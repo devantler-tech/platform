@@ -1,4 +1,4 @@
-name: Release
+name: Lint
 on:
   workflow_dispatch:
   pull_request:
