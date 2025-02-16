@@ -5,40 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  tree:
-    runs-on: ubuntu-latest
-    name: readme-tree
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install tree
-        run: sudo apt-get install -y tree
-      - name: Generate README Tree
-        run: |
-          tree -d -L 3 -I 'images|media' > tree.txt
-          sed -i '/<!-- readme-tree start -->/,/<!-- readme-tree end -->/c\
-          <!-- readme-tree start -->\
-          ```text\
-          '"$(cat tree.txt | sed 's/$/\\/')"'
-          ```\
-          <!-- readme-tree end -->' README.md
-          rm tree.txt
-      - name: Generate GitHub App Token
-        uses: tibdex/github-app-token@v2
-        id: generate-token
-        with:
-          app_id: ${{ secrets.APP_ID }}
-          private_key: ${{ secrets.APP_PRIVATE_KEY }}
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v7
-        with:
-          branch: update-readme-tree
-          commit-message: Update README Tree
-          title: Update README Tree
-          body: This PR includes new updates to the README Tree.
-          labels: chore
-          token: ${{ steps.generate-token.outputs.token }}
+  call-readme-tree-workflow:
+    uses: devantler-tech/.github/.github/workflows/readme-tree.yaml@main
+    secrets: inherit
