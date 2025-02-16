@@ -11,14 +11,29 @@ This repo contains the deployment artifacts for the DevantlerTech Platform. The 
   <summary>Show/hide folder structure</summary>
 
 <!-- readme-tree start -->
-```text
+```
 .
+├── .github
+│   └── workflows
+├── .vscode
 ├── docs
+│   └── images
 ├── hetzner
 ├── k8s
 │   ├── clusters
 │   │   ├── homelab-local
+│   │   │   ├── apps
+│   │   │   ├── flux-system
+│   │   │   ├── infrastructure
+│   │   │   │   └── controllers
+│   │   │   └── variables
 │   │   └── homelab-prod
+│   │       ├── apps
+│   │       ├── flux-system
+│   │       ├── infrastructure
+│   │       │   ├── controllers
+│   │       │   └── gha-runner-scale-sets
+│   │       └── variables
 │   ├── components
 │   │   ├── flux-kustomization-post-build-variables-label
 │   │   ├── flux-kustomization-sops-label
@@ -28,10 +43,563 @@ This repo contains the deployment artifacts for the DevantlerTech Platform. The 
 │   │   └── network-policy-default-deny
 │   ├── distributions
 │   │   ├── k3s
+│   │   │   ├── apps
+│   │   │   ├── infrastructure
+│   │   │   │   └── controllers
+│   │   │   └── variables
 │   │   └── talos
+│   │       ├── apps
+│   │       ├── infrastructure
+│   │       │   └── controllers
+│   │       │       ├── cilium
+│   │       │       ├── kubelet-serving-cert-approver
+│   │       │       └── longhorn
+│   │       └── variables
 │   └── shared
 │       ├── apps
+│       │   ├── fleetdm
+│       │   ├── headlamp
+│       │   ├── homepage
+│       │   ├── open-webui
+│       │   └── plantuml
 │       ├── infrastructure
+│       │   ├── cloudflared
+│       │   ├── cluster-policies
+│       │   │   └── samples
+│       │   │       ├── argo
+│       │   │       │   ├── application-field-validation
+│       │   │       │   ├── application-prevent-default-project
+│       │   │       │   ├── application-prevent-updates-project
+│       │   │       │   ├── applicationset-name-matches-project
+│       │   │       │   ├── appproject-clusterresourceblacklist
+│       │   │       │   └── argo-cluster-generation-from-rancher-capi
+│       │   │       ├── argo-cel
+│       │   │       │   ├── application-field-validation
+│       │   │       │   ├── application-prevent-default-project
+│       │   │       │   ├── application-prevent-updates-project
+│       │   │       │   ├── applicationset-name-matches-project
+│       │   │       │   └── appproject-clusterresourceblacklist
+│       │   │       ├── aws
+│       │   │       │   ├── require-aws-node-irsa
+│       │   │       │   └── require-encryption-aws-loadbalancers
+│       │   │       ├── aws-cel
+│       │   │       │   └── require-encryption-aws-loadbalancers
+│       │   │       ├── best-practices
+│       │   │       │   ├── add-network-policy
+│       │   │       │   ├── add-networkpolicy-dns
+│       │   │       │   ├── add-ns-quota
+│       │   │       │   ├── add-rolebinding
+│       │   │       │   ├── add-safe-to-evict
+│       │   │       │   ├── check-deprecated-apis
+│       │   │       │   ├── disallow-cri-sock-mount
+│       │   │       │   ├── disallow-default-namespace
+│       │   │       │   ├── disallow-empty-ingress-host
+│       │   │       │   ├── disallow-helm-tiller
+│       │   │       │   ├── disallow-latest-tag
+│       │   │       │   ├── require-drop-all
+│       │   │       │   ├── require-drop-cap-net-raw
+│       │   │       │   ├── require-labels
+│       │   │       │   ├── require-pod-requests-limits
+│       │   │       │   ├── require-probes
+│       │   │       │   ├── require-ro-rootfs
+│       │   │       │   ├── restrict-image-registries
+│       │   │       │   ├── restrict-node-port
+│       │   │       │   └── restrict-service-external-ips
+│       │   │       ├── best-practices-cel
+│       │   │       │   ├── check-deprecated-apis
+│       │   │       │   ├── disallow-cri-sock-mount
+│       │   │       │   ├── disallow-default-namespace
+│       │   │       │   ├── disallow-empty-ingress-host
+│       │   │       │   ├── disallow-helm-tiller
+│       │   │       │   ├── disallow-latest-tag
+│       │   │       │   ├── require-drop-all
+│       │   │       │   ├── require-drop-cap-net-raw
+│       │   │       │   ├── require-labels
+│       │   │       │   ├── require-pod-requests-limits
+│       │   │       │   ├── require-probes
+│       │   │       │   ├── require-ro-rootfs
+│       │   │       │   ├── restrict-image-registries
+│       │   │       │   ├── restrict-node-port
+│       │   │       │   └── restrict-service-external-ips
+│       │   │       ├── castai
+│       │   │       │   └── add-castai-removal-disabled
+│       │   │       ├── cert-manager
+│       │   │       │   ├── limit-dnsnames
+│       │   │       │   ├── limit-duration
+│       │   │       │   └── restrict-issuer
+│       │   │       ├── cleanup
+│       │   │       │   ├── cleanup-bare-pods
+│       │   │       │   └── cleanup-empty-replicasets
+│       │   │       ├── consul
+│       │   │       │   └── enforce-min-tls-version
+│       │   │       ├── consul-cel
+│       │   │       │   └── enforce-min-tls-version
+│       │   │       ├── external-secret-operator
+│       │   │       │   └── add-external-secret-prefix
+│       │   │       ├── flux
+│       │   │       │   ├── generate-flux-multi-tenant-resources
+│       │   │       │   ├── verify-flux-images
+│       │   │       │   ├── verify-flux-sources
+│       │   │       │   └── verify-git-repositories
+│       │   │       ├── flux-cel
+│       │   │       │   ├── verify-flux-sources
+│       │   │       │   └── verify-git-repositories
+│       │   │       │       └── .chainsaw-test-rename-after-issue-10313-fix
+│       │   │       ├── istio
+│       │   │       │   ├── add-ambient-mode-namespace
+│       │   │       │   ├── add-sidecar-injection-namespace
+│       │   │       │   ├── create-authorizationpolicy
+│       │   │       │   ├── enforce-ambient-mode-namespace
+│       │   │       │   ├── enforce-sidecar-injection-namespace
+│       │   │       │   ├── enforce-strict-mtls
+│       │   │       │   ├── enforce-tls-hosts-host-subnets
+│       │   │       │   ├── prevent-disabling-injection-pods
+│       │   │       │   ├── require-authorizationpolicy
+│       │   │       │   ├── restrict-virtual-service-wildcard
+│       │   │       │   ├── service-mesh-disallow-capabilities
+│       │   │       │   └── service-mesh-require-run-as-nonroot
+│       │   │       ├── istio-cel
+│       │   │       │   ├── enforce-sidecar-injection-namespace
+│       │   │       │   ├── enforce-strict-mtls
+│       │   │       │   └── prevent-disabling-injection-pods
+│       │   │       ├── karpenter
+│       │   │       │   ├── add-karpenter-daemonset-priority-class
+│       │   │       │   ├── add-karpenter-donot-evict
+│       │   │       │   ├── add-karpenter-nodeselector
+│       │   │       │   └── set-karpenter-non-cpu-limits
+│       │   │       ├── kasten
+│       │   │       │   ├── kasten-3-2-1-backup
+│       │   │       │   ├── kasten-data-protection-by-label
+│       │   │       │   ├── kasten-generate-example-backup-policy
+│       │   │       │   ├── kasten-generate-policy-by-preset-label
+│       │   │       │   ├── kasten-hourly-rpo
+│       │   │       │   ├── kasten-immutable-location-profile
+│       │   │       │   ├── kasten-minimum-retention
+│       │   │       │   └── kasten-validate-ns-by-preset-label
+│       │   │       ├── kasten-cel
+│       │   │       │   ├── k10-data-protection-by-label
+│       │   │       │   ├── k10-hourly-rpo
+│       │   │       │   └── k10-validate-ns-by-preset-label
+│       │   │       ├── kubecost
+│       │   │       │   ├── enable-kubecost-continuous-rightsizing
+│       │   │       │   ├── kubecost-proactive-cost-control
+│       │   │       │   └── require-kubecost-labels
+│       │   │       ├── kubecost-cel
+│       │   │       │   └── require-kubecost-labels
+│       │   │       ├── kubeops
+│       │   │       │   └── config-syncer-secret-generation-from-rancher-capi
+│       │   │       ├── kubevirt
+│       │   │       │   ├── add-services
+│       │   │       │   └── enforce-instancetype
+│       │   │       ├── linkerd
+│       │   │       │   ├── add-linkerd-mesh-injection
+│       │   │       │   ├── add-linkerd-policy-annotation
+│       │   │       │   ├── check-linkerd-authorizationpolicy
+│       │   │       │   ├── prevent-linkerd-pod-injection-override
+│       │   │       │   ├── prevent-linkerd-port-skipping
+│       │   │       │   ├── require-linkerd-mesh-injection
+│       │   │       │   └── require-linkerd-server
+│       │   │       ├── linkerd-cel
+│       │   │       │   ├── prevent-linkerd-pod-injection-override
+│       │   │       │   ├── prevent-linkerd-port-skipping
+│       │   │       │   └── require-linkerd-mesh-injection
+│       │   │       ├── nginx-ingress
+│       │   │       │   ├── disallow-ingress-nginx-custom-snippets
+│       │   │       │   ├── restrict-annotations
+│       │   │       │   └── restrict-ingress-paths
+│       │   │       ├── nginx-ingress-cel
+│       │   │       │   ├── disallow-ingress-nginx-custom-snippets
+│       │   │       │   ├── restrict-annotations
+│       │   │       │   └── restrict-ingress-paths
+│       │   │       ├── openshift
+│       │   │       │   ├── check-routes
+│       │   │       │   ├── disallow-deprecated-apis
+│       │   │       │   ├── disallow-jenkins-pipeline-strategy
+│       │   │       │   ├── disallow-security-context-constraint-anyuid
+│       │   │       │   ├── disallow-self-provisioner-binding
+│       │   │       │   ├── enforce-etcd-encryption
+│       │   │       │   ├── inject-infrastructurename
+│       │   │       │   ├── team-validate-ns-name
+│       │   │       │   └── unique-routes
+│       │   │       ├── openshift-cel
+│       │   │       │   ├── check-routes
+│       │   │       │   ├── disallow-deprecated-apis
+│       │   │       │   ├── disallow-jenkins-pipeline-strategy
+│       │   │       │   ├── disallow-security-context-constraint-anyuid
+│       │   │       │   └── enforce-etcd-encryption
+│       │   │       ├── other
+│       │   │       │   ├── add-certificates-volume
+│       │   │       │   ├── add-default-resources
+│       │   │       │   ├── add-default-securitycontext
+│       │   │       │   ├── add-emptydir-sizelimit
+│       │   │       │   ├── add-env-vars-from-cm
+│       │   │       │   ├── add-image-as-env-var
+│       │   │       │   ├── add-imagepullsecrets
+│       │   │       │   ├── add-imagepullsecrets-for-containers-and-initcontainers
+│       │   │       │   ├── add-labels
+│       │   │       │   ├── add-ndots
+│       │   │       │   ├── add-node-affinity
+│       │   │       │   ├── add-node-labels-pod
+│       │   │       │   ├── add-nodeSelector
+│       │   │       │   ├── add-pod-priorityclassname
+│       │   │       │   ├── add-pod-proxies
+│       │   │       │   ├── add-tolerations
+│       │   │       │   ├── add-ttl-jobs
+│       │   │       │   ├── add-volume-deployment
+│       │   │       │   ├── advanced-restrict-image-registries
+│       │   │       │   ├── advertise-node-extended-resources
+│       │   │       │   ├── allowed-annotations
+│       │   │       │   ├── allowed-base-images
+│       │   │       │   ├── allowed-image-repos
+│       │   │       │   ├── allowed-label-changes
+│       │   │       │   ├── allowed-pod-priorities
+│       │   │       │   ├── always-pull-images
+│       │   │       │   ├── annotate-base-images
+│       │   │       │   ├── apply-pss-restricted-profile
+│       │   │       │   ├── audit-event-on-delete
+│       │   │       │   ├── audit-event-on-exec
+│       │   │       │   ├── block-cluster-admin-from-ns
+│       │   │       │   ├── block-ephemeral-containers
+│       │   │       │   ├── block-images-with-volumes
+│       │   │       │   ├── block-large-images
+│       │   │       │   ├── block-pod-exec-by-namespace
+│       │   │       │   ├── block-pod-exec-by-namespace-label
+│       │   │       │   ├── block-pod-exec-by-pod-and-container
+│       │   │       │   ├── block-pod-exec-by-pod-label
+│       │   │       │   ├── block-pod-exec-by-pod-name
+│       │   │       │   ├── block-stale-images
+│       │   │       │   ├── block-updates-deletes
+│       │   │       │   ├── check-env-vars
+│       │   │       │   ├── check-hpa-exists
+│       │   │       │   ├── check-ingress-nginx-controller-version-and-annotation-policy
+│       │   │       │   ├── check-node-for-cve-2022-0185
+│       │   │       │   ├── check-nvidia-gpu
+│       │   │       │   ├── check-serviceaccount
+│       │   │       │   ├── check-serviceaccount-secrets
+│       │   │       │   ├── check-subjectaccessreview
+│       │   │       │   ├── check-vpa-configuration
+│       │   │       │   ├── concatenate-configmaps
+│       │   │       │   ├── copy-namespace-labels
+│       │   │       │   ├── cordon-and-drain-node
+│       │   │       │   ├── create-default-pdb
+│       │   │       │   ├── create-pod-antiaffinity
+│       │   │       │   ├── deny-commands-in-exec-probe
+│       │   │       │   ├── deny-secret-service-account-token-type
+│       │   │       │   ├── deployment-replicas-higher-than-pdb
+│       │   │       │   ├── disable-automountserviceaccounttoken
+│       │   │       │   ├── disable-service-discovery
+│       │   │       │   ├── disallow-all-secrets
+│       │   │       │   ├── disallow-localhost-services
+│       │   │       │   ├── disallow-secrets-from-env-vars
+│       │   │       │   ├── dns-policy-and-dns-config
+│       │   │       │   ├── docker-socket-requires-label
+│       │   │       │   ├── enforce-pod-duration
+│       │   │       │   ├── enforce-readwriteonce-pod
+│       │   │       │   ├── enforce-resources-as-ratio
+│       │   │       │   ├── ensure-probes-different
+│       │   │       │   ├── ensure-production-matches-staging
+│       │   │       │   ├── ensure-readonly-hostpath
+│       │   │       │   ├── exclude-namespaces-dynamically
+│       │   │       │   ├── expiration-for-policyexceptions
+│       │   │       │   ├── forbid-cpu-limits
+│       │   │       │   ├── generate-networkpolicy-existing
+│       │   │       │   ├── get-debug-information
+│       │   │       │   ├── imagepullpolicy-always
+│       │   │       │   ├── ingress-host-match-tls
+│       │   │       │   ├── inject-env-var-from-image-label
+│       │   │       │   ├── inject-sidecar-deployment
+│       │   │       │   ├── inspect-csr
+│       │   │       │   ├── kubernetes-version-check
+│       │   │       │   ├── label-existing-namespaces
+│       │   │       │   ├── label-nodes-cri
+│       │   │       │   ├── limit-configmap-for-sa
+│       │   │       │   ├── limit-containers-per-pod
+│       │   │       │   ├── limit-hostpath-type-pv
+│       │   │       │   ├── limit-hostpath-vols
+│       │   │       │   ├── memory-requests-equal-limits
+│       │   │       │   ├── metadata-match-regex
+│       │   │       │   ├── mitigate-log4shell
+│       │   │       │   ├── mutate-large-termination-gps
+│       │   │       │   ├── mutate-pod-binding
+│       │   │       │   ├── namespace-inventory-check
+│       │   │       │   ├── namespace-protection
+│       │   │       │   ├── nfs-subdir-external-provisioner-storage-path
+│       │   │       │   ├── only-trustworthy-registries-set-root
+│       │   │       │   ├── pdb-maxunavailable
+│       │   │       │   ├── pdb-maxunavailable-with-deployments
+│       │   │       │   ├── pdb-minavailable
+│       │   │       │   ├── policy-for-exceptions
+│       │   │       │   ├── prepend-image-registry
+│       │   │       │   ├── prevent-bare-pods
+│       │   │       │   ├── prevent-cr8escape
+│       │   │       │   ├── prevent-duplicate-hpa
+│       │   │       │   ├── prevent-duplicate-vpa
+│       │   │       │   ├── protect-node-taints
+│       │   │       │   ├── record-creation-details
+│       │   │       │   ├── refresh-env-var-in-pod
+│       │   │       │   ├── refresh-volumes-in-pods
+│       │   │       │   ├── remove-hostpath-volumes
+│       │   │       │   ├── remove-serviceaccount-token
+│       │   │       │   ├── replace-image-registry
+│       │   │       │   ├── replace-image-registry-with-harbor
+│       │   │       │   ├── replace-ingress-hosts
+│       │   │       │   ├── require-annotations
+│       │   │       │   ├── require-base-image
+│       │   │       │   ├── require-container-port-names
+│       │   │       │   ├── require-cpu-limits
+│       │   │       │   ├── require-deployments-have-multiple-replicas
+│       │   │       │   ├── require-emptydir-requests-limits
+│       │   │       │   ├── require-image-checksum
+│       │   │       │   ├── require-image-source
+│       │   │       │   ├── require-imagepullsecrets
+│       │   │       │   ├── require-ingress-https
+│       │   │       │   ├── require-netpol
+│       │   │       │   ├── require-non-root-groups
+│       │   │       │   ├── require-pdb
+│       │   │       │   ├── require-pod-priorityclassname
+│       │   │       │   ├── require-qos-burstable
+│       │   │       │   ├── require-qos-guaranteed
+│       │   │       │   ├── require-reasonable-pdbs
+│       │   │       │   ├── require-replicas-allow-disruption
+│       │   │       │   ├── require-storageclass
+│       │   │       │   ├── require-unique-external-dns
+│       │   │       │   ├── require-unique-service-selector
+│       │   │       │   ├── require-unique-uid-per-workload
+│       │   │       │   ├── require-vulnerability-scan
+│       │   │       │   ├── resolve-image-to-digest
+│       │   │       │   ├── resource-creation-updating-denied
+│       │   │       │   ├── restart-deployment-on-secret-change
+│       │   │       │   ├── restrict-annotations
+│       │   │       │   ├── restrict-automount-sa-token
+│       │   │       │   ├── restrict-binding-clusteradmin
+│       │   │       │   ├── restrict-binding-system-groups
+│       │   │       │   ├── restrict-clusterrole-csr
+│       │   │       │   ├── restrict-clusterrole-mutating-validating-admission-webhooks
+│       │   │       │   ├── restrict-clusterrole-nodesproxy
+│       │   │       │   ├── restrict-controlplane-scheduling
+│       │   │       │   ├── restrict-deprecated-registry
+│       │   │       │   ├── restrict-edit-for-endpoints
+│       │   │       │   ├── restrict-escalation-verbs-roles
+│       │   │       │   ├── restrict-ingress-classes
+│       │   │       │   ├── restrict-ingress-defaultbackend
+│       │   │       │   ├── restrict-ingress-host
+│       │   │       │   ├── restrict-ingress-wildcard
+│       │   │       │   ├── restrict-jobs
+│       │   │       │   ├── restrict-loadbalancer
+│       │   │       │   ├── restrict-networkpolicy-empty-podselector
+│       │   │       │   ├── restrict-node-affinity
+│       │   │       │   ├── restrict-node-label-changes
+│       │   │       │   ├── restrict-node-label-creation
+│       │   │       │   ├── restrict-node-selection
+│       │   │       │   ├── restrict-pod-controller-serviceaccount-updates
+│       │   │       │   ├── restrict-pod-count-per-node
+│       │   │       │   ├── restrict-sa-automount-sa-token
+│       │   │       │   ├── restrict-scale
+│       │   │       │   ├── restrict-secret-role-verbs
+│       │   │       │   ├── restrict-secrets-by-label
+│       │   │       │   ├── restrict-secrets-by-name
+│       │   │       │   ├── restrict-service-account
+│       │   │       │   ├── restrict-service-port-range
+│       │   │       │   ├── restrict-storageclass
+│       │   │       │   ├── restrict-usergroup-fsgroup-id
+│       │   │       │   ├── restrict-wildcard-resources
+│       │   │       │   ├── restrict-wildcard-verbs
+│       │   │       │   ├── scale-deployment-zero
+│       │   │       │   ├── spread-pods-across-topology
+│       │   │       │   ├── sync-secrets
+│       │   │       │   ├── time-bound-policy
+│       │   │       │   ├── topologyspreadconstraints-policy
+│       │   │       │   ├── unique-ingress-host-and-path
+│       │   │       │   ├── unique-ingress-paths
+│       │   │       │   ├── update-image-tag
+│       │   │       │   ├── verify-image
+│       │   │       │   ├── verify-image-cve-2022-42889
+│       │   │       │   ├── verify-image-gcpkms
+│       │   │       │   ├── verify-image-slsa
+│       │   │       │   ├── verify-image-with-multi-keys
+│       │   │       │   ├── verify-manifest-integrity
+│       │   │       │   ├── verify-sbom-cyclonedx
+│       │   │       │   └── verify-vpa-target
+│       │   │       ├── other-cel
+│       │   │       │   ├── advanced-restrict-image-registries
+│       │   │       │   ├── allowed-annotations
+│       │   │       │   ├── allowed-pod-priorities
+│       │   │       │   ├── block-ephemeral-containers
+│       │   │       │   ├── check-env-vars
+│       │   │       │   ├── check-node-for-cve-2022-0185
+│       │   │       │   ├── check-serviceaccount-secrets
+│       │   │       │   ├── deny-commands-in-exec-probe
+│       │   │       │   ├── deny-secret-service-account-token-type
+│       │   │       │   ├── disallow-all-secrets
+│       │   │       │   ├── disallow-localhost-services
+│       │   │       │   ├── disallow-secrets-from-env-vars
+│       │   │       │   ├── docker-socket-requires-label
+│       │   │       │   ├── enforce-pod-duration
+│       │   │       │   ├── enforce-readwriteonce-pod
+│       │   │       │   ├── ensure-probes-different
+│       │   │       │   ├── ensure-readonly-hostpath
+│       │   │       │   ├── exclude-namespaces-dynamically
+│       │   │       │   ├── forbid-cpu-limits
+│       │   │       │   ├── imagepullpolicy-always
+│       │   │       │   ├── ingress-host-match-tls
+│       │   │       │   ├── limit-containers-per-pod
+│       │   │       │   ├── limit-hostpath-type-pv
+│       │   │       │   ├── limit-hostpath-vols
+│       │   │       │   ├── memory-requests-equal-limits
+│       │   │       │   ├── metadata-match-regex
+│       │   │       │   ├── pdb-maxunavailable
+│       │   │       │   ├── prevent-bare-pods
+│       │   │       │   ├── prevent-cr8escape
+│       │   │       │   ├── require-annotations
+│       │   │       │   ├── require-container-port-names
+│       │   │       │   ├── require-deployments-have-multiple-replicas
+│       │   │       │   ├── require-emptydir-requests-limits
+│       │   │       │   ├── require-image-checksum
+│       │   │       │   ├── require-ingress-https
+│       │   │       │   ├── require-non-root-groups
+│       │   │       │   ├── require-pod-priorityclassname
+│       │   │       │   ├── require-qos-burstable
+│       │   │       │   ├── require-qos-guaranteed
+│       │   │       │   ├── require-storageclass
+│       │   │       │   ├── restrict-annotations
+│       │   │       │   ├── restrict-binding-clusteradmin
+│       │   │       │   ├── restrict-binding-system-groups
+│       │   │       │   ├── restrict-clusterrole-nodesproxy
+│       │   │       │   ├── restrict-controlplane-scheduling
+│       │   │       │   ├── restrict-deprecated-registry
+│       │   │       │   ├── restrict-edit-for-endpoints
+│       │   │       │   ├── restrict-escalation-verbs-roles
+│       │   │       │   ├── restrict-ingress-classes
+│       │   │       │   ├── restrict-ingress-defaultbackend
+│       │   │       │   ├── restrict-ingress-wildcard
+│       │   │       │   ├── restrict-jobs
+│       │   │       │   ├── restrict-loadbalancer
+│       │   │       │   ├── restrict-networkpolicy-empty-podselector
+│       │   │       │   ├── restrict-node-affinity
+│       │   │       │   ├── restrict-node-label-creation
+│       │   │       │   ├── restrict-pod-controller-serviceaccount-updates
+│       │   │       │   ├── restrict-sa-automount-sa-token
+│       │   │       │   ├── restrict-secret-role-verbs
+│       │   │       │   ├── restrict-secrets-by-name
+│       │   │       │   ├── restrict-service-port-range
+│       │   │       │   ├── restrict-storageclass
+│       │   │       │   ├── restrict-usergroup-fsgroup-id
+│       │   │       │   ├── restrict-wildcard-resources
+│       │   │       │   ├── restrict-wildcard-verbs
+│       │   │       │   └── topologyspreadconstraints-policy
+│       │   │       ├── pod-security
+│       │   │       │   ├── baseline
+│       │   │       │   │   ├── disallow-capabilities
+│       │   │       │   │   ├── disallow-host-namespaces
+│       │   │       │   │   ├── disallow-host-path
+│       │   │       │   │   ├── disallow-host-ports
+│       │   │       │   │   ├── disallow-host-ports-range
+│       │   │       │   │   ├── disallow-host-process
+│       │   │       │   │   ├── disallow-privileged-containers
+│       │   │       │   │   ├── disallow-proc-mount
+│       │   │       │   │   ├── disallow-selinux
+│       │   │       │   │   ├── restrict-apparmor-profiles
+│       │   │       │   │   ├── restrict-seccomp
+│       │   │       │   │   └── restrict-sysctls
+│       │   │       │   ├── enforce
+│       │   │       │   ├── restricted
+│       │   │       │   │   ├── disallow-capabilities-strict
+│       │   │       │   │   ├── disallow-privilege-escalation
+│       │   │       │   │   ├── require-run-as-non-root-user
+│       │   │       │   │   ├── require-run-as-nonroot
+│       │   │       │   │   ├── restrict-seccomp-strict
+│       │   │       │   │   └── restrict-volume-types
+│       │   │       │   └── subrule
+│       │   │       │       ├── podsecurity-subrule-baseline
+│       │   │       │       └── restricted
+│       │   │       │           ├── restricted-exclude-capabilities
+│       │   │       │           ├── restricted-exclude-seccomp
+│       │   │       │           └── restricted-latest
+│       │   │       ├── pod-security-cel
+│       │   │       │   ├── baseline
+│       │   │       │   │   ├── disallow-capabilities
+│       │   │       │   │   ├── disallow-host-namespaces
+│       │   │       │   │   ├── disallow-host-path
+│       │   │       │   │   ├── disallow-host-ports
+│       │   │       │   │   ├── disallow-host-ports-range
+│       │   │       │   │   ├── disallow-host-process
+│       │   │       │   │   ├── disallow-privileged-containers
+│       │   │       │   │   ├── disallow-proc-mount
+│       │   │       │   │   ├── disallow-selinux
+│       │   │       │   │   ├── restrict-seccomp
+│       │   │       │   │   └── restrict-sysctls
+│       │   │       │   └── restricted
+│       │   │       │       ├── disallow-capabilities-strict
+│       │   │       │       ├── disallow-privilege-escalation
+│       │   │       │       ├── require-run-as-non-root-user
+│       │   │       │       ├── require-run-as-nonroot
+│       │   │       │       ├── restrict-seccomp-strict
+│       │   │       │       └── restrict-volume-types
+│       │   │       ├── psa
+│       │   │       │   ├── add-privileged-existing-namespaces
+│       │   │       │   ├── add-psa-labels
+│       │   │       │   ├── add-psa-namespace-reporting
+│       │   │       │   └── deny-privileged-profile
+│       │   │       ├── psa-cel
+│       │   │       │   ├── add-psa-namespace-reporting
+│       │   │       │   └── deny-privileged-profile
+│       │   │       ├── psp-migration
+│       │   │       │   ├── add-apparmor
+│       │   │       │   ├── add-capabilities
+│       │   │       │   ├── add-runtimeClassName
+│       │   │       │   ├── check-supplemental-groups
+│       │   │       │   ├── restrict-adding-capabilities
+│       │   │       │   └── restrict-runtimeClassName
+│       │   │       ├── psp-migration-cel
+│       │   │       │   ├── check-supplemental-groups
+│       │   │       │   ├── restrict-adding-capabilities
+│       │   │       │   └── restrict-runtimeClassName
+│       │   │       ├── tekton
+│       │   │       │   ├── block-tekton-task-runs
+│       │   │       │   ├── require-tekton-bundle
+│       │   │       │   ├── require-tekton-namespace-pipelinerun
+│       │   │       │   ├── require-tekton-securitycontext
+│       │   │       │   ├── verify-tekton-pipeline-bundle-signatures
+│       │   │       │   ├── verify-tekton-taskrun-signatures
+│       │   │       │   └── verify-tekton-taskrun-vuln-scan
+│       │   │       ├── tekton-cel
+│       │   │       │   ├── block-tekton-task-runs
+│       │   │       │   └── require-tekton-bundle
+│       │   │       ├── traefik
+│       │   │       │   └── disallow-default-tlsoptions
+│       │   │       ├── traefik-cel
+│       │   │       │   └── disallow-default-tlsoptions
+│       │   │       ├── velero
+│       │   │       │   ├── backup-all-volumes
+│       │   │       │   ├── block-velero-restore
+│       │   │       │   └── validate-cron-schedule
+│       │   │       ├── velero-cel
+│       │   │       │   ├── block-velero-restore
+│       │   │       │   └── validate-cron-schedule
+│       │   │       └── windows-security
+│       │   │           └── require-run-as-containeruser
+│       │   ├── controllers
+│       │   │   ├── capi-operator
+│       │   │   ├── cert-manager
+│       │   │   ├── dex
+│       │   │   ├── gha-runner-scale-set-controller
+│       │   │   ├── k8sgpt-operator
+│       │   │   ├── kyverno
+│       │   │   ├── metrics-server
+│       │   │   ├── reloader
+│       │   │   ├── testkube
+│       │   │   │   └── crds
+│       │   │   ├── traefik
+│       │   │   └── trivy-operator
+│       │   ├── goldilocks
+│       │   ├── harbor
+│       │   ├── helm-charts-oci-proxy
+│       │   ├── middlewares
+│       │   │   ├── basic-auth
+│       │   │   └── forward-auth
+│       │   ├── oauth2-proxy
+│       │   ├── ollama
+│       │   └── selfsigned-cluster-issuer
 │       ├── tenants
 │       └── variables
 └── talos
@@ -39,7 +607,7 @@ This repo contains the deployment artifacts for the DevantlerTech Platform. The 
         ├── cluster
         └── nodes
 
-26 directories
+594 directories
 ```
 <!-- readme-tree end -->
 
