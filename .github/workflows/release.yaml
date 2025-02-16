@@ -1,0 +1,9 @@
+name: Release
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  call-release-workflow:
+    uses: devantler-tech/.github/.github/workflows/release.yaml@main
