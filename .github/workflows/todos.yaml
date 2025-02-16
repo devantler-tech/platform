@@ -1,18 +1,9 @@
 name: "TODOs"
 on:
   push:
-    branches: main
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    branches: [main]
 
 jobs:
-  build:
-    runs-on: "ubuntu-latest"
-    steps:
-      - uses: "actions/checkout@v4"
-      - uses: "alstr/todo-to-issue-action@v5"
-        env:
-          AUTO_ASSIGN: true
-          LABEL: chore
+  call-todos-workflow:
+    uses: devantler-tech/.github/.github/workflows/todos.yaml@main
+    secrets: inherit
