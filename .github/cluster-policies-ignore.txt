@@ -1,4 +1,4 @@
-*.chainsaw-test
+*.chainsaw-test*
 *.kyverno-test
 *artifact-hub.y*ml
 *artifacthub-pkg.y*ml
