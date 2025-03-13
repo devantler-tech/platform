@@ -8,13 +8,13 @@ on:
     branches:
       - main
     paths:
-      - 'k8s/shared/infrastructure/cluster-policies/samples/**'
+      - 'k8s/base/infrastructure/cluster-policies/samples/**'
 
 jobs:
   sync-policies:
     runs-on: ubuntu-latest
     env:
-      KYVERNO_POLICIES_DIR: k8s/shared/infrastructure/cluster-policies/samples/
+      KYVERNO_POLICIES_DIR: k8s/base/infrastructure/cluster-policies/samples/
       KYVERNO_POLICIES_TEMP_DIR: /tmp/cluster-policies
 
     steps:
