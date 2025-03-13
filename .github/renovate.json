@@ -25,5 +25,8 @@
   },
   "patch": {
     "automerge": true
-  }
+  },
+  "ignorePaths": [
+    "k8s/base/infrastructure/cluster-policies"
+  ]
 }
