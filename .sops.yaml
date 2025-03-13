@@ -1,9 +1,0 @@
-creation_rules:
-- path_regex: ^k8s\/clusters\/local\/.+\.enc\.ya?ml$
-  encrypted_regex: ^(data|stringData)$
-  age: |-
-    age1cdlw8szyuanqev6xcqe946xkeyh0exsks8rzkehgzlme70krmffqk892ty
-- path_regex: ^.+\.enc\.ya?ml$
-  encrypted_regex: ^(data|stringData)$
-  age: |-
-    age1cdlw8szyuanqev6xcqe946xkeyh0exsks8rzkehgzlme70krmffqk892ty

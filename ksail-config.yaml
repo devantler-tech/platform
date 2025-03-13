@@ -7,7 +7,6 @@ spec:
   connection:
     context: kind-local
   project:
-    secretManager: SOPS
     cni: Cilium
     kustomizationPath: k8s/clusters/local
   deploymentTool:
