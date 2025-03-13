@@ -1,0 +1,32 @@
+name: Deploy
+
+on:
+  pull_request:
+    branches:
+      - "main"
+  push:
+    branches:
+      - "main"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+      - name: Install KSail
+        run: |
+          # https://github.com/devantler-tech/ksail
+          version=$(curl -s https://api.github.com/repos/devantler-tech/ksail/releases/latest | jq -r '.tag_name')
+          curl -sL https://github.com/devantler-tech/ksail/releases/download/${version}/ksail-linux-amd64 -o ksail
+          chmod +x ksail
+          sudo mv ksail /usr/local/bin/ksail
+      - name: Create cluster
+        run: ksail up
+      - name: Destroy cluster
+        if: always()
+        run: ksail down

@@ -1,0 +1,50 @@
+---
+apiVersion: ksail.io/v1alpha1
+kind: Cluster
+metadata:
+  name: local
+spec:
+  connection:
+    context: kind-local
+  project:
+    secretManager: SOPS
+    cni: Cilium
+    kustomizationPath: k8s/clusters/local
+  deploymentTool:
+    flux:
+      source:
+        url: oci://ksail-registry:5000/ksail-registry
+  localRegistry:
+    name: ksail-registry
+    hostPort: 5555
+  mirrorRegistries:
+  - proxy:
+      url: https://registry.k8s.io/
+      insecure: false
+    name: registry.k8s.io-proxy
+    hostPort: 5556
+  - proxy:
+      url: https://registry-1.docker.io/
+      insecure: false
+    name: docker.io-proxy
+    hostPort: 5557
+  - proxy:
+      url: https://ghcr.io/
+      insecure: false
+    name: ghcr.io-proxy
+    hostPort: 5558
+  - proxy:
+      url: https://gcr.io/
+      insecure: false
+    name: gcr.io-proxy
+    hostPort: 5559
+  - proxy:
+      url: https://mcr.microsoft.com/
+      insecure: false
+    name: mcr.microsoft.com-proxy
+    hostPort: 5560
+  - proxy:
+      url: https://quay.io/
+      insecure: false
+    name: quay.io-proxy
+    hostPort: 5561
