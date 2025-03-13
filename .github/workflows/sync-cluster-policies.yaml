@@ -51,6 +51,11 @@ jobs:
           commit-message: "chore: sync cluster policies"
           title: "chore: sync cluster policies"
           body: "Sync Cluster Policies from <https://github.com/kyverno/policies>"
+          branch: sync-cluster-policies
+          delete-branch: true
           signoff: true
+          sign-commits: true
+          reviewers: devantler
+          assignees: devantler
           token: ${{ steps.generate-token.outputs.token }}
           branch-token: ${{ steps.generate-token.outputs.token }}
