@@ -1,4 +1,5 @@
 *.chainsaw-test
 *.kyverno-test
 *artifacthub-pkg.y*ml
+*kustomization.yaml
 *README.md
