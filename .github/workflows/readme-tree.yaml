@@ -11,5 +11,5 @@ permissions:
 
 jobs:
   readme-tree:
-    uses: devantler-tech/.github/.github/workflows/readme-tree.yaml@main
+    uses: devantler-tech/workflows/.github/workflows/readme-tree.yaml@main
     secrets: inherit
