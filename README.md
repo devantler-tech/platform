@@ -1,7 +1,7 @@
 # Welcome to the DevantlerTech Platform ⛴️
 
 > [!WARNING]
-> I am currently working towards making my other OS project [KSail](https://github.com/devantler/ksail) work really well for my homelab. As such this repo will not see much development the coming weeks. Rest assured, that it will recieve some much needed love, where I share my latest and greatest learnings in the Platform Engineering space.
+> I am currently working towards making my other OS project [KSail](https://github.com/devantler/ksail) work really well for my personal platform (homelab). As such this repo will not see much development the coming weeks. Rest assured, that it will recieve some much needed love, where I share my latest and greatest learnings in the Platform Engineering space.
 
 <img width="1840" alt="Screenshot 2024-09-03 at 00 51 44" src="https://github.com/user-attachments/assets/eb6729f7-edff-4346-9be9-0c77d9740633">
 
