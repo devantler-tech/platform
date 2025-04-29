@@ -28,6 +28,5 @@
   },
   "ignorePaths": [
     "k8s/base/infrastructure/cluster-policies"
-  ],
-  "semanticCommitType": "fix"
+  ]
 }
