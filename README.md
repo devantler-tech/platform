@@ -9,21 +9,26 @@ This repo contains the deployment artifacts for the DevantlerTech Platform. The 
 
 ## Prerequisites
 
-For development:
+For local development:
 
-- [Docker](https://docs.docker.com/get-docker/)
-- [KSail](https://github.com/devantler/ksail)
+- [Docker](https://docs.docker.com/get-docker/) - For running the cluster locally.
+- [KSail](https://github.com/devantler/ksail) - For developing the cluster locally, and for running the cluster in CI to ensure all changes are properly tested before being applied to the production cluster.
 
-For production:
+For development and production clusters:
 
-- [Cloudflare](https://www.cloudflare.com)
-- [Hetzner](https://www.hetzner.com/cloud/)
-- [Talos Omni](https://www.siderolabs.com/platform/saas-for-kubernetes/)
+- [Hetzner](https://www.hetzner.com/cloud/) - For hosting servers for control plane and worker nodes.
+- [Talos Omni](https://www.siderolabs.com/platform/saas-for-kubernetes/) - For provisioning the production cluster, and managing nodes, updates, and the Talos configuration.
+- [Cloudflare](https://www.cloudflare.com) - For etcd backups, DNS, and tunneling all traffic so my network stays private.
+- [Unifi](https://ui.com/) - For configuring a DMZ zone for my own nodes to run in, along with other security features.
+- [UTM](https://mac.getutm.app) - For running Kubernetes on Mac Mini via Apple Hypervisor.
+- [Flux GitOps](https://fluxcd.io) - For managing the kubernetes applications and infrastructure declaratively.
+- [SOPS](https://getsops.io) and [Age](https://github.com/FiloSottile/age) - For encrypting secrets at rest, allowing me to store them in this repository with confidence.
 
 ## Usage
 
 > [!IMPORTANT]
 > This setup uses SOPS to encrypt secrets at rest. If you want to run the platform locally, or on your own Omni instance, you will need to:
+>
 > 1. Fork this repo
 > 2. Create your own Age keys
 > 3. Update the `.sops.yaml` file in the root of the repository.
@@ -36,7 +41,34 @@ To run this cluster locally, simply run:
 ksail up
 ```
 
-## Stack
+## Clusters
+
+### Production
+
+#### Control Plane Nodes
+
+- 3x [Hetzner CAX11 nodes](https://www.hetzner.com/cloud/) (QEMU ARM64 2CPU 4Gb RAM 40Gb SSD)
+
+#### Worker Nodes
+
+- 1x Mac Mini M2 Pro (Apple Hypervisor ARM64 10CPU 32Gb RAM ~512Gb SSD)
+- 1x Mac Mini M1 (Apple Hypervisor ARM64 8CPU 16Gb RAM ~512Gb SSD)
+
+#### Hardware
+
+- [Unifi Cloud Gateway](https://eu.store.ui.com/eu/en/pro/products/ucg-ultra)
+
+### Development
+
+#### Control Plane Nodes
+
+- 3x [Hetzner CAX11 nodes](https://www.hetzner.com/cloud/) (QEMU ARM64 2CPU 4Gb RAM 40Gb SSD) for control plane nodes
+
+#### Worker Nodes
+
+Currently none.
+
+## Structure
 
 The cluster uses Flux GitOps to reconcile the state of the cluster with single source of truth stored in this repository and published as an OCI image. For development, the cluster is spun up by `KSail` and for production, the cluster is provisioned by `Talos Omni`.
 
@@ -52,7 +84,7 @@ The cluster configuration is stored in the `k8s/*` directories where the structu
   - [`infrastructure`](k8s/bases/common): Contains the different infrastructure components that are used for the different clusters and distributions.
   - [`apps`](k8s/bases/apps): Contains the different apps that are used for the different clusters and distributions.
 
-## Kustomize and Flux Kustomization Flow
+### Kustomize and Flux Kustomization Flow
 
 > [!IMPORTANT]
 > If you know of a different way to manage kustomize and flux kustomizations that results in less boilerplate code, please let me know. I am always looking for ways to improve the structure and make it more maintainable.
@@ -69,42 +101,14 @@ This means that for every flux kustomization that is applied to the cluster, the
 
 This allows for a clean separation of concerns and allows for modification of the resources for a specific cluster, distribution, or shared across all clusters.
 
-## Production Environment
-
-### Control Plane Nodes
-
-- 3x [Hetzner CAX11 nodes](https://www.hetzner.com/cloud/) (QEMU ARM64 2CPU 4Gb RAM 40Gb SSD) for control plane nodes
-
-### Worker Nodes
-
-- 1x [Hetzner CAX11 node](https://www.hetzner.com/cloud/) (QEMU ARM64 2CPU 4Gb RAM 40Gb SSD)
-- 1x [Hetzner CX22 node](https://www.hetzner.com/cloud/) (QEMU AMD64 2CPU 4Gb RAM 40Gb SSD)
-
-### Hardware
-
-- [Unifi Cloud Gateway](https://eu.store.ui.com/eu/en/pro/products/ucg-ultra) - For networking and firewall.
-- Mac Mini M2 Pro - For running VMs in UTM.
-- Mac Mini M1 - For running VMs in UTM.
-
-### Software
-
-- [Unifi](https://ui.com/) - For configuring a DMZ zone for my own nodes to run in, along with other security features.
-- [UTM](https://mac.getutm.app) - For running Kubernetes on Mac Mini via Apple Hypervisor.
-- [Talos Omni](https://www.siderolabs.com/platform/saas-for-kubernetes/) - For provisioning the production cluster, and managing nodes, updates, and the Talos configuration.
-- [Cloudflare](https://www.cloudflare.com) - For etcd backups, DNS, and tunneling all traffic so my network stays private.
-- [Flux GitOps](https://fluxcd.io) - For managing the kubernetes applications and infrastructure declaratively.
-- [SOPS](https://getsops.io) and [Age](https://github.com/FiloSottile/age) - For encrypting secrets at rest, allowing me to store them in this repository with confidence.
-- [KSail](https://github.com/devantler/ksail) - For developing the cluster locally, and for running the cluster in CI to ensure all changes are properly tested before being applied to the production cluster.
-
-### Monthly Cost
+## Monthly Cost
 
 | Item               | No. | Per unit | Total in Actual | Total in $ |
 | ------------------ | --- | -------- | --------------- | ---------- |
 | Talos Omni         | 1   | $10      | $10             | $10        |
-| Cloudflare Domains | 2   | $0,87    | $1,74           | $1,74      |
-| Hetzner CAX11      | 4   | 4,74€    | €18,96          | $21,43     |
-| Hetzner CX22       | 1   | 4,74€    | €4,74           | $5,36      |
-|                    |     |          |                 | $38,53     |
+| Cloudflare Domains | 3   | $0,87    | $2,61           | $2,61      |
+| Hetzner CAX11      | 6   | €4,74    | €28,44          | $32,15     |
+|                    |     |          |                 | $44,76     |
 
 ## Star History
 
