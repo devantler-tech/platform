@@ -8,19 +8,17 @@ packer {
 }
 
 locals {
-  image = "media/talos-v1.7.6-arm64.raw.xz"
+  image = "talos-v1.9.5-amd64/hcloud-amd64-omni-devantler-v1.9.5-secureboot.raw.xz"
 }
 
 source "hcloud" "talos" {
   rescue       = "linux64"
   image        = "debian-12" #
   location     = "fsn1" # https://docs.hetzner.com/cloud/general/locations
-  server_type  = "cax11" # https://docs.hetzner.com/cloud/servers/overview
+  server_type  = "cx22" # https://docs.hetzner.com/cloud/servers/overview
   ssh_username = "root"
-
-  snapshot_name = "Talos v1.7.6 (arm64)"
-
-  server_name = "homelab-talos-1"
+  snapshot_name = "talos-v1.9.5-amd64"
+  server_name = "packer-talos-v1.9.5-amd64"
 }
 
 build {
