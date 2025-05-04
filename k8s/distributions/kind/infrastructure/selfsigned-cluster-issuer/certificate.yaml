@@ -6,8 +6,8 @@ metadata:
 spec:
   secretName: cluster-issuer-certificate-tls
   dnsNames:
-    - "${cluster_domain}"
-    - "*.${cluster_domain}"
+    - "${domain}"
+    - "*.${domain}"
   issuerRef:
     name: selfsigned-cluster-issuer
     kind: ClusterIssuer

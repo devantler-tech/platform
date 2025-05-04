@@ -4,4 +4,4 @@ This cluster issuer can be used to issue self-signed certificates. It is only re
 
 ## Dependencies
 
-- [Cert Manager](../../README.md)
+- [Cert Manager](../../../../../k8s-old/shared/README.md)
