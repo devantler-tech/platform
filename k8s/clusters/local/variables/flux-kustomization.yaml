@@ -4,9 +4,10 @@ metadata:
   name: variables
   namespace: flux-system
 spec:
-  interval: 60m
-  timeout: 3m
-  retryInterval: 2m
+  interval: 5m
+  timeout: 2m
+  retryInterval: 1m
+  path: clusters/local/variables
   sourceRef:
     kind: OCIRepository
     name: flux-system
@@ -14,7 +15,6 @@ spec:
     provider: sops
     secretRef:
       name: sops-age
-  path: clusters/local/variables
-  prune: true
   wait: true
+  prune: true
   force: true

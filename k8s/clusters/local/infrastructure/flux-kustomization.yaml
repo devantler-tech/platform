@@ -5,9 +5,10 @@ metadata:
   name: infrastructure
   namespace: flux-system
 spec:
-  interval: 60m
-  timeout: 3m
-  retryInterval: 2m
+  interval: 5m
+  timeout: 2m
+  retryInterval: 1m
+  path: clusters/local/infrastructure
   sourceRef:
     kind: OCIRepository
     name: flux-system
@@ -18,7 +19,12 @@ spec:
     provider: sops
     secretRef:
       name: sops-age
-  path: clusters/local/infrastructure
-  prune: true
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: variables-local
+      - kind: Secret
+        name: variables-local-sensitive
   wait: true
+  prune: true
   force: true
