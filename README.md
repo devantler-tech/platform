@@ -19,6 +19,8 @@ This repo contains the deployment artifacts for the DevantlerTech Platform. The 
 ├── docs
 │   └── images
 ├── hetzner
+│   ├── talos-v1.9.5-amd64
+│   └── talos-v1.9.5-arm64
 ├── k8s
 │   ├── base
 │   │   ├── infrastructure
@@ -616,7 +618,7 @@ This repo contains the deployment artifacts for the DevantlerTech Platform. The 
         ├── cluster
         └── nodes
 
-603 directories
+605 directories
 ```
 <!-- readme-tree end -->
 
