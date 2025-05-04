@@ -1,7 +1,0 @@
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
-metadata:
-  name: capi-operator
-  namespace: capi-operator
-spec:
-  url: https://kubernetes-sigs.github.io/cluster-api-operator

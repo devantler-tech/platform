@@ -1,0 +1,10 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: variables-local
+  namespace: flux-system
+data:
+  domain: traefik.me
+  github_app_client_id: Iv23liZ8GHRgpx32Em2y
+  

@@ -11,6 +11,11 @@ spec:
   sourceRef:
     kind: OCIRepository
     name: flux-system
+  dependsOn:
+    - name: variables
+      namespace: flux-system
+  decryption:
+    provider: sops
   path: clusters/local/infrastructure
   prune: true
   wait: true
