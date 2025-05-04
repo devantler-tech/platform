@@ -2,10 +2,10 @@
 apiVersion: ksail.io/v1alpha1
 kind: Cluster
 metadata:
-  name: devantler-tech-platform-local
+  name: local
 spec:
   connection:
-    context: kind-devantler-tech-platform-local
+    context: kind-local
   project:
     kustomizationPath: k8s/clusters/local
     deploymentTool: Flux
