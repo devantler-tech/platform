@@ -1,0 +1,9 @@
+creation_rules:
+- path_regex: ^k8s\/clusters\/devantler-tech-platform-local\/.+\.enc\.ya?ml$
+  encrypted_regex: ^(data|stringData)$
+  age: |-
+    age1fqcl89lrl8daucdkn7xstjhv9mcxk39m59a9mhvw0g3j24kjmu6qcaxpp7
+- path_regex: ^.+\.enc\.ya?ml$
+  encrypted_regex: ^(data|stringData)$
+  age: |-
+    age1fqcl89lrl8daucdkn7xstjhv9mcxk39m59a9mhvw0g3j24kjmu6qcaxpp7
