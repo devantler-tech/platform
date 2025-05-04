@@ -34,9 +34,7 @@ spec:
         - name: GitHub
           id: github
           secret: ${dex_client_secret}
-          redirectURIs:
-            - https://headlamp.${domain}/oidc-callback
-            - https://grafana.${domain}/login/generic_oauth
+          redirectURIs: []
       connectors:
         - name: GitHub
           type: github

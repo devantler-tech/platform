@@ -12,6 +12,8 @@ spec:
     name: flux-system
   decryption:
     provider: sops
+    secretRef:
+      name: sops-age
   path: clusters/local/variables
   prune: true
   wait: true
