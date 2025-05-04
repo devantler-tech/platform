@@ -39,7 +39,7 @@ jobs:
         run: |
           while IFS= read -r pattern; do
           find ${{ env.KYVERNO_POLICIES_TEMP_DIR }} -path "${{ env.KYVERNO_POLICIES_TEMP_DIR }}/$pattern" -exec rm -rf {} +
-            done < .github/cluster-policies-ignore.txt
+            done < .policyignore
       - name: Copy Cluster Policies to the target directory
         run: |
           mkdir -p ${{ env.KYVERNO_POLICIES_DIR }}
