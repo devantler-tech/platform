@@ -27,6 +27,6 @@
     "automerge": true
   },
   "ignorePaths": [
-    "k8s/bases/infrastructure/cluster-policies"
-  ],
+    "k8s/bases/infrastructure/cluster-policies/samples"
+  ]
 }
