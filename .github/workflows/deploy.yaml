@@ -1,0 +1,30 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - "main"
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-dev:
+    uses: devantler-tech/workflows/.github/workflows/gitops-deploy.yaml@main
+    secrets: inherit
+    with:
+      DEPLOYMENT_ENV: dev
+
+  deploy-prod:
+    needs: deploy-dev
+    uses: devantler-tech/workflows/.github/workflows/gitops-deploy.yaml@main
+    secrets: inherit
+    with:
+      DEPLOYMENT_ENV: prod
+
+
+
