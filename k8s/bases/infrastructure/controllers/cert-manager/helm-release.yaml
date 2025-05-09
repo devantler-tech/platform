@@ -12,6 +12,8 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: cert-manager
+  dependsOn:
+    - name: cilium
   # https://github.com/cert-manager/cert-manager/blob/master/deploy/charts/cert-manager/values.yaml
   values:
     podDisruptionBudget:

@@ -1,0 +1,30 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  chart:
+    spec:
+      chart: cilium
+      version: v1.17.3
+      sourceRef:
+        kind: HelmRepository
+        name: cilium
+  interval: 10m0s
+  # https://github.com/cilium/cilium/blob/main/install/kubernetes/cilium/values.yaml
+  values: {}
+    # gatewayAPI:
+    #   enabled: true
+    #   enableAlpn: true
+    # Talos specific configuration
+    # kubeProxyReplacement: true
+    # ipam:
+    #   mode: kubernetes
+    # cgroup:
+    #   automount:
+    #     enabled: false
+    #   hostRoot: /sys/fs/cgroup
+    # k8sServiceHost: localhost
+    # k8sServicePort: 7445
