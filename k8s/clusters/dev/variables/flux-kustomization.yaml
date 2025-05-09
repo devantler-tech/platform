@@ -7,7 +7,7 @@ spec:
   interval: 5m
   timeout: 2m
   retryInterval: 1m
-  path: clusters/dev/variables
+  path: clusters/dev/variables/
   sourceRef:
     kind: OCIRepository
     name: flux-system

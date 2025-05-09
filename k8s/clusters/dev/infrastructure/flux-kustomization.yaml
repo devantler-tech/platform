@@ -8,13 +8,12 @@ spec:
   interval: 5m
   timeout: 2m
   retryInterval: 1m
-  path: clusters/dev/infrastructure/controllers
+  path: clusters/dev/infrastructure/controllers/
   sourceRef:
     kind: OCIRepository
     name: flux-system
   dependsOn:
     - name: variables
-      namespace: flux-system
   decryption:
     provider: sops
     secretRef:
@@ -38,15 +37,13 @@ spec:
   interval: 5m
   timeout: 2m
   retryInterval: 1m
-  path: clusters/dev/infrastructure
+  path: clusters/dev/infrastructure/
   sourceRef:
     kind: OCIRepository
     name: flux-system
   dependsOn:
     - name: variables
-      namespace: flux-system
     - name: infrastructure-controllers
-      namespace: flux-system
   decryption:
     provider: sops
     secretRef:

@@ -8,7 +8,7 @@ spec:
   interval: 5m
   timeout: 2m
   retryInterval: 1m
-  path: clusters/local/infrastructure/controllers
+  path: clusters/local/infrastructure/controllers/
   sourceRef:
     kind: OCIRepository
     name: flux-system
@@ -37,7 +37,7 @@ spec:
   interval: 5m
   timeout: 2m
   retryInterval: 1m
-  path: clusters/local/infrastructure
+  path: clusters/local/infrastructure/
   sourceRef:
     kind: OCIRepository
     name: flux-system
