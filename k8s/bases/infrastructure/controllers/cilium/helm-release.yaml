@@ -17,14 +17,7 @@ spec:
   values:
     ipam:
       mode: kubernetes
-    # gatewayAPI:
-    #   enabled: true
-    #   enableAlpn: true
-    # Talos specific configuration
-    # kubeProxyReplacement: true
-    # cgroup:
-    #   automount:
-    #     enabled: false
-    #   hostRoot: /sys/fs/cgroup
-    # k8sServiceHost: localhost
-    # k8sServicePort: 7445
+    kubeProxyReplacement: true
+    gatewayAPI:
+      enabled: true
+      enableAlpn: true
