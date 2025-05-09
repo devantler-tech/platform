@@ -2,6 +2,8 @@ name: Deploy
 
 on:
   push:
+    branches-ignore:
+      - 'gh-readonly-queue/**'
   workflow_dispatch:
 
 concurrency:
