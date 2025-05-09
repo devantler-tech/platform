@@ -48,7 +48,7 @@ ksail up
 
 #### Worker Nodes
 
-- 4x UTM nodes (Apple Hypervisor (ARM64 16/20CPU 8/16Gb RAM 55/125Gb SSD)
+- 4x UTM nodes (Apple Hypervisor ARM64 16/20CPU 8/16Gb RAM 55/125Gb SSD)
 
 ### Development
 
