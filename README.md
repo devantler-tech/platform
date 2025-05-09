@@ -42,6 +42,8 @@ ksail up
 
 ### Production
 
+Hybrid Cloud cluster that runs on both Hetzner Cloud and on-prem. Used for production workloads.
+
 #### Control Plane Nodes
 
 - 3x [Hetzner CAX11 nodes](https://www.hetzner.com/cloud/) (QEMU ARM64 2CPU 4Gb RAM 40Gb SSD)
@@ -52,9 +54,11 @@ ksail up
 
 ### Development
 
+Hybrid Cloud cluster that runs on both Hetzner Cloud and on-prem. Used to test and verify workloads before promoting them to production.
+
 #### Control Plane Nodes
 
-- 3x [Hetzner CAX11 nodes](https://www.hetzner.com/cloud/) (QEMU ARM64 2CPU 4Gb RAM 40Gb SSD) for control plane nodes
+- 3x [Hetzner CAX11 nodes](https://www.hetzner.com/cloud/) (QEMU ARM64 2CPU 4Gb RAM 40Gb SSD)
 
 #### Worker Nodes
 
