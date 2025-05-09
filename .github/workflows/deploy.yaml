@@ -18,7 +18,6 @@ permissions:
 
 jobs:
   deploy-dev:
-    if: startsWith(github.ref, 'refs/heads/')
     uses: devantler-tech/workflows/.github/workflows/gitops-deploy.yaml@main
     secrets: inherit
     with:
