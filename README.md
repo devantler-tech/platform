@@ -58,13 +58,13 @@ ksail up
 
 #### Worker Nodes
 
-- 2x UTM nodes (Apple Hypervisor (ARM64 16/20CPU 8/16Gb RAM 55/125Gb SSD)
+- 2x UTM nodes (Apple Hypervisor ARM64 16/20CPU 8/16Gb RAM 55/125Gb SSD)
 
 ## Hardware
 
 - [Unifi Cloud Gateway](https://eu.store.ui.com/eu/en/pro/products/ucg-ultra)
-- 1x Mac Mini M2 Pro (Apple Hypervisor ARM64 10CPU 32Gb RAM ~512Gb SSD)
-- 1x Mac Mini M1 (Apple Hypervisor ARM64 8CPU 16Gb RAM ~512Gb SSD)
+- 1x Mac Mini M2 Pro (ARM64 10CPU 32Gb RAM ~512Gb SSD)
+- 1x Mac Mini M1 (ARM64 8CPU 16Gb RAM ~256Gb SSD)
 
 ## Structure
 
