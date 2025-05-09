@@ -14,14 +14,14 @@ spec:
         name: cilium
   interval: 10m0s
   # https://github.com/cilium/cilium/blob/main/install/kubernetes/cilium/values.yaml
-  values: {}
+  values:
+    ipam:
+      mode: kubernetes
     # gatewayAPI:
     #   enabled: true
     #   enableAlpn: true
     # Talos specific configuration
     # kubeProxyReplacement: true
-    # ipam:
-    #   mode: kubernetes
     # cgroup:
     #   automount:
     #     enabled: false
