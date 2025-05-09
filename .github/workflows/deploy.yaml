@@ -12,6 +12,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   deploy-dev:
     uses: devantler-tech/workflows/.github/workflows/gitops-deploy.yaml@main
