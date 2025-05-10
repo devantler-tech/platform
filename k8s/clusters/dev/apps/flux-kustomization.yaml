@@ -11,6 +11,18 @@ spec:
   sourceRef:
     kind: OCIRepository
     name: flux-system
+  dependsOn:
+    - name: infrastructure
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: variables-dev
+      - kind: Secret
+        name: variables-dev-sensitive
   path: clusters/dev/apps/
   prune: true
   wait: true
