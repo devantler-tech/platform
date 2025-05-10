@@ -3,4 +3,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../../bases/infrastructure/controllers/
-  - cilium/
+patches:
+  - target:
+      kind: HelmRelease
+      name: cilium
+      namespace: kube-system
+    path: cilium/patches/helm-release-patch.yaml
