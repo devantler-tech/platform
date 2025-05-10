@@ -7,12 +7,6 @@ metadata:
 spec:
   # https://github.com/cilium/cilium/blob/main/install/kubernetes/cilium/values.yaml
   values:
-    cgroup:
-      autoMount:
-        enabled: false
-      hostRoot: /sys/fs/cgroup
-    k8sServiceHost: localhost
-    k8sServicePort: 7445
     securityContext:
       capabilities:
         ciliumAgent:
@@ -31,3 +25,9 @@ spec:
           - NET_ADMIN
           - SYS_ADMIN
           - SYS_RESOURCE
+    cgroup:
+      autoMount:
+        enabled: false
+      hostRoot: /sys/fs/cgroup
+    k8sServiceHost: localhost
+    k8sServicePort: 7445
