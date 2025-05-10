@@ -2,18 +2,18 @@
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: infrastructure
+  name: infrastructure-controllers
   namespace: flux-system
 spec:
   interval: 5m
   timeout: 2m
   retryInterval: 1m
-  path: clusters/dev/infrastructure/
+  path: clusters/prod/infrastructure/controllers/
   sourceRef:
     kind: OCIRepository
     name: flux-system
   dependsOn:
-    - name: infrastructure-controllers
+    - name: variables
   decryption:
     provider: sops
     secretRef:
@@ -21,9 +21,9 @@ spec:
   postBuild:
     substituteFrom:
       - kind: ConfigMap
-        name: variables-dev
+        name: variables-prod
       - kind: Secret
-        name: variables-dev-sensitive
+        name: variables-prod-sensitive
   wait: true
   prune: true
   force: true

@@ -8,7 +8,7 @@ spec:
   interval: 5m
   timeout: 2m
   retryInterval: 1m
-  path: clusters/dev/infrastructure/
+  path: clusters/prod/infrastructure/
   sourceRef:
     kind: OCIRepository
     name: flux-system
@@ -21,9 +21,9 @@ spec:
   postBuild:
     substituteFrom:
       - kind: ConfigMap
-        name: variables-dev
+        name: variables-prod
       - kind: Secret
-        name: variables-dev-sensitive
+        name: variables-prod-sensitive
   wait: true
   prune: true
   force: true

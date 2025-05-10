@@ -13,7 +13,6 @@ spec:
     kind: OCIRepository
     name: flux-system
   dependsOn:
-    - name: variables
     - name: infrastructure-controllers
   decryption:
     provider: sops
