@@ -1,0 +1,15 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  # https://github.com/cilium/cilium/blob/main/install/kubernetes/cilium/values.yaml
+  values:
+    cgroup:
+      autoMount:
+        enabled: false
+      hostRoot: /sys/fs/cgroup
+    k8sServiceHost: localhost
+    k8sServicePort: 7445
