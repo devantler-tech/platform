@@ -5,5 +5,5 @@ metadata:
   name: variables-prod
   namespace: flux-system
 data:
-  domain: prod.devantler.tech
+  domain: devantler.tech
   github_app_client_id: Iv23liZ8GHRgpx32Em2y
