@@ -9,28 +9,28 @@ nodes:
         kind: InitConfiguration
         nodeRegistration:
           kubeletExtraArgs:
-            rotate-server-certificates: "true"
+            rotate-certificates: "true"
   - role: worker
     kubeadmConfigPatches:
       - |
         kind: JoinConfiguration
         nodeRegistration:
           kubeletExtraArgs:
-            rotate-server-certificates: "true"
+            rotate-certificates: "true"
   - role: worker
     kubeadmConfigPatches:
       - |
         kind: JoinConfiguration
         nodeRegistration:
           kubeletExtraArgs:
-            rotate-server-certificates: "true"
+            rotate-certificates: "true"
   - role: worker
     kubeadmConfigPatches:
       - |
         kind: JoinConfiguration
         nodeRegistration:
           kubeletExtraArgs:
-            rotate-server-certificates: "true"
+            rotate-certificates: "true"
 networking:
   disableDefaultCNI: true
 containerdConfigPatches:
