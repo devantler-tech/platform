@@ -19,6 +19,8 @@ jobs:
     steps:
       - name: Wait for previous job to finish
         uses: ahmadnassri/action-workflow-queue@v1
+        with:
+          timeout: 1800000 # 30 minutes
 
   deploy-dev:
     needs: wait-for-workflow
