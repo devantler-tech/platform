@@ -2,8 +2,8 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: variables-dev
+  name: variables-cluster
   namespace: flux-system
 data:
-  domain: dev.devantler.tech
+  domain: traefik.me
   github_app_client_id: Iv23liZ8GHRgpx32Em2y

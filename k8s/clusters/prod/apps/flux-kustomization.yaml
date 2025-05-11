@@ -20,9 +20,9 @@ spec:
   postBuild:
     substituteFrom:
       - kind: ConfigMap
-        name: variables-prod
+        name: variables-cluster
       - kind: Secret
-        name: variables-prod-sensitive
+        name: variables-cluster
   path: clusters/prod/apps/
   prune: true
   wait: true

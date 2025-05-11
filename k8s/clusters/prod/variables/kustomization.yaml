@@ -3,5 +3,5 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../distributions/talos/variables
-  - config-map.yaml
-  - secret.enc.yaml
+  - variables-cluster-config-map.yaml
+  - variables-cluster-secret.enc.yaml
