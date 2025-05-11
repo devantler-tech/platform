@@ -19,6 +19,7 @@ permissions:
 
 jobs:
   deploy-dev:
+    if: github.event_name == 'merge_group'
     uses: devantler-tech/workflows/.github/workflows/gitops-deploy.yaml@main
     secrets: inherit
     with:
