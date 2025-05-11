@@ -13,3 +13,13 @@ spec:
     tls:
       insecureSkipVerify: true
       certSecret: cluster-issuer-certificate-tls
+  headers:
+    sslRedirect: true
+    stsSeconds: 315360000
+    browserXssFilter: true
+    contentTypeNosniff: true
+    forceSTSHeader: true
+    sslHost: ${traefik_forward_auth_ssl_host}
+    stsIncludeSubdomains: true
+    stsPreload: true
+    frameDeny: true
