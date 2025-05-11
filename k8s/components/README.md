@@ -1,8 +1,6 @@
 # Components
 
-This directory contains the Kubernetes components that are used in the homelab.
-
-Components are small, reusable pieces of Kubernetes configuration that can be used to build up more complex applications, or to share common configuration between multiple kustomize bases.
+This directory contains the Kustomize components used for various Kubernetes resources. Components are a way to modularize and reuse Kubernetes configuration, making it easier to manage and share common configurations across different environments or applications.
 
 To use a component in a kustomize kustomization, add a `components` field to the kustomization file, and list the components that you want to include (relative to the current directory).
 
