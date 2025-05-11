@@ -9,17 +9,19 @@ on:
   workflow_dispatch:
   merge_group:
 
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: false
-
 permissions:
   contents: read
   packages: write
 
 jobs:
+  wait-for-workflow:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for previous job to finish
+        uses: ahmadnassri/action-workflow-queue@v1
+
   deploy-dev:
-    if: github.event_name == 'merge_group'
+    needs: wait-for-workflow
     uses: devantler-tech/workflows/.github/workflows/gitops-deploy.yaml@main
     secrets: inherit
     with:
