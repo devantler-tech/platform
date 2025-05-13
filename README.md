@@ -40,6 +40,9 @@ ksail up
 
 ## Clusters
 
+> [!NOTE]
+> All clusters use Omni MachineSets, to autoprovision new nodes registered to Omni.
+
 ### Production
 
 Hybrid Cloud cluster that runs on both Hetzner Cloud and on-prem. Used for production workloads.
