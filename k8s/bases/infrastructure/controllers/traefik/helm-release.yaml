@@ -19,6 +19,7 @@ spec:
         redirections:
           entryPoint:
             to: websecure
+            scheme: https
       # websecure:
       #   middlewares:
       #     - traefik-auth-headers@kubernetescrd
