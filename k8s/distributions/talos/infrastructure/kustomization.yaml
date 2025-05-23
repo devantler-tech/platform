@@ -4,4 +4,5 @@ kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
   - cloudflared/
+  - cluster-issuers/
   - kubelet-serving-cert-approver/
