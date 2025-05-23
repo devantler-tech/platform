@@ -6,4 +6,5 @@ resources:
   - cilium/
   - dex/
   - reloader/
+  - testkube/
   - traefik/
