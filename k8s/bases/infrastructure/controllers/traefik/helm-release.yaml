@@ -12,6 +12,9 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: traefik
+  dependsOn:
+    - name: cert-manager
+      namespace: cert-manager
   # https://github.com/traefik/traefik-helm-chart/blob/master/traefik/values.yaml
   values:
     ports:
@@ -23,10 +26,6 @@ spec:
       # websecure:
       #   middlewares:
       #     - traefik-auth-headers@kubernetescrd
-    # tlsStore:
-    #   default:
-    #     defaultCertificate:
-    #       secretName: cluster-issuer-certificate-tls
     service:
       type: ${traefik_service_type:=LoadBalancer}
     ingressRoute:
@@ -35,6 +34,10 @@ spec:
         matchRule: Host(`traefik.${domain}`)
         entryPoints:
           - websecure
+    tlsStore:
+      default:
+        defaultCertificate:
+          secretName: certificate-tls
         # middlewares:
         #   - name: traefik-forward-auth
         # annotations:
