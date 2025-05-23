@@ -5,6 +5,6 @@ metadata:
   name: variables-cluster
   namespace: flux-system
 data:
-  domain: devantler.tech
+  domain: platform.devantler.tech
   github_app_client_id: Iv23liZ8GHRgpx32Em2y
   traefik_service_type: ClusterIP
