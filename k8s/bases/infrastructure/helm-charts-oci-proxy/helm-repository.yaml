@@ -1,8 +1,0 @@
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
-metadata:
-  name: helm-charts-oci-proxy
-  namespace: helm-charts-oci-proxy
-spec:
-  type: oci
-  url: oci://8gears.container-registry.com/library
