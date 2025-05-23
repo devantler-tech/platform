@@ -5,5 +5,7 @@ resources:
   - cert-manager/
   - cilium/
   - dex/
+  - kyverno/
   - reloader/
   - traefik/
+  - trivy-operator/
