@@ -12,7 +12,7 @@ spec:
       - Authorization
     tls:
       insecureSkipVerify: true
-      certSecret: cluster-issuer-certificate-tls
+      certSecret: certificate-tls
   headers:
     sslRedirect: true
     stsSeconds: 315360000
