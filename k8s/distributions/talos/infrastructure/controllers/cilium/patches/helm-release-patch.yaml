@@ -31,3 +31,4 @@ spec:
       hostRoot: /sys/fs/cgroup
     k8sServiceHost: localhost
     k8sServicePort: 7445
+    MTU: 1500
