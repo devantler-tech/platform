@@ -10,3 +10,7 @@
 
 # hcloud
 hetzner/talos-*/*.raw.xz
+
+# SOPS
+
+.decrypted*
