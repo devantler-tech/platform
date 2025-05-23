@@ -4,9 +4,9 @@ metadata:
   name: variables
   namespace: flux-system
 spec:
-  interval: 5m
-  timeout: 2m
-  retryInterval: 1m
+  interval: 60m
+  timeout: 3m
+  retryInterval: 2m
   path: clusters/local/variables/
   sourceRef:
     kind: OCIRepository
