@@ -3,10 +3,6 @@ kind: HelmRelease
 metadata:
   name: dex
   namespace: dex
-  labels:
-    helm.toolkit.fluxcd.io/crds: enabled
-    helm.toolkit.fluxcd.io/helm-test: enabled
-    helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 10m
   chart:
@@ -22,12 +18,12 @@ spec:
       enabled: true
       className: ${ingress_class_name:=}
       hosts:
-        - host: dex.${cluster_domain}
+        - host: dex.${domain}
           paths:
             - path: /
               pathType: ImplementationSpecific
     config:
-      issuer: https://dex.${cluster_domain}
+      issuer: https://dex.${domain}
       storage:
         type: kubernetes
         config:
@@ -38,17 +34,15 @@ spec:
         - name: GitHub
           id: github
           secret: ${dex_client_secret}
-          redirectURIs:
-            - https://headlamp.${cluster_domain}/oidc-callback
-            - https://grafana.${cluster_domain}/login/generic_oauth
+          redirectURIs: []
       connectors:
         - name: GitHub
           type: github
           id: github
           config:
-            clientID: ${github_client_id}
-            clientSecret: ${github_client_secret}
+            clientID: ${github_app_client_id}
+            clientSecret: ${github_app_client_secret}
             teamNameField: slug
-            redirectURI: https://dex.${cluster_domain}/callback
+            redirectURI: https://dex.${domain}/callback
             orgs:
-              - name: devantlerware
+              - name: devantler-tech
