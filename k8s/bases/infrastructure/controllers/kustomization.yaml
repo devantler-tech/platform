@@ -6,5 +6,7 @@ resources:
   - cilium/
   - dex/
   - goldilocks/
+  - kyverno/
   - reloader/
   - traefik/
+  - trivy-operator/
