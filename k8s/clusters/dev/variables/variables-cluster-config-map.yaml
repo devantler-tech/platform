@@ -6,6 +6,8 @@ metadata:
   namespace: flux-system
 data:
   domain: dev.platform.devantler.tech
+  email: ned@devantler.com
+  acme_server: https://acme-v02.api.letsencrypt.org/directory
   github_app_client_id: Iv23liZ8GHRgpx32Em2y
   issuer: letsencrypt-cluster-issuer
   traefik_service_type: ClusterIP

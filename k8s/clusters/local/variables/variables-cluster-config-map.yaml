@@ -7,4 +7,4 @@ metadata:
 data:
   domain: platform.local.devantler.tech
   github_app_client_id: Iv23liZ8GHRgpx32Em2y
-  issuer: selfsigned-cluster-issuer
+  issuer: selfsigned
