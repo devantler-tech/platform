@@ -27,10 +27,8 @@ spec:
     #   default:
     #     defaultCertificate:
     #       secretName: cluster-issuer-certificate-tls
-    # service:
-    #   type: ${traefik_service_type:=ClusterIP}
-    #   spec:
-    #     loadBalancerIP: ${traefik_ingress_load_balancer_ip}
+    service:
+      type: ${traefik_service_type:=LoadBalancer}
     ingressRoute:
       dashboard:
         enabled: true
