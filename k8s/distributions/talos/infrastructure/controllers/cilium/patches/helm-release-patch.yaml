@@ -31,5 +31,5 @@ spec:
       hostRoot: /sys/fs/cgroup
     k8sServiceHost: localhost
     k8sServicePort: 7445
-    # TODO: Remove this when the following issue is fixed: https://github.com/cilium/cilium/issues/37529
+    # TODO: Remove MTU setting when the following issue is fixed: https://github.com/cilium/cilium/issues/37529
     MTU: 1500
