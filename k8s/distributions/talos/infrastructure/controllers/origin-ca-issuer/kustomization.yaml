@@ -3,4 +3,4 @@ kind: Kustomization
 resources:
   - helm-release.yaml
   - helm-repository.yaml
-  - https://raw.githubusercontent.com/cloudflare/origin-ca-issuer/trunk/deploy/crds/cert-manager.k8s.cloudflare.com_originissuers.yaml
+  - https://raw.githubusercontent.com/cloudflare/origin-ca-issuer/trunk/deploy/crds/cert-manager.k8s.cloudflare.com_clusteroriginissuers.yaml
