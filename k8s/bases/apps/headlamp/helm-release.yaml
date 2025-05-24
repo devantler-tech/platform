@@ -32,13 +32,13 @@ spec:
       oidc:
         clientID: github
         clientSecret: ${dex_client_secret}
-        issuerURL: https://dex.${cluster_domain}
+        issuerURL: https://dex.${domain}
         scopes: "profile,email,groups"
     ingress:
       enabled: true
       ingressClassName: ${ingress_class_name:=}
       hosts:
-        - host: headlamp.${cluster_domain}
+        - host: headlamp.${domain}
           paths:
             - path: /
               type: ImplementationSpecific

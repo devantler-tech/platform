@@ -22,7 +22,7 @@ spec:
       defaultDataLocality: best-effort
     ingress:
       enabled: true
-      host: longhorn.${cluster_domain}
+      host: longhorn.${domain}
       ingressClassName: ${ingress_class_name:=}
       annotations:
         traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd

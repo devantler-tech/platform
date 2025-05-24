@@ -21,7 +21,7 @@ spec:
     ingress:
       enabled: ${plantuml_ingress_enabled:=true}
       hosts:
-        - plantuml.${cluster_domain}
+        - plantuml.${domain}
       annotations:
         traefik.ingress.kubernetes.io/router.middlewares: traefik-basic-auth@kubernetescrd
         gethomepage.dev/enabled: "true"

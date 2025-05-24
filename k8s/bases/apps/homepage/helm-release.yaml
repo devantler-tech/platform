@@ -43,7 +43,7 @@ spec:
       main:
         enabled: true
         hosts:
-          - host: homepage.${cluster_domain}
+          - host: homepage.${domain}
             paths:
               - path: /
                 pathType: Prefix
@@ -96,7 +96,7 @@ spec:
         - Network:
             - Cloudflare:
                 icon: cloudflare
-                href: https://cloudflare.${cluster_domain}
+                href: https://cloudflare.${domain}
                 description: Central hub for managing public networking, e.g. FQDN, DNS and remote tunneling.
                 widget:
                   type: cloudflared
@@ -120,7 +120,7 @@ spec:
         - Cluster Provisioning:
             - Omni:
                 icon: si-talos-#FF7300
-                href: https://omni.${cluster_domain}
+                href: https://omni.${domain}
                 description: Platform for provisioning and managing Talos Linux clusters.
         - Analytics:
             - Disqus:
@@ -135,7 +135,7 @@ spec:
         - Personal:
             - GitHub Pages:
                 - icon: github-light
-                  href: https://${cluster_domain}
+                  href: https://${domain}
         - Dev:
             - GitHub:
                 - icon: github-light
