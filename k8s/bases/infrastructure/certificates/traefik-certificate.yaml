@@ -9,5 +9,7 @@ spec:
     - "${domain}"
     - "*.${domain}"
   issuerRef:
-    name: ${issuer}
-    kind: ClusterIssuer
+    group: ${issuer_group}
+    kind: ${issuer_kind}
+    name: ${issuer_name}
+    

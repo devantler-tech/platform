@@ -1,0 +1,8 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: origin-ca-issuer
+  namespace: cert-manager
+spec:
+  url: oci://ghcr.io/cloudflare/origin-ca-issuer-charts
+  type: oci
