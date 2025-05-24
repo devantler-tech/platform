@@ -5,6 +5,7 @@ metadata:
   name: variables-cluster
   namespace: flux-system
 data:
+  cloudflared_tunnel_id: feb90d05-6569-4af1-8e79-13ecd147e39a
   domain: dev.platform.devantler.tech
   email: ned@devantler.com
   github_app_client_id: Iv23liZ8GHRgpx32Em2y
