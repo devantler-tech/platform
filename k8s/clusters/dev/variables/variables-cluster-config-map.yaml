@@ -7,7 +7,8 @@ metadata:
 data:
   domain: dev.platform.devantler.tech
   email: ned@devantler.com
-  acme_server: https://acme-v02.api.letsencrypt.org/directory
   github_app_client_id: Iv23liZ8GHRgpx32Em2y
-  issuer: acme-cloudflare
+  issuer_group: cert-manager.k8s.cloudflare.com
+  issuer_kind: ClusterOriginIssuer
+  issuer_name: cloudflare-origin
   traefik_service_type: ClusterIP
