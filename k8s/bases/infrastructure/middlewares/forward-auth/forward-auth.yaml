@@ -5,14 +5,14 @@ metadata:
   namespace: traefik
 spec:
   forwardAuth:
-    address: http://dex.dex:5556/auth
+    address: https://dex.${domain}/auth
     trustForwardHeader: true
   #   authResponseHeaders:
   #     - X-Auth-Request-Access-Token
   #     - Authorization
-    tls:
-      insecureSkipVerify: true
-      certSecret: certificate-tls
+  #   tls:
+  #     insecureSkipVerify: true
+  #     certSecret: certificate-tls
   # headers:
   #   sslRedirect: true
   #   stsSeconds: 315360000
