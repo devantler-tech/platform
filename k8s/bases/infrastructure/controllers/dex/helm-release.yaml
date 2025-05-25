@@ -30,7 +30,6 @@ spec:
       issuer: https://dex.${domain}
       oauth2:
         skipApprovalScreen: true
-      enablePasswordDB: true
       storage:
         type: kubernetes
         config:
