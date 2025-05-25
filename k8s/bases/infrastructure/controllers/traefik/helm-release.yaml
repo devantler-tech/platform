@@ -26,7 +26,7 @@ spec:
             scheme: https
       websecure:
         middlewares:
-          - traefik-auth-headers@kubernetescrd
+          - traefik-forward-auth@kubernetescrd
     service:
       type: ${traefik_service_type:=LoadBalancer}
     ingressRoute:
