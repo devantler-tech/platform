@@ -40,7 +40,7 @@ spec:
       main:
         enabled: true
         hosts:
-          - host: homepage.${domain}
+          - host: ${domain}
             paths:
               - path: /
                 pathType: Prefix
@@ -48,7 +48,7 @@ spec:
         #   traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
     env:
       - name: HOMEPAGE_ALLOWED_HOSTS
-        value: homepage.${domain}
+        value: ${domain}
     config:
       kubernetes:
         mode: cluster
@@ -102,7 +102,7 @@ spec:
                   type: cloudflared
                   accountid: 634e9016d402443e427865dc35457728
                   tunnelid: ${cloudflared_tunnel_id}
-                  key: ${cloudflared_tunnel_api_token}
+                  key: ${cloudflare_api_token}
             - UniFi:
                 icon: unifi
                 href: https://unifi.ui.com
