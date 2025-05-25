@@ -24,9 +24,9 @@ spec:
           entryPoint:
             to: websecure
             scheme: https
-      # websecure:
-      #   middlewares:
-      #     - traefik-auth-headers@kubernetescrd
+      websecure:
+        middlewares:
+          - traefik-auth-headers@kubernetescrd
     service:
       type: ${traefik_service_type:=LoadBalancer}
     ingressRoute:
@@ -39,11 +39,11 @@ spec:
       default:
         defaultCertificate:
           secretName: certificate-tls
-        # middlewares:
-        #   - name: traefik-forward-auth
-        # annotations:
-        #   gethomepage.dev/enabled: "true"
-        #   gethomepage.dev/name: Traefik
-        #   gethomepage.dev/description: Dashboard for monitoring the traefik reverse proxy.
-        #   gethomepage.dev/group: Monitoring
-        #   gethomepage.dev/icon: traefik
+        middlewares:
+          - name: traefik-forward-auth
+        annotations:
+          gethomepage.dev/enabled: "true"
+          gethomepage.dev/name: Traefik
+          gethomepage.dev/description: Dashboard for monitoring the traefik reverse proxy.
+          gethomepage.dev/group: Monitoring
+          gethomepage.dev/icon: traefik

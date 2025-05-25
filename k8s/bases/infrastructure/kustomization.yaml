@@ -5,3 +5,4 @@ resources:
   - certificates/
   - cluster-policies/
   - metrics-server/
+  - middlewares/forward-auth/
