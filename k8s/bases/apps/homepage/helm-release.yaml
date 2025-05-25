@@ -3,10 +3,10 @@ kind: HelmRelease
 metadata:
   name: homepage
   namespace: homepage
-  # labels:
-  #   helm.toolkit.fluxcd.io/crds: enabled
-  #   helm.toolkit.fluxcd.io/helm-test: enabled
-  #   helm.toolkit.fluxcd.io/remediation: enabled
+  labels:
+    #   helm.toolkit.fluxcd.io/crds: enabled
+    #   helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 10m
   chart:
