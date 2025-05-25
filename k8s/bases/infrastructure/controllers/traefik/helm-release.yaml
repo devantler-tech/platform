@@ -33,7 +33,7 @@ spec:
         entryPoints:
           - websecure
         middlewares:
-          - traefik-forward-auth
+          - name: traefik-forward-auth
     tlsStore:
       default:
         defaultCertificate:
