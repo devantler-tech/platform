@@ -34,6 +34,7 @@ spec:
           - websecure
         middlewares:
           - name: forward-auth
+          - name: forward-auth-headers
     tlsStore:
       default:
         defaultCertificate:
