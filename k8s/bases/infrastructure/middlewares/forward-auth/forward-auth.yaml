@@ -11,6 +11,7 @@ spec:
     #   - X-Auth-Request-Access-Token
     #   - Authorization
     tls:
+      insecureSkipVerify: true
       certSecret: certificate-tls
   # headers:
   #   sslRedirect: true

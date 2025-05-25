@@ -33,15 +33,15 @@ spec:
           inCluster: true
       oauth2:
         skipApprovalScreen: true
-      staticClients:
-        - name: GitHub
-          id: github
-          secret: ${dex_client_secret}
-          redirectURIs: []
+      # staticClients:
+      #   - name: GitHub
+      #     id: github
+      #     secret: ${dex_client_secret}
+      #     redirectURIs: []
       connectors:
         - name: GitHub
-          type: github
           id: github
+          type: github
           config:
             clientID: ${github_app_client_id}
             clientSecret: ${github_app_client_secret}
