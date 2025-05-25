@@ -16,24 +16,24 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: headlamp
-  postRenderers:
-    - kustomize:
-        patches:
-          - target:
-              kind: Deployment
-              name: headlamp
-            patch: |
-              - op: add
-                path: /metadata/annotations/secret.reloader.stakater.com~1reload
-                value: oidc
+  # postRenderers:
+  #   - kustomize:
+  #       patches:
+  #         - target:
+  #             kind: Deployment
+  #             name: headlamp
+  #           patch: |
+  #             - op: add
+  #               path: /metadata/annotations/secret.reloader.stakater.com~1reload
+  #               value: oidc
   # https://github.com/headlamp-k8s/headlamp/blob/main/charts/headlamp/values.yaml
   values:
-    config:
-      oidc:
-        clientID: github
-        clientSecret: ${dex_client_secret}
-        issuerURL: https://dex.${domain}
-        scopes: "profile,email,groups"
+    # config:
+    #   oidc:
+    #     clientID: github
+    #     clientSecret: ${dex_client_secret}
+    #     issuerURL: https://dex.${domain}
+    #     scopes: "profile,email,groups"
     ingress:
       enabled: true
       ingressClassName: ${ingress_class_name:=}
