@@ -107,21 +107,21 @@ spec:
                 icon: unifi
                 href: https://unifi.ui.com
                 description: Central hub for managing on-prem UniFi network infrastructure.
+        - Cloud:
+            - Hetzner Cloud:
+                icon: hetzner
+                href: https://console.hetzner.cloud/projects
+                description: Cloud infrastructure provider.
+        - Kubernetes:
+            - Omni:
+                icon: si-talos-#FF7300
+                href: https://devantler.omni.siderolabs.io
+                description: Platform for provisioning and managing Talos Linux clusters.
         - Monitoring:
             - Grafana:
                 icon: grafana
                 href: https://devantler.grafana.net
                 description: Central hub for monitoring my infrastructure.
-        - Virtualization Platforms:
-            - Hetzner Cloud:
-                icon: hetzner
-                href: https://console.hetzner.cloud/projects
-                description: Cloud infrastructure provider.
-        - Cluster Provisioning:
-            - Omni:
-                icon: si-talos-#FF7300
-                href: https://devantler.omni.siderolabs.io
-                description: Platform for provisioning and managing Talos Linux clusters.
         - Analytics:
             - Disqus:
                 icon: si-disqus-#2E9FFF
@@ -133,10 +133,10 @@ spec:
                 description: Web analytics service.
       bookmarks:
         - Personal:
-            - GitHub Pages:
+            - Personal Site:
                 - icon: github-light
                   href: https://davntler.tech
-        - Dev:
+        - Developer Platforms:
             - GitHub:
                 - icon: github-light
                   href: https://github.com
@@ -146,9 +146,6 @@ spec:
             - Renovate:
                 - icon: si-renovatebot-#007fa0
                   href: https://developer.mend.io
-            - NuGet:
-                - icon: si-nuget-#1088d6
-                  href: https://www.nuget.org
         - Kubernetes:
             - ArtifactHUB:
                 - icon: si-artifacthub-#417598
@@ -159,3 +156,10 @@ spec:
             - Network Policy Editor:
                 - icon: si-kubernetes-#326CE5
                   href: https://editor.networkpolicy.io
+        - Package Registries:
+            - Docker Hub:
+                - icon: docker
+                  href: https://hub.docker.com
+            - NuGet:
+                - icon: si-nuget-#1088d6
+                  href: https://www.nuget.org
