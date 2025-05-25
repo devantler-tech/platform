@@ -44,7 +44,7 @@ spec:
           id: github
           type: github
           config:
-            clientID: ${github_app_client_id}
+            clientID: "${github_app_client_id}"
             clientSecret: ${github_app_client_secret}
             teamNameField: slug
             redirectURI: https://dex.${domain}/callback
