@@ -7,9 +7,9 @@ spec:
   forwardAuth:
     address: https://dex.${domain}/auth
     trustForwardHeader: true
-    # authResponseHeaders:
-    #   - X-Auth-Request-Access-Token
-    #   - Authorization
+    authResponseHeaders:
+      - X-Auth-Request-Access-Token
+      - Authorization
     tls:
       insecureSkipVerify: true
       certSecret: certificate-tls
