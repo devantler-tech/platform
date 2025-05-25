@@ -24,9 +24,6 @@ spec:
           entryPoint:
             to: websecure
             scheme: https
-      websecure:
-        middlewares:
-          - traefik-forward-auth@kubernetescrd
     service:
       type: ${traefik_service_type:=LoadBalancer}
     ingressRoute:
@@ -35,6 +32,8 @@ spec:
         matchRule: Host(`traefik.${domain}`)
         entryPoints:
           - websecure
+        middlewares:
+          - traefik-forward-auth
     tlsStore:
       default:
         defaultCertificate:
