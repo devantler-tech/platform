@@ -7,7 +7,6 @@ metadata:
 data:
   cloudflared_tunnel_id: 18508e52-a9d7-466c-b85e-1fa102b3542e
   domain: platform.devantler.tech
-  email: ned@devantler.com
   github_app_client_id: Iv23limfvbk93bAXZI6b
   issuer_group: cert-manager.k8s.cloudflare.com
   issuer_kind: ClusterOriginIssuer
