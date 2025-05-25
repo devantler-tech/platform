@@ -28,25 +28,29 @@ spec:
               pathType: ImplementationSpecific
     config:
       issuer: https://dex.${domain}
+      oauth2:
+        skipApprovalScreen: true
+      enablePasswordDB: true
       storage:
         type: kubernetes
         config:
           inCluster: true
-      oauth2:
-        skipApprovalScreen: true
       # staticClients:
       #   - name: GitHub
       #     id: github
       #     secret: ${dex_client_secret}
       #     redirectURIs: []
       connectors:
-        - name: GitHub
+        - type: github
           id: github
-          type: github
+          name: GitHub
           config:
-            clientID: "${github_app_client_id}"
+            clientID: ${github_app_client_id}
             clientSecret: ${github_app_client_secret}
-            teamNameField: slug
             redirectURI: https://dex.${domain}/callback
+            loadAllGroups: true
+            teamNameField: slug
             orgs:
               - name: devantler-tech
+                teams:
+                  - platform
