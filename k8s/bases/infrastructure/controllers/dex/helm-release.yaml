@@ -34,11 +34,11 @@ spec:
         type: kubernetes
         config:
           inCluster: true
-      # staticClients:
-      #   - name: GitHub
-      #     id: github
-      #     secret: ${dex_client_secret}
-      #     redirectURIs: []
+      staticClients:
+        - name: GitHub
+          id: github
+          secret: ${dex_client_secret}
+          redirectURIs: []
       connectors:
         - type: github
           id: github
