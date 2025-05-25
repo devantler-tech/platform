@@ -39,8 +39,6 @@ spec:
       default:
         defaultCertificate:
           secretName: certificate-tls
-        middlewares:
-          - name: traefik-forward-auth
         annotations:
           gethomepage.dev/enabled: "true"
           gethomepage.dev/name: Traefik
