@@ -8,4 +8,4 @@ resources:
   - kyverno/
   - reloader/
   - traefik/
-  - trivy-operator/
+  # - trivy-operator/

@@ -10,9 +10,8 @@ spec:
     # authResponseHeaders:
     #   - X-Auth-Request-Access-Token
     #   - Authorization
-    # tls:
-    #   insecureSkipVerify: true
-    #   certSecret: certificate-tls
+    tls:
+      certSecret: certificate-tls
   # headers:
   #   sslRedirect: true
   #   stsSeconds: 315360000
