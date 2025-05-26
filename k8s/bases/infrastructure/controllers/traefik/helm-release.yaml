@@ -27,6 +27,9 @@ spec:
           entryPoint:
             to: websecure
             scheme: https
+      websecure:
+        middlewares:
+          - traefik-forward-auth-headers@kubernetescrd
     service:
       type: ${traefik_service_type:=LoadBalancer}
     ingressRoute:
