@@ -9,7 +9,6 @@ spec:
     - "${domain}"
     - "*.${domain}"
   issuerRef:
-    group: ${issuer_group}
-    kind: ${issuer_kind}
-    name: ${issuer_name}
-    
+    group: cert-manager.k8s.cloudflare.com
+    kind: ClusterOriginIssuer
+    name: cloudflare-origin
