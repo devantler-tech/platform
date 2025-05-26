@@ -20,12 +20,12 @@ metadata:
   namespace: traefik
 spec:
   headers:
-    sslRedirect: true
-    stsSeconds: 315360000
-    browserXssFilter: true
-    contentTypeNosniff: true
-    forceSTSHeader: true
-    sslHost: https://dex.${domain}/auth
+    frameDeny: true
     stsIncludeSubdomains: true
     stsPreload: true
-    frameDeny: true
+    stsSeconds: 31536000
+    forceSTSHeader: true
+    browserXssFilter: true
+    contentTypeNosniff: true
+    #sslRedirect: true
+    #sslHost: https://dex.${domain}
