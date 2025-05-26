@@ -9,5 +9,6 @@ resources:
   - kyverno/
   - origin-ca-issuer/
   - reloader/
+  - testkube/
   - traefik/
   # - trivy-operator/
