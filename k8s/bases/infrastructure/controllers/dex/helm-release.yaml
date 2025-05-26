@@ -18,6 +18,9 @@ spec:
         name: dex
   # https://github.com/dexidp/helm-charts/blob/master/charts/dex/values.yaml
   values:
+    globalArguments:
+      - "--global.checknewversion=false"
+      - "--global.sendanonymoususage=false"
     replicaCount: 2
     ingress:
       enabled: true
@@ -47,15 +50,6 @@ spec:
             clientID: ${github_app_client_id}
             clientSecret: ${github_app_client_secret}
             redirectURI: https://dex.${domain}/callback
-            loadAllGroups: true
             teamNameField: slug
             orgs:
               - name: devantler-tech
-                teams:
-                  - platform
-      enablePasswordDB: true
-      staticPasswords:
-      - email: "ned@devantler.tech"
-        hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W"
-        username: "admin"
-        userID: "08a8684b-db88-4b73-90a9-3cd1661f5466"
