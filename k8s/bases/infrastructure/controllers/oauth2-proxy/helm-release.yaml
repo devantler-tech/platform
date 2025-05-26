@@ -28,10 +28,12 @@ spec:
         provider = "oidc"
         provider_display_name = "Dex"
         oidc_issuer_url = "https://dex.${domain}"
+        scope = "openid email profile groups"
         reverse_proxy = true
         skip_provider_button = true
         upstreams = [ "static://202" ]
         email_domains = [ "*" ]
+    # insecure_oidc_skip_issuer_verification = false
     ingress:
       enabled: true
       hosts:
