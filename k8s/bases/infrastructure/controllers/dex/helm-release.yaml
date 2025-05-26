@@ -54,5 +54,7 @@ spec:
             clientID: $CLIENT_ID
             clientSecret: $CLIENT_SECRET
             redirectURI: https://dex.${domain}/callback
+            teamNameField: slug
+            useLoginAsID: false
             orgs:
               - name: devantler-tech
