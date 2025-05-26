@@ -21,15 +21,17 @@ spec:
     globalArguments:
       - "--global.checknewversion=false"
       - "--global.sendanonymoususage=false"
+    deployment:
+      replicas: ${traefik_replicas:=2}
     ports:
       web:
         redirections:
           entryPoint:
             to: websecure
             scheme: https
-      websecure:
-        middlewares:
-          - traefik-forward-auth-headers@kubernetescrd
+      # websecure:
+      #   middlewares:
+      #     - traefik-forward-auth-headers@kubernetescrd
     service:
       type: ${traefik_service_type:=ClusterIP}
     ingressRoute:
@@ -38,8 +40,8 @@ spec:
         matchRule: Host(`traefik.${domain}`)
         entryPoints:
           - websecure
-        middlewares:
-          - name: forward-auth
+        # middlewares:
+        #   - name: forward-auth
         annotations:
           gethomepage.dev/enabled: "true"
           gethomepage.dev/name: Traefik

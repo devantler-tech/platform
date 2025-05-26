@@ -28,7 +28,7 @@ spec:
               - path: /
                 type: ImplementationSpecific
         annotations:
-          traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
+          #traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
           gethomepage.dev/enabled: "true"
           gethomepage.dev/name: Goldilocks
           gethomepage.dev/description: Dashboard for automated vertical pod autoscaling recommendations.

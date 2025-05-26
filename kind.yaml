@@ -4,13 +4,16 @@ apiVersion: kind.x-k8s.io/v1alpha4
 name: local
 nodes:
   - role: control-plane
+  - role: worker
     extraPortMappings:
-      - containerPort: 80
+      - containerPort: 30010
         hostPort: 80
         protocol: TCP
-      - containerPort: 443
+      - containerPort: 30011
         hostPort: 443
         protocol: TCP
+  - role: worker
+  - role: worker
 networking:
   disableDefaultCNI: true
 containerdConfigPatches:

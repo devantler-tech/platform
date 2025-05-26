@@ -12,22 +12,4 @@ spec:
       - X-Forwarded-User
       - Authorization
     tls:
-      insecureSkipVerify: true
       certSecret: certificate-tls
----
-apiVersion: traefik.io/v1alpha1
-kind: Middleware
-metadata:
-  name: forward-auth-headers
-  namespace: traefik
-spec:
-  headers:
-    frameDeny: true
-    stsIncludeSubdomains: true
-    stsPreload: true
-    stsSeconds: 31536000
-    forceSTSHeader: true
-    browserXssFilter: true
-    contentTypeNosniff: true
-    #sslRedirect: true
-    #sslHost: https://dex.${domain}
