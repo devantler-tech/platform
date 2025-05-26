@@ -6,6 +6,7 @@ resources:
   - cilium/
   - dex/
   - kyverno/
+  - oauth2-proxy/
   - reloader/
   - traefik/
   # - trivy-operator/

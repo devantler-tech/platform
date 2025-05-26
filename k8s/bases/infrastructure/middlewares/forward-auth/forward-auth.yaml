@@ -5,11 +5,8 @@ metadata:
   namespace: traefik
 spec:
   forwardAuth:
-    address: https://dex.${domain}/auth
+    address: https://oauth2-proxy.${domain}
     trustForwardHeader: true
     authResponseHeaders:
       - X-Auth-Request-Access-Token
-      - X-Forwarded-User
       - Authorization
-    tls:
-      certSecret: certificate-tls
