@@ -100,7 +100,7 @@ spec:
                 description: Central hub for managing public networking, e.g. FQDN, DNS and remote tunneling.
                 widget:
                   type: cloudflared
-                  accountid: 634e9016d402443e427865dc35457728
+                  accountid: ${cloudflare_account_id}
                   tunnelid: ${cloudflared_tunnel_id}
                   key: ${cloudflare_api_token}
             - UniFi:
