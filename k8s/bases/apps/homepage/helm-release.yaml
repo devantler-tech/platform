@@ -44,8 +44,8 @@ spec:
             paths:
               - path: /
                 pathType: Prefix
-        # annotations:
-        #   traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
+        annotations:
+          traefik.ingress.kubernetes.io/router.middlewares: traefik-basic-auth@kubernetescrd
     env:
       - name: HOMEPAGE_ALLOWED_HOSTS
         value: ${domain}

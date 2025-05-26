@@ -6,5 +6,5 @@ resources:
   - cluster-issuers/
   - cluster-policies/
   - metrics-server/
-  - middlewares/forward-auth/
+  - middlewares/
   #- oauth2-proxy/

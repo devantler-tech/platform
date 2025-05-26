@@ -40,8 +40,8 @@ spec:
         matchRule: Host(`traefik.${domain}`)
         entryPoints:
           - websecure
-        # middlewares:
-        #   - name: forward-auth
+        middlewares:
+          - name: basic-auth
         annotations:
           gethomepage.dev/enabled: "true"
           gethomepage.dev/name: Traefik
