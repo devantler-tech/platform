@@ -25,4 +25,4 @@ spec:
           paths:
             - /
       annotations:
-       traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
+        traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
