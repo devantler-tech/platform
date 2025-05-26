@@ -20,12 +20,9 @@ spec:
   values:
     ingress:
       enabled: true
-      #annotations:
-      #  traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
-
-      ## @param ingress.hosts[0].host Hostname to your Whoami installation
-      ## @param ingress.hosts[0].paths Paths within the url structure
       hosts:
         - host: whoami.${domain}
           paths:
             - /
+      annotations:
+       traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd

@@ -9,6 +9,7 @@ spec:
     trustForwardHeader: true
     authResponseHeaders:
       - X-Auth-Request-Access-Token
+      - X-Forwarded-User
       - Authorization
     tls:
       insecureSkipVerify: true
