@@ -48,6 +48,7 @@ spec:
           gethomepage.dev/description: Dashboard for monitoring the traefik reverse proxy.
           gethomepage.dev/group: Monitoring
           gethomepage.dev/icon: traefik
+          gethomepage.dev/href: "https://traefik.${domain}"
     tlsStore:
       default:
         defaultCertificate:
