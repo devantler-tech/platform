@@ -31,7 +31,7 @@ spec:
         middlewares:
           - traefik-forward-auth-headers@kubernetescrd
     service:
-      type: ${traefik_service_type:=LoadBalancer}
+      type: ${traefik_service_type:=ClusterIP}
     ingressRoute:
       dashboard:
         enabled: true
