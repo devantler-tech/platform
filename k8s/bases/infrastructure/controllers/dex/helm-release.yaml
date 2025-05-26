@@ -26,6 +26,8 @@ spec:
           paths:
             - path: /
               pathType: ImplementationSpecific
+    https:
+      enabled: true
     config:
       issuer: https://dex.${domain}
       oauth2:
