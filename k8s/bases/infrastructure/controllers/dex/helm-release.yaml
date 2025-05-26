@@ -18,9 +18,6 @@ spec:
         name: dex
   # https://github.com/dexidp/helm-charts/blob/master/charts/dex/values.yaml
   values:
-    globalArguments:
-      - "--global.checknewversion=false"
-      - "--global.sendanonymoususage=false"
     replicaCount: 2
     ingress:
       enabled: true
@@ -29,6 +26,11 @@ spec:
           paths:
             - path: /
               pathType: ImplementationSpecific
+    envVars:
+      - name: CLIENT_ID
+        value: ${github_app_client_id}
+      - name: CLIENT_SECRET
+        value: ${github_app_client_secret}
     config:
       issuer: https://dex.${domain}
       oauth2:
@@ -47,8 +49,8 @@ spec:
           id: github
           name: GitHub
           config:
-            clientID: ${github_app_client_id}
-            clientSecret: ${github_app_client_secret}
+            clientID: $CLIENT_ID
+            clientSecret: $CLIENT_SECRET
             redirectURI: https://dex.${domain}/callback
             teamNameField: slug
             orgs:
