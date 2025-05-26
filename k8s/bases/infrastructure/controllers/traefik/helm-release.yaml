@@ -35,13 +35,13 @@ spec:
         # middlewares:
         #   - name: forward-auth
         #   - name: forward-auth-headers
-    tlsStore:
-      default:
-        defaultCertificate:
-          secretName: certificate-tls
         annotations:
           gethomepage.dev/enabled: "true"
           gethomepage.dev/name: Traefik
           gethomepage.dev/description: Dashboard for monitoring the traefik reverse proxy.
           gethomepage.dev/group: Monitoring
           gethomepage.dev/icon: traefik
+    tlsStore:
+      default:
+        defaultCertificate:
+          secretName: certificate-tls
