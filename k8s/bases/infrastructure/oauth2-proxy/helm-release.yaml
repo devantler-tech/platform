@@ -1,0 +1,39 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: oauth2-proxy
+  namespace: oauth2-proxy
+  labels:
+    # helm.toolkit.fluxcd.io/crds: enabled
+    # helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: oauth2-proxy
+      version: 7.12.16
+      sourceRef:
+        kind: HelmRepository
+        name: oauth2-proxy
+  # https://github.com/oauth2-proxy/manifests/blob/main/helm/oauth2-proxy/values.yaml
+  values:
+    replicaCount: ${oauth2_proxy_replicas:=2}
+    config:
+      clientID: "public-client"
+      clientSecret: "${dex_client_secret}"
+      cookieSecret: "${oauth2_proxy_cookie_secret}"
+      configFile: |-
+        provider = "oidc"
+        provider_display_name = "Dex"
+        oidc_issuer_url = "https://dex.${domain}"
+        reverse_proxy = true
+        email_domains = [ "*" ]
+        scope = "openid email profile groups"
+        upstreams = [ "static://202" ]
+        skip_provider_button = true
+    ingress:
+      enabled: true
+      hosts:
+        - oauth2-proxy.${domain}

@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: homepage
-  labels:
-    goldilocks.fairwinds.com/enabled: "true"
-    goldilocks.fairwinds.com/vpa-update-mode: "auto"
-    goldilocks.fairwinds.com/vpa-min-replicas: "1"
+  # labels:
+  #   goldilocks.fairwinds.com/enabled: "true"
+  #   goldilocks.fairwinds.com/vpa-update-mode: "auto"
+  #   goldilocks.fairwinds.com/vpa-min-replicas: "1"

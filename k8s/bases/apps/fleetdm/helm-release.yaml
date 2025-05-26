@@ -4,8 +4,8 @@ metadata:
   name: fleetdm
   namespace: fleetdm
   labels:
-    helm.toolkit.fluxcd.io/crds: enabled
-    helm.toolkit.fluxcd.io/helm-test: enabled
+    # helm.toolkit.fluxcd.io/crds: enabled
+    # helm.toolkit.fluxcd.io/helm-test: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 10m
@@ -19,11 +19,11 @@ spec:
   # https://github.com/fleetdm/fleet/blob/main/charts/fleet/values.yaml
   values:
     resources: {}
-    hostName: fleetdm.${cluster_domain}
+    hostName: fleetdm.${domain}
     ingress:
       enabled: true
       hosts:
-        - host: fleetdm.${cluster_domain}
+        - host: fleetdm.${domain}
           paths:
             - path: /
               pathType: ImplementationSpecific

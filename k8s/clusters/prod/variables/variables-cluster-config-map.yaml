@@ -5,9 +5,6 @@ metadata:
   name: variables-cluster
   namespace: flux-system
 data:
+  cloudflared_tunnel_id: 18508e52-a9d7-466c-b85e-1fa102b3542e
   domain: platform.devantler.tech
-  email: ned@devantler.com
-  acme_server: https://acme-v02.api.letsencrypt.org/directory
-  github_app_client_id: Iv23liZ8GHRgpx32Em2y
-  issuer: acme-cloudflare
-  traefik_service_type: ClusterIP
+  github_app_client_id: Iv23limfvbk93bAXZI6b

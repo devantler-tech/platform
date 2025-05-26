@@ -1,1 +1,5 @@
+127.0.0.1 local.platform.devantler.tech
+127.0.0.1 dex.local.platform.devantler.tech
+127.0.0.1 oauth2-proxy.local.platform.devantler.tech
 127.0.0.1 traefik.local.platform.devantler.tech
+127.0.0.1 whoami.local.platform.devantler.tech

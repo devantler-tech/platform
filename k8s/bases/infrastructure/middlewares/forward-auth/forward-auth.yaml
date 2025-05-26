@@ -5,21 +5,8 @@ metadata:
   namespace: traefik
 spec:
   forwardAuth:
-    address: ${traefik_forward_auth_address}
+    address: https://oauth2-proxy.${domain}
     trustForwardHeader: true
     authResponseHeaders:
       - X-Auth-Request-Access-Token
       - Authorization
-    tls:
-      insecureSkipVerify: true
-      certSecret: certificate-tls
-  headers:
-    sslRedirect: true
-    stsSeconds: 315360000
-    browserXssFilter: true
-    contentTypeNosniff: true
-    forceSTSHeader: true
-    sslHost: ${traefik_forward_auth_ssl_host}
-    stsIncludeSubdomains: true
-    stsPreload: true
-    frameDeny: true

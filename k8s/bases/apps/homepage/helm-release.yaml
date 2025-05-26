@@ -4,8 +4,8 @@ metadata:
   name: homepage
   namespace: homepage
   labels:
-    helm.toolkit.fluxcd.io/crds: enabled
-    helm.toolkit.fluxcd.io/helm-test: enabled
+    #   helm.toolkit.fluxcd.io/crds: enabled
+    #   helm.toolkit.fluxcd.io/helm-test: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 10m
@@ -33,9 +33,6 @@ spec:
   # ---
   # https://github.com/jameswynn/helm-charts/blob/main/charts/homepage/values.yaml
   values:
-    image:
-      repository: ghcr.io/gethomepage/homepage
-      tag: v1.2.0
     enableRbac: true
     serviceaccount:
       create: true
@@ -43,33 +40,36 @@ spec:
       main:
         enabled: true
         hosts:
-          - host: homepage.${cluster_domain}
+          - host: ${domain}
             paths:
               - path: /
                 pathType: Prefix
         annotations:
-          traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
+          traefik.ingress.kubernetes.io/router.middlewares: traefik-basic-auth@kubernetescrd
+    env:
+      - name: HOMEPAGE_ALLOWED_HOSTS
+        value: ${domain}
     config:
       kubernetes:
         mode: cluster
       settings:
-        title: Homelab
-        favicon: https://devantler.com/assets/images/author.png
+        title: Platform
+        favicon: https://devantler.tech/assets/images/author.png
         theme: dark
         color: slate
         background:
           image: https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?q=80&w=1974&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D
           blur: sm
           opacity: 70
-        providers:
-          longhorn:
-            url: http://longhorn-frontend.longhorn-system:80
+        # providers:
+        #   longhorn:
+        #     url: http://longhorn-frontend.longhorn-system:80
       widgets:
         - logo:
-            icon: https://devantler.com/assets/images/author.png
+            icon: https://devantler.tech/assets/images/author.png
         - greeting:
             text_size: xl
-            text: Welcome to Devantler's Homelab! 🚀
+            text: Welcome home!
         - search:
             provider: google
             target: _blank
@@ -87,41 +87,41 @@ spec:
             expanded: true
             cpu: true
             memory: true
-        - longhorn:
-            expanded: true
-            total: true
-            labels: false
-            nodes: false
+        # - longhorn:
+        #     expanded: true
+        #     total: true
+        #     labels: false
+        #     nodes: false
       services:
         - Network:
             - Cloudflare:
                 icon: cloudflare
-                href: https://cloudflare.${cluster_domain}
+                href: https://dash.cloudflare.com
                 description: Central hub for managing public networking, e.g. FQDN, DNS and remote tunneling.
                 widget:
                   type: cloudflared
-                  accountid: 634e9016d402443e427865dc35457728
-                  tunnelid: 3284a342-3b0f-4530-a60e-07338e2bec17
-                  key: ${cloudflared_tunnel_api_token}
+                  accountid: ${cloudflare_account_id}
+                  tunnelid: ${cloudflared_tunnel_id}
+                  key: ${cloudflare_api_token}
             - UniFi:
                 icon: unifi
                 href: https://unifi.ui.com
                 description: Central hub for managing on-prem UniFi network infrastructure.
+        - Cloud:
+            - Hetzner Cloud:
+                icon: hetzner
+                href: https://console.hetzner.cloud/projects
+                description: Cloud infrastructure provider.
+        - Kubernetes:
+            - Omni:
+                icon: si-talos-#FF7300
+                href: https://devantler.omni.siderolabs.io
+                description: Platform for provisioning and managing Talos Linux clusters.
         - Monitoring:
             - Grafana:
                 icon: grafana
                 href: https://devantler.grafana.net
                 description: Central hub for monitoring my infrastructure.
-        - Virtualization Platforms:
-            - Hetzner Cloud:
-                icon: hetzner
-                href: https://console.hetzner.cloud/projects
-                description: Cloud infrastructure provider.
-        - Cluster Provisioning:
-            - Omni:
-                icon: si-talos-#FF7300
-                href: https://omni.${cluster_domain}
-                description: Platform for provisioning and managing Talos Linux clusters.
         - Analytics:
             - Disqus:
                 icon: si-disqus-#2E9FFF
@@ -133,23 +133,20 @@ spec:
                 description: Web analytics service.
       bookmarks:
         - Personal:
-            - GitHub Pages:
+            - Personal Site:
                 - icon: github-light
-                  href: https://${cluster_domain}
-        - Dev:
+                  href: https://devantler.tech
+        - Developer Platforms:
             - GitHub:
                 - icon: github-light
                   href: https://github.com
-            - NuGet:
-                - icon: si-nuget-#1088d6
-                  href: https://www.nuget.org
             - Codecov:
                 - icon: si-codecov-#F01F7A
                   href: https://app.codecov.io
             - Renovate:
                 - icon: si-renovatebot-#007fa0
                   href: https://developer.mend.io
-        - Ops:
+        - Kubernetes:
             - ArtifactHUB:
                 - icon: si-artifacthub-#417598
                   href: https://artifacthub.io
@@ -159,3 +156,10 @@ spec:
             - Network Policy Editor:
                 - icon: si-kubernetes-#326CE5
                   href: https://editor.networkpolicy.io
+        - Package Registries:
+            - Docker Hub:
+                - icon: docker
+                  href: https://hub.docker.com
+            - NuGet:
+                - icon: si-nuget-#1088d6
+                  href: https://www.nuget.org
