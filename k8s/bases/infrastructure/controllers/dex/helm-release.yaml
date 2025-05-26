@@ -26,6 +26,10 @@ spec:
           paths:
             - path: /
               pathType: ImplementationSpecific
+          tls:
+          - secretName: certificate-tls
+            hosts:
+              - dex.${domain}
     https:
       enabled: true
     config:
