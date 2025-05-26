@@ -135,7 +135,7 @@ spec:
         - Personal:
             - Personal Site:
                 - icon: github-light
-                  href: https://davntler.tech
+                  href: https://devantler.tech
         - Developer Platforms:
             - GitHub:
                 - icon: github-light
