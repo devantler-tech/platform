@@ -1,0 +1,31 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: whoami
+  namespace: whoami
+  labels:
+    #   helm.toolkit.fluxcd.io/crds: enabled
+    #   helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: whoami
+      version: 1.10.3
+      sourceRef:
+        kind: HelmRepository
+        name: whoami
+  # https://github.com/cowboysysop/charts/blob/master/charts/whoami/values.yaml
+  values:
+    ingress:
+      enabled: true
+      #annotations:
+      #  traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
+
+      ## @param ingress.hosts[0].host Hostname to your Whoami installation
+      ## @param ingress.hosts[0].paths Paths within the url structure
+      hosts:
+        - host: whoami.${domain}
+          paths:
+            - /
