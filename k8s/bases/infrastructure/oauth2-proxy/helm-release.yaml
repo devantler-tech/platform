@@ -17,9 +17,6 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: oauth2-proxy
-  dependsOn:
-    - name: dex
-      namespace: dex
   # https://github.com/oauth2-proxy/manifests/blob/main/helm/oauth2-proxy/values.yaml
   values:
     replicaCount: ${oauth2_proxy_replicas:=2}
@@ -31,7 +28,6 @@ spec:
         provider = "oidc"
         provider_display_name = "Dex"
         oidc_issuer_url = "https://dex.${domain}"
-        insecure_oidc_skip_issuer_verification = true
         reverse_proxy = true
         email_domains = [ "*" ]
         scope = "openid email profile groups"

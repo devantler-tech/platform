@@ -7,3 +7,4 @@ resources:
   - cluster-policies/
   - metrics-server/
   - middlewares/forward-auth/
+  - oauth2-proxy/
