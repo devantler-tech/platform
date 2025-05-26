@@ -28,7 +28,6 @@ spec:
         provider = "oidc"
         provider_display_name = "Dex"
         oidc_issuer_url = "https://dex.${domain}"
-        ssl_insecure_skip_verify = true
         reverse_proxy = true
         skip_provider_button = true
         upstreams = [ "static://202" ]

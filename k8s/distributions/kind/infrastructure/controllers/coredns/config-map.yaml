@@ -34,7 +34,7 @@ data:
         lameduck 5s
       }
       ready
-      forward . traefik.traefik:443 {
+      forward . traefik.traefik.cluster.local:443 {
         max_concurrent 1000
       }
       cache 30 {
