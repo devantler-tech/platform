@@ -32,9 +32,9 @@ spec:
         matchRule: Host(`traefik.${domain}`)
         entryPoints:
           - websecure
-        middlewares:
-          - name: forward-auth
-          - name: forward-auth-headers
+        # middlewares:
+        #   - name: forward-auth
+        #   - name: forward-auth-headers
     tlsStore:
       default:
         defaultCertificate:
