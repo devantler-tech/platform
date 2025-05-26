@@ -37,8 +37,8 @@ spec:
         config:
           inCluster: true
       staticClients:
-        - name: GitHub
-          id: github
+        - name: Public Client
+          id: public-client
           secret: ${dex_client_secret}
           redirectURIs: []
       connectors:
