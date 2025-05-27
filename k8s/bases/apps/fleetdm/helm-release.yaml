@@ -4,7 +4,6 @@ metadata:
   name: fleetdm
   namespace: fleetdm
   labels:
-    # helm.toolkit.fluxcd.io/crds: enabled
     # helm.toolkit.fluxcd.io/helm-test: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
