@@ -29,12 +29,12 @@ spec:
       cookieSecret: "${oauth2_proxy_cookie_secret}"
       configFile: |-
         provider = "github"
+        github_org = "devantler-tech"
+        skip_provider_button = true
         reverse_proxy = true
         email_domains = [ "*" ]
-        cookie_secure = false
-        github_org = "devantler-tech"
+        cookie_domains=[".${cluster_domain}"]
         upstreams = [ "static://202" ]
-        skip_provider_button = true
     ingress:
       enabled: true
       hosts:
