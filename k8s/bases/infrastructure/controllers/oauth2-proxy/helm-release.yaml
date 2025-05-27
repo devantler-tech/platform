@@ -21,16 +21,15 @@ spec:
   values:
     replicaCount: ${oauth2_proxy_replicas:=2}
     config:
-      clientID: "public-client"
-      clientSecret: "${dex_client_secret}"
+      clientID: "${github_app_client_id}"
+      clientSecret: "${github_app_client_secret}"
       cookieSecret: "${oauth2_proxy_cookie_secret}"
       configFile: |-
-        provider = "oidc"
-        provider_display_name = "Dex"
-        oidc_issuer_url = "https://dex.${domain}"
+        provider = "github"
         reverse_proxy = true
         email_domains = [ "*" ]
-        scope = "openid email profile groups"
+        github_org = "devantler-tech"
+        github_team = "platform"
         upstreams = [ "static://202" ]
         skip_provider_button = true
     ingress:
