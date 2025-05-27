@@ -6,4 +6,3 @@ metadata:
 spec:
   forwardAuth:
     address: https://oauth2-proxy.${domain}
-    #trustForwardHeader: true
