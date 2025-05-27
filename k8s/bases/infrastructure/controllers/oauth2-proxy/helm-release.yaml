@@ -33,7 +33,7 @@ spec:
         skip_provider_button = true
         reverse_proxy = true
         email_domains = [ "*" ]
-        cookie_domains=[".${cluster_domain}"]
+        cookie_domains=[".${domain}"]
         upstreams = [ "static://202" ]
     ingress:
       enabled: true
