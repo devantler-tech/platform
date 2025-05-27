@@ -31,6 +31,7 @@ spec:
         provider = "github"
         reverse_proxy = true
         email_domains = [ "*" ]
+        cookie_secure = false
         github_org = "devantler-tech"
         upstreams = [ "static://202" ]
         skip_provider_button = true
