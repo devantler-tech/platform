@@ -45,7 +45,7 @@ jobs:
         run: |
           mkdir -p ${{ env.KYVERNO_POLICIES_DIR }}
           rm -rf ${{ env.KYVERNO_POLICIES_DIR }}/*
-          cp -r ${{ env.KYVERNO_POLICIES_TEMP_DIR }}/* ${{ env.KYVERNO_POLICIES_DIR }} || echo ""No policies found to copy."
+          cp -r ${{ env.KYVERNO_POLICIES_TEMP_DIR }}/* ${{ env.KYVERNO_POLICIES_DIR }} || echo "No policies found to copy."
       - name: Create PR with changes
         uses: peter-evans/create-pull-request@v7
         with:
