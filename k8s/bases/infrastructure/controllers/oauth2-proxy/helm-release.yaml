@@ -20,18 +20,17 @@ spec:
   # https://github.com/oauth2-proxy/manifests/blob/main/helm/oauth2-proxy/values.yaml
   values:
     replicaCount: ${oauth2_proxy_replicas:=2}
-    env:
-    - name: OAUTH2_PROXY_SCOPE
-      value: "read:user user:email"
     config:
       clientID: "${github_app_client_id}"
       clientSecret: "${github_app_client_secret}"
       cookieSecret: "${oauth2_proxy_cookie_secret}"
+      # TODO: Remove scope and test if it works without it
       configFile: |-
         provider = "github"
         github_org = "devantler-tech"
         skip_provider_button = true
         reverse_proxy = true
+        scope = "user:email"
         email_domains = [ "*" ]
         cookie_domains=[".${domain}"]
         upstreams = [ "static://202" ]
