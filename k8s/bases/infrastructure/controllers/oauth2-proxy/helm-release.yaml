@@ -20,6 +20,9 @@ spec:
   # https://github.com/oauth2-proxy/manifests/blob/main/helm/oauth2-proxy/values.yaml
   values:
     replicaCount: ${oauth2_proxy_replicas:=2}
+    env:
+    - name: OAUTH2_PROXY_SCOPE
+      value: "read:user user:email"
     config:
       clientID: "${github_app_client_id}"
       clientSecret: "${github_app_client_secret}"
