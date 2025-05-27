@@ -1,4 +1,4 @@
-# TODO: Upstream `helm-release-install-crds.yaml` to Kyverno policies repository
+# TODO: Upstream `helm-release-install-crds.yaml` to Kyverno policies repository.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
