@@ -1,3 +1,4 @@
+# TODO: Upstream `helm-release-remediation-retries.yaml` to Kyverno policies repository
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
