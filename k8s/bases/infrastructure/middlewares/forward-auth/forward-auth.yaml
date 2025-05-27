@@ -8,8 +8,12 @@ spec:
     address: https://oauth2-proxy.${domain}
     trustForwardHeader: true
      # TODO: Remove authResponseHeaders and test if it works without it
+     # TODO: Remove TLS and test if it works without it
     authResponseHeaders:
       - Authorization
       - X-Auth-Request-User
       - X-Auth-Request-Email
       - X-Auth-Request-Access-Token
+    tls:
+      insecureSkipVerify: true
+      certSecret: certificate-tls
