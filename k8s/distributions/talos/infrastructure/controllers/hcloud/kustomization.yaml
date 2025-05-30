@@ -1,7 +1,0 @@
----
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - hcloud-cloud-controller-manager/
-  - hcloud-csi/
-  - hcloud-token-secret.enc.yaml

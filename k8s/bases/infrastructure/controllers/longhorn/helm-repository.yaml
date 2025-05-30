@@ -1,8 +1,7 @@
----
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: HelmRepository
 metadata:
-  name: hcloud-csi
+  name: longhorn
   namespace: kube-system
 spec:
-  url: https://charts.hetzner.cloud
+  url: https://charts.longhorn.io
