@@ -1,0 +1,24 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hcloud-csi
+  namespace: kube-system
+spec:
+  chart:
+    spec:
+      chart: hcloud-csi
+      version: 2.14.0
+      sourceRef:
+        kind: HelmRepository
+        name: hcloud-csi
+  interval: 10m0s
+  # https://github.com/hetznercloud/csi-driver/blob/main/chart/values.yaml
+  values:
+    storageClasses:
+      - name: hcloud-volumes
+        defaultStorageClass: true
+        reclaimPolicy: Delete
+        extraParameters:
+          csi.storage.k8s.io/node-publish-secret-name: luks-encryption-key
+          csi.storage.k8s.io/node-publish-secret-namespace: kube-system
