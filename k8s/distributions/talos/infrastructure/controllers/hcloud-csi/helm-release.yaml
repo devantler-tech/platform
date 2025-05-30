@@ -15,6 +15,8 @@ spec:
   interval: 10m0s
   # https://github.com/hetznercloud/csi-driver/blob/main/chart/values.yaml
   values:
+    global:
+      enableProvidedByTopology: true
     storageClasses:
       - name: hcloud-volumes
         defaultStorageClass: true
@@ -22,3 +24,4 @@ spec:
         extraParameters:
           csi.storage.k8s.io/node-publish-secret-name: luks-encryption-key
           csi.storage.k8s.io/node-publish-secret-namespace: kube-system
+
