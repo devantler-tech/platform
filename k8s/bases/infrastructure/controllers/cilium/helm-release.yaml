@@ -22,6 +22,12 @@ spec:
     ipam:
       mode: kubernetes
     kubeProxyReplacement: true
+    authentication:
+      mutual:
+        spire:
+          enabled: true
+          install:
+            enabled: true
     gatewayAPI:
       enabled: true
       enableAlpn: true
