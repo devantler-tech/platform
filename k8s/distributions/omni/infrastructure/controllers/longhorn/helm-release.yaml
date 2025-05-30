@@ -2,7 +2,7 @@ apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
   name: longhorn
-  namespace: longhorn-system
+  namespace: kube-system
   labels:
     helm.toolkit.fluxcd.io/crds: enabled
     helm.toolkit.fluxcd.io/helm-test: enabled
@@ -23,9 +23,8 @@ spec:
     ingress:
       enabled: true
       host: longhorn.${domain}
-      ingressClassName: ${ingress_class_name:=}
       annotations:
-        traefik.ingress.kubernetes.io/router.middlewares: traefik-basic-auth@kubernetescrd
+        traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
         gethomepage.dev/enabled: "true"
         gethomepage.dev/name: Longhorn
         gethomepage.dev/description: Cloud-native storage.

@@ -33,7 +33,7 @@ spec:
       #   middlewares:
       #     - traefik-forward-auth-headers@kubernetescrd
     service:
-      type: ClusterIP
+      type: ${traefik_service_type}
     ingressRoute:
       dashboard:
         enabled: true
