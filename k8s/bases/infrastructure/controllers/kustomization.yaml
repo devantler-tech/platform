@@ -7,7 +7,6 @@ resources:
   - cloudflared/
   - dex/
   - kyverno/
-  - longhorn/
   - oauth2-proxy/
   - origin-ca-issuer/
   - reloader/
