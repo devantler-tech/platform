@@ -8,7 +8,7 @@ packer {
 }
 
 locals {
-  image = "talos-v1.9.6-arm64/hcloud-arm64-omni-devantler-v1.9.6.raw.xz"
+  image = "talos-v1.10.3-arm64/hcloud-arm64-omni-devantler-v1.10.3.raw.xz"
 }
 
 source "hcloud" "talos" {
@@ -17,8 +17,8 @@ source "hcloud" "talos" {
   location     = "fsn1" # https://docs.hetzner.com/cloud/general/locations
   server_type  = "cax11" # https://docs.hetzner.com/cloud/servers/overview
   ssh_username = "root"
-  snapshot_name = "talos-v1.9.6-arm64"
-  server_name = "packer-talos-v1.9.6-arm64"
+  snapshot_name = "talos-v1.10.3-arm64"
+  server_name = "packer-talos-v1.10.3-arm64"
 }
 
 build {
