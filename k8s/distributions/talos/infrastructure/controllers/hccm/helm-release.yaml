@@ -1,0 +1,17 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hccm
+  namespace: kube-system
+spec:
+  chart:
+    spec:
+      chart: hccm
+      version: 1.25.1
+      sourceRef:
+        kind: HelmRepository
+        name: hccm
+  interval: 10m0s
+  # https://github.com/hetznercloud/hcloud-cloud-controller-manager/blob/main/chart/values.yaml
+  values: {}

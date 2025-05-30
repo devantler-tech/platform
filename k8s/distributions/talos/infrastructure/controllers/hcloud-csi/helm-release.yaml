@@ -26,4 +26,3 @@ spec:
         extraParameters:
           csi.storage.k8s.io/node-publish-secret-name: luks-encryption-key
           csi.storage.k8s.io/node-publish-secret-namespace: kube-system
-
