@@ -2,12 +2,12 @@
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: hccm
+  name: hcloud-cloud-controller-manager
   namespace: kube-system
 spec:
   chart:
     spec:
-      chart: hccm
+      chart: hcloud-cloud-controller-manager
       version: 1.25.1
       sourceRef:
         kind: HelmRepository
