@@ -5,7 +5,7 @@ metadata:
   name: oauth2-proxy
   namespace: oauth2-proxy
   labels:
-    # helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/helm-test: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 10m
