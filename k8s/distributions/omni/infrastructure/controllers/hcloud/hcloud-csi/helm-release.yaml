@@ -20,6 +20,8 @@ spec:
   values:
     global:
       enableProvidedByTopology: true
+    controller:
+      hcloudVolumeDefaultLocation: fsn1
     storageClasses:
       - name: hcloud-volumes
         defaultStorageClass: true
