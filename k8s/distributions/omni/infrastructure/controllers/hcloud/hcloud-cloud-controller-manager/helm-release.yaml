@@ -4,6 +4,9 @@ kind: HelmRelease
 metadata:
   name: hcloud-cloud-controller-manager
   namespace: kube-system
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   chart:
     spec:
