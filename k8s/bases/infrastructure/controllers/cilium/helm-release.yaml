@@ -27,7 +27,8 @@ spec:
         spire:
           enabled: true
           install:
-            enabled: true
+            namespace: kube-system
+            existingNamespace: true
     gatewayAPI:
       enabled: true
       enableAlpn: true
