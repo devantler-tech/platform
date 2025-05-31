@@ -17,6 +17,8 @@ spec:
         kind: HelmRepository
         name: cilium
   interval: 10m0s
+  dependsOn:
+    - name: hcloud-csi
   # https://github.com/cilium/cilium/blob/main/install/kubernetes/cilium/values.yaml
   values:
     ipam:
