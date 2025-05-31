@@ -18,6 +18,8 @@ spec:
   interval: 10m0s
   # https://github.com/hetznercloud/csi-driver/blob/main/chart/values.yaml
   values:
+    global:
+      enableProvidedByTopology: true
     controller:
       hcloudVolumeDefaultLocation: fsn1
     node:
