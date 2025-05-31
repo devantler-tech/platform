@@ -4,8 +4,7 @@ metadata:
   name: plantuml
   namespace: plantuml
   labels:
-    helm.toolkit.fluxcd.io/crds: enabled
-    helm.toolkit.fluxcd.io/helm-test: enabled
+    # helm.toolkit.fluxcd.io/helm-test: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 10m
@@ -21,7 +20,7 @@ spec:
     ingress:
       enabled: ${plantuml_ingress_enabled:=true}
       hosts:
-        - plantuml.${cluster_domain}
+        - plantuml.${domain}
       annotations:
         traefik.ingress.kubernetes.io/router.middlewares: traefik-basic-auth@kubernetescrd
         gethomepage.dev/enabled: "true"

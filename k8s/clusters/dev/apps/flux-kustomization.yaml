@@ -23,6 +23,10 @@ spec:
         name: variables-cluster
       - kind: Secret
         name: variables-cluster
+      - kind: ConfigMap
+        name: variables-base
+      - kind: Secret
+        name: variables-base
   path: clusters/dev/apps/
   prune: true
   wait: true

@@ -1,0 +1,31 @@
+# TODO: Upstream `helm-release-install-crds.yaml` to Kyverno policies repository.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: helm-release-install-crds
+  annotations:
+    policies.kyverno.io/title: Helm Release Install CRDs
+    policies.kyverno.io/category: Flux
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: HelmRelease
+    policies.kyverno.io/description: >-
+      This policy sets the installation strategy for CRDs in HelmRelease resources
+      to CreateReplace. This ensures that if a HelmRelease is installed or upgraded,
+      the CRDs will be created or replaced as needed.
+spec:
+  rules:
+    - name: set-helm-release-install-crds
+      match:
+        resources:
+          kinds:
+            - HelmRelease
+          selector:
+            matchLabels:
+              helm.toolkit.fluxcd.io/crds: "enabled"
+      mutate:
+        patchStrategicMerge:
+          spec:
+            install:
+              crds: CreateReplace
+            upgrade:
+              crds: CreateReplace

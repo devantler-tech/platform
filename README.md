@@ -84,7 +84,7 @@ The cluster configuration is stored in the `k8s/*` directories where the structu
   - [`prod`](k8s/clusters/prod): Contains the production cluster specific configuration.****
 - [`distributions/`](k8s/distributions): Contains the distribution specific configuration.
   - [`kind`](k8s/distributions/kind): Contains the kind specific configuration.
-  - [`talos`](k8s/distributions/talos): Contains the talos specific configuration.
+  - [`talos`](k8s/distributions/omni): Contains the talos specific configuration.
 - [`bases/`](k8s/bases): Contains the different bases that are used for the different clusters and distributions.
   - [`infrastructure`](k8s/bases/common): Contains the different infrastructure components that are used for the different clusters and distributions.
   - [`apps`](k8s/bases/apps): Contains the different apps that are used for the different clusters and distributions.

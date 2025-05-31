@@ -4,6 +4,10 @@ kind: HelmRelease
 metadata:
   name: cilium
   namespace: kube-system
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    # helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   chart:
     spec:
@@ -18,6 +22,12 @@ spec:
     ipam:
       mode: kubernetes
     kubeProxyReplacement: true
+    authentication:
+      mutual:
+        spire:
+          enabled: true
+          install:
+            enabled: true
     gatewayAPI:
       enabled: true
       enableAlpn: true

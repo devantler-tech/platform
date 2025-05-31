@@ -3,6 +3,10 @@ kind: HelmRelease
 metadata:
   name: dex
   namespace: dex
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    # helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 10m
   chart:
@@ -14,35 +18,43 @@ spec:
         name: dex
   # https://github.com/dexidp/helm-charts/blob/master/charts/dex/values.yaml
   values:
+    replicaCount: ${dex_replicas:=2}
     ingress:
       enabled: true
-      className: ${ingress_class_name:=}
       hosts:
         - host: dex.${domain}
           paths:
             - path: /
               pathType: ImplementationSpecific
+    envVars:
+      - name: CLIENT_ID
+        value: ${github_app_client_id}
+      - name: CLIENT_SECRET
+        value: ${github_app_client_secret}
     config:
       issuer: https://dex.${domain}
+      oauth2:
+        skipApprovalScreen: true
       storage:
         type: kubernetes
         config:
           inCluster: true
-      oauth2:
-        skipApprovalScreen: true
       staticClients:
-        - name: GitHub
-          id: github
+        - name: Public Client
+          id: public-client
           secret: ${dex_client_secret}
-          redirectURIs: []
+          redirectURIs: ["https://oauth2-proxy.${domain}/oauth2/callback"]
       connectors:
-        - name: GitHub
-          type: github
+        - type: github
           id: github
+          name: GitHub
           config:
-            clientID: ${github_app_client_id}
-            clientSecret: ${github_app_client_secret}
-            teamNameField: slug
+            clientID: $CLIENT_ID
+            clientSecret: $CLIENT_SECRET
             redirectURI: https://dex.${domain}/callback
+            teamNameField: slug
+            useLoginAsID: false
             orgs:
               - name: devantler-tech
+                teams:
+                  - platform

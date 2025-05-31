@@ -7,6 +7,7 @@ resources:
   - dex/
   - goldilocks/
   - kyverno/
+  - oauth2-proxy/
   - reloader/
   - traefik/
-  - trivy-operator/
+  # - trivy-operator/

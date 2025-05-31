@@ -1,0 +1,27 @@
+# TODO: Upstream `helm-release-enable-tests.yaml` to Kyverno policies repository.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: helm-release-enable-tests
+  annotations:
+    policies.kyverno.io/title: Helm Release Enable Tests
+    policies.kyverno.io/category: Flux
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: HelmRelease
+    policies.kyverno.io/description: >-
+      This policy enables Helm tests for HelmRelease resources.
+spec:
+  rules:
+    - name: enable-helm-tests
+      match:
+        resources:
+          kinds:
+            - HelmRelease
+          selector:
+            matchLabels:
+              helm.toolkit.fluxcd.io/helm-test: "enabled"
+      mutate:
+        patchStrategicMerge:
+          spec:
+            test:
+              enable: true

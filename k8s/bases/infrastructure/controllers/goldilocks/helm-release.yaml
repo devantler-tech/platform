@@ -21,9 +21,8 @@ spec:
     dashboard:
       ingress:
         enabled: true
-        ingressClassName: ${ingress_class_name:=}
         hosts:
-          - host: goldilocks.${cluster_domain}
+          - host: goldilocks.${domain}
             paths:
               - path: /
                 type: ImplementationSpecific

@@ -1,0 +1,33 @@
+# TODO: Upstream `helm-release-remediation-retries.yaml` to Kyverno policies repository.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: helm-release-remediation-retries
+  annotations:
+    policies.kyverno.io/title: Helm Release Remediation Retries
+    policies.kyverno.io/category: Flux
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: HelmRelease
+    policies.kyverno.io/description: >-
+      This policy sets the remediation retries for HelmRelease resources
+      to 3. This ensures that if a HelmRelease fails to install or upgrade,
+      it will retry up to 3 times before giving up.
+spec:
+  rules:
+    - name: set-remediation-retries
+      match:
+        resources:
+          kinds:
+            - HelmRelease
+          selector:
+            matchLabels:
+              helm.toolkit.fluxcd.io/remediation: "enabled"
+      mutate:
+        patchStrategicMerge:
+          spec:
+            install:
+              remediation:
+                retries: 3
+            upgrade:
+              remediation:
+                retries: 3

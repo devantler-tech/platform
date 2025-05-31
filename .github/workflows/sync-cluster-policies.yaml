@@ -1,3 +1,4 @@
+# TODO: Move to https://github.com/devantler-tech/workflows as a reusable action.
 name: Sync Cluster Policies
 
 on:
@@ -16,7 +17,7 @@ jobs:
   sync-policies:
     runs-on: ubuntu-latest
     env:
-      KYVERNO_POLICIES_DIR: k8s/bases/infrastructure/cluster-policies/samples/
+      KYVERNO_POLICIES_DIR: k8s/bases/infrastructure/cluster-policies/samples
       KYVERNO_POLICIES_TEMP_DIR: /tmp/cluster-policies
 
     steps:
@@ -44,7 +45,7 @@ jobs:
         run: |
           mkdir -p ${{ env.KYVERNO_POLICIES_DIR }}
           rm -rf ${{ env.KYVERNO_POLICIES_DIR }}/*
-          cp -r ${{ env.KYVERNO_POLICIES_TEMP_DIR }}/* ${{ env.KYVERNO_POLICIES_DIR }}
+          cp -r ${{ env.KYVERNO_POLICIES_TEMP_DIR }}/* ${{ env.KYVERNO_POLICIES_DIR }} || echo "No policies found to copy."
       - name: Create PR with changes
         uses: peter-evans/create-pull-request@v7
         with:
