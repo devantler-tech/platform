@@ -5,6 +5,7 @@ resources:
   - cert-manager/
   - cilium/
   - dex/
+  - goldilocks/
   - kyverno/
   - oauth2-proxy/
   - reloader/
