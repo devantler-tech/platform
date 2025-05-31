@@ -39,7 +39,7 @@ spec:
                     values:
                       - "robot"
     storageClasses:
-      - name: hcloud-volumes-${domain}
+      - name: hcloud-volumes
         defaultStorageClass: true
         reclaimPolicy: Delete
         extraParameters:
