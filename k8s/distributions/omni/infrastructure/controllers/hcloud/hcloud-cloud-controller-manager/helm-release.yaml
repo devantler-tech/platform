@@ -20,9 +20,3 @@ spec:
   values:
     networking:
       enabled: true
-      clusterCIDR: 10.244.0.0/16
-      network:
-        valueFrom:
-          secretKeyRef:
-            name: hcloud
-            key: network
