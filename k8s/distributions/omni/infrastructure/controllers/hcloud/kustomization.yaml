@@ -4,5 +4,5 @@ kind: Kustomization
 resources:
   - hcloud-cloud-controller-manager/
   - hcloud-csi/
-  - hcloud-token-secret.enc.yaml
+  - hcloud-token-secret.yaml
   - helm-repository.yaml
