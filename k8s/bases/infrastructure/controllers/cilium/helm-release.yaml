@@ -27,24 +27,8 @@ spec:
         spire:
           enabled: true
           install:
-            agent:
-              securityContext:
-                allowPrivilegeEscalation: false
-                capabilities:
-                  drop:
-                    - ALL
-                runAsNonRoot: true
-                seccompProfile:
-                  type: RuntimeDefault
-            server:
-              securityContext:
-                allowPrivilegeEscalation: false
-                capabilities:
-                  drop:
-                    - ALL
-                runAsNonRoot: true
-                seccompProfile:
-                  type: RuntimeDefault
+            namespace: kube-system
+            existingNamespace: true
     gatewayAPI:
       enabled: true
       enableAlpn: true
