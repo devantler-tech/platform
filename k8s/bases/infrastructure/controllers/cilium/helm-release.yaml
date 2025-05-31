@@ -6,7 +6,7 @@ metadata:
   namespace: kube-system
   labels:
     helm.toolkit.fluxcd.io/crds: enabled
-    # helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/helm-test: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   chart:
