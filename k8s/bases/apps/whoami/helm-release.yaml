@@ -23,3 +23,5 @@ spec:
         - host: whoami.${domain}
           paths:
             - /
+      annotations:
+        traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
