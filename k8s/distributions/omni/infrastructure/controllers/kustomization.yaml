@@ -5,7 +5,6 @@ resources:
   - ../../../../bases/infrastructure/controllers/
   - hcloud/
   - kubelet-serving-cert-approver/
-  - longhorn/
   - origin-ca-issuer/
 patches:
   - target:
