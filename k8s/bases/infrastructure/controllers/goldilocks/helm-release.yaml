@@ -23,10 +23,10 @@ spec:
       updater:
         enabled: true
         extraArgs:
-          - --feature-gates=InPlaceOrRecreate=true
+          feature-gates: InPlaceOrRecreate=true
       admissionController:
         extraArgs:
-          - --feature-gates=InPlaceOrRecreate=true
+          feature-gates: InPlaceOrRecreate=true
     controller:
       flags:
         on-by-default: true
