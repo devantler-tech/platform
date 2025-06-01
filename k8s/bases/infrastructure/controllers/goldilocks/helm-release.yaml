@@ -16,6 +16,17 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: goldilocks
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: goldilocks-vpa-admission-controller
+            patch: |
+              - op: remove
+                path: /spec/containers/vpa/args/0
+              - op: remove
+                path: /spec/containers/vpa/args/1
   # https://github.com/FairwindsOps/charts/blob/master/stable/goldilocks/values.yaml
   values:
     # https://github.com/FairwindsOps/charts/blob/master/stable/vpa/values.yaml
