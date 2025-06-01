@@ -17,6 +17,4 @@ spec:
         name: hcloud
   interval: 10m0s
   # https://github.com/hetznercloud/hcloud-cloud-controller-manager/blob/main/chart/values.yaml
-  values:
-    networking:
-      enabled: true
+  values: {}
