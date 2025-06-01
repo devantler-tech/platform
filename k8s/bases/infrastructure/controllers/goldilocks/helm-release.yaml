@@ -18,13 +18,24 @@ spec:
         name: goldilocks
   # https://github.com/FairwindsOps/charts/blob/master/stable/goldilocks/values.yaml
   values:
+    # https://github.com/FairwindsOps/charts/blob/master/stable/vpa/values.yaml
     vpa:
       enabled: true
+      recommender:
+        image:
+          repository: registry.k8s.io/autoscaling/vpa-recommender
+          tag: 1.4.0
       updater:
         enabled: true
+        image:
+          repository: registry.k8s.io/autoscaling/vpa-updater
+          tag: 1.4.0
         extraArgs:
           feature-gates: InPlaceOrRecreate=true
       admissionController:
+        image:
+          repository: registry.k8s.io/autoscaling/vpa-updater
+          tag: 1.4.0
         extraArgs:
           feature-gates: InPlaceOrRecreate=true
     controller:
