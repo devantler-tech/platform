@@ -18,9 +18,6 @@ spec:
         name: goldilocks
   # https://github.com/FairwindsOps/charts/blob/master/stable/goldilocks/values.yaml
   values:
-    controller:
-      flags:
-        on-by-default: true
     vpa:
       enabled: true
       updater:
@@ -30,7 +27,12 @@ spec:
       admissionController:
         extraArgs:
           - --feature-gates=InPlaceOrRecreate=true
+    controller:
+      flags:
+        on-by-default: true
     dashboard:
+      flags:
+        on-by-default: true
       ingress:
         enabled: true
         hosts:
