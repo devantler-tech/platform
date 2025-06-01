@@ -51,6 +51,10 @@ spec:
       admissionController:
         # fix to remove unsupported tls args from admission controller
         generateCertificate: false
+        # fix to remove failing liveness probe from admission controller
+        livenessProbe: {}
+        # fix to remove failing readiness probe from admission controller
+        readinessProbe: {}
         image:
           repository: registry.k8s.io/autoscaling/vpa-updater
           tag: 1.4.0
