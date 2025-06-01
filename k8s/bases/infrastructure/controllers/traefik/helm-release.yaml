@@ -29,9 +29,6 @@ spec:
           entryPoint:
             to: websecure
             scheme: https
-      # websecure:
-      #   middlewares:
-      #     - traefik-forward-auth-headers@kubernetescrd
     service:
       type: ${traefik_service_type}
     ingressRoute:
@@ -41,7 +38,7 @@ spec:
         entryPoints:
           - websecure
         middlewares:
-          - name: basic-auth
+          - name: forward-auth
         annotations:
           gethomepage.dev/enabled: "true"
           gethomepage.dev/name: Traefik
