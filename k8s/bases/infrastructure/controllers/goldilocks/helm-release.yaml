@@ -16,6 +16,7 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: goldilocks
+  # fix to remove unsupported webhook args from admission controller
   postRenderers:
     - kustomize:
         patches:
@@ -48,6 +49,7 @@ spec:
           feature-gates: InPlaceOrRecreate=true
       # TODO: Remove admissionController image configuration when Goldilocks is updated to use VPA 1.4.0
       admissionController:
+        # fix to remove unsupported tls args from admission controller
         generateCertificate: false
         image:
           repository: registry.k8s.io/autoscaling/vpa-updater
