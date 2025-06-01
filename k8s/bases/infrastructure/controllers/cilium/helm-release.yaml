@@ -19,6 +19,16 @@ spec:
   interval: 10m0s
   # https://github.com/cilium/cilium/blob/main/install/kubernetes/cilium/values.yaml
   values:
+    hubble:
+      relay:
+        replicas: ${cilium_replicas:=2}
+      ui:
+        replicas: ${cilium_replicas:=2}
+    operator:
+      replicas: ${cilium_replicas:=2}
+    clustermesh:
+      apiserver:
+        replicas: ${cilium_replicas:=2}
     ipam:
       mode: kubernetes
     kubeProxyReplacement: true
