@@ -25,7 +25,7 @@ spec:
     replicaCount: ${cert_manager_replicas:=2}
     webhook:
       replicaCount: ${cert_manager_replicas:=2}
-    caInjector:
+    cainjector:
       replicaCount: ${cert_manager_replicas:=2}
     podDisruptionBudget:
       enabled: true
