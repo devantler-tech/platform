@@ -22,13 +22,13 @@ spec:
     ipam:
       mode: kubernetes
     kubeProxyReplacement: true
-    authentication:
-      mutual:
-        spire:
-          enabled: true
-          install:
-            namespace: kube-system
-            existingNamespace: true
+    # authentication:
+    #   mutual:
+    #     spire:
+    #       enabled: true
+    #       install:
+    #         namespace: kube-system
+    #         existingNamespace: true
     gatewayAPI:
       enabled: true
       enableAlpn: true
