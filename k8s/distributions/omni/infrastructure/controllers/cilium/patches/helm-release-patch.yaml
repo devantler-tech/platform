@@ -31,3 +31,4 @@ spec:
       hostRoot: /sys/fs/cgroup
     k8sServiceHost: localhost
     k8sServicePort: 7445
+    ipv4NativeRoutingCIDR: 10.0.0.0/16
