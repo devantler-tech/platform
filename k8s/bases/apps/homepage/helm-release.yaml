@@ -64,12 +64,12 @@ spec:
         #   longhorn:
         #     url: http://longhorn-frontend.longhorn-system:80
         layout:
-          Kubernetes:
-          Cloud:
-          Network:
-          Storage:
-          Monitoring:
-          Analytics:
+          - Kubernetes:
+          - Cloud:
+          - Network:
+          - Storage:
+          - Monitoring:
+          - Analytics:
       widgets:
         - logo:
             icon: https://devantler.tech/assets/images/author.png
