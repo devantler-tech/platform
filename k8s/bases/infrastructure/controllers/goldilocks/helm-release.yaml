@@ -16,55 +16,13 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: goldilocks
-  # fix to remove unsupported webhook (arg 0 and 1) and tls (arg 2,3 and 4) args from admission controller
-  postRenderers:
-    - kustomize:
-        patches:
-          - target:
-              kind: Deployment
-              name: goldilocks-vpa-admission-controller
-            patch: |
-              - op: remove
-                path: /spec/template/spec/containers/0/args/0
-              - op: remove
-                path: /spec/template/spec/containers/0/args/0
-              - op: remove
-                path: /spec/template/spec/containers/0/args/0
-              - op: remove
-                path: /spec/template/spec/containers/0/args/0
-              - op: remove
-                path: /spec/template/spec/containers/0/args/0
   # https://github.com/FairwindsOps/charts/blob/master/stable/goldilocks/values.yaml
   values:
     # https://github.com/FairwindsOps/charts/blob/master/stable/vpa/values.yaml
     vpa:
       enabled: true
-      # TODO: Remove recommender image configuration when Goldilocks is updated to use VPA 1.4.0
-      recommender:
-        image:
-          repository: registry.k8s.io/autoscaling/vpa-recommender
-          tag: 1.4.0
-      # TODO: Remove updater image configuration when Goldilocks is updated to use VPA 1.4.0
       updater:
         enabled: true
-        image:
-          repository: registry.k8s.io/autoscaling/vpa-updater
-          tag: 1.4.0
-        # TODO: Remove extraArgs from updater when VPA supports InPlaceOrRecreate by default
-        extraArgs:
-          feature-gates: InPlaceOrRecreate=true
-      # TODO: Remove admissionController image configuration when Goldilocks is updated to use VPA 1.4.0
-      admissionController:
-        # fix to remove failing liveness probe from admission controller
-        livenessProbe: null
-        # fix to remove failing readiness probe from admission controller
-        readinessProbe: null
-        image:
-          repository: registry.k8s.io/autoscaling/vpa-updater
-          tag: 1.4.0
-        # TODO: Remove extraArgs from admissionController when VPA supports InPlaceOrRecreate by default
-        extraArgs:
-          feature-gates: InPlaceOrRecreate=true
     controller:
       flags:
         on-by-default: true
