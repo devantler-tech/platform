@@ -16,8 +16,6 @@ spec:
         kind: HelmRepository
         name: hcloud
   interval: 10m0s
-  dependsOn:
-    - name: hcloud-cloud-controller-manager
   # https://github.com/hetznercloud/csi-driver/blob/main/chart/values.yaml
   values:
     global:

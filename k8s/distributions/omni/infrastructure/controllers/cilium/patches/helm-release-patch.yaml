@@ -5,9 +5,6 @@ metadata:
   name: cilium
   namespace: kube-system
 spec:
-  dependsOn:
-    - name: hcloud-cloud-controller-manager
-    - name: hcloud-csi
   # https://github.com/cilium/cilium/blob/main/install/kubernetes/cilium/values.yaml
   values:
     securityContext:
