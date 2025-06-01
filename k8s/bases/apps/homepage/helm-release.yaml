@@ -63,6 +63,13 @@ spec:
         # providers:
         #   longhorn:
         #     url: http://longhorn-frontend.longhorn-system:80
+        layout:
+          Kubernetes:
+          Cloud:
+          Network:
+          Storage:
+          Monitoring:
+          Analytics:
       widgets:
         - logo:
             icon: https://devantler.tech/assets/images/author.png
@@ -111,7 +118,6 @@ spec:
                 icon: unifi
                 href: https://unifi.ui.com
                 description: Central hub for managing on-prem UniFi network infrastructure.
-        - Storage: []
         - Monitoring:
             - Grafana:
                 icon: grafana
