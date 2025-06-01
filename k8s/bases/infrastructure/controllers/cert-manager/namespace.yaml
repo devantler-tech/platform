@@ -3,6 +3,5 @@ kind: Namespace
 metadata:
   name: cert-manager
   labels:
-    goldilocks.fairwinds.com/enabled: "true"
-    goldilocks.fairwinds.com/vpa-update-mode: "auto"
+    goldilocks.fairwinds.com/vpa-update-mode: "InPlaceOrRecreate"
     goldilocks.fairwinds.com/vpa-min-replicas: "2"
