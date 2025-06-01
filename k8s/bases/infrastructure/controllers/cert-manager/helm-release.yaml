@@ -22,6 +22,11 @@ spec:
     crds: CreateReplace
   # https://github.com/cert-manager/cert-manager/blob/master/deploy/charts/cert-manager/values.yaml
   values:
+    replicaCount: ${cert_manager_replicas:=2}
+    webhook:
+      replicaCount: ${cert_manager_replicas:=2}
+    caInjector:
+      replicaCount: ${cert_manager_replicas:=2}
     podDisruptionBudget:
       enabled: true
     crds:
