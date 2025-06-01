@@ -13,8 +13,8 @@ For local development:
 
 For development and production clusters:
 
-- [Hetzner](https://www.hetzner.com/cloud/) - For hosting servers for control plane and worker nodes.
 - [Talos Omni](https://www.siderolabs.com/platform/saas-for-kubernetes/) - For provisioning the production cluster, and managing nodes, updates, and the Talos configuration.
+- [Hetzner](https://www.hetzner.com/cloud/) - For hosting servers for control plane and worker nodes.
 - [Cloudflare](https://www.cloudflare.com) - For etcd backups, DNS, and tunneling all traffic so my network stays private.
 - [Unifi](https://ui.com/) - For configuring a DMZ zone for my own nodes to run in, along with other security features.
 - [UTM](https://mac.getutm.app) - For running Kubernetes on Mac Mini via Apple Hypervisor.
@@ -40,8 +40,8 @@ ksail up
 
 ## Clusters
 
-> [!NOTE]
-> All clusters use Omni MachineSets, to autoprovision new nodes registered to Omni.
+> [!TIP]
+> All clusters allow scheduling of workloads on control plane nodes. For homelab purposes, this is fine, but for enterprise use, it is recommended to separate control plane and worker nodes to ensure high availability and reliability.
 
 ### Production
 
@@ -49,11 +49,12 @@ Hybrid Cloud cluster that runs on both Hetzner Cloud and on-prem. Used for produ
 
 #### Control Plane Nodes
 
-- 3x [Hetzner CAX11 nodes](https://www.hetzner.com/cloud/) (QEMU ARM64 2CPU 4Gb RAM 40Gb SSD)
+- 2x [Hetzner CAX21 nodes](https://www.hetzner.com/cloud/) (QEMU ARM64 4 vCPU 8Gb RAM 80Gb SSD)
+- 1x [Hetzner CX32 node](https://www.hetzner.com/cloud/) (QEMU AMD64 4 vCPU 8Gb RAM 80Gb SSD)
 
 #### Worker Nodes
 
-- 4x UTM nodes (Apple Hypervisor ARM64 16/20CPU 8/16Gb RAM 55/125Gb SSD)
+- 1x UTM nodes (Apple Hypervisor ARM64 40 vCPU 32Gb RAM 350Gb SSD)
 
 ### Development
 
@@ -61,17 +62,18 @@ Hybrid Cloud cluster that runs on both Hetzner Cloud and on-prem. Used to test a
 
 #### Control Plane Nodes
 
-- 3x [Hetzner CAX11 nodes](https://www.hetzner.com/cloud/) (QEMU ARM64 2CPU 4Gb RAM 40Gb SSD)
+- 2x [Hetzner CAX21 nodes](https://www.hetzner.com/cloud/) (QEMU ARM64 4 vCPU 8Gb RAM 80Gb SSD)
+- 1x [Hetzner CX32 node](https://www.hetzner.com/cloud/) (QEMU AMD64 4 vCPU 8Gb RAM 80Gb SSD)
 
 #### Worker Nodes
 
-- 2x UTM nodes (Apple Hypervisor ARM64 16/20CPU 8/16Gb RAM 55/125Gb SSD)
+- 1x UTM nodes (Apple Hypervisor ARM64 32 vCPU 16Gb RAM 150Gb SSD)
 
 ## Hardware
 
 - [Unifi Cloud Gateway](https://eu.store.ui.com/eu/en/pro/products/ucg-ultra)
-- 1x Mac Mini M2 Pro (ARM64 10CPU 32Gb RAM ~512Gb SSD)
-- 1x Mac Mini M1 (ARM64 8CPU 16Gb RAM ~256Gb SSD)
+- 1x Mac Mini M2 Pro (ARM64 10 CPU 32Gb RAM ~512Gb SSD)
+- 1x Mac Mini M1 (ARM64 8 CPU 16Gb RAM ~256Gb SSD)
 
 ## Structure
 
@@ -112,8 +114,9 @@ This allows for a clean separation of concerns and allows for modification of th
 | ------------------ | --- | -------- | --------------- | ---------- |
 | Talos Omni         | 1   | $10      | $10             | $10        |
 | Cloudflare Domains | 3   | $0,87    | $2,61           | $2,61      |
-| Hetzner CAX11      | 6   | €4,74    | €28,44          | $32,15     |
-|                    |     |          |                 | $44,76     |
+| Hetzner CAX21      | 4   | €7,49    | €29,96          | $34        |
+| Hetzner CX32       | 2   | €7,88    | €15,76          | $17,88     |
+|                    |     |          |                 | $64,49     |
 
 ## Star History
 
