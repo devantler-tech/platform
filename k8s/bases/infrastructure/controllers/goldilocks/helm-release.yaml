@@ -24,29 +24,35 @@ spec:
               name: goldilocks-vpa-admission-controller
             patch: |
               - op: remove
-                path: /spec/containers/vpa/args/0
+                path: /spec/template/spec/containers/0/args/0
               - op: remove
-                path: /spec/containers/vpa/args/1
+                path: /spec/template/spec/containers/0/args/0
   # https://github.com/FairwindsOps/charts/blob/master/stable/goldilocks/values.yaml
   values:
     # https://github.com/FairwindsOps/charts/blob/master/stable/vpa/values.yaml
     vpa:
       enabled: true
+      # TODO: Remove recommender image configuration when Goldilocks is updated to use VPA 1.4.0
       recommender:
         image:
           repository: registry.k8s.io/autoscaling/vpa-recommender
           tag: 1.4.0
+      # TODO: Remove updater image configuration when Goldilocks is updated to use VPA 1.4.0
       updater:
         enabled: true
         image:
           repository: registry.k8s.io/autoscaling/vpa-updater
           tag: 1.4.0
+        # TODO: Remove extraArgs from updater when VPA supports InPlaceOrRecreate by default
         extraArgs:
           feature-gates: InPlaceOrRecreate=true
+      # TODO: Remove admissionController image configuration when Goldilocks is updated to use VPA 1.4.0
       admissionController:
+        generateCertificate: false
         image:
           repository: registry.k8s.io/autoscaling/vpa-updater
           tag: 1.4.0
+        # TODO: Remove extraArgs from admissionController when VPA supports InPlaceOrRecreate by default
         extraArgs:
           feature-gates: InPlaceOrRecreate=true
     controller:
