@@ -1,6 +1,6 @@
-127.0.0.1 dex.local.platform.devantler.tech
-127.0.0.1 goldilocks.local.platform.devantler.tech
-127.0.0.1 local.platform.devantler.tech
-127.0.0.1 oauth2-proxy.local.platform.devantler.tech
-127.0.0.1 traefik.local.platform.devantler.tech
-127.0.0.1 whoami.local.platform.devantler.tech
+127.0.0.1 dex.localhost
+127.0.0.1 goldilocks.localhost
+127.0.0.1 local.localhost
+127.0.0.1 oauth2-proxy.localhost
+127.0.0.1 traefik.localhost
+127.0.0.1 whoami.localhost
