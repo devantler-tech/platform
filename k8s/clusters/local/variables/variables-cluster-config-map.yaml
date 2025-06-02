@@ -10,4 +10,3 @@ data:
   issuer_group: cert-manager.io
   issuer_kind: ClusterIssuer
   issuer_name: selfsigned
-  traefik_service_type: NodePort
