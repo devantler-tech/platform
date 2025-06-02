@@ -10,4 +10,5 @@ resources:
   - oauth2-proxy/
   - reloader/
   - traefik/
+  - vertical-pod-autoscaler/
   # - trivy-operator/
