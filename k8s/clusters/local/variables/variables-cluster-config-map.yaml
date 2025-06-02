@@ -5,8 +5,9 @@ metadata:
   name: variables-cluster
   namespace: flux-system
 data:
-  domain: platform.localhost
+  domain: local.platform.devantler.tech
   github_app_client_id: Iv23liZ8GHRgpx32Em2y
   issuer_group: cert-manager.io
   issuer_kind: ClusterIssuer
   issuer_name: selfsigned
+  traefik_replicas: "1"
