@@ -1,0 +1,7 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: vertical-pod-autoscaler
+  namespace: vertical-pod-autoscaler
+spec:
+  url: https://charts.fairwinds.com/stable
