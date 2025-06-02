@@ -9,8 +9,3 @@ spec:
   values:
     nodeSelector:
       kubernetes.io/hostname: "local-worker"
-    ports:
-      web:
-        hostPort: 80
-      websecure:
-        hostPort: 443

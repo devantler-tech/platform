@@ -30,7 +30,7 @@ spec:
             to: websecure
             scheme: https
     service:
-      type: ClusterIP
+      type: ${traefik_service_type:=LoadBalancer}
     ingressRoute:
       dashboard:
         enabled: true
