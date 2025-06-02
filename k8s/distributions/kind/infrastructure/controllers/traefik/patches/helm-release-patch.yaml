@@ -8,7 +8,7 @@ spec:
   # https://github.com/traefik/traefik-helm-chart/blob/master/traefik/values.yaml
   values:
     nodeSelector:
-      ingress-ready: 'true'
+      kubernetes.io/hostname: "local-worker"
     ports:
       web:
         nodePort: 30000
