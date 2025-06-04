@@ -11,14 +11,14 @@ data:
         lameduck 5s
       }
       ready
+      rewrite name oauth2-proxy.${domain} oauth2-proxy.oauth2-proxy.svc.cluster.local
+      rewrite name dex.${domain} dex.dex.svc.cluster.local
       kubernetes cluster.local in-addr.arpa ip6.arpa {
         pods insecure
         fallthrough in-addr.arpa ip6.arpa
         ttl 30
       }
       prometheus :9153
-      forward dex.${domain} ${docker_default_gateway:=192.168.65.254}
-      forward oauth2-proxy.${domain} ${docker_default_gateway:=192.168.65.254}
       forward . /etc/resolv.conf {
         max_concurrent 1000
       }
