@@ -5,6 +5,7 @@ metadata:
   name: variables-cluster
   namespace: flux-system
 data:
+  domain_regex: platform\.lan
   domain: platform.lan
   github_app_client_id: Iv23liZ8GHRgpx32Em2y
   issuer_group: cert-manager.io
