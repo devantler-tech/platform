@@ -5,10 +5,10 @@ metadata:
   name: variables-cluster
   namespace: flux-system
 data:
-  cloudflared_tunnel_id: 16c0c1dc-388e-4ddc-bd5f-7fdb7710e499
-  domain: local.platform.devantler.tech
+  domain_regex: platform\.lan
+  domain: platform.lan
   github_app_client_id: Iv23liZ8GHRgpx32Em2y
   issuer_group: cert-manager.io
   issuer_kind: ClusterIssuer
   issuer_name: selfsigned
-  traefik_service_type: NodePort
+  traefik_replicas: "1"
