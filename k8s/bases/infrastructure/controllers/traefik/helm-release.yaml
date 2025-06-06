@@ -18,9 +18,8 @@ spec:
         name: traefik
   # https://github.com/traefik/traefik-helm-chart/blob/master/traefik/values.yaml
   values:
-    globalArguments:
-      - "--global.checknewversion=false"
-      - "--global.sendanonymoususage=false"
+    global:
+      checkNewVersion: true
     deployment:
       replicas: ${traefik_replicas:=2}
     ports:
