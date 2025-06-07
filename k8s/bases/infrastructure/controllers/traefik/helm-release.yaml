@@ -12,15 +12,14 @@ spec:
   chart:
     spec:
       chart: traefik
-      version: 35.4.0
+      version: 36.0.0
       sourceRef:
         kind: HelmRepository
         name: traefik
   # https://github.com/traefik/traefik-helm-chart/blob/master/traefik/values.yaml
   values:
-    globalArguments:
-      - "--global.checknewversion=false"
-      - "--global.sendanonymoususage=false"
+    global:
+      checkNewVersion: true
     deployment:
       replicas: ${traefik_replicas:=2}
     ports:
