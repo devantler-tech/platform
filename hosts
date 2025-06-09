@@ -1,6 +1,6 @@
-127.0.0.1 dex.local.platform.devantler.tech
-127.0.0.1 goldilocks.local.platform.devantler.tech
-127.0.0.1 local.platform.devantler.tech
-127.0.0.1 oauth2-proxy.local.platform.devantler.tech
-127.0.0.1 traefik.local.platform.devantler.tech
-127.0.0.1 whoami.local.platform.devantler.tech
+# TODO: Test if domain can be *.local.platform.devantler.tech, or update to *.lan
+127.0.0.1 dex.lan
+127.0.0.1 goldilocks.lan
+127.0.0.1 oauth2-proxy.lan
+127.0.0.1 traefik.lan
+127.0.0.1 whoami.lan

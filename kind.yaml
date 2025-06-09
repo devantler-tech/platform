@@ -5,17 +5,11 @@ name: local
 nodes:
   - role: control-plane
   - role: worker
-    kubeadmConfigPatches:
-      - |
-        kind: InitConfiguration
-        nodeRegistration:
-          kubeletExtraArgs:
-            node-labels: "ingress-ready=true"
     extraPortMappings:
-      - containerPort: 30000
+      - containerPort: 30080
         hostPort: 80
         protocol: TCP
-      - containerPort: 30001
+      - containerPort: 30443
         hostPort: 443
         protocol: TCP
   - role: worker
