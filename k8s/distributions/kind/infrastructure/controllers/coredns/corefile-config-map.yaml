@@ -1,3 +1,4 @@
+# TODO: Fix dns to rewrite external domain names to internal service names
 apiVersion: v1
 kind: ConfigMap
 metadata:
