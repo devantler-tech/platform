@@ -70,21 +70,6 @@ spec:
       widgets:
         - logo:
             icon: https://devantler.tech/assets/images/author.png
-        - greeting:
-            text_size: xl
-            text: Welcome home!
-        - search:
-            provider: google
-            target: _blank
-        - datetime:
-            text_size: xl
-            format:
-              dateStyle: long
-              timeStyle: short
-              hourCycle: h23
-        - openmeteo:
-            units: metric
-            cache: 5
         # - longhorn:
         #     expanded: true
         #     total: true
@@ -100,7 +85,7 @@ spec:
             - Hetzner Cloud:
                 icon: hetzner
                 href: https://console.hetzner.cloud/projects
-                description: Cloud infrastructure provider.
+                description: Hetzner Cloud infrastructure provider.
         - Network:
             - Cloudflare:
                 icon: cloudflare
@@ -115,11 +100,6 @@ spec:
                 icon: unifi
                 href: https://unifi.ui.com
                 description: Central hub for managing on-prem UniFi network infrastructure.
-        - Monitoring:
-            - Grafana:
-                icon: grafana
-                href: https://devantler.grafana.net
-                description: Central hub for monitoring my infrastructure.
         - Analytics:
             - Disqus:
                 icon: si-disqus-#2E9FFF
@@ -129,6 +109,11 @@ spec:
                 icon: google-analytics
                 href: https://analytics.google.com
                 description: Web analytics service.
+        - Monitoring:
+            - Grafana:
+                icon: grafana
+                href: https://devantler.grafana.net
+                description: Central hub for monitoring my infrastructure.
       bookmarks:
         - Personal:
             - Personal Site:
