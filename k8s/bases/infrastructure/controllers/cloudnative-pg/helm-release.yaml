@@ -18,4 +18,4 @@ spec:
         name: cloudnative-pg
   # https://github.com/cloudnative-pg/charts/blob/main/charts/cloudnative-pg/values.yaml
   values:
-    replicaCount: ${cloudnative-pg_replicas:=2}
+    replicaCount: ${cloudnative_pg_replicas:=2}
