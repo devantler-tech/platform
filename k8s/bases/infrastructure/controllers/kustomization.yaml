@@ -9,6 +9,7 @@ resources:
   - kyverno/
   - oauth2-proxy/
   - reloader/
+  - testkube/
   - traefik/
   - vertical-pod-autoscaler/
   # - trivy-operator/
