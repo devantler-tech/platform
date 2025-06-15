@@ -21,7 +21,7 @@ spec:
         patches:
           - target:
               kind: Deployment
-              name: cloudflared
+              name: cloudflared-cloudflare-tunnel-remote
             patch: |
               - op: replace
                 path: /spec/template/spec/containers/0/command
