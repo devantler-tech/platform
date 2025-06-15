@@ -20,7 +20,7 @@ spec:
     image:
       flavor: apache
       version: 4.5.12
-    replicaCount: ${nextcloud_replicas:=2}
+    replicaCount: ${nextcloud_replicas:=1}
     ingress:
       enabled: true
     service:
