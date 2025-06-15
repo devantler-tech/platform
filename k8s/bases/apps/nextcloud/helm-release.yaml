@@ -26,6 +26,8 @@ spec:
     service:
       annotations:
         traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
+    phpClientHttpsFix:
+      enabled: true
     internalDatabase:
       enabled: false
     externalDatabase:
