@@ -28,7 +28,7 @@ spec:
     externalDatabase:
       enabled: true
       type: postgresql
-      host: postgresql.nextcloud
+      host: db-rw.nextcloud
       database: nextcloud
       existingSecret:
         enabled: true
