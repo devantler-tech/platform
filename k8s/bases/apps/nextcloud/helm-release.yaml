@@ -18,8 +18,6 @@ spec:
   # https://github.com/nextcloud/helm/blob/main/charts/nextcloud/values.yaml
   values:
     replicaCount: ${nextcloud_replicas:=2}
-    strategy:
-      type: RollingUpdate
     ingress:
       enabled: true
       annotations:
@@ -31,6 +29,8 @@ spec:
       host: nextcloud.${domain}
       username: ${nextcloud_username:=admin}
       password: ${nextcloud_password:=password}
+      strategy:
+        type: RollingUpdate
       # existingSecret:
       #   enabled: false
       #   secretName: nameofsecret
