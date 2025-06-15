@@ -22,6 +22,22 @@ spec:
       enableProvidedByTopology: true
     controller:
       hcloudVolumeDefaultLocation: fsn1
+    node:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: "instance.hetzner.cloud/is-root-server"
+                    operator: NotIn
+                    values:
+                      - "true"
+                  - key: "instance.hetzner.cloud/provided-by"
+                    operator: Exists
+                  - key: "instance.hetzner.cloud/provided-by"
+                    operator: NotIn
+                    values:
+                      - "robot"
     storageClasses:
       - name: hcloud
         defaultStorageClass: true
