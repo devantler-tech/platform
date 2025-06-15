@@ -4,7 +4,7 @@ metadata:
   name: db
   namespace: nextcloud
 spec:
-  instances: 1
+  instances: 3
   storage:
     size: ${nextcloud_db_storage_size:=1Gi}
   bootstrap:
