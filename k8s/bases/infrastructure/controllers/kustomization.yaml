@@ -4,11 +4,12 @@ kind: Kustomization
 resources:
   - cert-manager/
   - cilium/
-  - cloudflared/
   - dex/
+  - goldilocks/
   - kyverno/
-  - origin-ca-issuer/
+  - oauth2-proxy/
   - reloader/
   - testkube/
   - traefik/
+  - vertical-pod-autoscaler/
   # - trivy-operator/

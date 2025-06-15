@@ -2,18 +2,18 @@ creation_rules:
   - path_regex: ^k8s\/clusters\/local\/.+\.enc\.ya?ml$
     encrypted_regex: ^(data|stringData)$
     age: |-
-      age1fqcl89lrl8daucdkn7xstjhv9mcxk39m59a9mhvw0g3j24kjmu6qcaxpp7
+      age14skmde00w0ps6u8asm4rdqwpktr5m5pq84070yzwvjjmcyfnl4ushfn5uq
   - path_regex: ^k8s\/clusters\/dev\/.+\.enc\.ya?ml$
     encrypted_regex: ^(data|stringData)$
     age: |-
-      age1q2vtjmghm5yv3sm426325u0tsgvru758lum8kefhp62fhmhf3afqhrnm3x
+      age188ez3ur89qj7pmnyyqhcp9nmxp7lvsa72plph0frkfh9tt7n5guqs0vz6c
   - path_regex: ^k8s\/clusters\/prod\/.+\.enc\.ya?ml$
     encrypted_regex: ^(data|stringData)$
     age: |-
-      age18huaqzzrln439z9nj56kmqnkcu5zrj44y57ml8tlauhh5vj3yqgsa0l9dw
+      age1rk6fs67kly3h4zux5za429z3grjtvs8vcunav4sa28pxk738najsk8wgs6
   - path_regex: ^.+\.enc\.ya?ml$
     encrypted_regex: ^(data|stringData)$
     age: |-
-      age1fqcl89lrl8daucdkn7xstjhv9mcxk39m59a9mhvw0g3j24kjmu6qcaxpp7,
-      age1q2vtjmghm5yv3sm426325u0tsgvru758lum8kefhp62fhmhf3afqhrnm3x,
-      age18huaqzzrln439z9nj56kmqnkcu5zrj44y57ml8tlauhh5vj3yqgsa0l9dw
+      age14skmde00w0ps6u8asm4rdqwpktr5m5pq84070yzwvjjmcyfnl4ushfn5uq,
+      age188ez3ur89qj7pmnyyqhcp9nmxp7lvsa72plph0frkfh9tt7n5guqs0vz6c,
+      age1rk6fs67kly3h4zux5za429z3grjtvs8vcunav4sa28pxk738najsk8wgs6

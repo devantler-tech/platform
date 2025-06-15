@@ -5,8 +5,8 @@ metadata:
   name: cilium
   namespace: kube-system
   labels:
-    # helm.toolkit.fluxcd.io/crds: enabled
-    # helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/helm-test: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   chart:
@@ -19,9 +19,26 @@ spec:
   interval: 10m0s
   # https://github.com/cilium/cilium/blob/main/install/kubernetes/cilium/values.yaml
   values:
+    hubble:
+      relay:
+        replicas: ${cilium_replicas:=2}
+      ui:
+        replicas: ${cilium_replicas:=2}
+    operator:
+      replicas: ${cilium_replicas:=2}
+    clustermesh:
+      apiserver:
+        replicas: ${cilium_replicas:=2}
     ipam:
       mode: kubernetes
     kubeProxyReplacement: true
+    authentication:
+      mutual:
+        spire:
+          enabled: true
+          install:
+            namespace: kube-system
+            existingNamespace: true
     gatewayAPI:
       enabled: true
       enableAlpn: true

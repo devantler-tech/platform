@@ -3,9 +3,21 @@ kind: Namespace
 metadata:
   name: trivy-operator
   labels:
-    goldilocks.fairwinds.com/enabled: "true"
-    goldilocks.fairwinds.com/vpa-update-mode: "auto"
-    goldilocks.fairwinds.com/vpa-min-replicas: "1"
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/audit: privileged
     pod-security.kubernetes.io/warn: privileged
+  annotations:
+    goldilocks.fairwinds.com/vpa-update-mode: "auto"
+    goldilocks.fairwinds.com/vpa-min-replicas: "2"
+    goldilocks.fairwinds.com/vpa-resource-policy: |
+      {
+        "containerPolicies": [
+          {
+            "containerName": "*",
+            "minAllowed": {
+              "cpu": "100m",
+              "memory": "100Mi"
+            }
+          }
+        ]
+      }

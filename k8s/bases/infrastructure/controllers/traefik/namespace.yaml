@@ -2,7 +2,18 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: traefik
-  # labels:
-  #   goldilocks.fairwinds.com/enabled: "true"
-  #   goldilocks.fairwinds.com/vpa-update-mode: "auto"
-  #   goldilocks.fairwinds.com/vpa-min-replicas: "1"
+  annotations:
+    goldilocks.fairwinds.com/vpa-update-mode: "auto"
+    goldilocks.fairwinds.com/vpa-min-replicas: "2"
+    goldilocks.fairwinds.com/vpa-resource-policy: |
+      {
+        "containerPolicies": [
+          {
+            "containerName": "*",
+            "minAllowed": {
+              "cpu": "100m",
+              "memory": "100Mi"
+            }
+          }
+        ]
+      }

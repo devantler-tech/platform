@@ -4,8 +4,7 @@ metadata:
   name: whoami
   namespace: whoami
   labels:
-    #   helm.toolkit.fluxcd.io/crds: enabled
-    #   helm.toolkit.fluxcd.io/helm-test: enabled
+    # helm.toolkit.fluxcd.io/helm-test: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 10m
@@ -25,4 +24,4 @@ spec:
           paths:
             - /
       annotations:
-        traefik.ingress.kubernetes.io/router.middlewares: traefik-basic-auth@kubernetescrd
+        traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd

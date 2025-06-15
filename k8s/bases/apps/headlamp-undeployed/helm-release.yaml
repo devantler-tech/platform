@@ -1,0 +1,49 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: headlamp
+  namespace: headlamp
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: headlamp
+      version: 0.27.0
+      sourceRef:
+        kind: HelmRepository
+        name: headlamp
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: headlamp
+            patch: |
+              - op: add
+                path: /metadata/annotations/secret.reloader.stakater.com~1reload
+                value: oidc
+  # https://github.com/headlamp-k8s/headlamp/blob/main/charts/headlamp/values.yaml
+  values:
+    config:
+      oidc:
+        clientID: github
+        clientSecret: ${dex_client_secret}
+        issuerURL: https://dex.${domain}
+        scopes: "profile,email,groups"
+    ingress:
+      enabled: true
+      ingressClassName: ${ingress_class_name:=}
+      hosts:
+        - host: headlamp.${domain}
+          paths:
+            - path: /
+              type: ImplementationSpecific
+      annotations:
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/name: Headlamp
+        gethomepage.dev/description: A web UI for managing Kubernetes clusters.
+        gethomepage.dev/group: Management
+        gethomepage.dev/icon: https://pbs.twimg.com/profile_images/1537480067227566080/waXG0X7n_400x400.jpg

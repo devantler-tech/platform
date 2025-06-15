@@ -4,8 +4,7 @@ metadata:
   name: homepage
   namespace: homepage
   labels:
-    #   helm.toolkit.fluxcd.io/crds: enabled
-    #   helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/helm-test: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 10m
@@ -45,14 +44,14 @@ spec:
               - path: /
                 pathType: Prefix
         annotations:
-          traefik.ingress.kubernetes.io/router.middlewares: traefik-basic-auth@kubernetescrd
+          traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
     env:
       - name: HOMEPAGE_ALLOWED_HOSTS
         value: ${domain}
     config:
       kubernetes:
         mode: cluster
-      settings:
+      settingsString: |
         title: Platform
         favicon: https://devantler.tech/assets/images/author.png
         theme: dark
@@ -61,38 +60,32 @@ spec:
           image: https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?q=80&w=1974&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D
           blur: sm
           opacity: 70
-        # providers:
-        #   longhorn:
-        #     url: http://longhorn-frontend.longhorn-system:80
+        layout:
+          Kubernetes:
+          Cloud:
+          Network:
+          Storage:
+          Monitoring:
+          Analytics:
       widgets:
         - logo:
             icon: https://devantler.tech/assets/images/author.png
-        - greeting:
-            text_size: xl
-            text: Welcome home!
-        - search:
-            provider: google
-            target: _blank
-        - datetime:
-            text_size: xl
-            format:
-              dateStyle: long
-              timeStyle: short
-              hourCycle: h23
-        - openmeteo:
-            units: metric
-            cache: 5
-        - resources:
-            backend: kubernetes
-            expanded: true
-            cpu: true
-            memory: true
         # - longhorn:
         #     expanded: true
         #     total: true
         #     labels: false
         #     nodes: false
       services:
+        - Kubernetes:
+            - Omni:
+                icon: si-talos-#FF7300
+                href: https://devantler.omni.siderolabs.io
+                description: Platform for provisioning and managing Talos Linux clusters.
+        - Cloud:
+            - Hetzner Cloud:
+                icon: hetzner
+                href: https://console.hetzner.cloud/projects
+                description: Hetzner Cloud infrastructure provider.
         - Network:
             - Cloudflare:
                 icon: cloudflare
@@ -107,21 +100,6 @@ spec:
                 icon: unifi
                 href: https://unifi.ui.com
                 description: Central hub for managing on-prem UniFi network infrastructure.
-        - Cloud:
-            - Hetzner Cloud:
-                icon: hetzner
-                href: https://console.hetzner.cloud/projects
-                description: Cloud infrastructure provider.
-        - Kubernetes:
-            - Omni:
-                icon: si-talos-#FF7300
-                href: https://devantler.omni.siderolabs.io
-                description: Platform for provisioning and managing Talos Linux clusters.
-        - Monitoring:
-            - Grafana:
-                icon: grafana
-                href: https://devantler.grafana.net
-                description: Central hub for monitoring my infrastructure.
         - Analytics:
             - Disqus:
                 icon: si-disqus-#2E9FFF
@@ -131,6 +109,11 @@ spec:
                 icon: google-analytics
                 href: https://analytics.google.com
                 description: Web analytics service.
+        - Monitoring:
+            - Grafana:
+                icon: grafana
+                href: https://devantler.grafana.net
+                description: Central hub for monitoring my infrastructure.
       bookmarks:
         - Personal:
             - Personal Site:

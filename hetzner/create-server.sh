@@ -3,10 +3,8 @@
 token=""
 server_name=""
 image_id=""
-server_type="cax11"
+server_type="cax21"
 location="fsn1"
-placement_group="homelab-placement-group"
-ssh_key_name="ssh-key"
 
 usage() {
   echo "Usage: $0 --token <token> --server-name <server_name> --server-type <server_type> --location <location> --placement-group <placement_group> --image-id <image_id> --ssh-key-name <ssh_key_name>"
@@ -16,9 +14,7 @@ usage() {
   echo "  --server-name <server_name> is the name of the server to create"
   echo "  --server-type <server_type> is the type of server to create e.g. cx11"
   echo "  --location <location> is the location to create the server in e.g. fsn1"
-  echo "  --placement-group <placement_group> is the placement group to create the server. Can be either a name or ID"
   echo "  --image-id <image_id> is the ID of the snapshot image to use for the server"
-  echo "  --ssh-key-name <ssh_key_name> is the name of the SSH key to use for the server"
   exit 1
 }
 
@@ -63,12 +59,12 @@ fi
 
 export HCLOUD_TOKEN=$1
 
-hcloud context create talos
+hcloud context create default
 
-hcloud network create --name talos-network --ip-range 10.0.0.0/16
+hcloud network create --name default --ip-range 10.0.0.0/16
 
-if [ "$(hcloud network describe talos-network | yq -e '.Subnets[]')" == "null" ]; then
-  hcloud network add-subnet talos-network --type server --network-zone eu-central
+if [ "$(hcloud network describe default | yq -e '.Subnets[]')" == "null" ]; then
+  hcloud network add-subnet default --type server --network-zone eu-central
 fi
 
 hcloud firewall create --name talos-firewall --rules-file - <<<'[
@@ -89,6 +85,6 @@ hcloud server create --name "$server_name" \
   --location "$location" \
   --placement-group "$placement_group" \
   --image "$image_id" \
-  --network talos-network \
+  --network default \
   --firewall talos-firewall \
-  --ssh-key "$ssh_key_name"
+  --ssh-key ssh-key

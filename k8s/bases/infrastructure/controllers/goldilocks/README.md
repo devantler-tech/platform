@@ -1,4 +1,4 @@
-# Homepage
+# Goldilocks
 
 A utility that can help you identify a starting point for resource requests and limits.
 
