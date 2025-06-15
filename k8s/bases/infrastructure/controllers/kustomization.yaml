@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - cert-manager/
   - cilium/
+  - cloudnative-pg/
   - dex/
   - goldilocks/
   - kyverno/
