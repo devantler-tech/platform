@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cnpg-system
+  annotations:
+    goldilocks.fairwinds.com/vpa-update-mode: "auto"
+    goldilocks.fairwinds.com/vpa-min-replicas: "2"
+    goldilocks.fairwinds.com/vpa-resource-policy: |
+      {
+        "containerPolicies": [
+          {
+            "containerName": "*",
+            "minAllowed": {
+              "cpu": "100m",
+              "memory": "100Mi"
+            }
+          }
+        ]
+      }
