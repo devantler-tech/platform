@@ -1,0 +1,9 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: nextcloud
+  namespace: nextcloud
+spec:
+  instances: 3
+  storage:
+    size: 1Gi
