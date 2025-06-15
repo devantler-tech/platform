@@ -17,6 +17,9 @@ spec:
         name: nextcloud
   # https://github.com/nextcloud/helm/blob/main/charts/nextcloud/values.yaml
   values:
+    image:
+      flavor: apache
+      version: 4.5.12
     replicaCount: ${nextcloud_replicas:=2}
     ingress:
       enabled: true
@@ -40,3 +43,5 @@ spec:
         type: RollingUpdate
       existingSecret:
         enabled: true
+    persistence:
+      enabled: true
