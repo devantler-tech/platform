@@ -15,6 +15,7 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: cloudflared
+  # TODO: Remove when Cilium supports QUIC protocol for cloudflared (https://github.com/cilium/cilium/issues/37529)
   postRenderers:
     - kustomize:
         patches:
