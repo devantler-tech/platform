@@ -31,5 +31,3 @@ spec:
       hostRoot: /sys/fs/cgroup
     k8sServiceHost: localhost
     k8sServicePort: 7445
-    # TODO: Remove this once QUIC support is fixed in Cilium (https://github.com/cilium/cilium/issues/37529)
-    MTU: 1500
