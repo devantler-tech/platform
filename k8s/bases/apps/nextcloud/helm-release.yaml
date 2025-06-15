@@ -20,80 +20,23 @@ spec:
     replicaCount: ${nextcloud_replicas:=2}
     ingress:
       enabled: true
-      annotations:
-        traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
     service:
       annotations:
         traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
+    internalDatabase:
+      enabled: false
+    externalDatabase:
+      enabled: true
+      type: postgresql
+      host: postgresql.nextcloud
+      database: nextcloud
+      existingSecret:
+        enabled: true
+        usernameKey: username
+        passwordKey: password
     nextcloud:
       host: nextcloud.${domain}
-      username: ${nextcloud_username:=admin}
-      password: ${nextcloud_password:=password}
       strategy:
         type: RollingUpdate
-      # existingSecret:
-      #   enabled: false
-      #   secretName: nameofsecret
-      #   usernameKey: nextcloud-username
-      #   passwordKey: nextcloud-password
-      #   tokenKey: ""
-      #   smtpUsernameKey: smtp-username
-      #   smtpPasswordKey: smtp-password
-      #   smtpHostKey: smtp-host
-      # mail:
-      #   enabled: false
-      #   # the user we send email as
-      #   fromAddress: user
-      #   # the domain we send email from
-      #   domain: domain.com
-      #   smtp:
-      #     host: domain.com
-      #     secure: ssl
-      #     port: 465
-      #     authtype: LOGIN
-      #     name: user
-      #     password: pass
-      # objectStore:
-      #   # https://docs.nextcloud.com/server/latest/admin_manual/configuration_files/primary_storage.html#simple-storage-service-s3
-      #   s3:
-      #     enabled: false
-      #     # ignored if nextcloud.objectstore.s3.existingSecret is not empty string
-      #     accessKey: ""
-      #     # ignored if nextcloud.objectstore.s3.existingSecret is not empty string
-      #     secretKey: ""
-      #     # use legacy auth method
-      #     legacyAuth: false
-      #     # s3 endpoint to use; only required if you're not using AWS
-      #     host: ""
-      #     # use TLS/SSL for S3 connections
-      #     ssl: true
-      #     # default port that can be changed based on your object store, e.g. for minio, you can use 9000
-      #     port: "443"
-      #     # this is the default in the nextcloud docs
-      #     region: "eu-west-1"
-      #     # required if using s3, the name of the bucket you'd like to use
-      #     bucket: ""
-      #     # object prefix in bucket
-      #     prefix: ""
-      #     # set to true if you are not using DNS for your buckets.
-      #     usePathStyle: false
-      #     # autocreate the bucket
-      #     autoCreate: false
-      #     # optonal parameter: you probably want to keep this as default
-      #     storageClass: "STANDARD"
-      #     # server side encryption key. learn more: https://docs.nextcloud.com/server/latest/admin_manual/configuration_files/primary_storage.html#s3-sse-c-encryption-support
-      #     sse_c_key: ""
-      #     # use an existingSecret for S3 credentials. If set, we ignore the following under nextcloud.objectStore.s3
-      #     # endpoint, accessKey, secretKey
-      #     existingSecret: ""
-      #     secretKeys:
-      #       # key in nextcloud.objectStore.s3.existingSecret to use for s3 endpoint
-      #       host: ""
-      #       # key in nextcloud.objectStore.s3.existingSecret to use for s3 accessKeyID
-      #       accessKey: ""
-      #       # key in nextcloud.objectStore.s3.existingSecret to use for s3 secretAccessKey
-      #       secretKey: ""
-      #       # key in nextcloud.objectStore.s3.existingSecret to use for the s3 bucket
-      #       bucket: ""
-      #       # key in nextcloud.objectStore.s3.existingSecret to use for the s3 sse_c_key
-      #       sse_c_key: ""
+      existingSecret:
+        enabled: true

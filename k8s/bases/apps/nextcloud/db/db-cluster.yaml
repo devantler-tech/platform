@@ -1,9 +1,15 @@
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: postgresql
+  name: db
   namespace: nextcloud
 spec:
   instances: 3
   storage:
     size: 1Gi
+  bootstrap:
+    initdb:
+      database: nextcloud
+      owner: nextcloud
+      secret:
+        name: nextcloud-db
