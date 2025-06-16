@@ -45,5 +45,9 @@ spec:
         type: RollingUpdate
       existingSecret:
         enabled: true
+      # TODO: Configure SendGrid email provider
+      # TODO: Add SMTP configuration for nextcloud
+      # mail:
+      #   enabled: true
     persistence:
       enabled: true
