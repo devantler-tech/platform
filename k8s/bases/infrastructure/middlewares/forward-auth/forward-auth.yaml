@@ -5,4 +5,4 @@ metadata:
   namespace: traefik
 spec:
   forwardAuth:
-    address: https://oauth2-proxy.${domain}
+    address: https://oauth2-proxy.${domain}/
