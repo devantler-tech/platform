@@ -8,6 +8,7 @@ resources:
   - dex/
   - goldilocks/
   - kyverno/
+  - metrics-server/
   - oauth2-proxy/
   - reloader/
   - traefik/

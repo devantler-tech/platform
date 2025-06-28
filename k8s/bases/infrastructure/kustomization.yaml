@@ -4,6 +4,4 @@ kind: Kustomization
 resources:
   - certificates/
   - cluster-policies/
-  - metrics-server/
   - middlewares/
-  #- oauth2-proxy/
