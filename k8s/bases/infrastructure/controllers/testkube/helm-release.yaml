@@ -12,7 +12,7 @@ spec:
   chart:
     spec:
       chart: testkube
-      version: 2.1.247
+      version: 2.1.252
       sourceRef:
         kind: HelmRepository
         name: testkube
