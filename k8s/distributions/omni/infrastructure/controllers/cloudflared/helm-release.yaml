@@ -1,0 +1,43 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cloudflared
+  namespace: cloudflared
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: cloudflare-tunnel-remote
+      version: 0.1.2
+      sourceRef:
+        kind: HelmRepository
+        name: cloudflared
+  # TODO: Remove when Cilium supports QUIC protocol for cloudflared (https://github.com/cilium/cilium/issues/37529)
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: cloudflared-cloudflare-tunnel-remote
+            patch: |
+              - op: replace
+                path: /spec/template/spec/containers/0/command
+                value:
+                  - cloudflared
+                  - tunnel
+                  - --protocol
+                  - http2
+                  - --no-autoupdate
+                  - --metrics
+                  - 0.0.0.0:2000
+                  - run
+  # https://github.com/cloudflare/helm-charts/blob/main/charts/cloudflare-tunnel-remote/values.yaml
+  values:
+    cloudflare:
+      tunnel_token: ${cloudflared_tunnel_token}
+    image:
+      pullPolicy: Always
+
