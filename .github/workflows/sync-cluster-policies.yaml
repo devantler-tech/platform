@@ -1,4 +1,4 @@
-# TODO: Move to https://github.com/devantler-tech/workflows as a reusable action.
+# TODO: Move to https://github.com/devantler-tech/github-actions as a reusable action.
 name: Sync Cluster Policies
 
 on:
