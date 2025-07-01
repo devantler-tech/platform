@@ -37,3 +37,6 @@ spec:
       enabled: true
       hosts:
         - oauth2-proxy.${domain}
+      annotations:
+        traefik.ingress.kubernetes.io/router.middlewares: traefik-headers@kubernetescrd
+

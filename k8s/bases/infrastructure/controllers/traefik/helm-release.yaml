@@ -30,6 +30,7 @@ spec:
             scheme: https
     service:
       type: ${traefik_service_type:=LoadBalancer}
+
     ingressRoute:
       dashboard:
         enabled: true
