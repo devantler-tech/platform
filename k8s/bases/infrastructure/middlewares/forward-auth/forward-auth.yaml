@@ -6,3 +6,7 @@ metadata:
 spec:
   forwardAuth:
     address: https://oauth2-proxy.${domain}/
+    trustForwardHeader: true
+    authResponseHeaders:
+      - X-Auth-Request-Access-Token
+      - Authorization
