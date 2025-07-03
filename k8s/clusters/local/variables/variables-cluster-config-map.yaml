@@ -12,3 +12,4 @@ data:
   issuer_kind: ClusterIssuer
   issuer_name: selfsigned
   traefik_replicas: "1"
+
