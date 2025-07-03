@@ -14,14 +14,16 @@ spec:
   interval: 1h0m0s
   # https://github.com/weaveworks/weave-gitops/blob/main/charts/gitops-server/values.yaml
   values:
+    annotations:
+      reloader.stakater.com/auto: "true"
     adminUser:
       create: true
       createSecret: false
       username: devantler
     ingress:
       enabled: true
-      annotations:
-        traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
+      # annotations:
+      #   traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
       hosts:
         - host: weave-gitops.${domain}
           paths:
