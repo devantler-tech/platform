@@ -22,8 +22,8 @@ spec:
       username: devantler
     ingress:
       enabled: true
-      # annotations:
-      #   traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
+      annotations:
+        traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
       hosts:
         - host: weave-gitops.${domain}
           paths:
