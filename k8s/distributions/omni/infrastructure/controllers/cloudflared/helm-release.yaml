@@ -15,7 +15,7 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: cloudflared
-  # TODO: Remove when Cilium supports QUIC protocol for cloudflared (https://github.com/cilium/cilium/issues/37529)
+  # TODO: Remove postRendererswhen Cilium supports QUIC protocol for cloudflared (https://github.com/cilium/cilium/issues/37529)
   postRenderers:
     - kustomize:
         patches:
@@ -33,6 +33,7 @@ spec:
     cloudflare:
       tunnel_token: ${cloudflared_tunnel_token}
     image:
-      repository: ghcr.io/nobles5e/cloudflared/cloudflared
       pullPolicy: Always
+      # TODO: Remove custom image when Cilium supports QUIC protocol for cloudflared (https://github.com/cilium/cilium/issues/37529)
+      repository: ghcr.io/nobles5e/cloudflared/cloudflared
       tag: latest
