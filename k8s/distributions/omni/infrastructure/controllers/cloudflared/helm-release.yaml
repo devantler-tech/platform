@@ -35,7 +35,7 @@ spec:
                 path: /spec/template/spec/containers/0/env/-
                 value:
                   name: TUNNEL_DISABLE_QUIC_PMTU
-                  value: "true"
+                  value: true
   # https://github.com/cloudflare/helm-charts/blob/main/charts/cloudflare-tunnel-remote/values.yaml
   values:
     cloudflare:
