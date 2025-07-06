@@ -26,6 +26,7 @@ spec:
               - op: replace
                 path: /spec/template/spec/containers/0/command
                 value:
+                  - cloudflared
                   - tunnel
                   - --no-autoupdate
                   - --metrics
