@@ -27,7 +27,7 @@ spec:
                 path: /spec/template/spec/containers/0/env/-
                 value:
                   name: CLOUDFLARED_QUIC_INITIAL_PACKET_SIZE
-                  value: "1230"
+                  value: "800"
   # https://github.com/cloudflare/helm-charts/blob/main/charts/cloudflare-tunnel-remote/values.yaml
   values:
     cloudflare:
