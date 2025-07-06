@@ -31,11 +31,10 @@ spec:
                   - --no-autoupdate
                   - --metrics
                   - 0.0.0.0:2000
-                  - run
-              - op: replace
-                path: /spec/template/spec/containers/0/env
-                value:
-                  - name: CLOUDFLARED_QUIC_INITIAL_PACKET_SIZE
+                - op: add
+                  path: /spec/template/spec/containers/0/env/-
+                  value:
+                    name: CLOUDFLARED_QUIC_INITIAL_PACKET_SIZE
                     value: "1230"
   # https://github.com/cloudflare/helm-charts/blob/main/charts/cloudflare-tunnel-remote/values.yaml
   values:
@@ -45,4 +44,3 @@ spec:
       repository: ghcr.io/nobles5e/cloudflared/cloudflared
       pullPolicy: Always
       tag: latest
-
