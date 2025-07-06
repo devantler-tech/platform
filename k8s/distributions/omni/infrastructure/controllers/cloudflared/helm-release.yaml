@@ -31,11 +31,11 @@ spec:
                   - --no-autoupdate
                   - --metrics
                   - 0.0.0.0:2000
-              - op: add
-                path: /spec/template/spec/containers/0/env/-
-                value:
-                  name: TUNNEL_DISABLE_QUIC_PMTU
-                  value: true
+            # - op: add
+            #   path: /spec/template/spec/containers/0/env/-
+            #   value:
+            #     name: CLOUDFLARED_QUIC_INITIAL_PACKET_SIZE
+            #     value: "1230"
   # https://github.com/cloudflare/helm-charts/blob/main/charts/cloudflare-tunnel-remote/values.yaml
   values:
     cloudflare:
