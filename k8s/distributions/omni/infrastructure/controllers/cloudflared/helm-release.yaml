@@ -16,18 +16,18 @@ spec:
         kind: HelmRepository
         name: cloudflared
   # TODO: Remove when Cilium supports QUIC protocol for cloudflared (https://github.com/cilium/cilium/issues/37529)
-  # postRenderers:
-  #   - kustomize:
-  #       patches:
-  #         - target:
-  #             kind: Deployment
-  #             name: cloudflared-cloudflare-tunnel-remote
-  #           patch: |
-  #             - op: add
-  #               path: /spec/template/spec/containers/0/env/-
-  #               value:
-  #                 name: CLOUDFLARED_QUIC_INITIAL_PACKET_SIZE
-  #                 value: "1230"
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: cloudflared-cloudflare-tunnel-remote
+            patch: |
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: TUNNEL_DISABLE_QUIC_PMTU
+                  value: "true"
   # https://github.com/cloudflare/helm-charts/blob/main/charts/cloudflare-tunnel-remote/values.yaml
   values:
     cloudflare:
