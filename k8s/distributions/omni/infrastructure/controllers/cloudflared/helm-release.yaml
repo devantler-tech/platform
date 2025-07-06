@@ -34,13 +34,13 @@ spec:
                 - op: add
                   path: /spec/template/spec/containers/0/env/-
                   value:
-                    name: CLOUDFLARED_QUIC_INITIAL_PACKET_SIZE
-                    value: "1230"
+                    name: TUNNEL_DISABLE_QUIC_PMTU
+                    value: "true"
   # https://github.com/cloudflare/helm-charts/blob/main/charts/cloudflare-tunnel-remote/values.yaml
   values:
     cloudflare:
       tunnel_token: ${cloudflared_tunnel_token}
     image:
-      repository: ghcr.io/nobles5e/cloudflared/cloudflared
+      # repository: ghcr.io/nobles5e/cloudflared/cloudflared
       pullPolicy: Always
-      tag: latest
+      # tag: latest
