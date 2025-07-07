@@ -6,7 +6,7 @@ metadata:
 spec:
   connection:
     context: kind-local
-    timeout: 7m
+    timeout: 10m
   project:
     kustomizationPath: k8s/clusters/local
     deploymentTool: Flux
