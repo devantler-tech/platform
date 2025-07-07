@@ -6,7 +6,6 @@ resources:
   - cilium/
   - cloudnative-pg/
   - dex/
-  - goldilocks/
   - kyverno/
   - oauth2-proxy/
   - reloader/
