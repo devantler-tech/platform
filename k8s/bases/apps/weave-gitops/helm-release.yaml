@@ -3,7 +3,12 @@ kind: HelmRelease
 metadata:
   name: weave-gitops
   namespace: flux-system
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
 spec:
+  interval: 10m
   chart:
     spec:
       chart: weave-gitops
@@ -11,7 +16,6 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: weave-gitops
-  interval: 1h0m0s
   # https://github.com/weaveworks/weave-gitops/blob/main/charts/gitops-server/values.yaml
   values:
     annotations:
@@ -22,10 +26,15 @@ spec:
       username: devantler
     ingress:
       enabled: true
-      annotations:
-        traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
       hosts:
         - host: weave-gitops.${domain}
           paths:
             - path: /
               pathType: ImplementationSpecific
+      annotations:
+        traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/name: Weave GitOps
+        gethomepage.dev/description: Dashboard for monitoring and managing GitOps (Flux).
+        gethomepage.dev/group: Kubernetes
+        gethomepage.dev/icon: flux-cd
