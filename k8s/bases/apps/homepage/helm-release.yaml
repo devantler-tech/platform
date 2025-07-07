@@ -11,7 +11,7 @@ spec:
   chart:
     spec:
       chart: homepage
-      version: 2.1.0
+      version: 4.0.0
       sourceRef:
         kind: HelmRepository
         name: homepage
@@ -30,11 +30,8 @@ spec:
   # https://simpleicons.org
   # https://pictogrammers.com/library/mdi/
   # ---
-  # https://github.com/jameswynn/helm-charts/blob/main/charts/homepage/values.yaml
+  # https://github.com/M0NsTeRRR/helm-charts/blob/main/charts/homepage/values.yaml
   values:
-    enableRbac: true
-    serviceaccount:
-      create: true
     ingress:
       main:
         enabled: true
@@ -42,107 +39,12 @@ spec:
           - host: ${domain}
             paths:
               - path: /
-                pathType: Prefix
+                pathType: ImplementationSpecific
         annotations:
           traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
     env:
       - name: HOMEPAGE_ALLOWED_HOSTS
         value: ${domain}
     config:
-      kubernetes:
-        mode: cluster
-      settingsString: |
-        title: Platform
-        favicon: https://devantler.tech/assets/images/author.png
-        theme: dark
-        color: slate
-        background:
-          image: https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?q=80&w=1974&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D
-          blur: sm
-          opacity: 70
-        layout:
-          Kubernetes:
-          Cloud:
-          Network:
-          Storage:
-          Monitoring:
-          Analytics:
-      widgets:
-        - logo:
-            icon: https://devantler.tech/assets/images/author.png
-        # - longhorn:
-        #     expanded: true
-        #     total: true
-        #     labels: false
-        #     nodes: false
-      services:
-        - Kubernetes:
-            - Omni:
-                icon: si-talos-#FF7300
-                href: https://devantler.omni.siderolabs.io
-                description: Platform for provisioning and managing Talos Linux clusters.
-        - Cloud:
-            - Hetzner Cloud:
-                icon: hetzner
-                href: https://console.hetzner.cloud/projects
-                description: Hetzner Cloud infrastructure provider.
-        - Network:
-            - Cloudflare:
-                icon: cloudflare
-                href: https://dash.cloudflare.com
-                description: Central hub for managing public networking, e.g. FQDN, DNS and remote tunneling.
-                widget:
-                  type: cloudflared
-                  accountid: ${cloudflare_account_id}
-                  tunnelid: ${cloudflared_tunnel_id}
-                  key: ${cloudflare_api_token}
-            - UniFi:
-                icon: unifi
-                href: https://unifi.ui.com
-                description: Central hub for managing on-prem UniFi network infrastructure.
-        - Analytics:
-            - Disqus:
-                icon: si-disqus-#2E9FFF
-                href: https://disqus.com
-                description: Platform to track and moderate embedded comments on my sites.
-            - Google Analytics:
-                icon: google-analytics
-                href: https://analytics.google.com
-                description: Web analytics service.
-        - Monitoring:
-            - Grafana:
-                icon: grafana
-                href: https://devantler.grafana.net
-                description: Central hub for monitoring my infrastructure.
-      bookmarks:
-        - Personal:
-            - Personal Site:
-                - icon: github-light
-                  href: https://devantler.tech
-        - Developer Platforms:
-            - GitHub:
-                - icon: github-light
-                  href: https://github.com
-            - Codecov:
-                - icon: si-codecov-#F01F7A
-                  href: https://app.codecov.io
-            - Renovate:
-                - icon: si-renovatebot-#007fa0
-                  href: https://developer.mend.io
-        - Kubernetes:
-            - ArtifactHUB:
-                - icon: si-artifacthub-#417598
-                  href: https://artifacthub.io
-            - CRD Docs:
-                - icon: si-kubernetes-#326CE5
-                  href: https://doc.crds.dev
-            - Network Policy Editor:
-                - icon: si-kubernetes-#326CE5
-                  href: https://editor.networkpolicy.io
-        - Package Registries:
-            - Docker Hub:
-                - icon: docker
-                  href: https://hub.docker.com
-            - NuGet:
-                - icon: si-nuget-#1088d6
-                  href: https://www.nuget.org
+      allowedHosts:
+        - ${domain}
