@@ -23,6 +23,14 @@ spec:
     replicaCount: ${nextcloud_replicas:=1}
     ingress:
       enabled: true
+      annotations:
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/name: Nextcloud
+        gethomepage.dev/description: File storage and collaboration platform.
+        gethomepage.dev/group: Apps
+        gethomepage.dev/icon: nextcloud
+        gethomepage.dev/app: nextcloud
+        gethomepage.dev/pod-selector: app.kubernetes.io/name=nextcloud
     service:
       annotations:
         traefik.ingress.kubernetes.io/service.sticky.cookie: "true"
