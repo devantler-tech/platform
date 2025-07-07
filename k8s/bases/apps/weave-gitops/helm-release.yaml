@@ -38,5 +38,3 @@ spec:
         gethomepage.dev/description: Dashboard for monitoring and managing GitOps (Flux).
         gethomepage.dev/group: Kubernetes
         gethomepage.dev/icon: flux-cd
-        gethomepage.dev/app: weave-gitops
-        gethomepage.dev/pod-selector: app.kubernetes.io/name=weave-gitops
