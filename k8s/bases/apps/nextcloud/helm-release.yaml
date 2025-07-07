@@ -17,9 +17,6 @@ spec:
         name: nextcloud
   # https://github.com/nextcloud/helm/blob/main/charts/nextcloud/values.yaml
   values:
-    image:
-      flavor: apache
-      version: 4.5.12
     replicaCount: ${nextcloud_replicas:=1}
     ingress:
       enabled: true
