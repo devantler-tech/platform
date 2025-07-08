@@ -4,9 +4,3 @@ kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
   - cluster-issuers/
-patches:
-  - target:
-      kind: HelmRelease
-      name: metrics-server
-      namespace: kube-system
-    path: metrics-server/patches/helm-release-patch.yaml
