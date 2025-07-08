@@ -49,6 +49,8 @@ spec:
       - name: config
         configMap:
           name: config
+      - name: logs
+        emptyDir: {}
     volumeMounts:
       - mountPath: /app/config/custom.js
         name: config
