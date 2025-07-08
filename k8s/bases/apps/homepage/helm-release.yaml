@@ -49,8 +49,6 @@ spec:
       - name: config
         configMap:
           name: config
-      - name: logs
-        emptyDir: {}
     volumeMounts:
       - mountPath: /app/config/custom.js
         name: config
@@ -76,5 +74,3 @@ spec:
       - mountPath: /app/config/widgets.yaml
         name: config
         subPath: widgets.yaml
-      - mountPath: /app/config/logs
-        name: logs
