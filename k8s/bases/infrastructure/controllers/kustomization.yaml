@@ -6,9 +6,11 @@ resources:
   - cilium/
   - cloudnative-pg/
   - dex/
+  - goldilocks/
   - kyverno/
   - oauth2-proxy/
   - reloader/
   - traefik/
   - vertical-pod-autoscaler/
+  - weave-gitops/
   # - trivy-operator/
