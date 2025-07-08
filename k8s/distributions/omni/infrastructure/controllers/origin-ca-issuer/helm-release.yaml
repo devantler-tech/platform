@@ -4,7 +4,7 @@ metadata:
   name: origin-ca-issuer
   namespace: cert-manager
 spec:
-  interval: 10m
+  interval: 2m
   chart:
     spec:
       chart: origin-ca-issuer
