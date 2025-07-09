@@ -65,6 +65,10 @@ data:
             icon: grafana
             href: https://devantler.grafana.net
             description: Central hub for monitoring my infrastructure.
+        - BetterStack:
+            icon: grafana
+            href: https://telemetry.betterstack.com/
+            description: Central hub for monitoring my infrastructure.
   bookmarks.yaml: |
     - Personal:
         - Personal Site:
