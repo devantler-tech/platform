@@ -46,31 +46,31 @@ spec:
       annotations:
         traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
     volumes:
-      - name: config
+      - name: homepage-config
         configMap:
-          name: config
+          name: homepage
     volumeMounts:
       - mountPath: /app/config/custom.js
-        name: config
+        name: homepage-config
         subPath: custom.js
       - mountPath: /app/config/custom.css
-        name: config
+        name: homepage-config
         subPath: custom.css
-      - mountPath: /app/config/bookmarks.yaml
-        name: config
-        subPath: bookmarks.yaml
       - mountPath: /app/config/docker.yaml
-        name: config
+        name: homepage-config
         subPath: docker.yaml
-      - mountPath: /app/config/kubernetes.yaml
-        name: config
-        subPath: kubernetes.yaml
-      - mountPath: /app/config/services.yaml
-        name: config
-        subPath: services.yaml
       - mountPath: /app/config/settings.yaml
-        name: config
+        name: homepage-config
         subPath: settings.yaml
+      - mountPath: /app/config/kubernetes.yaml
+        name: homepage-config
+        subPath: kubernetes.yaml
       - mountPath: /app/config/widgets.yaml
-        name: config
+        name: homepage-config
         subPath: widgets.yaml
+      - mountPath: /app/config/services.yaml
+        name: homepage-config
+        subPath: services.yaml
+      - mountPath: /app/config/bookmarks.yaml
+        name: homepage-config
+        subPath: bookmarks.yaml
