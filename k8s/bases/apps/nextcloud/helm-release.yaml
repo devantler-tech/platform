@@ -17,7 +17,7 @@ spec:
         name: nextcloud
   # https://github.com/nextcloud/helm/blob/main/charts/nextcloud/values.yaml
   values:
-    replicaCount: ${nextcloud_replicas:=2}
+    replicaCount: ${nextcloud_replicas:=1}
     ingress:
       enabled: true
       annotations:
