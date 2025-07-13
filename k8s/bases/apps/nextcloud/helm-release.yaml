@@ -44,8 +44,6 @@ spec:
         passwordKey: password
     nextcloud:
       host: nextcloud.${domain}
-      strategy:
-        type: RollingUpdate
       existingSecret:
         enabled: true
       # TODO: Configure SendGrid email provider
