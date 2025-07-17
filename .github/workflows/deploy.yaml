@@ -2,6 +2,8 @@ name: Deploy
 
 on:
   push:
+    branches-ignore:
+      - 'gh-readonly-queue/**'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -16,8 +18,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  wait-for-workflow:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for previous job to finish
+        uses: ahmadnassri/action-workflow-queue@v1
+        with:
+          timeout: 1800000 # 30 minutes
+
   deploy-dev:
-    if: github.event_name != 'merge_group'
+    needs: wait-for-workflow
     uses: devantler-tech/github-actions/.github/workflows/gitops-deploy.yaml@main
     secrets: inherit
     with:
@@ -30,6 +40,3 @@ jobs:
     secrets: inherit
     with:
       DEPLOYMENT_ENV: prod
-
-
-
