@@ -28,7 +28,7 @@ jobs:
 
   bootstrap-dev:
     needs: wait-for-workflow
-    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-cluster-bootstrap.yaml@b119b9fc03d4ca7cdff1b8ac64ee50034a267a88 # v1.8.0
+    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-cluster-bootstrap.yaml@e2bd11618534558a19a1903468a9f1ba5daf90db # v1.8.3
     with:
       DEPLOYMENT_ENV: dev
     secrets:
@@ -37,7 +37,7 @@ jobs:
 
   deploy-dev:
     needs: bootstrap-dev
-    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-gitops-deploy.yaml@b119b9fc03d4ca7cdff1b8ac64ee50034a267a88 # v1.8.0
+    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-gitops-deploy.yaml@e2bd11618534558a19a1903468a9f1ba5daf90db # v1.8.3
     with:
       DEPLOYMENT_ENV: dev
     secrets:
@@ -47,7 +47,7 @@ jobs:
   bootstrap-prod:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: deploy-dev
-    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-cluster-bootstrap.yaml@b119b9fc03d4ca7cdff1b8ac64ee50034a267a88 # v1.8.0
+    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-cluster-bootstrap.yaml@e2bd11618534558a19a1903468a9f1ba5daf90db # v1.8.3
     with:
       DEPLOYMENT_ENV: prod
     secrets:
@@ -57,7 +57,7 @@ jobs:
   deploy-prod:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: deploy-dev
-    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-gitops-deploy.yaml@b119b9fc03d4ca7cdff1b8ac64ee50034a267a88 # v1.8.0
+    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-gitops-deploy.yaml@e2bd11618534558a19a1903468a9f1ba5daf90db # v1.8.3
     with:
       DEPLOYMENT_ENV: prod
     secrets:
