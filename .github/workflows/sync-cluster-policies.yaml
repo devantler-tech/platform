@@ -15,49 +15,8 @@ permissions: {}
 
 jobs:
   sync-policies:
-    runs-on: ubuntu-latest
-    env:
+    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-sync-cluster-policies.yaml@b119b9fc03d4ca7cdff1b8ac64ee50034a267a88 #v1.8.0
+    with:
       KYVERNO_POLICIES_DIR: k8s/bases/infrastructure/cluster-policies/samples
-      KYVERNO_POLICIES_TEMP_DIR: /tmp/cluster-policies
-
-    steps:
-      - name: Generate GitHub App Token
-        uses: tibdex/github-app-token@3beb63f4bd073e61482598c45c71c1019b59b73a # v2.1.0
-        id: generate-token
-        with:
-          app_id: ${{ vars.APP_ID }}
-          private_key: ${{ secrets.APP_PRIVATE_KEY }}
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-          token: ${{ steps.generate-token.outputs.token }}
-      - name: Download latest Cluster Policies
-        run: |
-          git clone --filter=blob:none --sparse https://github.com/kyverno/policies ${{ env.KYVERNO_POLICIES_TEMP_DIR }}
-          cd ${{ env.KYVERNO_POLICIES_TEMP_DIR }}
-          git sparse-checkout set --no-cone '*/' ':!.*'
-      - name: Remove blacklisted policies
-        run: |
-          while IFS= read -r pattern; do
-          find ${{ env.KYVERNO_POLICIES_TEMP_DIR }} -path "${{ env.KYVERNO_POLICIES_TEMP_DIR }}/$pattern" -exec rm -rf {} +
-            done < .policyignore
-      - name: Copy Cluster Policies to the target directory
-        run: |
-          mkdir -p ${{ env.KYVERNO_POLICIES_DIR }}
-          rm -rf ${{ env.KYVERNO_POLICIES_DIR }}/*
-          cp -r ${{ env.KYVERNO_POLICIES_TEMP_DIR }}/* ${{ env.KYVERNO_POLICIES_DIR }} || echo "No policies found to copy."
-      - name: Create PR with changes
-        uses: peter-evans/create-pull-request@v7
-        with:
-          commit-message: "chore: sync cluster policies"
-          title: "chore: sync cluster policies"
-          body: "Sync Cluster Policies from <https://github.com/kyverno/policies>"
-          branch: sync-cluster-policies
-          delete-branch: true
-          signoff: true
-          sign-commits: true
-          reviewers: devantler
-          assignees: devantler
-          token: ${{ steps.generate-token.outputs.token }}
-          branch-token: ${{ steps.generate-token.outputs.token }}
+    secrets:
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}

@@ -26,17 +26,40 @@ jobs:
         with:
           timeout: 1800000 # 30 minutes
 
-  deploy-dev:
+  bootstrap-dev:
     needs: wait-for-workflow
-    uses: devantler-tech/github-actions/.github/workflows/gitops-deploy.yaml@main
-    secrets: inherit
+    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-cluster-bootstrap.yaml@b119b9fc03d4ca7cdff1b8ac64ee50034a267a88 # v1.8.0
     with:
       DEPLOYMENT_ENV: dev
+    secrets:
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+
+  deploy-dev:
+    needs: bootstrap-dev
+    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-gitops-deploy.yaml@b119b9fc03d4ca7cdff1b8ac64ee50034a267a88 # v1.8.0
+    with:
+      DEPLOYMENT_ENV: dev
+    secrets:
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+
+  bootstrap-prod:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: deploy-dev
+    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-cluster-bootstrap.yaml@b119b9fc03d4ca7cdff1b8ac64ee50034a267a88 # v1.8.0
+    with:
+      DEPLOYMENT_ENV: prod
+    secrets:
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
 
   deploy-prod:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: deploy-dev
-    uses: devantler-tech/github-actions/.github/workflows/gitops-deploy.yaml@main
-    secrets: inherit
+    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-gitops-deploy.yaml@b119b9fc03d4ca7cdff1b8ac64ee50034a267a88 # v1.8.0
     with:
       DEPLOYMENT_ENV: prod
+    secrets:
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}

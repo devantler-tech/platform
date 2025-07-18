@@ -8,5 +8,6 @@ on:
 
 jobs:
   todos:
-    uses: devantler-tech/github-actions/.github/workflows/todos.yaml@main
-    secrets: inherit
+    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-todos.yaml@b119b9fc03d4ca7cdff1b8ac64ee50034a267a88 # v1.8.0
+    secrets:
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
