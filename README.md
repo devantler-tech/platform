@@ -1,4 +1,4 @@
-# Welcome to the DevantlerTech Platform ⛴️
+# DevantlerTech Platform ☸️⛴️
 
 <img width="1840" alt="Screenshot 2024-09-03 at 00 51 44" src="https://github.com/user-attachments/assets/eb6729f7-edff-4346-9be9-0c77d9740633">
 
