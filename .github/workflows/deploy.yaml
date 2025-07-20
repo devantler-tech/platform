@@ -22,13 +22,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Wait for previous job to finish
-        uses: ahmadnassri/action-workflow-queue@v1
+        uses: ahmadnassri/action-workflow-queue@542658b3a8270cac81ae15d401b0d974732808ac # v1.2.0
         with:
           timeout: 1800000 # 30 minutes
 
   bootstrap-dev:
     needs: wait-for-workflow
-    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-cluster-bootstrap.yaml@d69de4b313f789d5aff0bf42614da212fc5362e2 # v1.8.4
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-cluster-bootstrap.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
     with:
       DEPLOYMENT_ENV: dev
     secrets:
@@ -37,7 +37,7 @@ jobs:
 
   deploy-dev:
     needs: bootstrap-dev
-    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-gitops-deploy.yaml@d69de4b313f789d5aff0bf42614da212fc5362e2 # v1.8.4
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
     with:
       DEPLOYMENT_ENV: dev
     secrets:
@@ -47,7 +47,7 @@ jobs:
   bootstrap-prod:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: deploy-dev
-    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-cluster-bootstrap.yaml@d69de4b313f789d5aff0bf42614da212fc5362e2 # v1.8.4
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
     with:
       DEPLOYMENT_ENV: prod
     secrets:
@@ -57,7 +57,7 @@ jobs:
   deploy-prod:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: bootstrap-prod
-    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-cd-gitops-deploy.yaml@d69de4b313f789d5aff0bf42614da212fc5362e2 # v1.8.4
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
     with:
       DEPLOYMENT_ENV: prod
     secrets:

@@ -1,4 +1,3 @@
-# TODO: Move to https://github.com/devantler-tech/github-actions as a reusable action.
 name: Sync Cluster Policies
 
 on:
@@ -15,7 +14,7 @@ permissions: {}
 
 jobs:
   sync-policies:
-    uses: devantler-tech/github-actions/.github/workflows/reusable-workflow-sync-cluster-policies.yaml@b119b9fc03d4ca7cdff1b8ac64ee50034a267a88 #v1.8.0
+    uses: devantler-tech/reusable-workflows/.github/workflows/sync-cluster-policies.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
     with:
       KYVERNO_POLICIES_DIR: k8s/bases/infrastructure/cluster-policies/samples
     secrets:
