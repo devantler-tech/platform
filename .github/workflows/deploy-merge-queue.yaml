@@ -1,4 +1,4 @@
-name: CD - Deploy
+name: CD - Deploy (Merge Queue)
 
 on:
   merge_group:
