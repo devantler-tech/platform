@@ -15,7 +15,7 @@ jobs:
     uses: devantler-tech/reusable-workflows/.github/workflows/cd-cluster-bootstrap.yaml@ef9a8261b5321bce3a4ee83ed4f5d10021c36653 # v1.1.10
     with:
       DEPLOYMENT_ENV: dev
-      SKIP: ${{ github.event_name == 'pull_request' }}
+      SKIP: ${{ github.event_name != 'merge_group' }}
     secrets:
       KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
       SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
@@ -25,7 +25,7 @@ jobs:
     uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@ef9a8261b5321bce3a4ee83ed4f5d10021c36653 # v1.1.10
     with:
       DEPLOYMENT_ENV: dev
-      SKIP: ${{ github.event_name == 'pull_request' }}
+      SKIP: ${{ github.event_name != 'merge_group' }}
     secrets:
       KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
       SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
