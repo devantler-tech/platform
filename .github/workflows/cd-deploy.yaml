@@ -17,24 +17,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  bootstrap-dev:
-    runs-on: ubuntu-latest
-    environment: dev
-    steps:
-      - name: No-op
-        run: echo "Only run this job if the merge queue is triggered"
-
-  deploy-dev:
-    needs: bootstrap-dev
-    runs-on: ubuntu-latest
-    environment: dev
-    steps:
-      - name: No-op
-        run: echo "Only run this job if the merge queue is triggered"
-
   bootstrap-prod:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: deploy-dev
     uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
     with:
       DEPLOYMENT_ENV: prod
