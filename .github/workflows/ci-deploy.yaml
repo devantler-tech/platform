@@ -1,9 +1,9 @@
 name: CI - Deploy
 
 on:
-  pull_request:
-    branches:
-      - 'main'
+  push:
+    branches-ignore:
+      - gh-readonly-queue/main/pr-**
   merge_group:
 
 permissions:
@@ -12,19 +12,20 @@ permissions:
 
 jobs:
   bootstrap-dev:
-    uses: devantler-tech/reusable-workflows/.github/workflows/cd-cluster-bootstrap.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
-    if: github.event_name == 'merge_group'
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-cluster-bootstrap.yaml@ef9a8261b5321bce3a4ee83ed4f5d10021c36653 # v1.1.10
     with:
       DEPLOYMENT_ENV: dev
+      SKIP: ${{ github.event_name == 'pull_request' }}
     secrets:
       KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
       SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+
   deploy-dev:
     needs: bootstrap-dev
-    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
-    if: github.event_name == 'merge_group'
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@ef9a8261b5321bce3a4ee83ed4f5d10021c36653 # v1.1.10
     with:
       DEPLOYMENT_ENV: dev
+      SKIP: ${{ github.event_name == 'pull_request' }}
     secrets:
       KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
       SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
