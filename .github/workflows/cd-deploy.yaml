@@ -2,11 +2,8 @@ name: CD - Deploy
 
 on:
   push:
-    branches-ignore:
-      - 'gh-readonly-queue/**'
     tags:
       - 'v*'
-  workflow_dispatch:
 
 permissions:
   contents: read
