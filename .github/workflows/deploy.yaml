@@ -19,6 +19,7 @@ concurrency:
 jobs:
   bootstrap-dev:
     runs-on: ubuntu-latest
+    environment: dev
     steps:
       - name: No-op
         run: echo "Only run this job if the merge queue is triggered"
@@ -26,6 +27,7 @@ jobs:
   deploy-dev:
     needs: bootstrap-dev
     runs-on: ubuntu-latest
+    environment: dev
     steps:
       - name: No-op
         run: echo "Only run this job if the merge queue is triggered"
