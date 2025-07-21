@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   bootstrap-dev:
-    uses: devantler-tech/reusable-workflows/.github/workflows/cd-cluster-bootstrap.yaml@6729357998569523788c7135784ecdcddf2e7d8e # v1.1.11
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-cluster-bootstrap.yaml@3507b6bc6c10bb8a0948658a611f91682883dab9 # v1.1.12
     with:
       DEPLOYMENT_ENV: dev
       SKIP: ${{ github.event_name != 'merge_group' }}
@@ -22,7 +22,7 @@ jobs:
 
   deploy-dev:
     needs: bootstrap-dev
-    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@6729357998569523788c7135784ecdcddf2e7d8e # v1.1.11
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@3507b6bc6c10bb8a0948658a611f91682883dab9 # v1.1.12
     with:
       DEPLOYMENT_ENV: dev
       SKIP: ${{ github.event_name != 'merge_group' }}
