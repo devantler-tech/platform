@@ -15,7 +15,6 @@ concurrency:
 
 jobs:
   bootstrap-prod:
-    if: startsWith(github.ref, 'refs/tags/v')
     uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
     with:
       DEPLOYMENT_ENV: prod
@@ -24,7 +23,6 @@ jobs:
       SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
 
   deploy-prod:
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: bootstrap-prod
     uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
     with:
