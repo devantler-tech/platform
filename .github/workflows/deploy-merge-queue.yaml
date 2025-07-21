@@ -1,0 +1,26 @@
+name: CD - Deploy
+
+on:
+  merge_group:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  bootstrap-dev:
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-cluster-bootstrap.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
+    with:
+      DEPLOYMENT_ENV: dev
+    secrets:
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+
+  deploy-dev:
+    needs: bootstrap-dev
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
+    with:
+      DEPLOYMENT_ENV: dev
+    secrets:
+      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}

@@ -7,7 +7,6 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-  merge_group:
 
 permissions:
   contents: read
@@ -18,31 +17,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  wait-for-workflow:
+  bootstrap-dev:
     runs-on: ubuntu-latest
     steps:
-      - name: Wait for previous job to finish
-        uses: ahmadnassri/action-workflow-queue@542658b3a8270cac81ae15d401b0d974732808ac # v1.2.0
-        with:
-          timeout: 1800000 # 30 minutes
-
-  bootstrap-dev:
-    needs: wait-for-workflow
-    uses: devantler-tech/reusable-workflows/.github/workflows/cd-cluster-bootstrap.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
-    with:
-      DEPLOYMENT_ENV: dev
-    secrets:
-      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
-      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+      - name: No-op
+        run: echo "Only run this job if the merge queue is triggered"
 
   deploy-dev:
     needs: bootstrap-dev
-    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
-    with:
-      DEPLOYMENT_ENV: dev
-    secrets:
-      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
-      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: No-op
+        run: echo "Only run this job if the merge queue is triggered"
 
   bootstrap-prod:
     if: startsWith(github.ref, 'refs/tags/v')
