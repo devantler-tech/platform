@@ -1,3 +1,4 @@
+# TODO: Rework this into a helm-release once the rewrite issue is resolved
 apiVersion: apps/v1
 kind: Deployment
 metadata:
