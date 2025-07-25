@@ -30,6 +30,7 @@ spec:
         github_users = ["devantler"]
         email_domains = [ "*" ]
         cookie_domains=[".${domain}"]
+        redirect_url = "https://oauth2-proxy.${domain}/oauth2/callback"
         upstreams = [ "static://202" ]
         skip_provider_button = true
         reverse_proxy = true
