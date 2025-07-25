@@ -1,4 +1,4 @@
-# TODO: Rework this into a helm-release once the rewrite issue is resolved
+# TODO: Rework CoreDNS deployment into a helm-release
 apiVersion: apps/v1
 kind: Deployment
 metadata:
