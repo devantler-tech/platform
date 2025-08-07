@@ -2,7 +2,6 @@
 "recommendations": [
     "inercia.vscode-k3d",
     "ms-azuretools.vscode-docker",
-    "ms-kubernetes-tools.vscode-aks-tools",
     "redhat.vscode-yaml",
     "signageos.signageos-vscode-sops",
     "timonwong.shellcheck",
