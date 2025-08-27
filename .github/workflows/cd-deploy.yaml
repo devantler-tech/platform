@@ -14,16 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  bootstrap-prod:
-    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
-    with:
-      DEPLOYMENT_ENV: prod
-    secrets:
-      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
-      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-
   deploy-prod:
-    needs: bootstrap-prod
     uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@fbfd051d3029c9f8d2bb64a87a329c824241fc36 # v1.1.6
     with:
       DEPLOYMENT_ENV: prod
