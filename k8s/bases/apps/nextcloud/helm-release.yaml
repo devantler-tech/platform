@@ -52,11 +52,3 @@ spec:
       #   enabled: true
     persistence:
       enabled: true
-    # Prevent occasional OOMKills (pod previously exited with code 137). Tune as needed.
-    resources:
-      requests:
-        cpu: 200m
-        memory: 512Mi
-      limits:
-        cpu: "1"
-        memory: 1Gi
