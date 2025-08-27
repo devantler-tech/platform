@@ -11,5 +11,5 @@ data:
   issuer_group: cert-manager.k8s.cloudflare.com
   issuer_kind: ClusterOriginIssuer
   issuer_name: cloudflare-origin
-  nextcloud_db_storage_size: 30Gi
+  nextcloud_db_storage_size: 100Gi
   traefik_service_type: ClusterIP
