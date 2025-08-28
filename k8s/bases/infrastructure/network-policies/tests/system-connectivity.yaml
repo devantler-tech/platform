@@ -1,0 +1,76 @@
+---
+apiVersion: tests.testkube.io/v3
+kind: Test
+metadata:
+  name: network-policy-system-connectivity
+  namespace: testkube
+spec:
+  type: curl/test
+  content:
+    type: string
+    data: |
+      #!/bin/bash
+      
+      echo "=== Testing System Component Connectivity ==="
+      
+      # Test API server connectivity
+      echo "Testing Kubernetes API server access..."
+      
+      # Test from goldilocks namespace (should work)
+      kubectl run test-api-access --rm -i --restart=Never \
+        --namespace=goldilocks \
+        --image=bitnami/kubectl:latest \
+        --serviceaccount=default \
+        -- kubectl get pods --request-timeout=10s
+      
+      if [ $? -eq 0 ]; then
+        echo "✓ Goldilocks can access API server"
+      else
+        echo "✗ Goldilocks cannot access API server"
+        exit 1
+      fi
+      
+      # Test DNS resolution from all namespaces
+      echo "Testing DNS resolution from system namespaces..."
+      
+      # Test from kube-system
+      kubectl run test-dns-system --rm -i --restart=Never \
+        --namespace=kube-system \
+        --image=busybox:latest \
+        -- nslookup kubernetes.default.svc.cluster.local
+      
+      if [ $? -eq 0 ]; then
+        echo "✓ DNS works from kube-system"
+      else
+        echo "✗ DNS failed from kube-system"
+        exit 1
+      fi
+      
+      # Test from application namespace
+      kubectl run test-dns-app --rm -i --restart=Never \
+        --namespace=homepage \
+        --image=busybox:latest \
+        -- nslookup kubernetes.default.svc.cluster.local
+      
+      if [ $? -eq 0 ]; then
+        echo "✓ DNS works from application namespace"
+      else
+        echo "✗ DNS failed from application namespace"
+        exit 1
+      fi
+      
+      # Test that traefik can reach application services
+      echo "Testing traefik connectivity to apps..."
+      kubectl run test-traefik-connectivity --rm -i --restart=Never \
+        --namespace=traefik \
+        --image=curlimages/curl:latest \
+        -- curl -s http://whoami.whoami.svc.cluster.local --max-time 10
+      
+      if [ $? -eq 0 ]; then
+        echo "✓ Traefik can reach application services"
+      else
+        echo "✗ Traefik cannot reach application services"
+        exit 1
+      fi
+      
+      echo "=== All system connectivity tests passed ==="

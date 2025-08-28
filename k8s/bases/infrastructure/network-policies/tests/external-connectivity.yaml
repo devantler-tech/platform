@@ -1,0 +1,54 @@
+---
+apiVersion: tests.testkube.io/v3
+kind: Test
+metadata:
+  name: network-policy-external-connectivity
+  namespace: testkube
+spec:
+  type: curl/test
+  content:
+    type: string
+    data: |
+      #!/bin/bash
+      
+      echo "=== Testing External Connectivity ==="
+      
+      # Test external public sites accessibility from appropriate namespaces
+      echo "Testing external site connectivity..."
+      
+      # Test that homepage can reach external APIs
+      kubectl run test-homepage-external --rm -i --restart=Never \
+        --namespace=homepage \
+        --image=curlimages/curl:latest \
+        -- curl -s -o /dev/null -w "%{http_code}" https://api.cloudflare.com/client/v4/user/tokens/verify --max-time 10
+      
+      if [ $? -eq 0 ]; then
+        echo "✓ Homepage can reach Cloudflare API"
+      else
+        echo "✗ Homepage cannot reach Cloudflare API"
+        exit 1
+      fi
+      
+      # Test that nextcloud can reach external services
+      kubectl run test-nextcloud-external --rm -i --restart=Never \
+        --namespace=nextcloud \
+        --image=curlimages/curl:latest \
+        -- curl -s -o /dev/null -w "%{http_code}" https://download.nextcloud.com --max-time 10
+      
+      if [ $? -eq 0 ]; then
+        echo "✓ Nextcloud can reach external download site"
+      else
+        echo "✗ Nextcloud cannot reach external download site"
+        exit 1
+      fi
+      
+      # Test that testkube can reach external sites
+      curl -s -o /dev/null -w "%{http_code}" https://www.google.com --max-time 10
+      if [ $? -eq 0 ]; then
+        echo "✓ Testkube can reach external sites"
+      else
+        echo "✗ Testkube cannot reach external sites"
+        exit 1
+      fi
+      
+      echo "=== All external connectivity tests passed ==="

@@ -1,0 +1,52 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: whoami-allow
+  namespace: whoami
+spec:
+  description: "Allow necessary traffic for Whoami test application"
+  endpointSelector: {}
+  ingress:
+    # Allow traffic within whoami namespace
+    - fromEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: whoami
+    # Allow ingress from traefik
+    - fromEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+    # Allow ingress from testkube for connectivity tests
+    - fromEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: testkube
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+  egress:
+    # Allow communication within whoami namespace
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: whoami
+    # Allow DNS queries
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - matchLabels:
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

@@ -1,0 +1,76 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: kube-system-allow
+  namespace: kube-system
+spec:
+  description: "Allow necessary traffic for kube-system components"
+  endpointSelector: {}
+  ingress:
+    # Allow all traffic within kube-system namespace
+    - fromEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+    # Allow traffic from all namespaces to kube-dns
+    - fromEndpoints:
+        - {}
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # Allow traffic from cilium agents
+    - fromEndpoints:
+        - matchLabels:
+            k8s-app: cilium
+    # Allow traffic to API server from all authenticated sources
+    - fromEndpoints:
+        - {}
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP
+  egress:
+    # Allow all egress within kube-system
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+    # Allow DNS queries
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - matchLabels:
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # Allow egress to internet for system components (container images, etc.)
+    - toFQDNs:
+        - matchPattern: "*"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "80"
+              protocol: TCP
+    # Allow etcd communication
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      toPorts:
+        - ports:
+            - port: "2379"
+              protocol: TCP
+            - port: "2380"
+              protocol: TCP

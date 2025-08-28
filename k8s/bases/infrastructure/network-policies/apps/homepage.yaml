@@ -1,0 +1,68 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: homepage-allow
+  namespace: homepage
+spec:
+  description: "Allow necessary traffic for Homepage dashboard"
+  endpointSelector: {}
+  ingress:
+    # Allow traffic within homepage namespace
+    - fromEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: homepage
+    # Allow ingress from traefik
+    - fromEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+  egress:
+    # Allow communication within homepage namespace
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: homepage
+    # Allow DNS queries
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - matchLabels:
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # Allow access to Kubernetes API server for dashboard widgets
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP
+    # Allow external API calls for dashboard widgets (Cloudflare, etc.)
+    - toFQDNs:
+        - matchName: "api.cloudflare.com"
+        - matchName: "dash.cloudflare.com"
+        - matchName: "devantler.omni.siderolabs.io"
+        - matchName: "console.hetzner.cloud"
+        - matchName: "images.unsplash.com"
+        - matchName: "devantler.tech"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "80"
+              protocol: TCP

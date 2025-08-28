@@ -1,0 +1,76 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: testkube-allow
+  namespace: testkube
+spec:
+  description: "Allow necessary traffic for Testkube testing framework"
+  endpointSelector: {}
+  ingress:
+    # Allow traffic within testkube namespace
+    - fromEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: testkube
+    # Allow ingress from traefik for web UI
+    - fromEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+            - port: "8088"
+              protocol: TCP
+  egress:
+    # Allow communication within testkube namespace
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: testkube
+    # Allow DNS queries
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - matchLabels:
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # Allow access to Kubernetes API server for test orchestration
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP
+    # Allow testkube to reach all namespaces for testing purposes
+    - toEndpoints:
+        - {}
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP
+            - port: "8080"
+              protocol: TCP
+    # Allow external connectivity for network tests
+    - toFQDNs:
+        - matchPattern: "*"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "80"
+              protocol: TCP

@@ -1,0 +1,67 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: traefik-allow
+  namespace: traefik
+spec:
+  description: "Allow necessary traffic for Traefik ingress controller"
+  endpointSelector: {}
+  ingress:
+    # Allow traffic within traefik namespace
+    - fromEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+    # Allow external traffic from anywhere (internet ingress)
+    - {}
+  egress:
+    # Allow communication within traefik namespace
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+    # Allow DNS queries
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - matchLabels:
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # Allow access to Kubernetes API server for ingress resources
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP
+    # Allow traefik to reach application services
+    - toEndpoints:
+        - {}
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP
+            - port: "8080"
+              protocol: TCP
+    # Allow external connectivity for ACME challenges and cert-manager
+    - toFQDNs:
+        - matchPattern: "*"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "80"
+              protocol: TCP

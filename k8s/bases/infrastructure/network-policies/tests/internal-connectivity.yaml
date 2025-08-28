@@ -1,0 +1,54 @@
+---
+apiVersion: tests.testkube.io/v3
+kind: Test
+metadata:
+  name: network-policy-internal-connectivity
+  namespace: testkube
+spec:
+  type: curl/test
+  content:
+    type: string
+    data: |
+      #!/bin/bash
+      
+      echo "=== Testing Internal Service Connectivity ==="
+      
+      # Test DNS resolution works
+      echo "Testing DNS resolution..."
+      nslookup kubernetes.default.svc.cluster.local
+      if [ $? -eq 0 ]; then
+        echo "✓ DNS resolution works"
+      else
+        echo "✗ DNS resolution failed"
+        exit 1
+      fi
+      
+      # Test that whoami service is reachable from testkube
+      echo "Testing internal service connectivity..."
+      kubectl run test-whoami-internal --rm -i --restart=Never \
+        --namespace=testkube \
+        --image=curlimages/curl:latest \
+        -- curl -s http://whoami.whoami.svc.cluster.local --max-time 10
+      
+      if [ $? -eq 0 ]; then
+        echo "✓ Can reach whoami service from testkube"
+      else
+        echo "✗ Cannot reach whoami service from testkube"
+        exit 1
+      fi
+      
+      # Test that services within namespaces can communicate
+      echo "Testing intra-namespace communication..."
+      kubectl run test-homepage-internal --rm -i --restart=Never \
+        --namespace=homepage \
+        --image=curlimages/curl:latest \
+        -- curl -s http://homepage.homepage.svc.cluster.local:3000 --max-time 10
+      
+      if [ $? -eq 0 ]; then
+        echo "✓ Homepage internal communication works"
+      else
+        echo "✗ Homepage internal communication failed"
+        exit 1
+      fi
+      
+      echo "=== All internal connectivity tests passed ==="

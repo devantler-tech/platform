@@ -1,0 +1,63 @@
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: nextcloud-allow
+  namespace: nextcloud
+spec:
+  description: "Allow necessary traffic for Nextcloud application and database"
+  endpointSelector: {}
+  ingress:
+    # Allow traffic within nextcloud namespace
+    - fromEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: nextcloud
+    # Allow ingress from traefik
+    - fromEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: traefik
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+            - port: "443"
+              protocol: TCP
+  egress:
+    # Allow communication within nextcloud namespace (app to DB)
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: nextcloud
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    # Allow DNS queries
+    - toEndpoints:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - matchLabels:
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # Allow external connectivity for Nextcloud app store, updates, federation
+    - toFQDNs:
+        - matchPattern: "*.nextcloud.com"
+        - matchPattern: "apps.nextcloud.com"
+        - matchPattern: "download.nextcloud.com"
+        - matchPattern: "updates.nextcloud.com"
+        - matchPattern: "lookup.nextcloud.com"
+        - matchPattern: "push-notifications.nextcloud.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "80"
+              protocol: TCP

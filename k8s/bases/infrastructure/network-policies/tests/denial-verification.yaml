@@ -1,0 +1,67 @@
+---
+apiVersion: tests.testkube.io/v3
+kind: Test
+metadata:
+  name: network-policy-denial-verification
+  namespace: testkube
+spec:
+  type: curl/test
+  content:
+    type: string
+    data: |
+      #!/bin/bash
+      
+      echo "=== Testing Network Policy Denial ==="
+      
+      # Test that unauthorized access is blocked
+      echo "Testing that unauthorized cross-namespace access is blocked..."
+      
+      # Try to access homepage from nextcloud namespace (should fail)
+      kubectl run test-cross-namespace-denial --rm -i --restart=Never \
+        --namespace=nextcloud \
+        --image=curlimages/curl:latest \
+        -- timeout 5 curl -s http://homepage.homepage.svc.cluster.local:3000
+      
+      # This should timeout/fail due to network policy
+      if [ $? -ne 0 ]; then
+        echo "✓ Cross-namespace access correctly blocked"
+      else
+        echo "✗ Cross-namespace access not properly blocked"
+        exit 1
+      fi
+      
+      # Test that external access from restricted namespaces is blocked
+      echo "Testing that unauthorized external access is blocked..."
+      
+      # Try to access external site from whoami namespace (should fail) 
+      kubectl run test-external-denial --rm -i --restart=Never \
+        --namespace=whoami \
+        --image=curlimages/curl:latest \
+        -- timeout 5 curl -s https://www.google.com
+      
+      # This should timeout/fail due to network policy
+      if [ $? -ne 0 ]; then
+        echo "✓ Unauthorized external access correctly blocked"
+      else
+        echo "✗ Unauthorized external access not properly blocked"
+        exit 1
+      fi
+      
+      # Test that database access is restricted to nextcloud namespace only
+      echo "Testing database access restrictions..."
+      
+      # Try to access postgres from homepage namespace (should fail)
+      kubectl run test-db-denial --rm -i --restart=Never \
+        --namespace=homepage \
+        --image=postgres:15 \
+        -- timeout 5 psql -h db-rw.nextcloud.svc.cluster.local -U nextcloud -d nextcloud -c "SELECT 1;"
+      
+      # This should timeout/fail due to network policy
+      if [ $? -ne 0 ]; then
+        echo "✓ Database access correctly restricted"
+      else
+        echo "✗ Database access not properly restricted"
+        exit 1
+      fi
+      
+      echo "=== All denial verification tests passed ==="
