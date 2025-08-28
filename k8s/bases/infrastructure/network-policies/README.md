@@ -67,11 +67,26 @@ Comprehensive network connectivity tests are included to validate:
 Tests are automatically deployed with the network policies and can be executed using Testkube:
 
 ```bash
-# Run all network policy tests
+# Run comprehensive validation (recommended)
+kubectl testkube run test network-policy-comprehensive-validation
+
+# Run individual test suites
 kubectl testkube run test network-policy-external-connectivity
 kubectl testkube run test network-policy-internal-connectivity
 kubectl testkube run test network-policy-denial-verification
 kubectl testkube run test network-policy-system-connectivity
+```
+
+### Manual Validation
+
+For manual testing and troubleshooting:
+
+```bash
+# Run the manual validation script
+./validation/validate-network-policies.sh
+
+# Follow the deployment guide
+cat DEPLOYMENT.md
 ```
 
 ## Troubleshooting

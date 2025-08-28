@@ -1,0 +1,151 @@
+---
+apiVersion: tests.testkube.io/v3
+kind: Test
+metadata:
+  name: network-policy-comprehensive-validation
+  namespace: testkube
+spec:
+  type: curl/test
+  content:
+    type: string
+    data: |
+      #!/bin/bash
+      
+      echo "🔒 COMPREHENSIVE NETWORK POLICY VALIDATION"
+      echo "=========================================="
+      
+      PASSED=0
+      FAILED=0
+      
+      # Function to run test and track results
+      run_test() {
+          local test_name="$1"
+          local namespace="$2"
+          local image="$3"
+          local command="$4"
+          local expected="$5"
+          
+          echo -n "Testing: $test_name ... "
+          
+          if kubectl run test-$(date +%N) --rm -i --restart=Never \
+              --namespace="$namespace" \
+              --image="$image" \
+              --timeout=30s \
+              -- sh -c "$command" >/dev/null 2>&1; then
+              result="success"
+          else
+              result="failure"
+          fi
+          
+          if [ "$result" = "$expected" ]; then
+              echo "✓ PASS"
+              PASSED=$((PASSED + 1))
+          else
+              echo "✗ FAIL (expected $expected, got $result)"
+              FAILED=$((FAILED + 1))
+          fi
+      }
+      
+      echo ""
+      echo "🌐 TESTING ALLOWED EXTERNAL CONNECTIVITY"
+      echo "--------------------------------------"
+      
+      # Homepage external access
+      run_test "Homepage → Cloudflare API" \
+          "homepage" \
+          "curlimages/curl:latest" \
+          "curl -s --connect-timeout 10 https://api.cloudflare.com/client/v4/user/tokens/verify" \
+          "success"
+      
+      # Nextcloud external access
+      run_test "Nextcloud → Download Site" \
+          "nextcloud" \
+          "curlimages/curl:latest" \
+          "curl -s --connect-timeout 10 -I https://download.nextcloud.com" \
+          "success"
+      
+      echo ""
+      echo "🏠 TESTING INTERNAL CONNECTIVITY"
+      echo "------------------------------"
+      
+      # DNS resolution
+      run_test "DNS from Homepage" \
+          "homepage" \
+          "busybox:latest" \
+          "nslookup kubernetes.default.svc.cluster.local" \
+          "success"
+      
+      # Service-to-service communication
+      run_test "Testkube → Whoami" \
+          "testkube" \
+          "curlimages/curl:latest" \
+          "curl -s --connect-timeout 10 http://whoami.whoami.svc.cluster.local" \
+          "success"
+      
+      # Traefik to services
+      run_test "Traefik → Whoami" \
+          "traefik" \
+          "curlimages/curl:latest" \
+          "curl -s --connect-timeout 10 http://whoami.whoami.svc.cluster.local" \
+          "success"
+      
+      echo ""
+      echo "🚫 TESTING BLOCKED CONNECTIVITY"
+      echo "-----------------------------"
+      
+      # Blocked external access
+      run_test "Whoami → External (blocked)" \
+          "whoami" \
+          "curlimages/curl:latest" \
+          "curl -s --connect-timeout 5 https://www.google.com" \
+          "failure"
+      
+      # Blocked cross-namespace
+      run_test "Nextcloud → Homepage (blocked)" \
+          "nextcloud" \
+          "curlimages/curl:latest" \
+          "curl -s --connect-timeout 5 http://homepage.homepage.svc.cluster.local:3000" \
+          "failure"
+      
+      # Blocked database access
+      run_test "Homepage → DB (blocked)" \
+          "homepage" \
+          "postgres:15" \
+          "pg_isready -h db-rw.nextcloud.svc.cluster.local -t 5" \
+          "failure"
+      
+      echo ""
+      echo "🔧 TESTING SYSTEM COMPONENTS"
+      echo "---------------------------"
+      
+      # API server access
+      run_test "Goldilocks → API Server" \
+          "goldilocks" \
+          "bitnami/kubectl:latest" \
+          "kubectl get pods --request-timeout=10s" \
+          "success"
+      
+      echo ""
+      echo "📊 VALIDATION SUMMARY"
+      echo "==================="
+      echo "✓ Passed: $PASSED"
+      echo "✗ Failed: $FAILED"
+      echo "Total:   $((PASSED + FAILED))"
+      echo ""
+      
+      if [ $FAILED -eq 0 ]; then
+          echo "🎉 ALL TESTS PASSED - Network policies are working correctly!"
+          echo ""
+          echo "Security Status: ✅ SECURE"
+          echo "- Default deny policy active"
+          echo "- Least privilege access enforced"
+          echo "- External access restricted to necessary services"
+          echo "- Cross-namespace communication blocked"
+          echo "- System components have required access"
+          exit 0
+      else
+          echo "❌ SOME TESTS FAILED - Please review network policies"
+          echo ""
+          echo "Security Status: ⚠️  NEEDS ATTENTION"
+          exit 1
+      fi

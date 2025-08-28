@@ -21,3 +21,4 @@ resources:
   - tests/internal-connectivity.yaml
   - tests/denial-verification.yaml
   - tests/system-connectivity.yaml
+  - tests/comprehensive-validation.yaml
