@@ -12,7 +12,7 @@ spec:
   chart:
     spec:
       chart: cilium
-      version: 1.17.6
+      version: 1.18.1
       sourceRef:
         kind: HelmRepository
         name: cilium
@@ -39,6 +39,29 @@ spec:
           install:
             namespace: kube-system
             existingNamespace: true
+            # TODO: Remove workaround when SPIRE no longer fails to start (https://github.com/cilium/cilium/issues/40533)
+            server:
+              initContainers:
+              - command:
+                - /bin/sh
+                - -c
+                - |
+                  chown -R 1000:1000 /run/spire/data
+                  chown -R 1000:1000 /tmp/spire-server
+                image: docker.io/library/busybox:1.37.0
+                imagePullPolicy: IfNotPresent
+                name: chown
+                securityContext:
+                  runAsGroup: 0
+                  runAsUser: 0
+                volumeMounts:
+                - mountPath: /run/spire/data
+                  name: spire-data
+                - mountPath: /tmp/spire-server/private
+                  name: spire-server-socket
+              securityContext:
+                runAsGroup: 1000
+                runAsUser: 1000
     gatewayAPI:
       enabled: true
       enableAlpn: true
