@@ -14,7 +14,7 @@ permissions: {}
 
 jobs:
   sync-policies:
-    uses: devantler-tech/reusable-workflows/.github/workflows/sync-cluster-policies.yaml@061ae5bdafe6d03d4930c2bd359e4c3256248dc8 # v1.11.19
+    uses: devantler-tech/reusable-workflows/.github/workflows/sync-cluster-policies.yaml@367b3fd01c231fc685afb24ea9a8a04182780dad # v1.11.21
     with:
       KYVERNO_POLICIES_DIR: k8s/bases/infrastructure/cluster-policies/samples
     secrets:
