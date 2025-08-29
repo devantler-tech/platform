@@ -87,7 +87,7 @@ spec:
             'oidc_login_update_avatar' => false,
             'oidc_login_map_groups' => true,
             'oidc_login_filter_allowed_values' => array(
-              'preferred_username' => '/^devantler$/',
+              'preferred_username' => '/^${nextcloud_username}$/',
             ),
           );
       hooks:
@@ -95,7 +95,7 @@ spec:
           # Enable and configure the user_oidc app
           occ app:enable user_oidc
           # Add admin user to admin group if OIDC user exists
-          occ group:adduser admin devantler || true
+          occ group:adduser admin ${nextcloud_username} || true
         pre-upgrade: |-
           # Ensure user_oidc app is enabled
           occ app:enable user_oidc
