@@ -6,3 +6,4 @@ metadata:
   namespace: flux-system
 data:
   cloudflare_account_id: 634e9016d402443e427865dc35457728
+  nextcloud_username: devantler
