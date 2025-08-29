@@ -14,3 +14,10 @@ hetzner/talos-*/*.raw.xz
 # SOPS
 
 .decrypted*
+
+# Go
+go.work
+go.work.sum
+
+# Build artifacts
+/cmd/example/example
