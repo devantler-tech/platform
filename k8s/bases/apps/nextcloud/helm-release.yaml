@@ -95,7 +95,13 @@ spec:
           # Enable and configure the user_oidc app
           occ app:enable user_oidc
           # Add admin user to admin group if OIDC user exists
-          occ group:adduser admin ${nextcloud_username} || true
+          if occ user:info "${nextcloud_username}" > /dev/null 2>&1; then
+            occ group:adduser admin "${nextcloud_username}" || \
+              echo "User ${nextcloud_username} is already in the admin group or another non-critical error occurred."
+          else
+            echo "User ${nextcloud_username} does not exist. Cannot add to admin group." >&2
+            exit 1
+          fi
         pre-upgrade: |-
           # Ensure user_oidc app is enabled
           occ app:enable user_oidc
