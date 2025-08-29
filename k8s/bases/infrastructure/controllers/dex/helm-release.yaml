@@ -43,7 +43,9 @@ spec:
         - name: Public Client
           id: public-client
           secret: ${dex_client_secret}
-          redirectURIs: ["https://oauth2-proxy.${domain}/oauth2/callback"]
+          redirectURIs: 
+            - "https://oauth2-proxy.${domain}/oauth2/callback"
+            - "https://nextcloud.${domain}/apps/user_oidc/code"
       connectors:
         - type: github
           id: github

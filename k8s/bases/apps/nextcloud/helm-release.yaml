@@ -50,5 +50,57 @@ spec:
       # TODO: Add SMTP configuration for nextcloud
       # mail:
       #   enabled: true
+      configs:
+        oidc.config.php: |-
+          <?php
+          $CONFIG = array (
+            'allow_user_to_change_display_name' => false,
+            'lost_password_link' => 'disabled',
+            'oidc_login_provider_url' => 'https://dex.${domain}',
+            'oidc_login_client_id' => 'public-client',
+            'oidc_login_client_secret' => '${dex_client_secret}',
+            'oidc_login_auto_redirect' => false,
+            'oidc_login_end_session_redirect' => false,
+            'oidc_login_button_text' => 'Log in with GitHub',
+            'oidc_login_hide_password_form' => false,
+            'oidc_login_use_id_token' => true,
+            'oidc_login_attributes' => array (
+              'id' => 'preferred_username',
+              'name' => 'name',
+              'mail' => 'email',
+              'groups' => 'groups',
+            ),
+            'oidc_login_default_group' => 'oidc',
+            'oidc_login_use_external_storage' => false,
+            'oidc_login_scope' => 'openid profile email groups',
+            'oidc_login_proxy_ldap' => false,
+            'oidc_login_disable_registration' => true,
+            'oidc_login_redir_fallback' => false,
+            'oidc_login_alt_login_page' => 'assets/login.php',
+            'oidc_login_tls_verify' => true,
+            'oidc_create_groups' => false,
+            'oidc_login_webdav_enabled' => false,
+            'oidc_login_password_authentication' => true,
+            'oidc_login_public_key_caching_time' => 86400,
+            'oidc_login_min_time_between_jwks_requests' => 10,
+            'oidc_login_well_known_caching_time' => 86400,
+            'oidc_login_update_avatar' => false,
+            'oidc_login_map_groups' => true,
+          );
+      hooks:
+        post-installation: |-
+          # Enable and configure the user_oidc app
+          occ app:enable user_oidc
+          # Add admin user to admin group if OIDC user exists
+          if occ user:info "${nextcloud_username}" > /dev/null 2>&1; then
+            occ group:adduser admin "${nextcloud_username}" || \
+              echo "User ${nextcloud_username} is already in the admin group or another non-critical error occurred."
+          else
+            echo "User ${nextcloud_username} does not exist. Cannot add to admin group." >&2
+            exit 1
+          fi
+        pre-upgrade: |-
+          # Ensure user_oidc app is enabled
+          occ app:enable user_oidc
     persistence:
       enabled: true
