@@ -21,3 +21,4 @@ go.work.sum
 
 # Build artifacts
 /cmd/example/example
+example
