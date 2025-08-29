@@ -86,9 +86,6 @@ spec:
             'oidc_login_well_known_caching_time' => 86400,
             'oidc_login_update_avatar' => false,
             'oidc_login_map_groups' => true,
-            'oidc_login_filter_allowed_values' => array(
-              'preferred_username' => '/^${nextcloud_username}$/',
-            ),
           );
       hooks:
         post-installation: |-
