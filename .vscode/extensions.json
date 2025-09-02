@@ -4,7 +4,6 @@
     "ms-azuretools.vscode-docker",
     "redhat.vscode-yaml",
     "signageos.signageos-vscode-sops",
-    "timonwong.shellcheck",
-    "weaveworks.vscode-gitops-tools"
+    "timonwong.shellcheck"
   ]
 }
