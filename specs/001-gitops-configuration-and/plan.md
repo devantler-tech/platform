@@ -6,7 +6,7 @@
 
 ## Execution Flow (/plan command scope)
 
-```
+```txt
 1. Load feature spec from Input path
    → If not found: ERROR "No feature spec at {path}"
 2. Fill Technical Context (scan for NEEDS CLARIFICATION)
@@ -64,7 +64,7 @@ Technical approach: Leverage existing Flux GitOps foundation with enhanced local
 
 ### Documentation (this feature)
 
-```
+```txt
 specs/[###-feature]/
 ├── plan.md              # This file (/plan command output)
 ├── research.md          # Phase 0 output (/plan command)
@@ -76,7 +76,7 @@ specs/[###-feature]/
 
 ### Source Code (repository root)
 
-```
+```txt
 # Option 1: Single project (DEFAULT)
 src/
 ├── models/
@@ -123,7 +123,7 @@ ios/ or android/
 
 2. **Generate and dispatch research agents**:
 
-   ```
+   ```txt
    For each unknown in Technical Context:
      Task: "Research {unknown} for {feature context}"
    For each technology choice:
