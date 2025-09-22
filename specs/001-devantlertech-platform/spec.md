@@ -1,6 +1,6 @@
-# Feature Specification: GitOps Configuration and Infrastructure
+# Feature Specification: DevantlerTech Platform
 
-**Feature Branch**: `001-gitops-configuration-and`
+**Feature Branch**: `001-devantlertech-platform`
 **Created**: 2025-09-22
 **Status**: Completed ✅
 **Input**: User description: "GitOps configuration and infrastructure for DevantlerTech's Kubernetes platform"

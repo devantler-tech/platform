@@ -1,6 +1,6 @@
 # Tasks: GitOps Configuration and Infrastructure
 
-**Input**: Design documents from `/specs/001-gitops-configuration-and/`
+**Input**: Design documents from `/specs/001-devantlertech-platform/`
 **Prerequisites**: plan.md (required), research.md, data-model.md, contracts/
 
 ## Execution Flow (main)
