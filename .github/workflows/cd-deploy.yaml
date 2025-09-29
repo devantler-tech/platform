@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   bootstrap-prod:
-    uses: devantler-tech/reusable-workflows/.github/workflows/cd-cluster-bootstrap.yaml@61daf49731f41ba325192885abd1c63d71c8d6ee # v1.15.3
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-cluster-bootstrap.yaml@800bac1f7de14fcc6b9b9bcf62e201308eafd15b # v1.15.12
     with:
       DEPLOYMENT_ENV: prod
     secrets:
@@ -24,7 +24,7 @@ jobs:
 
   deploy-prod:
     needs: bootstrap-prod
-    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@61daf49731f41ba325192885abd1c63d71c8d6ee # v1.15.3
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@800bac1f7de14fcc6b9b9bcf62e201308eafd15b # v1.15.12
     with:
       DEPLOYMENT_ENV: prod
     secrets:
