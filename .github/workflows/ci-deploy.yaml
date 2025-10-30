@@ -11,21 +11,36 @@ permissions:
   packages: write
 
 jobs:
+  # TODO: Reenable dev when no longer in savings mode
+  # bootstrap-dev:
+  #   uses: devantler-tech/reusable-workflows/.github/workflows/cd-cluster-bootstrap.yaml@800bac1f7de14fcc6b9b9bcf62e201308eafd15b # v1.15.12
+  #   with:
+  #     DEPLOYMENT_ENV: dev
+  #     SKIP: ${{ github.event_name != 'merge_group' }}
+  #   secrets:
+  #     KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+  #     SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+
   bootstrap-dev:
-    uses: devantler-tech/reusable-workflows/.github/workflows/cd-cluster-bootstrap.yaml@800bac1f7de14fcc6b9b9bcf62e201308eafd15b # v1.15.12
-    with:
-      DEPLOYMENT_ENV: dev
-      SKIP: ${{ github.event_name != 'merge_group' }}
-    secrets:
-      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
-      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: No-op bootstrap
+        run: echo "bootstrap-dev skipped"
+
+  # TODO: Reenable dev when no longer in savings mode
+  # deploy-dev:
+  #   needs: bootstrap-dev
+  #   uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@800bac1f7de14fcc6b9b9bcf62e201308eafd15b # v1.15.12
+  #   with:
+  #     DEPLOYMENT_ENV: dev
+  #     SKIP: ${{ github.event_name != 'merge_group' }}
+  #   secrets:
+  #     KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+  #     SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
 
   deploy-dev:
     needs: bootstrap-dev
-    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@800bac1f7de14fcc6b9b9bcf62e201308eafd15b # v1.15.12
-    with:
-      DEPLOYMENT_ENV: dev
-      SKIP: ${{ github.event_name != 'merge_group' }}
-    secrets:
-      KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
-      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: No-op deploy
+        run: echo "deploy-dev skipped"
