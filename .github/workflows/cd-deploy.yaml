@@ -24,7 +24,7 @@ jobs:
 
   deploy-prod:
     needs: bootstrap-prod
-    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@0763de30f9598601916680b2f52c9f41f14082df # v1.21.0
+    uses: devantler-tech/reusable-workflows/.github/workflows/cd-gitops-deploy.yaml@6e090583500faddbf48c4ef3af02e6b89db1913f # v1.22.3
     with:
       DEPLOYMENT_ENV: prod
     secrets:
