@@ -1,6 +1,6 @@
 {
 "recommendations": [
-    "inercia.vscode-k3d",
+    "devantler.ksail",
     "ms-azuretools.vscode-docker",
     "redhat.vscode-yaml",
     "signageos.signageos-vscode-sops",
