@@ -45,7 +45,9 @@ jobs:
       - name: 🔐 Create SOPS Age key
         run: |
           mkdir -p ~/.config/sops/age
-          echo "${{ secrets.SOPS_AGE_KEY }}" > ~/.config/sops/age/keys.txt
+          echo "$SOPS_AGE_KEY" > ~/.config/sops/age/keys.txt
+        env:
+          SOPS_AGE_KEY: ${{ secrets.KSAIL_SOPS_KEY }}
 
       - name: 🚀 Create Talos+Docker cluster
         run: ksail cluster create
@@ -56,7 +58,7 @@ jobs:
             --namespace=flux-system \
             --from-literal=sops.agekey="$SOPS_AGE_KEY"
         env:
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+          SOPS_AGE_KEY: ${{ secrets.KSAIL_SOPS_KEY }}
 
       - name: 📦 Push manifests to local registry
         run: ksail workload push
