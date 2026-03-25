@@ -35,7 +35,23 @@ For development and production clusters:
 To run this cluster locally, simply run:
 
 ```bash
-ksail up
+ksail cluster create
+ksail workload push
+ksail workload reconcile
+```
+
+Once the cluster is running, expose Traefik on localhost with:
+
+```bash
+kubectl port-forward svc/traefik -n traefik 443:443 80:80
+```
+
+Then access services at `https://platform.lan` (requires host entries from the `hosts` file).
+
+To tear down:
+
+```bash
+ksail cluster delete
 ```
 
 ## Clusters
@@ -79,14 +95,16 @@ Hybrid Cloud cluster that runs on both Hetzner Cloud and on-prem. Used to test a
 
 The cluster uses Flux GitOps to reconcile the state of the cluster with single source of truth stored in this repository and published as an OCI image. For development, the cluster is spun up by `KSail` and for production, the cluster is provisioned by `Talos Omni`.
 
+All environments use the Talos Kubernetes distribution. Local development uses Talos with the Docker provider (via KSail), while dev and production use Talos with Omni.
+
 The cluster configuration is stored in the `k8s/*` directories where the structure is as follows:
 
 - [`clusters/`](k8s/clusters): Contains the the cluster specific configuration for each environment.
   - [`local`](k8s/clusters/local): Contains the local cluster specific configuration.
   - [`prod`](k8s/clusters/prod): Contains the production cluster specific configuration.****
 - [`distributions/`](k8s/distributions): Contains the distribution specific configuration.
-  - [`kind`](k8s/distributions/kind): Contains the kind specific configuration.
-  - [`talos`](k8s/distributions/omni): Contains the talos specific configuration.
+  - [`docker`](k8s/distributions/docker): Contains the Talos+Docker specific configuration for local development.
+  - [`omni`](k8s/distributions/omni): Contains the Talos+Omni specific configuration for dev and production.
 - [`bases/`](k8s/bases): Contains the different bases that are used for the different clusters and distributions.
   - [`infrastructure`](k8s/bases/common): Contains the different infrastructure components that are used for the different clusters and distributions.
   - [`apps`](k8s/bases/apps): Contains the different apps that are used for the different clusters and distributions.

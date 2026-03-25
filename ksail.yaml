@@ -4,12 +4,17 @@ kind: Cluster
 metadata:
   name: local
 spec:
-  connection:
-    context: kind-local
-    timeout: 4m
-  project:
-    kustomizationPath: k8s/clusters/local
-    deploymentTool: Flux
+  cluster:
+    distributionConfig: talos-local
+    connection:
+      context: admin@local
+      timeout: 4m
+    distribution: Talos
+    provider: Docker
     cni: Cilium
-    ingressController: Traefik
-    secretManager: SOPS
+    gitOpsEngine: Flux
+    talos:
+      controlPlanes: 1
+      workers: 3
+  workload:
+    sourceDirectory: k8s

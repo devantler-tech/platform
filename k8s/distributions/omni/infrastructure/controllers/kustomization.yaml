@@ -4,12 +4,7 @@ kind: Kustomization
 resources:
   - ../../../../bases/infrastructure/controllers/
   - cloudflared/
+  - hcloud-ccm/
   - hcloud-csi/
   - kubelet-serving-cert-approver/
   - origin-ca-issuer/
-patches:
-  - target:
-      kind: HelmRelease
-      name: cilium
-      namespace: kube-system
-    path: cilium/patches/helm-release-patch.yaml

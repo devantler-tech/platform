@@ -18,35 +18,30 @@ sudo apt-get update && sudo apt-get install -y age
 wget -O /tmp/sops_linux_amd64.deb https://github.com/getsops/sops/releases/download/v3.8.1/sops_3.8.1_amd64.deb
 sudo dpkg -i /tmp/sops_linux_amd64.deb
 
-# Install Flux CLI
-wget -O /tmp/flux_linux_amd64.tar.gz https://github.com/fluxcd/flux2/releases/download/v2.4.0/flux_2.4.0_linux_amd64.tar.gz
-cd /tmp && tar -xzf flux_linux_amd64.tar.gz && sudo mv flux /usr/local/bin/
-
 # Install KSail (main tool for local development)
-# Note: Installation may fail in some environments due to module size limitations
-wget -O /tmp/ksail https://github.com/devantler-tech/ksail/releases/download/v1.6.0/ksail_linux_amd64
-chmod +x /tmp/ksail && sudo mv /tmp/ksail /usr/local/bin/
+brew tap devantler-tech/formulas && brew install ksail
 ```
 
 ### Local Development Cluster
 
-**Primary method (requires KSail):**
+**Primary method (requires KSail + Docker):**
 ```bash
 # NEVER CANCEL: Cluster startup takes 3-5 minutes. Set timeout to 10+ minutes.
-ksail up
+ksail cluster create
+
+# Push manifests and trigger Flux reconciliation
+ksail workload push
+ksail workload reconcile
+
+# Expose Traefik ingress on localhost (required on macOS)
+kubectl port-forward svc/traefik -n traefik 443:443 80:80
 ```
 
-**Alternative method (if KSail unavailable):**
+**Access local services** at `https://platform.lan` (requires host entries from the `hosts` file).
+
+**Cleanup:**
 ```bash
-# Create cluster using Kind directly - takes 45 seconds. NEVER CANCEL.
-kind create cluster --config kind.yaml
-
-# Verify cluster creation
-kubectl get nodes
-kubectl get pods -A
-
-# Clean up when done
-kind delete cluster --name local
+ksail cluster delete
 ```
 
 ### Verification Commands
@@ -54,20 +49,16 @@ Always run these commands to ensure your environment is properly set up:
 ```bash
 # Verify all tools are installed
 docker --version
-kind --version
+ksail --version
 kubectl version --client
-flux version --client
 sops --version
 age --version
 
 # Verify Docker is running
 docker ps
 
-# Check for existing clusters
-kind get clusters
-
-# Test Flux prerequisites
-flux check --pre
+# Check for existing Talos clusters
+ksail cluster list
 ```
 
 ## Repository Structure and Navigation
@@ -75,29 +66,61 @@ flux check --pre
 ### Key Directories
 - **`k8s/`** - All Kubernetes manifests and GitOps configuration
   - **`k8s/clusters/`** - Environment-specific configurations (local, dev, prod)
-  - **`k8s/distributions/`** - Distribution-specific configs (kind, talos)
+  - **`k8s/distributions/`** - Distribution-specific configs (docker, omni)
   - **`k8s/bases/`** - Shared base configurations
     - **`k8s/bases/infrastructure/`** - Core infrastructure components (controllers, certificates, policies)
     - **`k8s/bases/apps/`** - Application deployments (homepage, nextcloud, whoami)
+- **`talos-prod/`** - Talos machine config patches for Omni (production) clusters
+- **`talos-local/`** - Talos machine config patches for Docker (local) clusters
 - **`hetzner/`** - Hetzner Cloud provisioning scripts
 - **`.sops.yaml`** - SOPS encryption configuration
-- **`kind.yaml`** - Local Kind cluster configuration
-- **`ksail.yaml`** - KSail cluster configuration
+- **`ksail.yaml`** - KSail local cluster configuration (Talos + Docker)
+- **`ksail.prod.yaml`** - KSail production cluster configuration (Talos + Omni)
 
 ### Important Files
 - **`README.md`** - Main repository documentation
-- **`ksail.yaml`** - Defines local cluster with Flux, Cilium, Traefik, SOPS
-- **`kind.yaml`** - 4-node cluster (1 control-plane, 3 workers) with disabled CNI
+- **`ksail.yaml`** - Defines local Talos+Docker cluster with Flux, Cilium
+- **`ksail.prod.yaml`** - Defines production Talos+Omni cluster with Flux, Cilium, GHCR registry
+- **`talos-local/`** - Talos machine config patches for local Docker clusters
+- **`talos-prod/`** - Talos machine config patches for Omni clusters (prod)
 - **`.github/workflows/`** - CI/CD pipelines for cluster bootstrap and deployment
 
 ## Common Tasks and Workflows
 
 ### Local Development Workflow
 1. **Setup**: Install prerequisites and verify tools
-2. **Start**: Run `ksail up` (3-5 minutes, NEVER CANCEL)
-3. **Develop**: Make changes to YAML files in `k8s/` directory
-4. **Test**: Apply changes using Flux or kubectl
-5. **Cleanup**: Run `ksail down` or `kind delete cluster --name local`
+2. **Start**: Run `ksail cluster create` (3-5 minutes, NEVER CANCEL)
+3. **Deploy**: Run `ksail workload push` then `ksail workload reconcile`
+4. **Expose**: Run `kubectl port-forward svc/traefik -n traefik 443:443 80:80`
+5. **Develop**: Make changes to YAML files in `k8s/` directory
+6. **Test**: Run `ksail workload push` and `ksail workload reconcile` to apply changes
+7. **Cleanup**: Run `ksail cluster delete`
+
+### Production Deployment Workflow
+Production uses **Talos + Omni** (managed by Sidero Omni SaaS). The cluster is pre-provisioned — only workloads are deployed via KSail.
+
+**How it works:**
+1. Push a `v*` tag to trigger the `CD - Deploy` workflow
+2. The workflow uses `ksail --config ksail.prod.yaml` to target the committed prod config
+3. Root kustomization is switched from `clusters/local` to `clusters/prod`
+4. `ksail --config ksail.prod.yaml workload push` packages manifests and pushes to GHCR
+5. `ksail --config ksail.prod.yaml workload reconcile` triggers Flux to sync from the OCI artifact
+
+**Key differences from local:**
+- No `ksail cluster create/delete` — Omni manages cluster lifecycle externally
+- OCI artifacts pushed to GHCR (not a local registry)
+- `KUBE_CONFIG` secret provides kubeconfig for the Omni cluster
+- SPIRE mutual auth is enabled (unlike local Docker clusters)
+- Omni endpoint: `https://devantler.omni.siderolabs.io:443`
+
+### CI/CD Pipelines
+- **`ci-deploy.yaml`**: Runs on push/merge_group. Creates a local Talos+Docker cluster, pushes manifests, reconciles, then cleans up.
+- **`cd-deploy.yaml`**: Runs on `v*` tags. Deploys to production Omni cluster via `ksail --config ksail.prod.yaml workload push` + `ksail --config ksail.prod.yaml workload reconcile`.
+
+**Required GitHub Secrets:**
+- `KUBE_CONFIG` — kubeconfig for the production Omni cluster
+- `SOPS_AGE_KEY` — Age private key for SOPS secret decryption
+- `GITHUB_TOKEN` — automatically provided, used for GHCR authentication
 
 ### Working with Secrets
 This platform uses SOPS with Age encryption for all secrets:
@@ -147,17 +170,17 @@ Scripts for managing Hetzner Cloud infrastructure are in `hetzner/`:
 
 - **Cluster Creation**: 30-45 seconds (tested: 30-43 seconds) - NEVER CANCEL. Set timeout to 5+ minutes.
 - **Cluster Deletion**: 1-2 seconds (tested: 1.2 seconds) - NEVER CANCEL. Set timeout to 2+ minutes.
-- **KSail Up**: 3-5 minutes for full bootstrap - NEVER CANCEL. Set timeout to 10+ minutes.
+- **ksail cluster create**: 3-5 minutes for full bootstrap - NEVER CANCEL. Set timeout to 10+ minutes.
 - **Flux Reconciliation**: 2-5 minutes per kustomization - NEVER CANCEL. Set timeout to 10+ minutes.
 - **Tool Installation**: 1-3 minutes total (tested: apt update takes 30+ seconds) - NEVER CANCEL. Set timeout to 5+ minutes.
 - **Kustomize Build**: Under 1 second (tested: immediate) - Set timeout to 1+ minute.
 
 ## Known Limitations and Workarounds
 
-### KSail Installation Issues
-- KSail installation may fail due to large module size
-- **Workaround**: Use Kind directly with the provided `kind.yaml` configuration
-- Manual cluster setup is supported but requires additional Flux bootstrap steps
+### macOS Port Exposure
+- MetalLB virtual IPs are not accessible from macOS Docker Desktop (Docker VM isolation)
+- **Workaround**: Use `kubectl port-forward svc/traefik -n traefik 443:443 80:80` to expose services on localhost
+- Host entries in `hosts` file map `*.platform.lan` to `127.0.0.1`
 
 ### SOPS Decryption Requirements
 - Cannot decrypt existing secrets without proper Age keys
@@ -165,20 +188,26 @@ Scripts for managing Hetzner Cloud infrastructure are in `hetzner/`:
 - Local development requires secret re-encryption with personal keys
 
 ### CNI Configuration
-- Kind cluster starts with `disableDefaultCNI: true`
-- Nodes will be NotReady until Cilium is installed via Flux
-- This is expected behavior - the GitOps process handles CNI installation
+- Talos cluster starts with default CNI disabled (via `talos-local/cluster/cni.yaml`)
+- Nodes will be NotReady until Cilium is installed by KSail
+- This is expected behavior - KSail handles CNI installation automatically
 
 ## Platform Architecture
 
 This is a **GitOps-based Kubernetes platform** using:
-- **Flux CD** for declarative GitOps
-- **Cilium** for Container Network Interface (CNI)
+- **Flux CD** for declarative GitOps from OCI artifacts
+- **Cilium** for CNI with SPIRE mutual auth (prod) or without SPIRE (local Docker)
 - **Traefik** for ingress controller
-- **SOPS + Age** for secret encryption at rest
+- **SOPS + Age** for secret encryption at rest (per-environment Age keys)
 - **Kustomize** for configuration templating
-- **Kind** for local development clusters
-- **Talos Omni** for production cluster management
+- **KSail** for unified cluster and workload management
+- **Talos + Docker** for local development clusters (via KSail)
+- **Talos + Omni** for production cluster management (Sidero Omni SaaS)
+- **GHCR** for OCI artifact storage (production)
+
+### Dual-Provider Model
+- **Local/CI**: `ksail cluster create` → Talos + Docker provider → local OCI registry → `ksail workload push/reconcile`
+- **Production**: Omni manages cluster lifecycle → `ksail --config ksail.prod.yaml workload push` to GHCR → `ksail --config ksail.prod.yaml workload reconcile`
 
 ### Kustomization Flow
 The platform uses a hierarchical kustomization structure:
@@ -197,14 +226,13 @@ Infrastructure components are deployed in this order:
 After making any changes, ALWAYS test these scenarios:
 
 ### Basic Cluster Functionality
-1. **Cluster Creation**: Verify `kind create cluster --config kind.yaml` succeeds
-2. **Node Status**: Check nodes become Ready after CNI installation
+1. **Cluster Creation**: Verify `ksail cluster create` succeeds
+2. **Node Status**: Check nodes become Ready after Cilium installation
 3. **Pod Deployment**: Verify core pods start successfully
 
 ### GitOps Validation
 1. **Kustomize Build**: Ensure `kustomize build k8s/clusters/local/` succeeds
-2. **Flux Check**: Verify `flux check --pre` passes
-3. **YAML Validation**: Run `kubectl apply --dry-run=client` on generated manifests
+2. **YAML Validation**: Run `kubectl apply --dry-run=client` on generated manifests
 
 ### Manual Functional Testing
 If cluster is fully operational:
@@ -229,40 +257,50 @@ docs/                 - Additional documentation
 hetzner/              - Hetzner Cloud scripts
 hosts                 - Host configurations
 k8s/                  - Kubernetes manifests
-kind.yaml             - Kind cluster configuration
-ksail.yaml            - KSail configuration
-talos/                - Talos configurations
+ksail.yaml            - KSail local configuration (Talos + Docker)
+ksail.prod.yaml       - KSail production configuration (Talos + Omni)
+talos-prod/           - Talos configs for Omni clusters
+talos-local/          - Talos configs for local Docker clusters
 ```
 
 ### Cluster Status (Expected)
 ```bash
-# kubectl get nodes (after CNI installation)
+# kubectl get nodes (after Cilium installation)
 NAME                  STATUS   ROLES           AGE   VERSION
-local-control-plane   Ready    control-plane   5m    v1.33.1
-local-worker          Ready    <none>          4m    v1.33.1
-local-worker2         Ready    <none>          4m    v1.33.1
-local-worker3         Ready    <none>          4m    v1.33.1
+local-controlplane-1  Ready    control-plane   5m    v1.33.1
+local-worker-1        Ready    <none>          4m    v1.33.1
+local-worker-2        Ready    <none>          4m    v1.33.1
+local-worker-3        Ready    <none>          4m    v1.33.1
 ```
 
 ## Emergency Procedures
 
-### Cluster Recovery
+### Local Cluster Recovery
 ```bash
-# If cluster is unresponsive
-kind delete cluster --name local
-kind create cluster --config kind.yaml
+# If local cluster is unresponsive
+ksail cluster delete
+ksail cluster create
 
-# If KSail cluster is corrupted
-ksail down
-ksail up
+# Then redeploy workloads
+ksail workload push
+ksail workload reconcile
 ```
+
+### Production Cluster Recovery
+The Omni cluster is managed externally. To redeploy workloads:
+```bash
+# From a machine with production kubeconfig access
+ksail workload push
+ksail workload reconcile
+```
+For cluster-level issues, use the Omni dashboard at `https://devantler.omni.siderolabs.io`.
 
 ### Tool Reinstallation
 If tools stop working, reinstall in this order:
 1. Docker (restart service if needed)
-2. Kind (reinstall from GitHub releases)
+2. KSail (`brew reinstall ksail`)
 3. Kubectl (check cluster context)
-4. Flux CLI (verify version compatibility)
-5. SOPS and Age (check encryption keys)
+4. SOPS and Age (check encryption keys)
+5. omnictl (`brew install siderolabs/tap/omnictl`) — for Omni cluster management
 
 Remember: **ALWAYS follow these instructions first**. Only use additional search or commands when encountering unexpected issues not covered here.
