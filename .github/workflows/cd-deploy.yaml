@@ -31,10 +31,6 @@ jobs:
           mkdir -p ~/.kube
           echo "${{ secrets.KUBE_CONFIG }}" > ~/.kube/config
           chmod 600 ~/.kube/config
-          CONTEXT=$(kubectl config current-context)
-          if [[ "$CONTEXT" != "admin@devantler-prod" ]]; then
-            kubectl config rename-context "$CONTEXT" "admin@devantler-prod"
-          fi
 
       - name: 🔐 Create SOPS Age key
         run: |

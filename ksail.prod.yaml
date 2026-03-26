@@ -7,7 +7,7 @@ spec:
   cluster:
     distributionConfig: talos-prod
     connection:
-      context: admin@devantler-prod
+      context: devantler-prod
       timeout: 10m
     distribution: Talos
     provider: Omni
@@ -19,3 +19,4 @@ spec:
       registry: "${GITHUB_ACTOR}:${GITHUB_TOKEN}@ghcr.io/devantler-tech/platform"
   workload:
     sourceDirectory: k8s
+    tag: latest

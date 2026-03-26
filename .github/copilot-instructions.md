@@ -32,9 +32,6 @@ ksail cluster create
 # Push manifests and trigger Flux reconciliation
 ksail workload push
 ksail workload reconcile
-
-# Expose Traefik ingress on localhost (required on macOS)
-kubectl port-forward svc/traefik -n traefik 443:443 80:80
 ```
 
 **Access local services** at `https://platform.lan` (requires host entries from the `hosts` file).
@@ -91,10 +88,9 @@ ksail cluster list
 1. **Setup**: Install prerequisites and verify tools
 2. **Start**: Run `ksail cluster create` (3-5 minutes, NEVER CANCEL)
 3. **Deploy**: Run `ksail workload push` then `ksail workload reconcile`
-4. **Expose**: Run `kubectl port-forward svc/traefik -n traefik 443:443 80:80`
-5. **Develop**: Make changes to YAML files in `k8s/` directory
-6. **Test**: Run `ksail workload push` and `ksail workload reconcile` to apply changes
-7. **Cleanup**: Run `ksail cluster delete`
+4. **Develop**: Make changes to YAML files in `k8s/` directory
+5. **Test**: Run `ksail workload push` and `ksail workload reconcile` to apply changes
+6. **Cleanup**: Run `ksail cluster delete`
 
 ### Production Deployment Workflow
 Production uses **Talos + Omni** (managed by Sidero Omni SaaS). The cluster is pre-provisioned — only workloads are deployed via KSail.
@@ -179,7 +175,7 @@ Scripts for managing Hetzner Cloud infrastructure are in `hetzner/`:
 
 ### macOS Port Exposure
 - MetalLB virtual IPs are not accessible from macOS Docker Desktop (Docker VM isolation)
-- **Workaround**: Use `kubectl port-forward svc/traefik -n traefik 443:443 80:80` to expose services on localhost
+- Port mappings are configured in `ksail.yaml` under `spec.cluster.talos.extraPortMappings` to expose ports 80 and 443 from the Talos Docker container to the host
 - Host entries in `hosts` file map `*.platform.lan` to `127.0.0.1`
 
 ### SOPS Decryption Requirements
