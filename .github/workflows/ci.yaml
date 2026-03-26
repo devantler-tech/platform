@@ -16,7 +16,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 🧪 Run GitOps test
+      - name: 🧪 System Test
         uses: devantler-tech/ksail/.github/actions/ksail-cluster@4cc958abae21913e32d6effbcc8c02bd1fe5a4f9 # main
         with:
           distribution: Talos
