@@ -9,6 +9,7 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    environment: ci
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -16,7 +17,7 @@ jobs:
           persist-credentials: false
 
       - name: 🧪 Run GitOps test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@main
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@4cc958abae21913e32d6effbcc8c02bd1fe5a4f9 # main
         with:
           distribution: Talos
           provider: Docker
