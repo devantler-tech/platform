@@ -22,7 +22,7 @@ jobs:
           provider: Docker
           init: "false"
           validate: "true"
-          sops-age-key: ${{ secrets.KSAIL_SOPS_KEY }}
+          sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
           hosts-file: ${{ vars.HOSTS_FILE }}
           root-ca-cert-file: ${{ vars.ROOT_CA_CERT_FILE }}
           push: "true"
