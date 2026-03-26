@@ -8,10 +8,23 @@ permissions:
 
 jobs:
   test:
-    uses: devantler-tech/reusable-workflows/.github/workflows/ci-gitops-test.yaml@main
-    secrets:
-      KSAIL_SOPS_KEY: ${{ secrets.KSAIL_SOPS_KEY }}
-    with:
-      DISTRIBUTION: Talos
-      PROVIDER: Docker
-      VALIDATE: true
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: 🧪 Run GitOps test
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@main
+        with:
+          distribution: Talos
+          provider: Docker
+          init: "false"
+          validate: "true"
+          sops-age-key: ${{ secrets.KSAIL_SOPS_KEY }}
+          hosts-file: ${{ vars.HOSTS_FILE }}
+          root-ca-cert-file: ${{ vars.ROOT_CA_CERT_FILE }}
+          push: "true"
+          reconcile: "true"
+          delete: "true"
