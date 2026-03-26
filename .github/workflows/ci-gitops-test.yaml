@@ -1,0 +1,17 @@
+name: CI - GitOps Test
+on:
+  pull_request:
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    uses: devantler-tech/reusable-workflows/.github/workflows/ci-gitops-test.yaml@main
+    secrets:
+      KSAIL_SOPS_KEY: ${{ secrets.KSAIL_SOPS_KEY }}
+    with:
+      DISTRIBUTION: Talos
+      PROVIDER: Docker
+      VALIDATE: true
