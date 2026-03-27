@@ -30,10 +30,12 @@ spec:
             namespace: default
             key: time
         - name: currentTime
-          variable: >-
-            {{ mockTime || time.Now() | time.ParseInLocation('America/Los_Angeles') }}
+          variable:
+            value: >-
+              {{ mockTime || time.Now() | time.ParseInLocation('America/Los_Angeles') }}
         - name: isBusinessHours
-          variable: currentTime.Hour() >= 9 && currentTime.Hour() < 17 && (currentTime.Weekday() >= 1 && currentTime.Weekday() <= 5)
+          variable:
+            value: currentTime.Hour() >= 9 && currentTime.Hour() < 17 && (currentTime.Weekday() >= 1 && currentTime.Weekday() <= 5)
       mutate:
         patchStrategicMerge:
           spec:
