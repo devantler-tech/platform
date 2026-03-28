@@ -16,7 +16,14 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: vertical-pod-autoscaler
-  # https://github.com/FairwindsOps/charts/blob/master/stable/goldilocks/values.yaml
+  # https://github.com/FairwindsOps/charts/blob/master/stable/vpa/values.yaml
   values:
     updater:
       enabled: true
+      # TODO: Remove extraArgs when VPA supports InPlaceOrRecreate by default (GA in VPA 1.6.0+)
+      extraArgs:
+        feature-gates: InPlaceOrRecreate=true
+    admissionController:
+      # TODO: Remove extraArgs when VPA supports InPlaceOrRecreate by default (GA in VPA 1.6.0+)
+      extraArgs:
+        feature-gates: InPlaceOrRecreate=true
