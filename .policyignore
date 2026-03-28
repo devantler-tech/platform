@@ -12,6 +12,7 @@ castai*
 cert-manager*
 cleanup*
 consul*
+cost-optimization*
 external-secret-operator*
 flux-cel*
 flux*
