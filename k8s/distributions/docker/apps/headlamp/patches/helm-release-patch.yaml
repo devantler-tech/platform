@@ -1,0 +1,18 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: headlamp
+  namespace: headlamp
+spec:
+  values:
+    config:
+      extraArgs:
+        - "-oidc-ca-file=/etc/ssl/certs/platform-ca/ca-certificates.crt"
+    volumes:
+      - name: trust-bundle
+        configMap:
+          name: platform-ca
+    volumeMounts:
+      - name: trust-bundle
+        mountPath: /etc/ssl/certs/platform-ca
+        readOnly: true

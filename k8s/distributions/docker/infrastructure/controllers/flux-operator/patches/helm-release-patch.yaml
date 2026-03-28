@@ -1,0 +1,23 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: flux-operator
+  namespace: flux-system
+spec:
+  values:
+    web:
+      config:
+        insecure: true
+    extraVolumes:
+      - name: platform-ca
+        configMap:
+          name: platform-ca
+    extraVolumeMounts:
+      - name: platform-ca
+        mountPath: /etc/ssl/certs/platform-ca.crt
+        subPath: ca-certificates.crt
+        readOnly: true
+    extraEnvs:
+      - name: SSL_CERT_FILE
+        value: /etc/ssl/certs/platform-ca.crt
