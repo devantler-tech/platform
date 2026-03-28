@@ -11,13 +11,11 @@ For local development:
 - [Docker](https://docs.docker.com/get-docker/) - For running the cluster locally.
 - [KSail](https://github.com/devantler/ksail) - For developing the cluster locally, and for running the cluster in CI to ensure all changes are properly tested before being applied to the production cluster.
 
-For development and production clusters:
+For production clusters:
 
 - [Talos Omni](https://www.siderolabs.com/platform/saas-for-kubernetes/) - For provisioning the production cluster, and managing nodes, updates, and the Talos configuration.
 - [Hetzner](https://www.hetzner.com/cloud/) - For hosting servers for control plane and worker nodes.
 - [Cloudflare](https://www.cloudflare.com) - For etcd backups, DNS, and tunneling all traffic so my network stays private.
-- [Unifi](https://ui.com/) - For configuring a DMZ zone for my own nodes to run in, along with other security features.
-- [UTM](https://mac.getutm.app) - For running Kubernetes on Mac Mini via Apple Hypervisor.
 - [Flux GitOps](https://fluxcd.io) - For managing the kubernetes applications and infrastructure declaratively.
 - [SOPS](https://getsops.io) and [Age](https://github.com/FiloSottile/age) - For encrypting secrets at rest, allowing me to store them in this repository with confidence.
 
@@ -61,41 +59,21 @@ ksail cluster delete
 
 ### Production
 
-Hybrid Cloud cluster that runs on both Hetzner Cloud and on-prem. Used for production workloads.
+Cloud cluster running on Hetzner Cloud. Used for production workloads.
 
-#### Control Plane Nodes
+#### Nodes
 
-- 2x [Hetzner CAX21 nodes](https://www.hetzner.com/cloud/) (QEMU ARM64 4 vCPU 8Gb RAM 80Gb SSD)
-- 1x [Hetzner CX32 node](https://www.hetzner.com/cloud/) (QEMU AMD64 4 vCPU 8Gb RAM 80Gb SSD)
-
-#### Worker Nodes
-
-- 1x UTM nodes (Apple Hypervisor ARM64 40 vCPU 32Gb RAM 350Gb SSD)
-
-### Development
-
-Hybrid Cloud cluster that runs on both Hetzner Cloud and on-prem. Used to test and verify workloads before promoting them to production.
-
-#### Control Plane Nodes
-
-- 2x [Hetzner CAX21 nodes](https://www.hetzner.com/cloud/) (QEMU ARM64 4 vCPU 8Gb RAM 80Gb SSD)
-- 1x [Hetzner CX32 node](https://www.hetzner.com/cloud/) (QEMU AMD64 4 vCPU 8Gb RAM 80Gb SSD)
-
-#### Worker Nodes
-
-- 1x UTM nodes (Apple Hypervisor ARM64 32 vCPU 16Gb RAM 150Gb SSD)
+- 3x [Hetzner CX23 nodes](https://www.hetzner.com/cloud/) (x86 2 vCPU 4Gb RAM 40Gb SSD, eu-central)
 
 ## Hardware
 
-- [Unifi Cloud Gateway](https://eu.store.ui.com/eu/en/pro/products/ucg-ultra)
-- 1x Mac Mini M2 Pro (ARM64 10 CPU 32Gb RAM ~512Gb SSD)
-- 1x Mac Mini M1 (ARM64 8 CPU 16Gb RAM ~256Gb SSD)
+- 3x [Hetzner CX23](https://www.hetzner.com/cloud/) (x86 2 vCPU 4Gb RAM 40Gb SSD)
 
 ## Structure
 
-The cluster uses Flux GitOps to reconcile the state of the cluster with single source of truth stored in this repository and published as an OCI image. For development, the cluster is spun up by `KSail` and for production, the cluster is provisioned by `Talos Omni`.
+The cluster uses Flux GitOps to reconcile the state of the cluster with the single source of truth stored in this repository and published as an OCI image. KSail is used for local development, CI/CD testing, and production deployments. For production, nodes are provisioned on Hetzner Cloud and managed by Talos Omni.
 
-All environments use the Talos Kubernetes distribution. Local development uses Talos with the Docker provider (via KSail), while dev and production use Talos with Omni.
+All environments use the Talos Kubernetes distribution. Local development and CI use Talos with the Docker provider (via KSail), while production uses Talos with Omni on Hetzner Cloud.
 
 The cluster configuration is stored in the `k8s/*` directories where the structure is as follows:
 
@@ -104,7 +82,7 @@ The cluster configuration is stored in the `k8s/*` directories where the structu
   - [`prod`](k8s/clusters/prod): Contains the production cluster specific configuration.****
 - [`distributions/`](k8s/distributions): Contains the distribution specific configuration.
   - [`docker`](k8s/distributions/docker): Contains the Talos+Docker specific configuration for local development.
-  - [`omni`](k8s/distributions/omni): Contains the Talos+Omni specific configuration for dev and production.
+  - [`omni`](k8s/distributions/omni): Contains the Talos+Omni specific configuration for production.
 - [`bases/`](k8s/bases): Contains the different bases that are used for the different clusters and distributions.
   - [`infrastructure`](k8s/bases/common): Contains the different infrastructure components that are used for the different clusters and distributions.
   - [`apps`](k8s/bases/apps): Contains the different apps that are used for the different clusters and distributions.
@@ -132,9 +110,8 @@ This allows for a clean separation of concerns and allows for modification of th
 | ------------------ | --- | -------- | --------------- | ---------- |
 | Talos Omni         | 1   | $10      | $10             | $10        |
 | Cloudflare Domains | 3   | $0,87    | $2,61           | $2,61      |
-| Hetzner CAX21      | 4   | €7,49    | €29,96          | $34        |
-| Hetzner CX32       | 2   | €7,88    | €15,76          | $17,88     |
-|                    |     |          |                 | $64,49     |
+| Hetzner CX23       | 3   | €4,51    | €13,53          | $15,36     |
+|                    |     |          |                 | $27,97     |
 
 ## Star History
 
