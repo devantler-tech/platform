@@ -4,5 +4,4 @@ kind: Kustomization
 resources:
   - headlamp/
   - homepage/
-  #- nextcloud/
   - whoami/
