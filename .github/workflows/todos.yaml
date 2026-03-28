@@ -1,13 +1,15 @@
 name: "TODOs"
-permissions:
-  issues: write
 on:
   workflow_dispatch:
   push:
     branches: [main]
 
+permissions: {}
+
 jobs:
   todos:
     uses: devantler-tech/reusable-workflows/.github/workflows/todos.yaml@e0863b182654aaca93f9a94599f04f3433a5ff5a # v1.31.1
+    permissions:
+      issues: write # create/update TODO issues
     secrets:
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
