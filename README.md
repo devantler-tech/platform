@@ -11,7 +11,7 @@ For local development:
 - [Docker](https://docs.docker.com/get-docker/) - For running the cluster locally.
 - [KSail](https://github.com/devantler/ksail) - For developing the cluster locally, and for running the cluster in CI to ensure all changes are properly tested before being applied to the production cluster.
 
-For production clusters:
+For the production cluster:
 
 - [Talos Omni](https://www.siderolabs.com/platform/saas-for-kubernetes/) - For provisioning the production cluster, and managing nodes, updates, and the Talos configuration.
 - [Hetzner](https://www.hetzner.com/cloud/) - For hosting servers for control plane and worker nodes.
