@@ -38,7 +38,7 @@ jobs:
   system-test:
     name: 🧪 System Test
     needs: [changes]
-    if: github.event.pull_request.head.repo.full_name == github.repository && needs.changes.outputs.k8s == 'true'
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     environment: ci
     steps:
