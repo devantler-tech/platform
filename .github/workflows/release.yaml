@@ -5,14 +5,15 @@ on:
     branches:
       - main
 
-permissions:
-  contents: write
-  issues: write
-  pull-requests: write
-  id-token: write
+permissions: {}
 
 jobs:
   release:
     uses: devantler-tech/reusable-workflows/.github/workflows/release.yaml@e0863b182654aaca93f9a94599f04f3433a5ff5a # v1.31.1
+    permissions:
+      contents: write # create releases and tags
+      issues: write # comment on related issues
+      pull-requests: write # comment on related PRs
+      id-token: write # provenance signing
     secrets:
       APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
