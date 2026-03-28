@@ -14,4 +14,3 @@ resources:
   - traefik/
   - flux-web/
   - vertical-pod-autoscaler/
-  # - trivy-operator/
