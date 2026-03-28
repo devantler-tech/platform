@@ -37,14 +37,7 @@ spec:
       allowedHosts:
         - ${domain}
     ingress:
-      enabled: true
-      hosts:
-        - host: ${domain}
-          paths:
-            - path: /
-              pathType: ImplementationSpecific
-      annotations:
-        traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
+      enabled: false
     volumes:
       - name: homepage-config
         configMap:
