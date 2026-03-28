@@ -49,9 +49,17 @@ jobs:
       - name: 🔄 Set root kustomization to prod
         run: sed -i 's|clusters/local|clusters/prod|' k8s/kustomization.yaml
 
+      - name: 🔐 Login to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.prod.yaml workload push
         env:
+          GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🔁 Trigger Flux reconciliation
