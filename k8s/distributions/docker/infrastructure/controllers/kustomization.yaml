@@ -15,3 +15,8 @@ patches:
       name: metrics-server
       namespace: kube-system
     path: metrics-server/patches/helm-release-patch.yaml
+  - target:
+      kind: HelmRelease
+      name: flux-operator
+      namespace: flux-system
+    path: flux-operator/patches/helm-release-patch.yaml

@@ -1,0 +1,47 @@
+# TODO: Remove auth-proxy when Cilium supports native forward auth (https://github.com/cilium/cilium/issues/23797)
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-proxy-config
+  namespace: oauth2-proxy
+data:
+  traefik.yaml: |
+    entryPoints:
+      web:
+        address: ":8080"
+    providers:
+      file:
+        filename: /etc/traefik/dynamic.yaml
+    log:
+      level: INFO
+  dynamic.yaml: |
+    http:
+      middlewares:
+        oauth2-forward-auth:
+          forwardAuth:
+            address: "http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth"
+            trustForwardHeader: true
+            authResponseHeaders:
+              - X-Auth-Request-User
+              - X-Auth-Request-Email
+      routers:
+        homepage:
+          rule: "Host(`${domain}`)"
+          entryPoints: ["web"]
+          middlewares: ["oauth2-forward-auth"]
+          service: homepage
+        goldilocks:
+          rule: "Host(`goldilocks.${domain}`)"
+          entryPoints: ["web"]
+          middlewares: ["oauth2-forward-auth"]
+          service: goldilocks
+      services:
+        homepage:
+          loadBalancer:
+            servers:
+              - url: "http://homepage.homepage.svc.cluster.local:80"
+        goldilocks:
+          loadBalancer:
+            servers:
+              - url: "http://goldilocks-dashboard.goldilocks.svc.cluster.local:80"

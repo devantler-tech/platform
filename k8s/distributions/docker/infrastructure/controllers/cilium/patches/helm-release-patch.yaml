@@ -10,3 +10,6 @@ spec:
       mutual:
         spire:
           enabled: false
+    gatewayAPI:
+      hostNetwork:
+        enabled: true

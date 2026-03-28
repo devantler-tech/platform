@@ -1,0 +1,43 @@
+# TODO: Remove auth-proxy when Cilium supports native forward auth (https://github.com/cilium/cilium/issues/23797)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-proxy
+  namespace: oauth2-proxy
+spec:
+  replicas: ${auth_proxy_replicas:=2}
+  selector:
+    matchLabels:
+      app: auth-proxy
+  template:
+    metadata:
+      labels:
+        app: auth-proxy
+      annotations:
+        configmap.reloader.stakater.com/reload: auth-proxy-config
+    spec:
+      containers:
+        - name: traefik
+          image: docker.io/library/traefik:v3.4
+          args:
+            - --configFile=/etc/traefik/traefik.yaml
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: config
+              mountPath: /etc/traefik
+          readinessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: auth-proxy-config

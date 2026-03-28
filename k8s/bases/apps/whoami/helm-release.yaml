@@ -18,10 +18,4 @@ spec:
   # https://github.com/cowboysysop/charts/blob/master/charts/whoami/values.yaml
   values:
     ingress:
-      enabled: true
-      hosts:
-        - host: whoami.${domain}
-          paths:
-            - /
-      annotations:
-        traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
+      enabled: false

@@ -7,7 +7,7 @@ metadata:
 data:
   settings.yaml: |
     title: Platform
-    favicon: https://devantler.tech/assets/images/author.png
+    favicon: https://devantler.tech/_astro/author.DYUMYojz.png
     theme: dark
     color: slate
     background:

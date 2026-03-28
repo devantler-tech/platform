@@ -4,4 +4,5 @@ kind: Kustomization
 resources:
   - certificates/
   - cluster-policies/
-  - middlewares/
+  - cluster-role-bindings/
+  - gateway/

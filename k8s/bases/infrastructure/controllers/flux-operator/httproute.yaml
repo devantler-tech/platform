@@ -1,0 +1,22 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: flux-web
+  namespace: flux-system
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Flux Status
+    gethomepage.dev/description: Real-time status dashboard for Flux GitOps pipelines.
+    gethomepage.dev/group: Kubernetes
+    gethomepage.dev/icon: flux-cd
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - flux.${domain}
+  rules:
+    - backendRefs:
+        - name: flux-operator
+          port: 9080

@@ -35,9 +35,5 @@ spec:
         skip_provider_button = true
         reverse_proxy = true
     ingress:
-      enabled: true
-      hosts:
-        - oauth2-proxy.${domain}
-      annotations:
-        traefik.ingress.kubernetes.io/router.middlewares: traefik-headers@kubernetescrd
+      enabled: false
 
