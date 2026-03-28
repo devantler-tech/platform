@@ -19,7 +19,7 @@ spec:
     spec:
       containers:
         - name: traefik
-          image: docker.io/library/traefik:v3.4
+          image: docker.io/library/traefik:v3.6
           args:
             - --configFile=/etc/traefik/traefik.yaml
           ports:
