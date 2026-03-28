@@ -65,8 +65,8 @@ ksail cluster list
   - **`k8s/clusters/`** - Environment-specific configurations (local, dev, prod)
   - **`k8s/distributions/`** - Distribution-specific configs (docker, omni)
   - **`k8s/bases/`** - Shared base configurations
-    - **`k8s/bases/infrastructure/`** - Core infrastructure components (controllers, certificates, policies)
-    - **`k8s/bases/apps/`** - Application deployments (homepage, nextcloud, whoami)
+    - **`k8s/bases/infrastructure/`** - Core infrastructure components organized by resource type (e.g. `certificates/`, `gateway/`, `cluster-policies/`, `controllers/`)
+    - **`k8s/bases/apps/`** - Application deployments (homepage, whoami, headlamp)
 - **`talos-prod/`** - Talos machine config patches for Omni (production) clusters
 - **`talos-local/`** - Talos machine config patches for Docker (local) clusters
 - **`hetzner/`** - Hetzner Cloud provisioning scripts
@@ -216,6 +216,15 @@ Infrastructure components are deployed in this order:
 1. **infrastructure-controllers** (Flux controllers)
 2. **infrastructure** (core components like Cilium, SOPS)
 3. **apps** (applications and services)
+
+### Infrastructure File Structure Convention
+Resources in `k8s/bases/infrastructure/` are organized by **resource type**, not by the component that uses them:
+- `certificates/` — Certificate resources (e.g. `gateway-certificate.yaml`)
+- `cluster-policies/` — ClusterPolicy resources
+- `controllers/` — HelmRelease, HelmRepository, and related controller resources (each in a subdirectory by component name)
+- `gateway/` — Gateway and infrastructure-level HTTPRoute resources (e.g. HTTP→HTTPS redirect)
+
+Central gateway resources (Gateway, Certificate for TLS) are deployed to `kube-system` (the Cilium namespace) rather than a dedicated namespace.
 
 ## Validation Scenarios
 
