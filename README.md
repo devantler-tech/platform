@@ -79,7 +79,7 @@ The cluster configuration is stored in the `k8s/*` directories where the structu
 
 - [`clusters/`](k8s/clusters): Contains the the cluster specific configuration for each environment.
   - [`local`](k8s/clusters/local): Contains the local cluster specific configuration.
-  - [`prod`](k8s/clusters/prod): Contains the production cluster specific configuration.****
+  - [`prod`](k8s/clusters/prod): Contains the production cluster specific configuration.
 - [`distributions/`](k8s/distributions): Contains the distribution specific configuration.
   - [`docker`](k8s/distributions/docker): Contains the Talos+Docker specific configuration for local development.
   - [`omni`](k8s/distributions/omni): Contains the Talos+Omni specific configuration for production.
