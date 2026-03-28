@@ -11,7 +11,7 @@ spec:
   chart:
     spec:
       chart: headlamp
-      version: 0.27.0
+      version: 0.41.0
       sourceRef:
         kind: HelmRepository
         name: headlamp
@@ -25,7 +25,7 @@ spec:
               - op: add
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
                 value: oidc
-  # https://github.com/headlamp-k8s/headlamp/blob/main/charts/headlamp/values.yaml
+  # https://github.com/kubernetes-sigs/headlamp/blob/main/charts/headlamp/values.yaml
   values:
     config:
       oidc:
@@ -42,6 +42,7 @@ spec:
             - path: /
               type: ImplementationSpecific
       annotations:
+        traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
         gethomepage.dev/enabled: "true"
         gethomepage.dev/name: Headlamp
         gethomepage.dev/description: A web UI for managing Kubernetes clusters.
