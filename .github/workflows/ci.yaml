@@ -8,8 +8,36 @@ permissions:
   contents: read
 
 jobs:
-  test:
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+  changes:
+    name: 🔍 Detect Changes
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      k8s: ${{ steps.filter.outputs.k8s }}
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: 🔍 Filter paths
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        id: filter
+        with:
+          filters: |
+            k8s:
+              - 'k8s/**'
+              - 'ksail.yaml'
+              - '.sops.yaml'
+              - 'talos-local/**'
+              - '.github/workflows/ci.yaml'
+
+  system-test:
+    name: 🧪 System Test
+    needs: [changes]
+    if: github.event.pull_request.head.repo.full_name == github.repository && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     environment: ci
     steps:
