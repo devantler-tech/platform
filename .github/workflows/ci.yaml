@@ -1,0 +1,33 @@
+name: CI
+on:
+  pull_request:
+    branches: [main]
+  merge_group:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: ci
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: 🧪 System Test
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@e8af568986b21cb6e1ed1b3be92ff9c8c3612363 # v5.74.3
+        with:
+          distribution: Talos
+          provider: Docker
+          init: "false"
+          validate: "true"
+          sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
+          hosts-file: ${{ vars.HOSTS_FILE }}
+          root-ca-cert-file: ${{ vars.ROOT_CA_CERT_FILE }}
+          push: "true"
+          reconcile: "true"
+          delete: "true"
