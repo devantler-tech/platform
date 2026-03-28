@@ -2,15 +2,16 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+  - auth-proxy/
   - cert-manager/
   - cilium/
   - cloudnative-pg/
   - dex/
+  - flux-operator/
   - goldilocks/
   - kyverno/
   - metrics-server/
   - oauth2-proxy/
   - reloader/
-  - traefik/
-  - flux-web/
+  - trust-manager/
   - vertical-pod-autoscaler/

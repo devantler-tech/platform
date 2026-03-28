@@ -1,0 +1,13 @@
+# TODO: Remove auth-proxy when Cilium supports native forward auth (https://github.com/cilium/cilium/issues/23797)
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-proxy
+  namespace: oauth2-proxy
+spec:
+  selector:
+    app: auth-proxy
+  ports:
+    - port: 80
+      targetPort: 8080
