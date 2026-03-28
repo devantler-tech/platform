@@ -12,6 +12,6 @@ resources:
   - oauth2-proxy/
   - reloader/
   - traefik/
+  - flux-web/
   - vertical-pod-autoscaler/
-  - weave-gitops/
   # - trivy-operator/

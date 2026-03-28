@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flux-web
+  namespace: flux-system
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: traefik-forward-auth@kubernetescrd
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Flux Status
+    gethomepage.dev/description: Real-time status dashboard for Flux GitOps pipelines.
+    gethomepage.dev/group: Kubernetes
+    gethomepage.dev/icon: flux-cd
+spec:
+  rules:
+    - host: flux-web.${domain}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: flux-operator
+                port:
+                  name: http-web

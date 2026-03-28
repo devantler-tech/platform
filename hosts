@@ -4,5 +4,5 @@
 127.0.0.1 oauth2-proxy.platform.lan
 127.0.0.1 platform.lan
 127.0.0.1 traefik.platform.lan
-127.0.0.1 weave-gitops.platform.lan
+127.0.0.1 flux-web.platform.lan
 127.0.0.1 whoami.platform.lan
