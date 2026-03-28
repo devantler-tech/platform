@@ -111,7 +111,7 @@ This allows for a clean separation of concerns and allows for modification of th
 | Talos Omni         | 1   | $10      | $10             | $10        |
 | Cloudflare Domains | 3   | $0,87    | $2,61           | $2,61      |
 | Hetzner CX23       | 3   | €4,51    | €13,53          | $15,36     |
-|                    |     |          |                 | $27,97     |
+| Total              |     |          |                 | $27,97     |
 
 ## Star History
 
