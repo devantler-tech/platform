@@ -44,6 +44,8 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     environment: ci
+    permissions:
+      contents: read # checkout repository
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
