@@ -16,6 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      contents: read
       issues: write # sync issue labels
     steps:
       - name: 📑 Checkout
