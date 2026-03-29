@@ -15,6 +15,7 @@ jobs:
     name: 🔄 Sync Labels
     runs-on: ubuntu-latest
     permissions:
+      contents: read
       issues: write # sync issue labels
     steps:
       - name: 📑 Checkout
