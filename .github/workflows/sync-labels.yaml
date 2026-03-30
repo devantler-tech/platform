@@ -4,12 +4,19 @@ on:
   schedule:
     - cron: "0 7 * * 1"
 
-permissions:
-  issues: write
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
 
 jobs:
   sync-labels:
+    name: 🔄 Sync Labels
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write # sync issue labels
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

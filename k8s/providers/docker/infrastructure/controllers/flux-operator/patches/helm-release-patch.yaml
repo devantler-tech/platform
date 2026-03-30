@@ -13,6 +13,7 @@ spec:
       - name: platform-ca
         configMap:
           name: platform-ca
+          optional: true
     extraVolumeMounts:
       - name: platform-ca
         mountPath: /etc/ssl/certs/platform-ca.crt
