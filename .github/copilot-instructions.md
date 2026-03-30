@@ -63,7 +63,7 @@ ksail cluster list
 ### Key Directories
 - **`k8s/`** - All Kubernetes manifests and GitOps configuration
   - **`k8s/clusters/`** - Environment-specific configurations (local, dev, prod)
-  - **`k8s/distributions/`** - Distribution-specific configs (docker, omni)
+  - **`k8s/providers/`** - Distribution-specific configs (docker, omni)
   - **`k8s/bases/`** - Shared base configurations
     - **`k8s/bases/infrastructure/`** - Core infrastructure components organized by resource type (e.g. `certificates/`, `gateway/`, `cluster-policies/`, `controllers/`)
     - **`k8s/bases/apps/`** - Application deployments (homepage, whoami, headlamp)
@@ -208,7 +208,7 @@ This is a **GitOps-based Kubernetes platform** using:
 ### Kustomization Flow
 The platform uses a hierarchical kustomization structure:
 1. **Base configurations** in `k8s/bases/`
-2. **Distribution-specific** overlays in `k8s/distributions/`
+2. **Distribution-specific** overlays in `k8s/providers/`
 3. **Cluster-specific** overlays in `k8s/clusters/`
 
 ### Dependency Order

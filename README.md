@@ -80,29 +80,29 @@ The cluster configuration is stored in the `k8s/*` directories where the structu
 - [`clusters/`](k8s/clusters): Contains the the cluster specific configuration for each environment.
   - [`local`](k8s/clusters/local): Contains the local cluster specific configuration.
   - [`prod`](k8s/clusters/prod): Contains the production cluster specific configuration.
-- [`distributions/`](k8s/distributions): Contains the distribution specific configuration.
-  - [`docker`](k8s/distributions/docker): Contains the Talos+Docker specific configuration for local development.
-  - [`omni`](k8s/distributions/omni): Contains the Talos+Omni specific configuration for production.
-- [`bases/`](k8s/bases): Contains the different bases that are used for the different clusters and distributions.
-  - [`infrastructure`](k8s/bases/common): Contains the different infrastructure components that are used for the different clusters and distributions.
-  - [`apps`](k8s/bases/apps): Contains the different apps that are used for the different clusters and distributions.
+- [`providers/`](k8s/providers): Contains the provider specific configuration.
+  - [`docker`](k8s/providers/docker): Contains the Talos+Docker specific configuration for local development.
+  - [`omni`](k8s/providers/omni): Contains the Talos+Omni specific configuration for production.
+- [`bases/`](k8s/bases): Contains the different bases that are used for the different clusters and providers.
+  - [`infrastructure`](k8s/bases/common): Contains the different infrastructure components that are used for the different clusters and providers.
+  - [`apps`](k8s/bases/apps): Contains the different apps that are used for the different clusters and providers.
 
 ### Kustomize and Flux Kustomization Flow
 
 > [!IMPORTANT]
 > If you know of a different way to manage kustomize and flux kustomizations that results in less boilerplate code, please let me know. I am always looking for ways to improve the structure and make it more maintainable.
 
-To support hooking into the kustomize flow for adding or modifying resources for a specific cluster, a specific distribution, or shared across all clusters, the following structure is used:
+To support hooking into the kustomize flow for adding or modifying resources for a specific cluster, a specific provider, or shared across all clusters, the following structure is used:
 
 ![Structure](docs/images/gitops-structure.drawio.png)
 
-This means that for every flux kustomization that is applied to the cluster, there should be a corresponding resource folder in `clusters/<cluster-name>/`, `distributions/<distribution-name>`, or `bases/` that contains resources that should be applied to the cluster for that flux kustomization at the specific scope. For example, for the following flux kustomization `k8s/clusters/<cluster-name>/infrastructure.yaml`, the following resource folders should exist:
+This means that for every flux kustomization that is applied to the cluster, there should be a corresponding resource folder in `clusters/<cluster-name>/`, `providers/<provider-name>`, or `bases/` that contains resources that should be applied to the cluster for that flux kustomization at the specific scope. For example, for the following flux kustomization `k8s/clusters/<cluster-name>/infrastructure.yaml`, the following resource folders should exist:
 
 - `k8s/clusters/<cluster-name>/infrastructure/`
-- `k8s/distributions/<distribution-name>/infrastructure/`
+- `k8s/providers/<provider-name>/infrastructure/`
 - `k8s/bases/infrastructure/`
 
-This allows for a clean separation of concerns and allows for modification of the resources for a specific cluster, distribution, or shared across all clusters.
+This allows for a clean separation of concerns and allows for modification of the resources for a specific cluster, provider, or shared across all clusters.
 
 ## Monthly Cost
 
@@ -116,4 +116,3 @@ This allows for a clean separation of concerns and allows for modification of th
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=devantler/homelab&type=Date)](https://star-history.com/#devantler/homelab&Date)
-
