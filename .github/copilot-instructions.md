@@ -208,7 +208,7 @@ This is a **GitOps-based Kubernetes platform** using:
 ### Kustomization Flow
 The platform uses a hierarchical kustomization structure:
 1. **Base configurations** in `k8s/bases/`
-2. **Distribution-specific** overlays in `k8s/providers/`
+2. **Provider-specific** overlays in `k8s/providers/`
 3. **Cluster-specific** overlays in `k8s/clusters/`
 
 ### Dependency Order
