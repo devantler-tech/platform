@@ -94,7 +94,49 @@ The cluster configuration is stored in the `k8s/*` directories where the structu
 
 To support hooking into the kustomize flow for adding or modifying resources for a specific cluster, a specific provider, or shared across all clusters, the following structure is used:
 
-![Structure](docs/images/gitops-structure.drawio.png)
+#### Kustomize Overlay Flow
+
+Each cluster environment references a provider overlay, which in turn patches the shared base resources:
+
+```mermaid
+graph LR
+  subgraph "Cluster-specific"
+    local["clusters/local"]
+    dev["clusters/dev"]
+    prod["clusters/prod"]
+  end
+
+  subgraph "Provider-specific"
+    docker["providers/docker"]
+    omni["providers/omni"]
+  end
+
+  subgraph "Shared"
+    bases["bases/*"]
+  end
+
+  local --> docker
+  dev --> omni
+  prod --> omni
+  docker --> bases
+  omni --> bases
+```
+
+#### Flux Kustomization Dependency Chain
+
+Flux Kustomizations are reconciled sequentially. Each layer waits for the previous to become ready:
+
+```mermaid
+graph TB
+  variables["variables"]
+  controllers["infrastructure-controllers"]
+  infra["infrastructure"]
+  apps["apps"]
+
+  variables -- "depends on" --> controllers
+  controllers -- "depends on" --> infra
+  infra -- "depends on" --> apps
+```
 
 This means that for every flux kustomization that is applied to the cluster, there should be a corresponding resource folder in `clusters/<cluster-name>/`, `providers/<provider-name>`, or `bases/` that contains resources that should be applied to the cluster for that flux kustomization at the specific scope. For example, for the following flux kustomization `k8s/clusters/<cluster-name>/infrastructure.yaml`, the following resource folders should exist:
 
