@@ -84,7 +84,7 @@ The cluster configuration is stored in the `k8s/*` directories where the structu
   - [`docker`](k8s/providers/docker): Contains the Talos+Docker specific configuration for local development.
   - [`omni`](k8s/providers/omni): Contains the Talos+Omni specific configuration for production.
 - [`bases/`](k8s/bases): Contains the different bases that are used for the different clusters and providers.
-  - [`infrastructure`](k8s/bases/common): Contains the different infrastructure components that are used for the different clusters and providers.
+  - [`infrastructure`](k8s/bases/infrastructure): Contains the different infrastructure components that are used for the different clusters and providers.
   - [`apps`](k8s/bases/apps): Contains the different apps that are used for the different clusters and providers.
 
 ### Kustomize and Flux Kustomization Flow
