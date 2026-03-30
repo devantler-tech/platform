@@ -63,7 +63,7 @@ ksail cluster list
 ### Key Directories
 - **`k8s/`** - All Kubernetes manifests and GitOps configuration
   - **`k8s/clusters/`** - Environment-specific configurations (local, dev, prod)
-  - **`k8s/providers/`** - Distribution-specific configs (docker, omni)
+  - **`k8s/providers/`** - Provider-specific configs (docker, omni)
   - **`k8s/bases/`** - Shared base configurations
     - **`k8s/bases/infrastructure/`** - Core infrastructure components organized by resource type (e.g. `certificates/`, `gateway/`, `cluster-policies/`, `controllers/`)
     - **`k8s/bases/apps/`** - Application deployments (homepage, whoami, headlamp)
