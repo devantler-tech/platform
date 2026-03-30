@@ -4,16 +4,19 @@ on:
     branches: [main]
   merge_group:
 
-permissions:
-  contents: read
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   changes:
     name: 🔍 Detect Changes
     runs-on: ubuntu-latest
     permissions:
-      contents: read
-      pull-requests: read
+      contents: read # checkout repository
+      pull-requests: read # detect changed files
     outputs:
       k8s: ${{ steps.filter.outputs.k8s }}
     steps:
@@ -41,6 +44,8 @@ jobs:
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     environment: ci
+    permissions:
+      contents: read # checkout repository
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -48,7 +53,7 @@ jobs:
           persist-credentials: false
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@e8af568986b21cb6e1ed1b3be92ff9c8c3612363 # v5.74.3
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@8e48ca12ca3b53963f60439c367c8d462b727cbb # v5.78.2
         with:
           distribution: Talos
           provider: Docker
