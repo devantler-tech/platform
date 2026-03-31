@@ -1,4 +1,4 @@
-name: CD - Deploy
+name: CD
 
 on:
   push:
@@ -40,26 +40,12 @@ jobs:
             kubectl config rename-context "$CONTEXT" "devantler-prod"
           fi
 
-      - name: 🔐 Create SOPS Age key
-        env:
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-        run: |
-          mkdir -p ~/.config/sops/age
-          echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
-
-      - name: 🔐 Create SOPS Age secret in cluster
-        env:
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-        run: |
-          kubectl create namespace flux-system --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create secret generic sops-age \
-            --namespace=flux-system \
-            --from-literal=sops.agekey="${SOPS_AGE_KEY}" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: 🔄 Set root kustomization to prod
+      - name: 👉 Set root kustomization to prod
         run: sed -i 's|clusters/local|clusters/prod|' k8s/kustomization.yaml
 
+      - name: 🔄 Update cluster
+        run: ksail --config ksail.prod.yaml cluster update
+        
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.prod.yaml workload push
         env:
