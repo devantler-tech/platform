@@ -8,7 +8,7 @@ packer {
 }
 
 locals {
-  image = "hcloud-amd64-omni-devantler-1.12.5-0c667e.xz"
+  image = "talos-v1.12.5-amd64/hcloud-amd64-omni-devantler-1.12.5-0c667e.xz"
 }
 
 source "hcloud" "talos" {

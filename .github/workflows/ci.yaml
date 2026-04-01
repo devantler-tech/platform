@@ -74,6 +74,9 @@ jobs:
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     environment: dev
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
     permissions:
       contents: read # checkout repository
       packages: write # push OCI artifacts to GHCR
