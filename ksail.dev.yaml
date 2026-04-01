@@ -1,0 +1,22 @@
+---
+apiVersion: ksail.io/v1alpha1
+kind: Cluster
+metadata:
+  name: dev
+spec:
+  cluster:
+    distributionConfig: talos-dev
+    connection:
+      context: devantler-dev
+      timeout: 10m
+    distribution: Talos
+    provider: Omni
+    cni: Cilium
+    gitOpsEngine: Flux
+    omni:
+      endpoint: "https://devantler.na-west-1.omni.siderolabs.io:443"
+    localRegistry:
+      registry: "${GITHUB_ACTOR}:${GITHUB_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
+  workload:
+    sourceDirectory: k8s
+    tag: latest

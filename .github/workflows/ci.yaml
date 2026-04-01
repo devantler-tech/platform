@@ -34,8 +34,10 @@ jobs:
             k8s:
               - 'k8s/**'
               - 'ksail.yaml'
+              - 'ksail.dev.yaml'
               - '.sops.yaml'
               - 'talos-local/**'
+              - 'talos-dev/**'
               - '.github/workflows/ci.yaml'
 
   system-test:
@@ -65,3 +67,51 @@ jobs:
           push: "true"
           reconcile: "true"
           delete: "true"
+
+  deploy-dev:
+    name: 🚀 Deploy to Dev
+    needs: [changes]
+    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    environment: dev
+    concurrency:
+      group: deploy-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read # checkout repository
+      packages: write # push OCI artifacts to GHCR
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup KSail
+        uses: devantler-tech/actions/setup-ksail-action@884a9b7321e269351d5fc006d95e0b50b2ddedf6 # v1.9.7
+
+      - name: 🔐 Setup kubeconfig
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          echo "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+          CONTEXT=$(kubectl config current-context)
+          if [[ "$CONTEXT" != "devantler-dev" ]]; then
+            kubectl config rename-context "$CONTEXT" "devantler-dev"
+          fi
+
+      - name: 👉 Set root kustomization to dev
+        run: sed -i 's|clusters/local|clusters/dev|' k8s/kustomization.yaml
+
+      - name: 🔄 Update cluster
+        run: ksail --config ksail.dev.yaml cluster update
+
+      - name: 📦 Push manifests to GHCR
+        run: ksail --config ksail.dev.yaml workload push
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🔁 Trigger Flux reconciliation
+        run: ksail --config ksail.dev.yaml workload reconcile
