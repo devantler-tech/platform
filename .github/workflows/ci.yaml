@@ -53,7 +53,7 @@ jobs:
           persist-credentials: false
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@1e4f263190d49df5bb68d7adbf9fe74492a8a426 # v5.80.0
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@1fdd3cbaae7908dd1501c39e01862b9b69827d19 # v5.81.0
         with:
           distribution: Talos
           provider: Docker
