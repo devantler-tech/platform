@@ -71,13 +71,13 @@ ksail cluster list
 - **`talos-local/`** - Talos machine config patches for Docker (local) clusters
 - **`hetzner/`** - Hetzner Cloud provisioning scripts
 - **`.sops.yaml`** - SOPS encryption configuration
-- **`ksail.yaml`** - KSail local cluster configuration (Talos + Docker)
-- **`ksail.prod.yaml`** - KSail production cluster configuration (Talos + Omni)
+- **`ksail.yaml`** - KSail local cluster configuration (Talos + Docker, `kustomizationFile: clusters/local`)
+- **`ksail.prod.yaml`** - KSail production cluster configuration (Talos + Omni, `kustomizationFile: clusters/prod`)
 
 ### Important Files
 - **`README.md`** - Main repository documentation
-- **`ksail.yaml`** - Defines local Talos+Docker cluster with Flux, Cilium
-- **`ksail.prod.yaml`** - Defines production Talos+Omni cluster with Flux, Cilium, GHCR registry
+- **`ksail.yaml`** - Defines local Talos+Docker cluster with Flux, Cilium. Has `spec.workload.kustomizationFile: clusters/local` so Flux uses `k8s/clusters/local/kustomization.yaml` as the entry point.
+- **`ksail.prod.yaml`** - Defines production Talos+Omni cluster with Flux, Cilium, GHCR registry. Has `spec.workload.kustomizationFile: clusters/prod` so Flux uses `k8s/clusters/prod/kustomization.yaml` as the entry point.
 - **`talos-local/`** - Talos machine config patches for local Docker clusters
 - **`talos-prod/`** - Talos machine config patches for Omni clusters (prod)
 - **`.github/workflows/`** - CI/CD pipelines for cluster bootstrap and deployment
@@ -98,7 +98,7 @@ Production uses **Talos + Omni** (managed by Sidero Omni SaaS). The cluster is p
 **How it works:**
 1. Push a `v*` tag to trigger the `CD - Deploy` workflow
 2. The workflow uses `ksail --config ksail.prod.yaml` to target the committed prod config
-3. Root kustomization is switched from `clusters/local` to `clusters/prod`
+3. `ksail.prod.yaml` has `kustomizationFile: clusters/prod`, which tells KSail/Flux to use `k8s/clusters/prod/kustomization.yaml` as the entry point — no root `k8s/kustomization.yaml` or file rewriting is needed
 4. `ksail --config ksail.prod.yaml workload push` packages manifests and pushes to GHCR
 5. `ksail --config ksail.prod.yaml workload reconcile` triggers Flux to sync from the OCI artifact
 
@@ -111,7 +111,7 @@ Production uses **Talos + Omni** (managed by Sidero Omni SaaS). The cluster is p
 
 ### CI/CD Pipelines
 - **`ci-deploy.yaml`**: Runs on push/merge_group. Creates a local Talos+Docker cluster, pushes manifests, reconciles, then cleans up.
-- **`cd-deploy.yaml`**: Runs on `v*` tags. Deploys to production Omni cluster via `ksail --config ksail.prod.yaml workload push` + `ksail --config ksail.prod.yaml workload reconcile`.
+- **`cd-deploy.yaml`**: Runs on `v*` tags. Deploys to production Omni cluster using `ksail --config ksail.prod.yaml`. The prod config has `kustomizationFile: clusters/prod` so no file rewriting is needed — KSail/Flux automatically uses the correct entry point.
 
 **Required GitHub Secrets:**
 - `KUBE_CONFIG` — kubeconfig for the production Omni cluster
@@ -262,8 +262,8 @@ docs/                 - Additional documentation
 hetzner/              - Hetzner Cloud scripts
 hosts                 - Host configurations
 k8s/                  - Kubernetes manifests
-ksail.yaml            - KSail local configuration (Talos + Docker)
-ksail.prod.yaml       - KSail production configuration (Talos + Omni)
+ksail.yaml            - KSail local configuration (kustomizationFile: clusters/local)
+ksail.prod.yaml       - KSail production configuration (kustomizationFile: clusters/prod)
 talos-prod/           - Talos configs for Omni clusters
 talos-local/          - Talos configs for local Docker clusters
 ```
