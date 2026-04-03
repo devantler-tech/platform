@@ -108,6 +108,12 @@ jobs:
           mkdir -p ~/.config/sops/age
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
 
+      # TODO: Blocked on devantler-tech/ksail#3591 and devantler-tech/ksail#3592.
+      # cluster update currently fails for Talos+Omni clusters (falls through to Docker
+      # provider path). Re-enable once fixed and a new dev cluster is provisioned.
+      # - name: 🔄 Update cluster
+      #   run: ksail --config ksail.dev.yaml cluster update
+
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.dev.yaml workload push
         env:
@@ -115,11 +121,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🔁 Trigger Flux reconciliation
-        # Retry up to 3 times to handle transient rate-limit timeouts in KSail's
-        # OCI-repository check (hardcoded 2-min deadline, tracked in devantler-tech/ksail#3589).
-        run: |
-          for attempt in 1 2 3; do
-            ksail --config ksail.dev.yaml workload reconcile && break
-            echo "Attempt $attempt failed. Retrying in 30s..."
-            sleep 30
-          done
+        run: ksail --config ksail.dev.yaml workload reconcile
