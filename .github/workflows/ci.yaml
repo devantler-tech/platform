@@ -101,11 +101,12 @@ jobs:
             kubectl config rename-context "$CONTEXT" "devantler-dev"
           fi
 
-      - name: 👉 Set root kustomization to dev
-        run: sed -i 's|clusters/local|clusters/dev|' k8s/kustomization.yaml
-
-      - name: 🔄 Update cluster
-        run: ksail --config ksail.dev.yaml cluster update
+      - name: 🔐 Create SOPS Age key
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          mkdir -p ~/.config/sops/age
+          echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
 
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.dev.yaml workload push
