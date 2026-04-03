@@ -115,4 +115,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 🔁 Trigger Flux reconciliation
-        run: ksail --config ksail.dev.yaml workload reconcile
+        # Retry up to 3 times to handle transient rate-limit timeouts in KSail's
+        # OCI-repository check (hardcoded 2-min deadline, tracked in devantler-tech/ksail#3589).
+        run: |
+          for attempt in 1 2 3; do
+            ksail --config ksail.dev.yaml workload reconcile && break
+            echo "Attempt $attempt failed. Retrying in 30s..."
+            sleep 30
+          done
