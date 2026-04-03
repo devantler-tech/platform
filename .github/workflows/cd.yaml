@@ -40,12 +40,19 @@ jobs:
             kubectl config rename-context "$CONTEXT" "devantler-prod"
           fi
 
-      - name: 👉 Set root kustomization to prod
-        run: sed -i 's|clusters/local|clusters/prod|' k8s/kustomization.yaml
+      - name: 🔐 Create SOPS Age key
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          mkdir -p ~/.config/sops/age
+          echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
 
-      - name: 🔄 Update cluster
-        run: ksail --config ksail.prod.yaml cluster update
-        
+      # TODO: Blocked on devantler-tech/ksail#3591 and devantler-tech/ksail#3592.
+      # cluster update currently fails for Talos+Omni clusters (falls through to Docker
+      # provider path). Re-enable once fixed.
+      # - name: 🔄 Update cluster
+      #   run: ksail --config ksail.prod.yaml cluster update
+
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.prod.yaml workload push
         env:
