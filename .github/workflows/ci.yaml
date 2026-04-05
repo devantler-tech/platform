@@ -106,11 +106,14 @@ jobs:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
         run: |
           mkdir -p ~/.config/sops/age
+          umask 077
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
+          chmod 600 ~/.config/sops/age/keys.txt
 
-      # TODO: Blocked on devantler-tech/ksail#3591 and devantler-tech/ksail#3592.
-      # cluster update currently fails for Talos+Omni clusters (falls through to Docker
-      # provider path). Re-enable once fixed and a new dev cluster is provisioned.
+      # TODO: Blocked on devantler-tech/ksail#3674 and devantler-tech/ksail#3675.
+      # cluster update fails for Talos+Omni: wrong kubeconfig context name (#3674)
+      # and node scaling aborts in-place changes (#3675). Re-enable once fixed
+      # and a new dev cluster is provisioned.
       # - name: 🔄 Update cluster
       #   run: ksail --config ksail.dev.yaml cluster update
 
