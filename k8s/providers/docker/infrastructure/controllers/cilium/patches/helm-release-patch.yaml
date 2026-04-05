@@ -7,6 +7,7 @@ metadata:
 spec:
   values:
     authentication:
+      enabled: false
       mutual:
         spire:
           enabled: false

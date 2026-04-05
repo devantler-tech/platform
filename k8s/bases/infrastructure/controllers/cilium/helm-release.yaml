@@ -57,6 +57,7 @@ spec:
       mode: kubernetes
     kubeProxyReplacement: true
     authentication:
+      enabled: true
       mutual:
         spire:
           enabled: true

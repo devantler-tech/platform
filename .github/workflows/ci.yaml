@@ -55,7 +55,7 @@ jobs:
           persist-credentials: false
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@1fdd3cbaae7908dd1501c39e01862b9b69827d19 # v5.81.0
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@7d82a994df2fbd1c1448d510cc3c70428589321b # v5.82.0
         with:
           distribution: Talos
           provider: Docker
@@ -101,11 +101,30 @@ jobs:
             kubectl config rename-context "$CONTEXT" "devantler-dev"
           fi
 
-      - name: 👉 Set root kustomization to dev
-        run: sed -i 's|clusters/local|clusters/dev|' k8s/kustomization.yaml
+      - name: 🔐 Create SOPS Age key
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          mkdir -p ~/.config/sops/age
+          umask 077
+          echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
+          chmod 600 ~/.config/sops/age/keys.txt
 
-      - name: 🔄 Update cluster
-        run: ksail --config ksail.dev.yaml cluster update
+      - name: 🔐 Ensure SOPS Age decryption secret
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          kubectl create secret generic sops-age \
+            --namespace flux-system \
+            --from-literal=sops.agekey="${SOPS_AGE_KEY}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # TODO: Blocked on devantler-tech/ksail#3674 and devantler-tech/ksail#3675.
+      # cluster update fails for Talos+Omni: wrong kubeconfig context name (#3674)
+      # and node scaling aborts in-place changes (#3675). Re-enable once fixed
+      # and a new dev cluster is provisioned.
+      # - name: 🔄 Update cluster
+      #   run: ksail --config ksail.dev.yaml cluster update
 
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.dev.yaml workload push
@@ -113,5 +132,10 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # TODO: Remove continue-on-error once dev cluster secrets are fully
+      # configured (Hetzner API token, Cloudflare tunnel token, etc.).
+      # The reconciliation times out because infrastructure-controllers
+      # Kustomization cannot converge without valid cloud provider secrets.
       - name: 🔁 Trigger Flux reconciliation
         run: ksail --config ksail.dev.yaml workload reconcile
+        continue-on-error: true
