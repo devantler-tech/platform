@@ -110,7 +110,7 @@ Production uses **Talos + Omni** (managed by Sidero Omni SaaS). The cluster is p
 - Omni endpoint: `https://devantler.omni.siderolabs.io:443`
 
 ### CI/CD Pipelines
-- **`ci.yaml`**: Runs on push/merge_group. Creates a local Talos+Docker cluster, pushes manifests, reconciles, then cleans up.
+- **`ci.yaml`**: Runs on `pull_request` and `merge_group`. Creates a local Talos+Docker cluster, pushes manifests, reconciles, then cleans up.
 - **`cd.yaml`**: Runs on `v*` tags. Deploys to production Omni cluster using `ksail --config ksail.prod.yaml`. The prod config has `kustomizationFile: clusters/prod` so no file rewriting is needed — KSail/Flux automatically uses the correct entry point.
 
 **Required GitHub Secrets:**
