@@ -49,6 +49,15 @@ jobs:
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
 
+      - name: 🔐 Ensure SOPS Age decryption secret
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          kubectl create secret generic sops-age \
+            --namespace flux-system \
+            --from-literal=sops.agekey="${SOPS_AGE_KEY}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
       # TODO: Blocked on devantler-tech/ksail#3674 and devantler-tech/ksail#3675.
       # cluster update fails for Talos+Omni: wrong kubeconfig context name (#3674)
       # and node scaling aborts in-place changes (#3675). Re-enable once fixed.
