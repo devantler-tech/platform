@@ -119,12 +119,8 @@ jobs:
             --from-literal=sops.agekey="${SOPS_AGE_KEY}" \
             --dry-run=client -o yaml | kubectl apply -f -
 
-      # TODO: Blocked on devantler-tech/ksail#3674 and devantler-tech/ksail#3675.
-      # cluster update fails for Talos+Omni: wrong kubeconfig context name (#3674)
-      # and node scaling aborts in-place changes (#3675). Re-enable once fixed
-      # and a new dev cluster is provisioned.
-      # - name: 🔄 Update cluster
-      #   run: ksail --config ksail.dev.yaml cluster update
+      - name: 🔄 Create or update cluster
+        run: ksail --config ksail.dev.yaml cluster create || ksail --config ksail.dev.yaml cluster update
 
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.dev.yaml workload push
