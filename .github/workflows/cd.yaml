@@ -59,7 +59,12 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
       - name: 🔄 Create or update cluster
-        run: ksail --config ksail.prod.yaml cluster create || ksail --config ksail.prod.yaml cluster update
+        run: |
+          if ksail --config ksail.prod.yaml cluster info &>/dev/null; then
+            ksail --config ksail.prod.yaml cluster update
+          else
+            ksail --config ksail.prod.yaml cluster create
+          fi
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
