@@ -60,6 +60,9 @@ jobs:
 
       - name: 🔄 Create or update cluster
         run: ksail --config ksail.prod.yaml cluster create || ksail --config ksail.prod.yaml cluster update
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.prod.yaml workload push
