@@ -59,6 +59,7 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
 
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.prod.yaml workload push

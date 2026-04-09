@@ -120,12 +120,14 @@ jobs:
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
 
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.dev.yaml workload push
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
 
       # TODO: Remove continue-on-error once dev cluster secrets are fully
       # configured (Hetzner API token, Cloudflare tunnel token, etc.).
@@ -134,3 +136,5 @@ jobs:
       - name: 🔁 Trigger Flux reconciliation
         run: ksail --config ksail.dev.yaml workload reconcile
         continue-on-error: true
+        env:
+          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
