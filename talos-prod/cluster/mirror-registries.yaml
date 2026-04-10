@@ -4,32 +4,32 @@ machine:
       docker.io:
         endpoints:
           - https://harbor.devantler.tech/v2/docker.io-proxy
-          - https://registry-1.docker.io
+          - https://registry-1.docker.io/v2
         overridePath: true
       gcr.io:
         endpoints:
           - https://harbor.devantler.tech/v2/gcr.io-proxy
-          - https://gcr.io
+          - https://gcr.io/v2
         overridePath: true
       ghcr.io:
         endpoints:
           - https://harbor.devantler.tech/v2/ghcr.io-proxy
-          - https://ghcr.io
+          - https://ghcr.io/v2
         overridePath: true
       quay.io:
         endpoints:
           - https://harbor.devantler.tech/v2/quay.io-proxy
-          - https://quay.io
+          - https://quay.io/v2
         overridePath: true
       registry.k8s.io:
         endpoints:
           - https://harbor.devantler.tech/v2/registry.k8s.io-proxy
-          - https://registry.k8s.io
+          - https://registry.k8s.io/v2
         overridePath: true
       mcr.microsoft.com:
         endpoints:
           - https://harbor.devantler.tech/v2/mcr.microsoft.com-proxy
-          - https://mcr.microsoft.com
+          - https://mcr.microsoft.com/v2
     config:
       harbor.devantler.tech:
         auth:
