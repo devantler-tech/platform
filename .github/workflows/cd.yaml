@@ -51,11 +51,8 @@ jobs:
 
       - name: 🔄 Create or update cluster
         run: |
-          if ksail --config ksail.prod.yaml cluster info &>/dev/null; then
-            ksail --config ksail.prod.yaml cluster update
-          else
-            ksail --config ksail.prod.yaml cluster create
-          fi
+          ksail --config ksail.prod.yaml cluster update || \
+          (ksail --config ksail.prod.yaml cluster create || true; ksail --config ksail.prod.yaml cluster update)
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
