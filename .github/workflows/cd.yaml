@@ -32,9 +32,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TMP_DIR"' EXIT
           gh release download v1.6.5 --repo siderolabs/omni \
-            --pattern "omnictl-linux-amd64" --output /usr/local/bin/omnictl
-          chmod +x /usr/local/bin/omnictl
+            --pattern "omnictl-linux-amd64" --dir "$TMP_DIR"
+          gh release download v1.6.5 --repo siderolabs/omni \
+            --pattern "sha256sum.txt" --dir "$TMP_DIR"
+          (cd "$TMP_DIR" && grep " omnictl-linux-amd64$" sha256sum.txt | sha256sum -c -)
+          install -m 0755 "$TMP_DIR/omnictl-linux-amd64" /usr/local/bin/omnictl
 
       # Fetch a fresh kubeconfig from the Omni API so cluster update
       # always has valid credentials, even after cluster recreation.
