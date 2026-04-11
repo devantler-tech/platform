@@ -173,7 +173,6 @@ jobs:
       # Kustomization cannot converge without valid cloud provider secrets.
       - name: 🔁 Trigger Flux reconciliation
         run: ksail --config ksail.dev.yaml workload reconcile
-        continue-on-error: true
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
