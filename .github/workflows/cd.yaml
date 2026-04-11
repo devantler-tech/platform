@@ -28,17 +28,38 @@ jobs:
       - name: ⚙️ Setup KSail
         uses: devantler-tech/actions/setup-ksail-action@884a9b7321e269351d5fc006d95e0b50b2ddedf6 # v1.9.7
 
-      - name: 🔐 Setup kubeconfig
+      - name: ⚙️ Setup omnictl
         env:
-          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p ~/.kube
-          echo "${KUBE_CONFIG}" > ~/.kube/config
-          chmod 600 ~/.kube/config
-          CONTEXT=$(kubectl config current-context)
-          if [[ "$CONTEXT" != "devantler-prod" ]]; then
-            kubectl config rename-context "$CONTEXT" "devantler-prod"
+          TMP_DIR="$(mktemp -d)"
+          trap 'rm -rf "$TMP_DIR"' EXIT
+          gh release download v1.6.5 --repo siderolabs/omni \
+            --pattern "omnictl-linux-amd64" --dir "$TMP_DIR"
+          gh release download v1.6.5 --repo siderolabs/omni \
+            --pattern "sha256sum.txt" --dir "$TMP_DIR"
+          (cd "$TMP_DIR" && grep " omnictl-linux-amd64$" sha256sum.txt | sha256sum -c -)
+          install -m 0755 "$TMP_DIR/omnictl-linux-amd64" /usr/local/bin/omnictl
+
+      # Fetch a fresh kubeconfig from the Omni API so cluster update
+      # always has valid credentials, even after cluster recreation.
+      # Allowed to fail when the cluster does not yet exist (cluster
+      # create will fetch the kubeconfig itself).
+      # TODO: Remove once https://github.com/devantler-tech/ksail/issues/3922
+      # is resolved (cluster update should refresh kubeconfig itself).
+      - name: 🔐 Setup kubeconfig
+        continue-on-error: true
+        run: |
+          omnictl kubeconfig --cluster devantler-prod --force \
+            --service-account --user github-actions \
+            --force-context-name devantler-prod
+          CTX=$(kubectl config current-context 2>/dev/null || true)
+          if [[ -n "$CTX" && "$CTX" != "devantler-prod" ]]; then
+            kubectl config rename-context "$CTX" "devantler-prod"
           fi
+        env:
+          OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
+          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
 
       - name: 🔐 Create SOPS Age key
         env:
@@ -49,29 +70,29 @@ jobs:
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
 
-      - name: 🔐 Ensure SOPS Age decryption secret
-        env:
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+      - name: 🔄 Create or update cluster
         run: |
-          kubectl create secret generic sops-age \
-            --namespace flux-system \
-            --from-literal=sops.agekey="${SOPS_AGE_KEY}" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      # TODO: Blocked on devantler-tech/ksail#3674 and devantler-tech/ksail#3675.
-      # cluster update fails for Talos+Omni: wrong kubeconfig context name (#3674)
-      # and node scaling aborts in-place changes (#3675). Re-enable once fixed.
-      # - name: 🔄 Update cluster
-      #   run: ksail --config ksail.prod.yaml cluster update
+          if ksail --config ksail.prod.yaml cluster info > /dev/null 2>&1; then
+            ksail --config ksail.prod.yaml cluster update
+          else
+            ksail --config ksail.prod.yaml cluster create
+          fi
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
+          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
 
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.prod.yaml workload push
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
           OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
 
       - name: 🔁 Trigger Flux reconciliation
         run: ksail --config ksail.prod.yaml workload reconcile
         env:
+          OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
           OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
