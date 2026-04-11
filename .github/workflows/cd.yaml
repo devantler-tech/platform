@@ -49,12 +49,13 @@ jobs:
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
 
-      # TODO: Simplify to `if cluster info; then update; else create; fi`
-      # once https://github.com/devantler-tech/ksail/issues/3878 is resolved.
       - name: 🔄 Create or update cluster
         run: |
-          ksail --config ksail.prod.yaml cluster update || \
-          (ksail --config ksail.prod.yaml cluster create || true; ksail --config ksail.prod.yaml cluster update)
+          if ksail --config ksail.prod.yaml cluster info > /dev/null 2>&1; then
+            ksail --config ksail.prod.yaml cluster update
+          else
+            ksail --config ksail.prod.yaml cluster create
+          fi
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

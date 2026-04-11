@@ -55,7 +55,7 @@ jobs:
           persist-credentials: false
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@1301b67a0664ea5887db3d00f823008e64518554 # v5.91.6
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@de52d9ba24f2883bd273efe373f1996d1c44ba06 # v6.4.5
         with:
           distribution: Talos
           provider: Docker
@@ -110,12 +110,13 @@ jobs:
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
 
-      # TODO: Simplify to `if cluster info; then update; else create; fi`
-      # once https://github.com/devantler-tech/ksail/issues/3878 is resolved.
       - name: 🔄 Create or update cluster
         run: |
-          ksail --config ksail.dev.yaml cluster update || \
-          (ksail --config ksail.dev.yaml cluster create || true; ksail --config ksail.dev.yaml cluster update)
+          if ksail --config ksail.dev.yaml cluster info > /dev/null 2>&1; then
+            ksail --config ksail.dev.yaml cluster update
+          else
+            ksail --config ksail.dev.yaml cluster create
+          fi
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
