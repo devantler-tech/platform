@@ -9,11 +9,11 @@ permissions: {}
 
 jobs:
   release:
-    uses: devantler-tech/reusable-workflows/.github/workflows/release.yaml@c3fc9e030c8c488f6541b7c9bf4c5847fc5473bf # v1.32.0
+    uses: devantler-tech/reusable-workflows/.github/workflows/create-release.yaml@3273c09293df3e99d4aa9601de31d0f51279120c # v1.33.0
     permissions:
       contents: write # create releases and tags
       issues: write # comment on related issues
       pull-requests: write # comment on related PRs
       id-token: write # provenance signing
     secrets:
-      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+      app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
