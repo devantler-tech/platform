@@ -32,7 +32,7 @@ jobs:
           fetch-depth: 0
 
       - name: 🔍 Filter paths
-        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
+        uses: step-security/paths-filter@5c5241b8233e77b55b9046daf88f1cb7560281de # v4.0.1
         id: filter
         with:
           filters: |
