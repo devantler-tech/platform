@@ -114,9 +114,8 @@ Production uses **Talos + Omni** (managed by Sidero Omni SaaS). The cluster is p
 - **`cd.yaml`**: Runs on `v*` tags. Deploys to production Omni cluster using `ksail --config ksail.prod.yaml`. The prod config has `kustomizationFile: clusters/prod` so no file rewriting is needed — KSail/Flux automatically uses the correct entry point.
 
 **Required GitHub Secrets:**
-- `KUBE_CONFIG` — kubeconfig for the production Omni cluster
+- `GHCR_PAT` — long-lived PAT with `write:packages` scope, used for GHCR push/pull authentication
 - `SOPS_AGE_KEY` — Age private key for SOPS secret decryption
-- `GITHUB_TOKEN` — automatically provided, used for GHCR authentication
 
 ### Working with Secrets
 This platform uses SOPS with Age encryption for all secrets:
