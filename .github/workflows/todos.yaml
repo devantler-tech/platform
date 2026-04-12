@@ -8,8 +8,8 @@ permissions: {}
 
 jobs:
   todos:
-    uses: devantler-tech/reusable-workflows/.github/workflows/todos.yaml@c3fc9e030c8c488f6541b7c9bf4c5847fc5473bf # v1.32.0
+    uses: devantler-tech/reusable-workflows/.github/workflows/scan-for-todo-comments.yaml@3273c09293df3e99d4aa9601de31d0f51279120c # v1.33.0
     permissions:
       issues: write # create/update TODO issues
     secrets:
-      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+      app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
