@@ -105,7 +105,7 @@ Production uses **Talos + Omni** (managed by Sidero Omni SaaS). The cluster is p
 **Key differences from local:**
 - No `ksail cluster create/delete` — Omni manages cluster lifecycle externally
 - OCI artifacts pushed to GHCR (not a local registry)
-- `KUBE_CONFIG` secret provides kubeconfig for the Omni cluster
+- Kubeconfig is fetched dynamically via `omnictl kubeconfig` from the Omni API
 - SPIRE mutual auth is enabled (unlike local Docker clusters)
 - Omni endpoint: `https://devantler.omni.siderolabs.io:443`
 
@@ -114,8 +114,12 @@ Production uses **Talos + Omni** (managed by Sidero Omni SaaS). The cluster is p
 - **`cd.yaml`**: Runs on `v*` tags. Deploys to production Omni cluster using `ksail --config ksail.prod.yaml`. The prod config has `kustomizationFile: clusters/prod` so no file rewriting is needed — KSail/Flux automatically uses the correct entry point.
 
 **Required GitHub Secrets:**
-- `GHCR_PAT` — long-lived PAT with `write:packages` scope, used for GHCR push/pull authentication
+- `GHCR_PAT` — long-lived PAT (owner: `devantler`) with `write:packages` scope, used for GHCR push/pull authentication
 - `SOPS_AGE_KEY` — Age private key for SOPS secret decryption
+- `OMNI_SERVICE_ACCOUNT_KEY` — Omni service account key for cluster access (dev/prod)
+
+**Required GitHub Variables:**
+- `OMNI_ENDPOINT` — Omni API endpoint URL (per-environment)
 
 ### Working with Secrets
 This platform uses SOPS with Age encryption for all secrets:

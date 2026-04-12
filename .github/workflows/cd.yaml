@@ -83,7 +83,6 @@ jobs:
             ksail --config ksail.prod.yaml cluster create
           fi
         env:
-          GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
           OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
           OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
@@ -101,7 +100,6 @@ jobs:
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.prod.yaml workload push
         env:
-          GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
           OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
           OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
@@ -109,7 +107,6 @@ jobs:
       - name: 🔁 Trigger Flux reconciliation
         run: ksail --config ksail.prod.yaml workload reconcile
         env:
-          GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
           OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
           OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}

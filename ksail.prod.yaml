@@ -16,7 +16,7 @@ spec:
     omni:
       endpoint: "https://devantler.omni.siderolabs.io:443"
     localRegistry:
-      registry: "${GITHUB_ACTOR}:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
+      registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
   workload:
     sourceDirectory: k8s
     kustomizationFile: clusters/prod
