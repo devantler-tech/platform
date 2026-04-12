@@ -33,19 +33,6 @@ jobs:
       - name: ⚙️ Setup KSail
         uses: devantler-tech/actions/setup-ksail-action@884a9b7321e269351d5fc006d95e0b50b2ddedf6 # v1.9.7
 
-      - name: ⚙️ Setup omnictl
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TMP_DIR="$(mktemp -d)"
-          trap 'rm -rf "$TMP_DIR"' EXIT
-          gh release download v1.6.5 --repo siderolabs/omni \
-            --pattern "omnictl-linux-amd64" --dir "$TMP_DIR"
-          gh release download v1.6.5 --repo siderolabs/omni \
-            --pattern "sha256sum.txt" --dir "$TMP_DIR"
-          (cd "$TMP_DIR" && grep " omnictl-linux-amd64$" sha256sum.txt | sha256sum -c -)
-          install -m 0755 "$TMP_DIR/omnictl-linux-amd64" /usr/local/bin/omnictl
-
       - name: 🔐 Create SOPS Age key
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
@@ -54,26 +41,6 @@ jobs:
           umask 077
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
-
-      # Fetch a fresh kubeconfig from the Omni API so cluster update
-      # always has valid credentials, even after cluster recreation.
-      # Allowed to fail when the cluster does not yet exist (cluster
-      # create will fetch the kubeconfig itself).
-      # TODO: Remove once https://github.com/devantler-tech/ksail/issues/3922
-      # is resolved (cluster update should refresh kubeconfig itself).
-      - name: 🔐 Setup kubeconfig
-        continue-on-error: true
-        run: |
-          omnictl kubeconfig --cluster devantler-prod --force \
-            --service-account --user github-actions \
-            --force-context-name devantler-prod
-          CTX=$(kubectl config current-context 2>/dev/null || true)
-          if [[ -n "$CTX" && "$CTX" != "devantler-prod" ]]; then
-            kubectl config rename-context "$CTX" "devantler-prod"
-          fi
-        env:
-          OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
-          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
 
       - name: 🔄 Create or update cluster
         run: |
@@ -86,16 +53,6 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
           OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
           OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
-
-      # Workaround: ksail cluster update does not update the
-      # FluxInstance sync.ref from the cluster name to "latest".
-      # TODO: Remove once https://github.com/devantler-tech/ksail/issues/3933
-      # is resolved.
-      - name: 🔧 Fix FluxInstance OCI tag
-        continue-on-error: true
-        run: |
-          kubectl --context devantler-prod patch fluxinstance flux -n flux-system --type=merge \
-            -p '{"spec":{"sync":{"ref":"latest"}}}'
 
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.prod.yaml workload push
