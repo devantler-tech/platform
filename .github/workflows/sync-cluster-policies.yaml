@@ -14,8 +14,8 @@ permissions: {}
 
 jobs:
   sync-policies:
-    uses: devantler-tech/reusable-workflows/.github/workflows/sync-cluster-policies.yaml@c3fc9e030c8c488f6541b7c9bf4c5847fc5473bf # v1.32.0
+    uses: devantler-tech/reusable-workflows/.github/workflows/sync-cluster-policies.yaml@3273c09293df3e99d4aa9601de31d0f51279120c # v1.33.0
     with:
-      KYVERNO_POLICIES_DIR: k8s/bases/infrastructure/cluster-policies/samples
+      kyverno-policies-dir: k8s/bases/infrastructure/cluster-policies/samples
     secrets:
-      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+      app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
