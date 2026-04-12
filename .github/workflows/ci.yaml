@@ -133,13 +133,8 @@ jobs:
           OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
           OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
 
-      # TODO: Remove continue-on-error once dev cluster secrets are fully
-      # configured (Hetzner API token, Cloudflare tunnel token, etc.).
-      # The reconciliation times out because infrastructure-controllers
-      # Kustomization cannot converge without valid cloud provider secrets.
       - name: 🔁 Trigger Flux reconciliation
         run: ksail --config ksail.dev.yaml workload reconcile
-        continue-on-error: true
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_PAT }}
