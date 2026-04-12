@@ -8,7 +8,7 @@ permissions: {}
 
 jobs:
   todos:
-    uses: devantler-tech/reusable-workflows/.github/workflows/scan-for-todo-comments.yaml@3273c09293df3e99d4aa9601de31d0f51279120c # v1.33.0
+    uses: devantler-tech/reusable-workflows/.github/workflows/scan-for-todo-comments.yaml@9ec9792d6c140612f6b5bafa5dc786e751b5ff1a # v2.2.0
     permissions:
       issues: write # create/update TODO issues
     secrets:
