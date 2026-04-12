@@ -105,7 +105,7 @@ Production uses **Talos + Omni** (managed by Sidero Omni SaaS). The cluster is p
 **Key differences from local:**
 - No `ksail cluster create/delete` — Omni manages cluster lifecycle externally
 - OCI artifacts pushed to GHCR (not a local registry)
-- Kubeconfig is managed by KSail via the Omni API
+- Kubeconfig is fetched via `omnictl kubeconfig` in CI/CD workflows (workaround until KSail handles this natively)
 - SPIRE mutual auth is enabled (unlike local Docker clusters)
 - Omni endpoint: `https://devantler.omni.siderolabs.io:443`
 
