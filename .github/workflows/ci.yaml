@@ -102,7 +102,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@4235593b654b467bb57c2d2f492b1461eab37cba # v2.1.0
+        uses: devantler-tech/actions/setup-ksail-cli@961f62f4a771b31e48acaae4a619cef6c7fe2195 # v2.1.1
 
       - name: ⚙️ Setup omnictl
         env:
