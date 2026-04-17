@@ -20,10 +20,12 @@ spec:
     policyEngine: Kyverno
     talos:
       controlPlanes: 3
-    omni:
-      endpoint: "https://devantler.na-west-1.omni.siderolabs.io:443"
     localRegistry:
       registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
+  provider:
+    omni:
+      endpoint: "https://devantler.na-west-1.omni.siderolabs.io:443"
+      machineClass: dev
   workload:
     sourceDirectory: k8s
     kustomizationFile: clusters/dev

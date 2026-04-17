@@ -18,10 +18,14 @@ spec:
     certManager: Enabled
     metricsServer: Enabled
     policyEngine: Kyverno
-    omni:
-      endpoint: "https://devantler.omni.siderolabs.io:443"
+    talos:
+      controlPlanes: 3
     localRegistry:
       registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
+  provider:
+    omni:
+      endpoint: "https://devantler.omni.siderolabs.io:443"
+      machineClass: prod
   workload:
     sourceDirectory: k8s
     kustomizationFile: clusters/prod
