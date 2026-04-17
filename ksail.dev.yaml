@@ -13,6 +13,11 @@ spec:
     provider: Omni
     cni: Cilium
     gitOpsEngine: Flux
+    # Match the existing cluster state so 'ksail cluster update' does not
+    # attempt to uninstall components that are managed in-cluster via Flux.
+    certManager: Enabled
+    metricsServer: Enabled
+    policyEngine: Kyverno
     talos:
       controlPlanes: 3
     omni:
