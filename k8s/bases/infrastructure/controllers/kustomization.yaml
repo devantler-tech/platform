@@ -9,6 +9,7 @@ resources:
   - dex/
   - flux-operator/
   - goldilocks/
+  - kube-prometheus-stack/
   - kyverno/
   - metrics-server/
   - oauth2-proxy/
