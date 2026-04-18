@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "skills": {
+    "copilot-instructions-blueprint-generator": {
+      "source": "devantler-tech/skills",
+      "sourceType": "github"
+    },
+    "find-skills": {
+      "source": "devantler-tech/skills",
+      "sourceType": "github"
+    },
+    "gh-cli": {
+      "source": "devantler-tech/skills",
+      "sourceType": "github"
+    },
+    "gh-stack": {
+      "source": "devantler-tech/skills",
+      "sourceType": "github"
+    },
+    "git-commit": {
+      "source": "devantler-tech/skills",
+      "sourceType": "github"
+    },
+    "github-actions-docs": {
+      "source": "devantler-tech/skills",
+      "sourceType": "github"
+    },
+    "github-issues": {
+      "source": "devantler-tech/skills",
+      "sourceType": "github"
+    },
+    "gitops-cluster-debug": {
+      "source": "devantler-tech/skills",
+      "sourceType": "github"
+    },
+    "gitops-knowledge": {
+      "source": "devantler-tech/skills",
+      "sourceType": "github"
+    },
+    "gitops-repo-audit": {
+      "source": "devantler-tech/skills",
+      "sourceType": "github"
+    },
+    "refactor": {
+      "source": "devantler-tech/skills",
+      "sourceType": "github"
+    },
+    "siderolabs": {
+      "source": "devantler-tech/skills",
+      "sourceType": "github"
+    }
+  }
+}
