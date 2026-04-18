@@ -1,0 +1,108 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: platform-critical
+  namespace: monitoring
+  labels:
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+    - name: nodes
+      rules:
+        - alert: NodeNotReady
+          expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Node {{ $labels.node }} not Ready"
+            description: "Node {{ $labels.node }} has been NotReady for more than 10 minutes."
+
+        - alert: NodeDiskFillingUp
+          expr: |
+            (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|squashfs"}
+                  / node_filesystem_size_bytes{fstype!~"tmpfs|squashfs"})) * 100 > 90
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Node {{ $labels.instance }} disk >90 % full"
+            description: "Filesystem {{ $labels.mountpoint }} is {{ $value | humanize }}% full."
+
+    - name: storage
+      rules:
+        - alert: PersistentVolumeFillingUp
+          expr: |
+            (kubelet_volume_stats_used_bytes
+             / kubelet_volume_stats_capacity_bytes) * 100 > 90
+          for: 30m
+          labels:
+            severity: critical
+          annotations:
+            summary: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} >90 % full"
+            description: "PV {{ $labels.persistentvolumeclaim }} usage at {{ $value | humanize }}%."
+
+    - name: certificates
+      rules:
+        - alert: CertificateExpiringSoon
+          expr: |
+            (certmanager_certificate_expiration_timestamp_seconds - time()) / 86400 < 14
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "Certificate {{ $labels.namespace }}/{{ $labels.name }} expires in <14d"
+            description: "Renewal hasn't happened. cert-manager logs: kubectl logs -n cert-manager -l app=cert-manager"
+
+    - name: flux
+      rules:
+        - alert: FluxKustomizationNotReady
+          expr: |
+            gotk_reconcile_condition{type="Ready",status="False",
+                                     kind=~"Kustomization|HelmRelease"} == 1
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Flux {{ $labels.kind }} {{ $labels.namespace }}/{{ $labels.name }} not Ready"
+            description: "kubectl describe {{ $labels.kind }} -n {{ $labels.namespace }} {{ $labels.name }}"
+
+    - name: backups
+      rules:
+        - alert: VeleroBackupFailed
+          expr: increase(velero_backup_failure_total[1h]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "Velero backup failure(s) in the last hour"
+            description: "{{ $value }} Velero backup(s) failed. kubectl -n velero get backups | grep -v Completed"
+
+        - alert: VeleroNoRecentBackup
+          expr: |
+            time() - max(velero_backup_last_successful_timestamp) > 60 * 60 * 30
+          labels:
+            severity: critical
+          annotations:
+            summary: "No successful Velero backup in >30h"
+            description: "RPO breached. Latest backup is older than 30h; daily schedule should run every 24h."
+
+        - alert: CNPGNoRecentBackup
+          expr: |
+            time() - cnpg_collector_last_failed_backup_timestamp == 0
+            unless on(cluster)
+            time() - cnpg_collector_last_available_backup_timestamp < 60 * 60 * 30
+          labels:
+            severity: critical
+          annotations:
+            summary: "CNPG cluster {{ $labels.cluster }} has no successful backup in >30h"
+            description: "kubectl cnpg status {{ $labels.cluster }}"
+
+        - alert: CNPGClusterDegraded
+          expr: cnpg_pg_replication_in_recovery == 0 and on(namespace, cluster) cnpg_pg_replication_streaming_replicas < 1
+          for: 15m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CNPG cluster {{ $labels.cluster }} has no streaming replica"
+            description: "Single instance left -- a primary failure would lose data up to the last WAL archive."
