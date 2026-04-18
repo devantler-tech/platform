@@ -3,7 +3,7 @@
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant
 metadata:
-  name: allow-auth-proxy-backends
+  name: allow-oauth2-proxy-backends
   namespace: oauth2-proxy
 spec:
   from:
@@ -19,4 +19,4 @@ spec:
   to:
     - group: ""
       kind: Service
-      name: auth-proxy
+      name: oauth2-proxy
