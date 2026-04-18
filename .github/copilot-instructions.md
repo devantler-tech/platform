@@ -125,7 +125,7 @@ Production uses **Talos + Omni** (managed by Sidero Omni SaaS). The cluster is p
 This platform uses SOPS with Age encryption for all secrets:
 ```bash
 # View encrypted secrets (requires proper Age key)
-sops -d k8s/clusters/local/infrastructure/some-secret.enc.yaml
+sops -d k8s/clusters/local/variables/variables-cluster-secret.enc.yaml
 
 # Encrypt new secrets
 sops -e --input-type yaml --output-type yaml secret.yaml > secret.enc.yaml

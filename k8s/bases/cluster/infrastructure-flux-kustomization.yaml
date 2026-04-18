@@ -8,7 +8,7 @@ spec:
   interval: 60m
   timeout: 3m
   retryInterval: 2m
-  path: clusters/dev/infrastructure/
+  path: providers/__PROVIDER__/infrastructure
   sourceRef:
     kind: OCIRepository
     name: flux-system

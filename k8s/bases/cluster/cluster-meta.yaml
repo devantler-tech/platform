@@ -1,0 +1,14 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-meta
+  namespace: flux-system
+  annotations:
+    # Not applied to the cluster — consumed locally by kustomize replacements
+    # in each clusters/<env>/kustomization.yaml overlay to rewrite spec.path
+    # fields on the Flux Kustomizations below.
+    config.kubernetes.io/local-config: "true"
+data:
+  cluster_name: __CLUSTER__
+  provider: __PROVIDER__
