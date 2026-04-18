@@ -5,7 +5,8 @@ metadata:
   name: variables-cluster
   namespace: flux-system
 data:
-  cloudflared_tunnel_id: feb90d05-6569-4af1-8e79-13ecd147e39a
+  cloudflared_tunnel_id: 16559296-e0ce-4f7d-abef-bc703e0bb319
+  cloudflared_tunnel_name: platform-dev
   domain: dev.platform.devantler.tech
   github_app_client_id: Iv23lidTbdsQoKttGTUI
   issuer_group: cert-manager.k8s.cloudflare.com
