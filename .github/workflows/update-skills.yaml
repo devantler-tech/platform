@@ -1,0 +1,22 @@
+name: Update Copilot Skills
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *" # Daily at 06:00 UTC
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  update-copilot-skills:
+    permissions:
+      contents: write
+      pull-requests: write
+    uses: devantler-tech/reusable-workflows/.github/workflows/update-copilot-skills.yaml@6eea016969bceed84f4fb38c8e79fb04a2cadc31 # main @ 2026-04-18
+    with:
+      skills-lock: skills-lock.json
+      agent: github-copilot
+      scope: project
