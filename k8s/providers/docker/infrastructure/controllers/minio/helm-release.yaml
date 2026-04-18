@@ -1,0 +1,39 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: minio
+  namespace: minio
+spec:
+  interval: 5m
+  chart:
+    spec:
+      chart: minio
+      version: 17.0.21
+      sourceRef:
+        kind: HelmRepository
+        name: minio
+  # Local-only stand-in for Cloudflare R2 so Velero + CNPG exercise the
+  # exact same S3 code path in CI as in prod. Single replica, ephemeral
+  # emptyDir storage -- backups themselves are throw-away here; what
+  # matters is that the backup/restore flow runs end-to-end.
+  values:
+    auth:
+      rootUser: minio
+      rootPassword: minio-local-development-only
+    mode: standalone
+    persistence:
+      enabled: false
+    defaultBuckets: "platform-backups"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+    apiIngress:
+      enabled: false
+    ingress:
+      enabled: false
+    metrics:
+      serviceMonitor:
+        enabled: false

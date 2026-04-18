@@ -1,0 +1,118 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: velero
+  namespace: velero
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 5m
+  chart:
+    spec:
+      chart: velero
+      version: 10.1.4
+      sourceRef:
+        kind: HelmRepository
+        name: vmware-tanzu
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  # https://github.com/vmware-tanzu/helm-charts/blob/main/charts/velero/values.yaml
+  values:
+    image:
+      repository: velero/velero
+    initContainers:
+      - name: velero-plugin-for-aws
+        image: velero/velero-plugin-for-aws:v1.13.0
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+          - mountPath: /target
+            name: plugins
+
+    # Mount our SOPS-derived R2 credentials secret instead of the chart's
+    # generated one. The chart only consults it; it never writes to it.
+    credentials:
+      useSecret: true
+      existingSecret: velero-r2-credentials
+
+    # Cloudflare R2 backup target. Bucket + endpoint come from the shared
+    # variables-base ConfigMap; prefix is reused per consumer (PR #3).
+    configuration:
+      backupStorageLocation:
+        - name: default
+          provider: aws
+          bucket: ${r2_bucket}
+          prefix: ${r2_prefix_velero}
+          default: true
+          config:
+            region: ${r2_region}
+            s3ForcePathStyle: "true"
+            s3Url: ${r2_endpoint}
+            checksumAlgorithm: ""
+      # No CSI snapshots -- file-level only via Kopia (cost decision).
+      volumeSnapshotLocation: []
+      defaultVolumesToFsBackup: true
+      uploaderType: kopia
+      features: ""
+
+    # Run Velero itself with HA primitives matching the rest of the
+    # operator tier (PR #2b). Server is leader-elected so 2 replicas =
+    # instant failover, not extra capacity.
+    replicaCount: ${velero_replicas:=2}
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: velero
+            app.kubernetes.io/instance: velero
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+
+    # Node agent: DaemonSet, runs the Kopia uploader on every node that has
+    # PVCs. Defaults are sane; just confirm rolling update.
+    deployNodeAgent: true
+    nodeAgent:
+      updateStrategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxUnavailable: 1
+
+    # Daily backup of every namespace that has PVCs. 14-day retention
+    # matches the Omni etcd policy and the 24h RPO target. Long-term
+    # retention is handled by R2 object lock + lifecycle, not by Velero,
+    # so a corrupted controller cannot accidentally delete history.
+    schedules:
+      daily-full:
+        disabled: false
+        schedule: "17 2 * * *"
+        useOwnerReferencesInBackup: false
+        template:
+          ttl: "336h"
+          storageLocation: default
+          includedNamespaces:
+            - "*"
+          excludedNamespaces:
+            - kube-system
+            - velero
+          snapshotMoveData: true
+          defaultVolumesToFsBackup: true
+
+    metrics:
+      enabled: true
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
