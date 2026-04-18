@@ -16,4 +16,21 @@ spec:
         kind: HelmRepository
         name: metrics-server
   # https://github.com/kubernetes-sigs/metrics-server/blob/master/charts/metrics-server/values.yaml
-  values: {}
+  values:
+    replicas: ${metrics_server_replicas:=2}
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: metrics-server
+            app.kubernetes.io/instance: metrics-server

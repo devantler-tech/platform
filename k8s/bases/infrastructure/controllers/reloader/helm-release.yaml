@@ -19,3 +19,19 @@ spec:
   values:
     reloader:
       reloadStrategy: annotations
+      enableHA: true
+      deployment:
+        replicas: ${reloader_replicas:=2}
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app: reloader-reloader
+        labels:
+          provider: stakater
+          group: com.stakater.platform
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 1

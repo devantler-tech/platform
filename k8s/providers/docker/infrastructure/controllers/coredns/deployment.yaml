@@ -18,8 +18,8 @@ spec:
       k8s-app: kube-dns
   strategy:
     rollingUpdate:
-      maxSurge: 25%
-      maxUnavailable: 1
+      maxSurge: 1
+      maxUnavailable: 0
     type: RollingUpdate
   template:
     metadata:

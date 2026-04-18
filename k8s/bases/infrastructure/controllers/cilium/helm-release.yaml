@@ -46,10 +46,24 @@ spec:
     hubble:
       relay:
         replicas: ${cilium_replicas:=2}
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 1
       ui:
         replicas: ${cilium_replicas:=2}
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 1
     operator:
       replicas: ${cilium_replicas:=2}
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 1
+      updateStrategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 1
+          maxUnavailable: 0
     clustermesh:
       apiserver:
         replicas: ${cilium_replicas:=2}

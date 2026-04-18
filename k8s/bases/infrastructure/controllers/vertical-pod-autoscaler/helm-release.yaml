@@ -20,3 +20,7 @@ spec:
   values:
     updater:
       enabled: true
+    admissionController:
+      replicaCount: ${vpa_admission_replicas:=2}
+      podDisruptionBudget:
+        minAvailable: 1

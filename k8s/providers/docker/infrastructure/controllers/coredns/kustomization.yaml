@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - corefile-config-map.yaml
   - deployment.yaml
+  - pod-disruption-budget.yaml

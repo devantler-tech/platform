@@ -21,7 +21,22 @@ spec:
     global:
       enableProvidedByTopology: true
     controller:
+      replicaCount: ${hcloud_csi_controller_replicas:=2}
       hcloudVolumeDefaultLocation: fsn1
+      podDisruptionBudget:
+        create: true
+        minAvailable: 1
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: controller
+                    app.kubernetes.io/name: hcloud-csi
+                    app.kubernetes.io/instance: hcloud-csi
     node:
       affinity:
         nodeAffinity:
