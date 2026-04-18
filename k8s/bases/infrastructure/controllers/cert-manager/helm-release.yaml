@@ -23,11 +23,57 @@ spec:
   # https://github.com/cert-manager/cert-manager/blob/master/deploy/charts/cert-manager/values.yaml
   values:
     replicaCount: ${cert_manager_replicas:=2}
-    webhook:
-      replicaCount: ${cert_manager_replicas:=2}
-    cainjector:
-      replicaCount: ${cert_manager_replicas:=2}
     podDisruptionBudget:
       enabled: true
+      minAvailable: 1
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: cert-manager
+            app.kubernetes.io/instance: cert-manager
+    webhook:
+      replicaCount: ${cert_manager_replicas:=2}
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 1
+      strategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 1
+          maxUnavailable: 0
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: webhook
+              app.kubernetes.io/instance: cert-manager
+    cainjector:
+      replicaCount: ${cert_manager_replicas:=2}
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 1
+      strategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 1
+          maxUnavailable: 0
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: cainjector
+              app.kubernetes.io/instance: cert-manager
     crds:
       enabled: true

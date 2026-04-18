@@ -25,4 +25,13 @@ spec:
       enabled: true
     podDisruptionBudget:
       enabled: true
+      minAvailable: 1
     replicaCount: ${trust_manager_replicas:=2}
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: trust-manager
+            app.kubernetes.io/instance: trust-manager
