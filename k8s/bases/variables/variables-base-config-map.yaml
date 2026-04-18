@@ -6,3 +6,9 @@ metadata:
   namespace: flux-system
 data:
   cloudflare_account_id: 634e9016d402443e427865dc35457728
+  r2_endpoint: https://634e9016d402443e427865dc35457728.r2.cloudflarestorage.com
+  r2_region: auto
+  r2_bucket: devantler-platform-backups
+  r2_prefix_omni_etcd: omni-etcd
+  r2_prefix_velero: velero
+  r2_prefix_cnpg: cnpg
