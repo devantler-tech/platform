@@ -1,4 +1,3 @@
-# TODO: Remove auth-proxy when Cilium supports native forward auth (https://github.com/cilium/cilium/issues/23797)
 ---
 apiVersion: gateway.networking.k8s.io/v1beta1
 kind: ReferenceGrant

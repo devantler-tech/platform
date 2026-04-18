@@ -6,5 +6,4 @@ resources:
   - config-map.yaml
   - deployment.yaml
   - pod-disruption-budget.yaml
-  - reference-grant.yaml
   - service.yaml
