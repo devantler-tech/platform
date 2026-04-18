@@ -32,7 +32,7 @@ spec:
   # https://github.com/cloudflare/helm-charts/blob/main/charts/cloudflare-tunnel/values.yaml
   values:
     cloudflare:
-      account: "634e9016d402443e427865dc35457728"
+      account: ${cloudflare_account_id}
       tunnelName: ${cloudflared_tunnel_name}
       tunnelId: ${cloudflared_tunnel_id}
       secret: ${cloudflared_tunnel_secret}
