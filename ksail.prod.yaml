@@ -5,7 +5,7 @@ metadata:
   name: prod
 spec:
   cluster:
-    distributionConfig: talos-prod
+    distributionConfig: talos-omni
     connection:
       context: devantler-prod
       timeout: 10m

@@ -5,7 +5,7 @@ metadata:
   name: dev
 spec:
   cluster:
-    distributionConfig: talos-dev
+    distributionConfig: talos-omni
     connection:
       context: devantler-dev
       timeout: 10m
