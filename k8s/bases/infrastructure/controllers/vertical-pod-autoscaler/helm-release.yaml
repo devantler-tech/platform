@@ -20,10 +20,3 @@ spec:
   values:
     updater:
       enabled: true
-      # TODO: Remove extraArgs when VPA supports InPlaceOrRecreate by default (GA in VPA 1.6.0+)
-      extraArgs:
-        feature-gates: InPlaceOrRecreate=true
-    admissionController:
-      # TODO: Remove extraArgs when VPA supports InPlaceOrRecreate by default (GA in VPA 1.6.0+)
-      extraArgs:
-        feature-gates: InPlaceOrRecreate=true
