@@ -307,10 +307,49 @@ jobs:
       # (Talos Hetzner CCM node initialization requires talos-omni patches
       # for kubelet cloud-provider=external; tracked in a follow-up issue).
       - name: 🔁 Trigger Flux reconciliation
-        run: ksail --config ksail.dev.yaml workload reconcile
+        id: reconcile
+        run: ksail --config ksail.dev.yaml workload reconcile --timeout 30m
         continue-on-error: true
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
           OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
+
+      - name: 🩺 Diagnose Flux on failure
+        if: steps.reconcile.outcome == 'failure'
+        env:
+          OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
+          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
+        run: |
+          set +e
+          echo "::group::Flux Kustomizations"
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o wide
+          echo "::endgroup::"
+          echo "::group::Flux HelmReleases"
+          kubectl get helmreleases.helm.toolkit.fluxcd.io -A -o wide
+          echo "::endgroup::"
+          echo "::group::Flux OCIRepositories"
+          kubectl get ocirepositories.source.toolkit.fluxcd.io -A -o wide
+          echo "::endgroup::"
+          echo "::group::Failing Kustomizations describe"
+          for k in infrastructure-controllers infrastructure apps; do
+            echo "--- $k ---"
+            kubectl describe kustomizations.kustomize.toolkit.fluxcd.io "$k" -n flux-system 2>&1 | tail -60
+          done
+          echo "::endgroup::"
+          echo "::group::Flux controller pods"
+          kubectl get pods -n flux-system -o wide
+          echo "::endgroup::"
+          echo "::group::kustomize-controller logs"
+          kubectl logs -n flux-system -l app=kustomize-controller --tail=200
+          echo "::endgroup::"
+          echo "::group::helm-controller logs"
+          kubectl logs -n flux-system -l app=helm-controller --tail=200
+          echo "::endgroup::"
+          echo "::group::source-controller logs"
+          kubectl logs -n flux-system -l app=source-controller --tail=100
+          echo "::endgroup::"
+          echo "::group::Recent events (warnings)"
+          kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -50
+          echo "::endgroup::"
