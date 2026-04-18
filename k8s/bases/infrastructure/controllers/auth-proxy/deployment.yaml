@@ -7,6 +7,11 @@ metadata:
   namespace: oauth2-proxy
 spec:
   replicas: ${auth_proxy_replicas:=2}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   selector:
     matchLabels:
       app: auth-proxy
@@ -17,6 +22,14 @@ spec:
       annotations:
         configmap.reloader.stakater.com/reload: auth-proxy-config
     spec:
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: auth-proxy
       containers:
         - name: traefik
           image: docker.io/library/traefik:v3.6
@@ -37,6 +50,10 @@ spec:
               port: 8080
             initialDelaySeconds: 10
             periodSeconds: 30
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 10"]
       volumes:
         - name: config
           configMap:

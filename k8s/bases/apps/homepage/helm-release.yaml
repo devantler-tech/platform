@@ -25,6 +25,23 @@ spec:
               - op: add
                 path: /metadata/annotations/configmap.reloader.stakater.com~1reload
                 value: homepage
+              - op: add
+                path: /spec/strategy
+                value:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxSurge: 1
+                    maxUnavailable: 0
+              - op: add
+                path: /spec/template/spec/topologySpreadConstraints
+                value:
+                  - maxSkew: 1
+                    topologyKey: kubernetes.io/hostname
+                    whenUnsatisfiable: ScheduleAnyway
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: homepage
+                        app.kubernetes.io/instance: homepage
   # ICONS:
   # https://github.com/walkxcode/dashboard-icons
   # https://simpleicons.org

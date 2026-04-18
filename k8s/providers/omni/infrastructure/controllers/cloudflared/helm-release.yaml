@@ -29,8 +29,26 @@ spec:
               - op: add
                 path: /spec/template/spec/containers/0/args/2
                 value: http2
+              - op: add
+                path: /spec/strategy
+                value:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxSurge: 1
+                    maxUnavailable: 0
+              - op: add
+                path: /spec/template/spec/topologySpreadConstraints
+                value:
+                  - maxSkew: 1
+                    topologyKey: kubernetes.io/hostname
+                    whenUnsatisfiable: ScheduleAnyway
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: cloudflare-tunnel
+                        app.kubernetes.io/instance: cloudflared
   # https://github.com/cloudflare/helm-charts/blob/main/charts/cloudflare-tunnel/values.yaml
   values:
+    replicaCount: ${cloudflared_replicas:=2}
     cloudflare:
       account: ${cloudflare_account_id}
       tunnelName: ${cloudflared_tunnel_name}

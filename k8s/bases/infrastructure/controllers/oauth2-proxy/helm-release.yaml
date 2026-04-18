@@ -21,6 +21,23 @@ spec:
     deploymentAnnotations:
       configmap.reloader.stakater.com/reload: oauth2-proxy
     replicaCount: ${oauth2_proxy_replicas:=2}
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+      maxUnavailable: null
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: oauth2-proxy
+            app.kubernetes.io/instance: oauth2-proxy
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
     config:
       clientID: "${github_app_client_id}"
       clientSecret: "${github_app_client_secret}"

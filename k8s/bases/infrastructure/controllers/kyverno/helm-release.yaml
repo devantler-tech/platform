@@ -17,4 +17,22 @@ spec:
         kind: HelmRepository
         name: kyverno
   # https://github.com/kyverno/kyverno/blob/main/charts/kyverno/values.yaml
-  values: {}
+  values:
+    admissionController:
+      replicas: ${kyverno_admission_replicas:=2}
+      updateStrategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 1
+          maxUnavailable: 0
+      podDisruptionBudget:
+        enabled: true
+        minAvailable: 1
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: admission-controller
+              app.kubernetes.io/instance: kyverno

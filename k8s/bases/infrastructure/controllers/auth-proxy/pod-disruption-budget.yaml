@@ -1,0 +1,10 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: auth-proxy
+  namespace: oauth2-proxy
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: auth-proxy
