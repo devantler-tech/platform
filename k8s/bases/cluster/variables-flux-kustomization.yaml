@@ -1,3 +1,4 @@
+---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
@@ -7,7 +8,7 @@ spec:
   interval: 60m
   timeout: 3m
   retryInterval: 2m
-  path: clusters/prod/variables/
+  path: clusters/__CLUSTER__/variables
   sourceRef:
     kind: OCIRepository
     name: flux-system
