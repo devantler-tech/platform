@@ -19,6 +19,17 @@ spec:
   # https://github.com/dexidp/helm-charts/blob/master/charts/dex/values.yaml
   values:
     replicaCount: ${dex_replicas:=2}
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: dex
+            app.kubernetes.io/instance: dex
     ingress:
       enabled: false
     envVars:
