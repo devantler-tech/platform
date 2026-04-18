@@ -18,5 +18,4 @@ data:
   r2_bucket: platform-backups
   r2_prefix_velero: velero
   r2_prefix_cnpg: cnpg
-  r2_prefix_omni_etcd: omni-etcd
 
