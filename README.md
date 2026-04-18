@@ -145,6 +145,8 @@ This means that for every Flux Kustomization applied to a cluster, there should 
 
 The Flux Kustomizations themselves live in `k8s/bases/cluster/` (with sentinel `__CLUSTER__` / `__PROVIDER__` values in `spec.path`). Each `k8s/clusters/<cluster-name>/` overlay supplies a tiny `cluster-meta` ConfigMap and kustomize `replacements:` that rewrite those sentinels with the cluster's real values. Only the per-cluster `variables/` directory holds cluster-specific manifests.
 
+See [`docs/TEMPLATING.md`](docs/TEMPLATING.md) for the exact set of files a fork of this repo needs to edit to stand up its own instance.
+
 ## Monthly Cost
 
 | Item               | No. | Per unit | Total in Actual | Total in $ |
