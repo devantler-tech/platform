@@ -1,0 +1,11 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: hcloud-cloud-controller-manager
+  namespace: kube-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hcloud-cloud-controller-manager
+      app.kubernetes.io/instance: hcloud-cloud-controller-manager

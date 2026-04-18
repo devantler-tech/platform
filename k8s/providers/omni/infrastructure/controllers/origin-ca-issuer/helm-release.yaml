@@ -13,4 +13,5 @@ spec:
         kind: HelmRepository
         name: origin-ca-issuer
   # https://github.com/cloudflare/origin-ca-issuer/blob/trunk/deploy/charts/origin-ca-issuer/values.yaml
-  values: {}
+  values:
+    replicaCount: ${origin_ca_issuer_replicas:=2}

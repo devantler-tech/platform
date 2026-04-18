@@ -15,3 +15,21 @@ spec:
         kind: HelmRepository
         name: hcloud
   interval: 10m0s
+  # https://github.com/hetznercloud/hcloud-cloud-controller-manager/blob/main/chart/values.yaml
+  values:
+    replicaCount: ${hcloud_ccm_replicas:=2}
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: hcloud-cloud-controller-manager
+                  app.kubernetes.io/instance: hcloud-cloud-controller-manager
