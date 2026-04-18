@@ -10,33 +10,40 @@ spec:
   interval: 2m
   chart:
     spec:
-      chart: cloudflare-tunnel-remote
-      version: 0.1.2
+      chart: cloudflare-tunnel
+      version: 0.3.2
       sourceRef:
         kind: HelmRepository
         name: cloudflared
   # TODO: Remove postRenderers when Cilium supports QUIC protocol for cloudflared (https://github.com/cilium/cilium/issues/37529)
   postRenderers:
-     - kustomize:
-         patches:
-           - target:
-               kind: Deployment
-               name: cloudflared-cloudflare-tunnel-remote
-             patch: |
-               - op: replace
-                 path: /spec/template/spec/containers/0/command
-                 value:
-                   - cloudflared
-                   - tunnel
-                   - --protocol
-                   - http2
-                   - --no-autoupdate
-                   - --metrics
-                   - 0.0.0.0:2000
-                   - run
-  # https://github.com/cloudflare/helm-charts/blob/main/charts/cloudflare-tunnel-remote/values.yaml
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: cloudflared-cloudflare-tunnel
+            patch: |
+              - op: add
+                path: /spec/template/spec/containers/0/args/1
+                value: --protocol
+              - op: add
+                path: /spec/template/spec/containers/0/args/2
+                value: http2
+  # https://github.com/cloudflare/helm-charts/blob/main/charts/cloudflare-tunnel/values.yaml
   values:
-     cloudflare:
-       tunnel_token: ${cloudflared_tunnel_token}
-     image:
-       pullPolicy: Always
+    cloudflare:
+      account: ${cloudflare_account_id}
+      tunnelName: ${cloudflared_tunnel_name}
+      tunnelId: ${cloudflared_tunnel_id}
+      secret: ${cloudflared_tunnel_secret}
+      ingress:
+        - hostname: "*.${domain}"
+          service: https://cilium-gateway-platform.kube-system:443
+          originRequest:
+            noTLSVerify: true
+        - hostname: "${domain}"
+          service: https://cilium-gateway-platform.kube-system:443
+          originRequest:
+            noTLSVerify: true
+    image:
+      pullPolicy: Always
