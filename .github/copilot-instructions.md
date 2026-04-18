@@ -67,7 +67,7 @@ ksail cluster list
   - **`k8s/bases/`** - Shared base configurations
     - **`k8s/bases/infrastructure/`** - Core infrastructure components organized by resource type (e.g. `certificates/`, `gateway/`, `cluster-policies/`, `controllers/`)
     - **`k8s/bases/apps/`** - Application deployments (homepage, whoami, headlamp)
-- **`talos-prod/`** - Talos machine config patches for Omni (production) clusters
+- **`talos-omni/`** - Talos machine config patches for Omni-backed clusters (shared across dev and prod)
 - **`talos-local/`** - Talos machine config patches for Docker (local) clusters
 - **`hetzner/`** - Hetzner Cloud provisioning scripts
 - **`.sops.yaml`** - SOPS encryption configuration
@@ -79,7 +79,7 @@ ksail cluster list
 - **`ksail.yaml`** - Defines local Talos+Docker cluster with Flux, Cilium. Has `spec.workload.kustomizationFile: clusters/local` so Flux uses `k8s/clusters/local/kustomization.yaml` as the entry point.
 - **`ksail.prod.yaml`** - Defines production Talos+Omni cluster with Flux, Cilium, GHCR registry. Has `spec.workload.kustomizationFile: clusters/prod` so Flux uses `k8s/clusters/prod/kustomization.yaml` as the entry point.
 - **`talos-local/`** - Talos machine config patches for local Docker clusters
-- **`talos-prod/`** - Talos machine config patches for Omni clusters (prod)
+- **`talos-omni/`** - Talos machine config patches for Omni-backed clusters (dev and prod)
 - **`.github/workflows/`** - CI/CD pipelines for cluster bootstrap and deployment
 
 ## Common Tasks and Workflows
@@ -125,7 +125,7 @@ Production uses **Talos + Omni** (managed by Sidero Omni SaaS). The cluster is p
 This platform uses SOPS with Age encryption for all secrets:
 ```bash
 # View encrypted secrets (requires proper Age key)
-sops -d k8s/clusters/local/infrastructure/some-secret.enc.yaml
+sops -d k8s/clusters/local/variables/variables-cluster-secret.enc.yaml
 
 # Encrypt new secrets
 sops -e --input-type yaml --output-type yaml secret.yaml > secret.enc.yaml
@@ -267,7 +267,7 @@ hosts                 - Host configurations
 k8s/                  - Kubernetes manifests
 ksail.yaml            - KSail local configuration (kustomizationFile: clusters/local)
 ksail.prod.yaml       - KSail production configuration (kustomizationFile: clusters/prod)
-talos-prod/           - Talos configs for Omni clusters
+talos-omni/           - Talos configs for Omni clusters
 talos-local/          - Talos configs for local Docker clusters
 ```
 

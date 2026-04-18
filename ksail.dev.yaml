@@ -1,3 +1,7 @@
+# Dev Talos + Omni cluster.
+# See docs/TEMPLATING.md for the fields a fork of this repo needs to edit
+# (metadata.name, connection.context, provider.omni.endpoint,
+# provider.omni.machineClass, workload.kustomizationFile).
 ---
 apiVersion: ksail.io/v1alpha1
 kind: Cluster
@@ -5,7 +9,7 @@ metadata:
   name: dev
 spec:
   cluster:
-    distributionConfig: talos-dev
+    distributionConfig: talos-omni
     connection:
       context: devantler-dev
       timeout: 10m
