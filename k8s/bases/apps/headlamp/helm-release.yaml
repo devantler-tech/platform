@@ -25,8 +25,28 @@ spec:
               - op: add
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
                 value: oidc
+              - op: add
+                path: /spec/strategy
+                value:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxSurge: 1
+                    maxUnavailable: 0
   # https://github.com/kubernetes-sigs/headlamp/blob/main/charts/headlamp/values.yaml
   values:
+    replicaCount: ${headlamp_replicas:=2}
+    podDisruptionBudget:
+      enabled: true
+      minAvailable: 1
+      maxUnavailable: null
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: headlamp
+            app.kubernetes.io/instance: headlamp
     config:
       oidc:
         clientID: public-client
