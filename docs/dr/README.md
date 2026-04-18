@@ -10,3 +10,4 @@ specific layers it references.
 | [omni-etcd-backups.md](./omni-etcd-backups.md) | Control plane (PR #3) |
 | [velero-cnpg.md](./velero-cnpg.md)       | Apps + PVs (PR #4) |
 | [alerting.md](./alerting.md)             | Detection (PR #6) |
+| [restore-drill.md](./restore-drill.md)   | CI verification (PR #7) |

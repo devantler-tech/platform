@@ -14,28 +14,36 @@ and CNPG.
   etcd portion. Velero + CNPG share the same bucket under separate prefixes.
 - Already part of the Cloudflare account that fronts the platform
 
-## Bucket layout
+## Single shared bucket (Omni constraint)
 
-One bucket per platform install, multiple prefixes:
+Omni supports exactly **one** backup-storage configuration for the whole Omni
+instance — there is no per-cluster override. All Omni-managed clusters share the
+same S3 target and Omni itself namespaces snapshots by cluster name underneath
+that target.
+
+To keep Velero and CNPG from colliding in that same bucket, they run under
+per-env prefixes:
 
 ```
 devantler-platform-backups/
-├── omni-etcd/<cluster-name>/...   ← this PR
-├── velero/                        ← PR #4
-└── cnpg/<cluster-name>/...        ← PR #4
+├── <omni-cluster-name>/...   ← Omni etcd snapshots, bucket root (managed by Omni)
+├── velero/dev/               ← Velero, dev cluster
+├── velero/prod/              ← Velero, prod cluster
+├── cnpg/dev/                 ← CNPG WAL/base backups, dev cluster
+└── cnpg/prod/                ← same, prod cluster
 ```
 
-Bucket name and prefixes are exposed via the shared `variables-base` ConfigMap
-in `k8s/bases/variables/variables-base-config-map.yaml`:
+Bucket and endpoint come from the shared `variables-base` ConfigMap in
+`k8s/bases/variables/variables-base-config-map.yaml`; per-env prefixes come from
+each `k8s/clusters/<env>/variables/variables-cluster-config-map.yaml`:
 
-| Key                     | Value                                |
-| ----------------------- | ------------------------------------ |
-| `r2_endpoint`           | `https://<account>.r2.cloudflarestorage.com` |
-| `r2_region`             | `auto`                               |
-| `r2_bucket`             | `devantler-platform-backups`         |
-| `r2_prefix_omni_etcd`   | `omni-etcd`                          |
-| `r2_prefix_velero`      | `velero`                             |
-| `r2_prefix_cnpg`        | `cnpg`                               |
+| Key                     | Where        | Value                                           |
+| ----------------------- | ------------ | ----------------------------------------------- |
+| `r2_endpoint`           | base         | `https://<account>.r2.cloudflarestorage.com`    |
+| `r2_region`             | base         | `auto`                                          |
+| `r2_bucket`             | base         | `devantler-platform-backups`                    |
+| `r2_prefix_velero`      | per-cluster  | `velero/dev` or `velero/prod` (local: `velero`) |
+| `r2_prefix_cnpg`        | per-cluster  | `cnpg/dev` or `cnpg/prod` (local: `cnpg`)       |
 
 ## R2 bucket settings (one-time, in Cloudflare dashboard)
 
@@ -45,42 +53,34 @@ in `k8s/bases/variables/variables-base-config-map.yaml`:
    deleting backups before the retention window.
 3. **Versioning**: enabled. Pairs with object lock and lets restores reach back
    past an accidental overwrite.
-4. **Lifecycle rules**:
-   - `omni-etcd/`: transition to Infrequent Access after 14 days (still cheap on
-     R2; mostly hygiene); abort incomplete multipart uploads after 1 day.
-   - `velero/`, `cnpg/`: same.
+4. **Lifecycle rules** (all under `devantler-platform-backups/`):
+   - `velero/` and `cnpg/`: transition to Infrequent Access after 14 days;
+     abort incomplete multipart uploads after 1 day.
+   - Bucket root (Omni snapshots): same.
 5. **Server-side encryption**: SSE-S3 (AES-256), which is the R2 default and
    cannot be disabled. No additional config needed.
-6. Create a **scoped API token** with permission `Object Read & Write` limited to
-   this bucket. Save the access key ID and secret access key — these are the
-   values that go into the SOPS-encrypted `variables-base` secret as
-   `r2_access_key_id` / `r2_secret_access_key`.
+6. Create a **scoped S3 API token** with permission `Object Read & Write`
+   limited to this bucket. Save the Access Key ID and Secret Access Key — these
+   are the values that go into the SOPS-encrypted cluster secrets as
+   `r2_access_key_id` / `r2_secret_access_key` (one copy in `dev`, one in
+   `prod`; the key can be the same or rotated independently — same bucket).
 
-## Omni-side configuration
+## Omni-side configuration (one-time, in the Omni UI)
 
-Omni's "Control Plane Backups" feature writes etcd snapshots directly to S3-
-compatible storage. There is no in-cluster cron and no extra workload — the
-backup runs from Omni's control plane and only the resulting snapshot blob lands
-in R2.
+Omni's **Settings → Backup Storage** page takes a single S3 config that applies
+to every cluster Omni manages. Open it and paste:
 
-Configure once per cluster in the Omni UI (`Cluster → Backups`) **or** via
-`omnictl` with the values below.
+| Field             | Value                                                               |
+| ----------------- | ------------------------------------------------------------------- |
+| Endpoint          | `https://634e9016d402443e427865dc35457728.r2.cloudflarestorage.com` |
+| Bucket            | `devantler-platform-backups`                                        |
+| Region            | `auto` (any value works; R2 ignores it)                             |
+| Access Key ID     | the R2 S3 token ID from step 6 above                                |
+| Secret Access Key | the R2 S3 token secret from step 6 above                            |
+| Session Token     | *(leave blank)*                                                     |
 
-```bash
-# Example — run for each of dev and prod, substituting the cluster name.
-omnictl cluster set-backup \
-  --cluster <cluster-name> \
-  --type s3 \
-  --endpoint "https://634e9016d402443e427865dc35457728.r2.cloudflarestorage.com" \
-  --region auto \
-  --bucket devantler-platform-backups \
-  --prefix "omni-etcd/<cluster-name>" \
-  --access-key-id     "$R2_ACCESS_KEY_ID" \
-  --secret-access-key "$R2_SECRET_ACCESS_KEY" \
-  --schedule "@daily" \
-  --retention 14 \
-  --long-term-retention 4
-```
+Save. Then for each cluster (dev, prod) enable backups under
+**Cluster → Settings → etcd Backups** with:
 
 | Setting               | Value                              |
 | --------------------- | ---------------------------------- |
@@ -91,6 +91,10 @@ omnictl cluster set-backup \
 | Encryption at rest    | SSE-S3 (R2 default)                |
 | RPO target            | 24 h (matches plan goal)           |
 
+Omni writes snapshots at `<bucket>/<cluster-name>/<snapshot-id>` — the
+per-cluster folder is added by Omni, not by us. That's why our own Velero/CNPG
+prefixes don't overlap.
+
 ## Restore (high level)
 
 Detailed in `docs/dr/runbook.md` (PR #5). Summary:
@@ -98,7 +102,7 @@ Detailed in `docs/dr/runbook.md` (PR #5). Summary:
 1. Provision a fresh Talos node from the snapshot used by `hetzner/`.
 2. In Omni, create a new cluster pointed at the same machine.
 3. `Cluster → Backups → Restore from S3` → pick the most recent snapshot under
-   `omni-etcd/<cluster-name>/`.
+   the target cluster's folder in the R2 bucket.
 4. Omni rolls a new etcd member from the snapshot and rejoins the control plane.
 5. Once the API server is back, Flux reconciles the rest of the platform from
    GHCR — no further manual steps for the workload tier.
