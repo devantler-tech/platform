@@ -243,36 +243,22 @@ jobs:
           # CNPG backup object does not exist. Fall back to checking the
           # phase directly on the Backup CR.
           velero backup describe "$BACKUP_NAME" 2>/dev/null || true
-          phase=$(kubectl -n velero get backup "$BACKUP_NAME" -o jsonpath='{.status.phase}')
+          phase=$(kubectl -n velero get backups.velero.io "$BACKUP_NAME" -o jsonpath='{.status.phase}')
           [[ "$phase" == "Completed" ]] || { echo "Backup phase=$phase, expected Completed" >&2; exit 1; }
 
-      - name: 🗑️ Destroy cluster
-        run: ksail cluster delete
-
-      - name: 🚀 Create cluster (round 2 -- fresh)
+      - name: 🗑️ Simulate data loss (delete marker namespace)
+        # In prod the data-loss event is a lost cluster; R2 retains the
+        # backup. Locally, MinIO runs in-cluster with ephemeral storage,
+        # so destroying the cluster also destroys the backup target.
+        # Instead, simulate data loss by deleting the marker namespace
+        # and restoring it from the backup -- exercises the same
+        # Velero->S3->Velero code path end-to-end.
         run: |
-          ksail cluster create
-          ksail workload push
-          ksail workload reconcile --timeout 30m
-
-      - name: ⏳ Wait for Velero + MinIO ready (round 2)
-        run: |
-          kubectl -n velero rollout status deploy/velero --timeout=10m
-          kubectl -n minio rollout status deploy/minio --timeout=10m
-          # Backup metadata lives in MinIO -- Velero will rediscover it
-          # from the BackupStorageLocation. Wait for the backup CR to
-          # reappear.
-          for i in $(seq 1 30); do
-            kubectl -n velero get backup "$BACKUP_NAME" >/dev/null 2>&1 && exit 0
-            sleep 10
-          done
-          echo "Backup $BACKUP_NAME not rediscovered after cluster rebuild" >&2
-          velero backup get
-          exit 1
+          kubectl delete namespace "$MARKER_NS" --wait=true --timeout=2m
 
       - name: ♻️ Restore marker from backup
         run: |
-          # Marker namespace must NOT pre-exist on the new cluster.
+          # Marker namespace must NOT exist right before restore.
           ! kubectl get ns "$MARKER_NS" >/dev/null 2>&1
           velero restore create "$BACKUP_NAME-restore" \
             --from-backup "$BACKUP_NAME" \
@@ -280,7 +266,7 @@ jobs:
           # Skip --details on describe for the same presigned-URL + CNPG
           # reasons as the backup step above.
           velero restore describe "$BACKUP_NAME-restore" 2>/dev/null || true
-          phase=$(kubectl -n velero get restore "$BACKUP_NAME-restore" -o jsonpath='{.status.phase}')
+          phase=$(kubectl -n velero get restores.velero.io "$BACKUP_NAME-restore" -o jsonpath='{.status.phase}')
           [[ "$phase" == "Completed" ]] || { echo "Restore phase=$phase, expected Completed" >&2; exit 1; }
 
       - name: ✅ Assert marker present
@@ -290,7 +276,7 @@ jobs:
             echo "Marker run-id mismatch: got=$got_run_id expected=${{ github.run_id }}" >&2
             exit 1
           }
-          echo "DR drill OK: marker survived backup -> destroy -> recreate -> restore"
+          echo "DR drill OK: marker survived backup -> data-loss -> restore"
 
       - name: 🧹 Tear down
         if: always()
