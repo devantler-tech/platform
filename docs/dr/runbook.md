@@ -213,7 +213,7 @@ find . -name '*.enc.yaml' -print0 | xargs -0 -n1 sops updatekeys --yes
 
 ```bash
 # 1. Mint a new R2 token in the Cloudflare dashboard (scoped to your
-#    platform-backups bucket only). DO NOT revoke the old one
+#    <your-bucket> bucket only). DO NOT revoke the old one
 #    yet -- there is a window where both must work.
 
 # 2. Update the encrypted secret in-place
@@ -231,7 +231,7 @@ kubectl logs -n cnpg-system -l app.kubernetes.io/name=cloudnative-pg --tail=50
 
 # 5. Revoke the old token in Cloudflare.
 
-# 6. Update the in-Omni R2 credentials (Omni etcd backups, see omni-etcd-backups.md).
+# 6. Update the in-Omni R2 credentials (Omni etcd backups, see [omni-etcd-backups.md](./omni-etcd-backups.md)).
 omnictl cluster set-backup --cluster <c> --access-key-id <new> --secret-access-key <new>
 ```
 

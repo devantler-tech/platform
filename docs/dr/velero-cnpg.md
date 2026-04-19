@@ -10,7 +10,7 @@ The application/PV backup tier. Etcd snapshots are handled by Omni
                 ┌─────────────────────────────────────┐
                 │  Cloudflare R2                      │
                 │  bucket: <your-bucket>              │
-                │    omni-etcd/      (Omni)           │
+                │    <cluster-name>/  (Omni)          │
                 │    velero/         (this layer)     │
                 │    cnpg/<cluster>/ (this layer)     │
                 └─────────────────────────────────────┘
