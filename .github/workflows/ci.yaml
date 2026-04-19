@@ -83,7 +83,49 @@ jobs:
           delete: "false"
 
       - name: 🔁 Reconcile with extended timeout
+        id: reconcile
         run: ksail workload reconcile --timeout 30m
+
+      - name: 🩺 Diagnose Flux on failure
+        if: failure() && steps.reconcile.outcome == 'failure'
+        run: |
+          set +e
+          echo "::group::Nodes"
+          kubectl get nodes -o wide
+          echo "::endgroup::"
+          echo "::group::Flux Kustomizations"
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o wide
+          echo "::endgroup::"
+          echo "::group::Flux HelmReleases"
+          kubectl get helmreleases.helm.toolkit.fluxcd.io -A -o wide
+          echo "::endgroup::"
+          echo "::group::Flux OCIRepositories"
+          kubectl get ocirepositories.source.toolkit.fluxcd.io -A -o wide
+          echo "::endgroup::"
+          echo "::group::Failing Kustomizations describe"
+          for k in infrastructure-controllers infrastructure apps; do
+            echo "--- $k ---"
+            kubectl describe kustomizations.kustomize.toolkit.fluxcd.io "$k" -n flux-system 2>&1 | tail -80
+          done
+          echo "::endgroup::"
+          echo "::group::Flux controller pods"
+          kubectl get pods -n flux-system -o wide
+          echo "::endgroup::"
+          echo "::group::kustomize-controller logs"
+          kubectl logs -n flux-system -l app=kustomize-controller --tail=300
+          echo "::endgroup::"
+          echo "::group::helm-controller logs"
+          kubectl logs -n flux-system -l app=helm-controller --tail=300
+          echo "::endgroup::"
+          echo "::group::source-controller logs"
+          kubectl logs -n flux-system -l app=source-controller --tail=200
+          echo "::endgroup::"
+          echo "::group::All pods"
+          kubectl get pods -A -o wide
+          echo "::endgroup::"
+          echo "::group::Recent events (warnings)"
+          kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -100
+          echo "::endgroup::"
 
       - name: 🔥 Delete cluster
         if: always()
@@ -144,10 +186,28 @@ jobs:
           velero version --client-only
 
       - name: 🚀 Create cluster (round 1)
+        id: create1
         run: |
           ksail cluster create
           ksail workload push
           ksail workload reconcile --timeout 30m
+
+      - name: 🩺 Diagnose Flux on failure (round 1)
+        if: failure() && steps.create1.outcome == 'failure'
+        run: |
+          set +e
+          kubectl get nodes -o wide
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o wide
+          kubectl get helmreleases.helm.toolkit.fluxcd.io -A -o wide
+          for k in infrastructure-controllers infrastructure apps; do
+            echo "--- $k ---"
+            kubectl describe kustomizations.kustomize.toolkit.fluxcd.io "$k" -n flux-system 2>&1 | tail -60
+          done
+          kubectl get pods -n flux-system -o wide
+          kubectl logs -n flux-system -l app=kustomize-controller --tail=300
+          kubectl logs -n flux-system -l app=helm-controller --tail=300
+          kubectl get pods -A -o wide
+          kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -100
 
       - name: ⏳ Wait for Velero + MinIO ready (round 1)
         run: |
