@@ -11,7 +11,13 @@ spec:
   hostnames:
     - ${domain}
   rules:
-    - backendRefs:
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://${domain}/
+      backendRefs:
         - name: oauth2-proxy
           namespace: oauth2-proxy
           port: 80
