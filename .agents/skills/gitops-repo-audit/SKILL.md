@@ -4,10 +4,9 @@ description: |
     Audit and validate Flux CD GitOps repositories by scanning local repo files (not live clusters) — runs Kubernetes schema validation, detects deprecated Flux APIs, reviews RBAC/multi-tenancy/secrets management, and produces a prioritized GitOps report. Use when users ask to audit, analyze, validate, review, or security-check a GitOps repo.
 license: Apache-2.0
 metadata:
-    github-path: gitops-repo-audit
-    github-pinned: 5fe05e6dd751519bdc212d80499429651392ac7e
-    github-ref: 5fe05e6dd751519bdc212d80499429651392ac7e
-    github-repo: https://github.com/devantler-tech/skills
+    github-path: skills/gitops-repo-audit
+    github-ref: refs/tags/v0.0.3
+    github-repo: https://github.com/fluxcd/agent-skills
     github-tree-sha: 6a0bce48f3bda341fce4ad2c4c798b40b40b98c4
 name: gitops-repo-audit
 ---
