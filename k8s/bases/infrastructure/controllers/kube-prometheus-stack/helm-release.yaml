@@ -48,10 +48,10 @@ spec:
         retentionSize: "5GiB"
         resources:
           requests:
-            cpu: 100m
-            memory: 512Mi
+            cpu: 50m
+            memory: 256Mi
           limits:
-            memory: 1Gi
+            memory: 768Mi
         # Discover ServiceMonitors / PodMonitors / PrometheusRules from
         # any namespace -- charts in this repo (Velero, CNPG, etc.) drop
         # their own.

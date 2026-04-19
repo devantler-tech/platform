@@ -66,10 +66,15 @@ spec:
     # Run Velero itself with HA primitives matching the rest of the
     # operator tier (PR #2b). Server is leader-elected so 2 replicas =
     # instant failover, not extra capacity.
+    #
+    # Intentionally no PodDisruptionBudget: velero uses leader election,
+    # so pod-level PDB adds no availability; with replicaCount=1 on prod
+    # (`velero_replicas=1`), a PDB with `minAvailable: 1` creates a
+    # classic deadlock where a rolling upgrade cannot evict the sole
+    # pod. `Recreate` strategy is a better fit: brief blip during an
+    # upgrade is acceptable for a backup controller and avoids requiring
+    # a surge pod that the CX23 prod nodes cannot host.
     replicaCount: ${velero_replicas:=2}
-    podDisruptionBudget:
-      enabled: true
-      minAvailable: 1
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
@@ -79,10 +84,7 @@ spec:
             app.kubernetes.io/name: velero
             app.kubernetes.io/instance: velero
     strategy:
-      type: RollingUpdate
-      rollingUpdate:
-        maxSurge: 0
-        maxUnavailable: 1
+      type: Recreate
 
     # Node agent: DaemonSet, runs the Kopia uploader on every node that has
     # PVCs. Defaults are sane; just confirm rolling update.
@@ -118,7 +120,7 @@ spec:
 
     resources:
       requests:
-        cpu: 100m
-        memory: 256Mi
+        cpu: 25m
+        memory: 128Mi
       limits:
         memory: 512Mi
