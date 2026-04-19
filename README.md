@@ -161,10 +161,10 @@ See [`docs/TEMPLATING.md`](docs/TEMPLATING.md) for the exact set of files a fork
 | Item                      | No. | Per unit | Total in Actual | Total in $ |
 | ------------------------- | --- | -------- | --------------- | ---------- |
 | Talos Omni                | 1   | $10      | $10             | $10        |
-| Cloudflare Domains        | 3   | $0,87    | $2,61           | $2,61      |
+| Cloudflare Domains        | 2   | $0,87    | $1,74           | $1,74      |
 | Hetzner CX23 (prod)       | 3   | €4,51    | €13,53          | $15,36     |
 | Hetzner CX23 (dev)        | 3   | €4,51    | €13,53          | $15,36     |
-| Total                     |     |          |                 | $43,33     |
+| Total                     |     |          |                 | $42,46     |
 
 ## Star History
 
