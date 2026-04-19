@@ -62,8 +62,8 @@ spec:
       updateStrategy:
         type: RollingUpdate
         rollingUpdate:
-          maxSurge: 1
-          maxUnavailable: 0
+          maxSurge: 0
+          maxUnavailable: 1
     clustermesh:
       apiserver:
         replicas: ${cilium_replicas:=2}
