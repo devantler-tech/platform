@@ -17,6 +17,23 @@ spec:
   # emptyDir storage -- backups themselves are throw-away here; what
   # matters is that the backup/restore flow runs end-to-end.
   values:
+    # Bitnami deprecated their free container images in Aug 2025; the
+    # chart still pins tags that only exist under the `bitnamilegacy/`
+    # namespace now. Point the images there so CI pulls succeed.
+    # See: https://github.com/bitnami/charts/issues/35164
+    global:
+      security:
+        allowInsecureImages: true
+    image:
+      repository: bitnamilegacy/minio
+    clientImage:
+      repository: bitnamilegacy/minio-client
+    console:
+      image:
+        repository: bitnamilegacy/minio-object-browser
+    volumePermissions:
+      image:
+        repository: bitnamilegacy/os-shell
     auth:
       rootUser: minio
       rootPassword: minio-local-development-only
