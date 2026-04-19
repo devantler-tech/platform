@@ -26,6 +26,7 @@ spec:
         allowInsecureImages: true
     image:
       repository: bitnamilegacy/minio
+      tag: 2025.6.13-debian-12-r2
     clientImage:
       repository: bitnamilegacy/minio-client
     console:
@@ -35,8 +36,8 @@ spec:
       image:
         repository: bitnamilegacy/os-shell
     auth:
-      rootUser: AKIAIOSFODNN7EXAMPLE
-      rootPassword: wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY00
+      rootUser: minio
+      rootPassword: minio-local-development-only
     mode: standalone
     persistence:
       enabled: false
