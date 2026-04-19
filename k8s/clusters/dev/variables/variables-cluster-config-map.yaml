@@ -16,3 +16,17 @@ data:
   # collide. Omni writes etcd snapshots at bucket root independently.
   r2_prefix_velero: velero/dev
   r2_prefix_cnpg: cnpg/dev
+  # --- HA replica overrides for the 3× CX23 dev cluster ---
+  # Mirrors prod: user-facing stays at 2 replicas, operators drop to 1
+  # because they are leader-elected and single-replica operators are
+  # sufficient for the stated RPO/RTO. This keeps the cluster within
+  # CPU budget on the shared 6 vCPU footprint.
+  cert_manager_replicas: "1"
+  trust_manager_replicas: "1"
+  reloader_replicas: "1"
+  metrics_server_replicas: "1"
+  vpa_admission_replicas: "1"
+  cilium_replicas: "1"
+  velero_replicas: "1"
+  cloudnative_pg_replicas: "1"
+  alertmanager_replicas: "1"
