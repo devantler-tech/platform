@@ -75,8 +75,19 @@ jobs:
           hosts-file: ${{ vars.HOSTS_FILE }}
           root-ca-cert-file: ${{ vars.ROOT_CA_CERT_FILE }}
           push: "true"
-          reconcile: "true"
-          delete: "true"
+          # Reconcile handled by explicit step below so we can extend the
+          # timeout past the action's built-in default (the HA/DR stack
+          # adds Velero + MinIO + kube-prometheus-stack which can push
+          # reconciliation past the default 5m budget on GHA runners).
+          reconcile: "false"
+          delete: "false"
+
+      - name: 🔁 Reconcile with extended timeout
+        run: ksail workload reconcile --timeout 30m
+
+      - name: 🔥 Delete cluster
+        if: always()
+        run: ksail cluster delete || echo "⚠️ Cluster may not have been created"
 
   # PR #7: DR restore drill. Validates the full Velero -> MinIO -> Velero
   # round trip end-to-end on a fresh cluster, so an etcd loss / cluster
@@ -136,7 +147,7 @@ jobs:
         run: |
           ksail cluster create
           ksail workload push
-          ksail workload reconcile
+          ksail workload reconcile --timeout 30m
 
       - name: ⏳ Wait for Velero + MinIO ready (round 1)
         run: |
@@ -176,7 +187,7 @@ jobs:
         run: |
           ksail cluster create
           ksail workload push
-          ksail workload reconcile
+          ksail workload reconcile --timeout 30m
 
       - name: ⏳ Wait for Velero + MinIO ready (round 2)
         run: |
