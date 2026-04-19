@@ -17,8 +17,14 @@ spec:
         name: vmware-tanzu
   install:
     crds: CreateReplace
+    remediation:
+      retries: -1
   upgrade:
     crds: CreateReplace
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  timeout: 15m
   # https://github.com/vmware-tanzu/helm-charts/blob/main/charts/velero/values.yaml
   values:
     image:
