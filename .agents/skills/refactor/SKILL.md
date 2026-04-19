@@ -2,10 +2,9 @@
 description: Surgical code refactoring to improve maintainability without changing behavior. Covers extracting functions, renaming variables, breaking down god functions, improving type safety, eliminating code smells, and applying design patterns. Less drastic than repo-rebuilder; use for gradual improvements.
 license: MIT
 metadata:
-    github-path: refactor
-    github-pinned: 5fe05e6dd751519bdc212d80499429651392ac7e
-    github-ref: 5fe05e6dd751519bdc212d80499429651392ac7e
-    github-repo: https://github.com/devantler-tech/skills
+    github-path: skills/refactor
+    github-ref: refs/heads/main
+    github-repo: https://github.com/github/awesome-copilot
     github-tree-sha: 01cfb6a412faf9d680880cc3f631c419121a9916
 name: refactor
 ---

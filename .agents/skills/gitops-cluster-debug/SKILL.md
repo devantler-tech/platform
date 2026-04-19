@@ -4,10 +4,9 @@ description: |
     Debug and troubleshoot Flux CD on live Kubernetes clusters (not local repo files) via the Flux MCP server — inspects Flux resource status, reads controller logs, traces dependency chains, and performs installation health checks. Use when users report failing, stuck, or not-ready Flux resources on a cluster, reconciliation errors, controller issues, artifact pull failures, or need live cluster Flux Operator troubleshooting.
 license: Apache-2.0
 metadata:
-    github-path: gitops-cluster-debug
-    github-pinned: 5fe05e6dd751519bdc212d80499429651392ac7e
-    github-ref: 5fe05e6dd751519bdc212d80499429651392ac7e
-    github-repo: https://github.com/devantler-tech/skills
+    github-path: skills/gitops-cluster-debug
+    github-ref: refs/tags/v0.0.3
+    github-repo: https://github.com/fluxcd/agent-skills
     github-tree-sha: f1463d4de7168c3561f680a2613c3b68578f09ca
 name: gitops-cluster-debug
 ---

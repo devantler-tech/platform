@@ -1,10 +1,9 @@
 ---
 description: Technology-agnostic blueprint generator for creating comprehensive copilot-instructions.md files that guide GitHub Copilot to produce code consistent with project standards, architecture patterns, and exact technology versions by analyzing existing codebase patterns and avoiding assumptions.
 metadata:
-    github-path: copilot-instructions-blueprint-generator
-    github-pinned: 5fe05e6dd751519bdc212d80499429651392ac7e
-    github-ref: 5fe05e6dd751519bdc212d80499429651392ac7e
-    github-repo: https://github.com/devantler-tech/skills
+    github-path: skills/copilot-instructions-blueprint-generator
+    github-ref: refs/heads/main
+    github-repo: https://github.com/github/awesome-copilot
     github-tree-sha: a67fccf32fc28eda70e5868e65e61e2fce3e64ef
 name: copilot-instructions-blueprint-generator
 ---
