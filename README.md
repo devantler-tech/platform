@@ -9,7 +9,7 @@ This repo contains the deployment artifacts for the DevantlerTech Platform. The 
 For local development:
 
 - [Docker](https://docs.docker.com/get-docker/) - For running the cluster locally.
-- [KSail](https://github.com/devantler/ksail) - For developing the cluster locally, and for running the cluster in CI to ensure all changes are properly tested before being applied to the production cluster.
+- [KSail](https://github.com/devantler-tech/ksail) - For developing the cluster locally, and for running the cluster in CI to ensure all changes are properly tested before being applied to the production cluster.
 
 For the production cluster:
 
@@ -28,7 +28,7 @@ For the production cluster:
 > 2. Create your own Age keys
 > 3. Update the `.sops.yaml` file in the root of the repository.
 > 4. Update GitHub secrets with your Age key.
-> 5. Replace all encoded `*.sops.yaml` files in the `k8s/` folder with new ones that are encrypted with your own keys.
+> 5. Replace all encoded `*.enc.yaml` files in the `k8s/` folder with new ones that are encrypted with your own keys.
 
 To run this cluster locally, simply run:
 
@@ -38,13 +38,7 @@ ksail workload push
 ksail workload reconcile
 ```
 
-Once the cluster is running, expose Traefik on localhost with:
-
-```bash
-kubectl port-forward svc/traefik -n traefik 443:443 80:80
-```
-
-Then access services at `https://platform.lan` (requires host entries from the `hosts` file).
+Ports 80 and 443 are automatically mapped to localhost via `extraPortMappings` in `ksail.yaml`. Once the cluster is running, access services at `https://platform.lan` (requires host entries from the `hosts` file).
 
 To tear down:
 
@@ -57,17 +51,26 @@ ksail cluster delete
 > [!TIP]
 > All clusters allow scheduling of workloads on control plane nodes. For homelab purposes, this is fine, but for enterprise use, it is recommended to separate control plane and worker nodes to ensure high availability and reliability.
 
+### Local
+
+Local development cluster running on Docker via KSail. Uses Talos with the Docker provider.
+
+- 1 control-plane node + 3 worker nodes (Docker containers)
+- Config: [`ksail.yaml`](ksail.yaml)
+
+### Dev
+
+Staging cluster running on Hetzner Cloud, managed by Talos Omni. Deployed automatically on merge via the CI pipeline.
+
+- 3x [Hetzner CX23 nodes](https://www.hetzner.com/cloud/) (x86 2 vCPU 4Gb RAM 40Gb SSD)
+- Config: [`ksail.dev.yaml`](ksail.dev.yaml)
+
 ### Production
 
-Cloud cluster running on Hetzner Cloud. Used for production workloads.
+Cloud cluster running on Hetzner Cloud, managed by Talos Omni. Deployed via `v*` tags through the CD pipeline.
 
-#### Nodes
-
-- 3x [Hetzner CX23 nodes](https://www.hetzner.com/cloud/) (x86 2 vCPU 4Gb RAM 40Gb SSD, eu-central)
-
-## Hardware
-
-- 3x [Hetzner CX23](https://www.hetzner.com/cloud/) (x86 2 vCPU 4Gb RAM 40Gb SSD)
+- 3x [Hetzner CX23 nodes](https://www.hetzner.com/cloud/) (x86 2 vCPU 4Gb RAM 40Gb SSD)
+- Config: [`ksail.prod.yaml`](ksail.prod.yaml)
 
 ## Structure
 
@@ -77,15 +80,18 @@ All environments use the Talos Kubernetes distribution. Local development and CI
 
 The cluster configuration is stored in the `k8s/*` directories where the structure is as follows:
 
-- [`clusters/`](k8s/clusters): Contains the the cluster specific configuration for each environment.
+- [`clusters/`](k8s/clusters): Contains the cluster specific configuration for each environment.
   - [`local`](k8s/clusters/local): Contains the local cluster specific configuration.
+  - [`dev`](k8s/clusters/dev): Contains the dev cluster specific configuration.
   - [`prod`](k8s/clusters/prod): Contains the production cluster specific configuration.
 - [`providers/`](k8s/providers): Contains the provider specific configuration.
   - [`docker`](k8s/providers/docker): Contains the Talos+Docker specific configuration for local development.
-  - [`omni`](k8s/providers/omni): Contains the Talos+Omni specific configuration for production.
+  - [`omni`](k8s/providers/omni): Contains the Talos+Omni specific configuration for dev and production.
 - [`bases/`](k8s/bases): Contains the different bases that are used for the different clusters and providers.
+  - [`cluster`](k8s/bases/cluster): Contains the shared Flux Kustomizations with sentinel paths (`__CLUSTER__`, `__PROVIDER__`).
   - [`infrastructure`](k8s/bases/infrastructure): Contains the different infrastructure components that are used for the different clusters and providers.
   - [`apps`](k8s/bases/apps): Contains the different apps that are used for the different clusters and providers.
+  - [`variables`](k8s/bases/variables): Contains the shared base variables (ConfigMap and Secret).
 
 ### Kustomize and Flux Kustomization Flow
 
@@ -133,9 +139,9 @@ graph TB
   infra["infrastructure"]
   apps["apps"]
 
-  variables -- "depends on" --> controllers
-  controllers -- "depends on" --> infra
-  infra -- "depends on" --> apps
+  controllers -- "depends on" --> variables
+  infra -- "depends on" --> controllers
+  apps -- "depends on" --> infra
 ```
 
 This means that for every Flux Kustomization applied to a cluster, there should be a corresponding resource folder in `providers/<provider-name>/` or `bases/` that contains the manifests for that scope. For example, the `infrastructure` Flux Kustomization is backed by:
@@ -149,13 +155,17 @@ See [`docs/TEMPLATING.md`](docs/TEMPLATING.md) for the exact set of files a fork
 
 ## Monthly Cost
 
-| Item               | No. | Per unit | Total in Actual | Total in $ |
-| ------------------ | --- | -------- | --------------- | ---------- |
-| Talos Omni         | 1   | $10      | $10             | $10        |
-| Cloudflare Domains | 3   | $0,87    | $2,61           | $2,61      |
-| Hetzner CX23       | 3   | €4,51    | €13,53          | $15,36     |
-| Total              |     |          |                 | $27,97     |
+> [!NOTE]
+> Prices are approximate and may be outdated.
+
+| Item                      | No. | Per unit | Total in Actual | Total in $ |
+| ------------------------- | --- | -------- | --------------- | ---------- |
+| Talos Omni                | 1   | $10      | $10             | $10        |
+| Cloudflare Domains        | 3   | $0,87    | $2,61           | $2,61      |
+| Hetzner CX23 (prod)       | 3   | €4,51    | €13,53          | $15,36     |
+| Hetzner CX23 (dev)        | 3   | €4,51    | €13,53          | $15,36     |
+| Total                     |     |          |                 | $43,33     |
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=devantler/homelab&type=Date)](https://star-history.com/#devantler/homelab&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=devantler-tech/platform&type=Date)](https://star-history.com/#devantler-tech/platform&Date)
