@@ -49,21 +49,25 @@ spec:
         podDisruptionBudget:
           enabled: true
           minAvailable: 1
+          # Chart defaults set maxUnavailable: 1; PDB can't have both set.
+          maxUnavailable: null
       ui:
         replicas: ${cilium_replicas:=2}
         podDisruptionBudget:
           enabled: true
           minAvailable: 1
+          maxUnavailable: null
     operator:
       replicas: ${cilium_replicas:=2}
       podDisruptionBudget:
         enabled: true
         minAvailable: 1
+        maxUnavailable: null
       updateStrategy:
         type: RollingUpdate
         rollingUpdate:
-          maxSurge: 1
-          maxUnavailable: 0
+          maxSurge: 0
+          maxUnavailable: 1
     clustermesh:
       apiserver:
         replicas: ${cilium_replicas:=2}

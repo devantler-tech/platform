@@ -12,3 +12,24 @@ data:
   issuer_group: cert-manager.k8s.cloudflare.com
   issuer_kind: ClusterOriginIssuer
   issuer_name: cloudflare-origin
+  # Per-env prefixes inside the shared R2 bucket so dev/prod don't
+  # collide. Omni writes etcd snapshots at bucket root independently.
+  r2_prefix_velero: velero/prod
+  r2_prefix_cnpg: cnpg/prod
+  # --- HA replica overrides for the 3× CX23 prod cluster ---
+  # User-facing path keeps the default of 2 replicas for zero-downtime
+  # rolling updates (homepage, headlamp, whoami, dex, oauth2-proxy,
+  # auth-proxy, cloudflared, kyverno admission).
+  # Operators are leader-elected; 1 replica is sufficient — a brief blip
+  # during a rolling upgrade of the operator itself does not affect the
+  # data plane. Dropping them to 1 frees CPU headroom on the 6 vCPU
+  # total available after Talos + Cilium overhead.
+  cert_manager_replicas: "1"
+  trust_manager_replicas: "1"
+  reloader_replicas: "1"
+  metrics_server_replicas: "1"
+  vpa_admission_replicas: "1"
+  cilium_replicas: "1"
+  velero_replicas: "1"
+  cloudnative_pg_replicas: "1"
+  alertmanager_replicas: "1"

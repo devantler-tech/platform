@@ -11,4 +11,11 @@ data:
   issuer_group: cert-manager.io
   issuer_kind: ClusterIssuer
   issuer_name: platform-ca
+  # Local override: point R2-shaped backup config at in-cluster MinIO so
+  # Velero / CNPG run unchanged code paths against a local stand-in.
+  r2_endpoint: http://minio.minio.svc.cluster.local:9000
+  r2_region: us-east-1
+  r2_bucket: platform-backups
+  r2_prefix_velero: velero
+  r2_prefix_cnpg: cnpg
 

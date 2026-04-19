@@ -1,0 +1,156 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kube-prometheus-stack
+  namespace: monitoring
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 5m
+  chart:
+    spec:
+      chart: kube-prometheus-stack
+      version: 83.6.0
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  timeout: 15m
+  # https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/values.yaml
+  #
+  # Trimmed-down install: Prometheus + Alertmanager + node-exporter +
+  # kube-state-metrics. No Grafana (no need; this is alerting-only,
+  # operators look at logs / kubectl directly). No remote-write -- alerts
+  # fire from in-cluster, ship via webhook to a free destination
+  # (Discord/email). Caveat documented in docs/dr/alerting.md: a fully
+  # offline cluster cannot self-alert; fine for homelab scope.
+  values:
+    crds:
+      enabled: true
+
+    grafana:
+      enabled: false
+
+    # We don't host an external Prometheus and don't expose this one.
+    prometheus:
+      prometheusSpec:
+        replicas: 1
+        retention: 14d
+        retentionSize: "5GiB"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 256Mi
+          limits:
+            memory: 768Mi
+        # Discover ServiceMonitors / PodMonitors / PrometheusRules from
+        # any namespace -- charts in this repo (Velero, CNPG, etc.) drop
+        # their own.
+        serviceMonitorSelectorNilUsesHelmValues: false
+        podMonitorSelectorNilUsesHelmValues: false
+        ruleSelectorNilUsesHelmValues: false
+        probeSelectorNilUsesHelmValues: false
+        scrapeConfigSelectorNilUsesHelmValues: false
+        # External labels so the webhook payload identifies the source
+        # cluster.
+        externalLabels:
+          domain: ${domain}
+        # No persistence -- 14d/5GiB fits in memory + emptyDir for a
+        # homelab. PR #4 already backs up persistent state separately;
+        # losing the metrics history on a restart is acceptable.
+        storageSpec: {}
+
+    alertmanager:
+      alertmanagerSpec:
+        replicas: ${alertmanager_replicas:=2}
+        podDisruptionBudget:
+          enabled: true
+          minAvailable: 1
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: alertmanager
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 128Mi
+        externalUrl: ""
+      config:
+        global:
+          resolve_timeout: 5m
+        route:
+          group_by: ["alertname", "cluster", "severity"]
+          group_wait: 30s
+          group_interval: 5m
+          repeat_interval: 12h
+          receiver: webhook-critical
+          routes:
+            - matchers:
+                - severity = "critical"
+              receiver: webhook-critical
+              continue: false
+            - matchers:
+                - severity = "warning"
+              receiver: webhook-critical
+              repeat_interval: 24h
+        receivers:
+          - name: webhook-critical
+            webhook_configs:
+              - url_file: /etc/alertmanager/secrets/alertmanager-webhook/webhook_url
+                send_resolved: true
+        inhibit_rules:
+          - source_matchers: [severity = "critical"]
+            target_matchers: [severity = "warning"]
+            equal: [alertname, cluster, namespace]
+      secrets:
+        - alertmanager-webhook
+
+    # Don't try to scrape the API server / kubelet / etcd through the
+    # default ServiceMonitors here -- Talos exposes some of these
+    # differently and we don't need k8s-internal histograms for alerting.
+    # Targeted alerts in PrometheusRule cover what we actually care about.
+    kubeApiServer:
+      enabled: false
+    kubeControllerManager:
+      enabled: false
+    kubeScheduler:
+      enabled: false
+    kubeProxy:
+      enabled: false
+    kubeEtcd:
+      enabled: false
+    kubelet:
+      enabled: true
+
+    nodeExporter:
+      enabled: true
+    kube-state-metrics:
+      enabled: true
+
+    # Disable the bundled "default" Prometheus rules -- the chart ships
+    # ~200 alerts that mostly aren't relevant for a homelab. We add our
+    # own focused PrometheusRule (rules/critical.yaml) instead.
+    defaultRules:
+      create: false
+
+    prometheusOperator:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
