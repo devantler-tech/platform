@@ -20,6 +20,6 @@ spec:
     - goldilocks.${domain}
   rules:
     - backendRefs:
-        - name: auth-proxy
+        - name: oauth2-proxy
           namespace: oauth2-proxy
           port: 80

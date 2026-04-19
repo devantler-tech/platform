@@ -17,41 +17,16 @@ data:
       level: INFO
   dynamic.yaml: |
     http:
-      middlewares:
-        oauth2-forward-auth:
-          forwardAuth:
-            address: "http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80/oauth2/auth"
-            trustForwardHeader: true
-            authResponseHeaders:
-              - X-Auth-Request-User
-              - X-Auth-Request-Email
-        oauth2-signin:
-          errors:
-            status:
-              - "401"
-            service: oauth2-proxy
-            query: "/oauth2/start?rd={url}"
-        oauth2-auth:
-          chain:
-            middlewares:
-              - oauth2-signin
-              - oauth2-forward-auth
       routers:
         homepage:
           rule: "Host(`${domain}`)"
           entryPoints: ["web"]
-          middlewares: ["oauth2-auth"]
           service: homepage
         goldilocks:
           rule: "Host(`goldilocks.${domain}`)"
           entryPoints: ["web"]
-          middlewares: ["oauth2-auth"]
           service: goldilocks
       services:
-        oauth2-proxy:
-          loadBalancer:
-            servers:
-              - url: "http://oauth2-proxy.oauth2-proxy.svc.cluster.local:80"
         homepage:
           loadBalancer:
             servers:

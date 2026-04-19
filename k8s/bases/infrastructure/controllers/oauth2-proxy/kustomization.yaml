@@ -6,3 +6,4 @@ resources:
   - helm-repository.yaml
   - httproute.yaml
   - namespace.yaml
+  - reference-grant.yaml
