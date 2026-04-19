@@ -82,7 +82,7 @@ See `.github/workflows/` for the exact names.
 ## Template body (do not edit when instantiating)
 
 - `k8s/bases/cluster/` — shared Flux Kustomizations with sentinel paths.
-- `k8s/bases/infrastructure/` — Cilium, Traefik, cert-manager configs, etc.
+- `k8s/bases/infrastructure/` — Cilium, cert-manager, Kyverno, alerting configs, etc.
 - `k8s/bases/apps/` — reference applications (homepage, whoami, headlamp).
 - `k8s/providers/{docker,omni}/` — provider-specific assembly of bases.
 
