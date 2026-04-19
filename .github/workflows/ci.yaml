@@ -236,7 +236,13 @@ jobs:
           velero backup create "$BACKUP_NAME" \
             --include-namespaces "$MARKER_NS" \
             --wait
-          velero backup describe "$BACKUP_NAME" --details
+          # `velero backup describe --details` generates presigned URLs
+          # against the in-cluster MinIO DNS (minio.minio.svc.cluster.local)
+          # which the GitHub runner can't resolve. Also, newer Velero CLIs
+          # query cnpg CRDs for ItemOperations and exit non-zero when the
+          # CNPG backup object does not exist. Fall back to checking the
+          # phase directly on the Backup CR.
+          velero backup describe "$BACKUP_NAME" 2>/dev/null || true
           phase=$(kubectl -n velero get backup "$BACKUP_NAME" -o jsonpath='{.status.phase}')
           [[ "$phase" == "Completed" ]] || { echo "Backup phase=$phase, expected Completed" >&2; exit 1; }
 
@@ -271,7 +277,9 @@ jobs:
           velero restore create "$BACKUP_NAME-restore" \
             --from-backup "$BACKUP_NAME" \
             --wait
-          velero restore describe "$BACKUP_NAME-restore" --details
+          # Skip --details on describe for the same presigned-URL + CNPG
+          # reasons as the backup step above.
+          velero restore describe "$BACKUP_NAME-restore" 2>/dev/null || true
           phase=$(kubectl -n velero get restore "$BACKUP_NAME-restore" -o jsonpath='{.status.phase}')
           [[ "$phase" == "Completed" ]] || { echo "Restore phase=$phase, expected Completed" >&2; exit 1; }
 
