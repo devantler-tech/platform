@@ -39,7 +39,7 @@ each `k8s/clusters/<env>/variables/variables-cluster-config-map.yaml`:
 
 | Key                     | Where        | Value                                           |
 | ----------------------- | ------------ | ----------------------------------------------- |
-| `r2_endpoint`           | base         | `https://<account>.r2.cloudflarestorage.com`    |
+| `r2_endpoint`           | base         | `https://<account-id>.r2.cloudflarestorage.com` |
 | `r2_region`             | base         | `auto`                                          |
 | `r2_bucket`             | base         | `<your-bucket>` (e.g. `<your-org>-platform-backups`) |
 | `r2_prefix_velero`      | per-cluster  | `velero/dev` or `velero/prod` (local: `velero`) |

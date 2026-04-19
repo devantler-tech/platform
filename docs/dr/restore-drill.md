@@ -84,7 +84,8 @@ kubectl -n dr-drill create configmap dr-marker --from-literal=t=$(date -u +%FT%T
 velero backup create dr-drill --include-namespaces dr-drill --wait
 
 # Simulate data loss
-kubectl delete namespace dr-drill
+kubectl delete namespace dr-drill --wait=true --timeout=2m
+until ! kubectl get namespace dr-drill >/dev/null 2>&1; do sleep 2; done
 
 # Restore
 velero restore create dr-drill-restore --from-backup dr-drill --wait
