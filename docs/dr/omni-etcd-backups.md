@@ -3,7 +3,7 @@
 Disaster-recovery backup of the Talos/Omni control-plane etcd state for the `dev`
 and `prod` clusters. Configured **inside Omni** (not in this repo) because Omni
 manages cluster lifecycle externally; only the shared R2 bucket and the
-credentials live here, where they are reused by Velero ([PR #4](./velero-cnpg.md))
+credentials live here, where they are reused by Velero (see [velero-cnpg.md](./velero-cnpg.md))
 and CNPG.
 
 ## Why R2
@@ -25,7 +25,7 @@ To keep Velero and CNPG from colliding in that same bucket, they run under
 per-env prefixes:
 
 ```
-devantler-platform-backups/
+<your-bucket>/
 ├── <omni-cluster-name>/...   ← Omni etcd snapshots, bucket root (managed by Omni)
 ├── velero/dev/               ← Velero, dev cluster
 ├── velero/prod/              ← Velero, prod cluster
@@ -39,21 +39,21 @@ each `k8s/clusters/<env>/variables/variables-cluster-config-map.yaml`:
 
 | Key                     | Where        | Value                                           |
 | ----------------------- | ------------ | ----------------------------------------------- |
-| `r2_endpoint`           | base         | `https://<account>.r2.cloudflarestorage.com`    |
+| `r2_endpoint`           | base         | `https://<account-id>.r2.cloudflarestorage.com` |
 | `r2_region`             | base         | `auto`                                          |
-| `r2_bucket`             | base         | `devantler-platform-backups`                    |
+| `r2_bucket`             | base         | `<your-bucket>` (e.g. `<your-org>-platform-backups`) |
 | `r2_prefix_velero`      | per-cluster  | `velero/dev` or `velero/prod` (local: `velero`) |
 | `r2_prefix_cnpg`        | per-cluster  | `cnpg/dev` or `cnpg/prod` (local: `cnpg`)       |
 
 ## R2 bucket settings (one-time, in Cloudflare dashboard)
 
-1. Create bucket `devantler-platform-backups` in jurisdiction `default`.
+1. Create a bucket (e.g. `<your-org>-platform-backups`) in jurisdiction `default`.
 2. **Object Lock**: enabled, **Compliance** mode disabled, **Governance** mode
    default retention **30 days**. Prevents an attacker (or `rm -rf` typo) from
    deleting backups before the retention window.
 3. **Versioning**: enabled. Pairs with object lock and lets restores reach back
    past an accidental overwrite.
-4. **Lifecycle rules** (all under `devantler-platform-backups/`):
+4. **Lifecycle rules** (all under `<your-bucket>/`):
    - `velero/` and `cnpg/`: transition to Infrequent Access after 14 days;
      abort incomplete multipart uploads after 1 day.
    - Bucket root (Omni snapshots): same.
@@ -72,8 +72,8 @@ to every cluster Omni manages. Open it and paste:
 
 | Field             | Value                                                               |
 | ----------------- | ------------------------------------------------------------------- |
-| Endpoint          | `https://634e9016d402443e427865dc35457728.r2.cloudflarestorage.com` |
-| Bucket            | `devantler-platform-backups`                                        |
+| Endpoint          | `https://<account-id>.r2.cloudflarestorage.com`                    |
+| Bucket            | `<your-bucket>`                                                     |
 | Region            | `auto` (any value works; R2 ignores it)                             |
 | Access Key ID     | the R2 S3 token ID from step 6 above                                |
 | Secret Access Key | the R2 S3 token secret from step 6 above                            |
@@ -97,7 +97,7 @@ prefixes don't overlap.
 
 ## Restore (high level)
 
-Detailed in `docs/dr/runbook.md` (PR #5). Summary:
+Detailed in [`runbook.md`](./runbook.md). Summary:
 
 1. Provision a fresh Talos node from the snapshot used by `hetzner/`.
 2. In Omni, create a new cluster pointed at the same machine.
@@ -115,7 +115,6 @@ nothing to restore that isn't already in this repo.
 
 ## Related
 
-- [DR runbook](./runbook.md) (PR #5) — full rebuild-from-zero procedure
-- [Velero + CNPG backups](./velero-cnpg.md) (PR #4) — application/PV layer
-- [HA primitives](../../README.md) — PDBs, topology spread, rolling updates
-  (PRs #2a / #2b)
+- [DR runbook](./runbook.md) — full rebuild-from-zero procedure
+- [Velero + CNPG backups](./velero-cnpg.md) — application/PV layer
+- [HA primitives](../../README.md) — cluster environments and topology

@@ -19,20 +19,20 @@ these simultaneously and you cannot recover.
 
 | Artifact                                | Where it lives                       | Recovery if lost                     |
 | --------------------------------------- | ------------------------------------ | ------------------------------------ |
-| **SOPS Age private keys** (one per env) | 1Password + hardware key, second loc | Re-encrypt all `*.enc.yaml` (below)  |
-| **Cloudflare R2 access keys**           | 1Password                            | Mint new in Cloudflare; SOPS-update  |
-| **Omni admin credentials**              | 1Password + Omni `omnictl` config    | Reset via Sidero support             |
-| **Cloudflare API token**                | 1Password                            | Mint new in Cloudflare dashboard     |
+| **SOPS Age private keys** (one per env) | Secure vault + offline backup        | Re-encrypt all `*.enc.yaml` (below)  |
+| **Cloudflare R2 access keys**           | Secure vault                         | Mint new in Cloudflare; SOPS-update  |
+| **Omni admin credentials**              | Secure vault + `omnictl` config      | Reset via Sidero support             |
+| **Cloudflare API token**                | Secure vault                         | Mint new in Cloudflare dashboard     |
 
-> Recommendation: 1Password vault `platform-dr` shared with at least one
-> additional trusted operator, plus an offline copy on a hardware-encrypted
-> USB stick stored in a second physical location.
+> Recommendation: store these in a shared vault accessible by at least one
+> additional trusted operator, plus an offline copy in a second physical
+> location.
 
 ---
 
 ## Scenario 1 — Single node loss
 
-Expected behaviour: PDBs (PRs #2a / #2b) keep every multi-replica workload
+Expected behaviour: PDBs keep every multi-replica workload
 serving traffic. Omni replaces the failed node within ~5 minutes.
 
 **Action:** none required if PDBs and Omni autoscaling are healthy. Verify
@@ -66,14 +66,14 @@ kubectl get deploy -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.meta
 ```
 
 If anything reports `maxUnavailable` other than `0`, that workload was
-either added after PR #2a/#2b or has a chart limitation — fix before
+either added without an HA configuration or has a chart limitation — fix before
 upgrading.
 
 ---
 
 ## Scenario 3 — etcd corruption / control-plane loss
 
-Restore from the most recent Omni snapshot (PR #3).
+Restore from the most recent Omni snapshot (see [omni-etcd-backups.md](./omni-etcd-backups.md)).
 
 1. **Omni dashboard** → `Cluster → Backups → Restore from S3`.
 2. Pick the most recent snapshot under `omni-etcd/<cluster-name>/` (Omni
@@ -212,8 +212,8 @@ find . -name '*.enc.yaml' -print0 | xargs -0 -n1 sops updatekeys --yes
 ## Scenario 7 — R2 / Cloudflare credential rotation
 
 ```bash
-# 1. Mint a new R2 token in the Cloudflare dashboard (scoped to the
-#    devantler-platform-backups bucket only). DO NOT revoke the old one
+# 1. Mint a new R2 token in the Cloudflare dashboard (scoped to your
+#    <your-bucket> bucket only). DO NOT revoke the old one
 #    yet -- there is a window where both must work.
 
 # 2. Update the encrypted secret in-place
@@ -231,7 +231,7 @@ kubectl logs -n cnpg-system -l app.kubernetes.io/name=cloudnative-pg --tail=50
 
 # 5. Revoke the old token in Cloudflare.
 
-# 6. Update the in-Omni R2 credentials (Omni etcd backups, PR #3).
+# 6. Update the in-Omni R2 credentials (Omni etcd backups, see [omni-etcd-backups.md](./omni-etcd-backups.md)).
 omnictl cluster set-backup --cluster <c> --access-key-id <new> --secret-access-key <new>
 ```
 
@@ -253,7 +253,7 @@ etcdctl --endpoints unix:///tmp/etcd.snapshot \
 # Kubernetes Secret YAML, the EncryptionConfiguration was lost.
 ```
 
-This check is also asserted by the CI restore drill (PR #7).
+This check is also asserted by the CI restore drill (see [restore-drill.md](./restore-drill.md)).
 
 ---
 
@@ -269,15 +269,14 @@ ksail cluster create
 ksail workload push && ksail workload reconcile
 ```
 
-CI exercises this on every PR (`.github/workflows/ci.yaml`), and from PR
-#7 onward also exercises a Velero backup → restore against the in-cluster
+CI exercises this on every PR (`.github/workflows/ci.yaml`), and also
+exercises a Velero backup → restore against the in-cluster
 MinIO so the prod code path is regression-tested.
 
 ---
 
 ## Related documents
 
-- [HA & DR plan](../../README.md) — overall design
-- [Omni etcd backups](./omni-etcd-backups.md) — control-plane backups (PR #3)
-- [Velero + CNPG → R2](./velero-cnpg.md) — application/PV backups (PR #4)
-- [Alerting](./alerting.md) — automated detection of backup failures (PR #6)
+- [Omni etcd backups](./omni-etcd-backups.md) — control-plane backups
+- [Velero + CNPG → R2](./velero-cnpg.md) — application/PV backups
+- [Alerting](./alerting.md) — automated detection of backup failures

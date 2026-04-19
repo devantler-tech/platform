@@ -19,7 +19,7 @@ out of Alertmanager.
 
 ## What gets alerted
 
-See `k8s/bases/infrastructure/controllers/kube-prometheus-stack/rules/critical.yaml`.
+See `k8s/bases/infrastructure/alerts/platform-critical.yaml`.
 
 | Alert                       | Severity | Why                                       |
 | --------------------------- | -------- | ----------------------------------------- |
@@ -42,9 +42,10 @@ This is the deliberate tradeoff for "no SaaS". Mitigations:
 
 1. **Daily Velero schedule + Omni etcd backups still run independently.**
    On next recovery, you'll see the missed backup in R2.
-2. **PR #7 CI restore drill** asserts the rules render and Alertmanager
-   accepts them on every PR — so a regression in the alert spec is caught
-   before merge.
+2. **CI restore drill** validates that `PrometheusRule` manifests are
+   accepted and the monitoring stack reconciles on every PR — so a
+   regression in the alert spec is caught before merge
+   (see [restore-drill.md](./restore-drill.md)).
 3. If true off-cluster alerting becomes necessary later, the documented
    follow-up is to add Grafana Cloud free tier (10k metrics, ample for
    these alerts) and configure a remote-write target in
@@ -90,7 +91,8 @@ Identical install, with:
 - Webhook URL pointed at `http://example.invalid/no-webhook-on-local`
   (deliberately fails). CI asserts this fail mode is acceptable — the
   alerts still fire inside Alertmanager, the webhook just can't reach
-  anywhere. PR #7 verifies the alert wiring; the lack of an external
+  anywhere. The CI restore drill verifies the monitoring stack reconciles
+  and `PrometheusRule` manifests are accepted; the lack of an external
   destination is by design.
 
 ## Tuning resource footprint
@@ -105,7 +107,7 @@ Current chart values:
 | node-exporter  | (chart defaults)      | (chart defaults) |
 | kube-state-metrics | (chart defaults)  | (chart defaults) |
 
-Total ~1 GiB committed memory, well within 3× CX23 (24 GiB total). If
+Total ~1 GiB committed memory. If
 this becomes too heavy, the first thing to drop is `nodeExporter` and
 the related node-level alerts.
 
@@ -113,4 +115,4 @@ the related node-level alerts.
 
 - [DR runbook](./runbook.md) — what to do when an alert fires
 - [Velero + CNPG](./velero-cnpg.md) — the systems whose health is being checked
-- [HA primitives](../../README.md) — PDBs / topology spread (PRs #2a/#2b)
+- [HA primitives](../../README.md) — cluster environments and topology

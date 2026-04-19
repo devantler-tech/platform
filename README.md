@@ -28,7 +28,7 @@ For the production cluster:
 > 2. Create your own Age keys
 > 3. Update the `.sops.yaml` file in the root of the repository.
 > 4. Update GitHub secrets with your Age key.
-> 5. Replace all encoded `*.enc.yaml` files in the `k8s/` folder with new ones that are encrypted with your own keys.
+> 5. Replace all encrypted `*.enc.yaml` files in the `k8s/` folder with new ones that are encrypted with your own keys.
 
 To run this cluster locally, simply run:
 
@@ -60,7 +60,7 @@ Local development cluster running on Docker via KSail. Uses Talos with the Docke
 
 ### Dev
 
-Staging cluster running on Hetzner Cloud, managed by Talos Omni. Deployed automatically on merge via the CI pipeline.
+Staging cluster running on Hetzner Cloud, managed by Talos Omni. Deployed automatically via the CI pipeline when changes run through the merge queue (`merge_group`).
 
 - 3x [Hetzner CX23 nodes](https://www.hetzner.com/cloud/) (x86 2 vCPU 4Gb RAM 40Gb SSD)
 - Config: [`ksail.dev.yaml`](ksail.dev.yaml)

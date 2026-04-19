@@ -143,7 +143,7 @@ spec:
 
     # Disable the bundled "default" Prometheus rules -- the chart ships
     # ~200 alerts that mostly aren't relevant for a homelab. We add our
-    # own focused PrometheusRule (rules/critical.yaml) instead.
+    # own focused PrometheusRule (k8s/bases/infrastructure/alerts/platform-critical.yaml) instead.
     defaultRules:
       create: false
 

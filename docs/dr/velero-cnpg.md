@@ -1,7 +1,7 @@
 # Application & volume backups — Velero + CloudNativePG → R2
 
 The application/PV backup tier. Etcd snapshots are handled by Omni
-([PR #3](./omni-etcd-backups.md)); this layer covers everything that lives
+(see [omni-etcd-backups.md](./omni-etcd-backups.md)); this layer covers everything that lives
 *inside* the cluster — Kubernetes objects, PVC contents, and Postgres data.
 
 ## Architecture
@@ -9,10 +9,10 @@ The application/PV backup tier. Etcd snapshots are handled by Omni
 ```
                 ┌─────────────────────────────────────┐
                 │  Cloudflare R2                      │
-                │  bucket: devantler-platform-backups │
-                │    omni-etcd/      (PR #3, Omni)    │
-                │    velero/         ← this PR        │
-                │    cnpg/<cluster>/ ← this PR        │
+                │  bucket: <your-bucket>              │
+                │    <cluster-name>/  (Omni)          │
+                │    velero/         (this layer)     │
+                │    cnpg/<cluster>/ (this layer)     │
                 └─────────────────────────────────────┘
                               ▲           ▲
                               │           │
@@ -23,7 +23,7 @@ The application/PV backup tier. Etcd snapshots are handled by Omni
                        └──────────┘  └────────────────────┘
 ```
 
-Same R2 bucket as Omni etcd, separate prefixes (PR #3). Credentials are
+Same R2 bucket as Omni etcd, separate prefixes (see [omni-etcd-backups.md](./omni-etcd-backups.md)). Credentials are
 SOPS-encrypted in `variables-base-secret.enc.yaml` and substituted into both
 the Velero and CNPG secrets at Flux apply time.
 
@@ -39,15 +39,15 @@ the Velero and CNPG secrets at Flux apply time.
 - VolumeSnapshotLocation: **none**. Cost decision (CSI snapshots are billed
   per-GB on Hetzner Cloud, file-level on R2 is flat).
 - HA: 2 replicas, PDB minAvailable=1, hostname topologySpread, RollingUpdate
-  maxUnavailable=0 — same posture as the rest of the operator tier (PR #2b).
+  maxUnavailable=0 — same posture as the rest of the operator tier.
 - Daily schedule `daily-full` at 02:17, 14-day TTL, all namespaces except
   `kube-system` and `velero`. Long-term retention is enforced by R2 object
-  lock + lifecycle (PR #3) so even a misconfigured Velero cannot delete
+  lock + lifecycle (see [omni-etcd-backups.md](./omni-etcd-backups.md)) so even a misconfigured Velero cannot delete
   history beyond the 30-day governance window.
 
 ## CloudNativePG
 
-- The operator was already installed; this PR adds a **reusable Barman
+- The operator was already installed; the platform adds a **reusable Barman
   credentials Secret** (`cnpg-r2-credentials` in `cnpg-system`) that any
   future `Cluster` resource references via `barmanObjectStore.s3Credentials`.
 - The recipe is documented inline in
@@ -73,8 +73,9 @@ variable overrides in `k8s/clusters/local/variables/`:
 | `r2_secret_access_key` | `minio-local-development-only` (SOPS-encrypted)   |
 
 No code changes between local and prod — only the variable values differ.
-This is the whole point of the substitution layer: PR #7 (CI restore drill)
-will exercise the *exact* same `velero backup` / `velero restore` calls
+This is the whole point of the substitution layer: the CI restore drill
+(see [restore-drill.md](./restore-drill.md))
+exercises the *exact* same `velero backup` / `velero restore` calls
 that an operator would run against R2 in prod.
 
 The MinIO credentials are hard-coded local-only secrets. They are
@@ -101,7 +102,7 @@ spec:
   defaultVolumesToFsBackup: true
 EOF
 
-# Restore (e.g. into a fresh cluster after PR #3 etcd restore)
+# Restore (e.g. into a fresh cluster after etcd restore)
 kubectl -n velero create -f - <<EOF
 apiVersion: velero.io/v1
 kind: Restore
@@ -114,7 +115,7 @@ EOF
 ```
 
 For the full DR procedure (which order to restore in, expected RTO breakdown,
-etc.) see [`runbook.md`](./runbook.md) (PR #5).
+etc.) see [`runbook.md`](./runbook.md).
 
 ## Credential rotation
 
@@ -135,7 +136,7 @@ sops --set '["stringData"]["r2_secret_access_key"] "<new-secret>"' \
 
 ## Related
 
-- [Omni etcd backups](./omni-etcd-backups.md) (PR #3) — control-plane layer
-- [DR runbook](./runbook.md) (PR #5) — restore-from-zero procedure
-- [Alerting](./alerting.md) (PR #6) — alarms on missed backups / failures
-- [CI restore drill](../../.github/workflows/ci.yaml) (PR #7) — automated proof
+- [Omni etcd backups](./omni-etcd-backups.md) — control-plane layer
+- [DR runbook](./runbook.md) — restore-from-zero procedure
+- [Alerting](./alerting.md) — alarms on missed backups / failures
+- [CI restore drill](./restore-drill.md) — automated proof
