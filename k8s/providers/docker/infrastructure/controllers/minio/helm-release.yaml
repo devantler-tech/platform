@@ -35,8 +35,8 @@ spec:
       image:
         repository: bitnamilegacy/os-shell
     auth:
-      rootUser: minio
-      rootPassword: minio-local-development-only
+      rootUser: AKIAIOSFODNN7EXAMPLE
+      rootPassword: wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY00
     mode: standalone
     persistence:
       enabled: false
