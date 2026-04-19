@@ -11,14 +11,20 @@ spec:
   chart:
     spec:
       chart: kube-prometheus-stack
-      version: 78.5.0
+      version: 83.6.0
       sourceRef:
         kind: HelmRepository
         name: prometheus-community
   install:
     crds: CreateReplace
+    remediation:
+      retries: -1
   upgrade:
     crds: CreateReplace
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  timeout: 15m
   # https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/values.yaml
   #
   # Trimmed-down install: Prometheus + Alertmanager + node-exporter +
