@@ -1,0 +1,113 @@
+# Local-only stand-in for Cloudflare R2 so Velero + CNPG exercise the
+# exact same S3 code path in CI as in prod. Single replica, ephemeral
+# emptyDir storage -- backups themselves are throw-away here; what
+# matters is that the backup/restore flow runs end-to-end.
+#
+# The bitnami/minio chart was replaced with a hand-rolled Deployment
+# using the official minio/minio image because the bitnami image
+# 2025.7.23 ships strict SigV4 credential validation ("Credential
+# access key has length X, should be 32") that rejects Velero's
+# regular S3 calls.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: minio
+  labels:
+    app.kubernetes.io/name: minio
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: minio
+    spec:
+      containers:
+        - name: minio
+          image: quay.io/minio/minio:RELEASE.2025-04-08T15-41-24Z
+          args:
+            - server
+            - /data
+            - --console-address
+            - :9001
+          env:
+            - name: MINIO_ROOT_USER
+              value: minio
+            - name: MINIO_ROOT_PASSWORD
+              value: minio-local-development-only
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          readinessProbe:
+            tcpSocket:
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: api
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: minio
+spec:
+  selector:
+    app.kubernetes.io/name: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: api
+    - name: console
+      port: 9001
+      targetPort: console
+---
+# Create the `platform-backups` bucket used by Velero/CNPG as a one-shot
+# Job after MinIO comes up. Uses the MinIO client image.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: minio-create-bucket
+  namespace: minio
+spec:
+  backoffLimit: 20
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mc
+          image: quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              until mc alias set local http://minio.minio.svc.cluster.local:9000 \
+                    minio minio-local-development-only; do
+                sleep 2
+              done
+              mc mb --ignore-existing local/platform-backups
+              mc ls local/

@@ -1,9 +1,0 @@
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
-metadata:
-  name: minio
-  namespace: minio
-spec:
-  interval: 24h
-  type: oci
-  url: oci://registry-1.docker.io/bitnamicharts

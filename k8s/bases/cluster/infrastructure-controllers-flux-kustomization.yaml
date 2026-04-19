@@ -20,14 +20,16 @@ spec:
       name: sops-age
   postBuild:
     substituteFrom:
-      - kind: ConfigMap
-        name: variables-cluster
-      - kind: Secret
-        name: variables-cluster
+      # Per-Flux docs, later entries override earlier ones, so the base
+      # (defaults) come first and the per-cluster overrides come last.
       - kind: ConfigMap
         name: variables-base
       - kind: Secret
         name: variables-base
+      - kind: ConfigMap
+        name: variables-cluster
+      - kind: Secret
+        name: variables-cluster
   wait: true
   prune: true
   force: true

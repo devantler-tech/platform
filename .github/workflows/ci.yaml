@@ -75,8 +75,61 @@ jobs:
           hosts-file: ${{ vars.HOSTS_FILE }}
           root-ca-cert-file: ${{ vars.ROOT_CA_CERT_FILE }}
           push: "true"
-          reconcile: "true"
-          delete: "true"
+          # Reconcile handled by explicit step below so we can extend the
+          # timeout past the action's built-in default (the HA/DR stack
+          # adds Velero + MinIO + kube-prometheus-stack which can push
+          # reconciliation past the default 5m budget on GHA runners).
+          reconcile: "false"
+          delete: "false"
+
+      - name: 🔁 Reconcile with extended timeout
+        id: reconcile
+        run: ksail workload reconcile --timeout 30m
+
+      - name: 🩺 Diagnose Flux on failure
+        if: failure() && steps.reconcile.outcome == 'failure'
+        run: |
+          set +e
+          echo "::group::Nodes"
+          kubectl get nodes -o wide
+          echo "::endgroup::"
+          echo "::group::Flux Kustomizations"
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o wide
+          echo "::endgroup::"
+          echo "::group::Flux HelmReleases"
+          kubectl get helmreleases.helm.toolkit.fluxcd.io -A -o wide
+          echo "::endgroup::"
+          echo "::group::Flux OCIRepositories"
+          kubectl get ocirepositories.source.toolkit.fluxcd.io -A -o wide
+          echo "::endgroup::"
+          echo "::group::Failing Kustomizations describe"
+          for k in infrastructure-controllers infrastructure apps; do
+            echo "--- $k ---"
+            kubectl describe kustomizations.kustomize.toolkit.fluxcd.io "$k" -n flux-system 2>&1 | tail -80
+          done
+          echo "::endgroup::"
+          echo "::group::Flux controller pods"
+          kubectl get pods -n flux-system -o wide
+          echo "::endgroup::"
+          echo "::group::kustomize-controller logs"
+          kubectl logs -n flux-system -l app=kustomize-controller --tail=300
+          echo "::endgroup::"
+          echo "::group::helm-controller logs"
+          kubectl logs -n flux-system -l app=helm-controller --tail=300
+          echo "::endgroup::"
+          echo "::group::source-controller logs"
+          kubectl logs -n flux-system -l app=source-controller --tail=200
+          echo "::endgroup::"
+          echo "::group::All pods"
+          kubectl get pods -A -o wide
+          echo "::endgroup::"
+          echo "::group::Recent events (warnings)"
+          kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -100
+          echo "::endgroup::"
+
+      - name: 🔥 Delete cluster
+        if: always()
+        run: ksail cluster delete || echo "⚠️ Cluster may not have been created"
 
   # PR #7: DR restore drill. Validates the full Velero -> MinIO -> Velero
   # round trip end-to-end on a fresh cluster, so an etcd loss / cluster
@@ -133,10 +186,28 @@ jobs:
           velero version --client-only
 
       - name: 🚀 Create cluster (round 1)
+        id: create1
         run: |
           ksail cluster create
           ksail workload push
-          ksail workload reconcile
+          ksail workload reconcile --timeout 30m
+
+      - name: 🩺 Diagnose Flux on failure (round 1)
+        if: failure() && steps.create1.outcome == 'failure'
+        run: |
+          set +e
+          kubectl get nodes -o wide
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o wide
+          kubectl get helmreleases.helm.toolkit.fluxcd.io -A -o wide
+          for k in infrastructure-controllers infrastructure apps; do
+            echo "--- $k ---"
+            kubectl describe kustomizations.kustomize.toolkit.fluxcd.io "$k" -n flux-system 2>&1 | tail -60
+          done
+          kubectl get pods -n flux-system -o wide
+          kubectl logs -n flux-system -l app=kustomize-controller --tail=300
+          kubectl logs -n flux-system -l app=helm-controller --tail=300
+          kubectl get pods -A -o wide
+          kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -100
 
       - name: ⏳ Wait for Velero + MinIO ready (round 1)
         run: |
@@ -165,43 +236,37 @@ jobs:
           velero backup create "$BACKUP_NAME" \
             --include-namespaces "$MARKER_NS" \
             --wait
-          velero backup describe "$BACKUP_NAME" --details
-          phase=$(kubectl -n velero get backup "$BACKUP_NAME" -o jsonpath='{.status.phase}')
+          # `velero backup describe --details` generates presigned URLs
+          # against the in-cluster MinIO DNS (minio.minio.svc.cluster.local)
+          # which the GitHub runner can't resolve. Also, newer Velero CLIs
+          # query cnpg CRDs for ItemOperations and exit non-zero when the
+          # CNPG backup object does not exist. Fall back to checking the
+          # phase directly on the Backup CR.
+          velero backup describe "$BACKUP_NAME" 2>/dev/null || true
+          phase=$(kubectl -n velero get backups.velero.io "$BACKUP_NAME" -o jsonpath='{.status.phase}')
           [[ "$phase" == "Completed" ]] || { echo "Backup phase=$phase, expected Completed" >&2; exit 1; }
 
-      - name: 🗑️ Destroy cluster
-        run: ksail cluster delete
-
-      - name: 🚀 Create cluster (round 2 -- fresh)
+      - name: 🗑️ Simulate data loss (delete marker namespace)
+        # In prod the data-loss event is a lost cluster; R2 retains the
+        # backup. Locally, MinIO runs in-cluster with ephemeral storage,
+        # so destroying the cluster also destroys the backup target.
+        # Instead, simulate data loss by deleting the marker namespace
+        # and restoring it from the backup -- exercises the same
+        # Velero->S3->Velero code path end-to-end.
         run: |
-          ksail cluster create
-          ksail workload push
-          ksail workload reconcile
-
-      - name: ⏳ Wait for Velero + MinIO ready (round 2)
-        run: |
-          kubectl -n velero rollout status deploy/velero --timeout=10m
-          kubectl -n minio rollout status deploy/minio --timeout=10m
-          # Backup metadata lives in MinIO -- Velero will rediscover it
-          # from the BackupStorageLocation. Wait for the backup CR to
-          # reappear.
-          for i in $(seq 1 30); do
-            kubectl -n velero get backup "$BACKUP_NAME" >/dev/null 2>&1 && exit 0
-            sleep 10
-          done
-          echo "Backup $BACKUP_NAME not rediscovered after cluster rebuild" >&2
-          velero backup get
-          exit 1
+          kubectl delete namespace "$MARKER_NS" --wait=true --timeout=2m
 
       - name: ♻️ Restore marker from backup
         run: |
-          # Marker namespace must NOT pre-exist on the new cluster.
+          # Marker namespace must NOT exist right before restore.
           ! kubectl get ns "$MARKER_NS" >/dev/null 2>&1
           velero restore create "$BACKUP_NAME-restore" \
             --from-backup "$BACKUP_NAME" \
             --wait
-          velero restore describe "$BACKUP_NAME-restore" --details
-          phase=$(kubectl -n velero get restore "$BACKUP_NAME-restore" -o jsonpath='{.status.phase}')
+          # Skip --details on describe for the same presigned-URL + CNPG
+          # reasons as the backup step above.
+          velero restore describe "$BACKUP_NAME-restore" 2>/dev/null || true
+          phase=$(kubectl -n velero get restores.velero.io "$BACKUP_NAME-restore" -o jsonpath='{.status.phase}')
           [[ "$phase" == "Completed" ]] || { echo "Restore phase=$phase, expected Completed" >&2; exit 1; }
 
       - name: ✅ Assert marker present
@@ -211,7 +276,7 @@ jobs:
             echo "Marker run-id mismatch: got=$got_run_id expected=${{ github.run_id }}" >&2
             exit 1
           }
-          echo "DR drill OK: marker survived backup -> destroy -> recreate -> restore"
+          echo "DR drill OK: marker survived backup -> data-loss -> restore"
 
       - name: 🧹 Tear down
         if: always()

@@ -22,8 +22,8 @@ spec:
     updateStrategy:
       type: RollingUpdate
       rollingUpdate:
-        maxSurge: 1
-        maxUnavailable: 0
+        maxSurge: 0
+        maxUnavailable: 1
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
