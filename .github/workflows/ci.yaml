@@ -164,7 +164,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@961f62f4a771b31e48acaae4a619cef6c7fe2195 # v2.1.1
+        uses: devantler-tech/actions/setup-ksail-cli@79063198d351a69bbd89369465004417ab01f173 # v3.0.0
 
       - name: 🔐 Create SOPS Age key
         env:
@@ -306,7 +306,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@961f62f4a771b31e48acaae4a619cef6c7fe2195 # v2.1.1
+        uses: devantler-tech/actions/setup-ksail-cli@79063198d351a69bbd89369465004417ab01f173 # v3.0.0
 
       - name: ⚙️ Setup omnictl
         env:
