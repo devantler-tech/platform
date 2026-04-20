@@ -420,7 +420,7 @@ jobs:
           echo "::endgroup::"
 
   ci-required-checks:
-    name: ✅ Required Checks
+    name: CI - Required Checks
     runs-on: ubuntu-latest
     needs: [changes, system-test, restore-drill, deploy-dev]
     if: always()
