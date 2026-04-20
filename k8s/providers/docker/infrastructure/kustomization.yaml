@@ -4,16 +4,3 @@ kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
   - cluster-issuers/
-# Pin all ScaledObjects to 1 replica in local Docker clusters.
-# KEDA is installed but autoscaling is disabled — CI needs
-# deterministic replica counts and resources are unlimited.
-patches:
-  - target:
-      kind: ScaledObject
-    patch: |
-      - op: replace
-        path: /spec/minReplicaCount
-        value: 1
-      - op: replace
-        path: /spec/maxReplicaCount
-        value: 1
