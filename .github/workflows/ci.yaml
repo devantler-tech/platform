@@ -418,3 +418,24 @@ jobs:
           echo "::group::Recent events (warnings)"
           kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -50
           echo "::endgroup::"
+
+  ci-required-checks:
+    name: ✅ Required Checks
+    runs-on: ubuntu-latest
+    needs: [changes, system-test, restore-drill, deploy-dev]
+    if: always()
+    permissions: {}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
+        with:
+          egress-policy: audit
+
+      - name: 📊 Evaluate job results
+        uses: devantler-tech/actions/require-checks-in-pr@1f66c91d45d374ceac9fe830a783444ebc9be958 # v3.2.0
+        with:
+          job-results: >-
+            ${{ needs.changes.result }}
+            ${{ needs.system-test.result }}
+            ${{ needs.restore-drill.result }}
+            ${{ needs.deploy-dev.result }}
