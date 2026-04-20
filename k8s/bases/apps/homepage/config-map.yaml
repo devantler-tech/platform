@@ -7,25 +7,51 @@ metadata:
 data:
   settings.yaml: |
     title: Platform
-    favicon: https://devantler.tech/_astro/author.DYUMYojz.png
+    favicon: https://github.com/devantler-tech.png
     theme: dark
     color: slate
+    cardBlur: sm
     background:
       image: https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?q=80&w=1974&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D
       blur: sm
       opacity: 70
     layout:
       Kubernetes:
+        icon: si-talos-#FF7300
       Cloud:
+        icon: si-hetzner
       Network:
-      Storage:
+        icon: si-cloudflare
       Monitoring:
+        icon: si-grafana
       Analytics:
+        icon: si-googleanalytics
   kubernetes.yaml: |
     mode: cluster
   widgets.yaml: |
     - logo:
-        icon: https://devantler.tech/assets/images/author.png
+        icon: https://github.com/devantler-tech.png
+    - kubernetes:
+        cluster:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
+          label: cluster
+        nodes:
+          show: true
+          cpu: true
+          memory: true
+          showLabel: true
+    - search:
+        provider: google
+        target: _blank
+    - datetime:
+        text_size: xl
+        format:
+          dateStyle: short
+          timeStyle: short
+          hourCycle: h23
   services.yaml: |
     - Kubernetes:
         - Omni:
@@ -74,13 +100,32 @@ data:
         - Personal Site:
             - icon: github-light
               href: https://devantler.tech
-    - Developer Platforms:
+    - GitHub Organization:
         - GitHub:
             - icon: github-light
               href: https://github.com
+        - DevantlerTech:
+            - icon: github-light
+              href: https://github.com/devantler-tech
+        - Security:
+            - icon: si-github-#181717
+              href: https://github.com/orgs/devantler-tech/security/overview
+        - Insights:
+            - icon: si-github-#181717
+              href: https://github.com/orgs/devantler-tech/insights
+        - Packages:
+            - icon: si-github-#181717
+              href: https://github.com/orgs/devantler-tech/packages
+        - Projects:
+            - icon: si-github-#181717
+              href: https://github.com/orgs/devantler-tech/projects/5
+    - Developer Platforms:
         - Codecov:
             - icon: si-codecov-#F01F7A
               href: https://app.codecov.io
+        - StepSecurity:
+            - icon: si-stepsecurity
+              href: https://app.stepsecurity.io
         - Renovate:
             - icon: si-renovatebot-#007fa0
               href: https://developer.mend.io
