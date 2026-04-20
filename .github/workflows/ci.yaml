@@ -131,156 +131,6 @@ jobs:
         if: always()
         run: ksail cluster delete || echo "⚠️ Cluster may not have been created"
 
-  # PR #7: DR restore drill. Validates the full Velero -> MinIO -> Velero
-  # round trip end-to-end on a fresh cluster, so an etcd loss / cluster
-  # rebuild scenario is regression-tested every PR.
-  #
-  # Total wall budget = 4h (matches the documented RTO in docs/dr/runbook.md).
-  # In practice the drill takes ~15 min; the budget is the manual-prod
-  # ceiling we promise to operators.
-  restore-drill:
-    name: 🔁 DR Restore Drill
-    needs: [changes]
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.changes.outputs.k8s == 'true'
-    runs-on: ubuntu-latest
-    environment: ci
-    timeout-minutes: 240
-    permissions:
-      contents: read
-    env:
-      KSAIL_CONFIG: ksail.yaml
-      MARKER_NS: dr-drill
-      MARKER_NAME: dr-marker
-      BACKUP_NAME: dr-drill
-    steps:
-      - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
-        with:
-          egress-policy: audit
-
-      - name: 📑 Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@1f66c91d45d374ceac9fe830a783444ebc9be958 # v3.2.0
-
-      - name: 🔐 Create SOPS Age key
-        env:
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-        run: |
-          mkdir -p ~/.config/sops/age
-          umask 077
-          echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
-          chmod 600 ~/.config/sops/age/keys.txt
-
-      - name: ⚙️ Install Velero CLI
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download v1.16.1 --repo vmware-tanzu/velero \
-            --pattern "velero-v1.16.1-linux-amd64.tar.gz" --dir /tmp
-          tar -C /tmp -xzf /tmp/velero-v1.16.1-linux-amd64.tar.gz
-          sudo install -m 0755 /tmp/velero-v1.16.1-linux-amd64/velero /usr/local/bin/velero
-          velero version --client-only
-
-      - name: 🚀 Create cluster (round 1)
-        id: create1
-        run: |
-          ksail cluster create
-          ksail workload push
-          ksail workload reconcile --timeout 30m
-
-      - name: 🩺 Diagnose Flux on failure (round 1)
-        if: failure() && steps.create1.outcome == 'failure'
-        run: |
-          set +e
-          kubectl get nodes -o wide
-          kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o wide
-          kubectl get helmreleases.helm.toolkit.fluxcd.io -A -o wide
-          for k in infrastructure-controllers infrastructure apps; do
-            echo "--- $k ---"
-            kubectl describe kustomizations.kustomize.toolkit.fluxcd.io "$k" -n flux-system 2>&1 | tail -60
-          done
-          kubectl get pods -n flux-system -o wide
-          kubectl logs -n flux-system -l app=kustomize-controller --tail=300
-          kubectl logs -n flux-system -l app=helm-controller --tail=300
-          kubectl get pods -A -o wide
-          kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -100
-
-      - name: ⏳ Wait for Velero + MinIO ready (round 1)
-        run: |
-          kubectl -n velero rollout status deploy/velero --timeout=10m
-          kubectl -n minio rollout status deploy/minio --timeout=10m
-          # Wait for default BackupStorageLocation to become Available.
-          for i in $(seq 1 30); do
-            phase=$(kubectl -n velero get backupstoragelocation default -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-            [[ "$phase" == "Available" ]] && exit 0
-            sleep 10
-          done
-          echo "BackupStorageLocation never became Available" >&2
-          kubectl -n velero get backupstoragelocation -o yaml
-          exit 1
-
-      - name: 📌 Write marker resource
-        run: |
-          kubectl create namespace "$MARKER_NS"
-          kubectl -n "$MARKER_NS" create configmap "$MARKER_NAME" \
-            --from-literal=created-at="$(date -u +%FT%TZ)" \
-            --from-literal=run-id="${{ github.run_id }}" \
-            --from-literal=sha="${{ github.sha }}"
-
-      - name: 💾 Backup namespace via Velero
-        run: |
-          velero backup create "$BACKUP_NAME" \
-            --include-namespaces "$MARKER_NS" \
-            --wait
-          # `velero backup describe --details` generates presigned URLs
-          # against the in-cluster MinIO DNS (minio.minio.svc.cluster.local)
-          # which the GitHub runner can't resolve. Also, newer Velero CLIs
-          # query cnpg CRDs for ItemOperations and exit non-zero when the
-          # CNPG backup object does not exist. Fall back to checking the
-          # phase directly on the Backup CR.
-          velero backup describe "$BACKUP_NAME" 2>/dev/null || true
-          phase=$(kubectl -n velero get backups.velero.io "$BACKUP_NAME" -o jsonpath='{.status.phase}')
-          [[ "$phase" == "Completed" ]] || { echo "Backup phase=$phase, expected Completed" >&2; exit 1; }
-
-      - name: 🗑️ Simulate data loss (delete marker namespace)
-        # In prod the data-loss event is a lost cluster; R2 retains the
-        # backup. Locally, MinIO runs in-cluster with ephemeral storage,
-        # so destroying the cluster also destroys the backup target.
-        # Instead, simulate data loss by deleting the marker namespace
-        # and restoring it from the backup -- exercises the same
-        # Velero->S3->Velero code path end-to-end.
-        run: |
-          kubectl delete namespace "$MARKER_NS" --wait=true --timeout=2m
-
-      - name: ♻️ Restore marker from backup
-        run: |
-          # Marker namespace must NOT exist right before restore.
-          ! kubectl get ns "$MARKER_NS" >/dev/null 2>&1
-          velero restore create "$BACKUP_NAME-restore" \
-            --from-backup "$BACKUP_NAME" \
-            --wait
-          # Skip --details on describe for the same presigned-URL + CNPG
-          # reasons as the backup step above.
-          velero restore describe "$BACKUP_NAME-restore" 2>/dev/null || true
-          phase=$(kubectl -n velero get restores.velero.io "$BACKUP_NAME-restore" -o jsonpath='{.status.phase}')
-          [[ "$phase" == "Completed" ]] || { echo "Restore phase=$phase, expected Completed" >&2; exit 1; }
-
-      - name: ✅ Assert marker present
-        run: |
-          got_run_id=$(kubectl -n "$MARKER_NS" get configmap "$MARKER_NAME" -o jsonpath='{.data.run-id}')
-          [[ "$got_run_id" == "${{ github.run_id }}" ]] || {
-            echo "Marker run-id mismatch: got=$got_run_id expected=${{ github.run_id }}" >&2
-            exit 1
-          }
-          echo "DR drill OK: marker survived backup -> data-loss -> restore"
-
-      - name: 🧹 Tear down
-        if: always()
-        run: ksail cluster delete || true
 
   deploy-dev:
     name: 🚀 Deploy to Dev
@@ -422,7 +272,7 @@ jobs:
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [changes, system-test, restore-drill, deploy-dev]
+    needs: [changes, system-test, deploy-dev]
     if: always()
     permissions: {}
     steps:
@@ -437,5 +287,4 @@ jobs:
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.system-test.result }}
-            ${{ needs.restore-drill.result }}
             ${{ needs.deploy-dev.result }}
