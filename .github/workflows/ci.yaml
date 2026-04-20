@@ -164,7 +164,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@79063198d351a69bbd89369465004417ab01f173 # v3.0.0
+        uses: devantler-tech/actions/setup-ksail-cli@1f66c91d45d374ceac9fe830a783444ebc9be958 # v3.2.0
 
       - name: 🔐 Create SOPS Age key
         env:
@@ -306,7 +306,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@79063198d351a69bbd89369465004417ab01f173 # v3.0.0
+        uses: devantler-tech/actions/setup-ksail-cli@1f66c91d45d374ceac9fe830a783444ebc9be958 # v3.2.0
 
       - name: ⚙️ Setup omnictl
         env:
@@ -420,7 +420,7 @@ jobs:
           echo "::endgroup::"
 
   ci-required-checks:
-    name: CI - Required Checks
+    name: ✅ Required Checks
     runs-on: ubuntu-latest
     needs: [changes, system-test, restore-drill, deploy-dev]
     if: always()
