@@ -6,7 +6,7 @@ metadata:
 spec:
   scaleTargetRef:
     name: headlamp
-  minReplicaCount: 0
+  minReplicaCount: 1
   maxReplicaCount: ${headlamp_max_replicas:=2}
   cooldownPeriod: 300
   triggers:

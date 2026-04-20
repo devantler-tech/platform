@@ -6,7 +6,7 @@ metadata:
 spec:
   scaleTargetRef:
     name: homepage
-  minReplicaCount: 0
+  minReplicaCount: 1
   maxReplicaCount: ${homepage_max_replicas:=2}
   cooldownPeriod: 300
   triggers:

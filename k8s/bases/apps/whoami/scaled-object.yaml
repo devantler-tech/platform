@@ -6,7 +6,7 @@ metadata:
 spec:
   scaleTargetRef:
     name: whoami
-  minReplicaCount: 0
+  minReplicaCount: 1
   maxReplicaCount: ${whoami_max_replicas:=2}
   cooldownPeriod: 300
   triggers:

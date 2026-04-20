@@ -21,13 +21,3 @@ patches:
       name: flux-operator
       namespace: flux-system
     path: flux-operator/patches/helm-release-patch.yaml
-  # Pin all ScaledObjects to 1 replica in local Docker clusters.
-  - target:
-      kind: ScaledObject
-    patch: |
-      - op: replace
-        path: /spec/minReplicaCount
-        value: 1
-      - op: replace
-        path: /spec/maxReplicaCount
-        value: 1

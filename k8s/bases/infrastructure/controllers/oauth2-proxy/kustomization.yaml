@@ -7,4 +7,3 @@ resources:
   - httproute.yaml
   - namespace.yaml
   - reference-grant.yaml
-  - scaled-object.yaml

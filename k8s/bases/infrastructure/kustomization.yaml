@@ -7,3 +7,4 @@ resources:
   - cluster-policies/
   - cluster-role-bindings/
   - gateway/
+  - scaled-objects/
