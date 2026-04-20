@@ -61,3 +61,12 @@ Rotating MySQL / Redis passwords also requires updating the Bitnami
 subcharts' running instances — the simplest path for this homelab is to
 scale the StatefulSet to 0, delete the PVCs, and let Flux recreate
 everything with the new credentials.
+
+## Image registry note
+
+The bundled Bitnami MySQL / Redis subcharts pin tags that Broadcom moved
+out of `docker.io/bitnami/*` to `docker.io/bitnamilegacy/*` in
+[August 2025](https://github.com/bitnami/containers/issues/83267). The
+HelmRelease overrides each image's `repository` to `bitnamilegacy/*`
+until the Fleet chart ships updated subchart pins or we migrate to the
+official `mysql` / `redis` images.

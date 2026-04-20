@@ -8,4 +8,3 @@ resources:
   - pod-disruption-budget.yaml
   - mysql-secret.yaml
   - redis-secret.yaml
-  - fleet-server-secret.yaml
