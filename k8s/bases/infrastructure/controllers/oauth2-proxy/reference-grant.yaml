@@ -12,9 +12,6 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: flux-system
-    - group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      namespace: goldilocks
   to:
     - group: ""
       kind: Service

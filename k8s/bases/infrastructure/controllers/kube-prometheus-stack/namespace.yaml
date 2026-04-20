@@ -7,6 +7,3 @@ metadata:
     # hostPort to scrape node-level metrics — requires privileged PSS.
     pod-security.kubernetes.io/enforce: privileged
     pod-security.kubernetes.io/enforce-version: latest
-  annotations:
-    goldilocks.fairwinds.com/vpa-update-mode: "auto"
-    goldilocks.fairwinds.com/vpa-min-replicas: "1"
