@@ -20,7 +20,7 @@ spec:
         patches:
           - target:
               kind: Deployment
-              name: fleetdm
+              name: fleet
             patch: |
               - op: add
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
