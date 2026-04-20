@@ -1,0 +1,30 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: keda-http-add-on
+  namespace: keda
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 2m
+  timeout: 10m
+  dependsOn:
+    - name: keda
+  chart:
+    spec:
+      chart: keda-add-ons-http
+      version: 0.13.0
+      sourceRef:
+        kind: HelmRepository
+        name: keda
+  # https://github.com/kedacore/charts/blob/main/http-add-on/values.yaml
+  values:
+    crds:
+      install: true
+    scaler:
+      replicas: 1
+    interceptor:
+      replicas:
+        min: 1
+        max: 3
