@@ -1,0 +1,107 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: fleetdm
+  namespace: fleetdm
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 2m
+  chart:
+    spec:
+      chart: fleet
+      version: v6.8.10
+      sourceRef:
+        kind: HelmRepository
+        name: fleetdm
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: fleetdm
+            patch: |
+              - op: add
+                path: /metadata/annotations/secret.reloader.stakater.com~1reload
+                value: fleet-server,mysql,redis
+              - op: add
+                path: /spec/strategy
+                value:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxSurge: 1
+                    maxUnavailable: 0
+              - op: add
+                path: /spec/template/spec/topologySpreadConstraints
+                value:
+                  - maxSkew: 1
+                    topologyKey: kubernetes.io/hostname
+                    whenUnsatisfiable: ScheduleAnyway
+                    labelSelector:
+                      matchLabels:
+                        app: fleet
+  # https://github.com/fleetdm/fleet/blob/main/charts/fleet/values.yaml
+  values:
+    hostName: fleetdm.${domain}
+    replicas: ${fleetdm_replicas:=2}
+    # Ingress is handled by a Gateway API HTTPRoute in this repo.
+    ingress:
+      enabled: false
+    # Load the MDM server private key from a SOPS-encrypted Secret so
+    # FLEET_SERVER_PRIVATE_KEY is stable across restarts. Losing this
+    # value invalidates every enrolled device.
+    envsFrom:
+      - name: FLEET_SERVER_PRIVATE_KEY
+        valueFrom:
+          secretKeyRef:
+            name: fleet-server
+            key: FLEET_SERVER_PRIVATE_KEY
+    fleet:
+      # TLS terminates at the platform Gateway (Traefik / Cilium).
+      tls:
+        enabled: false
+    # Run vulnerability processing in a dedicated container so the API
+    # pods don't OOM every hour during the scan.
+    vulnProcessing:
+      dedicated: ${fleetdm_vuln_dedicated:=true}
+    database:
+      address: fleetdm-mysql.fleetdm:3306
+    cache:
+      address: fleetdm-redis-master.fleetdm:6379
+      usePassword: true
+    # https://github.com/bitnami/charts/blob/main/bitnami/mysql/values.yaml
+    mysql:
+      enabled: true
+      architecture: ${fleetdm_mysql_architecture:=replication}
+      auth:
+        createDatabase: true
+        database: fleet
+        username: fleet
+        existingSecret: mysql
+      secondary:
+        replicaCount: ${fleetdm_mysql_secondary_replicas:=2}
+      primary:
+        persistence:
+          enabled: true
+          size: 20Gi
+      metrics:
+        enabled: true
+    # https://github.com/bitnami/charts/blob/main/bitnami/redis/values.yaml
+    redis:
+      enabled: true
+      architecture: ${fleetdm_redis_architecture:=replication}
+      auth:
+        existingSecret: redis
+        existingSecretPasswordKey: redis-password
+      master:
+        persistence:
+          enabled: true
+          size: 8Gi
+      replica:
+        replicaCount: ${fleetdm_redis_replicas:=2}
+        persistence:
+          enabled: true
+          size: 8Gi
+      metrics:
+        enabled: true

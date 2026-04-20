@@ -1,0 +1,24 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: fleetdm
+  namespace: fleetdm
+spec:
+  values:
+    replicas: 1
+    vulnProcessing:
+      dedicated: false
+    mysql:
+      architecture: standalone
+      secondary:
+        replicaCount: 0
+      primary:
+        persistence:
+          size: 5Gi
+    redis:
+      architecture: standalone
+      replica:
+        replicaCount: 0
+      master:
+        persistence:
+          size: 2Gi
