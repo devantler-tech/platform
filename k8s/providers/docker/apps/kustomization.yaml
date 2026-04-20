@@ -26,3 +26,15 @@ patches:
       - op: replace
         path: /spec/maxReplicaCount
         value: 1
+  # Pin all HTTPScaledObjects to 1 replica in local Docker clusters.
+  # The HTTP Add-on interceptor still routes traffic, but scaling is
+  # disabled — CI needs deterministic replica counts.
+  - target:
+      kind: HTTPScaledObject
+    patch: |
+      - op: replace
+        path: /spec/replicas/min
+        value: 1
+      - op: replace
+        path: /spec/replicas/max
+        value: 1

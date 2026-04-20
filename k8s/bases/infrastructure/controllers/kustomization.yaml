@@ -9,6 +9,7 @@ resources:
   - dex/
   - flux-operator/
   - keda/
+  - keda-http-add-on/
   - kube-prometheus-stack/
   - kyverno/
   - metrics-server/
