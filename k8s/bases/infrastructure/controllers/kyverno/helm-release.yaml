@@ -28,6 +28,24 @@ spec:
   values:
     admissionController:
       replicas: ${kyverno_admission_replicas:=2}
+      rbac:
+        clusterRole:
+          extraResources:
+            # The auto-vpa ClusterPolicy generates VPA objects for every
+            # Deployment / StatefulSet.  Kyverno needs RBAC on the target
+            # resource type for generate rules to work.
+            - apiGroups:
+                - autoscaling.k8s.io
+              resources:
+                - verticalpodautoscalers
+              verbs:
+                - get
+                - list
+                - watch
+                - create
+                - update
+                - patch
+                - delete
       updateStrategy:
         type: RollingUpdate
         rollingUpdate:
@@ -44,3 +62,19 @@ spec:
             matchLabels:
               app.kubernetes.io/component: admission-controller
               app.kubernetes.io/instance: kyverno
+    backgroundController:
+      rbac:
+        clusterRole:
+          extraResources:
+            - apiGroups:
+                - autoscaling.k8s.io
+              resources:
+                - verticalpodautoscalers
+              verbs:
+                - get
+                - list
+                - watch
+                - create
+                - update
+                - patch
+                - delete
