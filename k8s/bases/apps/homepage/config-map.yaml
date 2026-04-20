@@ -7,7 +7,7 @@ metadata:
 data:
   settings.yaml: |
     title: Platform
-    favicon: https://github.com/devantler-tech.png
+    favicon: https://avatars.githubusercontent.com/u/178524219?v=4&s=32
     theme: dark
     color: slate
     cardBlur: sm
@@ -30,7 +30,7 @@ data:
     mode: cluster
   widgets.yaml: |
     - logo:
-        icon: https://github.com/devantler-tech.png
+        icon: https://avatars.githubusercontent.com/u/178524219?v=4&s=200
     - kubernetes:
         cluster:
           show: true
