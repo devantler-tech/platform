@@ -1,0 +1,27 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: fleetdm
+  namespace: fleetdm
+spec:
+  values:
+    replicas: 1
+    vulnProcessing:
+      dedicated: false
+    # Local Docker cluster has no default StorageClass (see minio pattern:
+    # emptyDir for local S3). Disable persistence for both MySQL and Redis
+    # so stateful pods can schedule. Data is throw-away in local/CI.
+    mysql:
+      architecture: standalone
+      secondary:
+        replicaCount: 0
+      primary:
+        persistence:
+          enabled: false
+    redis:
+      architecture: standalone
+      replica:
+        replicaCount: 0
+      master:
+        persistence:
+          enabled: false

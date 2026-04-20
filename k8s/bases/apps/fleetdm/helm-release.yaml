@@ -1,0 +1,139 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: fleetdm
+  namespace: fleetdm
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 2m
+  chart:
+    spec:
+      chart: fleet
+      version: v6.8.10
+      sourceRef:
+        kind: HelmRepository
+        name: fleetdm
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: fleet
+            patch: |
+              - op: add
+                path: /metadata/annotations/secret.reloader.stakater.com~1reload
+                value: mysql,redis
+              - op: add
+                path: /spec/strategy
+                value:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxSurge: 1
+                    maxUnavailable: 0
+              - op: add
+                path: /spec/template/spec/topologySpreadConstraints
+                value:
+                  - maxSkew: 1
+                    topologyKey: kubernetes.io/hostname
+                    whenUnsatisfiable: ScheduleAnyway
+                    labelSelector:
+                      matchLabels:
+                        app: fleet
+  # https://github.com/fleetdm/fleet/blob/main/charts/fleet/values.yaml
+  values:
+    hostName: fleetdm.${domain}
+    replicas: ${fleetdm_replicas:=2}
+    # Ingress is handled by a Gateway API HTTPRoute in this repo.
+    ingress:
+      enabled: false
+    # FLEET_SERVER_PRIVATE_KEY is substituted by Flux from the
+    # per-cluster SOPS-encrypted `variables-cluster-secret.enc.yaml`
+    # before apply. The rendered Deployment carries the value as a
+    # literal env, readable only to principals with RBAC on the fleetdm
+    # namespace. Stable across restarts; losing this key invalidates
+    # every enrolled device.
+    environments:
+      FLEET_SERVER_PRIVATE_KEY: ${fleetdm_server_private_key}
+    fleet:
+      # TLS terminates at the platform Gateway (Traefik / Cilium).
+      tls:
+        enabled: false
+    # Run vulnerability processing in a dedicated container so the API
+    # pods don't OOM every hour during the scan.
+    vulnProcessing:
+      dedicated: ${fleetdm_vuln_dedicated:=true}
+    database:
+      address: fleetdm-mysql.fleetdm:3306
+    cache:
+      address: fleetdm-redis-master.fleetdm:6379
+      usePassword: true
+    # https://github.com/bitnami/charts/blob/main/bitnami/mysql/values.yaml
+    # NOTE: Broadcom/Bitnami moved all tagged images out of `bitnami/*` on
+    # docker.io in August 2025; the old tags pinned by this chart version
+    # now only resolve under `bitnamilegacy/*`. Override until the Fleet
+    # chart upgrades or we migrate to the official MySQL/Redis images.
+    # https://github.com/bitnami/containers/issues/83267
+    mysql:
+      enabled: true
+      architecture: ${fleetdm_mysql_architecture:=replication}
+      image:
+        registry: docker.io
+        repository: bitnamilegacy/mysql
+      auth:
+        createDatabase: true
+        database: fleet
+        username: fleet
+        existingSecret: mysql
+      secondary:
+        replicaCount: ${fleetdm_mysql_secondary_replicas:=2}
+      primary:
+        persistence:
+          enabled: true
+          size: 20Gi
+      metrics:
+        enabled: true
+        image:
+          registry: docker.io
+          repository: bitnamilegacy/mysqld-exporter
+      volumePermissions:
+        image:
+          registry: docker.io
+          repository: bitnamilegacy/os-shell
+    # https://github.com/bitnami/charts/blob/main/bitnami/redis/values.yaml
+    redis:
+      enabled: true
+      architecture: ${fleetdm_redis_architecture:=replication}
+      image:
+        registry: docker.io
+        repository: bitnamilegacy/redis
+      auth:
+        existingSecret: redis
+        existingSecretPasswordKey: redis-password
+      master:
+        persistence:
+          enabled: true
+          size: 8Gi
+      replica:
+        replicaCount: ${fleetdm_redis_replicas:=2}
+        persistence:
+          enabled: true
+          size: 8Gi
+      metrics:
+        enabled: true
+        image:
+          registry: docker.io
+          repository: bitnamilegacy/redis-exporter
+      sentinel:
+        image:
+          registry: docker.io
+          repository: bitnamilegacy/redis-sentinel
+      volumePermissions:
+        image:
+          registry: docker.io
+          repository: bitnamilegacy/os-shell
+      sysctl:
+        image:
+          registry: docker.io
+          repository: bitnamilegacy/os-shell

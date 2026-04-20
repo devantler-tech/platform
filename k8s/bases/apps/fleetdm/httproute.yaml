@@ -1,0 +1,22 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: fleetdm
+  namespace: fleetdm
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Fleet
+    gethomepage.dev/description: Open-source device management (MDM + osquery).
+    gethomepage.dev/group: Management
+    gethomepage.dev/icon: si-coderwall-#40B5A4
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - fleetdm.${domain}
+  rules:
+    - backendRefs:
+        - name: fleetdm-service
+          port: 8080

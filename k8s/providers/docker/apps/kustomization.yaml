@@ -9,3 +9,8 @@ patches:
       name: headlamp
       namespace: headlamp
     path: headlamp/patches/helm-release-patch.yaml
+  - target:
+      kind: HelmRelease
+      name: fleetdm
+      namespace: fleetdm
+    path: fleetdm/patches/helm-release-patch.yaml
