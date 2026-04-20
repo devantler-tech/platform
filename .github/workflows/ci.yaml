@@ -21,7 +21,7 @@ jobs:
       k8s: ${{ steps.filter.outputs.k8s }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
         with:
           egress-policy: audit
 
@@ -55,7 +55,7 @@ jobs:
       contents: read # checkout repository
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
         with:
           egress-policy: audit
 
@@ -154,7 +154,7 @@ jobs:
       BACKUP_NAME: dr-drill
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
         with:
           egress-policy: audit
 
@@ -296,7 +296,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@f808768d1510423e83855289c910610ca9b43176 # v2.17.0
+        uses: step-security/harden-runner@8d3c67de8e2fe68ef647c8db1e6a09f647780f40 # v2.19.0
         with:
           egress-policy: audit
 
