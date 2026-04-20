@@ -10,8 +10,10 @@ metadata:
     policies.kyverno.io/subject: HelmRelease
     policies.kyverno.io/description: >-
       This policy sets the remediation retries for HelmRelease resources
-      to 3. This ensures that if a HelmRelease fails to install or upgrade,
-      it will retry up to 3 times before giving up.
+      to 3 and enables remediateLastFailure. This ensures that if a
+      HelmRelease fails to install or upgrade, it will retry up to 3
+      times and then retry once more on the next reconciliation interval,
+      preventing permanent stalling.
 spec:
   rules:
     - name: set-remediation-retries
@@ -28,6 +30,8 @@ spec:
             install:
               remediation:
                 retries: 3
+                remediateLastFailure: true
             upgrade:
               remediation:
                 retries: 3
+                remediateLastFailure: true

@@ -1,0 +1,78 @@
+# TODO: Upstream `auto-vpa.yaml` to Kyverno policies repository.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: auto-vpa
+  annotations:
+    policies.kyverno.io/title: Auto VPA
+    policies.kyverno.io/category: Autoscaling
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: Deployment,StatefulSet
+    policies.kyverno.io/description: >-
+      Generates a VerticalPodAutoscaler for every Deployment and
+      StatefulSet outside kube-system. VPA is memory-only
+      (controlledResources: ["memory"]) so it does not conflict with
+      KEDA / HPA horizontal scaling on CPU.
+      Ref: https://brtkwr.com/posts/2026-02-07-running-hpa-and-vpa-together-on-kubernetes/
+spec:
+  rules:
+    - name: generate-vpa-for-deployment
+      match:
+        resources:
+          kinds:
+            - Deployment
+      exclude:
+        resources:
+          namespaces:
+            - kube-system
+      generate:
+        apiVersion: autoscaling.k8s.io/v1
+        kind: VerticalPodAutoscaler
+        name: "{{request.object.metadata.name}}"
+        namespace: "{{request.object.metadata.namespace}}"
+        synchronize: true
+        data:
+          spec:
+            targetRef:
+              apiVersion: apps/v1
+              kind: Deployment
+              name: "{{request.object.metadata.name}}"
+            updatePolicy:
+              updateMode: "Auto"
+              minReplicas: 2
+            resourcePolicy:
+              containerPolicies:
+                - containerName: "*"
+                  controlledResources: ["memory"]
+                  minAllowed:
+                    memory: "64Mi"
+    - name: generate-vpa-for-statefulset
+      match:
+        resources:
+          kinds:
+            - StatefulSet
+      exclude:
+        resources:
+          namespaces:
+            - kube-system
+      generate:
+        apiVersion: autoscaling.k8s.io/v1
+        kind: VerticalPodAutoscaler
+        name: "{{request.object.metadata.name}}"
+        namespace: "{{request.object.metadata.namespace}}"
+        synchronize: true
+        data:
+          spec:
+            targetRef:
+              apiVersion: apps/v1
+              kind: StatefulSet
+              name: "{{request.object.metadata.name}}"
+            updatePolicy:
+              updateMode: "Auto"
+              minReplicas: 2
+            resourcePolicy:
+              containerPolicies:
+                - containerName: "*"
+                  controlledResources: ["memory"]
+                  minAllowed:
+                    memory: "64Mi"

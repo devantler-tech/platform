@@ -8,7 +8,7 @@ resources:
   - cloudnative-pg/
   - dex/
   - flux-operator/
-  - goldilocks/
+  - keda/
   - kube-prometheus-stack/
   - kyverno/
   - metrics-server/
