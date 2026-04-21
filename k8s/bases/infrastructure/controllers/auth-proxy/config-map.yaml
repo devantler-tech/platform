@@ -22,16 +22,8 @@ data:
           rule: "Host(`${domain}`)"
           entryPoints: ["web"]
           service: homepage
-        goldilocks:
-          rule: "Host(`goldilocks.${domain}`)"
-          entryPoints: ["web"]
-          service: goldilocks
       services:
         homepage:
           loadBalancer:
             servers:
               - url: "http://homepage.homepage.svc.cluster.local:80"
-        goldilocks:
-          loadBalancer:
-            servers:
-              - url: "http://goldilocks-dashboard.goldilocks.svc.cluster.local:80"

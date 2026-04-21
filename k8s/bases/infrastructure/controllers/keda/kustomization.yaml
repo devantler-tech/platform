@@ -4,7 +4,3 @@ resources:
   - namespace.yaml
   - helm-release.yaml
   - helm-repository.yaml
-  - httproute.yaml
-  - mysql-secret.yaml
-  - pod-disruption-budget.yaml
-  - redis-secret.yaml
