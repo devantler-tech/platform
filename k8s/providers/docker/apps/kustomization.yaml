@@ -14,27 +14,3 @@ patches:
       name: fleetdm
       namespace: fleetdm
     path: fleetdm/patches/helm-release-patch.yaml
-  # Pin all ScaledObjects to 1 replica in local Docker clusters.
-  # KEDA is installed but autoscaling is disabled — CI needs
-  # deterministic replica counts and resources are unlimited.
-  - target:
-      kind: ScaledObject
-    patch: |
-      - op: replace
-        path: /spec/minReplicaCount
-        value: 1
-      - op: replace
-        path: /spec/maxReplicaCount
-        value: 1
-  # Pin all HTTPScaledObjects to 1 replica in local Docker clusters.
-  # The HTTP Add-on interceptor still routes traffic, but scaling is
-  # disabled — CI needs deterministic replica counts.
-  - target:
-      kind: HTTPScaledObject
-    patch: |
-      - op: replace
-        path: /spec/replicas/min
-        value: 1
-      - op: replace
-        path: /spec/replicas/max
-        value: 1
