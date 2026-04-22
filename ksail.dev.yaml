@@ -15,14 +15,22 @@ spec:
     provider: Hetzner
     cni: Cilium
     gitOpsEngine: Flux
-    # Match the existing cluster state so 'ksail cluster update' does not
-    # attempt to uninstall components that are managed in-cluster via Flux.
-    certManager: Enabled
-    metricsServer: Enabled
-    policyEngine: Kyverno
+    # These components are managed in-cluster by Flux (HelmReleases under
+    # k8s/bases/infrastructure/controllers/). Tell ksail not to install
+    # them so there are not two different install paths for the same
+    # release, and so ksail bootstrap does not race Flux — in particular,
+    # ksail installing metrics-server before Flux has a chance to install
+    # kubelet-serving-cert-approver leaves the kubelet serving CSRs
+    # pending and causes metrics-server to TLS-fail against kubelet.
+    certManager: Disabled
+    metricsServer: Default
+    policyEngine: None
     talos:
       controlPlanes: 3
       workers: 2
+      # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
+      # an unwanted in-place upgrade to ksail's default version.
+      version: v1.11.2
       # Hetzner Talos ISO (x86_64). Override to 122629 for ARM.
       iso: 122630
     localRegistry:
