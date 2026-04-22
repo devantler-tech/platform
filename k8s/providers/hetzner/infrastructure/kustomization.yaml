@@ -4,3 +4,9 @@ kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
   - cluster-issuers/
+patches:
+  - path: gateway-patch.yaml
+    target:
+      kind: Gateway
+      name: platform
+

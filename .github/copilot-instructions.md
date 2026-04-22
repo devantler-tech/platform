@@ -63,23 +63,23 @@ ksail cluster list
 ### Key Directories
 - **`k8s/`** - All Kubernetes manifests and GitOps configuration
   - **`k8s/clusters/`** - Environment-specific configurations (local, dev, prod)
-  - **`k8s/providers/`** - Provider-specific configs (docker, omni)
+  - **`k8s/providers/`** - Provider-specific configs (docker, hetzner)
   - **`k8s/bases/`** - Shared base configurations
     - **`k8s/bases/infrastructure/`** - Core infrastructure components organized by resource type (e.g. `certificates/`, `gateway/`, `cluster-policies/`, `controllers/`)
     - **`k8s/bases/apps/`** - Application deployments (homepage, whoami, headlamp)
-- **`talos-omni/`** - Talos machine config patches for Omni-backed clusters (shared across dev and prod)
+- **`talos/`** - Talos machine config patches for Hetzner-backed clusters (shared across dev and prod). Split into `cluster/`, `control-planes/`, `workers/` as ksail expects.
 - **`talos-local/`** - Talos machine config patches for Docker (local) clusters
-- **`hetzner/`** - Hetzner Cloud provisioning scripts
+- **`hetzner/`** - Legacy Hetzner Cloud helper scripts (snapshot packer, ad-hoc server create/delete). Day-to-day lifecycle is handled by the KSail Hetzner provider.
 - **`.sops.yaml`** - SOPS encryption configuration
 - **`ksail.yaml`** - KSail local cluster configuration (Talos + Docker, `kustomizationFile: clusters/local`)
-- **`ksail.prod.yaml`** - KSail production cluster configuration (Talos + Omni, `kustomizationFile: clusters/prod`)
+- **`ksail.dev.yaml`** / **`ksail.prod.yaml`** - KSail dev/prod cluster configurations (Talos + Hetzner, `kustomizationFile: clusters/{dev,prod}`)
 
 ### Important Files
 - **`README.md`** - Main repository documentation
 - **`ksail.yaml`** - Defines local Talos+Docker cluster with Flux, Cilium. Has `spec.workload.kustomizationFile: clusters/local` so Flux uses `k8s/clusters/local/kustomization.yaml` as the entry point.
-- **`ksail.prod.yaml`** - Defines production Talos+Omni cluster with Flux, Cilium, GHCR registry. Has `spec.workload.kustomizationFile: clusters/prod` so Flux uses `k8s/clusters/prod/kustomization.yaml` as the entry point.
+- **`ksail.prod.yaml`** - Defines production Talos+Hetzner cluster with Flux, Cilium, GHCR registry. Has `spec.workload.kustomizationFile: clusters/prod` so Flux uses `k8s/clusters/prod/kustomization.yaml` as the entry point.
 - **`talos-local/`** - Talos machine config patches for local Docker clusters
-- **`talos-omni/`** - Talos machine config patches for Omni-backed clusters (dev and prod)
+- **`talos/`** - Talos machine config patches for Hetzner-backed clusters (dev and prod)
 - **`.github/workflows/`** - CI/CD pipelines for cluster bootstrap and deployment
 
 ## Common Tasks and Workflows
@@ -93,33 +93,32 @@ ksail cluster list
 6. **Cleanup**: Run `ksail cluster delete`
 
 ### Production Deployment Workflow
-Production uses **Talos + Omni** (managed by Sidero Omni SaaS). The cluster is pre-provisioned — only workloads are deployed via KSail.
+Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail owns the full lifecycle: Talos boot, Hetzner CCM + CSI install, kubeconfig handoff, and workload push.
 
 **How it works:**
 1. Push a `v*` tag to trigger the `CD - Deploy` workflow
 2. The workflow uses `ksail --config ksail.prod.yaml` to target the committed prod config
 3. `ksail.prod.yaml` has `kustomizationFile: clusters/prod`, which tells KSail/Flux to use `k8s/clusters/prod/kustomization.yaml` as the entry point — no root `k8s/kustomization.yaml` or file rewriting is needed
-4. `ksail --config ksail.prod.yaml workload push` packages manifests and pushes to GHCR
-5. `ksail --config ksail.prod.yaml workload reconcile` triggers Flux to sync from the OCI artifact
+4. `ksail --config ksail.prod.yaml cluster create` (first run) or `cluster update` (subsequent runs) provisions / reconciles the Hetzner servers, Talos, CCM, and CSI.
+5. `ksail --config ksail.prod.yaml workload push` packages manifests and pushes to GHCR
+6. `ksail --config ksail.prod.yaml workload reconcile` triggers Flux to sync from the OCI artifact
 
 **Key differences from local:**
-- No `ksail cluster create/delete` — Omni manages cluster lifecycle externally
 - OCI artifacts pushed to GHCR (not a local registry)
-- Kubeconfig is fetched via `omnictl kubeconfig` in CI/CD workflows (workaround until KSail handles this natively)
-- SPIRE mutual auth is enabled (unlike local Docker clusters)
-- Omni endpoint: `https://devantler.omni.siderolabs.io:443`
+- Nodes are real Hetzner servers; `ksail cluster update` can scale workers in place or swap ISO versions
+- Ingress is a real Hetzner Cloud Load Balancer provisioned by the hcloud CCM from the Cilium Gateway's Service
+- DNS A/AAAA records at the apex + wildcard must point at the LB IP (human step — see `docs/dr/runbook.md` scenario 4)
 
 ### CI/CD Pipelines
-- **`ci.yaml`**: Runs on `pull_request` and `merge_group`. Creates a local Talos+Docker cluster, pushes manifests, reconciles, then cleans up.
-- **`cd.yaml`**: Runs on `v*` tags. Deploys to production Omni cluster using `ksail --config ksail.prod.yaml`. The prod config has `kustomizationFile: clusters/prod` so no file rewriting is needed — KSail/Flux automatically uses the correct entry point.
+- **`ci.yaml`**: Runs on `pull_request` (local Talos+Docker system test) and `merge_group` (deploys dev via Hetzner provider).
+- **`cd.yaml`**: Runs on `v*` tags. Deploys to production Hetzner cluster using `ksail --config ksail.prod.yaml`.
 
 **Required GitHub Secrets:**
 - `GHCR_TOKEN` — long-lived PAT (owner: `devantler`) with `write:packages` scope, used for GHCR push/pull authentication
 - `SOPS_AGE_KEY` — Age private key for SOPS secret decryption
-- `OMNI_SERVICE_ACCOUNT_KEY` — Omni service account key for cluster access (dev/prod)
+- `HCLOUD_TOKEN` — Hetzner Cloud API token (read/write) used by the ksail Hetzner provider and by the Hetzner CCM / CSI at runtime
 
-**Required GitHub Variables:**
-- `OMNI_ENDPOINT` — Omni API endpoint URL (per-environment)
+**Required GitHub Variables:** none.
 
 ### Working with Secrets
 This platform uses SOPS with Age encryption for all secrets:
@@ -148,19 +147,6 @@ kustomize build k8s/clusters/local/
 
 # Test Flux kustomizations
 flux check
-```
-
-### Hetzner Cloud Operations
-Scripts for managing Hetzner Cloud infrastructure are in `hetzner/`:
-```bash
-# Create a server (requires Hetzner API token)
-./hetzner/create-server.sh --token <token> --server-name <name> --image-id <id>
-
-# Create snapshot from Talos media
-./hetzner/create-snapshot.sh --token <token> --media-path <path>
-
-# Delete a server
-./hetzner/delete-server.sh --token <token> --server-name <name>
 ```
 
 ## Timing Expectations and Warnings
@@ -201,12 +187,12 @@ This is a **GitOps-based Kubernetes platform** using:
 - **Kustomize** for configuration templating
 - **KSail** for unified cluster and workload management
 - **Talos + Docker** for local development clusters (via KSail)
-- **Talos + Omni** for production cluster management (Sidero Omni SaaS)
+- **Talos + Hetzner** for dev/prod cluster management (KSail native Hetzner provider)
 - **GHCR** for OCI artifact storage (production)
 
 ### Dual-Provider Model
 - **Local/CI**: `ksail cluster create` → Talos + Docker provider → local OCI registry → `ksail workload push/reconcile`
-- **Production**: Omni manages cluster lifecycle → `ksail --config ksail.prod.yaml workload push` to GHCR → `ksail --config ksail.prod.yaml workload reconcile`
+- **Dev/Production**: `ksail --config ksail.{dev,prod}.yaml cluster create|update` → Talos + Hetzner provider → Hetzner CCM + CSI installed by ksail → `ksail workload push` to GHCR → `workload reconcile`
 
 ### Kustomization Flow
 The platform uses a hierarchical kustomization structure:
@@ -267,7 +253,7 @@ hosts                 - Host configurations
 k8s/                  - Kubernetes manifests
 ksail.yaml            - KSail local configuration (kustomizationFile: clusters/local)
 ksail.prod.yaml       - KSail production configuration (kustomizationFile: clusters/prod)
-talos-omni/           - Talos configs for Omni clusters
+talos/                - Talos configs for Hetzner clusters (cluster/, control-planes/, workers/)
 talos-local/          - Talos configs for local Docker clusters
 ```
 
@@ -295,13 +281,14 @@ ksail workload reconcile
 ```
 
 ### Production Cluster Recovery
-The Omni cluster is managed externally. To redeploy workloads:
+With the KSail Hetzner provider, the cluster is cattle. Rebuild it in place:
 ```bash
-# From a machine with production kubeconfig access
-ksail workload push
-ksail workload reconcile
+export HCLOUD_TOKEN=...
+ksail --config ksail.prod.yaml cluster update   # scales / re-provisions missing nodes
+# For a full rebuild from zero, see docs/dr/runbook.md scenario 4.
+ksail --config ksail.prod.yaml workload push
+ksail --config ksail.prod.yaml workload reconcile
 ```
-For cluster-level issues, use the Omni dashboard at `https://devantler.omni.siderolabs.io`.
 
 ### Tool Reinstallation
 If tools stop working, reinstall in this order:
@@ -309,6 +296,5 @@ If tools stop working, reinstall in this order:
 2. KSail (`brew reinstall ksail`)
 3. Kubectl (check cluster context)
 4. SOPS and Age (check encryption keys)
-5. omnictl (`brew install siderolabs/tap/omnictl`) — for Omni cluster management
 
 Remember: **ALWAYS follow these instructions first**. Only use additional search or commands when encountering unexpected issues not covered here.

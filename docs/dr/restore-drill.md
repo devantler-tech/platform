@@ -52,8 +52,9 @@ explodes.
 - Cloudflare R2 specifics (CRC checksum quirk, bucket policy, IAM key
   rotation). That's `dev`/`prod`-only and needs a periodic manual drill
   documented in [`runbook.md`](./runbook.md#scenario-3-restore-an-app-namespace-from-velero).
-- Omni etcd backup/restore — not exercised here because there is no
-  Omni in CI. Drill manually per [`omni-etcd-backups.md`](./omni-etcd-backups.md).
+- Omni etcd backup/restore — no longer part of the platform; etcd is a
+  cattle resource recreated by `ksail cluster create`. Full-cluster
+  recovery is covered by [`runbook.md`](./runbook.md#scenario-4-full-cluster-rebuild-from-zero).
 - CNPG PITR — covered by the CNPG operator's own e2e; we only verify
   that the `ScheduledBackup` reconciles. A future extension could write
   a row, backup, delete, restore, and read the row back.

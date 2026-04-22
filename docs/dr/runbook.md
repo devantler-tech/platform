@@ -7,21 +7,21 @@ of manual control-plane work, dev or prod can be reconstructed to a state
 indistinguishable from the day before the incident.
 
 > **RPO target:** 24 h (daily snapshots).
-> **RTO target:** 4 h (mostly slack for manual Omni / Cloudflare clicks; the
-> automated portion is &lt; 15 minutes in CI).
+> **RTO target:** 4 h (mostly slack for manual Hetzner / Cloudflare clicks;
+> the automated portion is &lt; 15 minutes in CI).
 
 ---
 
 ## Off-cluster artifacts you must keep safe
 
-The repo + these four items are the entire seed for a rebuild. Lose all of
+The repo + these items are the entire seed for a rebuild. Lose all of
 these simultaneously and you cannot recover.
 
 | Artifact                                | Where it lives                       | Recovery if lost                     |
 | --------------------------------------- | ------------------------------------ | ------------------------------------ |
 | **SOPS Age private keys** (one per env) | Secure vault + offline backup        | Re-encrypt all `*.enc.yaml` (below)  |
 | **Cloudflare R2 access keys**           | Secure vault                         | Mint new in Cloudflare; SOPS-update  |
-| **Omni admin credentials**              | Secure vault + `omnictl` config      | Reset via Sidero support             |
+| **Hetzner Cloud API token**             | Secure vault                         | Mint new in Hetzner Cloud console    |
 | **Cloudflare API token**                | Secure vault                         | Mint new in Cloudflare dashboard     |
 
 > Recommendation: store these in a shared vault accessible by at least one
@@ -32,16 +32,17 @@ these simultaneously and you cannot recover.
 
 ## Scenario 1 — Single node loss
 
-Expected behaviour: PDBs keep every multi-replica workload
-serving traffic. Omni replaces the failed node within ~5 minutes.
-
-**Action:** none required if PDBs and Omni autoscaling are healthy. Verify
-afterwards:
+Expected behaviour: PDBs keep every multi-replica workload serving traffic.
+Re-scale workers or re-run `ksail cluster update` to replace the lost node.
 
 ```bash
+# Inspect state
 kubectl get nodes
 kubectl get pods -A --field-selector=status.phase!=Running
 kubectl get pdb -A    # all should show ALLOWED-DISRUPTIONS=1
+
+# Replace the failed node (re-runs Hetzner provisioning for missing members)
+ksail --config ksail.prod.yaml cluster update
 ```
 
 If any workload is stuck in Pending because all replicas were on the dead
@@ -55,7 +56,9 @@ kubectl -n <ns> rollout restart deployment/<name>
 
 ## Scenario 2 — Planned rolling Talos / Kubernetes upgrade
 
-Driven by Omni; nodes drain one at a time. PDBs hold the line.
+Bump the Talos ISO ID in `ksail.{dev,prod}.yaml` (or the Kubernetes version
+in the ksail config) and re-run `ksail cluster update`. ksail cordons and
+replaces nodes one at a time; PDBs hold the line.
 
 ```bash
 # Pre-flight: confirm every multi-replica workload has a PDB
@@ -63,69 +66,55 @@ kubectl get pdb -A
 
 # Pre-flight: confirm RollingUpdate strategy uses maxUnavailable: 0
 kubectl get deploy -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}\t{.spec.strategy.rollingUpdate.maxUnavailable}{"\n"}{end}'
+
+# Apply the upgrade
+ksail --config ksail.prod.yaml cluster update
 ```
 
 If anything reports `maxUnavailable` other than `0`, that workload was
-either added without an HA configuration or has a chart limitation — fix before
-upgrading.
+either added without an HA configuration or has a chart limitation — fix
+before upgrading.
 
 ---
 
 ## Scenario 3 — etcd corruption / control-plane loss
 
-Restore from the most recent Omni snapshot (see [omni-etcd-backups.md](./omni-etcd-backups.md)).
-
-1. **Omni dashboard** → `Cluster → Backups → Restore from S3`.
-2. Pick the most recent snapshot under `omni-etcd/<cluster-name>/` (Omni
-   lists them automatically; default sort is most-recent-first).
-3. Confirm. Omni rolls a fresh etcd member from the snapshot and rejoins
-   it to the control plane.
-4. Wait for `kubectl get componentstatuses` (or `kubectl get --raw=/livez`)
-   to come green.
-5. Flux reconciles everything else from GHCR — no manual workload steps.
-
-If the dashboard is unavailable, `omnictl` equivalent:
-
-```bash
-omnictl cluster restore-backup \
-  --cluster <cluster-name> \
-  --snapshot <snapshot-id-from-omni>
-```
-
-**RPO:** ≤ 24 h (daily schedule). **RTO:** typically &lt; 15 min for the
-restore + ~5 min for Flux to converge.
+With Omni retired, there is no managed etcd snapshot. Recovery path is
+**full cluster rebuild** (Scenario 4) followed by Velero + CNPG restores.
+This is an accepted trade-off documented in the migration decision:
+workload state lives in R2-backed Velero and CNPG backups; the control
+plane is a cattle resource that ksail can re-provision in &lt; 15 min.
 
 ---
 
 ## Scenario 4 — Full cluster rebuild from zero
 
-The "everything is gone" path. ~30 min of manual clicks + ~15 min of Flux
-reconciliation.
+The "everything is gone" path. ~10 min of Hetzner provisioning + ~15 min of
+Flux reconciliation.
 
 ```bash
-# 1. Provision a fresh Hetzner snapshot if needed
-./hetzner/create-snapshot.sh --token "$HCLOUD_TOKEN" --media-path /path/to/talos-metal.iso
+# 1. Set credentials locally
+export HCLOUD_TOKEN=<hetzner-cloud-api-token>
+export GHCR_TOKEN=<ghcr-pat-with-packages-read-write>
+export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt  # points at the env's Age key
 
-# 2. Provision the cluster nodes from that snapshot
-./hetzner/create-server.sh --token "$HCLOUD_TOKEN" --server-name <name> --image-id <id>
-# repeat for the desired control plane + worker count
+# 2. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
+ksail --config ksail.prod.yaml cluster create
 
-# 3. Register the cluster in Omni (UI: Add Cluster -> point at the new machines)
-
-# 4. Apply the Talos machine config from this repo (talos-omni/) via Omni's
-#    config-patches feature. This sets the encryption-at-rest key, CNI=none,
-#    etc. -- all values are committed here, no out-of-band drift.
-
-# 5. Bootstrap Flux against this repo
+# 3. Bootstrap Flux from this repo
 ksail --config ksail.prod.yaml workload push       # packages -> GHCR
 ksail --config ksail.prod.yaml workload reconcile  # Flux pulls and applies
-# Flux will install Cilium, cert-manager, the rest of infrastructure, then apps
 
-# 6. Wait for Flux to settle
+# 4. Wait for Flux to settle
 flux get kustomizations -A
 # Re-run if any are NotReady; expect convergence in 10-15 minutes
 
-# 7. Restore Velero backups (apps + PVCs)
+# 5. Point public DNS at the new Hetzner Cloud Load Balancer
+kubectl -n kube-system get svc cilium-gateway-platform \
+  -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+# Update A/AAAA records for ${domain} and *.${domain} at your DNS provider.
+
+# 6. Restore Velero backups (apps + PVCs)
 kubectl -n velero create -f - <<EOF
 apiVersion: velero.io/v1
 kind: Restore
@@ -141,14 +130,14 @@ spec:
     - velero
 EOF
 
-# 8. (If any CNPG Cluster exists) restore from R2
+# 7. (If any CNPG Cluster exists) restore from R2
 kubectl cnpg restore <new-cluster-name> \
   --backup <backup-name> \
   --target-time '<RFC3339-timestamp-or-omit-for-latest>'
 ```
 
 If this is the **first time** restoring after losing the SOPS keys, replace
-step 5 with the rotation flow in Scenario 6 first.
+step 3 with the rotation flow in Scenario 6 first.
 
 ---
 
@@ -230,9 +219,6 @@ kubectl -n velero get backups -w
 kubectl logs -n cnpg-system -l app.kubernetes.io/name=cloudnative-pg --tail=50
 
 # 5. Revoke the old token in Cloudflare.
-
-# 6. Update the in-Omni R2 credentials (Omni etcd backups, see [omni-etcd-backups.md](./omni-etcd-backups.md)).
-omnictl cluster set-backup --cluster <c> --access-key-id <new> --secret-access-key <new>
 ```
 
 ---
@@ -277,6 +263,5 @@ MinIO so the prod code path is regression-tested.
 
 ## Related documents
 
-- [Omni etcd backups](./omni-etcd-backups.md) — control-plane backups
 - [Velero + CNPG → R2](./velero-cnpg.md) — application/PV backups
 - [Alerting](./alerting.md) — automated detection of backup failures

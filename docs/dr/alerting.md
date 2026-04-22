@@ -40,8 +40,8 @@ See `k8s/bases/infrastructure/alerts/platform-critical.yaml`.
 
 This is the deliberate tradeoff for "no SaaS". Mitigations:
 
-1. **Daily Velero schedule + Omni etcd backups still run independently.**
-   On next recovery, you'll see the missed backup in R2.
+1. **Daily Velero schedule runs independently.** On next recovery,
+   you'll see the missed backup in R2.
 2. **CI restore drill** validates that `PrometheusRule` manifests are
    accepted and the monitoring stack reconciles on every PR — so a
    regression in the alert spec is caught before merge

@@ -53,11 +53,6 @@ data:
           timeStyle: short
           hourCycle: h23
   services.yaml: |
-    - Kubernetes:
-        - Omni:
-            icon: si-talos-#FF7300
-            href: https://devantler.omni.siderolabs.io
-            description: Platform for provisioning and managing Talos Linux clusters.
     - Cloud:
         - Hetzner Cloud:
             icon: hetzner
@@ -67,12 +62,7 @@ data:
         - Cloudflare:
             icon: cloudflare
             href: https://dash.cloudflare.com
-            description: Central hub for managing public networking, e.g. FQDN, DNS and remote tunneling.
-            widget:
-              type: cloudflared
-              accountid: ${cloudflare_account_id}
-              tunnelid: ${cloudflared_tunnel_id}
-              key: ${cloudflare_api_token}
+            description: Central hub for managing public networking, e.g. FQDN and DNS.
         - UniFi:
             icon: unifi
             href: https://unifi.ui.com

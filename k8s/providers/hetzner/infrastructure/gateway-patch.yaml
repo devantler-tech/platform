@@ -1,0 +1,18 @@
+---
+# Attach Hetzner Cloud Load Balancer configuration to the Cilium Gateway.
+# Cilium propagates spec.infrastructure.annotations onto the generated
+# cilium-gateway-platform Service, which the hcloud CCM picks up to
+# provision a Cloud Load Balancer in the cluster's region and network.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: platform
+  namespace: kube-system
+spec:
+  infrastructure:
+    annotations:
+      load-balancer.hetzner.cloud/location: ${hetzner_lb_location}
+      load-balancer.hetzner.cloud/type: ${hetzner_lb_type}
+      load-balancer.hetzner.cloud/use-private-ip: "true"
+      load-balancer.hetzner.cloud/ipv6-disabled: "false"
+      load-balancer.hetzner.cloud/name: platform-gateway

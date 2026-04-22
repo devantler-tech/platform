@@ -13,16 +13,15 @@ For local development:
 
 For the production cluster:
 
-- [Talos Omni](https://www.siderolabs.com/platform/saas-for-kubernetes/) - For provisioning the production cluster, and managing nodes, updates, and the Talos configuration.
-- [Hetzner](https://www.hetzner.com/cloud/) - For hosting servers for control plane and worker nodes.
-- [Cloudflare](https://www.cloudflare.com) - For etcd backups, DNS, and tunneling all traffic so my network stays private.
+- [Hetzner Cloud](https://www.hetzner.com/cloud/) — Infrastructure provider and managed Cloud Load Balancer for cluster ingress. KSail's native Hetzner provider handles Talos boot, CCM, CSI, and kubeconfig.
+- [Cloudflare](https://www.cloudflare.com) — DNS (A/AAAA records pointed at the Hetzner Cloud Load Balancer) and Origin CA.
 - [Flux GitOps](https://fluxcd.io) - For managing the kubernetes applications and infrastructure declaratively.
 - [SOPS](https://getsops.io) and [Age](https://github.com/FiloSottile/age) - For encrypting secrets at rest, allowing me to store them in this repository with confidence.
 
 ## Usage
 
 > [!IMPORTANT]
-> This setup uses SOPS to encrypt secrets at rest. If you want to run the platform locally, or on your own Omni instance, you will need to:
+> This setup uses SOPS to encrypt secrets at rest. If you want to run the platform locally, or in your own Hetzner project, you will need to:
 >
 > 1. Fork this repo
 > 2. Create your own Age keys
@@ -60,23 +59,23 @@ Local development cluster running on Docker via KSail. Uses Talos with the Docke
 
 ### Dev
 
-Staging cluster running on Hetzner Cloud, managed by Talos Omni. Deployed automatically via the CI pipeline when changes run through the merge queue (`merge_group`).
+Staging cluster running on Hetzner Cloud via KSail's native Hetzner provider. Deployed automatically via the CI pipeline when changes run through the merge queue (`merge_group`).
 
-- 3x [Hetzner CX23 nodes](https://www.hetzner.com/cloud/) (x86 2 vCPU 4Gb RAM 40Gb SSD)
+- 3× [Hetzner CX23](https://www.hetzner.com/cloud/) control planes + 2× CX23 workers (x86 2 vCPU 4Gb RAM 40Gb SSD each)
 - Config: [`ksail.dev.yaml`](ksail.dev.yaml)
 
 ### Production
 
-Cloud cluster running on Hetzner Cloud, managed by Talos Omni. Deployed via `v*` tags through the CD pipeline.
+Cloud cluster running on Hetzner Cloud via KSail's native Hetzner provider. Deployed via `v*` tags through the CD pipeline.
 
-- 3x [Hetzner CX23 nodes](https://www.hetzner.com/cloud/) (x86 2 vCPU 4Gb RAM 40Gb SSD)
+- 3× [Hetzner CX23](https://www.hetzner.com/cloud/) control planes + 2× CX23 workers (x86 2 vCPU 4Gb RAM 40Gb SSD each)
 - Config: [`ksail.prod.yaml`](ksail.prod.yaml)
 
 ## Structure
 
-The cluster uses Flux GitOps to reconcile the state of the cluster with the single source of truth stored in this repository and published as an OCI image. KSail is used for local development, CI/CD testing, and production deployments. For production, nodes are provisioned on Hetzner Cloud and managed by Talos Omni.
+The cluster uses Flux GitOps to reconcile the state of the cluster with the single source of truth stored in this repository and published as an OCI image. KSail is used for local development, CI/CD testing, and production deployments. For dev and prod, nodes are provisioned on Hetzner Cloud by KSail's native Hetzner provider, which also installs the Hetzner CCM and CSI drivers.
 
-All environments use the Talos Kubernetes distribution. Local development and CI use Talos with the Docker provider (via KSail), while production uses Talos with Omni on Hetzner Cloud.
+All environments use the Talos Kubernetes distribution. Local development and CI use Talos with the Docker provider; dev and prod use Talos with the Hetzner provider.
 
 The cluster configuration is stored in the `k8s/*` directories where the structure is as follows:
 
@@ -86,7 +85,7 @@ The cluster configuration is stored in the `k8s/*` directories where the structu
   - [`prod`](k8s/clusters/prod): Contains the production cluster specific configuration.
 - [`providers/`](k8s/providers): Contains the provider specific configuration.
   - [`docker`](k8s/providers/docker): Contains the Talos+Docker specific configuration for local development.
-  - [`omni`](k8s/providers/omni): Contains the Talos+Omni specific configuration for dev and production.
+  - [`hetzner`](k8s/providers/hetzner): Contains the Talos+Hetzner specific configuration for dev and production.
 - [`bases/`](k8s/bases): Contains the different bases that are used for the different clusters and providers.
   - [`cluster`](k8s/bases/cluster): Contains the shared Flux Kustomizations with sentinel paths (`__CLUSTER__`, `__PROVIDER__`).
   - [`infrastructure`](k8s/bases/infrastructure): Contains the different infrastructure components that are used for the different clusters and providers.
@@ -114,7 +113,7 @@ graph LR
 
   subgraph "Provider-specific"
     docker["providers/docker"]
-    omni["providers/omni"]
+    hetzner["providers/hetzner"]
   end
 
   subgraph "Shared"
@@ -122,10 +121,10 @@ graph LR
   end
 
   local --> docker
-  dev --> omni
-  prod --> omni
+  dev --> hetzner
+  prod --> hetzner
   docker --> bases
-  omni --> bases
+  hetzner --> bases
 ```
 
 #### Flux Kustomization Dependency Chain
@@ -160,11 +159,12 @@ See [`docs/TEMPLATING.md`](docs/TEMPLATING.md) for the exact set of files a fork
 
 | Item                      | No. | Per unit | Total in Actual | Total in $ |
 | ------------------------- | --- | -------- | --------------- | ---------- |
-| Talos Omni                | 1   | $10      | $10             | $10        |
 | Cloudflare Domains        | 2   | $0,87    | $1,74           | $1,74      |
-| Hetzner CX23 (prod)       | 3   | €4,51    | €13,53          | $15,36     |
-| Hetzner CX23 (dev)        | 3   | €4,51    | €13,53          | $15,36     |
-| Total                     |     |          |                 | $42,46     |
+| Hetzner CX23 (prod)       | 5   | €4,51    | €22,55          | $25,60     |
+| Hetzner CX23 (dev)        | 5   | €4,51    | €22,55          | $25,60     |
+| Hetzner Cloud LB LB11 (prod) | 1 | €5,39   | €5,39           | $6,12      |
+| Hetzner Cloud LB LB11 (dev)  | 1 | €5,39   | €5,39           | $6,12      |
+| Total                     |     |          |                 | $65,18     |
 
 ## Star History
 

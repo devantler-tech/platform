@@ -96,9 +96,9 @@ spec:
           maxUnavailable: 1
 
     # Daily backup of every namespace that has PVCs. 14-day retention
-    # matches the Omni etcd policy and the 24h RPO target. Long-term
-    # retention is handled by R2 object lock + lifecycle, not by Velero,
-    # so a corrupted controller cannot accidentally delete history.
+    # matches the 24h RPO target. Long-term retention is handled by R2
+    # object lock + lifecycle, not by Velero, so a corrupted controller
+    # cannot accidentally delete history.
     schedules:
       daily-full:
         disabled: false

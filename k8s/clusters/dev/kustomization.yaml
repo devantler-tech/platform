@@ -15,7 +15,7 @@ patches:
         namespace: flux-system
       data:
         cluster_name: dev
-        provider: omni
+        provider: hetzner
 
 replacements:
   # Point apps / infrastructure / infrastructure-controllers Flux Kustomizations

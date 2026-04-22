@@ -42,7 +42,7 @@ jobs:
               - 'ksail.dev.yaml'
               - '.sops.yaml'
               - 'talos-local/**'
-              - 'talos-omni/**'
+              - 'talos/**'
               - '.github/workflows/ci.yaml'
 
   system-test:
@@ -158,19 +158,6 @@ jobs:
       - name: ⚙️ Setup KSail
         uses: devantler-tech/actions/setup-ksail-cli@1f66c91d45d374ceac9fe830a783444ebc9be958 # v3.2.0
 
-      - name: ⚙️ Setup omnictl
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TMP_DIR="$(mktemp -d)"
-          trap 'rm -rf "$TMP_DIR"' EXIT
-          gh release download v1.6.5 --repo siderolabs/omni \
-            --pattern "omnictl-linux-amd64" --dir "$TMP_DIR"
-          gh release download v1.6.5 --repo siderolabs/omni \
-            --pattern "sha256sum.txt" --dir "$TMP_DIR"
-          (cd "$TMP_DIR" && grep " omnictl-linux-amd64$" sha256sum.txt | sha256sum -c -)
-          install -m 0755 "$TMP_DIR/omnictl-linux-amd64" /usr/local/bin/omnictl
-
       - name: 🔐 Create SOPS Age key
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
@@ -179,24 +166,6 @@ jobs:
           umask 077
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
-
-      # Workaround: ksail cluster update does not fetch kubeconfig from
-      # Omni, so we fetch it manually via omnictl.
-      # TODO: Remove once ksail natively fetches kubeconfig during
-      # cluster update for the Omni provider.
-      - name: 🔐 Setup kubeconfig
-        continue-on-error: true
-        run: |
-          omnictl kubeconfig --cluster devantler-dev --force \
-            --service-account --user github-actions \
-            --force-context-name devantler-dev
-          CTX=$(kubectl config current-context 2>/dev/null || true)
-          if [[ -n "$CTX" && "$CTX" != "devantler-dev" ]]; then
-            kubectl config rename-context "$CTX" "devantler-dev"
-          fi
-        env:
-          OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
-          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
 
       - name: 🔄 Create or update cluster
         run: |
@@ -207,35 +176,27 @@ jobs:
           fi
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
-          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.dev.yaml workload push
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
-          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
-      # TODO: Remove continue-on-error once dev cluster bootstrap is stable
-      # (Talos Hetzner CCM node initialization requires talos-omni patches
-      # for kubelet cloud-provider=external; tracked in a follow-up issue).
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
         run: ksail --config ksail.dev.yaml workload reconcile --timeout 30m
-        continue-on-error: true
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
-          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
       - name: 🩺 Diagnose Flux on failure
         if: steps.reconcile.outcome == 'failure'
         env:
-          OMNI_ENDPOINT: ${{ vars.OMNI_ENDPOINT }}
-          OMNI_SERVICE_ACCOUNT_KEY: ${{ secrets.OMNI_SERVICE_ACCOUNT_KEY }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
           set +e
           echo "::group::Flux Kustomizations"
