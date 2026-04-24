@@ -30,4 +30,6 @@ data:
   # --- Hetzner Cloud Load Balancer ---
   hetzner_lb_location: "fsn1"
   hetzner_lb_type: "lb11"
+  # --- Hetzner Cloud Network ---
+  hcloud_network: "dev-network"
 
