@@ -26,7 +26,7 @@ Verify: `kubectl oidc-login --help`
 
 ```bash
 kubectl config set-credentials oidc-local \
-  --exec-api-version=client.authentication.k8s.io/v1beta1 \
+  --exec-api-version=client.authentication.k8s.io/v1 \
   --exec-command=kubectl \
   --exec-arg=oidc-login \
   --exec-arg=get-token \
@@ -46,7 +46,7 @@ kubectl config set-credentials oidc-local \
 
 ```bash
 kubectl config set-credentials oidc-prod \
-  --exec-api-version=client.authentication.k8s.io/v1beta1 \
+  --exec-api-version=client.authentication.k8s.io/v1 \
   --exec-command=kubectl \
   --exec-arg=oidc-login \
   --exec-arg=get-token \
@@ -111,7 +111,7 @@ kube-apiserver validates token
       │
       ▼
 RBAC: ClusterRoleBinding oidc-admin
-  grants cluster-admin to ned@devantler.tech
+  grants cluster-admin to oidc:ned@devantler.tech
 ```
 
 ## RBAC
@@ -125,7 +125,7 @@ by Dex:
 subjects:
   - apiGroup: rbac.authorization.k8s.io
     kind: User
-    name: ned@devantler.tech
+    name: "oidc:ned@devantler.tech"
 ```
 
 To grant access to additional users, add more subjects to that file.

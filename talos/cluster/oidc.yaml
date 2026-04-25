@@ -19,4 +19,6 @@ cluster:
       oidc-issuer-url: https://dex.platform.devantler.tech
       oidc-client-id: public-client
       oidc-username-claim: email
+      oidc-username-prefix: "oidc:"
       oidc-groups-claim: groups
+      oidc-groups-prefix: "oidc:"
