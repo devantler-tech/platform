@@ -7,7 +7,6 @@ specific layers it references.
 | Document                                       | Layer                |
 | ---------------------------------------------- | -------------------- |
 | [runbook.md](./runbook.md)                     | Procedure            |
-| [omni-etcd-backups.md](./omni-etcd-backups.md) | Control plane        |
 | [velero-cnpg.md](./velero-cnpg.md)             | Apps + PVs           |
 | [alerting.md](./alerting.md)                   | Detection            |
 | [restore-drill.md](./restore-drill.md)         | CI verification      |

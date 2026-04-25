@@ -5,15 +5,12 @@ metadata:
   name: variables-cluster
   namespace: flux-system
 data:
-  cloudflared_tunnel_id: 16559296-e0ce-4f7d-abef-bc703e0bb319
-  cloudflared_tunnel_name: platform-dev
   domain: dev.platform.devantler.tech
   github_app_client_id: Iv23lidTbdsQoKttGTUI
   issuer_group: cert-manager.k8s.cloudflare.com
   issuer_kind: ClusterOriginIssuer
   issuer_name: cloudflare-origin
-  # Per-env prefixes inside the shared R2 bucket so dev/prod don't
-  # collide. Omni writes etcd snapshots at bucket root independently.
+  # Per-env prefixes inside the shared R2 bucket so dev/prod don't collide.
   r2_prefix_velero: velero/dev
   r2_prefix_cnpg: cnpg/dev
   # --- HA replica overrides for the 3× CX23 dev cluster ---
@@ -30,3 +27,9 @@ data:
   velero_replicas: "1"
   cloudnative_pg_replicas: "1"
   alertmanager_replicas: "1"
+  # --- Hetzner Cloud Load Balancer ---
+  hetzner_lb_location: "fsn1"
+  hetzner_lb_type: "lb11"
+  # --- Hetzner Cloud Network ---
+  hcloud_network: "dev-network"
+

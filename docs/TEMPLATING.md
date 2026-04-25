@@ -24,18 +24,20 @@ Only these fields genuinely vary per instance:
 | `metadata.name` | cluster short name (e.g. `local`) | `dev` / `prod` |
 | `spec.cluster.connection.context` | kubeconfig context | kubeconfig context |
 | `spec.cluster.localRegistry.registry` | n/a | OCI registry URL for the manifest artefact |
-| `spec.provider.omni.endpoint` | n/a | your Omni instance URL |
-| `spec.provider.omni.machineClass` | n/a | Omni machine class name |
+| `spec.provider.hetzner.location` | n/a | primary Hetzner location (`fsn1`, `nbg1`, `hel1`, …) |
+| `spec.provider.hetzner.{controlPlane,worker}ServerType` | n/a | Hetzner server types (default `cx23`) |
+| `spec.provider.hetzner.networkCidr` | n/a | private network CIDR for the cluster |
 | `spec.workload.kustomizationFile` | `clusters/local` | `clusters/<env>` |
 
 Everything else (distribution, provider, CNI, GitOps engine, timeouts,
 `certManager`/`metricsServer`/`policyEngine`, Talos control-plane count,
-`sourceDirectory`, tag) should match across all Omni-backed instances.
+`sourceDirectory`, tag) should match across all Hetzner-backed instances.
 
 ### 2. Talos machine-config directories
 
 - `talos-local/` — Docker-provider patches.
-- `talos-omni/` — Omni-provider patches. Shared between dev and prod.
+- `talos/` — Hetzner-provider patches. Shared between dev and prod.
+  Split into `cluster/`, `control-planes/`, and `workers/` as ksail expects.
 
 Edit the YAML patches inside if your DNS, OIDC issuer, or networking differs.
 
@@ -47,7 +49,7 @@ local-config `cluster-meta` ConfigMap:
 ```yaml
 data:
   cluster_name: <env>          # drives spec.path: clusters/<env>/variables
-  provider: <docker|omni>      # drives spec.path: providers/<provider>/...
+  provider: <docker|hetzner>   # drives spec.path: providers/<provider>/...
 ```
 
 Replacements in the same file rewrite the sentinel placeholders
@@ -61,7 +63,7 @@ Each `k8s/clusters/<env>/variables/` directory contains the only resources
 Flux reads that are genuinely per-cluster:
 
 - `variables-cluster-config-map.yaml` — non-secret values (hostnames, URLs,
-  feature flags, etc).
+  feature flags, Hetzner LB location and type, etc).
 - `variables-cluster-secret.enc.yaml` — SOPS-encrypted secrets. Re-encrypt
   these with your own Age key (update `.sops.yaml`, then `sops -e` each file).
 
@@ -74,8 +76,8 @@ with your own public key and re-encrypt every `*.enc.yaml` file in the repo.
 
 GitHub Actions expect:
 
-- Secrets: `GHCR_TOKEN`, `SOPS_AGE_KEY`, `OMNI_SERVICE_ACCOUNT_KEY`
-- Variables: `OMNI_ENDPOINT` (per environment)
+- Secrets: `GHCR_TOKEN`, `SOPS_AGE_KEY`, `HCLOUD_TOKEN`
+- Variables: (none required after the Hetzner migration)
 
 See `.github/workflows/` for the exact names.
 
@@ -84,17 +86,17 @@ See `.github/workflows/` for the exact names.
 - `k8s/bases/cluster/` — shared Flux Kustomizations with sentinel paths.
 - `k8s/bases/infrastructure/` — Cilium, cert-manager, Kyverno, alerting configs, etc.
 - `k8s/bases/apps/` — reference applications (homepage, whoami, headlamp).
-- `k8s/providers/{docker,omni}/` — provider-specific assembly of bases.
+- `k8s/providers/{docker,hetzner}/` — provider-specific assembly of bases.
 
 Changes here are "platform changes" — upstream them instead of forking them.
 
 ## Adding a new environment
 
-1. `cp -R talos-omni talos-<env>` (or reuse `talos-omni`).
+1. `cp -R talos talos-<env>` (or reuse `talos`).
 2. `cp -R k8s/clusters/prod k8s/clusters/<env>` and update `cluster_name` +
    `provider` in the new overlay's `cluster-meta` patch.
 3. Edit `k8s/clusters/<env>/variables/variables-cluster-{config-map,secret.enc}.yaml`.
-4. `cp ksail.prod.yaml ksail.<env>.yaml`; update the five per-cluster fields.
+4. `cp ksail.prod.yaml ksail.<env>.yaml`; update the per-cluster fields.
 5. Add the new environment to `.github/workflows/` pipelines as needed.
 
 That's the complete set of edits. Everything else is inherited from the

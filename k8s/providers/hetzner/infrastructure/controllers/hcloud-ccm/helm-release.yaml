@@ -17,6 +17,9 @@ spec:
   interval: 10m0s
   # https://github.com/hetznercloud/hcloud-cloud-controller-manager/blob/main/chart/values.yaml
   values:
+    networking:
+      enabled: true
+      clusterCIDR: 10.244.0.0/16
     replicaCount: ${hcloud_ccm_replicas:=2}
     strategy:
       type: RollingUpdate

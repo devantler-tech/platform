@@ -1,8 +1,10 @@
 # Application & volume backups — Velero + CloudNativePG → R2
 
-The application/PV backup tier. Etcd snapshots are handled by Omni
-(see [omni-etcd-backups.md](./omni-etcd-backups.md)); this layer covers everything that lives
-*inside* the cluster — Kubernetes objects, PVC contents, and Postgres data.
+The application/PV backup tier. With Omni retired, etcd is a cattle
+resource recreated by `ksail cluster create` on demand (see
+[runbook.md](./runbook.md) scenario 4). This layer covers everything that
+needs to survive a full cluster rebuild — Kubernetes objects, PVC
+contents, and Postgres data.
 
 ## Architecture
 
@@ -10,9 +12,8 @@ The application/PV backup tier. Etcd snapshots are handled by Omni
                 ┌─────────────────────────────────────┐
                 │  Cloudflare R2                      │
                 │  bucket: <your-bucket>              │
-                │    <cluster-name>/  (Omni)          │
-                │    velero/         (this layer)     │
-                │    cnpg/<cluster>/ (this layer)     │
+                │    velero/<env>/   (this layer)     │
+                │    cnpg/<env>/     (this layer)     │
                 └─────────────────────────────────────┘
                               ▲           ▲
                               │           │
@@ -23,9 +24,8 @@ The application/PV backup tier. Etcd snapshots are handled by Omni
                        └──────────┘  └────────────────────┘
 ```
 
-Same R2 bucket as Omni etcd, separate prefixes (see [omni-etcd-backups.md](./omni-etcd-backups.md)). Credentials are
-SOPS-encrypted in `variables-base-secret.enc.yaml` and substituted into both
-the Velero and CNPG secrets at Flux apply time.
+Credentials are SOPS-encrypted in `variables-base-secret.enc.yaml` and
+substituted into both the Velero and CNPG secrets at Flux apply time.
 
 ## Velero
 
@@ -42,8 +42,8 @@ the Velero and CNPG secrets at Flux apply time.
   maxUnavailable=0 — same posture as the rest of the operator tier.
 - Daily schedule `daily-full` at 02:17, 14-day TTL, all namespaces except
   `kube-system` and `velero`. Long-term retention is enforced by R2 object
-  lock + lifecycle (see [omni-etcd-backups.md](./omni-etcd-backups.md)) so even a misconfigured Velero cannot delete
-  history beyond the 30-day governance window.
+  lock + lifecycle rules (configured on the bucket) so even a misconfigured
+  Velero cannot delete history beyond the 30-day governance window.
 
 ## CloudNativePG
 
@@ -136,7 +136,6 @@ sops --set '["stringData"]["r2_secret_access_key"] "<new-secret>"' \
 
 ## Related
 
-- [Omni etcd backups](./omni-etcd-backups.md) — control-plane layer
 - [DR runbook](./runbook.md) — restore-from-zero procedure
 - [Alerting](./alerting.md) — alarms on missed backups / failures
 - [CI restore drill](./restore-drill.md) — automated proof

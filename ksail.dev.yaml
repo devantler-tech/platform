@@ -1,7 +1,5 @@
-# Dev Talos + Omni cluster.
-# See docs/TEMPLATING.md for the fields a fork of this repo needs to edit
-# (metadata.name, connection.context, provider.omni.endpoint,
-# provider.omni.machineClass, workload.kustomizationFile).
+# Dev Talos + Hetzner cluster.
+# See docs/TEMPLATING.md for the fields a fork of this repo needs to edit.
 ---
 apiVersion: ksail.io/v1alpha1
 kind: Cluster
@@ -9,27 +7,44 @@ metadata:
   name: dev
 spec:
   cluster:
-    distributionConfig: talos-omni
+    distributionConfig: talos
     connection:
-      context: devantler-dev
+      context: admin@dev
       timeout: 10m
     distribution: Talos
-    provider: Omni
+    provider: Hetzner
     cni: Cilium
     gitOpsEngine: Flux
-    # Match the existing cluster state so 'ksail cluster update' does not
-    # attempt to uninstall components that are managed in-cluster via Flux.
+    # These components are installed by ksail. There is a known race on
+    # Hetzner clusters between ksail's metrics-server install and Flux's
+    # kubelet-serving-cert-approver install (required because Talos
+    # rotate-server-certificates: true leaves kubelet serving CSRs
+    # pending). File upstream in devantler-tech/ksail if this trips
+    # bootstrap again.
     certManager: Enabled
     metricsServer: Enabled
     policyEngine: Kyverno
     talos:
       controlPlanes: 3
+      workers: 2
+      # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
+      # an unwanted in-place upgrade to ksail's default version.
+      version: v1.11.2
+      # Hetzner Talos ISO (x86_64). Override to 122629 for ARM.
+      iso: 122630
     localRegistry:
       registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
   provider:
-    omni:
-      endpoint: "https://devantler.na-west-1.omni.siderolabs.io:443"
-      machineClass: dev
+    hetzner:
+      controlPlaneServerType: cx23
+      workerServerType: cx23
+      location: fsn1
+      networkCidr: 10.0.0.0/16
+      placementGroupStrategy: Spread
+      fallbackLocations:
+        - nbg1
+        - hel1
+      placementGroupFallbackToNone: true
   workload:
     sourceDirectory: k8s
     kustomizationFile: clusters/dev

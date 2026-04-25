@@ -8,11 +8,9 @@ data:
   cloudflare_account_id: 634e9016d402443e427865dc35457728
   r2_endpoint: https://634e9016d402443e427865dc35457728.r2.cloudflarestorage.com
   r2_region: auto
-  # Shared bucket for Omni etcd snapshots, Velero, and CNPG across
-  # all clusters. Omni supports exactly one backup storage config and
-  # writes directly at bucket root (per-cluster folders managed by Omni
-  # itself), so Velero / CNPG must namespace themselves with per-env
-  # prefixes -- set in each clusters/<env>/variables-cluster-config-map.
+  # Shared bucket for Velero and CNPG backups across all clusters.
+  # Velero / CNPG namespace themselves with per-env prefixes — set in
+  # each clusters/<env>/variables-cluster-config-map.
   r2_bucket: devantler-platform-backups
   r2_prefix_velero: velero
   r2_prefix_cnpg: cnpg

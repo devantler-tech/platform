@@ -5,21 +5,18 @@ metadata:
   name: variables-cluster
   namespace: flux-system
 data:
-  cloudflared_tunnel_id: d3414fbb-2c71-493a-a528-f901204442a3
-  cloudflared_tunnel_name: platform-prod
   domain: platform.devantler.tech
   github_app_client_id: Iv23limfvbk93bAXZI6b
   issuer_group: cert-manager.k8s.cloudflare.com
   issuer_kind: ClusterOriginIssuer
   issuer_name: cloudflare-origin
-  # Per-env prefixes inside the shared R2 bucket so dev/prod don't
-  # collide. Omni writes etcd snapshots at bucket root independently.
+  # Per-env prefixes inside the shared R2 bucket so dev/prod don't collide.
   r2_prefix_velero: velero/prod
   r2_prefix_cnpg: cnpg/prod
   # --- HA replica overrides for the 3× CX23 prod cluster ---
   # User-facing path keeps the default of 2 replicas for zero-downtime
   # rolling updates (homepage, headlamp, whoami, dex, oauth2-proxy,
-  # auth-proxy, cloudflared, kyverno admission).
+  # auth-proxy, kyverno admission).
   # Operators are leader-elected; 1 replica is sufficient — a brief blip
   # during a rolling upgrade of the operator itself does not affect the
   # data plane. Dropping them to 1 frees CPU headroom on the 6 vCPU
@@ -33,3 +30,9 @@ data:
   velero_replicas: "1"
   cloudnative_pg_replicas: "1"
   alertmanager_replicas: "1"
+  # --- Hetzner Cloud Load Balancer ---
+  hetzner_lb_location: "fsn1"
+  hetzner_lb_type: "lb11"
+  # --- Hetzner Cloud Network ---
+  hcloud_network: "prod-network"
+
