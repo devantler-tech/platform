@@ -156,11 +156,11 @@ jobs:
         # Workaround: ksail cluster update can't refresh the Hetzner
         # kubeconfig on ephemeral runners (devantler-tech/ksail#4369).
         env:
-          DEV_KUBECONFIG: ${{ secrets.DEV_KUBECONFIG }}
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
         run: |
           mkdir -p ~/.kube
           umask 077
-          echo "${DEV_KUBECONFIG}" > ~/.kube/config
+          echo "${KUBE_CONFIG}" > ~/.kube/config
           chmod 600 ~/.kube/config
 
       - name: 🔄 Create or update cluster
