@@ -1,0 +1,12 @@
+---
+# Labels the local-path-storage namespace with privileged PSA enforcement.
+# The local-path-provisioner (CSI) creates short-lived helper pods that use
+# hostPath volumes to provision PVCs — this violates the default "baseline"
+# PodSecurity policy, so the namespace must be exempted.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: local-path-storage
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest

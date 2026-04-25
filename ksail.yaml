@@ -14,6 +14,7 @@ spec:
     distribution: Talos
     provider: Docker
     cni: Cilium
+    csi: Enabled
     gitOpsEngine: Flux
     sops:
       ageKeyEnvVar: 
