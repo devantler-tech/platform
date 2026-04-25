@@ -152,13 +152,22 @@ jobs:
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
 
-      - name: 🔄 Create or update cluster
+      - name: 🔑 Restore kubeconfig
+        # ksail cluster update needs a valid kubeconfig to detect the current
+        # cluster state. Without it, the component detector returns defaults and
+        # triggers spurious changes that all fail. The KUBE_CONFIG secret must be
+        # kept up-to-date from the homelab after any cluster recreation.
+        # See devantler-tech/ksail#4369 for the upstream design context.
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
         run: |
-          if ksail --config ksail.dev.yaml cluster info > /dev/null 2>&1; then
-            ksail --config ksail.dev.yaml cluster update
-          else
-            ksail --config ksail.dev.yaml cluster create
-          fi
+          mkdir -p ~/.kube
+          umask 077
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🔄 Update cluster
+        run: ksail --config ksail.dev.yaml cluster update
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
