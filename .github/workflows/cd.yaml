@@ -40,7 +40,15 @@ jobs:
       - name: 🔄 Create or update cluster
         run: |
           if ksail --config ksail.prod.yaml cluster info > /dev/null 2>&1; then
-            ksail --config ksail.prod.yaml cluster update
+            if [ -f "$HOME/.kube/config" ]; then
+              ksail --config ksail.prod.yaml cluster update
+            else
+              # Workaround: ksail cluster update can't refresh Hetzner
+              # kubeconfig on ephemeral runners (devantler-tech/ksail#4369).
+              echo "⚠️ Cluster exists but kubeconfig is missing. Recreating..."
+              ksail --config ksail.prod.yaml cluster delete --force || true
+              ksail --config ksail.prod.yaml cluster create
+            fi
           else
             ksail --config ksail.prod.yaml cluster create
           fi
