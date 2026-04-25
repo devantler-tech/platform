@@ -1,6 +1,5 @@
 # Longhorn on Talos requires kubelet extra mounts so the CSI driver can
-# access the host data directory.  The /dev mount is required for
-# Longhorn to manage block devices directly.
+# access the host data directory.
 #
 # An extra Hetzner Cloud Volume must be attached to each worker and
 # mounted at /var/lib/longhorn (see machine.disks below).  The second

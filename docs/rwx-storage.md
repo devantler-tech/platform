@@ -124,7 +124,7 @@ When upgrading Talos nodes, **always use `--preserve`** to avoid wiping `/var/li
 talosctl upgrade --nodes <IP> --image <IMAGE> --preserve
 ```
 
-See [Longhorn Talos Linux Support](https://longhorn.io/docs/1.8.1/advanced-resources/os-distro-specific/talos-linux-support/#talos-linux-upgrades) for recovery steps if data is accidentally wiped.
+See [Longhorn Talos Linux Support](https://longhorn.io/docs/advanced-resources/os-distro-specific/talos-linux-support/#talos-linux-upgrades) for recovery steps if data is accidentally wiped.
 
 ## Scaling
 
