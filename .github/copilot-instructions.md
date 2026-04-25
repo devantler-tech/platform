@@ -69,7 +69,6 @@ ksail cluster list
     - **`k8s/bases/apps/`** - Application deployments (homepage, whoami, headlamp)
 - **`talos/`** - Talos machine config patches for Hetzner-backed clusters (shared across dev and prod). Split into `cluster/`, `control-planes/`, `workers/` as ksail expects.
 - **`talos-local/`** - Talos machine config patches for Docker (local) clusters
-- **`hetzner/`** - Legacy Hetzner Cloud helper scripts (snapshot packer, ad-hoc server create/delete). Day-to-day lifecycle is handled by the KSail Hetzner provider.
 - **`.sops.yaml`** - SOPS encryption configuration
 - **`ksail.yaml`** - KSail local cluster configuration (Talos + Docker, `kustomizationFile: clusters/local`)
 - **`ksail.dev.yaml`** / **`ksail.prod.yaml`** - KSail dev/prod cluster configurations (Talos + Hetzner, `kustomizationFile: clusters/{dev,prod}`)
@@ -248,7 +247,6 @@ If cluster is fully operational:
 .vscode/              - VSCode settings
 README.md             - Main documentation
 docs/                 - Additional documentation
-hetzner/              - Hetzner Cloud scripts
 hosts                 - Host configurations
 k8s/                  - Kubernetes manifests
 ksail.yaml            - KSail local configuration (kustomizationFile: clusters/local)

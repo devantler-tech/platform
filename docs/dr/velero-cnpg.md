@@ -2,7 +2,7 @@
 
 The application/PV backup tier. With Omni retired, etcd is a cattle
 resource recreated by `ksail cluster create` on demand (see
-[runbook.md](./runbook.md) scenario 3). This layer covers everything that
+[runbook.md](./runbook.md) scenario 4). This layer covers everything that
 needs to survive a full cluster rebuild — Kubernetes objects, PVC
 contents, and Postgres data.
 
