@@ -1,0 +1,98 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cluster-autoscaler
+  namespace: kube-system
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  chart:
+    spec:
+      chart: cluster-autoscaler
+      version: 9.46.6
+      sourceRef:
+        kind: HelmRepository
+        name: cluster-autoscaler
+  # https://github.com/kubernetes/autoscaler/blob/master/charts/cluster-autoscaler/values.yaml
+  values:
+    cloudProvider: hetzner
+
+    # --- Node pool definitions ---
+    # Format: <min>:<max>:<server-type>:<location>:<pool-name>
+    autoscalingGroups:
+      - name: autoscale-small
+        minSize: ${autoscaler_small_pool_min}
+        maxSize: ${autoscaler_small_pool_max}
+        instanceType: ${autoscaler_small_server_type}
+        region: ${autoscaler_location}
+      - name: autoscale-medium
+        minSize: ${autoscaler_medium_pool_min}
+        maxSize: ${autoscaler_medium_pool_max}
+        instanceType: ${autoscaler_medium_server_type}
+        region: ${autoscaler_location}
+
+    extraArgs:
+      # Pick the pool whose nodes will have the least wasted resources.
+      expander: least-waste
+      # Wait before removing underutilized nodes to avoid flapping.
+      scale-down-delay-after-add: 5m
+      scale-down-delay-after-delete: 2m
+      scale-down-unneeded-time: 10m
+      # Hard ceiling — caps total autoscaler-managed workers.
+      max-total-unready-count: 3
+      # Log autoscaler decisions.
+      v: "4"
+
+    extraEnv:
+      - name: HCLOUD_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: hcloud
+            key: token
+      - name: HCLOUD_NETWORK
+        valueFrom:
+          secretKeyRef:
+            name: hcloud
+            key: network
+      # Talos image ID — a Hetzner snapshot built from the Talos Image
+      # Factory hcloud image. See docs/node-autoscaling.md.
+      - name: HCLOUD_IMAGE
+        value: "${autoscaler_talos_image}"
+      # HCLOUD_CLUSTER_CONFIG is mounted from the cluster-autoscaler-config
+      # Secret via extraVolumes below. The file path is referenced via
+      # HCLOUD_CLUSTER_CONFIG_FILE instead.
+      - name: HCLOUD_CLUSTER_CONFIG_FILE
+        value: /etc/cluster-autoscaler/cluster-config.json
+
+    extraVolumes:
+      - name: cluster-config
+        secret:
+          secretName: cluster-autoscaler-config
+    extraVolumeMounts:
+      - name: cluster-config
+        mountPath: /etc/cluster-autoscaler
+        readOnly: true
+
+    # Run on control plane nodes so the autoscaler itself isn't evicted
+    # during scale-down of worker nodes.
+    tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+    nodeSelector:
+      node-role.kubernetes.io/control-plane: ""
+
+    rbac:
+      create: true
+      serviceAccount:
+        create: true
+        name: cluster-autoscaler
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi

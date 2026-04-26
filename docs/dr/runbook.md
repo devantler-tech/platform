@@ -261,7 +261,53 @@ MinIO so the prod code path is regression-tested.
 
 ---
 
+## Scenario 8 — Cluster Autoscaler issues
+
+### Autoscaler not scaling up
+
+```bash
+# Check for pending pods
+kubectl get pods -A --field-selector=status.phase=Pending
+
+# Inspect autoscaler logs
+kubectl -n kube-system logs -l app.kubernetes.io/name=cluster-autoscaler --tail=200
+
+# Check status ConfigMap
+kubectl -n kube-system get cm cluster-autoscaler-status -o yaml
+```
+
+Common causes:
+- `autoscaler_talos_image` set to `PLACEHOLDER` — create the Talos snapshot
+  and update the variable (see [docs/node-autoscaling.md](./node-autoscaling.md))
+- Pool `maxSize` reached — increase `autoscaler_*_pool_max` variables
+- `HCLOUD_TOKEN` expired — rotate in SOPS secrets
+
+### Orphaned autoscaler nodes after cluster delete
+
+`ksail cluster delete` may not remove servers created by the Cluster
+Autoscaler. Clean up manually:
+
+```bash
+hcloud server list --selector cluster.autoscaler.nodeGroupLabel
+# Delete each orphaned server
+hcloud server delete <server-id>
+```
+
+### Autoscaler node not joining cluster
+
+```bash
+# Check if the server was created in Hetzner
+hcloud server list
+
+# If the server exists but node doesn't appear in kubectl:
+# The worker machine config may be invalid or stale.
+# Regenerate — see docs/node-autoscaling.md "Generate Talos worker machine config"
+```
+
+---
+
 ## Related documents
 
+- [Node autoscaling](./node-autoscaling.md) — architecture, prerequisites, and troubleshooting
 - [Velero + CNPG → R2](./velero-cnpg.md) — application/PV backups
 - [Alerting](./alerting.md) — automated detection of backup failures
