@@ -11,6 +11,8 @@ machine:
       partitions:
         - mountpoint: /var/lib/longhorn
   kubelet:
+    nodeLabels:
+      node.longhorn.io/create-default-disk: "true"
     extraMounts:
       - destination: /var/lib/longhorn
         type: bind

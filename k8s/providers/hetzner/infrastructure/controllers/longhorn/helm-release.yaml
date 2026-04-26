@@ -35,6 +35,10 @@ spec:
       defaultReplicaCount: ${longhorn_replica_count:=2}
       # Reclaim space from deleted volumes automatically.
       autoDeletePodWhenVolumeDetachedUnexpectedly: true
+      # Only create default disks on nodes explicitly labeled for storage.
+      # This prevents control plane nodes (which lack dedicated volumes)
+      # from hosting replicas and running out of memory.
+      createDefaultDiskOnLabeledNodesOnly: true
 
     persistence:
       # Longhorn is the default StorageClass (replaces hcloud for new PVCs).
