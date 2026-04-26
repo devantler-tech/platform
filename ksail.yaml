@@ -15,8 +15,6 @@ spec:
     provider: Docker
     cni: Cilium
     gitOpsEngine: Flux
-    sops:
-      ageKeyEnvVar: 
     talos:
       controlPlanes: 1
       workers: 3
