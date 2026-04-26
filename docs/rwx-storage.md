@@ -75,7 +75,7 @@ hcloud server list
 # The volume appears as /dev/sdb on the worker
 hcloud volume create \
   --name <cluster>-worker-<n>-longhorn \
-  --size 20 \
+  --size 50 \
   --server <worker-server-name>
 ```
 
@@ -156,4 +156,13 @@ To change the Hetzner volume size:
 hcloud volume resize --size 50 <volume-id>
 ```
 
-After resizing, Longhorn detects the additional space automatically.
+After resizing, the Hetzner block device grows immediately but the XFS partition and filesystem must be expanded:
+
+```bash
+# From a privileged pod on the worker (or via talosctl debug container):
+sgdisk -e /dev/sdb          # Fix GPT to use all space
+growpart /dev/sdb 1          # Grow partition 1 to fill disk
+xfs_growfs /var/lib/longhorn # Expand XFS filesystem online
+```
+
+Longhorn detects the additional space automatically once the filesystem is grown.
