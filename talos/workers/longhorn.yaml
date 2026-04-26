@@ -7,13 +7,13 @@
 # Hetzner volume.  Verify with `talosctl disks --nodes <worker-ip>` and
 # update the device path below if it differs on your nodes.
 machine:
+  nodeLabels:
+    node.longhorn.io/create-default-disk: "true"
   disks:
     - device: /dev/sdb
       partitions:
         - mountpoint: /var/lib/longhorn
   kubelet:
-    nodeLabels:
-      node.longhorn.io/create-default-disk: "true"
     extraMounts:
       - destination: /var/lib/longhorn
         type: bind
