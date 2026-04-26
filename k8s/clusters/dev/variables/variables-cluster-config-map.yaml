@@ -38,7 +38,7 @@ data:
   # Talos snapshot ID on Hetzner Cloud — created from the Talos Image
   # Factory hcloud image. Must be updated when Talos is upgraded.
   # See docs/node-autoscaling.md for the snapshot creation process.
-  autoscaler_talos_image: "PLACEHOLDER"
+  autoscaler_talos_image: "380360661"
   autoscaler_small_server_type: "cx23"
   autoscaler_small_pool_min: "0"
   autoscaler_small_pool_max: "5"
