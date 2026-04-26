@@ -44,9 +44,14 @@ data:
   autoscaler_talos_image: "PLACEHOLDER"
   autoscaler_small_server_type: "cx23"
   autoscaler_small_pool_min: "0"
-  autoscaler_small_pool_max: "5"
+  autoscaler_small_pool_max: "1"
   autoscaler_medium_server_type: "cx33"
   autoscaler_medium_pool_min: "0"
-  autoscaler_medium_pool_max: "3"
+  autoscaler_medium_pool_max: "1"
+  autoscaler_location: "fsn1"
+  # Hard ceiling: max autoscaler-managed nodes across all pools.
+  # Hetzner limit is 5 servers/project; 3 CPs + 1 static worker = 4
+  # fixed, leaving 1 slot for the autoscaler.
+  autoscaler_max_nodes_total: "1"
   autoscaler_location: "fsn1"
 

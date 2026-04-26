@@ -17,8 +17,9 @@ KSail (static baseline)
 └── 1 static worker (cx23, guaranteed minimum)
 
 Cluster Autoscaler (dynamic workers)
-├── Pool: autoscale-small  → 0-5 × CX23 (2 vCPU, 4 GB)
-├── Pool: autoscale-medium → 0-3 × CX33 (4 vCPU, 8 GB)
+├── Pool: autoscale-small  → 0-1 × CX23 (2 vCPU, 4 GB)
+├── Pool: autoscale-medium → 0-1 × CX33 (4 vCPU, 8 GB)
+├── max-nodes-total: 1 (Hetzner 5-server limit)
 └── Expander: least-waste
 ```
 
@@ -143,15 +144,20 @@ All autoscaler parameters are configurable via per-environment variables in
 | `autoscaler_talos_image` | — | Hetzner snapshot ID for Talos worker nodes |
 | `autoscaler_small_server_type` | `cx23` | Server type for the small pool |
 | `autoscaler_small_pool_min` | `0` | Minimum nodes in the small pool |
-| `autoscaler_small_pool_max` | `5` | Maximum nodes in the small pool |
+| `autoscaler_small_pool_max` | `1` | Maximum nodes in the small pool |
 | `autoscaler_medium_server_type` | `cx33` | Server type for the medium pool |
 | `autoscaler_medium_pool_min` | `0` | Minimum nodes in the medium pool |
-| `autoscaler_medium_pool_max` | `3` | Maximum nodes in the medium pool |
+| `autoscaler_medium_pool_max` | `1` | Maximum nodes in the medium pool |
 | `autoscaler_location` | `fsn1` | Hetzner datacenter for autoscaled nodes |
+| `autoscaler_max_nodes_total` | `1` | Hard ceiling on total autoscaler-managed nodes (all pools) |
 
 ### Cost guardrails
 
 - **Hard max per pool** — `autoscaler_*_pool_max` caps each pool.
+- **Hard max total** — `autoscaler_max_nodes_total` caps **all** autoscaler-managed
+  nodes across every pool. Default is `1` (Hetzner 5-server limit minus
+  3 control planes minus 1 static KSail worker). Increase if the Hetzner
+  project limit is raised.
 - **Expander** — `least-waste` prefers cheaper, smaller nodes when possible.
 - **Scale-down** — underutilized nodes are removed after 10 minutes
   (`scale-down-unneeded-time`).
