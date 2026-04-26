@@ -19,7 +19,11 @@ spec:
   # https://github.com/hetznercloud/csi-driver/blob/main/chart/values.yaml
   values:
     global:
-      enableProvidedByTopology: true
+      # enableProvidedByTopology adds an allowedTopologies constraint to the
+      # StorageClass that conflicts with the CSI provisioner's topology
+      # matching when volumeBindingMode is WaitForFirstConsumer.  Disabling
+      # it avoids "topology not in requisite" provisioning failures.
+      enableProvidedByTopology: false
     controller:
       replicaCount: ${hcloud_csi_controller_replicas:=2}
       hcloudVolumeDefaultLocation: fsn1

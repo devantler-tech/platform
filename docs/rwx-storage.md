@@ -16,31 +16,47 @@ Hetzner Cloud Volume (per worker)
 
 ## Prerequisites
 
-### 1. Custom Talos ISO with Longhorn extensions
+### 1. Custom Talos installer image with Longhorn extensions
 
 Longhorn requires two Talos system extensions baked into the installer image:
 
 - `siderolabs/iscsi-tools` — iSCSI initiator/target for Longhorn's data plane
 - `siderolabs/util-linux-tools` — provides `fstrim` for Longhorn volume trimming
 
-Generate a custom ISO via [Talos Image Factory](https://factory.talos.dev):
+The extensions are configured via [Talos Image Factory](https://factory.talos.dev).
+A schematic ID encodes the set of extensions; it is referenced in
+`talos/cluster/install-image.yaml` as `machine.install.image`. Nodes boot
+from the standard Hetzner Talos ISO but install the custom image (with
+extensions) to disk during first boot or upgrade.
 
-1. Select **Talos v1.11.2** (matching the version pinned in `ksail.{dev,prod}.yaml`)
-2. Choose **Hetzner Cloud** as the platform
-3. Add system extensions: `iscsi-tools`, `util-linux-tools`
-4. Download the **ISO** (amd64)
-5. Upload to Hetzner Cloud:
-   ```bash
-   hcloud iso upload --name talos-v1.11.2-longhorn talos-amd64.iso
-   ```
-6. Note the ISO ID from the output
-7. Update `ksail.dev.yaml` and `ksail.prod.yaml`:
-   ```yaml
-   spec:
-     cluster:
-       talos:
-         iso: <NEW_ISO_ID>
-   ```
+To **regenerate the schematic** (e.g. when adding more extensions or bumping
+the Talos version):
+
+```bash
+# Create a new schematic via the Image Factory API
+curl -s -X POST https://factory.talos.dev/schematics \
+  -H 'Content-Type: application/yaml' -d '
+customization:
+  systemExtensions:
+    officialExtensions:
+      - siderolabs/iscsi-tools
+      - siderolabs/util-linux-tools
+      - siderolabs/qemu-guest-agent
+'
+# → {"id":"<SCHEMATIC_ID>"}
+
+# Update talos/cluster/install-image.yaml:
+#   machine.install.image: factory.talos.dev/installer/<SCHEMATIC_ID>:v<TALOS_VERSION>
+```
+
+To **apply the new image to existing nodes**:
+
+```bash
+talosctl upgrade \
+  --nodes <IP> \
+  --image factory.talos.dev/installer/<SCHEMATIC_ID>:v<TALOS_VERSION> \
+  --preserve
+```
 
 ### 2. Hetzner Cloud Volumes for workers
 
