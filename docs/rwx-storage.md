@@ -18,10 +18,12 @@ Hetzner Cloud Volume (per worker)
 
 ### 1. Custom Talos installer image with Longhorn extensions
 
-Longhorn requires two Talos system extensions baked into the installer image:
+Longhorn requires two Talos system extensions baked into the installer image.
+The installer image also includes one additional recommended extension:
 
-- `siderolabs/iscsi-tools` — iSCSI initiator/target for Longhorn's data plane
-- `siderolabs/util-linux-tools` — provides `fstrim` for Longhorn volume trimming
+- `siderolabs/iscsi-tools` — **required** by Longhorn for the iSCSI initiator/target data plane
+- `siderolabs/util-linux-tools` — **required** by Longhorn for `fstrim` volume trimming
+- `siderolabs/qemu-guest-agent` — **recommended** for Hetzner Cloud VM integration (not required by Longhorn)
 
 The extensions are configured via [Talos Image Factory](https://factory.talos.dev).
 A schematic ID encodes the set of extensions; it is referenced in
@@ -69,13 +71,12 @@ Each worker node needs a dedicated Hetzner Cloud Volume mounted at `/var/lib/lon
 hcloud server list
 
 # Create a volume and attach it to a worker
+# Do NOT use --format — Talos expects to partition/format the disk itself
 # The volume appears as /dev/sdb on the worker
 hcloud volume create \
   --name <cluster>-worker-<n>-longhorn \
   --size 20 \
-  --server <worker-server-name> \
-  --format ext4 \
-  --location fsn1
+  --server <worker-server-name>
 ```
 
 The Talos machine config patch (`talos/workers/longhorn.yaml`) handles mounting `/dev/sdb` at `/var/lib/longhorn`.
