@@ -141,7 +141,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@1f66c91d45d374ceac9fe830a783444ebc9be958 # v3.2.0
+        uses: devantler-tech/actions/setup-ksail-cli@19f1f2e8c01aeafe037af8ca26d8c2dab1dee2a4 # v3.2.3
 
       - name: 🔐 Create SOPS Age key
         env:
@@ -232,7 +232,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/require-checks-in-pr@1f66c91d45d374ceac9fe830a783444ebc9be958 # v3.2.0
+        uses: devantler-tech/actions/require-checks-in-pr@19f1f2e8c01aeafe037af8ca26d8c2dab1dee2a4 # v3.2.3
         with:
           job-results: >-
             ${{ needs.changes.result }}
