@@ -35,4 +35,6 @@ data:
   hetzner_lb_type: "lb11"
   # --- Hetzner Cloud Network ---
   hcloud_network: "prod-network"
+  # --- Longhorn distributed storage ---
+  longhorn_replica_count: "2"
 
