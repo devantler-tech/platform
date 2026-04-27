@@ -52,5 +52,4 @@ data:
   # Hard ceiling: max nodes in the cluster (total, including KSail-
   # managed CPs and static workers). Hetzner limit is 5 servers/project.
   autoscaler_max_nodes_total: "5"
-  autoscaler_location: "fsn1"
 

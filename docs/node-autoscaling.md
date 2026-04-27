@@ -19,7 +19,7 @@ KSail (static baseline)
 Cluster Autoscaler (dynamic workers)
 ├── Pool: autoscale-small  → 0-1 × CX23 (2 vCPU, 4 GB)
 ├── Pool: autoscale-medium → 0-1 × CX33 (4 vCPU, 8 GB)
-├── max-nodes-total: 1 (Hetzner 5-server limit)
+├── max-nodes-total: 5 (Hetzner 5-server limit)
 └── Expander: least-waste
 ```
 
@@ -42,9 +42,10 @@ Cluster Autoscaler (dynamic workers)
 
 1. Cluster Autoscaler detects Pending pods with unmet resource requests.
 2. It calls the Hetzner API to create a new server using:
-   - `HCLOUD_IMAGE` — a Talos snapshot (not the ISO).
-   - `cloudInit` from `HCLOUD_CLUSTER_CONFIG` — the Talos worker machine
-     config YAML. Hetzner passes this as user-data; Talos reads it on boot.
+   - `HCLOUD_IMAGE` -- a Talos snapshot (not the ISO).
+   - `HCLOUD_CLOUD_INIT` -- base64-encoded Talos worker machine config
+     YAML. Hetzner passes the decoded content as user-data; Talos reads
+     it on boot.
 3. The server boots Talos, applies the machine config, and joins the cluster.
 4. Once the node is Ready, pending pods are scheduled.
 
@@ -115,28 +116,35 @@ Then modify for autoscaler nodes:
 > Hetzner volumes and serve as Longhorn storage nodes. Autoscaler nodes
 > run workloads that access storage via the Longhorn CSI driver.
 
-### 3. Build the cluster-config Secret
+### 3. Store the worker machine config
 
-1. Base64-encode the worker machine config:
+1. Base64-encode the stripped worker machine config:
    ```bash
-   cat worker.yaml | base64 -w0 > worker-b64.txt
+   base64 -i worker-autoscaler.yaml | tr -d '\n' > worker-b64.txt
    ```
 
-2. Edit the Secret at
-   `k8s/providers/hetzner/infrastructure/controllers/cluster-autoscaler/cluster-autoscaler-config-secret.yaml`:
-   - Replace `PLACEHOLDER_BASE64_TALOS_WORKER_CONFIG` with the base64 content
-     for each pool.
-
-3. Encrypt with SOPS:
+2. Add it to each cluster's SOPS-encrypted secret as
+   `autoscaler_cloud_init_b64`:
    ```bash
-   sops -e cluster-autoscaler-config-secret.yaml > cluster-autoscaler-config-secret.enc.yaml
+   CLOUD_INIT_B64=$(cat worker-b64.txt)
+   sops --set "[\"stringData\"][\"autoscaler_cloud_init_b64\"] \"$CLOUD_INIT_B64\"" \
+     k8s/clusters/<env>/variables/variables-cluster-secret.enc.yaml
    ```
 
-4. Commit `cluster-autoscaler-config-secret.enc.yaml`, delete the plaintext.
+3. Commit the updated `variables-cluster-secret.enc.yaml`.
+
+> The Talos snapshot ID (`hcloud_image`) is hardcoded in
+> `k8s/providers/hetzner/.../cluster-autoscaler-config-secret.yaml`
+> because Flux variable substitution renders numeric IDs as YAML
+> integers. Update it there when the snapshot changes.
 
 ### 4. Set the Talos snapshot ID
 
-Update `autoscaler_talos_image` in both:
+Update the hardcoded `hcloud_image` value in
+`k8s/providers/hetzner/infrastructure/controllers/cluster-autoscaler/cluster-autoscaler-config-secret.yaml`.
+
+Also update `autoscaler_talos_image` in both cluster variable ConfigMaps
+(used for documentation/tracking, not for runtime substitution):
 - `k8s/clusters/prod/variables/variables-cluster-config-map.yaml`
 - `k8s/clusters/dev/variables/variables-cluster-config-map.yaml`
 
@@ -157,15 +165,15 @@ All autoscaler parameters are configurable via per-environment variables in
 | `autoscaler_medium_pool_min` | `0` | Minimum nodes in the medium pool |
 | `autoscaler_medium_pool_max` | `1` | Maximum nodes in the medium pool |
 | `autoscaler_location` | `fsn1` | Hetzner datacenter for autoscaled nodes |
-| `autoscaler_max_nodes_total` | `1` | Hard ceiling on total autoscaler-managed nodes (all pools) |
+| `autoscaler_max_nodes_total` | `5` | Hard ceiling on total cluster nodes (all nodes, not just autoscaler) |
 
 ### Cost guardrails
 
 - **Hard max per pool** — `autoscaler_*_pool_max` caps each pool.
-- **Hard max total** — `autoscaler_max_nodes_total` caps **all** autoscaler-managed
-  nodes across every pool. Default is `1` (Hetzner 5-server limit minus
-  3 control planes minus 1 static KSail worker). Increase if the Hetzner
-  project limit is raised.
+- **Hard max total** -- `autoscaler_max_nodes_total` caps the **total
+  cluster node count** (KSail CPs + static workers + autoscaler workers).
+  Default is `5` (Hetzner project server limit). Increase if the Hetzner
+  limit is raised.
 - **Expander** — `least-waste` prefers cheaper, smaller nodes when possible.
 - **Scale-down** — underutilized nodes are removed after 10 minutes
   (`scale-down-unneeded-time`).

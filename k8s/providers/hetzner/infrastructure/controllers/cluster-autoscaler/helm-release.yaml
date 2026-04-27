@@ -39,10 +39,9 @@ spec:
       scale-down-delay-after-add: 5m
       scale-down-delay-after-delete: 2m
       scale-down-unneeded-time: 10m
-      # Hard ceiling — caps total autoscaler-managed workers across ALL
-      # pools.  Hetzner enforces a per-project server limit (default 5);
-      # subtract control planes and KSail static workers to get this
-      # value.  Increase if the Hetzner limit is raised.
+      # Hard ceiling on total cluster nodes (KSail CPs + static workers
+      # + autoscaler workers combined). Hetzner enforces 5 servers per
+      # project. Increase if the Hetzner limit is raised.
       max-nodes-total: ${autoscaler_max_nodes_total}
       ok-total-unready-count: 3
       # Log autoscaler decisions.
