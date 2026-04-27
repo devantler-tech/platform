@@ -191,7 +191,7 @@ This is a **GitOps-based Kubernetes platform** using:
 
 ### Dual-Provider Model
 - **Local/CI**: `ksail cluster create` → Talos + Docker provider → local OCI registry → `ksail workload push/reconcile`
-- **Dev/Production**: `ksail --config ksail.prod.yaml cluster create|update` → Talos + Hetzner provider → Hetzner CCM + CSI installed by ksail → `ksail workload push` to GHCR → `workload reconcile`
+- **Production**: `ksail --config ksail.prod.yaml cluster create|update` → Talos + Hetzner provider → Hetzner CCM + CSI installed by ksail → `ksail workload push` to GHCR → `workload reconcile`
 
 ### Kustomization Flow
 The platform uses a hierarchical kustomization structure:

@@ -19,17 +19,16 @@ KSail (static baseline)
 Cluster Autoscaler (dynamic workers)
 ├── Pool: autoscale-small  → 0-1 × CX23 (2 vCPU, 4 GB)
 ├── Pool: autoscale-medium → 0-1 × CX33 (4 vCPU, 8 GB)
-├── max-nodes-total: 10 (3 CPs + 3 workers + up to 4 autoscaler nodes)
-└── Expander: price → least-waste → least-nodes
+├── max-nodes-total: 10 (3 CPs + 3 workers + headroom for autoscaler nodes)
+└── Expander: price
 ```
 
 - **Horizontal scaling** — autoscaler adds workers when pods are Pending due
   to insufficient resources, and removes underutilized workers after a
   configurable cooldown.
 - **Vertical scaling** — multiple node pools with different server types.
-  The `price` expander picks the cheapest pool first; if tied, `least-waste`
-  breaks ties by resource fit, and `least-nodes` minimises node count as a
-  final fallback. See
+  The `price` expander picks the cheapest pool that can satisfy the pending
+  pod's resource requests. See
   [cluster-autoscaler FAQ](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md).
 - **KSail coexistence** — `nodeAutoscaling: Enabled` in `ksail.prod.yaml`
   prevents `ksail cluster update` from modifying worker counts, avoiding
@@ -173,10 +172,10 @@ All autoscaler parameters are configurable via per-environment variables in
 - **Hard max per pool** — `autoscaler_*_pool_max` caps each pool.
 - **Hard max total** -- `autoscaler_max_nodes_total` caps the **total
   cluster node count** (KSail CPs + static workers + autoscaler workers).
-  Set to `10` (3 CPs + 3 workers = 6 base, leaves room for 4 autoscaler
-  nodes). Increase if more headroom is needed.
-- **Expander** — `price,least-waste,least-nodes` — cheapest first, then
-  best resource fit, then fewest nodes.
+  Set to `10` (3 CPs + 3 workers = 6 base; current pool caps allow 2
+  more). Provides headroom for future pool expansion.
+- **Expander** — `price` — picks the cheapest eligible node group when
+  scaling up.
 - **Scale-down** — underutilized nodes are removed after 10 minutes
   (`scale-down-unneeded-time`).
 

@@ -33,17 +33,17 @@ spec:
         region: ${autoscaler_location}
 
     extraArgs:
-      # Expander priority: cheapest first, then least wasted resources,
-      # then fewest total nodes. See
+      # Prefer the cheapest eligible node group when scaling up. See
       # https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md
-      expander: price,least-waste,least-nodes
+      expander: price
       # Wait before removing underutilized nodes to avoid flapping.
       scale-down-delay-after-add: 5m
       scale-down-delay-after-delete: 2m
       scale-down-unneeded-time: 10m
       # Hard ceiling on total cluster nodes (KSail CPs + static workers
       # + autoscaler workers combined). 3 CPs + 3 workers = 6 base;
-      # ceiling of 10 leaves headroom for autoscaling.
+      # current pool caps allow 2 more (1 small + 1 medium). Ceiling of
+      # 10 provides headroom for future pool expansion.
       max-nodes-total: ${autoscaler_max_nodes_total}
       ok-total-unready-count: 3
       # Log autoscaler decisions.
