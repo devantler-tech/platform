@@ -20,7 +20,6 @@ spec:
     cloudProvider: hetzner
 
     # --- Node pool definitions ---
-    # Format: <min>:<max>:<server-type>:<location>:<pool-name>
     autoscalingGroups:
       - name: autoscale-small
         minSize: ${autoscaler_small_pool_min}
@@ -45,39 +44,30 @@ spec:
       # subtract control planes and KSail static workers to get this
       # value.  Increase if the Hetzner limit is raised.
       max-nodes-total: ${autoscaler_max_nodes_total}
-      max-total-unready-count: 3
+      ok-total-unready-count: 3
       # Log autoscaler decisions.
       v: "4"
 
-    extraEnv:
-      - name: HCLOUD_TOKEN
-        valueFrom:
-          secretKeyRef:
-            name: hcloud
-            key: token
-      - name: HCLOUD_NETWORK
-        valueFrom:
-          secretKeyRef:
-            name: hcloud
-            key: network
-      # Talos image ID — a Hetzner snapshot built from the Talos Image
-      # Factory hcloud image. See docs/node-autoscaling.md.
-      - name: HCLOUD_IMAGE
-        value: "${autoscaler_talos_image}"
-      # HCLOUD_CLUSTER_CONFIG is mounted from the cluster-autoscaler-config
-      # Secret via extraVolumes below. The file path is referenced via
-      # HCLOUD_CLUSTER_CONFIG_FILE instead.
-      - name: HCLOUD_CLUSTER_CONFIG_FILE
-        value: /etc/cluster-autoscaler/cluster-config.json
+    # --- Environment variables (map format) ---
+    extraEnv: {}
 
-    extraVolumes:
-      - name: cluster-config
-        secret:
-          secretName: cluster-autoscaler-config
-    extraVolumeMounts:
-      - name: cluster-config
-        mountPath: /etc/cluster-autoscaler
-        readOnly: true
+    # --- Environment variables from Secrets ---
+    extraEnvSecrets:
+      HCLOUD_TOKEN:
+        name: hcloud
+        key: token
+      HCLOUD_NETWORK:
+        name: hcloud
+        key: network
+      # Talos snapshot ID — stored as string in Secret to avoid Helm
+      # scientific notation. See docs/node-autoscaling.md.
+      HCLOUD_IMAGE:
+        name: cluster-autoscaler-config
+        key: hcloud_image
+      # Base64-encoded Talos worker machine config YAML.
+      HCLOUD_CLOUD_INIT:
+        name: cluster-autoscaler-config
+        key: hcloud_cloud_init
 
     # Run on control plane nodes so the autoscaler itself isn't evicted
     # during scale-down of worker nodes.

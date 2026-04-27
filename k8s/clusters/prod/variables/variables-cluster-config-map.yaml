@@ -49,9 +49,8 @@ data:
   autoscaler_medium_pool_min: "0"
   autoscaler_medium_pool_max: "1"
   autoscaler_location: "fsn1"
-  # Hard ceiling: max autoscaler-managed nodes across all pools.
-  # Hetzner limit is 5 servers/project; 3 CPs + 1 static worker = 4
-  # fixed, leaving 1 slot for the autoscaler.
-  autoscaler_max_nodes_total: "1"
+  # Hard ceiling: max nodes in the cluster (total, including KSail-
+  # managed CPs and static workers). Hetzner limit is 5 servers/project.
+  autoscaler_max_nodes_total: "5"
   autoscaler_location: "fsn1"
 
