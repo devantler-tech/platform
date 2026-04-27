@@ -37,4 +37,19 @@ data:
   hcloud_network: "prod-network"
   # --- Longhorn distributed storage ---
   longhorn_replica_count: "2"
+  # --- Node Autoscaler (Hetzner Cluster Autoscaler) ---
+  # Talos snapshot ID on Hetzner Cloud — created from the Talos Image
+  # Factory hcloud image. Must be updated when Talos is upgraded.
+  # See docs/node-autoscaling.md for the snapshot creation process.
+  autoscaler_talos_image: "PLACEHOLDER"
+  autoscaler_small_server_type: "cx23"
+  autoscaler_small_pool_min: "0"
+  autoscaler_small_pool_max: "1"
+  autoscaler_medium_server_type: "cx33"
+  autoscaler_medium_pool_min: "0"
+  autoscaler_medium_pool_max: "1"
+  autoscaler_location: "fsn1"
+  # Hard ceiling: max nodes in the cluster (total, including KSail-
+  # managed CPs and static workers). Hetzner limit is 5 servers/project.
+  autoscaler_max_nodes_total: "5"
 
