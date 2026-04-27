@@ -25,7 +25,7 @@ KSail expects this `cluster/`, `control-planes/`, `workers/` split.
 
 ## Provider Differences
 
-| | Docker (local) | Hetzner (dev/prod) |
+| | Docker (local) | Hetzner (prod) |
 |---|---|---|
 | Config dir | `talos-local/` | `talos/` |
 | CNI | Disabled, installed by KSail | Disabled, installed by KSail |

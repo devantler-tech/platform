@@ -10,7 +10,7 @@ data:
   issuer_group: cert-manager.k8s.cloudflare.com
   issuer_kind: ClusterOriginIssuer
   issuer_name: cloudflare-origin
-  # Per-env prefixes inside the shared R2 bucket so dev/prod don't collide.
+  # Per-env prefixes inside the shared R2 bucket.
   r2_prefix_velero: velero/prod
   r2_prefix_cnpg: cnpg/prod
   # --- HA replica overrides for the 3× CX23 prod cluster ---
@@ -36,7 +36,7 @@ data:
   # --- Hetzner Cloud Network ---
   hcloud_network: "prod-network"
   # --- Longhorn distributed storage ---
-  longhorn_replica_count: "2"
+  longhorn_replica_count: "3"
   # --- Node Autoscaler (Hetzner Cluster Autoscaler) ---
   # Talos snapshot ID on Hetzner Cloud — created from the Talos Image
   # Factory hcloud image. Must be updated when Talos is upgraded.
@@ -50,6 +50,7 @@ data:
   autoscaler_medium_pool_max: "1"
   autoscaler_location: "fsn1"
   # Hard ceiling: max nodes in the cluster (total, including KSail-
-  # managed CPs and static workers). Hetzner limit is 5 servers/project.
-  autoscaler_max_nodes_total: "5"
+  # managed CPs and static workers). 3 CPs + 3 workers = 6 base nodes;
+  # ceiling of 10 leaves room for 4 autoscaler workers.
+  autoscaler_max_nodes_total: "10"
 

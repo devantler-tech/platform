@@ -59,7 +59,6 @@ substituted into the `alertmanager-webhook` Secret at apply time.
 | Env   | Where to set                                  | Suggestion             |
 | ----- | --------------------------------------------- | ---------------------- |
 | local | `k8s/clusters/local/variables/variables-cluster-secret.enc.yaml` (already filled with a non-resolvable invalid URL — alerts fail to send, on purpose) | n/a |
-| dev   | same path under `clusters/dev/`               | Discord #dev-alerts    |
 | prod  | same path under `clusters/prod/`              | Discord #prod-alerts   |
 
 To set:

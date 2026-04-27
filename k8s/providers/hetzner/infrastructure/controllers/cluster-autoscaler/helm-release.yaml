@@ -33,15 +33,17 @@ spec:
         region: ${autoscaler_location}
 
     extraArgs:
-      # Pick the pool whose nodes will have the least wasted resources.
-      expander: least-waste
+      # Expander priority: cheapest first, then least wasted resources,
+      # then fewest total nodes. See
+      # https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md
+      expander: price,least-waste,least-nodes
       # Wait before removing underutilized nodes to avoid flapping.
       scale-down-delay-after-add: 5m
       scale-down-delay-after-delete: 2m
       scale-down-unneeded-time: 10m
       # Hard ceiling on total cluster nodes (KSail CPs + static workers
-      # + autoscaler workers combined). Hetzner enforces 5 servers per
-      # project. Increase if the Hetzner limit is raised.
+      # + autoscaler workers combined). 3 CPs + 3 workers = 6 base;
+      # ceiling of 10 leaves headroom for autoscaling.
       max-nodes-total: ${autoscaler_max_nodes_total}
       ok-total-unready-count: 3
       # Log autoscaler decisions.

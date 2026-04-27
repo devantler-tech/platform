@@ -62,23 +62,23 @@ ksail cluster list
 
 ### Key Directories
 - **`k8s/`** - All Kubernetes manifests and GitOps configuration
-  - **`k8s/clusters/`** - Environment-specific configurations (local, dev, prod)
+  - **`k8s/clusters/`** - Environment-specific configurations (local, prod)
   - **`k8s/providers/`** - Provider-specific configs (docker, hetzner)
   - **`k8s/bases/`** - Shared base configurations
     - **`k8s/bases/infrastructure/`** - Core infrastructure components organized by resource type (e.g. `certificates/`, `gateway/`, `cluster-policies/`, `controllers/`)
     - **`k8s/bases/apps/`** - Application deployments (homepage, whoami, headlamp)
-- **`talos/`** - Talos machine config patches for Hetzner-backed clusters (shared across dev and prod). Split into `cluster/`, `control-planes/`, `workers/` as ksail expects.
+- **`talos/`** - Talos machine config patches for Hetzner-backed clusters (prod). Split into `cluster/`, `control-planes/`, `workers/` as ksail expects.
 - **`talos-local/`** - Talos machine config patches for Docker (local) clusters
 - **`.sops.yaml`** - SOPS encryption configuration
 - **`ksail.yaml`** - KSail local cluster configuration (Talos + Docker, `kustomizationFile: clusters/local`)
-- **`ksail.dev.yaml`** / **`ksail.prod.yaml`** - KSail dev/prod cluster configurations (Talos + Hetzner, `kustomizationFile: clusters/{dev,prod}`)
+- **`ksail.prod.yaml`** - KSail prod cluster configuration (Talos + Hetzner, `kustomizationFile: clusters/prod`)
 
 ### Important Files
 - **`README.md`** - Main repository documentation
 - **`ksail.yaml`** - Defines local Talos+Docker cluster with Flux, Cilium. Has `spec.workload.kustomizationFile: clusters/local` so Flux uses `k8s/clusters/local/kustomization.yaml` as the entry point.
 - **`ksail.prod.yaml`** - Defines production Talos+Hetzner cluster with Flux, Cilium, GHCR registry. Has `spec.workload.kustomizationFile: clusters/prod` so Flux uses `k8s/clusters/prod/kustomization.yaml` as the entry point.
 - **`talos-local/`** - Talos machine config patches for local Docker clusters
-- **`talos/`** - Talos machine config patches for Hetzner-backed clusters (dev and prod)
+- **`talos/`** - Talos machine config patches for Hetzner-backed clusters (prod)
 - **`.github/workflows/`** - CI/CD pipelines for cluster bootstrap and deployment
 
 ## Common Tasks and Workflows
@@ -109,7 +109,7 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 - DNS A/AAAA records at the apex + wildcard must point at the LB IP (human step — see `docs/dr/runbook.md` scenario 4)
 
 ### CI/CD Pipelines
-- **`ci.yaml`**: Runs on `pull_request` (local Talos+Docker system test) and `merge_group` (deploys dev via Hetzner provider).
+- **`ci.yaml`**: Runs on `pull_request` (local Talos+Docker system test) and `merge_group` (deploys prod via Hetzner provider).
 - **`cd.yaml`**: Runs on `v*` tags. Deploys to production Hetzner cluster using `ksail --config ksail.prod.yaml`.
 
 **Required GitHub Secrets:**
@@ -186,12 +186,12 @@ This is a **GitOps-based Kubernetes platform** using:
 - **Kustomize** for configuration templating
 - **KSail** for unified cluster and workload management
 - **Talos + Docker** for local development clusters (via KSail)
-- **Talos + Hetzner** for dev/prod cluster management (KSail native Hetzner provider)
+- **Talos + Hetzner** for production cluster management (KSail native Hetzner provider)
 - **GHCR** for OCI artifact storage (production)
 
 ### Dual-Provider Model
 - **Local/CI**: `ksail cluster create` → Talos + Docker provider → local OCI registry → `ksail workload push/reconcile`
-- **Dev/Production**: `ksail --config ksail.{dev,prod}.yaml cluster create|update` → Talos + Hetzner provider → Hetzner CCM + CSI installed by ksail → `ksail workload push` to GHCR → `workload reconcile`
+- **Dev/Production**: `ksail --config ksail.prod.yaml cluster create|update` → Talos + Hetzner provider → Hetzner CCM + CSI installed by ksail → `ksail workload push` to GHCR → `workload reconcile`
 
 ### Kustomization Flow
 The platform uses a hierarchical kustomization structure:

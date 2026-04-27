@@ -1,6 +1,6 @@
 # RWX Storage with Longhorn
 
-Longhorn provides ReadWriteMany (RWX) storage on Hetzner clusters (dev/prod) using dedicated Hetzner Cloud Volumes attached to each worker node. It replaces the `hcloud` StorageClass as the cluster default.
+Longhorn provides ReadWriteMany (RWX) storage on Hetzner clusters (prod) using dedicated Hetzner Cloud Volumes attached to each worker node. It replaces the `hcloud` StorageClass as the cluster default.
 
 > **Local Docker clusters do not support Longhorn** — the iSCSI kernel modules required by Longhorn are not available in Docker-based Talos containers.
 

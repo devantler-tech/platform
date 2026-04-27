@@ -15,13 +15,13 @@ supported path.
 
 ### 1. ksail configs — one per environment
 
-Files: `ksail.yaml` (local), `ksail.dev.yaml`, `ksail.prod.yaml`.
+Files: `ksail.yaml` (local), `ksail.prod.yaml`.
 
 Only these fields genuinely vary per instance:
 
-| Field | local | dev / prod |
+| Field | local | prod |
 |---|---|---|
-| `metadata.name` | cluster short name (e.g. `local`) | `dev` / `prod` |
+| `metadata.name` | cluster short name (e.g. `local`) | `prod` |
 | `spec.cluster.connection.context` | kubeconfig context | kubeconfig context |
 | `spec.cluster.localRegistry.registry` | n/a | OCI registry URL for the manifest artefact |
 | `spec.provider.hetzner.location` | n/a | primary Hetzner location (`fsn1`, `nbg1`, `hel1`, …) |
@@ -36,7 +36,7 @@ Everything else (distribution, provider, CNI, GitOps engine, timeouts,
 ### 2. Talos machine-config directories
 
 - `talos-local/` — Docker-provider patches.
-- `talos/` — Hetzner-provider patches. Shared between dev and prod.
+- `talos/` — Hetzner-provider patches. Used by prod.
   Split into `cluster/`, `control-planes/`, and `workers/` as ksail expects.
 
 Edit the YAML patches inside if your DNS, OIDC issuer, or networking differs.

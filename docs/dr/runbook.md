@@ -3,7 +3,7 @@
 The single source of truth for "how do I get the platform back" — covering
 single-node loss, full-cluster loss, and credential rotation. Designed so
 that with this repo + the off-cluster artifacts listed below + ~30 minutes
-of manual control-plane work, dev or prod can be reconstructed to a state
+of manual control-plane work, prod can be reconstructed to a state
 indistinguishable from the day before the incident.
 
 > **RPO target:** 24 h (daily snapshots).
@@ -56,7 +56,7 @@ kubectl -n <ns> rollout restart deployment/<name>
 
 ## Scenario 2 — Planned rolling Talos / Kubernetes upgrade
 
-Bump the Talos ISO ID in `ksail.{dev,prod}.yaml` (or the Kubernetes version
+Bump the Talos ISO ID in `ksail.prod.yaml` (or the Kubernetes version
 in the ksail config) and re-run `ksail cluster update`. ksail cordons and
 replaces nodes one at a time; PDBs hold the line.
 

@@ -34,7 +34,7 @@ jobs:
             k8s:
               - 'k8s/**'
               - 'ksail.yaml'
-              - 'ksail.dev.yaml'
+              - 'ksail.prod.yaml'
               - '.sops.yaml'
               - 'talos-local/**'
               - 'talos/**'
@@ -126,14 +126,14 @@ jobs:
         run: ksail cluster delete || echo "⚠️ Cluster may not have been created"
 
 
-  deploy-dev:
-    name: 🚀 Deploy to Dev
+  deploy-prod:
+    name: 🚀 Deploy to Prod
     needs: [changes]
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
-    environment: dev
+    environment: prod
     concurrency:
-      group: deploy-dev
+      group: deploy-prod
       cancel-in-progress: false
     permissions:
       contents: read # checkout repository
@@ -171,13 +171,13 @@ jobs:
           chmod 600 ~/.kube/config
 
       - name: 🔄 Update cluster
-        run: ksail --config ksail.dev.yaml cluster update
+        run: ksail --config ksail.prod.yaml cluster update
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
       - name: 📦 Push manifests to GHCR
-        run: ksail --config ksail.dev.yaml workload push
+        run: ksail --config ksail.prod.yaml workload push
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -185,7 +185,7 @@ jobs:
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
-        run: ksail --config ksail.dev.yaml workload reconcile
+        run: ksail --config ksail.prod.yaml workload reconcile
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -231,7 +231,7 @@ jobs:
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [changes, system-test, deploy-dev]
+    needs: [changes, system-test, deploy-prod]
     if: always()
     permissions: {}
     steps:
@@ -241,4 +241,4 @@ jobs:
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.system-test.result }}
-            ${{ needs.deploy-dev.result }}
+            ${{ needs.deploy-prod.result }}

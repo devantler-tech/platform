@@ -4,7 +4,7 @@
 touches `k8s/**` or the cluster configs. The job validates the full
 backup → data-loss → restore cycle end-to-end on a local Talos+Docker
 cluster, so the Velero code path is regression-tested **before** changes
-reach `dev` or `prod`.
+reach `prod`.
 
 ## What it does
 
@@ -50,7 +50,7 @@ explodes.
 ## What this does **not** catch
 
 - Cloudflare R2 specifics (CRC checksum quirk, bucket policy, IAM key
-  rotation). That's `dev`/`prod`-only and needs a periodic manual drill
+  rotation). That's `prod`-only and needs a periodic manual drill
   documented in [`runbook.md`](./runbook.md#scenario-3-restore-an-app-namespace-from-velero).
 - Omni etcd backup/restore — no longer part of the platform; etcd is a
   cattle resource recreated by `ksail cluster create`. Full-cluster

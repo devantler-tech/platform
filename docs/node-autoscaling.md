@@ -14,22 +14,24 @@ with the Hetzner Cloud provider.
 ```
 KSail (static baseline)
 ├── 3 control planes (cx23, never autoscaled)
-└── 1 static worker (cx23, guaranteed minimum)
+└── 3 static workers (cx23, guaranteed minimum, Longhorn storage nodes)
 
 Cluster Autoscaler (dynamic workers)
 ├── Pool: autoscale-small  → 0-1 × CX23 (2 vCPU, 4 GB)
 ├── Pool: autoscale-medium → 0-1 × CX33 (4 vCPU, 8 GB)
-├── max-nodes-total: 5 (Hetzner 5-server limit)
-└── Expander: least-waste
+├── max-nodes-total: 10 (3 CPs + 3 workers + up to 4 autoscaler nodes)
+└── Expander: price → least-waste → least-nodes
 ```
 
 - **Horizontal scaling** — autoscaler adds workers when pods are Pending due
   to insufficient resources, and removes underutilized workers after a
   configurable cooldown.
 - **Vertical scaling** — multiple node pools with different server types.
-  The `least-waste` expander picks the smallest pool whose nodes can fit
-  the pending pod's resource requests.
-- **KSail coexistence** — `nodeAutoscaling: Enabled` in `ksail.{dev,prod}.yaml`
+  The `price` expander picks the cheapest pool first; if tied, `least-waste`
+  breaks ties by resource fit, and `least-nodes` minimises node count as a
+  final fallback. See
+  [cluster-autoscaler FAQ](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md).
+- **KSail coexistence** — `nodeAutoscaling: Enabled` in `ksail.prod.yaml`
   prevents `ksail cluster update` from modifying worker counts, avoiding
   conflicts with autoscaler-managed nodes.
 - **Storage architecture** — autoscaler nodes are **compute-only** (no
@@ -143,10 +145,9 @@ Then modify for autoscaler nodes:
 Update the hardcoded `hcloud_image` value in
 `k8s/providers/hetzner/infrastructure/controllers/cluster-autoscaler/cluster-autoscaler-config-secret.yaml`.
 
-Also update `autoscaler_talos_image` in both cluster variable ConfigMaps
+Also update `autoscaler_talos_image` in the cluster variable ConfigMap
 (used for documentation/tracking, not for runtime substitution):
 - `k8s/clusters/prod/variables/variables-cluster-config-map.yaml`
-- `k8s/clusters/dev/variables/variables-cluster-config-map.yaml`
 
 ---
 
@@ -172,9 +173,10 @@ All autoscaler parameters are configurable via per-environment variables in
 - **Hard max per pool** — `autoscaler_*_pool_max` caps each pool.
 - **Hard max total** -- `autoscaler_max_nodes_total` caps the **total
   cluster node count** (KSail CPs + static workers + autoscaler workers).
-  Default is `5` (Hetzner project server limit). Increase if the Hetzner
-  limit is raised.
-- **Expander** — `least-waste` prefers cheaper, smaller nodes when possible.
+  Set to `10` (3 CPs + 3 workers = 6 base, leaves room for 4 autoscaler
+  nodes). Increase if more headroom is needed.
+- **Expander** — `price,least-waste,least-nodes` — cheapest first, then
+  best resource fit, then fewest nodes.
 - **Scale-down** — underutilized nodes are removed after 10 minutes
   (`scale-down-unneeded-time`).
 
@@ -234,9 +236,9 @@ After a full cluster rebuild (`ksail cluster delete` + `create`):
 
 ### Talos version upgrades
 
-When bumping the Talos version in `ksail.{dev,prod}.yaml`:
+When bumping the Talos version in `ksail.prod.yaml`:
 1. Create a new Talos snapshot matching the new version.
-2. Update `autoscaler_talos_image` in both cluster variable files.
+2. Update `autoscaler_talos_image` in the cluster variable file.
 3. Regenerate the worker machine config if the Talos config schema changed.
 
 ### Hetzner server type changes
