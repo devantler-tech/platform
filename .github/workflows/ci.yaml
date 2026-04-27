@@ -67,7 +67,7 @@ jobs:
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@19b16519675738d063003ca944b3f025d06b9b68 # v7.3.1
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@79e9602b30aa4ab82d472c2b3f42e78c4fc2c96c # v7.5.0
         with:
           distribution: Talos
           provider: Docker
@@ -77,19 +77,11 @@ jobs:
           hosts-file: ${{ vars.HOSTS_FILE }}
           root-ca-cert-file: ${{ vars.ROOT_CA_CERT_FILE }}
           push: "true"
-          # Reconcile handled by explicit step below so we can extend the
-          # timeout past the action's built-in default (the HA/DR stack
-          # adds Velero + MinIO + kube-prometheus-stack which can push
-          # reconciliation past the default 5m budget on GHA runners).
-          reconcile: "false"
+          reconcile: "true"
           delete: "false"
 
-      - name: 🔁 Reconcile with extended timeout
-        id: reconcile
-        run: ksail workload reconcile --timeout 30m
-
       - name: 🩺 Diagnose Flux on failure
-        if: failure() && steps.reconcile.outcome == 'failure'
+        if: failure()
         run: |
           set +e
           echo "::group::Nodes"
@@ -153,7 +145,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@1f66c91d45d374ceac9fe830a783444ebc9be958 # v3.2.0
+        uses: devantler-tech/actions/setup-ksail-cli@19f1f2e8c01aeafe037af8ca26d8c2dab1dee2a4 # v3.2.3
 
       - name: 🔐 Create SOPS Age key
         env:
@@ -164,13 +156,22 @@ jobs:
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
 
-      - name: 🔄 Create or update cluster
+      - name: 🔑 Restore kubeconfig
+        # ksail cluster update needs a valid kubeconfig to detect the current
+        # cluster state. Without it, the component detector returns defaults and
+        # triggers spurious changes that all fail. The KUBE_CONFIG secret must be
+        # kept up-to-date from the homelab after any cluster recreation.
+        # See devantler-tech/ksail#4369 for the upstream design context.
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
         run: |
-          if ksail --config ksail.dev.yaml cluster info > /dev/null 2>&1; then
-            ksail --config ksail.dev.yaml cluster update
-          else
-            ksail --config ksail.dev.yaml cluster create
-          fi
+          mkdir -p ~/.kube
+          umask 077
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🔄 Update cluster
+        run: ksail --config ksail.dev.yaml cluster update
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
@@ -184,7 +185,7 @@ jobs:
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
-        run: ksail --config ksail.dev.yaml workload reconcile --timeout 30m
+        run: ksail --config ksail.dev.yaml workload reconcile
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -235,7 +236,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/require-checks-in-pr@1f66c91d45d374ceac9fe830a783444ebc9be958 # v3.2.0
+        uses: devantler-tech/actions/require-checks-in-pr@19f1f2e8c01aeafe037af8ca26d8c2dab1dee2a4 # v3.2.3
         with:
           job-results: >-
             ${{ needs.changes.result }}

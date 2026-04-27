@@ -1,0 +1,11 @@
+# Use a custom Talos installer image from the Image Factory that includes:
+#   Longhorn-required extensions:
+#     - siderolabs/iscsi-tools      (iSCSI initiator/target for Longhorn data plane)
+#     - siderolabs/util-linux-tools (fstrim for Longhorn volume trimming)
+#   Hetzner-recommended extension:
+#     - siderolabs/qemu-guest-agent (Hetzner Cloud VM integration)
+#
+# Schematic: https://factory.talos.dev/?arch=amd64&extensions=siderolabs%2Fiscsi-tools&extensions=siderolabs%2Fqemu-guest-agent&extensions=siderolabs%2Futil-linux-tools&target=hcloud&version=1.11.2
+machine:
+  install:
+    image: factory.talos.dev/installer/e187c9b90f773cd8c84e5a3265c5554ee787b2fe67b508d9f955e90e7ae8c96c:v1.11.2

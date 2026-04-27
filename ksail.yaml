@@ -10,13 +10,12 @@ spec:
     distributionConfig: talos-local
     connection:
       context: admin@local
-      timeout: 4m
+      timeout: 15m
     distribution: Talos
     provider: Docker
     cni: Cilium
+    csi: Enabled
     gitOpsEngine: Flux
-    sops:
-      ageKeyEnvVar: 
     talos:
       controlPlanes: 1
       workers: 3
