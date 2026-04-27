@@ -32,6 +32,11 @@ Cluster Autoscaler (dynamic workers)
 - **KSail coexistence** — `nodeAutoscaling: Enabled` in `ksail.{dev,prod}.yaml`
   prevents `ksail cluster update` from modifying worker counts, avoiding
   conflicts with autoscaler-managed nodes.
+- **Storage architecture** — autoscaler nodes are **compute-only** (no
+  Hetzner volume, no Longhorn storage). Static KSail workers have
+  dedicated Hetzner volumes and serve as Longhorn storage nodes. Pods on
+  autoscaler nodes access Longhorn PVCs via the CSI driver (network).
+  The Hetzner Cluster Autoscaler [does not support volume attachment](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/hetzner/hetzner_node_group.go).
 
 ### How new nodes join
 
@@ -88,24 +93,27 @@ for a packer configuration.
 
 ### 2. Generate Talos worker machine config
 
-Extract a worker machine config compatible with the existing cluster:
+Extract a worker machine config compatible with the existing cluster,
+then **strip it for autoscaler use** (compute-only, no storage volume):
 
 ```bash
 # From a machine with talosctl configured for the cluster:
-talosctl gen config <cluster-name> https://<api-endpoint>:6443 \
-  --output-types worker \
-  --with-examples=false --with-docs=false \
-  --config-patch @talos/cluster/cni.yaml \
-  --config-patch @talos/cluster/rotate-server-certificates.yaml \
-  --config-patch @talos/workers/longhorn.yaml
+talosctl -n <worker-ip> get machineconfig v1alpha1 -o jsonpath='{.spec}' > worker-raw.yaml
 ```
 
-> **Important:** The generated config must use the same cluster CA and
-> bootstrap token as the running cluster. If you're unsure, extract the
-> secrets from the existing cluster first:
-> ```bash
-> talosctl -n <cp-ip> get machineconfig -o yaml
-> ```
+Then modify for autoscaler nodes:
+- Set `machine.install.wipe: true` (critical — snapshot boots need a
+  fresh install to create a writable filesystem)
+- Remove `machine.disks` (autoscaler servers have no `/dev/sdb` volume)
+- Remove `machine.nodeLabels["node.longhorn.io/create-default-disk"]`
+  (compute-only, no Longhorn storage)
+- Keep `machine.kubelet.extraMounts` for `/var/lib/longhorn` (needed
+  for CSI driver access to Longhorn PVCs)
+
+> **Why compute-only?** The Hetzner Cluster Autoscaler doesn't support
+> attaching volumes to new servers. Static KSail workers have dedicated
+> Hetzner volumes and serve as Longhorn storage nodes. Autoscaler nodes
+> run workloads that access storage via the Longhorn CSI driver.
 
 ### 3. Build the cluster-config Secret
 
