@@ -8,6 +8,7 @@ metadata:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 2m
+  timeout: 5m
   chart:
     spec:
       chart: fleet
@@ -41,6 +42,55 @@ spec:
                     labelSelector:
                       matchLabels:
                         app: fleet
+          # The Fleet binary writes ~/.goquery/history on every invocation, but
+          # the chart enables readOnlyRootFilesystem and runs as uid 3333 which
+          # has no /etc/passwd entry. Mount an emptyDir at /home/fleet and run
+          # as the image's actual `fleet` user (uid 100, gid 101) so the
+          # binary can resolve $HOME and write its history file.
+          - target:
+              kind: Job
+              name: fleet-migration
+            patch: |
+              apiVersion: batch/v1
+              kind: Job
+              metadata:
+                name: fleet-migration
+              spec:
+                template:
+                  spec:
+                    volumes:
+                      - name: fleet-home
+                        emptyDir: {}
+                    containers:
+                      - name: fleet-migration
+                        securityContext:
+                          runAsUser: 100
+                          runAsGroup: 101
+                        volumeMounts:
+                          - name: fleet-home
+                            mountPath: /home/fleet
+          - target:
+              kind: Deployment
+              name: fleet
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: fleet
+              spec:
+                template:
+                  spec:
+                    volumes:
+                      - name: fleet-home
+                        emptyDir: {}
+                    containers:
+                      - name: fleet
+                        securityContext:
+                          runAsUser: 100
+                          runAsGroup: 101
+                        volumeMounts:
+                          - name: fleet-home
+                            mountPath: /home/fleet
   # https://github.com/fleetdm/fleet/blob/main/charts/fleet/values.yaml
   values:
     hostName: fleetdm.${domain}
