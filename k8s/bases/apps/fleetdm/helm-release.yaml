@@ -8,14 +8,6 @@ metadata:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 2m
-  timeout: 10m
-  install:
-    remediation:
-      retries: -1
-  upgrade:
-    remediation:
-      retries: -1
-      remediateLastFailure: true
   chart:
     spec:
       chart: fleet
@@ -49,6 +41,25 @@ spec:
                     labelSelector:
                       matchLabels:
                         app: fleet
+              - op: add
+                path: /spec/template/spec/initContainers
+                value:
+                  - name: wait-for-mysql
+                    image: busybox:1.37
+                    command: ['sh', '-c', 'until nc -zw1 fleetdm-mysql 3306; do echo "waiting for mysql"; sleep 2; done']
+                  - name: wait-for-redis
+                    image: busybox:1.37
+                    command: ['sh', '-c', 'until nc -zw1 fleetdm-redis-master 6379; do echo "waiting for redis"; sleep 2; done']
+          - target:
+              kind: Job
+              name: fleet-migration
+            patch: |
+              - op: add
+                path: /spec/template/spec/initContainers
+                value:
+                  - name: wait-for-mysql
+                    image: busybox:1.37
+                    command: ['sh', '-c', 'until nc -zw1 fleetdm-mysql 3306; do echo "waiting for mysql"; sleep 2; done']
   # https://github.com/fleetdm/fleet/blob/main/charts/fleet/values.yaml
   values:
     hostName: fleetdm.${domain}
