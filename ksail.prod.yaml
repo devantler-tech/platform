@@ -45,13 +45,13 @@ spec:
     certManager: Enabled
     metricsServer: Enabled
     policyEngine: Kyverno
+    controlPlanes: 3
+    # Baseline workers — guaranteed minimum even if autoscaler is down.
+    # Longhorn requires dedicated Hetzner Cloud Volumes on static
+    # workers; autoscaler-created nodes are compute-only.
+    # The Cluster Autoscaler manages additional workers dynamically.
+    workers: 3
     talos:
-      controlPlanes: 3
-      # Baseline workers — guaranteed minimum even if autoscaler is down.
-      # Longhorn requires dedicated Hetzner Cloud Volumes on static
-      # workers; autoscaler-created nodes are compute-only.
-      # The Cluster Autoscaler manages additional workers dynamically.
-      workers: 3
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
       version: v1.11.2

@@ -16,9 +16,9 @@ spec:
     cni: Cilium
     csi: Enabled
     gitOpsEngine: Flux
+    controlPlanes: 1
+    workers: 3
     talos:
-      controlPlanes: 1
-      workers: 3
       extraPortMappings:
         - containerPort: 80
           hostPort: 80
