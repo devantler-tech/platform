@@ -145,17 +145,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: ⚙️ Install KSail
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tmpdir="$(mktemp -d)"
-          gh release download v7.8.0 --repo devantler-tech/ksail \
-            --pattern "ksail_*_linux_amd64.tar.gz" \
-            --dir "$tmpdir"
-          tar -xzf "$tmpdir"/ksail_*_linux_amd64.tar.gz -C "$tmpdir"
-          sudo install "$tmpdir/ksail" /usr/local/bin/ksail
-          rm -rf "$tmpdir"
+      - name: ⚙️ Setup KSail
+        uses: devantler-tech/actions/setup-ksail-cli@59d3ffbe1a9437fcc39e2794fa2f221abe878310 # v3.3.0
 
       - name: 🔐 Create SOPS Age key
         env:
