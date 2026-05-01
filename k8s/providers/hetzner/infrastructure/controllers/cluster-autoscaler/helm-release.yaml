@@ -11,7 +11,7 @@ spec:
   chart:
     spec:
       chart: cluster-autoscaler
-      version: 9.46.6
+      version: 9.57.0
       sourceRef:
         kind: HelmRepository
         name: cluster-autoscaler
