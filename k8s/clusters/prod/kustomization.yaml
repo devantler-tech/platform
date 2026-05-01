@@ -16,6 +16,24 @@ patches:
       data:
         cluster_name: prod
         provider: hetzner
+  # Prod has heavier components (Longhorn, etc.) that need more time to
+  # reconcile than the 3m base timeout allows.
+  - patch: |
+      apiVersion: kustomize.toolkit.fluxcd.io/v1
+      kind: Kustomization
+      metadata:
+        name: infrastructure-controllers
+        namespace: flux-system
+      spec:
+        timeout: 15m
+  - patch: |
+      apiVersion: kustomize.toolkit.fluxcd.io/v1
+      kind: Kustomization
+      metadata:
+        name: infrastructure
+        namespace: flux-system
+      spec:
+        timeout: 15m
 
 replacements:
   # Point apps / infrastructure / infrastructure-controllers Flux Kustomizations
