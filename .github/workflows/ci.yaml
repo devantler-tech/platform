@@ -156,6 +156,8 @@ jobs:
           tar -xzf "$tmpdir"/ksail_*_linux_amd64.tar.gz -C "$tmpdir"
           sudo install "$tmpdir/ksail" /usr/local/bin/ksail
           rm -rf "$tmpdir"
+
+      - name: 🔐 Create SOPS Age key
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
         run: |
