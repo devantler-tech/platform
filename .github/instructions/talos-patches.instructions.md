@@ -10,7 +10,7 @@ applyTo:
 
 ```
 talos-local/     # Docker provider (local dev)
-talos/           # Hetzner provider (dev + prod, shared)
+talos/           # Hetzner provider (prod)
   cluster/       # Patches applied to all nodes
   control-planes/ # Patches for control plane nodes only
   workers/       # Patches for worker nodes only
