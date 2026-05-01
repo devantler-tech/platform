@@ -27,7 +27,7 @@ Cluster Autoscaler (dynamic workers, managed by KSail)
   to insufficient resources, and removes underutilized workers after a
   configurable cooldown.
 - **Vertical scaling** — multiple node pools with different server types.
-  The `price` expander picks the cheapest pool that can satisfy the pending
+  The `Price` expander picks the cheapest pool that can satisfy the pending
   pod's resource requests. See
   [cluster-autoscaler FAQ](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md).
 - **KSail integration** — KSail installs the Cluster Autoscaler Helm chart,
