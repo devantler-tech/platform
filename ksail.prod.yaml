@@ -15,10 +15,10 @@ spec:
     provider: Hetzner
     cni: Cilium
     gitOpsEngine: Flux
-    # Delegate worker scaling to the in-cluster Cluster Autoscaler
-    # (Hetzner provider). KSail installs and configures the autoscaler
-    # natively when autoscaler.node.enabled is set. Initial static node
-    # counts still apply on `cluster create`.
+    # KSail manages the Cluster Autoscaler natively when
+    # autoscaler.node.enabled is set. KSail installs, configures, and
+    # reconciles the autoscaler — no Flux manifests needed. Initial
+    # static node counts still apply on `cluster create`.
     autoscaler:
       node:
         enabled: Enabled
