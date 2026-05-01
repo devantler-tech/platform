@@ -10,7 +10,7 @@ spec:
     distributionConfig: talos
     connection:
       context: admin@prod
-      timeout: 15m
+      timeout: 30m
     distribution: Talos
     provider: Hetzner
     cni: Cilium

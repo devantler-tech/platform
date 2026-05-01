@@ -17,7 +17,10 @@ patches:
         cluster_name: prod
         provider: hetzner
   # Prod has heavier components (Longhorn, etc.) that need more time to
-  # reconcile than the 3m base timeout allows.
+  # reconcile than the 3m base timeout allows. kube-prometheus-stack has a
+  # 15m HelmRelease timeout itself; adding margin gives the full chain
+  # (infrastructure-controllers → infrastructure → apps) room to complete
+  # within the ksail connection.timeout (30m).
   - patch: |
       apiVersion: kustomize.toolkit.fluxcd.io/v1
       kind: Kustomization
@@ -25,7 +28,7 @@ patches:
         name: infrastructure-controllers
         namespace: flux-system
       spec:
-        timeout: 15m
+        timeout: 25m
   - patch: |
       apiVersion: kustomize.toolkit.fluxcd.io/v1
       kind: Kustomization
@@ -33,7 +36,7 @@ patches:
         name: infrastructure
         namespace: flux-system
       spec:
-        timeout: 15m
+        timeout: 20m
 
 replacements:
   # Point apps / infrastructure / infrastructure-controllers Flux Kustomizations

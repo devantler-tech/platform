@@ -193,7 +193,7 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
       - name: 🩺 Diagnose Flux on failure
-        if: steps.reconcile.outcome == 'failure'
+        if: failure() && steps.reconcile.outcome == 'failure'
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
