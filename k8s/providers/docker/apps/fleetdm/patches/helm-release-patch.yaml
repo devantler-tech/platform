@@ -4,6 +4,8 @@ metadata:
   name: fleetdm
   namespace: fleetdm
 spec:
+  # Docker CI starts MySQL cold; allow more time than the base 5m.
+  timeout: 15m
   values:
     replicas: 1
     vulnProcessing:
