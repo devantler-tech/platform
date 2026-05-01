@@ -73,10 +73,10 @@ jobs:
           cache: false
 
       - name: ⚙️ Install KSail from source
-        run: go install github.com/devantler-tech/ksail/v7@0fe00a390d72a51610aecfc9f5d73c16fed70316
+        run: go install github.com/devantler-tech/ksail/v7@c87892586d281181f42c96f2feef52e3ca16ec5c
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@0fe00a390d72a51610aecfc9f5d73c16fed70316 # main
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@c87892586d281181f42c96f2feef52e3ca16ec5c # main
         with:
           distribution: Talos
           provider: Docker
@@ -161,7 +161,7 @@ jobs:
           cache: false
 
       - name: ⚙️ Install KSail from source
-        run: go install github.com/devantler-tech/ksail/v7@0fe00a390d72a51610aecfc9f5d73c16fed70316
+        run: go install github.com/devantler-tech/ksail/v7@c87892586d281181f42c96f2feef52e3ca16ec5c
 
       - name: 🔐 Create SOPS Age key
         env:

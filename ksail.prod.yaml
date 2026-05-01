@@ -19,9 +19,6 @@ spec:
     # (Hetzner provider). KSail installs and configures the autoscaler
     # natively when autoscaler.node.enabled is set. Initial static node
     # counts still apply on `cluster create`.
-    # Workaround: nodeAutoscaling set alongside autoscaler.node.enabled
-    # due to ksail#4507 (deprecated field default conflict).
-    nodeAutoscaling: Enabled
     autoscaler:
       node:
         enabled: Enabled
