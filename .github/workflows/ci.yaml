@@ -66,21 +66,12 @@ jobs:
           remove_packages_one_command: true
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
-      - name: ⚙️ Setup Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: stable
-          cache: false
-
-      - name: ⚙️ Install KSail from source
-        run: go install github.com/devantler-tech/ksail/v7@c87892586d281181f42c96f2feef52e3ca16ec5c
-
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@c87892586d281181f42c96f2feef52e3ca16ec5c # main
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@2810ccdf3181648979b053bef3eebace86e3b5f2 # v7.8.0
         with:
           distribution: Talos
           provider: Docker
-          install: "false"
+          ksail-version: "7.8.0"
           init: "false"
           validate: "true"
           sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
@@ -154,16 +145,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: ⚙️ Setup Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: stable
-          cache: false
-
-      - name: ⚙️ Install KSail from source
-        run: go install github.com/devantler-tech/ksail/v7@c87892586d281181f42c96f2feef52e3ca16ec5c
-
-      - name: 🔐 Create SOPS Age key
+      - name: ⚙️ Install KSail
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tmpdir="$(mktemp -d)"
+          gh release download v7.8.0 --repo devantler-tech/ksail \
+            --pattern "ksail_*_linux_amd64.tar.gz" \
+            --dir "$tmpdir"
+          tar -xzf "$tmpdir"/ksail_*_linux_amd64.tar.gz -C "$tmpdir"
+          sudo install "$tmpdir/ksail" /usr/local/bin/ksail
+          rm -rf "$tmpdir"
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
         run: |

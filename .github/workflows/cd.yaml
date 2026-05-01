@@ -25,14 +25,17 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: ⚙️ Setup Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
-        with:
-          go-version: stable
-          cache: false
-
-      - name: ⚙️ Install KSail from source
-        run: go install github.com/devantler-tech/ksail/v7@c87892586d281181f42c96f2feef52e3ca16ec5c
+      - name: ⚙️ Install KSail
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tmpdir="$(mktemp -d)"
+          gh release download v7.8.0 --repo devantler-tech/ksail \
+            --pattern "ksail_*_linux_amd64.tar.gz" \
+            --dir "$tmpdir"
+          tar -xzf "$tmpdir"/ksail_*_linux_amd64.tar.gz -C "$tmpdir"
+          sudo install "$tmpdir/ksail" /usr/local/bin/ksail
+          rm -rf "$tmpdir"
 
       - name: 🔐 Create SOPS Age key
         env:
