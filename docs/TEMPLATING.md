@@ -29,7 +29,7 @@ Only these fields genuinely vary per instance:
 | `spec.provider.hetzner.networkCidr` | n/a | private network CIDR for the cluster |
 | `spec.cluster.autoscaler.node.pools` | n/a | node pool definitions (name, serverType, location, min, max) |
 | `spec.cluster.autoscaler.node.maxNodesTotal` | n/a | hard ceiling on total cluster nodes |
-| `spec.workload.kustomizationFile` | `clusters/local` | `clusters/<env>` |
+| `spec.workload.kustomizationFile` | `clusters/local` | `clusters/prod` |
 
 Everything else (distribution, provider, CNI, GitOps engine, timeouts,
 `certManager`/`metricsServer`/`policyEngine`, Talos control-plane count,
