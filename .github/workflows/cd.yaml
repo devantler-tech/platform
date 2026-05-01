@@ -25,8 +25,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@19f1f2e8c01aeafe037af8ca26d8c2dab1dee2a4 # v3.2.3
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: ⚙️ Install KSail from source
+        run: go install github.com/devantler-tech/ksail/v7@0fe00a390d72a51610aecfc9f5d73c16fed70316
 
       - name: 🔐 Create SOPS Age key
         env:

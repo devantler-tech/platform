@@ -66,11 +66,21 @@ jobs:
           remove_packages_one_command: true
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: ⚙️ Install KSail from source
+        run: go install github.com/devantler-tech/ksail/v7@0fe00a390d72a51610aecfc9f5d73c16fed70316
+
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@79e9602b30aa4ab82d472c2b3f42e78c4fc2c96c # v7.5.0
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@0fe00a390d72a51610aecfc9f5d73c16fed70316 # main
         with:
           distribution: Talos
           provider: Docker
+          install: "false"
           init: "false"
           validate: "true"
           sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
@@ -144,8 +154,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@19f1f2e8c01aeafe037af8ca26d8c2dab1dee2a4 # v3.2.3
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: ⚙️ Install KSail from source
+        run: go install github.com/devantler-tech/ksail/v7@0fe00a390d72a51610aecfc9f5d73c16fed70316
 
       - name: 🔐 Create SOPS Age key
         env:

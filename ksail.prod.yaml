@@ -16,10 +16,26 @@ spec:
     cni: Cilium
     gitOpsEngine: Flux
     # Delegate worker scaling to the in-cluster Cluster Autoscaler
-    # (Hetzner provider). KSail skips controlPlanes/workers diffs on
-    # `cluster update` when this is Enabled. Initial counts still apply
-    # on `cluster create`. Requires devantler-tech/ksail#4365.
-    nodeAutoscaling: Enabled
+    # (Hetzner provider). KSail installs and configures the autoscaler
+    # natively when autoscaler.node.enabled is set. Initial static node
+    # counts still apply on `cluster create`.
+    autoscaler:
+      node:
+        enabled: Enabled
+        expander: Price
+        maxNodesTotal: 10
+        scaleDownUnneededTime: "10m"
+        pools:
+          - name: autoscale-small
+            serverType: cx23
+            location: fsn1
+            min: 0
+            max: 1
+          - name: autoscale-medium
+            serverType: cx33
+            location: fsn1
+            min: 0
+            max: 1
     # These components are installed by ksail. There is a known race on
     # Hetzner clusters between ksail's metrics-server install and Flux's
     # kubelet-serving-cert-approver install (required because Talos
