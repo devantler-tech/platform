@@ -20,7 +20,7 @@ Cluster Autoscaler (dynamic workers, managed by KSail)
 ├── Pool: autoscale-small  → 0-1 × CX23 (2 vCPU, 4 GB)
 ├── Pool: autoscale-medium → 0-1 × CX33 (4 vCPU, 8 GB)
 ├── max-nodes-total: 10 (3 CPs + 3 workers + headroom for autoscaler nodes)
-└── Expander: price
+└── Expander: Price
 ```
 
 - **Horizontal scaling** — autoscaler adds workers when pods are Pending due
