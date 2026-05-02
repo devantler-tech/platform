@@ -21,7 +21,7 @@ spec:
     # static node counts still apply on `cluster create`.
     autoscaler:
       node:
-        enabled: Enabled
+        enabled: true
         expander: Price
         maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
