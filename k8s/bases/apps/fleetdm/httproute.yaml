@@ -7,7 +7,7 @@ metadata:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: Fleet
     gethomepage.dev/description: Open-source device management (MDM + osquery).
-    gethomepage.dev/group: Management
+    gethomepage.dev/group: Device Management
     gethomepage.dev/icon: si-coderwall-#40B5A4
 spec:
   parentRefs:

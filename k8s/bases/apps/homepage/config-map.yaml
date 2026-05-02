@@ -18,6 +18,10 @@ data:
     layout:
       Kubernetes:
         icon: si-talos-#FF7300
+      Device Management:
+        icon: mdi-cellphone-cog
+      Diagnostics:
+        icon: mdi-stethoscope
       Cloud:
         icon: si-hetzner
       Network:
@@ -68,10 +72,6 @@ data:
             href: https://unifi.ui.com
             description: Central hub for managing on-prem UniFi network infrastructure.
     - Analytics:
-        - Disqus:
-            icon: si-disqus-#2E9FFF
-            href: https://disqus.com
-            description: Platform to track and moderate embedded comments on my sites.
         - Google Analytics:
             icon: google-analytics
             href: https://analytics.google.com
@@ -81,16 +81,12 @@ data:
             icon: grafana
             href: https://devantler.grafana.net
             description: Central hub for monitoring my infrastructure.
-        - BetterStack:
-            icon: https://cdn.brandfetch.io/idzOqqi9J1/w/400/h/400/theme/dark/icon.jpeg
-            href: https://telemetry.betterstack.com/
-            description: Central hub for monitoring my infrastructure.
   bookmarks.yaml: |
     - Personal:
         - Personal Site:
             - icon: github-light
               href: https://devantler.tech
-    - GitHub Organization:
+    - GitHub:
         - GitHub:
             - icon: github-light
               href: https://github.com
@@ -109,7 +105,7 @@ data:
         - Projects:
             - icon: si-github-#181717
               href: https://github.com/orgs/devantler-tech/projects/5
-    - Developer Platforms:
+    - Developer Tools:
         - Codecov:
             - icon: si-codecov-#F01F7A
               href: https://app.codecov.io
@@ -119,6 +115,12 @@ data:
         - Renovate:
             - icon: si-renovatebot-#007fa0
               href: https://developer.mend.io
+        - skills.sh:
+            - icon: mdi-certificate-outline
+              href: https://skills.sh
+        - lllm-stats.com:
+            - icon: mdi-chart-bar
+              href: https://lllm-stats.com
     - Kubernetes:
         - ArtifactHUB:
             - icon: si-artifacthub-#417598

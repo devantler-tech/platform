@@ -3,6 +3,12 @@ kind: HTTPRoute
 metadata:
   name: whoami
   namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Whoami
+    gethomepage.dev/description: HTTP echo service for network diagnostics.
+    gethomepage.dev/group: Diagnostics
+    gethomepage.dev/icon: mdi-network-check
 spec:
   parentRefs:
     - name: platform
