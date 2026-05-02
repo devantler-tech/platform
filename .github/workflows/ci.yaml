@@ -237,7 +237,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/require-checks-in-pr@19f1f2e8c01aeafe037af8ca26d8c2dab1dee2a4 # v3.2.3
+        uses: devantler-tech/actions/require-checks-in-pr@59d3ffbe1a9437fcc39e2794fa2f221abe878310 # v3.3.0
         with:
           job-results: >-
             ${{ needs.changes.result }}
