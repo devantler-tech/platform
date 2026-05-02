@@ -66,4 +66,19 @@ data:
   # CSI snapshotter crash-loops trying to list them. Disable until CRDs
   # are added.
   longhorn_csi_snapshotter_replicas: "0"
+  # --- Non-essential services scaled to 0 ---
+  # Origin CA issuer requests 1 CPU (50% of worker allocatable) for a simple
+  # cert controller. Disabled until we actually need Cloudflare Origin certs.
+  origin_ca_issuer_replicas: "0"
+  # VPA recommender/updater are nice-to-have but consume ~200Mi + 200m CPU.
+  # Keep admission controller (webhook) at 1 but disable the non-critical workers.
+  vpa_recommender_replicas: "0"
+  vpa_updater_replicas: "0"
+  # Kyverno sub-controllers: background policy evaluation, report generation,
+  # and cleanup are non-critical. Only admission controller is needed for webhook.
+  kyverno_background_replicas: "0"
+  kyverno_reports_replicas: "0"
+  kyverno_cleanup_replicas: "0"
+  # Alertmanager: not sending alerts to any useful destination yet.
+  alertmanager_replicas: "0"
 
