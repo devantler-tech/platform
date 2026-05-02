@@ -3,7 +3,7 @@
 The single source of truth for "how do I get the platform back" — covering
 single-node loss, full-cluster loss, and credential rotation. Designed so
 that with this repo + the off-cluster artifacts listed below + ~30 minutes
-of manual control-plane work, dev or prod can be reconstructed to a state
+of manual control-plane work, prod can be reconstructed to a state
 indistinguishable from the day before the incident.
 
 > **RPO target:** 24 h (daily snapshots).
@@ -56,7 +56,7 @@ kubectl -n <ns> rollout restart deployment/<name>
 
 ## Scenario 2 — Planned rolling Talos / Kubernetes upgrade
 
-Bump the Talos ISO ID in `ksail.{dev,prod}.yaml` (or the Kubernetes version
+Bump the Talos ISO ID in `ksail.prod.yaml` (or the Kubernetes version
 in the ksail config) and re-run `ksail cluster update`. ksail cordons and
 replaces nodes one at a time; PDBs hold the line.
 
@@ -277,10 +277,9 @@ kubectl -n kube-system get cm cluster-autoscaler-status -o yaml
 ```
 
 Common causes:
-- `autoscaler_talos_image` set to `PLACEHOLDER` — create the Talos snapshot
-  and update the variable (see [docs/node-autoscaling.md](./node-autoscaling.md))
-- Pool `maxSize` reached — increase `autoscaler_*_pool_max` variables
-- `HCLOUD_TOKEN` expired — rotate in SOPS secrets
+- Pool `maxSize` reached — increase `max` under the relevant pool in `ksail.prod.yaml`, then run
+  `ksail --config ksail.prod.yaml cluster update`
+- `HCLOUD_TOKEN` expired — rotate in SOPS secrets and GitHub environment secrets
 
 ### Orphaned autoscaler nodes after cluster delete
 
@@ -301,7 +300,8 @@ hcloud server list
 
 # If the server exists but node doesn't appear in kubectl:
 # The worker machine config may be invalid or stale.
-# Regenerate — see docs/node-autoscaling.md "Generate Talos worker machine config"
+# Re-run cluster update to regenerate worker config and re-apply:
+ksail --config ksail.prod.yaml cluster update
 ```
 
 ---

@@ -10,7 +10,7 @@ applyTo:
 
 ```
 talos-local/     # Docker provider (local dev)
-talos/           # Hetzner provider (dev + prod, shared)
+talos/           # Hetzner provider (prod)
   cluster/       # Patches applied to all nodes
   control-planes/ # Patches for control plane nodes only
   workers/       # Patches for worker nodes only
@@ -25,7 +25,7 @@ KSail expects this `cluster/`, `control-planes/`, `workers/` split.
 
 ## Provider Differences
 
-| | Docker (local) | Hetzner (dev/prod) |
+| | Docker (local) | Hetzner (prod) |
 |---|---|---|
 | Config dir | `talos-local/` | `talos/` |
 | CNI | Disabled, installed by KSail | Disabled, installed by KSail |

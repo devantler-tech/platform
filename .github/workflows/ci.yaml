@@ -34,7 +34,7 @@ jobs:
             k8s:
               - 'k8s/**'
               - 'ksail.yaml'
-              - 'ksail.dev.yaml'
+              - 'ksail.prod.yaml'
               - '.sops.yaml'
               - 'talos-local/**'
               - 'talos/**'
@@ -67,10 +67,11 @@ jobs:
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@66ab34c2b160e4a578cff8eb4983ec135c9605d0 # v7.7.0
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@2810ccdf3181648979b053bef3eebace86e3b5f2 # v7.8.0
         with:
           distribution: Talos
           provider: Docker
+          ksail-version: "7.8.0"
           init: "false"
           validate: "true"
           sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
@@ -126,14 +127,14 @@ jobs:
         run: ksail cluster delete || echo "⚠️ Cluster may not have been created"
 
 
-  deploy-dev:
-    name: 🚀 Deploy to Dev
+  deploy-prod:
+    name: 🚀 Deploy to Prod
     needs: [changes]
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
-    environment: dev
+    environment: prod
     concurrency:
-      group: deploy-dev
+      group: deploy-prod
       cancel-in-progress: false
     permissions:
       contents: read # checkout repository
@@ -145,7 +146,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@19f1f2e8c01aeafe037af8ca26d8c2dab1dee2a4 # v3.2.3
+        uses: devantler-tech/actions/setup-ksail-cli@59d3ffbe1a9437fcc39e2794fa2f221abe878310 # v3.3.0
 
       - name: 🔐 Create SOPS Age key
         env:
@@ -171,13 +172,13 @@ jobs:
           chmod 600 ~/.kube/config
 
       - name: 🔄 Update cluster
-        run: ksail --config ksail.dev.yaml cluster update
+        run: ksail --config ksail.prod.yaml cluster update
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
       - name: 📦 Push manifests to GHCR
-        run: ksail --config ksail.dev.yaml workload push
+        run: ksail --config ksail.prod.yaml workload push
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -185,14 +186,14 @@ jobs:
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
-        run: ksail --config ksail.dev.yaml workload reconcile
+        run: ksail --config ksail.prod.yaml workload reconcile
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
       - name: 🩺 Diagnose Flux on failure
-        if: steps.reconcile.outcome == 'failure'
+        if: failure() && steps.reconcile.outcome == 'failure'
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
@@ -231,7 +232,7 @@ jobs:
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [changes, system-test, deploy-dev]
+    needs: [changes, system-test, deploy-prod]
     if: always()
     permissions: {}
     steps:
@@ -241,4 +242,4 @@ jobs:
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.system-test.result }}
-            ${{ needs.deploy-dev.result }}
+            ${{ needs.deploy-prod.result }}

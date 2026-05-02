@@ -16,6 +16,17 @@ patches:
       data:
         cluster_name: local
         provider: docker
+  # Docker CI has slower startup for heavy apps (e.g. FleetDM with MySQL).
+  # Increase the apps Flux Kustomization health-check timeout so fleet-migration
+  # has enough time to complete even on a cold image cache.
+  - patch: |
+      apiVersion: kustomize.toolkit.fluxcd.io/v1
+      kind: Kustomization
+      metadata:
+        name: apps
+        namespace: flux-system
+      spec:
+        timeout: 15m
 
 replacements:
   # Point apps / infrastructure / infrastructure-controllers Flux Kustomizations

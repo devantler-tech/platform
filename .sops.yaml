@@ -3,10 +3,6 @@ creation_rules:
     encrypted_regex: ^(data|stringData)$
     age: |-
       age14skmde00w0ps6u8asm4rdqwpktr5m5pq84070yzwvjjmcyfnl4ushfn5uq
-  - path_regex: ^k8s\/clusters\/dev\/.+\.enc\.ya?ml$
-    encrypted_regex: ^(data|stringData)$
-    age: |-
-      age188ez3ur89qj7pmnyyqhcp9nmxp7lvsa72plph0frkfh9tt7n5guqs0vz6c
   - path_regex: ^k8s\/clusters\/prod\/.+\.enc\.ya?ml$
     encrypted_regex: ^(data|stringData)$
     age: |-
@@ -15,5 +11,4 @@ creation_rules:
     encrypted_regex: ^(data|stringData)$
     age: |-
       age14skmde00w0ps6u8asm4rdqwpktr5m5pq84070yzwvjjmcyfnl4ushfn5uq,
-      age188ez3ur89qj7pmnyyqhcp9nmxp7lvsa72plph0frkfh9tt7n5guqs0vz6c,
       age1rk6fs67kly3h4zux5za429z3grjtvs8vcunav4sa28pxk738najsk8wgs6

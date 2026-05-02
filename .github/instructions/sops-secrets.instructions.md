@@ -8,7 +8,6 @@ applyTo: "**/*.enc.yaml"
 
 Each environment has its own Age public key. Path-based rules auto-select the key:
 - `k8s/clusters/local/*.enc.yaml` → local Age key
-- `k8s/clusters/dev/*.enc.yaml` → dev Age key
 - `k8s/clusters/prod/*.enc.yaml` → prod Age key
 
 Only `data` and `stringData` fields are encrypted (`encrypted_regex: ^(data|stringData)$`).

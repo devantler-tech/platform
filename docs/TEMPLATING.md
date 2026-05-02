@@ -15,19 +15,21 @@ supported path.
 
 ### 1. ksail configs — one per environment
 
-Files: `ksail.yaml` (local), `ksail.dev.yaml`, `ksail.prod.yaml`.
+Files: `ksail.yaml` (local), `ksail.prod.yaml`.
 
 Only these fields genuinely vary per instance:
 
-| Field | local | dev / prod |
+| Field | local | prod |
 |---|---|---|
-| `metadata.name` | cluster short name (e.g. `local`) | `dev` / `prod` |
+| `metadata.name` | cluster short name (e.g. `local`) | `prod` |
 | `spec.cluster.connection.context` | kubeconfig context | kubeconfig context |
 | `spec.cluster.localRegistry.registry` | n/a | OCI registry URL for the manifest artefact |
 | `spec.provider.hetzner.location` | n/a | primary Hetzner location (`fsn1`, `nbg1`, `hel1`, …) |
 | `spec.provider.hetzner.{controlPlane,worker}ServerType` | n/a | Hetzner server types (default `cx23`) |
 | `spec.provider.hetzner.networkCidr` | n/a | private network CIDR for the cluster |
-| `spec.workload.kustomizationFile` | `clusters/local` | `clusters/<env>` |
+| `spec.cluster.autoscaler.node.pools` | n/a | node pool definitions (name, serverType, location, min, max) |
+| `spec.cluster.autoscaler.node.maxNodesTotal` | n/a | hard ceiling on total cluster nodes |
+| `spec.workload.kustomizationFile` | `clusters/local` | `clusters/prod` |
 
 Everything else (distribution, provider, CNI, GitOps engine, timeouts,
 `certManager`/`metricsServer`/`policyEngine`, Talos control-plane count,
@@ -36,7 +38,7 @@ Everything else (distribution, provider, CNI, GitOps engine, timeouts,
 ### 2. Talos machine-config directories
 
 - `talos-local/` — Docker-provider patches.
-- `talos/` — Hetzner-provider patches. Shared between dev and prod.
+- `talos/` — Hetzner-provider patches. Used by prod.
   Split into `cluster/`, `control-planes/`, and `workers/` as ksail expects.
 
 Edit the YAML patches inside if your DNS, OIDC issuer, or networking differs.
