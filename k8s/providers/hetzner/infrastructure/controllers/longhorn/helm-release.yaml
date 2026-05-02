@@ -32,7 +32,7 @@ spec:
       defaultDataPath: /var/lib/longhorn
       # Match the number of workers so every volume is replicated across
       # all available nodes.
-      defaultReplicaCount: ${longhorn_replica_count:=2}
+      defaultReplicaCount: ${longhorn_replica_count:=3}
       # Reclaim space from deleted volumes automatically.
       autoDeletePodWhenVolumeDetachedUnexpectedly: true
       # Only create default disks on nodes explicitly labeled for storage.
@@ -46,7 +46,7 @@ spec:
     persistence:
       # Longhorn is the default StorageClass (replaces hcloud for new PVCs).
       defaultClass: true
-      defaultClassReplicaCount: ${longhorn_replica_count:=2}
+      defaultClassReplicaCount: ${longhorn_replica_count:=3}
       # RWX support via Longhorn's built-in NFS server.
       defaultFsType: ext4
       reclaimPolicy: Delete

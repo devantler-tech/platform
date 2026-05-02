@@ -57,10 +57,10 @@ data:
   hcloud_ccm_replicas: "1"
   hcloud_csi_controller_replicas: "1"
   # --- Longhorn distributed storage ---
-  # Only 2 worker nodes carry Longhorn disks (createDefaultDiskOnLabeledNodesOnly),
-  # so replica count must not exceed 2. Previously 3, which left all volumes
-  # permanently degraded and wasted resources scheduling impossible replicas.
-  longhorn_replica_count: "2"
+  # All 3 static workers carry Longhorn disks (labeled with
+  # node.longhorn.io/create-default-disk=true). Replica count matches
+  # worker count so every volume is fully replicated across all nodes.
+  longhorn_replica_count: "3"
   # VolumeSnapshot CRDs (snapshot.storage.k8s.io) are not installed; the
   # CSI snapshotter crash-loops trying to list them. Disable until CRDs
   # are added.
@@ -69,15 +69,17 @@ data:
   # Origin CA issuer requests 1 CPU (50% of worker allocatable) for a simple
   # cert controller. Disabled until we actually need Cloudflare Origin certs.
   origin_ca_issuer_replicas: "0"
-  # VPA recommender/updater are nice-to-have but consume ~200Mi + 200m CPU.
-  # Keep admission controller (webhook) at 1 but disable the non-critical workers.
-  vpa_recommender_replicas: "0"
+  # VPA recommender computes resource recommendations; admission controller
+  # applies them at pod start. Updater (pod eviction) is disabled to avoid
+  # disruption — recommendations are applied on next pod restart instead.
+  vpa_recommender_replicas: "1"
   vpa_updater_replicas: "0"
-  # Kyverno sub-controllers: background policy evaluation, report generation,
-  # and cleanup are non-critical. Only admission controller is needed for webhook.
-  kyverno_background_replicas: "0"
+  # Kyverno background controller is required for generate rules (auto-vpa
+  # ClusterPolicy). Reports and cleanup are non-critical.
+  kyverno_background_replicas: "1"
   kyverno_reports_replicas: "0"
   kyverno_cleanup_replicas: "0"
-  # Alertmanager: not sending alerts to any useful destination yet.
-  alertmanager_replicas: "0"
+  # Alertmanager routes alerts from Prometheus rules. Required for
+  # production observability even without external notification channels.
+  alertmanager_replicas: "1"
 
