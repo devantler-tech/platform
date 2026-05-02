@@ -10,7 +10,7 @@ spec:
     distributionConfig: talos-local
     connection:
       context: admin@local
-      timeout: 25m
+      timeout: 40m
     distribution: Talos
     provider: Docker
     cni: Cilium
