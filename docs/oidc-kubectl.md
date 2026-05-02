@@ -35,7 +35,7 @@ kubectl config set-credentials oidc-local \
   --exec-arg=--oidc-extra-scope=email \
   --exec-arg=--oidc-extra-scope=profile \
   --exec-arg=--oidc-extra-scope=groups \
-  --exec-arg=--certificate-authority-data=$(cat /path/to/mkcert-ca.pem | base64 | tr -d '\n')
+  --exec-arg=--certificate-authority-data=$(cat "$(mkcert -CAROOT)/rootCA.pem" | base64 | tr -d '\n')
 ```
 
 > **Note:** The `--certificate-authority-data` flag is only needed for

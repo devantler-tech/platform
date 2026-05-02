@@ -7,12 +7,12 @@
 # If the DNS record is switched to DNS-only (grey-cloud), add the
 # Cloudflare Origin ECC CA root cert via machine.files and set oidc-ca-file.
 #
-# NOTE: This file lives in the shared talos/ directory used by both
-# ksail.dev.yaml and ksail.prod.yaml. The issuer URL below targets
-# production. To enable OIDC on the dev cluster, create a separate
-# talos-dev/ directory with a dev-specific oidc.yaml (issuer URL:
-# https://dex.dev.platform.devantler.tech) and update ksail.dev.yaml
-# to use distributionConfig: talos-dev.
+# NOTE: This file lives in the talos/ directory used by ksail.prod.yaml.
+# The issuer URL below targets production. If a dev environment is added
+# in the future (e.g. ksail.dev.yaml), create a separate talos-dev/
+# directory with a dev-specific oidc.yaml (issuer URL:
+# https://dex.dev.platform.devantler.tech) and point the dev config's
+# distributionConfig to talos-dev.
 cluster:
   apiServer:
     extraArgs:
