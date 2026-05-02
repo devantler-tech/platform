@@ -12,5 +12,6 @@ data:
   # Velero / CNPG namespace themselves with per-env prefixes — set in
   # each clusters/<env>/variables-cluster-config-map.
   r2_bucket: devantler-platform-backups
+  cloudflare_zone: devantler.tech
   r2_prefix_velero: velero
   r2_prefix_cnpg: cnpg
