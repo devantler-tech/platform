@@ -39,6 +39,9 @@ spec:
       # This prevents control plane nodes (which lack dedicated volumes)
       # from hosting replicas and running out of memory.
       createDefaultDiskOnLabeledNodesOnly: true
+      # Restrict Longhorn system-managed pods (instance-managers, etc.)
+      # to storage nodes. Prevents ~100Mi overhead per non-storage node.
+      systemManagedComponentsNodeSelector: "node.longhorn.io/create-default-disk:true"
 
     persistence:
       # Longhorn is the default StorageClass (replaces hcloud for new PVCs).
