@@ -1,0 +1,41 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: external-dns
+  namespace: external-dns
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 2m
+  chart:
+    spec:
+      chart: external-dns
+      version: 1.20.0
+      sourceRef:
+        kind: HelmRepository
+        name: external-dns
+  # https://github.com/kubernetes-sigs/external-dns/blob/master/charts/external-dns/values.yaml
+  values:
+    provider:
+      name: cloudflare
+    sources:
+      - gateway-httproute
+    policy: sync
+    registry: txt
+    txtOwnerId: "${domain}"
+    txtPrefix: "_externaldns."
+    domainFilters:
+      - "${cloudflare_zone}"
+    extraArgs:
+      - --cloudflare-proxied
+      - --exclude-target-net=10.0.0.0/8
+    env:
+      - name: CF_API_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: external-dns-cloudflare
+            key: api-token
+    deploymentStrategy:
+      type: Recreate
+    serviceMonitor:
+      enabled: false

@@ -45,6 +45,20 @@ To tear down:
 ksail cluster delete
 ```
 
+### Validating Changes
+
+Before pushing, validate manifests with schema-aware checks and Flux variable substitution:
+
+```bash
+# Validate local cluster manifests (default)
+ksail workload validate
+
+# Validate prod cluster manifests
+ksail --config ksail.prod.yaml workload validate
+```
+
+This is faster than a full cluster test and catches YAML errors, missing fields, and broken kustomize overlays.
+
 ## Clusters
 
 > [!TIP]

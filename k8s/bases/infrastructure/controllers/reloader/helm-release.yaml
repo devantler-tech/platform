@@ -8,6 +8,13 @@ metadata:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 2m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
   chart:
     spec:
       chart: reloader

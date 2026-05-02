@@ -10,6 +10,13 @@ metadata:
 spec:
   interval: 2m
   timeout: 10m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
   chart:
     spec:
       chart: dex
@@ -53,6 +60,13 @@ spec:
           redirectURIs:
             - "https://oauth2-proxy.${domain}/oauth2/callback"
             - "https://headlamp.${domain}/oidc-callback"
+          trustedPeers:
+            - kubectl
+        - name: kubectl
+          id: kubectl
+          public: true
+          redirectURIs:
+            - "http://localhost:8000"
         - name: Flux Web
           id: flux-web
           secret: ${flux_web_client_secret}

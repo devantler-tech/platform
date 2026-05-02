@@ -16,6 +16,13 @@ spec:
         kind: HelmRepository
         name: hcloud
   interval: 10m0s
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
   # https://github.com/hetznercloud/csi-driver/blob/main/chart/values.yaml
   values:
     global:
