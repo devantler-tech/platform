@@ -6,4 +6,5 @@ resources:
   - hcloud-ccm/
   - hcloud-csi/
   - kubelet-serving-cert-approver/
+  - longhorn/
   - origin-ca-issuer/

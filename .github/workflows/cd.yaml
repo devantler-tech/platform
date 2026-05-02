@@ -26,7 +26,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@1f66c91d45d374ceac9fe830a783444ebc9be958 # v3.2.0
+        uses: devantler-tech/actions/setup-ksail-cli@59d3ffbe1a9437fcc39e2794fa2f221abe878310 # v3.3.0
 
       - name: 🔐 Create SOPS Age key
         env:
@@ -37,13 +37,22 @@ jobs:
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
 
-      - name: 🔄 Create or update cluster
+      - name: 🔑 Restore kubeconfig
+        # ksail cluster update needs a valid kubeconfig to detect the current
+        # cluster state. Without it, the component detector returns defaults and
+        # triggers spurious changes that all fail. The KUBE_CONFIG secret must be
+        # kept up-to-date from the homelab after any cluster recreation.
+        # See devantler-tech/ksail#4369 for the upstream design context.
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
         run: |
-          if ksail --config ksail.prod.yaml cluster info > /dev/null 2>&1; then
-            ksail --config ksail.prod.yaml cluster update
-          else
-            ksail --config ksail.prod.yaml cluster create
-          fi
+          mkdir -p ~/.kube
+          umask 077
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🔄 Update cluster
+        run: ksail --config ksail.prod.yaml cluster update
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
@@ -57,7 +66,7 @@ jobs:
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
-        run: ksail --config ksail.prod.yaml workload reconcile --timeout 30m
+        run: ksail --config ksail.prod.yaml workload reconcile
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}

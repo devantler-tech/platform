@@ -3,7 +3,7 @@
 The single source of truth for "how do I get the platform back" — covering
 single-node loss, full-cluster loss, and credential rotation. Designed so
 that with this repo + the off-cluster artifacts listed below + ~30 minutes
-of manual control-plane work, dev or prod can be reconstructed to a state
+of manual control-plane work, prod can be reconstructed to a state
 indistinguishable from the day before the incident.
 
 > **RPO target:** 24 h (daily snapshots).
@@ -56,7 +56,7 @@ kubectl -n <ns> rollout restart deployment/<name>
 
 ## Scenario 2 — Planned rolling Talos / Kubernetes upgrade
 
-Bump the Talos ISO ID in `ksail.{dev,prod}.yaml` (or the Kubernetes version
+Bump the Talos ISO ID in `ksail.prod.yaml` (or the Kubernetes version
 in the ksail config) and re-run `ksail cluster update`. ksail cordons and
 replaces nodes one at a time; PDBs hold the line.
 
@@ -261,7 +261,53 @@ MinIO so the prod code path is regression-tested.
 
 ---
 
+## Scenario 8 — Cluster Autoscaler issues
+
+### Autoscaler not scaling up
+
+```bash
+# Check for pending pods
+kubectl get pods -A --field-selector=status.phase=Pending
+
+# Inspect autoscaler logs
+kubectl -n kube-system logs -l app.kubernetes.io/name=cluster-autoscaler --tail=200
+
+# Check status ConfigMap
+kubectl -n kube-system get cm cluster-autoscaler-status -o yaml
+```
+
+Common causes:
+- Pool `maxSize` reached — increase `max` under the relevant pool in `ksail.prod.yaml`, then run
+  `ksail --config ksail.prod.yaml cluster update`
+- `HCLOUD_TOKEN` expired — rotate in SOPS secrets and GitHub environment secrets
+
+### Orphaned autoscaler nodes after cluster delete
+
+`ksail cluster delete` may not remove servers created by the Cluster
+Autoscaler. Clean up manually:
+
+```bash
+hcloud server list --selector cluster.autoscaler.nodeGroupLabel
+# Delete each orphaned server
+hcloud server delete <server-id>
+```
+
+### Autoscaler node not joining cluster
+
+```bash
+# Check if the server was created in Hetzner
+hcloud server list
+
+# If the server exists but node doesn't appear in kubectl:
+# The worker machine config may be invalid or stale.
+# Re-run cluster update to regenerate worker config and re-apply:
+ksail --config ksail.prod.yaml cluster update
+```
+
+---
+
 ## Related documents
 
+- [Node autoscaling](./node-autoscaling.md) — architecture, prerequisites, and troubleshooting
 - [Velero + CNPG → R2](./velero-cnpg.md) — application/PV backups
 - [Alerting](./alerting.md) — automated detection of backup failures

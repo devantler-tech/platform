@@ -1,0 +1,22 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: fleetdm
+  namespace: fleetdm
+spec:
+  # Hetzner cloud volumes take longer to attach than local storage.
+  timeout: 15m
+  values:
+    # Bitnami MySQL in replication mode names the primary service
+    # "fleetdm-mysql-primary" instead of "fleetdm-mysql".
+    database:
+      address: fleetdm-mysql-primary.fleetdm:3306
+    # Hetzner rootfs (~36 GiB) is too small for Longhorn to host 20 Gi
+    # MySQL replicas. Use hcloud-csi block storage for MySQL PVCs.
+    mysql:
+      primary:
+        persistence:
+          storageClass: hcloud
+      secondary:
+        persistence:
+          storageClass: hcloud

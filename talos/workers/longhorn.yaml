@@ -1,0 +1,20 @@
+# Longhorn on Talos requires kubelet extra mounts so the CSI driver can
+# access the host data directory.  Longhorn stores replicas under
+# /var/lib/longhorn on the root filesystem.
+#
+# NOTE: Do NOT use machine.disks to partition /dev/sdb for Longhorn on
+# Hetzner — hcloud-csi dynamically attaches Cloud Volumes at /dev/sdb,
+# /dev/sdc, etc.  Partitioning /dev/sdb with Talos would destroy those
+# volumes and break any PVC backed by hcloud-csi.
+machine:
+  nodeLabels:
+    node.longhorn.io/create-default-disk: "true"
+  kubelet:
+    extraMounts:
+      - destination: /var/lib/longhorn
+        type: bind
+        source: /var/lib/longhorn
+        options:
+          - bind
+          - rshared
+          - rw

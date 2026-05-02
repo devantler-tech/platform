@@ -10,7 +10,7 @@ data:
   issuer_group: cert-manager.k8s.cloudflare.com
   issuer_kind: ClusterOriginIssuer
   issuer_name: cloudflare-origin
-  # Per-env prefixes inside the shared R2 bucket so dev/prod don't collide.
+  # Per-env prefixes inside the shared R2 bucket.
   r2_prefix_velero: velero/prod
   r2_prefix_cnpg: cnpg/prod
   # --- HA replica overrides for the 3× CX23 prod cluster ---
@@ -35,4 +35,6 @@ data:
   hetzner_lb_type: "lb11"
   # --- Hetzner Cloud Network ---
   hcloud_network: "prod-network"
+  # --- Longhorn distributed storage ---
+  longhorn_replica_count: "3"
 

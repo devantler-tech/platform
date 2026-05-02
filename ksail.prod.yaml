@@ -10,11 +10,32 @@ spec:
     distributionConfig: talos
     connection:
       context: admin@prod
-      timeout: 10m
+      timeout: 30m
     distribution: Talos
     provider: Hetzner
     cni: Cilium
     gitOpsEngine: Flux
+    # KSail manages the Cluster Autoscaler natively when
+    # autoscaler.node.enabled is set. KSail installs, configures, and
+    # reconciles the autoscaler — no Flux manifests needed. Initial
+    # static node counts still apply on `cluster create`.
+    autoscaler:
+      node:
+        enabled: Enabled
+        expander: Price
+        maxNodesTotal: 10
+        scaleDownUnneededTime: "10m"
+        pools:
+          - name: autoscale-small
+            serverType: cx23
+            location: fsn1
+            min: 0
+            max: 1
+          - name: autoscale-medium
+            serverType: cx33
+            location: fsn1
+            min: 0
+            max: 1
     # These components are installed by ksail. There is a known race on
     # Hetzner clusters between ksail's metrics-server install and Flux's
     # kubelet-serving-cert-approver install (required because Talos
@@ -24,9 +45,13 @@ spec:
     certManager: Enabled
     metricsServer: Enabled
     policyEngine: Kyverno
+    controlPlanes: 3
+    # Baseline workers — guaranteed minimum even if autoscaler is down.
+    # Longhorn requires dedicated Hetzner Cloud Volumes on static
+    # workers; autoscaler-created nodes are compute-only.
+    # The Cluster Autoscaler manages additional workers dynamically.
+    workers: 3
     talos:
-      controlPlanes: 3
-      workers: 2
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
       version: v1.11.2

@@ -22,8 +22,8 @@ allowing low-level access to OS-specific features through osquery.
     (`minAvailable: 1`), pod anti-affinity (chart default), and
     topology spread across nodes;
   - MySQL: Bitnami subchart in `replication` mode (1 primary + 2
-    secondaries, dev/prod) — `standalone` (local);
-  - Redis: Bitnami subchart in `replication` mode (2 replicas, dev/prod)
+    secondaries, prod) — `standalone` (local);
+  - Redis: Bitnami subchart in `replication` mode (2 replicas, prod)
     — `standalone` (local).
 - **Vulnerability processing**: runs in a dedicated container
   (`vulnProcessing.dedicated: true`) so the API pods don't OOM every

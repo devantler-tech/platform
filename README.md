@@ -57,35 +57,27 @@ Local development cluster running on Docker via KSail. Uses Talos with the Docke
 - 1 control-plane node + 3 worker nodes (Docker containers)
 - Config: [`ksail.yaml`](ksail.yaml)
 
-### Dev
-
-Staging cluster running on Hetzner Cloud via KSail's native Hetzner provider. Deployed automatically via the CI pipeline when changes run through the merge queue (`merge_group`).
-
-- 3× [Hetzner CX23](https://www.hetzner.com/cloud/) control planes + 2× CX23 workers (x86 2 vCPU 4Gb RAM 40Gb SSD each)
-- Config: [`ksail.dev.yaml`](ksail.dev.yaml)
-
 ### Production
 
-Cloud cluster running on Hetzner Cloud via KSail's native Hetzner provider. Deployed via `v*` tags through the CD pipeline.
+Cloud cluster running on Hetzner Cloud via KSail's native Hetzner provider. Deployed via `v*` tags through the CD pipeline, and validated in the merge queue via the CI pipeline.
 
-- 3× [Hetzner CX23](https://www.hetzner.com/cloud/) control planes + 2× CX23 workers (x86 2 vCPU 4Gb RAM 40Gb SSD each)
+- 3× [Hetzner CX23](https://www.hetzner.com/cloud/) control planes + 3× CX23 static workers + autoscaling (x86 2 vCPU 4Gb RAM 40Gb SSD each)
 - Config: [`ksail.prod.yaml`](ksail.prod.yaml)
 
 ## Structure
 
-The cluster uses Flux GitOps to reconcile the state of the cluster with the single source of truth stored in this repository and published as an OCI image. KSail is used for local development, CI/CD testing, and production deployments. For dev and prod, nodes are provisioned on Hetzner Cloud by KSail's native Hetzner provider, which also installs the Hetzner CCM and CSI drivers.
+The cluster uses Flux GitOps to reconcile the state of the cluster with the single source of truth stored in this repository and published as an OCI image. KSail is used for local development, CI/CD testing, and production deployments. For prod, nodes are provisioned on Hetzner Cloud by KSail's native Hetzner provider, which also installs the Hetzner CCM and CSI drivers.
 
-All environments use the Talos Kubernetes distribution. Local development and CI use Talos with the Docker provider; dev and prod use Talos with the Hetzner provider.
+All environments use the Talos Kubernetes distribution. Local development and CI use Talos with the Docker provider; prod uses Talos with the Hetzner provider.
 
 The cluster configuration is stored in the `k8s/*` directories where the structure is as follows:
 
 - [`clusters/`](k8s/clusters): Contains the cluster specific configuration for each environment.
   - [`local`](k8s/clusters/local): Contains the local cluster specific configuration.
-  - [`dev`](k8s/clusters/dev): Contains the dev cluster specific configuration.
   - [`prod`](k8s/clusters/prod): Contains the production cluster specific configuration.
 - [`providers/`](k8s/providers): Contains the provider specific configuration.
   - [`docker`](k8s/providers/docker): Contains the Talos+Docker specific configuration for local development.
-  - [`hetzner`](k8s/providers/hetzner): Contains the Talos+Hetzner specific configuration for dev and production.
+  - [`hetzner`](k8s/providers/hetzner): Contains the Talos+Hetzner specific configuration for production.
 - [`bases/`](k8s/bases): Contains the different bases that are used for the different clusters and providers.
   - [`cluster`](k8s/bases/cluster): Contains the shared Flux Kustomizations with sentinel paths (`__CLUSTER__`, `__PROVIDER__`).
   - [`infrastructure`](k8s/bases/infrastructure): Contains the different infrastructure components that are used for the different clusters and providers.
@@ -107,7 +99,6 @@ Each cluster environment references a provider overlay, which in turn patches th
 graph LR
   subgraph "Cluster-specific"
     local["clusters/local"]
-    dev["clusters/dev"]
     prod["clusters/prod"]
   end
 
@@ -121,7 +112,6 @@ graph LR
   end
 
   local --> docker
-  dev --> hetzner
   prod --> hetzner
   docker --> bases
   hetzner --> bases
@@ -160,11 +150,9 @@ See [`docs/TEMPLATING.md`](docs/TEMPLATING.md) for the exact set of files a fork
 | Item                      | No. | Per unit | Total in Actual | Total in $ |
 | ------------------------- | --- | -------- | --------------- | ---------- |
 | Cloudflare Domains        | 2   | $0,87    | $1,74           | $1,74      |
-| Hetzner CX23 (prod)       | 5   | €4,51    | €22,55          | $25,60     |
-| Hetzner CX23 (dev)        | 5   | €4,51    | €22,55          | $25,60     |
+| Hetzner CX23 (prod)       | 6   | €4,51    | €27,06          | $30,72     |
 | Hetzner Cloud LB LB11 (prod) | 1 | €5,39   | €5,39           | $6,12      |
-| Hetzner Cloud LB LB11 (dev)  | 1 | €5,39   | €5,39           | $6,12      |
-| Total                     |     |          |                 | $65,18     |
+| Total                     |     |          |                 | $38,58     |
 
 ## Star History
 
