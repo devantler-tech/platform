@@ -55,5 +55,12 @@ spec:
       resizerReplicaCount: ${longhorn_csi_resizer_replicas:=1}
       snapshotterReplicaCount: ${longhorn_csi_snapshotter_replicas:=1}
 
+    # Restrict Longhorn DaemonSets to storage-labeled nodes only.
+    # Control planes don't carry disks and no pods on them mount Longhorn
+    # volumes — running longhorn-manager there wastes ~250Mi per node.
+    longhornManager:
+      nodeSelector:
+        node.longhorn.io/create-default-disk: "true"
+
     longhornUI:
       replicas: ${longhorn_ui_replicas:=1}
