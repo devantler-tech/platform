@@ -9,6 +9,13 @@ metadata:
 spec:
   interval: 2m
   timeout: 5m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
   chart:
     spec:
       chart: fleet

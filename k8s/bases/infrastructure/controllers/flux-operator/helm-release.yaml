@@ -17,6 +17,13 @@ spec:
         kind: HelmRepository
         name: flux-operator
   interval: 10m0s
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
   values:
     web:
       config:
