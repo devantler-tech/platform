@@ -32,6 +32,7 @@ data:
         icon: si-googleanalytics
   kubernetes.yaml: |
     mode: cluster
+    gateway: true
   widgets.yaml: |
     - logo:
         icon: https://avatars.githubusercontent.com/u/178524219?v=4&s=200
