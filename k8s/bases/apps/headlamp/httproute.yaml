@@ -18,5 +18,6 @@ spec:
     - headlamp.${domain}
   rules:
     - backendRefs:
-        - name: headlamp
-          port: 80
+        - name: keda-add-ons-http-interceptor-proxy
+          namespace: keda
+          port: 8080
