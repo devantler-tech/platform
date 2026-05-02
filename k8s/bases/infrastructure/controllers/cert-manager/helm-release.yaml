@@ -18,8 +18,13 @@ spec:
         name: cert-manager
   install:
     crds: CreateReplace
+    remediation:
+      retries: -1
   upgrade:
     crds: CreateReplace
+    remediation:
+      retries: -1
+      remediateLastFailure: true
   # https://github.com/cert-manager/cert-manager/blob/master/deploy/charts/cert-manager/values.yaml
   values:
     replicaCount: ${cert_manager_replicas:=2}

@@ -17,6 +17,13 @@ spec:
         kind: HelmRepository
         name: cilium
   interval: 10m0s
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
   # https://github.com/cilium/cilium/blob/main/install/kubernetes/cilium/values.yaml
   values:
     securityContext:
