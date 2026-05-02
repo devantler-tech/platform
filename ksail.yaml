@@ -16,6 +16,9 @@ spec:
     cni: Cilium
     csi: Enabled
     gitOpsEngine: Flux
+    certManager: Enabled
+    metricsServer: Enabled
+    policyEngine: Kyverno
     controlPlanes: 1
     workers: 3
     talos:
