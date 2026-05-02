@@ -39,11 +39,31 @@ data:
   # Homepage stays at 1 replica since it is behind oauth2-proxy and cannot
   # use KEDA HTTP scale-to-zero. One replica is sufficient for a dashboard.
   homepage_replicas: "1"
-  # --- Hetzner Cloud Load Balancer ---
+  # KEDA-managed apps: HelmRelease replicas are the initial value only;
+  # KEDA HTTPScaledObject overrides at runtime (min 0, max 2). Setting
+  # the initial to 1 saves memory until the first KEDA reconciliation.
+  headlamp_replicas: "1"
+  whoami_replicas: "1"
+  fleetdm_replicas: "1"
+  # Auth chain: single replica is sufficient on cx23 nodes; prevents OOM
+  # cascade that makes both replicas flap simultaneously.
+  dex_replicas: "1"
+  oauth2_proxy_replicas: "1"
+  auth_proxy_replicas: "1"
+  # --- Hetzner Cloud ---
   hetzner_lb_location: "fsn1"
   hetzner_lb_type: "lb11"
-  # --- Hetzner Cloud Network ---
   hcloud_network: "prod-network"
+  # Leader-elected controllers: 1 replica is sufficient.
+  hcloud_ccm_replicas: "1"
+  hcloud_csi_controller_replicas: "1"
   # --- Longhorn distributed storage ---
-  longhorn_replica_count: "3"
+  # Only 2 worker nodes carry Longhorn disks (createDefaultDiskOnLabeledNodesOnly),
+  # so replica count must not exceed 2. Previously 3, which left all volumes
+  # permanently degraded and wasted resources scheduling impossible replicas.
+  longhorn_replica_count: "2"
+  # VolumeSnapshot CRDs (snapshot.storage.k8s.io) are not installed; the
+  # CSI snapshotter crash-loops trying to list them. Disable until CRDs
+  # are added.
+  longhorn_csi_snapshotter_replicas: "0"
 
