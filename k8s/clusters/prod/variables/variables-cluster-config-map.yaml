@@ -35,7 +35,6 @@ data:
   cilium_replicas: "1"
   velero_replicas: "1"
   cloudnative_pg_replicas: "1"
-  alertmanager_replicas: "1"
   # Homepage stays at 1 replica since it is behind oauth2-proxy and cannot
   # use KEDA HTTP scale-to-zero. One replica is sufficient for a dashboard.
   homepage_replicas: "1"
