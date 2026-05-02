@@ -9,7 +9,9 @@ cluster:
       oidc-issuer-url: https://dex.platform.lan
       oidc-client-id: public-client
       oidc-username-claim: email
+      oidc-username-prefix: "oidc:"
       oidc-groups-claim: groups
+      oidc-groups-prefix: "oidc:"
       oidc-ca-file: /etc/kubernetes/oidc/ca.crt
     extraVolumes:
       - hostPath: /var/etc/kubernetes/oidc

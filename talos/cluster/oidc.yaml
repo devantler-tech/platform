@@ -1,0 +1,24 @@
+# OIDC configuration for the kube-apiserver on Hetzner clusters.
+# Enables Dex as an OIDC identity provider so that tokens issued by Dex
+# are accepted as valid Kubernetes authentication credentials.
+#
+# On Hetzner, kube-apiserver reaches Dex through Cloudflare's proxy, so
+# the TLS cert is publicly trusted and no custom oidc-ca-file is needed.
+# If the DNS record is switched to DNS-only (grey-cloud), add the
+# Cloudflare Origin ECC CA root cert via machine.files and set oidc-ca-file.
+#
+# NOTE: This file lives in the talos/ directory used by ksail.prod.yaml.
+# The issuer URL below targets production. If a dev environment is added
+# in the future (e.g. ksail.dev.yaml), create a separate talos-dev/
+# directory with a dev-specific oidc.yaml (issuer URL:
+# https://dex.dev.platform.devantler.tech) and point the dev config's
+# distributionConfig to talos-dev.
+cluster:
+  apiServer:
+    extraArgs:
+      oidc-issuer-url: https://dex.platform.devantler.tech
+      oidc-client-id: public-client
+      oidc-username-claim: email
+      oidc-username-prefix: "oidc:"
+      oidc-groups-claim: groups
+      oidc-groups-prefix: "oidc:"
