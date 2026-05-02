@@ -1,0 +1,59 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: longhorn
+  namespace: longhorn-system
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  chart:
+    spec:
+      chart: longhorn
+      version: 1.11.1
+      sourceRef:
+        kind: HelmRepository
+        name: longhorn
+  interval: 10m0s
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  timeout: 10m
+  # https://github.com/longhorn/charts/blob/master/charts/longhorn/values.yaml
+  values:
+    defaultSettings:
+      defaultDataPath: /var/lib/longhorn
+      # Match the number of workers so every volume is replicated across
+      # all available nodes.
+      defaultReplicaCount: ${longhorn_replica_count:=2}
+      # Reclaim space from deleted volumes automatically.
+      autoDeletePodWhenVolumeDetachedUnexpectedly: true
+      # Only create default disks on nodes explicitly labeled for storage.
+      # This prevents control plane nodes (which lack dedicated volumes)
+      # from hosting replicas and running out of memory.
+      createDefaultDiskOnLabeledNodesOnly: true
+
+    persistence:
+      # Longhorn is the default StorageClass (replaces hcloud for new PVCs).
+      defaultClass: true
+      defaultClassReplicaCount: ${longhorn_replica_count:=2}
+      # RWX support via Longhorn's built-in NFS server.
+      defaultFsType: ext4
+      reclaimPolicy: Delete
+
+    # Resource-conscious settings for cx23 workers (2 vCPU, 4 GB RAM).
+    csi:
+      attacherReplicaCount: ${longhorn_csi_attacher_replicas:=1}
+      provisionerReplicaCount: ${longhorn_csi_provisioner_replicas:=1}
+      resizerReplicaCount: ${longhorn_csi_resizer_replicas:=1}
+      snapshotterReplicaCount: ${longhorn_csi_snapshotter_replicas:=1}
+
+    longhornUI:
+      replicas: ${longhorn_ui_replicas:=1}

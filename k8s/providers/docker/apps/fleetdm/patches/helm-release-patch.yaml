@@ -4,24 +4,25 @@ metadata:
   name: fleetdm
   namespace: fleetdm
 spec:
+  # Docker CI starts MySQL cold; allow more time than the base 5m.
+  timeout: 15m
   values:
     replicas: 1
     vulnProcessing:
       dedicated: false
-    # Local Docker cluster has no default StorageClass (see minio pattern:
-    # emptyDir for local S3). Disable persistence for both MySQL and Redis
-    # so stateful pods can schedule. Data is throw-away in local/CI.
     mysql:
       architecture: standalone
       secondary:
         replicaCount: 0
       primary:
         persistence:
-          enabled: false
+          enabled: true
+          size: 2Gi
     redis:
       architecture: standalone
       replica:
         replicaCount: 0
       master:
         persistence:
-          enabled: false
+          enabled: true
+          size: 1Gi
