@@ -39,6 +39,16 @@ spec:
                   rollingUpdate:
                     maxSurge: 1
                     maxUnavailable: 0
+              - op: add
+                path: /spec/template/spec/volumes/-
+                value:
+                  name: headlamp-plugins
+                  emptyDir: {}
+              - op: add
+                path: /spec/template/spec/containers/0/volumeMounts/-
+                value:
+                  name: headlamp-plugins
+                  mountPath: /headlamp/plugins
   # https://github.com/kubernetes-sigs/headlamp/blob/main/charts/headlamp/values.yaml
   values:
     replicaCount: ${headlamp_replicas:=2}
@@ -64,27 +74,44 @@ spec:
       enabled: false
     initContainers:
       - name: install-plugins
-        image: busybox:1.37
+        image: docker.io/library/busybox:1.37.0
         command:
           - /bin/sh
           - -c
           - |
             set -e
             PLUGINS_DIR="/headlamp/plugins"
+            TMP_FILE="/tmp/plugin.tar.gz"
             mkdir -p "$PLUGINS_DIR"
-            PLUGINS="
-              https://github.com/headlamp-k8s/plugins/releases/download/flux-0.6.0/headlamp-k8s-flux-0.6.0.tar.gz
-              https://github.com/headlamp-k8s/plugins/releases/download/prometheus-0.8.2/prometheus-0.8.2.tar.gz
-              https://github.com/headlamp-k8s/plugins/releases/download/cert-manager-0.1.0/headlamp-k8s-cert-manager-0.1.0.tar.gz
-              https://github.com/headlamp-k8s/plugins/releases/download/plugin-catalog-0.4.3/headlamp-k8s-plugin-catalog-0.4.3.tar.gz
-              https://github.com/headlamp-k8s/plugins/releases/download/keda-0.1.1-beta/headlamp-k8s-keda-0.1.1-beta.tar.gz
-            "
-            for url in $PLUGINS; do
-              name=$(basename "$url" .tar.gz)
+            install_plugin() {
+              local url="$1" checksum="$2" name="$3"
               echo "Installing plugin: $name"
+              wget --tries=3 --timeout=30 -qO "$TMP_FILE" "$url"
+              printf '%s  %s\n' "$checksum" "$TMP_FILE" | sha256sum -c
               mkdir -p "$PLUGINS_DIR/$name"
-              wget -qO- "$url" | tar xz -C "$PLUGINS_DIR/$name" --strip-components=1
-            done
+              tar xz -C "$PLUGINS_DIR/$name" --strip-components=1 -f "$TMP_FILE"
+              rm -f "$TMP_FILE"
+            }
+            install_plugin \
+              "https://github.com/headlamp-k8s/plugins/releases/download/flux-0.6.0/headlamp-k8s-flux-0.6.0.tar.gz" \
+              "28a9c74e0e312a22a67517062ce06c09bc83f9e3c72d8481c20eb5aca49339d0" \
+              "flux"
+            install_plugin \
+              "https://github.com/headlamp-k8s/plugins/releases/download/prometheus-0.8.2/prometheus-0.8.2.tar.gz" \
+              "1280172868a81e73f537eba55dc0dc765defa50142b9312008c2bae702a3c7a8" \
+              "prometheus"
+            install_plugin \
+              "https://github.com/headlamp-k8s/plugins/releases/download/cert-manager-0.1.0/headlamp-k8s-cert-manager-0.1.0.tar.gz" \
+              "87acdab62a7e36c9826fdfc6169048245af0d026d4af3e2b759b15a7baa42580" \
+              "cert-manager"
+            install_plugin \
+              "https://github.com/headlamp-k8s/plugins/releases/download/plugin-catalog-0.4.3/headlamp-k8s-plugin-catalog-0.4.3.tar.gz" \
+              "5b7445b0bb6bd9db29995228da9e70c2c4aa3aa328db041035f160e0d14be22b" \
+              "plugin-catalog"
+            install_plugin \
+              "https://github.com/headlamp-k8s/plugins/releases/download/keda-0.1.1-beta/headlamp-k8s-keda-0.1.1-beta.tar.gz" \
+              "b3394a77fba6ae63c6b24b90880a75c54c41f872e079bddf975df4b65ba5b61e" \
+              "keda"
         volumeMounts:
           - name: headlamp-plugins
             mountPath: /headlamp/plugins
