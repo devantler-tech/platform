@@ -42,6 +42,7 @@ substituted at Flux reconcile time:
 | `fleetdm_mysql_root_password` | MySQL root password. |
 | `fleetdm_mysql_replication_password` | MySQL replication user password. |
 | `fleetdm_redis_password` | Redis password. |
+| `fleetdm_license_key` | **Fleet premium license JWT.** Unlocks premium features. The current value is a trial license expiring 2025-05-01 — replace with a paid license before expiry or Fleet will revert to the free tier. |
 
 ### Rotating / regenerating
 
