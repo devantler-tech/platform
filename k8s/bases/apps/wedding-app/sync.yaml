@@ -20,7 +20,7 @@ metadata:
   namespace: wedding-app
 spec:
   interval: 1m
-  path: ./k8s
+  path: ./deploy
   prune: true
   serviceAccountName: wedding-app
   sourceRef:
