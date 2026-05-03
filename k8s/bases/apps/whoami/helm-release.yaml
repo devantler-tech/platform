@@ -27,7 +27,7 @@ spec:
     replicaCount: ${whoami_replicas:=2}
     pdb:
       create: true
-      minAvailable: 1
+      minAvailable: 0
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname

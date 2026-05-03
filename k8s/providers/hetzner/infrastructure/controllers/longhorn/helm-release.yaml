@@ -32,18 +32,21 @@ spec:
       defaultDataPath: /var/lib/longhorn
       # Match the number of workers so every volume is replicated across
       # all available nodes.
-      defaultReplicaCount: ${longhorn_replica_count:=2}
+      defaultReplicaCount: ${longhorn_replica_count:=3}
       # Reclaim space from deleted volumes automatically.
       autoDeletePodWhenVolumeDetachedUnexpectedly: true
       # Only create default disks on nodes explicitly labeled for storage.
       # This prevents control plane nodes (which lack dedicated volumes)
       # from hosting replicas and running out of memory.
       createDefaultDiskOnLabeledNodesOnly: true
+      # Restrict Longhorn system-managed pods (instance-managers, etc.)
+      # to storage nodes. Prevents ~100Mi overhead per non-storage node.
+      systemManagedComponentsNodeSelector: "node.longhorn.io/create-default-disk:true"
 
     persistence:
       # Longhorn is the default StorageClass (replaces hcloud for new PVCs).
       defaultClass: true
-      defaultClassReplicaCount: ${longhorn_replica_count:=2}
+      defaultClassReplicaCount: ${longhorn_replica_count:=3}
       # RWX support via Longhorn's built-in NFS server.
       defaultFsType: ext4
       reclaimPolicy: Delete
@@ -54,6 +57,13 @@ spec:
       provisionerReplicaCount: ${longhorn_csi_provisioner_replicas:=1}
       resizerReplicaCount: ${longhorn_csi_resizer_replicas:=1}
       snapshotterReplicaCount: ${longhorn_csi_snapshotter_replicas:=1}
+
+    # Restrict Longhorn DaemonSets to storage-labeled nodes only.
+    # Control planes don't carry disks and no pods on them mount Longhorn
+    # volumes — running longhorn-manager there wastes ~250Mi per node.
+    longhornManager:
+      nodeSelector:
+        node.longhorn.io/create-default-disk: "true"
 
     longhornUI:
       replicas: ${longhorn_ui_replicas:=1}
