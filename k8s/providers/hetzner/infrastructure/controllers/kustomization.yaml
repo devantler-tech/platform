@@ -5,6 +5,7 @@ resources:
   - ../../../../bases/infrastructure/controllers/
   - coredns/
   - external-dns/
+  - flux-instance.yaml
   - hcloud-ccm/
   - hcloud-csi/
   - kubelet-serving-cert-approver/

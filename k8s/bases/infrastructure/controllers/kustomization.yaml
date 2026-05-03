@@ -7,7 +7,6 @@ resources:
   - cilium/
   - cloudnative-pg/
   - dex/
-  - flux-instance.yaml
   - flux-operator/
   - keda/
   - keda-http-add-on/
