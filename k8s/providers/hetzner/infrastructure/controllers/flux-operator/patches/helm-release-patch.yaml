@@ -5,10 +5,13 @@ metadata:
   namespace: flux-system
 spec:
   values:
+    commonAnnotations:
+      configmap.reloader.stakater.com/reload: "cloudflare-origin-ca"
     extraVolumes:
       - name: trust-bundle
         configMap:
           name: cloudflare-origin-ca
+          optional: true
     extraVolumeMounts:
       - name: trust-bundle
         mountPath: /etc/ssl/certs/cloudflare-origin-ca

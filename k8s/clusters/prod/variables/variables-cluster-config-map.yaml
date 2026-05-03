@@ -20,8 +20,8 @@ data:
   # auth-proxy, kyverno admission).
   # Headlamp is set to 1 because its OIDC login stores state in-memory;
   # with >1 replica the callback may hit a pod that lacks the state → "invalid request".
-  # The deployment's maxSurge=1 / maxUnavailable=0 strategy still ensures
-  # zero-downtime during planned rollouts.
+  # The deployment uses maxSurge=0 / maxUnavailable=1 to prevent two pods from
+  # running simultaneously during rollouts (avoids the same state-mismatch window).
   headlamp_replicas: "1"
   # Operators are leader-elected; 1 replica is sufficient — a brief blip
   # during a rolling upgrade of the operator itself does not affect the
