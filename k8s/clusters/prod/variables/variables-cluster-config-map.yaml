@@ -5,6 +5,7 @@ metadata:
   name: variables-cluster
   namespace: flux-system
 data:
+  cluster_name: prod
   domain_regex: platform\.devantler\.tech
   domain: platform.devantler.tech
   github_app_client_id: Iv23limfvbk93bAXZI6b

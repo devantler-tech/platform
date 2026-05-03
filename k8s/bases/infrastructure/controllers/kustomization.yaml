@@ -11,6 +11,7 @@ resources:
   - keda/
   - keda-http-add-on/
   - kube-prometheus-stack/
+  - kubescape/
   - kyverno/
   - metrics-server/
   - oauth2-proxy/

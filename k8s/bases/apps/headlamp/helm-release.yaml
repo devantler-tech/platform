@@ -119,3 +119,12 @@ spec:
         volumeMounts:
           - name: headlamp-plugins
             mountPath: /headlamp/plugins
+      - name: install-kubescape-plugin
+        image: quay.io/kubescape/headlamp-plugin:v0.11.0
+        command:
+          - /bin/sh
+          - -c
+          - cp -r /plugins/* /headlamp/plugins/
+        volumeMounts:
+          - name: headlamp-plugins
+            mountPath: /headlamp/plugins
