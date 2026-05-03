@@ -112,6 +112,10 @@ spec:
               "https://github.com/headlamp-k8s/plugins/releases/download/keda-0.1.1-beta/headlamp-k8s-keda-0.1.1-beta.tar.gz" \
               "b3394a77fba6ae63c6b24b90880a75c54c41f872e079bddf975df4b65ba5b61e" \
               "keda"
+            install_plugin \
+              "https://github.com/headlamp-k8s/plugins/releases/download/opencost-0.1.3/headlamp-k8s-opencost-0.1.3.tar.gz" \
+              "cb3e67aa5bb8cc4869037b9024f58c95acfc1bc23ab6cbc80aa36e0c37ec21bd" \
+              "opencost"
         volumeMounts:
           - name: headlamp-plugins
             mountPath: /headlamp/plugins
