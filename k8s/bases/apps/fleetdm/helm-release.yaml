@@ -32,7 +32,7 @@ spec:
             patch: |
               - op: add
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
-                value: mysql,redis
+                value: mysql,redis,fleet-license
               - op: add
                 path: /spec/strategy
                 value:
@@ -118,7 +118,8 @@ spec:
       tls:
         enabled: false
       license:
-        licenseKey: ${fleetdm_license_key}
+        secretName: fleet-license
+        licenseKey: license-key
     # Run vulnerability processing in a dedicated container so the API
     # pods don't OOM every hour during the scan.
     vulnProcessing:
