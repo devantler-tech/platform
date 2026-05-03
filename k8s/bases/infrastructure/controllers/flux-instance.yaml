@@ -22,5 +22,5 @@ spec:
     - image-automation-controller
   cluster:
     type: kubernetes
-    multitenant: true
+    multitenant: false
     networkPolicy: true
