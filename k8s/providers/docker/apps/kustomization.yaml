@@ -56,3 +56,13 @@ patches:
       name: wedding-app
       namespace: wedding-app
     path: wedding-app/patches/httproute-patch.yaml
+  - target:
+      kind: Secret
+      name: git-credentials
+      namespace: wedding-app
+    path: wedding-app/patches/git-credentials-secret-patch.yaml
+  - target:
+      kind: Secret
+      name: sops-age
+      namespace: wedding-app
+    path: wedding-app/patches/sops-age-secret-patch.yaml
