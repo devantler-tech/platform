@@ -9,7 +9,7 @@ spec:
   interval: 1m
   ref:
     tag: latest
-  url: oci://ghcr.io/devantler-tech/wedding-app-manifests
+  url: oci://ghcr.io/devantler-tech/wedding-app/manifests
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
