@@ -38,7 +38,7 @@ Cluster Autoscaler (dynamic workers, managed by KSail)
   Hetzner volume, no Longhorn storage). Static KSail workers have
   dedicated Hetzner volumes and serve as Longhorn storage nodes. Pods on
   autoscaler nodes access Longhorn PVCs via the CSI driver (network).
-  The Hetzner Cluster Autoscaler [does not support volume attachment](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/hetzner/hetzner_node_group.go).
+  The Hetzner Cluster Autoscaler [does not support volume attachment](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md).
 
 ### How new nodes join
 

@@ -5,7 +5,7 @@ This guide explains how to use [`kubelogin`](https://github.com/int128/kubelogin
 ## Prerequisites
 
 - Access to the cluster (kubeconfig with server address)
-- A GitHub account that is a member of the [`devantler-tech`](https://github.com/devantler-tech) organisation
+- A GitHub account that is a member of the [`devantler-tech`](https://github.com/devantler-tech) organization
 - The `oidc-admin` ClusterRoleBinding must list your OIDC identity (see [RBAC](#rbac))
 
 ## 1 — Install kubelogin
