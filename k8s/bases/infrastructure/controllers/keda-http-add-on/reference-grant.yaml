@@ -8,6 +8,9 @@ spec:
   from:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
+      namespace: fleetdm
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
       namespace: headlamp
     - group: gateway.networking.k8s.io
       kind: HTTPRoute

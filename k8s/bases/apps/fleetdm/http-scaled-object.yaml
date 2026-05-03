@@ -1,0 +1,24 @@
+---
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  name: fleetdm
+  namespace: fleetdm
+spec:
+  hosts:
+    - fleetdm.${domain}
+  scaleTargetRef:
+    name: fleet
+    service: fleetdm-service
+    port: 8080
+  replicas:
+    min: 0
+    max: 2
+  # Longer cooldown for FleetDM — enrolled devices check in periodically.
+  # 15 minutes of silence before scale-to-zero.
+  scaledownPeriod: 900
+  scalingMetric:
+    requestRate:
+      granularity: 1s
+      targetValue: 100
+      window: 1m

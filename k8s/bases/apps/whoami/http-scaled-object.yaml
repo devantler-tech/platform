@@ -1,0 +1,22 @@
+---
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  name: whoami
+  namespace: whoami
+spec:
+  hosts:
+    - whoami.${domain}
+  scaleTargetRef:
+    name: whoami
+    service: whoami
+    port: 80
+  replicas:
+    min: 0
+    max: 2
+  scaledownPeriod: 300
+  scalingMetric:
+    requestRate:
+      granularity: 1s
+      targetValue: 100
+      window: 1m
