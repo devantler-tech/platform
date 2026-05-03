@@ -1,8 +1,8 @@
 # Extends the KSail-bootstrapped FluxInstance to include image automation
 # controllers (image-reflector-controller + image-automation-controller).
 # KSail creates the initial FluxInstance during `ksail cluster create`;
-# this resource is reconciled by the infrastructure Flux Kustomization
-# post-bootstrap and overwrites it with the additional components.
+# this resource is reconciled by the infrastructure-controllers Flux
+# Kustomization post-bootstrap in the Hetzner (prod) environment only.
 ---
 apiVersion: fluxcd.controlplane.io/v1
 kind: FluxInstance
@@ -11,7 +11,7 @@ metadata:
   namespace: flux-system
 spec:
   distribution:
-    version: "2.x"
+    version: "2.8.x"
     registry: "ghcr.io/fluxcd"
   components:
     - source-controller

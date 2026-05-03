@@ -50,3 +50,9 @@ patches:
       name: wedding-app
       namespace: wedding-app
     path: wedding-app/patches/imageupdateautomation-patch.yaml
+  - target:
+      group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: wedding-app
+      namespace: wedding-app
+    path: wedding-app/patches/httproute-patch.yaml
