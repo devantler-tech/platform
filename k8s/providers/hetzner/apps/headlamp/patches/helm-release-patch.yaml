@@ -12,7 +12,11 @@ spec:
       - name: trust-bundle
         configMap:
           name: cloudflare-origin-ca
+      - name: headlamp-plugins
+        emptyDir: {}
     volumeMounts:
       - name: trust-bundle
         mountPath: /etc/ssl/certs/cloudflare-origin-ca
         readOnly: true
+      - name: headlamp-plugins
+        mountPath: /headlamp/plugins

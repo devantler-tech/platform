@@ -12,7 +12,11 @@ spec:
       - name: trust-bundle
         configMap:
           name: platform-ca
+      - name: headlamp-plugins
+        emptyDir: {}
     volumeMounts:
       - name: trust-bundle
         mountPath: /etc/ssl/certs/platform-ca
         readOnly: true
+      - name: headlamp-plugins
+        mountPath: /headlamp/plugins

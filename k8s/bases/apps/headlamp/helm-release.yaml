@@ -62,3 +62,29 @@ spec:
         scopes: "profile,email,groups"
     ingress:
       enabled: false
+    initContainers:
+      - name: install-plugins
+        image: busybox:1.37
+        command:
+          - /bin/sh
+          - -c
+          - |
+            set -e
+            PLUGINS_DIR="/headlamp/plugins"
+            mkdir -p "$PLUGINS_DIR"
+            PLUGINS="
+              https://github.com/headlamp-k8s/plugins/releases/download/flux-0.6.0/headlamp-k8s-flux-0.6.0.tar.gz
+              https://github.com/headlamp-k8s/plugins/releases/download/prometheus-0.8.2/prometheus-0.8.2.tar.gz
+              https://github.com/headlamp-k8s/plugins/releases/download/cert-manager-0.1.0/headlamp-k8s-cert-manager-0.1.0.tar.gz
+              https://github.com/headlamp-k8s/plugins/releases/download/plugin-catalog-0.4.3/headlamp-k8s-plugin-catalog-0.4.3.tar.gz
+              https://github.com/headlamp-k8s/plugins/releases/download/keda-0.1.1-beta/headlamp-k8s-keda-0.1.1-beta.tar.gz
+            "
+            for url in $PLUGINS; do
+              name=$(basename "$url" .tar.gz)
+              echo "Installing plugin: $name"
+              mkdir -p "$PLUGINS_DIR/$name"
+              wget -qO- "$url" | tar xz -C "$PLUGINS_DIR/$name" --strip-components=1
+            done
+        volumeMounts:
+          - name: headlamp-plugins
+            mountPath: /headlamp/plugins
