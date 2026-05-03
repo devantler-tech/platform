@@ -117,6 +117,8 @@ spec:
       # TLS terminates at the platform Gateway (Traefik / Cilium).
       tls:
         enabled: false
+      license:
+        licenseKey: ${fleetdm_license_key}
     # Run vulnerability processing in a dedicated container so the API
     # pods don't OOM every hour during the scan.
     vulnProcessing:
