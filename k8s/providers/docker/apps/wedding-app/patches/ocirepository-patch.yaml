@@ -1,0 +1,7 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: wedding-app
+  namespace: wedding-app
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: Ignore

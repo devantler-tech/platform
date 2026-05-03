@@ -1,0 +1,7 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: wedding-app
+  namespace: wedding-app
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: Ignore
