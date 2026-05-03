@@ -1,0 +1,78 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: opencost
+  namespace: opencost
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 2m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  chart:
+    spec:
+      chart: opencost
+      version: 2.5.17
+      sourceRef:
+        kind: HelmRepository
+        name: opencost
+  # https://github.com/opencost/opencost-helm-chart/blob/main/charts/opencost/values.yaml
+  #
+  # Lightweight FinOps cost allocation. Points at the existing
+  # kube-prometheus-stack Prometheus and uses custom pricing derived from
+  # Hetzner Cloud CX23 hourly rates (€0.0064/hr for 2 vCPU / 4 GB RAM).
+  values:
+    opencost:
+      prometheus:
+        internal:
+          enabled: false
+        external:
+          enabled: true
+          url: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
+
+      # Hetzner Cloud custom pricing — CX23 rates decomposed into
+      # per-resource-unit hourly USD costs (EUR/USD ≈ 1.09).
+      # https://www.hetzner.com/cloud#pricing
+      # https://www.opencost.io/docs/configuration/on-prem#custom-pricing-using-the-opencost-helm-chart
+      customPricing:
+        enabled: true
+        createConfigmap: true
+        provider: custom
+        costModel:
+          description: "Hetzner Cloud CX23 — 2 vCPU / 4 GB / 40 GB NVMe (50/50 CPU-RAM split)"
+          CPU: 0.00175
+          spotCPU: 0
+          RAM: 0.00088
+          spotRAM: 0
+          GPU: 0
+          storage: 0.00008
+          zoneNetworkEgress: 0.001
+          regionNetworkEgress: 0.001
+          internetNetworkEgress: 0.001
+
+      exporter:
+        replicas: 1
+        resources:
+          requests:
+            cpu: 10m
+            memory: 55Mi
+          limits:
+            memory: 256Mi
+
+      ui:
+        enabled: true
+        resources:
+          requests:
+            cpu: 10m
+            memory: 55Mi
+          limits:
+            memory: 128Mi
+
+      metrics:
+        serviceMonitor:
+          enabled: true
