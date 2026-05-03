@@ -1,0 +1,18 @@
+# ClusterRoleBinding that grants flux-web-admin to users authenticated
+# via the Flux Status web UI who are members of the devantler-tech:admins
+# group. The Flux Operator impersonates users with their OIDC claims
+# (email as username, GitHub org:team as groups) so the group name here
+# matches the raw OIDC groups claim without the oidc: prefix.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flux-web-admins
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flux-web-admin
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: "devantler-tech:admins"
