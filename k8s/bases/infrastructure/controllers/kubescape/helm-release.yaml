@@ -25,7 +25,7 @@ spec:
         name: kubescape
   # https://github.com/kubescape/helm-charts/blob/main/charts/kubescape-operator/values.yaml
   values:
-    clusterName: ${cluster_name:=default}
+    clusterName: ${cluster_name}
     capabilities:
       continuousScan: enable
       vulnerabilityScan: enable
