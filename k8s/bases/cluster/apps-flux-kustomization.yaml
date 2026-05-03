@@ -30,6 +30,9 @@ spec:
         name: variables-cluster
       - kind: Secret
         name: variables-cluster
+      - kind: Secret
+        name: variables-ghcr
+        optional: true
   wait: true
   prune: true
   force: true
