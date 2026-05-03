@@ -20,8 +20,12 @@ metadata:
   namespace: wedding-app
 spec:
   interval: 1m
+  timeout: 5m
+  retryInterval: 2m
   path: ./deploy
   prune: true
+  wait: true
+  force: true
   serviceAccountName: wedding-app
   sourceRef:
     kind: OCIRepository
