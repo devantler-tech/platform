@@ -1,0 +1,18 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: flux-operator
+  namespace: flux-system
+spec:
+  values:
+    extraVolumes:
+      - name: trust-bundle
+        configMap:
+          name: cloudflare-origin-ca
+    extraVolumeMounts:
+      - name: trust-bundle
+        mountPath: /etc/ssl/certs/cloudflare-origin-ca
+        readOnly: true
+    extraEnvs:
+      - name: SSL_CERT_FILE
+        value: /etc/ssl/certs/cloudflare-origin-ca/ca-certificates.crt
