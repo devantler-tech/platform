@@ -13,7 +13,7 @@ spec:
     port: 80
   replicas:
     min: 0
-    max: 2
+    max: 2 # OIDC callback state is safe at >1 because all traffic routes through the KEDA HTTP interceptor-proxy.
   scaledownPeriod: 300
   scalingMetric:
     requestRate:
