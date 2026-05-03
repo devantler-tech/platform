@@ -14,14 +14,11 @@ data:
   # Per-env prefixes inside the shared R2 bucket.
   r2_prefix_velero: velero/prod
   r2_prefix_cnpg: cnpg/prod
-  # --- HA replica overrides for the 3× CX23 prod cluster ---
-  # User-facing path keeps the default of 2 replicas for zero-downtime
-  # rolling updates (homepage, whoami, dex, oauth2-proxy,
-  # auth-proxy, kyverno admission).
-  # Operators are leader-elected; 1 replica is sufficient — a brief blip
-  # during a rolling upgrade of the operator itself does not affect the
-  # data plane. Dropping them to 1 frees CPU headroom on the 6 vCPU
-  # total available after Talos + Cilium overhead.
+  # --- Operator/controller replicas (1 is sufficient — leader-elected) ---
+  # These are all leader-elected operators. 1 replica is sufficient; a brief
+  # blip during a rolling upgrade of the operator itself does not affect the
+  # data plane. Dropping them to 1 frees CPU headroom on the 6 vCPU total
+  # available after Talos + Cilium overhead.
   cert_manager_replicas: "1"
   trust_manager_replicas: "1"
   reloader_replicas: "1"
@@ -34,8 +31,10 @@ data:
   # use KEDA HTTP scale-to-zero. One replica is sufficient for a dashboard.
   homepage_replicas: "1"
   # KEDA-managed apps: HelmRelease replicas are the initial value only;
-  # KEDA HTTPScaledObject overrides at runtime (min 0, max 2). Setting
-  # the initial to 1 saves memory until the first KEDA reconciliation.
+  # KEDA HTTPScaledObject overrides at runtime. Setting the initial to 1
+  # saves memory until the first KEDA reconciliation.
+  # headlamp: min 0, max 1 (OIDC state in-memory — must stay single-pod)
+  # whoami/fleetdm: min 0, max 2
   headlamp_replicas: "1"
   whoami_replicas: "1"
   fleetdm_replicas: "1"

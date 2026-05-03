@@ -8,7 +8,7 @@ metadata:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 2m
-  timeout: 5m
+  timeout: 15m
   install:
     remediation:
       retries: -1
