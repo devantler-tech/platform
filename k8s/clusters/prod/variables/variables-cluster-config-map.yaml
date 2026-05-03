@@ -65,8 +65,9 @@ data:
   # cert controller. Disabled until we actually need Cloudflare Origin certs.
   origin_ca_issuer_replicas: "0"
   # VPA recommender computes resource recommendations; admission controller
-  # applies them at pod start. Updater (pod eviction) is disabled to avoid
-  # disruption — recommendations are applied on next pod restart instead.
+  # applies them at pod start. Updater (pod eviction) is scaled to 0
+  # replicas to avoid disruption, so recommendations are applied on the
+  # next pod restart instead.
   vpa_recommender_replicas: "1"
   vpa_updater_replicas: "0"
   # Kyverno background controller is required for generate rules (auto-vpa
