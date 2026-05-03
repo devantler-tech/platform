@@ -5,10 +5,12 @@ metadata:
   namespace: fleetdm
   annotations:
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/name: Fleet
+    gethomepage.dev/name: FleetDM
     gethomepage.dev/description: Open-source device management (MDM + osquery).
     gethomepage.dev/group: Device Management
     gethomepage.dev/icon: si-coderwall-#40B5A4
+    gethomepage.dev/href: https://fleetdm.${domain}
+    gethomepage.dev/pod-selector: app=fleet
 spec:
   parentRefs:
     - name: platform

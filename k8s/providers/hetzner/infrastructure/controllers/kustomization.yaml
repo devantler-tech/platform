@@ -10,3 +10,5 @@ resources:
   - kubelet-serving-cert-approver/
   - longhorn/
   - origin-ca-issuer/
+patches:
+  - path: flux-operator/patches/helm-release-patch.yaml
