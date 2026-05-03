@@ -37,15 +37,15 @@ spec:
                 value:
                   type: RollingUpdate
                   rollingUpdate:
-                    maxSurge: 1
-                    maxUnavailable: 0
+                    maxSurge: 0
+                    maxUnavailable: 1
   # https://github.com/kubernetes-sigs/headlamp/blob/main/charts/headlamp/values.yaml
   values:
     replicaCount: ${headlamp_replicas:=2}
     podDisruptionBudget:
       enabled: true
-      minAvailable: 1
-      maxUnavailable: null
+      minAvailable: null
+      maxUnavailable: 1
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname

@@ -5,10 +5,12 @@ metadata:
   namespace: flux-system
   annotations:
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/name: Flux Status
+    gethomepage.dev/name: Flux
     gethomepage.dev/description: Real-time status dashboard for Flux GitOps pipelines.
     gethomepage.dev/group: Kubernetes
     gethomepage.dev/icon: flux-cd
+    gethomepage.dev/href: https://flux.${domain}
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=flux-operator
 spec:
   parentRefs:
     - name: platform
