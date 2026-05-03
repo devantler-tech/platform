@@ -5,4 +5,3 @@ resources:
   - ../../../providers/hetzner/variables
   - variables-cluster-config-map.yaml
   - variables-cluster-secret.enc.yaml
-  - ghcr-token-secret.enc.yaml
