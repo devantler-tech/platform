@@ -6,6 +6,7 @@ metadata:
 spec:
   interval: 10m
   url: https://github.com/devantler-tech/wedding-app.git
+  provider: github
   ref:
     branch: main
   secretRef:
