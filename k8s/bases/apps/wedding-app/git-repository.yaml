@@ -1,0 +1,12 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: wedding-app
+  namespace: wedding-app
+spec:
+  interval: 10m
+  url: https://github.com/devantler-tech/wedding-app.git
+  ref:
+    branch: main
+  secretRef:
+    name: git-credentials

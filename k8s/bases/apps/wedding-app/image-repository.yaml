@@ -1,0 +1,10 @@
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: wedding-app
+  namespace: wedding-app
+spec:
+  image: ghcr.io/devantler-tech/wedding-app
+  interval: 5m
+  exclusionList:
+    - "^sha-"

@@ -31,3 +31,7 @@ spec:
     kind: OCIRepository
     name: wedding-app
   targetNamespace: wedding-app
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age

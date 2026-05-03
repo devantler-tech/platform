@@ -6,4 +6,6 @@ resources:
   - certificates/
   - cluster-policies/
   - cluster-role-bindings/
+  - cluster-roles/
+  - flux-instance.yaml
   - gateway/

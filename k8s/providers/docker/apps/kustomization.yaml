@@ -26,3 +26,27 @@ patches:
       name: wedding-app
       namespace: wedding-app
     path: wedding-app/patches/kustomization-patch.yaml
+  - target:
+      group: image.toolkit.fluxcd.io
+      kind: ImageRepository
+      name: wedding-app
+      namespace: wedding-app
+    path: wedding-app/patches/imagerepository-patch.yaml
+  - target:
+      group: image.toolkit.fluxcd.io
+      kind: ImagePolicy
+      name: wedding-app
+      namespace: wedding-app
+    path: wedding-app/patches/imagepolicy-patch.yaml
+  - target:
+      group: source.toolkit.fluxcd.io
+      kind: GitRepository
+      name: wedding-app
+      namespace: wedding-app
+    path: wedding-app/patches/gitrepository-patch.yaml
+  - target:
+      group: image.toolkit.fluxcd.io
+      kind: ImageUpdateAutomation
+      name: wedding-app
+      namespace: wedding-app
+    path: wedding-app/patches/imageupdateautomation-patch.yaml

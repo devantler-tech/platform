@@ -1,0 +1,25 @@
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageUpdateAutomation
+metadata:
+  name: wedding-app
+  namespace: wedding-app
+spec:
+  interval: 30m
+  sourceRef:
+    kind: GitRepository
+    name: wedding-app
+  git:
+    checkout:
+      ref:
+        branch: main
+    commit:
+      author:
+        name: flux-image-automation
+        email: flux@devantler.tech
+      messageTemplate: |
+        chore(deploy): update image to {{ range .Changed.Objects }}{{ .NewValue }}{{ end }}
+    push:
+      branch: flux-image-updates
+  update:
+    path: ./deploy
+    strategy: Setters

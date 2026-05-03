@@ -1,0 +1,7 @@
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageRepository
+metadata:
+  name: wedding-app
+  namespace: wedding-app
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: Ignore
