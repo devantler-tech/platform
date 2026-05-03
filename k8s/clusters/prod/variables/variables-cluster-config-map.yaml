@@ -18,11 +18,6 @@ data:
   # User-facing path keeps the default of 2 replicas for zero-downtime
   # rolling updates (homepage, whoami, dex, oauth2-proxy,
   # auth-proxy, kyverno admission).
-  # Headlamp is set to 1 because its OIDC login stores state in-memory;
-  # with >1 replica the callback may hit a pod that lacks the state → "invalid request".
-  # The deployment uses maxSurge=0 / maxUnavailable=1 to prevent two pods from
-  # running simultaneously during rollouts (avoids the same state-mismatch window).
-  headlamp_replicas: "1"
   # Operators are leader-elected; 1 replica is sufficient — a brief blip
   # during a rolling upgrade of the operator itself does not affect the
   # data plane. Dropping them to 1 frees CPU headroom on the 6 vCPU
