@@ -25,8 +25,11 @@ spec:
         name: vertical-pod-autoscaler
   # https://github.com/FairwindsOps/charts/blob/master/stable/vpa/values.yaml
   values:
+    recommender:
+      replicaCount: ${vpa_recommender_replicas:=1}
     updater:
       enabled: true
+      replicaCount: ${vpa_updater_replicas:=1}
     admissionController:
       replicaCount: ${vpa_admission_replicas:=2}
       podDisruptionBudget:

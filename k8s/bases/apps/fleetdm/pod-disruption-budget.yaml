@@ -4,7 +4,9 @@ metadata:
   name: fleetdm
   namespace: fleetdm
 spec:
-  minAvailable: 1
+  # minAvailable: 0 allows KEDA to scale the deployment to zero replicas
+  # without creating a permanently-violated PDB.
+  minAvailable: 0
   selector:
     matchLabels:
       app: fleet

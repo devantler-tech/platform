@@ -8,7 +8,7 @@ metadata:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 2m
-  timeout: 5m
+  timeout: 15m
   install:
     remediation:
       retries: -1
@@ -63,6 +63,10 @@ spec:
               metadata:
                 name: fleet-migration
               spec:
+                # Allow MySQL time to initialize before declaring the migration
+                # permanently failed. Default of 6 retries is insufficient when
+                # MySQL starts cold (e.g. first deploy or CI).
+                backoffLimit: 20
                 template:
                   spec:
                     volumes:

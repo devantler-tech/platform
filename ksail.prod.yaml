@@ -54,9 +54,10 @@ spec:
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
-      version: v1.11.2
-      # Hetzner Talos ISO (x86_64). Override to 122629 for ARM.
-      iso: 122630
+      version: v1.12.4
+      # Hetzner Talos ISO (x86_64). The v1.11.2 ISO (122630) was deprecated
+      # and removed from Hetzner on 2026-03-18. Use v1.12.4 (125127).
+      iso: 125127
     localRegistry:
       registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
   provider:
