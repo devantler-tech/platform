@@ -240,7 +240,7 @@ jobs:
           # The FluxInstance may trigger a controller restart (e.g. when adding
           # image-automation controllers). Wait for all Flux deployments —
           # especially source-controller — to be Available before reconciling.
-          for deploy in source-controller kustomize-controller helm-controller notification-controller; do
+          for deploy in source-controller kustomize-controller helm-controller notification-controller image-reflector-controller image-automation-controller; do
             echo "Waiting for $deploy..."
             kubectl -n flux-system wait deployment/"$deploy" \
               --for=condition=Available --timeout=120s 2>/dev/null || true
