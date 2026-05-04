@@ -6,5 +6,7 @@ metadata:
 spec:
   image: ghcr.io/devantler-tech/wedding-app
   interval: 5m
+  secretRef:
+    name: ghcr-auth
   exclusionList:
     - "^sha-"
