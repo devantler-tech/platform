@@ -42,19 +42,37 @@ spec:
         kind: Deployment
         name: wedding-app
       patch: |
-        - op: add
-          path: /spec/template/spec/imagePullSecrets
-          value:
-            - name: ghcr-auth
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: wedding-app
+        spec:
+          template:
+            spec:
+              imagePullSecrets:
+                - name: ghcr-auth
+    - target:
+        kind: Deployment
+        name: wedding-app
+      patch: |
         - op: replace
           path: /spec/template/spec/containers/0/image
           value: ghcr.io/devantler-tech/wedding-app:latest
+    - target:
+        kind: Deployment
+        name: wedding-app
+      patch: |
         - op: replace
-          path: /spec/template/spec/containers/0/env/2
+          path: /spec/template/spec/containers/0/env
           value:
-            name: DATABASE_URL
-            value: "postgresql://${username}:${password}@wedding-db-rw:5432/wedding"
+            - name: PORT
+              value: "3000"
+            - name: NODE_ENV
+              value: "production"
+            - name: DATABASE_URL
+              value: "postgresql://${username}:${password}@wedding-db-rw:5432/wedding"
   postBuild:
     substituteFrom:
       - kind: Secret
         name: wedding-db-credentials
+        optional: true
