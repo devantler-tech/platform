@@ -50,21 +50,11 @@ spec:
           path: /spec/template/spec/containers/0/image
           value: ghcr.io/devantler-tech/wedding-app:latest
         - op: replace
-          path: /spec/template/spec/containers/0/env
+          path: /spec/template/spec/containers/0/env/2
           value:
-            - name: DB_USER
-              valueFrom:
-                secretKeyRef:
-                  name: wedding-db-credentials
-                  key: username
-            - name: DB_PASS
-              valueFrom:
-                secretKeyRef:
-                  name: wedding-db-credentials
-                  key: password
-            - name: DATABASE_URL
-              value: "postgresql://$(DB_USER):$(DB_PASS)@wedding-db-rw:5432/wedding"
-            - name: PORT
-              value: "3000"
-            - name: NODE_ENV
-              value: "production"
+            name: DATABASE_URL
+            value: "postgresql://${username}:${password}@wedding-db-rw:5432/wedding"
+  postBuild:
+    substituteFrom:
+      - kind: Secret
+        name: wedding-db-credentials
