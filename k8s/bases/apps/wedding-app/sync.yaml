@@ -24,7 +24,7 @@ spec:
   interval: 1m
   timeout: 5m
   retryInterval: 2m
-  path: ./deploy
+  path: .
   prune: true
   wait: true
   force: true
@@ -37,3 +37,37 @@ spec:
     provider: sops
     secretRef:
       name: sops-age
+  patches:
+    - target:
+        kind: Deployment
+        name: wedding-app
+      patch: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: wedding-app
+        spec:
+          template:
+            spec:
+              imagePullSecrets:
+                - name: ghcr-auth
+              containers:
+                - name: wedding-app
+                  image: ghcr.io/devantler-tech/wedding-app:latest
+                  env:
+                    - name: DB_USER
+                      valueFrom:
+                        secretKeyRef:
+                          name: wedding-db-credentials
+                          key: username
+                    - name: DB_PASS
+                      valueFrom:
+                        secretKeyRef:
+                          name: wedding-db-credentials
+                          key: password
+                    - name: DATABASE_URL
+                      value: "postgresql://$(DB_USER):$(DB_PASS)@wedding-db-rw:5432/wedding"
+                    - name: PORT
+                      value: "3000"
+                    - name: NODE_ENV
+                      value: "production"
