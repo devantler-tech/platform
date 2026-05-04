@@ -234,16 +234,26 @@ jobs:
             rm -f /tmp/suspended-ks.txt
           fi
 
-      - name: ⏳ Wait for Flux controllers to be ready
+      - name: ⏳ Pre-apply FluxInstance and wait for controllers
         continue-on-error: true
         run: |
-          # The FluxInstance may trigger a controller restart (e.g. when adding
-          # image-automation controllers). Wait for all Flux deployments —
-          # especially source-controller — to be Available before reconciling.
+          # The FluxInstance adds image-automation controllers, which causes
+          # flux-operator to restart ALL Flux controllers. If this happens
+          # during ksail reconcile, the OCIRepository CRD becomes temporarily
+          # unavailable and ksail fails with "resource not found".
+          # Pre-apply the FluxInstance directly so the restart happens NOW,
+          # then wait for all controllers to come back before reconciling.
+          flux_instance="k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml"
+          if [ -f "$flux_instance" ]; then
+            echo "Pre-applying FluxInstance to trigger controller restart..."
+            kubectl apply -f "$flux_instance" || true
+            echo "Waiting 30s for flux-operator to process..."
+            sleep 30
+          fi
           for deploy in source-controller kustomize-controller helm-controller notification-controller image-reflector-controller image-automation-controller; do
             echo "Waiting for $deploy..."
             kubectl -n flux-system wait deployment/"$deploy" \
-              --for=condition=Available --timeout=120s 2>/dev/null || true
+              --for=condition=Available --timeout=180s 2>/dev/null || true
           done
 
       - name: 🔁 Trigger Flux reconciliation
