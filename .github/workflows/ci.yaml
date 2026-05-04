@@ -258,6 +258,16 @@ jobs:
               echo "Skipping $deploy (not yet deployed)"
             fi
           done
+          # Wait for source-controller to be fully operational (serving CRDs)
+          echo "Waiting for source-controller to serve CRDs..."
+          for i in $(seq 1 30); do
+            if kubectl get ocirepositories -A &>/dev/null; then
+              echo "source-controller is serving CRDs"
+              break
+            fi
+            echo "  attempt $i/30 — waiting 10s..."
+            sleep 10
+          done
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
