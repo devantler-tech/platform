@@ -1,0 +1,7 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: kubescape
+  namespace: kubescape
+spec:
+  url: https://kubescape.github.io/helm-charts/
