@@ -197,15 +197,17 @@ jobs:
             printf 'Resetting stuck HelmRelease: %s/%s\n' "$ns" "$name"
             kubectl patch helmrelease.helm.toolkit.fluxcd.io "$name" -n "$ns" \
               --type=merge -p '{"spec":{"suspend":true}}' || true
+            echo "$ns/$name" >> /tmp/suspended-hr.txt
           done
           sleep 5
-          kubectl get helmreleases.helm.toolkit.fluxcd.io -A -o json 2>/dev/null | \
-            jq -r '.items[] | select(.spec.suspend == true) | "\(.metadata.namespace) \(.metadata.name)"' | \
-          while read -r ns name; do
-            printf 'Resuming HelmRelease: %s/%s\n' "$ns" "$name"
-            kubectl patch helmrelease.helm.toolkit.fluxcd.io "$name" -n "$ns" \
-              --type=merge -p '{"spec":{"suspend":false}}' || true
-          done
+          if [ -f /tmp/suspended-hr.txt ]; then
+            while IFS='/' read -r ns name; do
+              printf 'Resuming HelmRelease: %s/%s\n' "$ns" "$name"
+              kubectl patch helmrelease.helm.toolkit.fluxcd.io "$name" -n "$ns" \
+                --type=merge -p '{"spec":{"suspend":false}}' || true
+            done < /tmp/suspended-hr.txt
+            rm -f /tmp/suspended-hr.txt
+          fi
 
       - name: 🔧 Reset stuck Kustomizations
         continue-on-error: true
@@ -260,14 +262,20 @@ jobs:
           done
           # Wait for source-controller to be fully operational (serving CRDs)
           echo "Waiting for source-controller to serve CRDs..."
+          crd_ready=false
           for i in $(seq 1 30); do
             if kubectl get ocirepositories -A &>/dev/null; then
               echo "source-controller is serving CRDs"
+              crd_ready=true
               break
             fi
             echo "  attempt $i/30 — waiting 10s..."
             sleep 10
           done
+          if [ "$crd_ready" != "true" ]; then
+            echo "ERROR: source-controller CRDs not available after 5 minutes"
+            exit 1
+          fi
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
