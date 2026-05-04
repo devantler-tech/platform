@@ -11,7 +11,7 @@ resources:
   - keda/
   - keda-http-add-on/
   - kube-prometheus-stack/
-  - kubescape/
+  # - kubescape/  # temporarily disabled to bisect CI failure
   - kyverno/
   - metrics-server/
   - oauth2-proxy/

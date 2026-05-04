@@ -21,8 +21,9 @@ patches:
       name: flux-operator
       namespace: flux-system
     path: flux-operator/patches/helm-release-patch.yaml
-  - target:
-      kind: HelmRelease
-      name: kubescape
-      namespace: kubescape
-    path: kubescape/patches/helm-release-patch.yaml
+  # temporarily disabled to bisect CI failure
+  # - target:
+  #     kind: HelmRelease
+  #     name: kubescape
+  #     namespace: kubescape
+  #   path: kubescape/patches/helm-release-patch.yaml
