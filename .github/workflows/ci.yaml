@@ -207,6 +207,29 @@ jobs:
               --type=merge -p '{"spec":{"suspend":false}}' || true
           done
 
+      - name: 🔧 Reset stuck Kustomizations
+        continue-on-error: true
+        run: |
+          # Kustomizations may be stuck in HealthCheckFailed/BuildFailed state
+          # from a previous deploy (e.g. a new resource failed its health check).
+          # Suspend + resume clears the failure status so ksail reconcile sees a
+          # fresh state and waits for the new reconciliation cycle.
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o json 2>/dev/null | \
+            jq -r '.items[] | select(.status.conditions // [] | any(.type == "Ready" and .status == "False" and (.reason // "" | test("HealthCheckFailed|BuildFailed|Failed|Stalled")))) | "\(.metadata.namespace) \(.metadata.name)"' | \
+          while read -r ns name; do
+            printf 'Resetting stuck Kustomization: %s/%s\n' "$ns" "$name"
+            kubectl patch kustomization.kustomize.toolkit.fluxcd.io "$name" -n "$ns" \
+              --type=merge -p '{"spec":{"suspend":true}}' || true
+          done
+          sleep 5
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o json 2>/dev/null | \
+            jq -r '.items[] | select(.spec.suspend == true) | "\(.metadata.namespace) \(.metadata.name)"' | \
+          while read -r ns name; do
+            printf 'Resuming Kustomization: %s/%s\n' "$ns" "$name"
+            kubectl patch kustomization.kustomize.toolkit.fluxcd.io "$name" -n "$ns" \
+              --type=merge -p '{"spec":{"suspend":false}}' || true
+          done
+
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
         run: ksail --config ksail.prod.yaml workload reconcile
