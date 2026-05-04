@@ -251,9 +251,13 @@ jobs:
             sleep 30
           fi
           for deploy in source-controller kustomize-controller helm-controller notification-controller image-reflector-controller image-automation-controller; do
-            echo "Waiting for $deploy..."
-            kubectl -n flux-system wait deployment/"$deploy" \
-              --for=condition=Available --timeout=180s 2>/dev/null || true
+            if kubectl -n flux-system get deployment/"$deploy" &>/dev/null; then
+              echo "Waiting for $deploy..."
+              kubectl -n flux-system wait deployment/"$deploy" \
+                --for=condition=Available --timeout=180s
+            else
+              echo "Skipping $deploy (not yet deployed)"
+            fi
           done
 
       - name: 🔁 Trigger Flux reconciliation
