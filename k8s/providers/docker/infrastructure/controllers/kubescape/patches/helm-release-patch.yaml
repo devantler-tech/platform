@@ -5,7 +5,28 @@ metadata:
   namespace: kubescape
 spec:
   interval: 2m
-  # eBPF-based runtime detection is unavailable on Docker-provider Talos nodes.
+  # The kubescape operator chart is resource-heavy and takes longer than the
+  # kustomize-controller health-check window to become fully ready on
+  # Docker-provider Talos nodes. Disable wait so the HelmRelease reports
+  # success immediately after applying resources.
+  install:
+    disableWait: true
+    remediation:
+      retries: -1
+  upgrade:
+    disableWait: true
+    remediation:
+      retries: -1
+      remediateLastFailure: true
   values:
     capabilities:
+      # eBPF-based runtime detection is unavailable on Docker-provider nodes.
       runtimeDetection: disable
+      # Heavy capabilities not needed for local/CI testing.
+      runtimeObservability: disable
+      malwareDetection: disable
+      networkPolicyService: disable
+      networkEventsStreaming: disable
+      seccompProfileService: disable
+      httpDetection: disable
+      nodeProfileService: disable
