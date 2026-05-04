@@ -235,7 +235,6 @@ jobs:
           fi
 
       - name: ⏳ Pre-apply FluxInstance and wait for controllers
-        continue-on-error: true
         run: |
           # The FluxInstance adds image-automation controllers, which causes
           # flux-operator to restart ALL Flux controllers. If this happens
@@ -246,7 +245,7 @@ jobs:
           flux_instance="k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml"
           if [ -f "$flux_instance" ]; then
             echo "Pre-applying FluxInstance to trigger controller restart..."
-            kubectl apply -f "$flux_instance" || true
+            kubectl apply -f "$flux_instance"
             echo "Waiting 30s for flux-operator to process..."
             sleep 30
           fi
