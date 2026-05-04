@@ -6,6 +6,7 @@
     ":semanticCommitTypeAll(fix)"
   ],
   "assigneesFromCodeOwners": true,
+  "minimumReleaseAge": "7 days",
   "flux": {
     "fileMatch": [
       "^k8s/.+\\.ya?ml$"
