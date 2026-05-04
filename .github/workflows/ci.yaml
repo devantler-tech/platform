@@ -276,6 +276,31 @@ jobs:
             echo "ERROR: source-controller CRDs not available after 5 minutes"
             exit 1
           fi
+          # Ensure the OCIRepository exists for ksail workload reconcile.
+          # ksail expects this resource but does not create it — it is
+          # normally bootstrapped by ksail cluster create. After a
+          # FluxInstance restart the resource may be missing.
+          if ! kubectl get ocirepository flux-system -n flux-system &>/dev/null; then
+            echo "Creating OCIRepository flux-system..."
+            kubectl apply -f - <<'OCIEOF'
+          apiVersion: source.toolkit.fluxcd.io/v1
+          kind: OCIRepository
+          metadata:
+            name: flux-system
+            namespace: flux-system
+          spec:
+            interval: 1m
+            url: oci://ghcr.io/devantler-tech/platform/manifests
+            ref:
+              tag: latest
+            secretRef:
+              name: ksail-registry-credentials
+            provider: generic
+          OCIEOF
+            echo "Waiting for OCIRepository to be ready..."
+            kubectl wait ocirepository/flux-system -n flux-system \
+              --for=condition=Ready --timeout=120s
+          fi
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
