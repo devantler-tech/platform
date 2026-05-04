@@ -4,6 +4,7 @@ metadata:
   name: kubescape
   namespace: kubescape
 spec:
+  interval: 2m
   # eBPF-based runtime detection is unavailable on Docker-provider Talos nodes.
   values:
     capabilities:
