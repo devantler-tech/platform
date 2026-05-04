@@ -301,6 +301,14 @@ jobs:
             kubectl wait ocirepository/flux-system -n flux-system \
               --for=condition=Ready --timeout=120s
           fi
+          # Ensure root Flux Kustomizations exist for ksail workload reconcile.
+          if ! kubectl get kustomization variables -n flux-system &>/dev/null; then
+            echo "Bootstrapping root Flux Kustomizations..."
+            kubectl kustomize k8s/clusters/prod | kubectl apply -f -
+            echo "Waiting for variables Kustomization to be ready..."
+            kubectl wait kustomization/variables -n flux-system \
+              --for=condition=Ready --timeout=180s
+          fi
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
