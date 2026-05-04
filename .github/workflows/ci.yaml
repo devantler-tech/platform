@@ -234,6 +234,18 @@ jobs:
             rm -f /tmp/suspended-ks.txt
           fi
 
+      - name: ⏳ Wait for Flux controllers to be ready
+        continue-on-error: true
+        run: |
+          # The FluxInstance may trigger a controller restart (e.g. when adding
+          # image-automation controllers). Wait for all Flux deployments —
+          # especially source-controller — to be Available before reconciling.
+          for deploy in source-controller kustomize-controller helm-controller notification-controller; do
+            echo "Waiting for $deploy..."
+            kubectl -n flux-system wait deployment/"$deploy" \
+              --for=condition=Available --timeout=120s 2>/dev/null || true
+          done
+
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
         run: ksail --config ksail.prod.yaml workload reconcile
