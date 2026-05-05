@@ -24,6 +24,9 @@ spec:
               protocol: TCP
             - port: "6443"
               protocol: TCP
+    # Intra-namespace communication (scaler→interceptor:9090, etc.)
+    - fromEndpoints:
+        - {}
     # Metrics scraping
     - fromEndpoints:
         - matchLabels:
