@@ -7,13 +7,13 @@ metadata:
     policies.kyverno.io/title: Auto VPA
     policies.kyverno.io/category: Autoscaling
     policies.kyverno.io/severity: low
-    policies.kyverno.io/subject: Deployment,StatefulSet
+    policies.kyverno.io/subject: Deployment,StatefulSet,DaemonSet
     policies.kyverno.io/description: >-
-      Generates a VerticalPodAutoscaler for every Deployment and
-      StatefulSet outside kube-system. VPA is memory-only
-      (controlledResources: ["memory"]) so it does not conflict with
-      KEDA / HPA horizontal scaling on CPU.
-      Ref: https://brtkwr.com/posts/2026-02-07-running-hpa-and-vpa-together-on-kubernetes/
+      Generates a VerticalPodAutoscaler for every Deployment, StatefulSet,
+      and DaemonSet outside kube-system. VPA controls both CPU and memory
+      to ensure workloads do not over-request resources. KEDA-managed
+      workloads use HTTP request rate (not CPU) for horizontal scaling,
+      so VPA CPU management does not conflict.
 spec:
   rules:
     - name: generate-vpa-for-deployment
@@ -43,8 +43,9 @@ spec:
             resourcePolicy:
               containerPolicies:
                 - containerName: "*"
-                  controlledResources: ["memory"]
+                  controlledResources: ["cpu", "memory"]
                   minAllowed:
+                    cpu: "10m"
                     memory: "64Mi"
     - name: generate-vpa-for-statefulset
       match:
@@ -73,6 +74,38 @@ spec:
             resourcePolicy:
               containerPolicies:
                 - containerName: "*"
-                  controlledResources: ["memory"]
+                  controlledResources: ["cpu", "memory"]
                   minAllowed:
+                    cpu: "10m"
+                    memory: "64Mi"
+    - name: generate-vpa-for-daemonset
+      match:
+        resources:
+          kinds:
+            - DaemonSet
+      exclude:
+        resources:
+          namespaces:
+            - kube-system
+      generate:
+        apiVersion: autoscaling.k8s.io/v1
+        kind: VerticalPodAutoscaler
+        name: "{{request.object.metadata.name}}"
+        namespace: "{{request.object.metadata.namespace}}"
+        synchronize: true
+        data:
+          spec:
+            targetRef:
+              apiVersion: apps/v1
+              kind: DaemonSet
+              name: "{{request.object.metadata.name}}"
+            updatePolicy:
+              updateMode: "Auto"
+              minReplicas: 1
+            resourcePolicy:
+              containerPolicies:
+                - containerName: "*"
+                  controlledResources: ["cpu", "memory"]
+                  minAllowed:
+                    cpu: "10m"
                     memory: "64Mi"
