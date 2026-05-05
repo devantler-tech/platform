@@ -7,6 +7,12 @@ creation_rules:
     encrypted_regex: ^(data|stringData)$
     age: |-
       age1rk6fs67kly3h4zux5za429z3grjtvs8vcunav4sa28pxk738najsk8wgs6
+  # Tenant: wedding-app — encrypted with the tenant's own Age key so
+  # platform admins cannot decrypt tenant secrets.
+  - path_regex: ^k8s\/bases\/apps\/wedding-app\/.+\.enc\.ya?ml$
+    encrypted_regex: ^(data|stringData)$
+    age: |-
+      age1vce0tzr7c5xzejpkd40s48ux833e3u5hf667xz4g3skes7zxn9gstkusn4
   - path_regex: ^.+\.enc\.ya?ml$
     encrypted_regex: ^(data|stringData)$
     age: |-

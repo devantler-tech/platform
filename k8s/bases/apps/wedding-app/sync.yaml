@@ -18,6 +18,8 @@ kind: Kustomization
 metadata:
   labels:
     app.kubernetes.io/managed-by: ksail
+  annotations:
+    ksail.devantler.tech/reconcile-exclude: "true"
   name: wedding-app
   namespace: wedding-app
 spec:
