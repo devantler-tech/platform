@@ -7,6 +7,8 @@ metadata:
     helm.toolkit.fluxcd.io/helm-test: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
+  # WORKAROUND: MySQL PVC format failure on Longhorn — see ksail#4621
+  suspend: true
   interval: 2m
   timeout: 15m
   install:
