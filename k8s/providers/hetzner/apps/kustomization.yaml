@@ -14,3 +14,9 @@ patches:
       name: headlamp
       namespace: headlamp
     path: headlamp/patches/helm-release-patch.yaml
+  - target:
+      group: kustomize.toolkit.fluxcd.io
+      kind: Kustomization
+      name: wedding-app
+      namespace: wedding-app
+    path: wedding-app/patches/kustomization-patch.yaml
