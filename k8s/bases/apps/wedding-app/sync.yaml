@@ -39,11 +39,3 @@ spec:
     provider: sops
     secretRef:
       name: sops-age
-  postBuild:
-    substituteFrom:
-      - kind: ConfigMap
-        name: variables-base
-        optional: true
-      - kind: ConfigMap
-        name: variables-cluster
-        optional: true

@@ -14,25 +14,3 @@ patches:
       name: fleetdm
       namespace: fleetdm
     path: fleetdm/patches/helm-release-patch.yaml
-  - target:
-      group: source.toolkit.fluxcd.io
-      kind: OCIRepository
-      name: wedding-app
-      namespace: wedding-app
-    path: wedding-app/patches/ocirepository-patch.yaml
-  - target:
-      group: kustomize.toolkit.fluxcd.io
-      kind: Kustomization
-      name: wedding-app
-      namespace: wedding-app
-    path: wedding-app/patches/kustomization-patch.yaml
-  - target:
-      kind: Secret
-      name: sops-age
-      namespace: wedding-app
-    path: wedding-app/patches/sops-age-secret-patch.yaml
-  - target:
-      kind: Secret
-      name: ghcr-auth
-      namespace: wedding-app
-    path: wedding-app/patches/ghcr-auth-secret-patch.yaml
