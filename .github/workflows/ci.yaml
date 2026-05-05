@@ -74,6 +74,8 @@ jobs:
           ksail-version: "7.12.2"
           init: "false"
           validate: "true"
+          scan: "true"
+          scan-framework: "nsa"
           sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
           hosts-file: ${{ vars.HOSTS_FILE }}
           root-ca-cert-file: ${{ vars.ROOT_CA_CERT_FILE }}
