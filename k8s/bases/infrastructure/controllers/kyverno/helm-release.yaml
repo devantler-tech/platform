@@ -46,6 +46,20 @@ spec:
                 - update
                 - patch
                 - delete
+            # The add-default-deny ClusterPolicy generates CiliumNetworkPolicy
+            # objects in every namespace.
+            - apiGroups:
+                - cilium.io
+              resources:
+                - ciliumnetworkpolicies
+              verbs:
+                - get
+                - list
+                - watch
+                - create
+                - update
+                - patch
+                - delete
       updateStrategy:
         type: RollingUpdate
         rollingUpdate:
@@ -71,6 +85,18 @@ spec:
                 - autoscaling.k8s.io
               resources:
                 - verticalpodautoscalers
+              verbs:
+                - get
+                - list
+                - watch
+                - create
+                - update
+                - patch
+                - delete
+            - apiGroups:
+                - cilium.io
+              resources:
+                - ciliumnetworkpolicies
               verbs:
                 - get
                 - list
