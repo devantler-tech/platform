@@ -10,12 +10,14 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
-    # Webhook from kube-apiserver
+    # Webhook from kube-apiserver (hostNetwork on control plane nodes)
     - fromEntities:
         - kube-apiserver
+        - remote-node
+        - host
       toPorts:
         - ports:
-            - port: "443"
+            - port: "10250"
               protocol: TCP
   egress:
     # Kube API for service discovery
@@ -29,6 +31,7 @@ spec:
     # Scrape node-exporter on nodes
     - toEntities:
         - host
+        - remote-node
     # Alertmanager webhooks (Slack, etc)
     - toEntities:
         - world
@@ -40,3 +43,14 @@ spec:
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

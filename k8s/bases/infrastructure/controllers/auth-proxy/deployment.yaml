@@ -43,6 +43,7 @@ spec:
             - containerPort: 8080
           securityContext:
             runAsNonRoot: true
+            runAsUser: 65532
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]

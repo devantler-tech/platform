@@ -1,21 +1,28 @@
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: allow-kubelet-cert-approver
-  namespace: kubelet-serving-cert-approver
+  name: allow-fleetdm
+  namespace: fleetdm
 spec:
   endpointSelector: {}
   ingress:
-    # Metrics scraping
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
+    # Gateway ingress
+    - fromEntities:
+        - ingress
       toPorts:
         - ports:
-            - port: "9090"
+            - port: "8080"
               protocol: TCP
+    # Intra-namespace (fleet → mysql, fleet → redis)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: fleetdm
   egress:
-    # Kube API for approving CSRs
+    # Intra-namespace (fleet → mysql, fleet → redis)
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: fleetdm
+    # Kube API
     - toEntities:
         - kube-apiserver
     # DNS resolution

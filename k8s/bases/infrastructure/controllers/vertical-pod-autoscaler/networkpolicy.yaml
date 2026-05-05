@@ -6,12 +6,14 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Webhook from kube-apiserver
+    # Webhook from kube-apiserver (hostNetwork on control plane nodes)
     - fromEntities:
         - kube-apiserver
+        - remote-node
+        - host
       toPorts:
         - ports:
-            - port: "443"
+            - port: "8000"
               protocol: TCP
   egress:
     # Kube API for managing VPAs
@@ -21,3 +23,14 @@ spec:
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
