@@ -1,7 +1,0 @@
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: wedding-app
-  namespace: wedding-app
-  annotations:
-    kustomize.toolkit.fluxcd.io/ssa: Ignore

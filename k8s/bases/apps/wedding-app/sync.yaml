@@ -37,42 +37,11 @@ spec:
     provider: sops
     secretRef:
       name: sops-age
-  patches:
-    - target:
-        kind: Deployment
-        name: wedding-app
-      patch: |
-        apiVersion: apps/v1
-        kind: Deployment
-        metadata:
-          name: wedding-app
-        spec:
-          template:
-            spec:
-              imagePullSecrets:
-                - name: ghcr-auth
-    - target:
-        kind: Deployment
-        name: wedding-app
-      patch: |
-        - op: replace
-          path: /spec/template/spec/containers/0/image
-          value: ghcr.io/devantler-tech/wedding-app:latest
-    - target:
-        kind: Deployment
-        name: wedding-app
-      patch: |
-        - op: replace
-          path: /spec/template/spec/containers/0/env
-          value:
-            - name: PORT
-              value: "3000"
-            - name: NODE_ENV
-              value: "production"
-            - name: DATABASE_URL
-              value: "postgresql://${username}:${password}@wedding-db-rw:5432/wedding"
   postBuild:
     substituteFrom:
-      - kind: Secret
-        name: wedding-db-credentials
+      - kind: ConfigMap
+        name: variables-base
+        optional: true
+      - kind: ConfigMap
+        name: variables-cluster
         optional: true
