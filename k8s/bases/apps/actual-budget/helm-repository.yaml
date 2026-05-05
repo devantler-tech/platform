@@ -1,0 +1,8 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: actual-budget
+  namespace: actual-budget
+spec:
+  url: https://community-charts.github.io/helm-charts
+  interval: 60m

@@ -1,0 +1,22 @@
+---
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  name: actual-budget
+  namespace: actual-budget
+spec:
+  hosts:
+    - budget.${domain}
+  scaleTargetRef:
+    name: actual-budget-actualbudget
+    service: actual-budget-actualbudget
+    port: 5006
+  replicas:
+    min: 0
+    max: 1
+  scaledownPeriod: 300
+  scalingMetric:
+    requestRate:
+      granularity: 1s
+      targetValue: 100
+      window: 1m

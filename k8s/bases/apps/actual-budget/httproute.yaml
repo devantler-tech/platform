@@ -1,0 +1,25 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: actual-budget
+  namespace: actual-budget
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Actual Budget
+    gethomepage.dev/description: Local-first personal finance and budgeting.
+    gethomepage.dev/group: Finance
+    gethomepage.dev/icon: si-actualbudget
+    gethomepage.dev/href: https://budget.${domain}
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=actualbudget
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - budget.${domain}
+  rules:
+    - backendRefs:
+        - name: keda-add-ons-http-interceptor-proxy
+          namespace: keda
+          port: 8080

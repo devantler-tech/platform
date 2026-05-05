@@ -36,9 +36,11 @@ data:
   # saves memory until the first KEDA reconciliation.
   # headlamp: min 0, max 1 (OIDC state in-memory — must stay single-pod)
   # whoami/fleetdm: min 0, max 2
+  # actual-budget: min 0, max 1 (SQLite — single-pod only)
   headlamp_replicas: "1"
   whoami_replicas: "1"
   fleetdm_replicas: "1"
+  actual_budget_replicas: "1"
   # Auth chain: single replica is sufficient on cx23 nodes; prevents OOM
   # cascade that makes both replicas flap simultaneously.
   dex_replicas: "1"

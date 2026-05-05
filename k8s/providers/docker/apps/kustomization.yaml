@@ -6,6 +6,11 @@ resources:
 patches:
   - target:
       kind: HelmRelease
+      name: actual-budget
+      namespace: actual-budget
+    path: actual-budget/patches/helm-release-patch.yaml
+  - target:
+      kind: HelmRelease
       name: headlamp
       namespace: headlamp
     path: headlamp/patches/helm-release-patch.yaml

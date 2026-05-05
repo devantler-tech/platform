@@ -60,6 +60,7 @@ spec:
           redirectURIs:
             - "https://oauth2-proxy.${domain}/oauth2/callback"
             - "https://headlamp.${domain}/oidc-callback"
+            - "https://budget.${domain}/oidc/callback"
           trustedPeers:
             - kubectl
         - name: kubectl

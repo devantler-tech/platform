@@ -1,0 +1,65 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: actual-budget
+  namespace: actual-budget
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 2m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  chart:
+    spec:
+      chart: actualbudget
+      version: 1.8.7
+      sourceRef:
+        kind: HelmRepository
+        name: actual-budget
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: actual-budget-actualbudget
+            patch: |
+              - op: add
+                path: /spec/strategy
+                value:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxSurge: 1
+                    maxUnavailable: 0
+              - op: add
+                path: /spec/template/spec/topologySpreadConstraints
+                value:
+                  - maxSkew: 1
+                    topologyKey: kubernetes.io/hostname
+                    whenUnsatisfiable: ScheduleAnyway
+                    labelSelector:
+                      matchLabels:
+                        app.kubernetes.io/name: actualbudget
+                        app.kubernetes.io/instance: actual-budget
+  # https://github.com/community-charts/helm-charts/blob/main/charts/actualbudget/values.yaml
+  values:
+    replicaCount: ${actual_budget_replicas:=1}
+    ingress:
+      enabled: false
+    persistence:
+      enabled: true
+      size: 10Gi
+    login:
+      method: "openid"
+      openid:
+        enforce: true
+        providerName: "Dex"
+        discoveryUrl: "https://dex.${domain}/.well-known/openid-configuration"
+        clientId: "public-client"
+        clientSecret: "${dex_client_secret}"
+        authMethod: "openid"
+        tokenExpiration: "never"
