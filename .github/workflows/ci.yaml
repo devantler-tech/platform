@@ -71,7 +71,7 @@ jobs:
         with:
           distribution: Talos
           provider: Docker
-          ksail-version: "7.8.0"
+          ksail-version: "7.12.2"
           init: "false"
           validate: "true"
           sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
