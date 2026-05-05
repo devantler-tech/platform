@@ -15,13 +15,27 @@ spec:
   # https://github.com/cloudflare/origin-ca-issuer/blob/trunk/deploy/charts/origin-ca-issuer/values.yaml
   values:
     replicaCount: ${origin_ca_issuer_replicas:=2}
-    # Chart default is 1 full CPU core per replica — absurd for a tiny
-    # webhook that signs a handful of certificates per day. Override to
-    # burstable-tier sizing so a 2-vCPU node can actually run something
-    # else.
-    resources:
-      requests:
-        cpu: 10m
-        memory: 64Mi
-      limits:
-        memory: 128Mi
+  # Chart hardcodes 1 CPU / 512Mi without templating; override via
+  # postRenderers since values.resources is not wired in the chart.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: origin-ca-issuer
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: origin-ca-issuer
+              spec:
+                template:
+                  spec:
+                    containers:
+                      - name: origin-ca-issuer
+                        resources:
+                          requests:
+                            cpu: 10m
+                            memory: 64Mi
+                          limits:
+                            memory: 128Mi

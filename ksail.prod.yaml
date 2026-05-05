@@ -50,7 +50,7 @@ spec:
     # Longhorn requires dedicated Hetzner Cloud Volumes on static
     # workers; autoscaler-created nodes are compute-only.
     # The Cluster Autoscaler manages additional workers dynamically.
-    workers: 3
+    workers: 4
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.

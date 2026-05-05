@@ -30,3 +30,13 @@ spec:
       continuousScan: enable
       vulnerabilityScan: enable
       runtimeDetection: enable
+    # Chart defaults are grossly overprovisioned for small clusters.
+    # Align with VPA recommendations.
+    kubevuln:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 1Gi

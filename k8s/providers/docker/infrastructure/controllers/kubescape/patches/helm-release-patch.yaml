@@ -23,7 +23,6 @@ spec:
       # eBPF-based runtime detection is unavailable on Docker-provider nodes.
       runtimeDetection: disable
       # Heavy capabilities not needed for local/CI testing.
-      vulnerabilityScan: disable
       runtimeObservability: disable
       malwareDetection: disable
       networkPolicyService: disable
