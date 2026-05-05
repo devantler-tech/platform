@@ -6,3 +6,4 @@ resources:
   - helm-repository.yaml
   - pod-disruption-budget.yaml
   - r2-credentials-secret.yaml
+  - networkpolicy.yaml

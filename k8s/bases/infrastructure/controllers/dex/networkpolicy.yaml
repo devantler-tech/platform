@@ -1,34 +1,33 @@
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: allow-flux
-  namespace: flux-system
+  name: allow-dex
+  namespace: dex
 spec:
   endpointSelector: {}
   ingress:
-    # Gateway ingress for flux-web UI
+    # Gateway ingress for OIDC endpoints
     - fromEntities:
         - ingress
       toPorts:
         - ports:
-            - port: "9080"
+            - port: "5556"
               protocol: TCP
-    # Webhook notifications
-    - fromEntities:
-        - world
-      toPorts:
-        - ports:
-            - port: "80"
-              protocol: TCP
-    # Metrics scraping
+    # gRPC from oauth2-proxy
     - fromEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "5556"
+              protocol: TCP
+            - port: "5558"
+              protocol: TCP
   egress:
-    # Kube API
+    # Kube API for reading secrets
     - toEntities:
         - kube-apiserver
-    # OCI registries (GHCR, etc)
+    # GitHub/OIDC upstream connectors
     - toEntities:
         - world
       toPorts:

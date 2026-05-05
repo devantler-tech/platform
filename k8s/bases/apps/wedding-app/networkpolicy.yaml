@@ -1,0 +1,27 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-wedding-app
+  namespace: wedding-app
+spec:
+  endpointSelector: {}
+  ingress:
+    # Gateway ingress
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+    # Intra-namespace (app → db, db replication)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: wedding-app
+  egress:
+    # Intra-namespace (app → db)
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: wedding-app
+    # Kube API (for CNPG operator managing the cluster)
+    - toEntities:
+        - kube-apiserver

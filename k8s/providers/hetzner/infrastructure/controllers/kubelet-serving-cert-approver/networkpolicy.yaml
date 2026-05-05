@@ -1,0 +1,20 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-kubelet-cert-approver
+  namespace: kubelet-serving-cert-approver
+spec:
+  endpointSelector: {}
+  ingress:
+    # Metrics scraping
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+  egress:
+    # Kube API for approving CSRs
+    - toEntities:
+        - kube-apiserver

@@ -1,0 +1,27 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-velero
+  namespace: velero
+spec:
+  endpointSelector: {}
+  ingress:
+    # Metrics scraping
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "8085"
+              protocol: TCP
+  egress:
+    # Kube API for backup operations
+    - toEntities:
+        - kube-apiserver
+    # S3-compatible backup target
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

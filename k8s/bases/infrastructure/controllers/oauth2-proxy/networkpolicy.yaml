@@ -1,0 +1,40 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-oauth2-proxy
+  namespace: oauth2-proxy
+spec:
+  endpointSelector: {}
+  ingress:
+    # Gateway ingress
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+            - port: "4180"
+              protocol: TCP
+  egress:
+    # Dex for OIDC
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: dex
+      toPorts:
+        - ports:
+            - port: "5556"
+              protocol: TCP
+    # Upstream backends (homepage, etc)
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: homepage
+    # GitHub OAuth
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # Kube API
+    - toEntities:
+        - kube-apiserver

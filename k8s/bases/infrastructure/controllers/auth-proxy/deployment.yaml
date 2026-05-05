@@ -30,6 +30,10 @@ spec:
           labelSelector:
             matchLabels:
               app: auth-proxy
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: traefik
           image: docker.io/library/traefik:v3.6
@@ -37,6 +41,12 @@ spec:
             - --configFile=/etc/traefik/traefik.yaml
           ports:
             - containerPort: 8080
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           volumeMounts:
             - name: config
               mountPath: /etc/traefik

@@ -1,0 +1,11 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-reloader
+  namespace: reloader
+spec:
+  endpointSelector: {}
+  egress:
+    # Kube API for watching configmaps/secrets
+    - toEntities:
+        - kube-apiserver

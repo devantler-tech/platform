@@ -1,0 +1,20 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-headlamp
+  namespace: headlamp
+spec:
+  endpointSelector: {}
+  ingress:
+    # KEDA interceptor proxy routes traffic from gateway
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: keda
+      toPorts:
+        - ports:
+            - port: "4466"
+              protocol: TCP
+  egress:
+    # Kube API for dashboard
+    - toEntities:
+        - kube-apiserver

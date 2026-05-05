@@ -1,0 +1,23 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-vpa
+  namespace: vertical-pod-autoscaler
+spec:
+  endpointSelector: {}
+  ingress:
+    # Webhook from kube-apiserver
+    - fromEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+  egress:
+    # Kube API for managing VPAs
+    - toEntities:
+        - kube-apiserver
+    # Metrics server
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system

@@ -1,0 +1,42 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-monitoring
+  namespace: monitoring
+spec:
+  endpointSelector: {}
+  ingress:
+    # Intra-namespace (prometheus → alertmanager, etc)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+    # Webhook from kube-apiserver
+    - fromEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+  egress:
+    # Kube API for service discovery
+    - toEntities:
+        - kube-apiserver
+    # Scrape targets in all namespaces
+    - toEndpoints:
+        - matchExpressions:
+            - key: k8s:io.kubernetes.pod.namespace
+              operator: Exists
+    # Scrape node-exporter on nodes
+    - toEntities:
+        - host
+    # Alertmanager webhooks (Slack, etc)
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # Intra-namespace
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring

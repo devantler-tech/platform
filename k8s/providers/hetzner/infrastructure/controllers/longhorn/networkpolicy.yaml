@@ -1,25 +1,22 @@
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: allow-flux
-  namespace: flux-system
+  name: allow-longhorn
+  namespace: longhorn-system
 spec:
   endpointSelector: {}
   ingress:
-    # Gateway ingress for flux-web UI
+    # Webhook from kube-apiserver
     - fromEntities:
-        - ingress
+        - kube-apiserver
       toPorts:
         - ports:
-            - port: "9080"
+            - port: "9502"
               protocol: TCP
-    # Webhook notifications
-    - fromEntities:
-        - world
-      toPorts:
-        - ports:
-            - port: "80"
-              protocol: TCP
+    # Intra-namespace (manager, driver, engine)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: longhorn-system
     # Metrics scraping
     - fromEndpoints:
         - matchLabels:
@@ -28,7 +25,11 @@ spec:
     # Kube API
     - toEntities:
         - kube-apiserver
-    # OCI registries (GHCR, etc)
+    # Intra-namespace
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: longhorn-system
+    # Backup targets (S3-compatible)
     - toEntities:
         - world
       toPorts:

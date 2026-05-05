@@ -1,37 +1,35 @@
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: allow-flux
-  namespace: flux-system
+  name: allow-keda
+  namespace: keda
 spec:
   endpointSelector: {}
   ingress:
-    # Gateway ingress for flux-web UI
+    # Gateway ingress to interceptor proxy
     - fromEntities:
         - ingress
       toPorts:
         - ports:
-            - port: "9080"
+            - port: "8080"
               protocol: TCP
-    # Webhook notifications
+    # Webhook from kube-apiserver
     - fromEntities:
-        - world
+        - kube-apiserver
       toPorts:
         - ports:
-            - port: "80"
+            - port: "443"
               protocol: TCP
     # Metrics scraping
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
   egress:
-    # Kube API
+    # Kube API for watching scalers
     - toEntities:
         - kube-apiserver
-    # OCI registries (GHCR, etc)
-    - toEntities:
-        - world
-      toPorts:
-        - ports:
-            - port: "443"
-              protocol: TCP
+    # Reach backend services in any namespace
+    - toEndpoints:
+        - matchExpressions:
+            - key: k8s:io.kubernetes.pod.namespace
+              operator: Exists

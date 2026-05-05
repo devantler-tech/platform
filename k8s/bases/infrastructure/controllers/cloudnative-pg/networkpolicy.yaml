@@ -1,0 +1,19 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-cnpg
+  namespace: cnpg-system
+spec:
+  endpointSelector: {}
+  ingress:
+    # Webhook from kube-apiserver
+    - fromEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+  egress:
+    # Kube API for managing PG clusters
+    - toEntities:
+        - kube-apiserver

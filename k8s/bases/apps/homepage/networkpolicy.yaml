@@ -1,0 +1,20 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-homepage
+  namespace: homepage
+spec:
+  endpointSelector: {}
+  ingress:
+    # Traffic from oauth2-proxy (via gateway → oauth2-proxy → homepage)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+  egress:
+    # Kube API for widget data
+    - toEntities:
+        - kube-apiserver
