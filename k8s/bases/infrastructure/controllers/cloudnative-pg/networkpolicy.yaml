@@ -19,6 +19,17 @@ spec:
     # Kube API for managing PG clusters
     - toEntities:
         - kube-apiserver
+    # Reach managed PostgreSQL instances in any namespace (status + postgres ports)
+    - toEndpoints:
+        - matchExpressions:
+            - key: k8s:io.kubernetes.pod.namespace
+              operator: Exists
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+            - port: "5432"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:
