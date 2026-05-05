@@ -67,11 +67,11 @@ jobs:
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@99c97b5f43dc088cdb3ddb9e3d0f1a55a223fe79 # v7.11.1
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@6989546ae8b628ae3e841eb68a8a3f5d9e6ce021 # v7.12.2
         with:
           distribution: Talos
           provider: Docker
-          ksail-version: "7.8.0"
+          ksail-version: "7.12.2"
           init: "false"
           validate: "true"
           sops-age-key: ${{ secrets.SOPS_AGE_KEY }}

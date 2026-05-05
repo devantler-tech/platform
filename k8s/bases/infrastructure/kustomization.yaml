@@ -6,4 +6,5 @@ resources:
   - certificates/
   - cluster-policies/
   - cluster-role-bindings/
+  - cluster-roles/
   - gateway/

@@ -14,15 +14,3 @@ patches:
       name: fleetdm
       namespace: fleetdm
     path: fleetdm/patches/helm-release-patch.yaml
-  - target:
-      group: source.toolkit.fluxcd.io
-      kind: OCIRepository
-      name: wedding-app
-      namespace: wedding-app
-    path: wedding-app/patches/ocirepository-patch.yaml
-  - target:
-      group: kustomize.toolkit.fluxcd.io
-      kind: Kustomization
-      name: wedding-app
-      namespace: wedding-app
-    path: wedding-app/patches/kustomization-patch.yaml
