@@ -32,6 +32,9 @@ spec:
               app: auth-proxy
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -48,6 +51,13 @@ spec:
             capabilities:
               drop: ["ALL"]
             readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
           volumeMounts:
             - name: config
               mountPath: /etc/traefik

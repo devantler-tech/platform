@@ -47,6 +47,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+            readOnlyRootFilesystem: true
           env:
             - name: MINIO_ROOT_USER
               value: minio
@@ -72,6 +73,7 @@ spec:
               cpu: 100m
               memory: 256Mi
             limits:
+              cpu: 500m
               memory: 512Mi
           volumeMounts:
             - name: data
@@ -123,6 +125,14 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
           command:
             - /bin/sh
             - -c
