@@ -1,4 +1,3 @@
-# Upstream: https://github.com/kyverno/policies/blob/main/other/create-pod-antiaffinity/create-pod-antiaffinity.yaml
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -22,15 +21,18 @@ spec:
             kinds:
               - Deployment
       preconditions:
+        # This precondition selects Pods with the label `app` defined
         all:
         - key: "{{request.object.spec.template.metadata.labels.app || ''}}"
           operator: NotEquals
           value: ""
+      # Mutates the Deployment resource to add fields.
       mutate:
         patchStrategicMerge:
           spec:
             template:
               spec:
+                # Add the `affinity`if not already specified.
                 +(affinity):
                   +(podAntiAffinity):
                     +(preferredDuringSchedulingIgnoredDuringExecution):
