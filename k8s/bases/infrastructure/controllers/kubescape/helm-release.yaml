@@ -27,6 +27,7 @@ spec:
   values:
     clusterName: ${cluster_name}
     capabilities:
+      configurationScan: enable
       continuousScan: enable
       vulnerabilityScan: enable
       runtimeDetection: enable
