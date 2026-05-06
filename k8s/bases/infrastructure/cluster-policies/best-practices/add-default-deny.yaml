@@ -1,7 +1,10 @@
-# Generates a default-deny CiliumNetworkPolicy, a DNS-allow policy,
-# and a standard NetworkPolicy default-deny in every namespace. The
-# CiliumNetworkPolicy is the enforcing policy; the standard
-# NetworkPolicy satisfies Kubescape C-0054 compliance scanning.
+# Generates a default-deny CiliumNetworkPolicy and a DNS-allow policy
+# in every namespace. This ensures zero-trust networking by default —
+# workloads must explicitly allow the traffic they need.
+#
+# Note: standard NetworkPolicy is NOT generated alongside CiliumNetworkPolicy
+# because Cilium enforces both independently — a standard default-deny would
+# block traffic that CiliumNetworkPolicy explicitly allows.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -9,14 +12,13 @@ metadata:
   annotations:
     policies.kyverno.io/title: Default Deny Network Policy
     policies.kyverno.io/category: Networking, Best Practices
-    policies.kyverno.io/subject: CiliumNetworkPolicy, NetworkPolicy
+    policies.kyverno.io/subject: CiliumNetworkPolicy
     policies.kyverno.io/minversion: 1.6.0
     policies.kyverno.io/description: >-
       Generates a CiliumNetworkPolicy that activates Cilium's whitelist
       mode for all endpoints in a namespace (effectively deny-all), plus
       a companion policy that allows DNS egress to kube-dns so pods can
-      still resolve names. Also generates a standard NetworkPolicy
-      default-deny for Kubescape compliance (C-0054).
+      still resolve names.
 spec:
   rules:
     - name: generate-default-deny
@@ -76,29 +78,3 @@ spec:
                         protocol: UDP
                       - port: "53"
                         protocol: TCP
-    - name: generate-standard-default-deny
-      match:
-        any:
-          - resources:
-              kinds:
-                - Namespace
-      exclude:
-        any:
-          - resources:
-              names:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-      generate:
-        generateExisting: true
-        apiVersion: networking.k8s.io/v1
-        kind: NetworkPolicy
-        name: default-deny
-        synchronize: true
-        namespace: "{{request.object.metadata.name}}"
-        data:
-          spec:
-            podSelector: {}
-            policyTypes:
-              - Ingress
-              - Egress
