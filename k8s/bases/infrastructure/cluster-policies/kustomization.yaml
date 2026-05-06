@@ -8,3 +8,72 @@ resources:
   - flux/helm-release-enable-tests.yaml
   - flux/helm-release-install-crds.yaml
   - flux/helm-release-remediation-retries.yaml
+  - samples/create-pod-antiaffinity.yaml
+  - samples/spread-pods-across-topology.yaml
+patches:
+  # --- Anti-affinity: add StatefulSet match, use app.kubernetes.io/name, exclude kube-system ---
+  - target:
+      kind: ClusterPolicy
+      name: insert-pod-antiaffinity
+    patch: |
+      - op: replace
+        path: /spec/rules/0/match/any
+        value:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+      - op: add
+        path: /spec/rules/0/exclude
+        value:
+          resources:
+            namespaces:
+              - kube-system
+      - op: replace
+        path: /spec/rules/0/preconditions/all/0/key
+        value: "{{request.object.spec.template.metadata.labels.\"app.kubernetes.io/name\" || ''}}"
+      - op: replace
+        path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(affinity)/+(podAntiAffinity)/+(preferredDuringSchedulingIgnoredDuringExecution)/0/podAffinityTerm/labelSelector/matchExpressions/0/key
+        value: "app.kubernetes.io/name"
+      - op: replace
+        path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(affinity)/+(podAntiAffinity)/+(preferredDuringSchedulingIgnoredDuringExecution)/0/podAffinityTerm/labelSelector/matchExpressions/0/values/0
+        value: "{{request.object.spec.template.metadata.labels.\"app.kubernetes.io/name\"}}"
+  # --- Topology spread: remove label gate, add StatefulSet, hostname key, ScheduleAnyway, exclude kube-system ---
+  - target:
+      kind: ClusterPolicy
+      name: spread-pods
+    patch: |
+      - op: replace
+        path: /spec/rules/0/match/any
+        value:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+      - op: add
+        path: /spec/rules/0/exclude
+        value:
+          resources:
+            namespaces:
+              - kube-system
+      - op: add
+        path: /spec/rules/0/preconditions
+        value:
+          all:
+            - key: "{{request.object.spec.template.metadata.labels.\"app.kubernetes.io/name\" || ''}}"
+              operator: NotEquals
+              value: ""
+      - op: replace
+        path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(topologySpreadConstraints)/0/topologyKey
+        value: "kubernetes.io/hostname"
+      - op: replace
+        path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(topologySpreadConstraints)/0/whenUnsatisfiable
+        value: "ScheduleAnyway"
+      - op: replace
+        path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(topologySpreadConstraints)/0/labelSelector
+        value:
+          matchExpressions:
+            - key: "app.kubernetes.io/name"
+              operator: In
+              values:
+                - "{{request.object.spec.template.metadata.labels.\"app.kubernetes.io/name\"}}"
