@@ -4,7 +4,7 @@ kind: Kustomization
 resources:
   # Custom policies (no upstream equivalent)
   - best-practices/add-default-deny.yaml
-  - flux/auto-vpa.yaml
+  - best-practices/auto-vpa.yaml
   - flux/helm-release-enable-tests.yaml
   - flux/helm-release-install-crds.yaml
   - flux/helm-release-remediation-retries.yaml
