@@ -6,13 +6,15 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Webhook from kube-apiserver (hostNetwork on control plane nodes)
+    # Webhook + API server pod proxy (host scanner access on 7888)
     - fromEntities:
         - kube-apiserver
         - remote-node
         - host
       toPorts:
         - ports:
+            - port: "7888"
+              protocol: TCP
             - port: "8443"
               protocol: TCP
     # Intra-namespace communication
