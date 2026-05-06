@@ -33,6 +33,13 @@ spec:
     # Kube API
     - toEntities:
         - kube-apiserver
+    # External services (agent downloads, update checks, license validation)
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:

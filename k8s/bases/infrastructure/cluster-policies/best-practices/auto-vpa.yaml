@@ -45,8 +45,8 @@ spec:
                 - containerName: "*"
                   controlledResources: ["cpu", "memory"]
                   minAllowed:
-                    cpu: "10m"
-                    memory: "64Mi"
+                    cpu: "50m"
+                    memory: "128Mi"
     - name: generate-vpa-for-statefulset
       match:
         resources:
@@ -76,8 +76,8 @@ spec:
                 - containerName: "*"
                   controlledResources: ["cpu", "memory"]
                   minAllowed:
-                    cpu: "10m"
-                    memory: "64Mi"
+                    cpu: "50m"
+                    memory: "128Mi"
     - name: generate-vpa-for-daemonset
       match:
         resources:
@@ -107,5 +107,5 @@ spec:
                 - containerName: "*"
                   controlledResources: ["cpu", "memory"]
                   minAllowed:
-                    cpu: "10m"
-                    memory: "64Mi"
+                    cpu: "50m"
+                    memory: "128Mi"
