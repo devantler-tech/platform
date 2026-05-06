@@ -35,6 +35,11 @@ spec:
               protocol: TCP
             - port: "80"
               protocol: TCP
+            # DNS-01 challenge verification queries external nameservers
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
     # Kube API for managing certificates
     - toEntities:
         - kube-apiserver
