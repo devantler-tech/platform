@@ -9,9 +9,9 @@ data:
   domain_regex: platform\.devantler\.tech
   domain: platform.devantler.tech
   github_app_client_id: Iv23limfvbk93bAXZI6b
-  issuer_group: cert-manager.k8s.cloudflare.com
-  issuer_kind: ClusterOriginIssuer
-  issuer_name: cloudflare-origin
+  issuer_group: cert-manager.io
+  issuer_kind: ClusterIssuer
+  issuer_name: letsencrypt-prod
   # Per-env prefixes inside the shared R2 bucket.
   r2_prefix_velero: velero/prod
   r2_prefix_cnpg: cnpg/prod
