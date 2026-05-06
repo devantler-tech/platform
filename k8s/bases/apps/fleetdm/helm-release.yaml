@@ -182,11 +182,13 @@ spec:
         persistence:
           enabled: true
           size: 8Gi
+          storageClass: hcloud
       replica:
         replicaCount: ${fleetdm_redis_replicas:=2}
         persistence:
           enabled: true
           size: 8Gi
+          storageClass: hcloud
       metrics:
         enabled: true
         image:
