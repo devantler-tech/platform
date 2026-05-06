@@ -18,10 +18,9 @@ spec:
     # Kube API for dashboard
     - toEntities:
         - kube-apiserver
-    # Dex OIDC (resolves to Cilium Gateway LB in kube-system)
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: kube-system
+    # Dex OIDC, external services (via Cloudflare proxy)
+    - toEntities:
+        - world
       toPorts:
         - ports:
             - port: "443"

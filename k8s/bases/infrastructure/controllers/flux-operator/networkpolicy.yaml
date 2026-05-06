@@ -28,17 +28,9 @@ spec:
     # Kube API
     - toEntities:
         - kube-apiserver
-    # OCI registries (GHCR, etc)
+    # OCI registries, Dex OIDC (all via Cloudflare proxy)
     - toEntities:
         - world
-      toPorts:
-        - ports:
-            - port: "443"
-              protocol: TCP
-    # Dex OIDC (resolves to Cilium Gateway LB in kube-system)
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: kube-system
       toPorts:
         - ports:
             - port: "443"
