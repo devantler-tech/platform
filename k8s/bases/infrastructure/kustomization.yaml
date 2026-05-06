@@ -8,3 +8,4 @@ resources:
   - cluster-role-bindings/
   - cluster-roles/
   - gateway/
+  - security-exceptions/
