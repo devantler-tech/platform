@@ -10,6 +10,14 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
+    # OpenCost queries Prometheus
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: opencost
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
     # Webhook from kube-apiserver (hostNetwork on control plane nodes)
     - fromEntities:
         - kube-apiserver
