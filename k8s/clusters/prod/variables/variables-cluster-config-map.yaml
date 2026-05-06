@@ -48,6 +48,8 @@ data:
   hetzner_lb_location: "fsn1"
   hetzner_lb_type: "lb11"
   hcloud_network: "prod-network"
+  # --- Contact ---
+  admin_email: "ned@devantler.tech"
   # Leader-elected controllers: 1 replica is sufficient.
   hcloud_ccm_replicas: "1"
   hcloud_csi_controller_replicas: "1"
