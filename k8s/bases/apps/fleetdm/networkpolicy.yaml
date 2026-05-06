@@ -6,9 +6,17 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Gateway ingress
+    # Gateway ingress (direct from Cilium envoy)
     - fromEntities:
         - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # KEDA HTTP interceptor forwards traffic from gateway
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: keda
       toPorts:
         - ports:
             - port: "8080"
