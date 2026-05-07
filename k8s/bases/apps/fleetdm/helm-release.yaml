@@ -156,10 +156,25 @@ spec:
         persistence:
           enabled: true
           size: 20Gi
+        # The chart enables readOnlyRootFilesystem but does not mount an
+        # emptyDir for /opt/bitnami/mysql/tmp; mysqld init writes InnoDB
+        # temp files there and fails on a fresh data dir without it.
+        extraVolumes:
+          - name: tmp
+            emptyDir: {}
+        extraVolumeMounts:
+          - name: tmp
+            mountPath: /opt/bitnami/mysql/tmp
       primary:
         persistence:
           enabled: true
           size: 20Gi
+        extraVolumes:
+          - name: tmp
+            emptyDir: {}
+        extraVolumeMounts:
+          - name: tmp
+            mountPath: /opt/bitnami/mysql/tmp
       metrics:
         enabled: true
         image:
