@@ -44,6 +44,9 @@ spec:
         data:
           spec:
             endpointSelector: {}
+            enableDefaultDeny:
+              ingress: true
+              egress: true
     - name: generate-allow-dns
       match:
         any:
