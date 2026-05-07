@@ -58,6 +58,18 @@ spec:
       # Hetzner Talos ISO (x86_64). The v1.11.2 ISO (122630) was deprecated
       # and removed from Hetzner on 2026-03-18. Use v1.12.4 (125127).
       iso: 125127
+      # Talos Image Factory extensions baked into the node image. KSail
+      # computes the schematic ID from this list and uses it both for
+      # machine.install.image and for the Hetzner snapshot the Cluster
+      # Autoscaler boots new nodes from. Must match the schematic in
+      # talos/cluster/install-image.yaml.
+      #   - siderolabs/iscsi-tools      (Longhorn data plane)
+      #   - siderolabs/util-linux-tools (Longhorn fstrim)
+      #   - siderolabs/qemu-guest-agent (Hetzner Cloud VM integration)
+      extensions:
+        - siderolabs/iscsi-tools
+        - siderolabs/util-linux-tools
+        - siderolabs/qemu-guest-agent
     localRegistry:
       registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
   provider:
