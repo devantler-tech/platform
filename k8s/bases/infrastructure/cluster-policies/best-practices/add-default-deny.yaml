@@ -47,6 +47,10 @@ spec:
             enableDefaultDeny:
               ingress: true
               egress: true
+            ingressDeny:
+              - {}
+            egressDeny:
+              - {}
     - name: generate-allow-dns
       match:
         any:
