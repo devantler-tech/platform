@@ -1,0 +1,31 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: hubble-ui
+  namespace: kube-system
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Hubble
+    gethomepage.dev/description: Cilium network observability UI.
+    gethomepage.dev/group: Diagnostics
+    gethomepage.dev/icon: https://raw.githubusercontent.com/cilium/cilium/main/Documentation/images/logo-solo.svg
+    gethomepage.dev/href: https://hubble.${domain}
+    gethomepage.dev/pod-selector: k8s-app=hubble-ui
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - hubble.${domain}
+  rules:
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://hubble.${domain}/
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80

@@ -1,0 +1,23 @@
+---
+# Allow auth-proxy to forward authenticated requests to Hubble UI.
+# Hubble UI lives in kube-system which has no default-deny, so this CNP is
+# defense-in-depth: if/when a kube-system default-deny is introduced, the
+# auth-proxy → hubble-ui path stays open while every other path is denied.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-hubble-ui
+  namespace: kube-system
+spec:
+  endpointSelector:
+    matchLabels:
+      k8s-app: hubble-ui
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            app: auth-proxy
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "8081"
+              protocol: TCP
