@@ -25,7 +25,7 @@ metadata:
       misconfigured resources at admission instead of waiting for a runtime
       failure.
 spec:
-  validationFailureAction: Audit
+  validationFailureAction: Enforce
   background: true
   rules:
     - name: kustomization-recommended-settings

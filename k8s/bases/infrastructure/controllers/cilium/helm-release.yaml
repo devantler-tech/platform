@@ -17,6 +17,7 @@ spec:
         kind: HelmRepository
         name: cilium
   interval: 10m0s
+  timeout: 10m
   install:
     remediation:
       retries: -1
