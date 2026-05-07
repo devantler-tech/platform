@@ -25,6 +25,14 @@ spec:
         - ports:
             - port: "443"
               protocol: TCP
+    # In-cluster MinIO for local/CI backup target
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: minio
+      toPorts:
+        - ports:
+            - port: "9000"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:

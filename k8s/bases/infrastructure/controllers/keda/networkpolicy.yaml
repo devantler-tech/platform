@@ -26,7 +26,8 @@ spec:
               protocol: TCP
     # Intra-namespace communication (scaler→interceptor:9090, etc.)
     - fromEndpoints:
-        - {}
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: keda
     # Metrics scraping
     - fromEndpoints:
         - matchLabels:
@@ -35,11 +36,24 @@ spec:
     # Kube API for watching scalers
     - toEntities:
         - kube-apiserver
-    # Reach backend services in any namespace
+    # HTTP interceptor -> backend services in KEDA-managed namespaces
     - toEndpoints:
-        - matchExpressions:
-            - key: k8s:io.kubernetes.pod.namespace
-              operator: Exists
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: fleetdm
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: headlamp
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: whoami
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+    # Prometheus for metrics-based scaling
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:

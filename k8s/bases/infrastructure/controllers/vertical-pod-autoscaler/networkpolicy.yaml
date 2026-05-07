@@ -19,10 +19,16 @@ spec:
     # Kube API for managing VPAs
     - toEntities:
         - kube-apiserver
-    # Metrics server
+    # Metrics server (recommender queries resource metrics)
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "10250"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:

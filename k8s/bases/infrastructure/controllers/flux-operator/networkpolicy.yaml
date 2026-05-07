@@ -20,11 +20,19 @@ spec:
         - ports:
             - port: "80"
               protocol: TCP
+    # Intra-namespace (controller-to-controller communication)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: flux-system
     # Metrics scraping
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
   egress:
+    # Intra-namespace (controller-to-controller communication)
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: flux-system
     # Kube API
     - toEntities:
         - kube-apiserver
