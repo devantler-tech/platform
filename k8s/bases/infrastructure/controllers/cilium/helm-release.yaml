@@ -68,12 +68,14 @@ spec:
           maxUnavailable: null
       ui:
         enabled: true
-        replicas: ${cilium_replicas:=2}
+        # KEDA HTTP add-on scales hubble-ui between 0 and 1 based on traffic.
+        # The replica count here is the initial value at HelmRelease apply
+        # time only — KEDA's HTTPScaledObject takes over immediately.
+        replicas: ${hubble_ui_replicas:=1}
         rollOutPods: true
+        # PDB intentionally disabled: incompatible with scale-to-zero managed by KEDA.
         podDisruptionBudget:
-          enabled: true
-          minAvailable: 1
-          maxUnavailable: null
+          enabled: false
     operator:
       replicas: ${cilium_replicas:=2}
       podDisruptionBudget:

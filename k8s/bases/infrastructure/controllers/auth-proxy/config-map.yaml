@@ -34,4 +34,4 @@ data:
         hubble-ui:
           loadBalancer:
             servers:
-              - url: "http://hubble-ui.kube-system.svc.cluster.local:80"
+              - url: "http://keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local:8080"

@@ -43,6 +43,7 @@ data:
   headlamp_replicas: "1"
   whoami_replicas: "1"
   fleetdm_replicas: "1"
+  hubble_ui_replicas: "1"
   # Auth chain: 2 replicas for HA during VPA evictions (prevents 502s).
   dex_replicas: "2"
   oauth2_proxy_replicas: "2"

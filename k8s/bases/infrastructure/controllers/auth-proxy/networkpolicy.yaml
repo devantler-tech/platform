@@ -28,14 +28,14 @@ spec:
         - ports:
             - port: "3000"
               protocol: TCP
-    # Hubble UI upstream (kube-system)
+    # Hubble UI upstream via KEDA HTTP add-on interceptor (scale-to-zero).
     - toEndpoints:
         - matchLabels:
-            k8s-app: hubble-ui
-            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:io.kubernetes.pod.namespace: keda
+            app.kubernetes.io/component: interceptor
       toPorts:
         - ports:
-            - port: "8081"
+            - port: "8080"
               protocol: TCP
     # DNS resolution
     - toEndpoints:
