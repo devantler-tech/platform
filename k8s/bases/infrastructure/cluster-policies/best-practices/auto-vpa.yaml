@@ -44,6 +44,7 @@ spec:
               containerPolicies:
                 - containerName: "*"
                   controlledResources: ["cpu", "memory"]
+                  controlledValues: RequestsOnly
                   minAllowed:
                     cpu: "50m"
                     memory: "128Mi"
@@ -75,6 +76,7 @@ spec:
               containerPolicies:
                 - containerName: "*"
                   controlledResources: ["cpu", "memory"]
+                  controlledValues: RequestsOnly
                   minAllowed:
                     cpu: "50m"
                     memory: "128Mi"
@@ -106,6 +108,7 @@ spec:
               containerPolicies:
                 - containerName: "*"
                   controlledResources: ["cpu", "memory"]
+                  controlledValues: RequestsOnly
                   minAllowed:
                     cpu: "50m"
                     memory: "128Mi"
