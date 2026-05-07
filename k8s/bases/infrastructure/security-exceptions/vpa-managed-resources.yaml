@@ -1,0 +1,26 @@
+---
+# Exempt resource limit/request controls cluster-wide.
+# VPA (Vertical Pod Autoscaler) manages resource allocation at pod admission
+# time. The Deployment/StatefulSet spec intentionally omits static resource
+# values so VPA can right-size pods dynamically. Kubescape scans the
+# Deployment spec (not the running pod), so it will always report these as
+# missing.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: vpa-managed-resources
+spec:
+  reason: >-
+    VPA manages resource requests and limits at pod admission time.
+    Deployment specs intentionally omit static values to allow VPA
+    right-sizing. Kubescape scans the stored Deployment spec, not
+    the mutated pod spec.
+  posture:
+    - controlID: C-0268
+      action: ignore
+    - controlID: C-0269
+      action: ignore
+    - controlID: C-0270
+      action: ignore
+    - controlID: C-0271
+      action: ignore

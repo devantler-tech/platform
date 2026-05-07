@@ -4,4 +4,11 @@ resources:
   - admission-controllers.yaml
   - cilium-network-policies.yaml
   - controller-rbac.yaml
+  - health-probes.yaml
+  - helm-chart-metadata.yaml
+  - image-verification.yaml
   - infrastructure-privileged.yaml
+  - pod-security-mutations.yaml
+  - service-account-tokens.yaml
+  - upstream-chart-defaults.yaml
+  - vpa-managed-resources.yaml
