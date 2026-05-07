@@ -29,12 +29,12 @@ data:
   # Brief blip during rolling upgrade does not affect data plane.
   trust_manager_replicas: "1"
   reloader_replicas: "1"
-  cilium_replicas: "1"
+  cilium_replicas: "2"
   velero_replicas: "1"
   cloudnative_pg_replicas: "1"
-  # Homepage stays at 1 replica since it is behind oauth2-proxy and cannot
-  # use KEDA HTTP scale-to-zero. One replica is sufficient for a dashboard.
-  homepage_replicas: "1"
+  # Homepage: 2 replicas for HA during VPA evictions (it is behind oauth2-proxy
+  # and cannot use KEDA HTTP scale-to-zero).
+  homepage_replicas: "2"
   # KEDA-managed apps: HelmRelease replicas are the initial value only;
   # KEDA HTTPScaledObject overrides at runtime. Setting the initial to 1
   # saves memory until the first KEDA reconciliation.
