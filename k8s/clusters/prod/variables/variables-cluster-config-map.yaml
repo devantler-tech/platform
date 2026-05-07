@@ -20,11 +20,15 @@ data:
   # during eviction. User-facing auth and admission webhooks need 2+ replicas.
   cert_manager_replicas: "2"
   metrics_server_replicas: "2"
+  vpa_admission_replicas: "2"
+  keda_operator_replicas: "2"
+  keda_webhooks_replicas: "2"
+  keda_scaler_replicas: "2"
+  keda_interceptor_min_replicas: "2"
   # --- Non-critical operators (1 replica — leader-elected) ---
   # Brief blip during rolling upgrade does not affect data plane.
   trust_manager_replicas: "1"
   reloader_replicas: "1"
-  vpa_admission_replicas: "1"
   cilium_replicas: "1"
   velero_replicas: "1"
   cloudnative_pg_replicas: "1"
