@@ -8,3 +8,4 @@ resources:
   - namespace.yaml
   - reference-grant.yaml
   - networkpolicy.yaml
+  - networkpolicy-default-deny.yaml

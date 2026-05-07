@@ -1,48 +1,42 @@
+# TODO: Remove auth-proxy when Cilium supports native forward auth (https://github.com/cilium/cilium/issues/23797)
+---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: allow-oauth2-proxy
+  name: allow-auth-proxy
   namespace: oauth2-proxy
 spec:
   endpointSelector:
     matchLabels:
-      app: oauth2-proxy
+      app: auth-proxy
   ingress:
-    # Gateway ingress (HTTPRoute -> oauth2-proxy)
-    - fromEntities:
-        - ingress
-      toPorts:
-        - ports:
-            - port: "4180"
-              protocol: TCP
-  egress:
-    # Auth-proxy upstream (forward authenticated traffic to host-routing proxy)
-    - toEndpoints:
+    # Authenticated traffic from oauth2-proxy
+    - fromEndpoints:
         - matchLabels:
-            app: auth-proxy
+            app: oauth2-proxy
             k8s:io.kubernetes.pod.namespace: oauth2-proxy
       toPorts:
         - ports:
             - port: "8080"
               protocol: TCP
-    # Dex for OIDC
+  egress:
+    # Homepage upstream
     - toEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: dex
+            k8s:io.kubernetes.pod.namespace: homepage
       toPorts:
         - ports:
-            - port: "5556"
+            - port: "3000"
               protocol: TCP
-    # GitHub OAuth
-    - toEntities:
-        - world
+    # Hubble UI upstream (kube-system)
+    - toEndpoints:
+        - matchLabels:
+            k8s-app: hubble-ui
+            k8s:io.kubernetes.pod.namespace: kube-system
       toPorts:
         - ports:
-            - port: "443"
+            - port: "8081"
               protocol: TCP
-    # Kube API
-    - toEntities:
-        - kube-apiserver
     # DNS resolution
     - toEndpoints:
         - matchLabels:
