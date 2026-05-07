@@ -1,0 +1,55 @@
+# Mutates the `default` ServiceAccount in every namespace to set
+# `automountServiceAccountToken: false`, so any Pod that doesn't request
+# its own ServiceAccount won't have an API token mounted.
+#
+# Addresses kubescape controls:
+#   C-0034 Automatic mapping of service account
+#   C-0189 CIS-5.1.5 Default service accounts not actively used
+#   C-0190 CIS-5.1.6 SA tokens only mounted where necessary
+#   C-0261 ServiceAccount token mounted (when pod uses default SA)
+#
+# Workloads that genuinely need API access already create their own
+# ServiceAccount via their Helm chart — those are unaffected.
+#
+# Uses generateExisting so the mutation also applies to namespaces that
+# already exist when the policy is installed. Excludes kube-system/public/
+# node-lease where kubelet and other system components rely on default.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disable-default-sa-automount
+  annotations:
+    policies.kyverno.io/title: Disable Default SA Automount
+    policies.kyverno.io/category: Pod Security, Best Practices
+    policies.kyverno.io/subject: ServiceAccount
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Forces every namespace's `default` ServiceAccount to disable
+      automountServiceAccountToken so pods that don't bind a dedicated
+      ServiceAccount don't get an API token mounted.
+spec:
+  rules:
+    - name: mutate-default-sa-automount
+      match:
+        any:
+          - resources:
+              kinds:
+                - ServiceAccount
+              names:
+                - default
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+      mutate:
+        mutateExistingOnPolicyUpdate: true
+        targets:
+          - apiVersion: v1
+            kind: ServiceAccount
+            name: default
+            namespace: "{{ request.object.metadata.namespace || request.namespace }}"
+        patchStrategicMerge:
+          automountServiceAccountToken: false

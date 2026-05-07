@@ -105,6 +105,18 @@ spec:
                 - update
                 - patch
                 - delete
+            # disable-default-sa-automount mutates existing `default` SAs
+            # in every namespace.
+            - apiGroups:
+                - ""
+              resources:
+                - serviceaccounts
+              verbs:
+                - get
+                - list
+                - watch
+                - update
+                - patch
     reportsController:
       replicas: ${kyverno_reports_replicas:=1}
     cleanupController:
