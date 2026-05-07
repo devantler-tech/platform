@@ -28,7 +28,6 @@ spec:
       - "${cloudflare_zone}"
     extraArgs:
       - --exclude-target-net=10.0.0.0/8
-      - --exclude-target-net=::/0
       - --cloudflare-proxied
     env:
       - name: CF_API_TOKEN
