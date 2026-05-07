@@ -68,6 +68,8 @@ spec:
 
       ui:
         enabled: true
+        securityContext:
+          readOnlyRootFilesystem: false
         resources:
           requests:
             cpu: 10m
