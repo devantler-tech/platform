@@ -6,9 +6,18 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Gateway ingress for OIDC endpoints
+    # Gateway ingress for OIDC endpoints (external traffic via Cilium Gateway)
     - fromEntities:
         - ingress
+      toPorts:
+        - ports:
+            - port: "5556"
+              protocol: TCP
+    # OIDC token exchange from Headlamp backend (hairpin via gateway ClusterIP
+    # preserves the originating pod identity instead of using the 'ingress' entity)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: headlamp
       toPorts:
         - ports:
             - port: "5556"
