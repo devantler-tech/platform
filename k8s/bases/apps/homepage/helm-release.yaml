@@ -9,7 +9,7 @@ spec:
   interval: 2m
   timeout: 10m
   test:
-    enable: false
+    enable: true
   install:
     remediation:
       retries: -1

@@ -31,14 +31,12 @@ spec:
       continuousScan: enable
       vulnerabilityScan: enable
       runtimeDetection: enable
-    # Disable host scanner - it hangs the compliance scan via API server
-    # pod proxy timeout. Node-level CIS checks are deprioritized.
     hostScanner:
-      enabled: false
+      enabled: true
     nodeAgent:
       config:
         hostSensor:
-          enabled: false
+          enabled: true
     # Chart defaults are grossly overprovisioned for small clusters.
     # Align with VPA recommendations.
     kubevuln:

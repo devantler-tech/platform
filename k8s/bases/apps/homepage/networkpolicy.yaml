@@ -14,10 +14,26 @@ spec:
         - ports:
             - port: "3000"
               protocol: TCP
+    # Intra-namespace (Helm test pods)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: homepage
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
   egress:
     # Kube API for widget data
     - toEntities:
         - kube-apiserver
+    # Intra-namespace (Helm test pods reaching homepage service)
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: homepage
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:
