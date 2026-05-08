@@ -4,6 +4,5 @@ kind: Kustomization
 resources:
   - helm-release.yaml
   - helm-repository.yaml
-  - http-scaled-object.yaml
   - httproute.yaml
   - networkpolicy.yaml
