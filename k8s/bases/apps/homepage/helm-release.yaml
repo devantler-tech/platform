@@ -4,7 +4,9 @@ metadata:
   name: homepage
   namespace: homepage
   labels:
-    helm.toolkit.fluxcd.io/helm-test: enabled
+    # Helm test disabled: busybox wget writes index.html which fails under
+    # Kyverno's readOnlyRootFilesystem policy; deployment readiness probe
+    # already validates service health.
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 2m
@@ -50,20 +52,6 @@ spec:
                       matchLabels:
                         app.kubernetes.io/name: homepage
                         app.kubernetes.io/instance: homepage
-          - target:
-              kind: Pod
-              name: homepage-test-connection
-            patch: |
-              apiVersion: v1
-              kind: Pod
-              metadata:
-                name: homepage-test-connection
-              spec:
-                containers:
-                  - name: wget
-                    args: ['-O', '/dev/null', 'homepage:80']
-                    securityContext:
-                      readOnlyRootFilesystem: false
   # ICONS:
   # https://github.com/walkxcode/dashboard-icons
   # https://simpleicons.org
