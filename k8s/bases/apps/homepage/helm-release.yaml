@@ -4,12 +4,11 @@ metadata:
   name: homepage
   namespace: homepage
   labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 2m
   timeout: 10m
-  test:
-    enable: true
   install:
     remediation:
       retries: -1
@@ -51,6 +50,13 @@ spec:
                       matchLabels:
                         app.kubernetes.io/name: homepage
                         app.kubernetes.io/instance: homepage
+          - target:
+              kind: Pod
+              name: homepage-test-connection
+            patch: |
+              - op: replace
+                path: /spec/containers/0/args
+                value: ['-O', '/dev/null', 'homepage:80']
   # ICONS:
   # https://github.com/walkxcode/dashboard-icons
   # https://simpleicons.org

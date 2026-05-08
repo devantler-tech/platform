@@ -40,6 +40,31 @@ spec:
                   rollingUpdate:
                     maxSurge: 0
                     maxUnavailable: 1
+              - op: add
+                path: /spec/template/spec/volumes/-
+                value:
+                  name: tmp-dir
+                  emptyDir: {}
+              - op: add
+                path: /spec/template/spec/volumes/-
+                value:
+                  name: headlamp-config
+                  emptyDir: {}
+              - op: add
+                path: /spec/template/spec/containers/0/volumeMounts/-
+                value:
+                  name: tmp-dir
+                  mountPath: /tmp
+              - op: add
+                path: /spec/template/spec/containers/0/volumeMounts/-
+                value:
+                  name: headlamp-config
+                  mountPath: /home/headlamp/.config
+              - op: add
+                path: /spec/template/spec/containers/1/volumeMounts/-
+                value:
+                  name: tmp-dir
+                  mountPath: /tmp
   # https://github.com/kubernetes-sigs/headlamp/blob/main/charts/headlamp/values.yaml
   values:
     replicaCount: ${headlamp_replicas:=2}
@@ -84,18 +109,5 @@ spec:
         installOptions:
           parallel: true
           maxConcurrent: 3
-      volumeMounts:
-        - name: tmp-dir
-          mountPath: /tmp
-    volumes:
-      - name: tmp-dir
-        emptyDir: {}
-      - name: headlamp-config
-        emptyDir: {}
-    volumeMounts:
-      - name: tmp-dir
-        mountPath: /tmp
-      - name: headlamp-config
-        mountPath: /home/headlamp/.config
     ingress:
       enabled: false
