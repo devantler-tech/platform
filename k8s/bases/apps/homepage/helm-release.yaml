@@ -54,9 +54,16 @@ spec:
               kind: Pod
               name: homepage-test-connection
             patch: |
-              - op: replace
-                path: /spec/containers/0/args
-                value: ['-O', '/dev/null', 'homepage:80']
+              apiVersion: v1
+              kind: Pod
+              metadata:
+                name: homepage-test-connection
+              spec:
+                containers:
+                  - name: wget
+                    args: ['-O', '/dev/null', 'homepage:80']
+                    securityContext:
+                      readOnlyRootFilesystem: false
   # ICONS:
   # https://github.com/walkxcode/dashboard-icons
   # https://simpleicons.org
