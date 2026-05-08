@@ -126,6 +126,9 @@ spec:
             capabilities:
               drop: ["ALL"]
             readOnlyRootFilesystem: true
+          env:
+            - name: MC_CONFIG_DIR
+              value: /tmp/.mc
           resources:
             requests:
               cpu: 10m
@@ -133,6 +136,9 @@ spec:
             limits:
               cpu: 100m
               memory: 128Mi
+          volumeMounts:
+            - name: mc-config
+              mountPath: /tmp/.mc
           command:
             - /bin/sh
             - -c
@@ -144,3 +150,6 @@ spec:
               done
               mc mb --ignore-existing local/platform-backups
               mc ls local/
+      volumes:
+        - name: mc-config
+          emptyDir: {}
