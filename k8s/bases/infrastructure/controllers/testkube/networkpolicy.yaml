@@ -1,0 +1,51 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-testkube
+  namespace: testkube
+spec:
+  endpointSelector: {}
+  ingress:
+    # Webhook from kube-apiserver (hostNetwork on control plane nodes)
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "9443"
+              protocol: TCP
+    # Intra-namespace (API server, operator, workers, dashboard)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: testkube
+    # Metrics scraping
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+  egress:
+    # Kube API for test execution and CRD management
+    - toEntities:
+        - kube-apiserver
+    # Intra-namespace (API server, operator, workers)
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: testkube
+    # Test artifacts, cloud reporting, container image pulls
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

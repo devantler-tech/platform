@@ -44,12 +44,31 @@ spec:
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: fleetdm
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: headlamp
+      toPorts:
+        - ports:
+            - port: "4466"
+              protocol: TCP
+    - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: whoami
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+    - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "8081"
+              protocol: TCP
     # Prometheus for metrics-based scaling
     - toEndpoints:
         - matchLabels:
