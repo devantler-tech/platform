@@ -1,0 +1,27 @@
+---
+# Exempt pod-level security context controls cluster-wide.
+# Kyverno ClusterPolicy "add-security-context" enforces these at pod
+# admission time (seccompProfile, allowPrivilegeEscalation: false,
+# readOnlyRootFilesystem: true, drop ALL capabilities). However, kubescape
+# scans the Deployment/StatefulSet spec where these fields are absent.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: pod-security-mutations
+spec:
+  reason: >-
+    Kyverno mutate policy "add-security-context" enforces these controls at
+    pod admission. The Deployment spec does not contain these fields because
+    they are injected by Kyverno when pods are created. Kubescape scans the
+    stored spec, not the live pod.
+  posture:
+    - controlID: C-0211
+      action: ignore
+    - controlID: C-0016
+      action: ignore
+    - controlID: C-0017
+      action: ignore
+    - controlID: C-0055
+      action: ignore
+    - controlID: C-0013
+      action: ignore

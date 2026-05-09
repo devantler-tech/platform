@@ -1,0 +1,41 @@
+---
+# Exempt health probe controls for infrastructure namespaces.
+# Many infrastructure controllers, sidecars, and init containers do not
+# expose health endpoints. Adding probes to upstream charts is impractical
+# and they typically have their own readiness mechanisms (leader election,
+# watch loops).
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: health-probes
+spec:
+  reason: >-
+    Infrastructure controllers, sidecars, and init containers often lack
+    health probe endpoints. Upstream charts manage their own availability
+    through leader election and watch mechanisms.
+  posture:
+    - controlID: C-0018
+      action: ignore
+    - controlID: C-0056
+      action: ignore
+  match:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - flux-system
+            - kyverno
+            - cert-manager
+            - cnpg-system
+            - velero
+            - keda
+            - monitoring
+            - kubescape
+            - vertical-pod-autoscaler
+            - longhorn-system
+            - kube-system
+            - reloader
+            - external-dns
+            - kubelet-serving-cert-approver
+            - opencost

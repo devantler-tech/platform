@@ -1,0 +1,40 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-kyverno
+  namespace: kyverno
+spec:
+  endpointSelector: {}
+  ingress:
+    # Webhook from kube-apiserver (hostNetwork on control plane nodes)
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "9443"
+              protocol: TCP
+    # Metrics scraping
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+  egress:
+    # Kube API for policy enforcement
+    - toEntities:
+        - kube-apiserver
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

@@ -1,0 +1,51 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-cnpg
+  namespace: cnpg-system
+spec:
+  endpointSelector: {}
+  ingress:
+    # Webhook from kube-apiserver (hostNetwork on control plane nodes)
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "9443"
+              protocol: TCP
+    # Metrics scraping from Prometheus
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+  egress:
+    # Kube API for managing PG clusters
+    - toEntities:
+        - kube-apiserver
+    # Reach managed PostgreSQL instances in any namespace (status + postgres ports)
+    - toEndpoints:
+        - matchExpressions:
+            - key: k8s:io.kubernetes.pod.namespace
+              operator: Exists
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+            - port: "5432"
+              protocol: TCP
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

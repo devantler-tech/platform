@@ -1,0 +1,26 @@
+---
+# Exempt controls related to upstream Helm chart defaults that cannot be
+# changed without forking the charts.
+# - C-0210: Cluster internal networking configuration
+# - C-0258: Secrets not encrypted at rest (etcd-level, not our control on Talos)
+# - C-0259: hostPath mount (needed by some controllers outside infra namespaces)
+# - C-0266: Ensure containers run with high UID (upstream images choose UID)
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: upstream-chart-defaults
+spec:
+  reason: >-
+    These controls flag behaviors defined by upstream Helm charts or the
+    underlying infrastructure (Talos etcd encryption, container base image
+    UIDs, hostPath usage by operators). Fixing them requires forking charts
+    or changing infrastructure-level configuration.
+  posture:
+    - controlID: C-0210
+      action: ignore
+    - controlID: C-0258
+      action: ignore
+    - controlID: C-0259
+      action: ignore
+    - controlID: C-0266
+      action: ignore

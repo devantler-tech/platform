@@ -1,0 +1,97 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-keda
+  namespace: keda
+spec:
+  endpointSelector: {}
+  ingress:
+    # Gateway ingress to interceptor proxy
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # Webhook from kube-apiserver (hostNetwork on control plane nodes)
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "9443"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+    # Intra-namespace communication (scaler→interceptor:9090, etc.)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: keda
+    # Metrics scraping
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+  egress:
+    # Kube API for watching scalers
+    - toEntities:
+        - kube-apiserver
+    # Intra-namespace (external-scaler→interceptor:9090, controller→operator, etc.)
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: keda
+    # HTTP interceptor -> backend services in KEDA-managed namespaces
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: fleetdm
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: headlamp
+      toPorts:
+        - ports:
+            - port: "4466"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: whoami
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: actual-budget
+      toPorts:
+        - ports:
+            - port: "5006"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+      toPorts:
+        - ports:
+            - port: "8081"
+              protocol: TCP
+    # Prometheus for metrics-based scaling
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

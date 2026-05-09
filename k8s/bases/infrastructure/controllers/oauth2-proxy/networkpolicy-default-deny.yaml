@@ -1,0 +1,13 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny
+  namespace: oauth2-proxy
+spec:
+  endpointSelector: {}
+  # Selecting all endpoints with empty ingress/egress arrays puts every pod in
+  # the namespace into deny-by-default. Other CNPs in the namespace add
+  # specific allow rules per workload (see networkpolicy.yaml,
+  # ../auth-proxy/networkpolicy.yaml).
+  ingress: []
+  egress: []

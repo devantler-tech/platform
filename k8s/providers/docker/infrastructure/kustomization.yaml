@@ -5,3 +5,4 @@ resources:
   - ../../../bases/infrastructure/
   - cluster-issuers/
   - local-path-storage-namespace.yaml
+  - local-path-storage-networkpolicy.yaml

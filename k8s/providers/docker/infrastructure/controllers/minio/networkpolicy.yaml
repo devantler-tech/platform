@@ -1,0 +1,38 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-minio
+  namespace: minio
+spec:
+  endpointSelector: {}
+  ingress:
+    # Velero and CNPG backup/restore access
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: velero
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: cnpg-system
+      toPorts:
+        - ports:
+            - port: "9000"
+              protocol: TCP
+    # Intra-namespace (create-bucket job → minio)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: minio
+  egress:
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # Intra-namespace
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: minio

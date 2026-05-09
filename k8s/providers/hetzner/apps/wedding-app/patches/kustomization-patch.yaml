@@ -1,0 +1,27 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: wedding-app
+  namespace: wedding-app
+spec:
+  patches:
+    - target:
+        group: postgresql.cnpg.io
+        kind: Cluster
+        name: wedding-db
+      patch: |
+        apiVersion: postgresql.cnpg.io/v1
+        kind: Cluster
+        metadata:
+          name: wedding-db
+        spec:
+          storage:
+            storageClass: longhorn
+    - target:
+        kind: HTTPRoute
+        name: wedding-app
+      patch: |
+        - op: replace
+          path: /spec/hostnames
+          value:
+            - wedding.platform.devantler.tech

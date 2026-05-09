@@ -9,45 +9,53 @@ data:
   domain_regex: platform\.devantler\.tech
   domain: platform.devantler.tech
   github_app_client_id: Iv23limfvbk93bAXZI6b
-  issuer_group: cert-manager.k8s.cloudflare.com
-  issuer_kind: ClusterOriginIssuer
-  issuer_name: cloudflare-origin
+  issuer_group: cert-manager.io
+  issuer_kind: ClusterIssuer
+  issuer_name: letsencrypt-prod
   # Per-env prefixes inside the shared R2 bucket.
   r2_prefix_velero: velero/prod
   r2_prefix_cnpg: cnpg/prod
-  # --- Operator/controller replicas (1 is sufficient — leader-elected) ---
-  # These are all leader-elected operators. 1 replica is sufficient; a brief
-  # blip during a rolling upgrade of the operator itself does not affect the
-  # data plane. Dropping them to 1 frees CPU headroom on the 6 vCPU total
-  # available after Talos + Cilium overhead.
-  cert_manager_replicas: "1"
+  # --- Critical controllers (2 replicas for HA during VPA evictions) ---
+  # With VPA updateMode=InPlaceOrRecreate, single-replica services get 502s
+  # during eviction. User-facing auth and admission webhooks need 2+ replicas.
+  cert_manager_replicas: "2"
+  metrics_server_replicas: "2"
+  vpa_admission_replicas: "2"
+  keda_operator_replicas: "2"
+  keda_webhooks_replicas: "2"
+  keda_scaler_replicas: "2"
+  keda_interceptor_min_replicas: "2"
+  # --- Non-critical operators (1 replica — leader-elected) ---
+  # Brief blip during rolling upgrade does not affect data plane.
   trust_manager_replicas: "1"
   reloader_replicas: "1"
-  metrics_server_replicas: "1"
-  vpa_admission_replicas: "1"
-  cilium_replicas: "1"
+  cilium_replicas: "2"
   velero_replicas: "1"
   cloudnative_pg_replicas: "1"
-  # Homepage stays at 1 replica since it is behind oauth2-proxy and cannot
-  # use KEDA HTTP scale-to-zero. One replica is sufficient for a dashboard.
-  homepage_replicas: "1"
+  # Homepage: 2 replicas for HA during VPA evictions (it is behind oauth2-proxy
+  # and cannot use KEDA HTTP scale-to-zero).
+  homepage_replicas: "2"
   # KEDA-managed apps: HelmRelease replicas are the initial value only;
   # KEDA HTTPScaledObject overrides at runtime. Setting the initial to 1
   # saves memory until the first KEDA reconciliation.
   # headlamp: min 0, max 1 (OIDC state in-memory — must stay single-pod)
   # whoami/fleetdm: min 0, max 2
+  # actual-budget: min 1, max 1 (SQLite on RWO PVC — no scale-to-zero)
   headlamp_replicas: "1"
   whoami_replicas: "1"
   fleetdm_replicas: "1"
-  # Auth chain: single replica is sufficient on cx23 nodes; prevents OOM
-  # cascade that makes both replicas flap simultaneously.
-  dex_replicas: "1"
-  oauth2_proxy_replicas: "1"
-  auth_proxy_replicas: "1"
+  actual_budget_replicas: "1"
+  hubble_ui_replicas: "1"
+  # Auth chain: 2 replicas for HA during VPA evictions (prevents 502s).
+  dex_replicas: "2"
+  oauth2_proxy_replicas: "2"
+  auth_proxy_replicas: "2"
   # --- Hetzner Cloud ---
   hetzner_lb_location: "fsn1"
   hetzner_lb_type: "lb11"
   hcloud_network: "prod-network"
+  # --- Contact ---
+  admin_email: "ned@devantler.tech"
   # Leader-elected controllers: 1 replica is sufficient.
   hcloud_ccm_replicas: "1"
   hcloud_csi_controller_replicas: "1"
@@ -65,11 +73,10 @@ data:
   # cert controller. Disabled until we actually need Cloudflare Origin certs.
   origin_ca_issuer_replicas: "0"
   # VPA recommender computes resource recommendations; admission controller
-  # applies them at pod start. Updater (pod eviction) is scaled to 0
-  # replicas to avoid disruption, so recommendations are applied on the
-  # next pod restart instead.
+  # applies them at pod start. Updater evicts pods to apply new resource
+  # recommendations continuously.
   vpa_recommender_replicas: "1"
-  vpa_updater_replicas: "0"
+  vpa_updater_replicas: "1"
   # Kyverno background controller is required for generate rules (auto-vpa
   # ClusterPolicy). kyverno@3.8.0 rejects 0 replicas for any controller,
   # so reports and cleanup run at 1 replica each.

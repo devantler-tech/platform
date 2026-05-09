@@ -5,3 +5,4 @@ resources:
   - helm-repository.yaml
   - webhook-secret.yaml
   - helm-release.yaml
+  - networkpolicy.yaml

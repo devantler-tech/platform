@@ -27,6 +27,13 @@ spec:
       labels:
         app.kubernetes.io/name: minio
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: minio
           image: quay.io/minio/minio:RELEASE.2025-04-08T15-41-24Z
@@ -35,6 +42,12 @@ spec:
             - /data
             - --console-address
             - :9001
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
           env:
             - name: MINIO_ROOT_USER
               value: minio
@@ -60,6 +73,7 @@ spec:
               cpu: 100m
               memory: 256Mi
             limits:
+              cpu: 500m
               memory: 512Mi
           volumeMounts:
             - name: data
@@ -97,9 +111,34 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mc
           image: quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          env:
+            - name: MC_CONFIG_DIR
+              value: /tmp/.mc
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: mc-config
+              mountPath: /tmp/.mc
           command:
             - /bin/sh
             - -c
@@ -111,3 +150,6 @@ spec:
               done
               mc mb --ignore-existing local/platform-backups
               mc ls local/
+      volumes:
+        - name: mc-config
+          emptyDir: {}

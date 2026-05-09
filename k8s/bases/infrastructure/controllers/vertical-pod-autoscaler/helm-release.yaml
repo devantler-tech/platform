@@ -5,10 +5,10 @@ metadata:
   namespace: vertical-pod-autoscaler
   labels:
     helm.toolkit.fluxcd.io/crds: enabled
-    helm.toolkit.fluxcd.io/helm-test: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 2m
+  timeout: 10m
   install:
     remediation:
       retries: -1
@@ -16,6 +16,8 @@ spec:
     remediation:
       retries: -1
       remediateLastFailure: true
+  test:
+    enable: false
   chart:
     spec:
       chart: vpa

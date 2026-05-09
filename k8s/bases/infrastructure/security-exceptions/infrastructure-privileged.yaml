@@ -1,0 +1,49 @@
+---
+# Exempt infrastructure components that legitimately require elevated privileges.
+# Cilium (CNI) needs: privileged, hostPath, hostNetwork, hostPID, NET_ADMIN, SYS_ADMIN
+# Longhorn (storage) needs: privileged, hostPath, hostPID
+# Velero node-agent (backup) needs: hostPath, privileged
+# Prometheus node-exporter (monitoring) needs: hostPath, hostNetwork, hostPID
+# SPIRE agent (identity) needs: hostPath, hostPID
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: infrastructure-privileged
+spec:
+  reason: >-
+    CNI (Cilium), distributed storage (Longhorn), node monitoring
+    (Prometheus node-exporter), identity (SPIRE agent), and backup
+    (Velero node-agent) require host-level access by design.
+  posture:
+    - controlID: C-0057
+      action: ignore
+    - controlID: C-0048
+      action: ignore
+    - controlID: C-0045
+      action: ignore
+    - controlID: C-0041
+      action: ignore
+    - controlID: C-0038
+      action: ignore
+    - controlID: C-0044
+      action: ignore
+    - controlID: C-0046
+      action: ignore
+    - controlID: C-0016
+      action: ignore
+    - controlID: C-0013
+      action: ignore
+    - controlID: C-0017
+      action: ignore
+    - controlID: C-0055
+      action: ignore
+  match:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - kube-system
+            - longhorn-system
+            - monitoring
+            - velero

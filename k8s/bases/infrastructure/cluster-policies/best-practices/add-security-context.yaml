@@ -1,0 +1,91 @@
+# Mutates pods to apply security best-practices that kubescape checks:
+# - seccompProfile: RuntimeDefault (C-0055 Linux hardening)
+# - allowPrivilegeEscalation: false (C-0016)
+# - readOnlyRootFilesystem: true (C-0017)
+# - drop ALL capabilities (C-0055)
+#
+# NOTE: runAsNonRoot is NOT set here because many third-party images
+# use non-numeric users (e.g. "node") which Kubernetes cannot verify,
+# or legitimately need root (e.g. host-scanner). Apps should set this
+# explicitly in their own security context.
+#
+# Uses +(key) to never overwrite values explicitly set by Helm charts.
+# Excludes kube-system and longhorn-system (require elevated privileges).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: add-security-context
+  annotations:
+    policies.kyverno.io/title: Security Context Defaults
+    policies.kyverno.io/category: Pod Security, Best Practices
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Mutates all pods to set security best-practice defaults using
+      conditional anchors so explicit chart values are never overwritten.
+spec:
+  rules:
+    - name: add-pod-security-context
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - longhorn-system
+                - kubescape
+                - kubevirt
+                - cdi
+      mutate:
+        patchStrategicMerge:
+          spec:
+            securityContext:
+              +(seccompProfile):
+                type: RuntimeDefault
+    - name: add-container-security-context
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - longhorn-system
+                - kubescape
+                - kubevirt
+                - cdi
+      mutate:
+        foreach:
+          - list: "request.object.spec.containers"
+            patchStrategicMerge:
+              spec:
+                containers:
+                  - (name): "{{element.name}}"
+                    securityContext:
+                      +(allowPrivilegeEscalation): false
+                      +(readOnlyRootFilesystem): true
+                      +(capabilities):
+                        drop:
+                          - ALL
+          - list: "request.object.spec.initContainers[]"
+            patchStrategicMerge:
+              spec:
+                initContainers:
+                  - (name): "{{element.name}}"
+                    securityContext:
+                      +(allowPrivilegeEscalation): false
+                      +(readOnlyRootFilesystem): true
+                      +(capabilities):
+                        drop:
+                          - ALL

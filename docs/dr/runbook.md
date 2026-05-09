@@ -308,6 +308,6 @@ ksail --config ksail.prod.yaml cluster update
 
 ## Related documents
 
-- [Node autoscaling](./node-autoscaling.md) — architecture, prerequisites, and troubleshooting
+- [Node autoscaling](../node-autoscaling.md) — architecture, prerequisites, and troubleshooting
 - [Velero + CNPG → R2](./velero-cnpg.md) — application/PV backups
 - [Alerting](./alerting.md) — automated detection of backup failures
