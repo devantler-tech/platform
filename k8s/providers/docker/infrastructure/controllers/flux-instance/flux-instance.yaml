@@ -26,7 +26,11 @@ spec:
       - target:
           kind: Deployment
           name: kustomize-controller
+          namespace: flux-system
         patch: |
+          - op: test
+            path: /spec/template/spec/containers/0/name
+            value: manager
           - op: add
             path: /spec/template/spec/containers/0/args/-
             value: --requeue-dependency=5s
