@@ -83,7 +83,7 @@ spec:
                           claimName: headlamp
   # https://github.com/kubernetes-sigs/headlamp/blob/main/charts/headlamp/values.yaml
   values:
-    replicaCount: ${headlamp_replicas:=2}
+    replicaCount: ${headlamp_replicas:=1}
     podDisruptionBudget:
       enabled: true
       minAvailable: 0
