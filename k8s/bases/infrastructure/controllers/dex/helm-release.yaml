@@ -38,6 +38,15 @@ spec:
           matchLabels:
             app.kubernetes.io/name: dex
             app.kubernetes.io/instance: dex
+    # Dex writes a temporary copy of its config at startup. The
+    # add-security-context policy enforces readOnlyRootFilesystem, so
+    # /tmp must be an emptyDir to avoid EPERM.
+    volumes:
+      - name: tmp
+        emptyDir: {}
+    volumeMounts:
+      - name: tmp
+        mountPath: /tmp
     ingress:
       enabled: false
     envVars:
