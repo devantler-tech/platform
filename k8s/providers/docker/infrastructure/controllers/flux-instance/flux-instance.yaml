@@ -1,8 +1,6 @@
-# Extends the KSail-bootstrapped FluxInstance to include image automation
-# controllers (image-reflector-controller + image-automation-controller).
-# KSail creates the initial FluxInstance during `ksail cluster create`;
-# this resource is reconciled by the infrastructure-controllers Flux
-# Kustomization post-bootstrap in the Hetzner (prod) environment only.
+# Extends the KSail-bootstrapped FluxInstance to increase controller
+# concurrency and lower the dependency requeue interval for faster
+# parallel reconciliation in Docker (local) clusters.
 ---
 apiVersion: fluxcd.controlplane.io/v1
 kind: FluxInstance
@@ -18,13 +16,11 @@ spec:
     - kustomize-controller
     - helm-controller
     - notification-controller
-    - image-reflector-controller
-    - image-automation-controller
   cluster:
     type: kubernetes
     multitenant: false
     networkPolicy: true
-    size: large
+    size: medium
   kustomize:
     patches:
       - target:
