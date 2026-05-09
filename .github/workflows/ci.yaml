@@ -233,9 +233,11 @@ jobs:
               exit 0
             fi
             if [ "$attempt" -lt "$max_attempts" ]; then
-              printf '⏳ Waiting 90s for Flux controllers to stabilize…\n'
-              sleep 90
-              # Verify controllers are Running before retrying
+              printf '⏳ Waiting for Flux controllers to stabilize…\n'
+              # Wait for all Flux controller deployments to be available before retrying
+              for deploy in helm-controller kustomize-controller source-controller; do
+                kubectl rollout status deployment/"$deploy" -n flux-system --timeout=120s 2>/dev/null || true
+              done
               kubectl get pods -n flux-system -l app.kubernetes.io/part-of=flux -o wide || true
             fi
           done
