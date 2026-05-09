@@ -64,6 +64,13 @@ spec:
               protocol: TCP
     - toEndpoints:
         - matchLabels:
+            k8s:io.kubernetes.pod.namespace: actual-budget
+      toPorts:
+        - ports:
+            - port: "5006"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
       toPorts:
         - ports:
