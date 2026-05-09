@@ -173,6 +173,15 @@ jobs:
           printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
           chmod 600 ~/.kube/config
 
+      - name: 🔑 Restore talosconfig
+        env:
+          TALOS_CONFIG: ${{ secrets.TALOS_CONFIG }}
+        run: |
+          mkdir -p ~/.talos
+          umask 077
+          printf '%s' "${TALOS_CONFIG}" > ~/.talos/config
+          chmod 600 ~/.talos/config
+
       - name: 🔄 Update cluster
         run: ksail --config ksail.prod.yaml cluster update
         env:
