@@ -37,6 +37,11 @@ spec:
       config:
         hostSensor:
           enabled: true
+    # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
+    # to avoid Helm upgrade failures from PVC shrink rejection.
+    persistence:
+      size:
+        backingStorage: 10Gi
     # Chart defaults are grossly overprovisioned for small clusters.
     # Align with VPA recommendations.
     kubevuln:
