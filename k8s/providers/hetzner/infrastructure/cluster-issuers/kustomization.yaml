@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - cloudflare-origin-issuer.yaml
   - cloudflare-origin-ca-trust-bundle.yaml
+  - letsencrypt-prod-issuer.yaml

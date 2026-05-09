@@ -1,0 +1,49 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-kubescape
+  namespace: kubescape
+spec:
+  endpointSelector: {}
+  ingress:
+    # Webhook + API server pod proxy (host scanner access on 7888)
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "7888"
+              protocol: TCP
+            - port: "8443"
+              protocol: TCP
+    # Intra-namespace communication
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kubescape
+  egress:
+    # Kube API for scanning
+    - toEntities:
+        - kube-apiserver
+    # Kubescape cloud backend
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # Intra-namespace communication
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kubescape
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

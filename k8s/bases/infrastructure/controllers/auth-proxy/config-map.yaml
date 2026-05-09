@@ -22,8 +22,16 @@ data:
           rule: "Host(`${domain}`)"
           entryPoints: ["web"]
           service: homepage
+        hubble:
+          rule: "Host(`hubble.${domain}`)"
+          entryPoints: ["web"]
+          service: hubble-ui
       services:
         homepage:
           loadBalancer:
             servers:
               - url: "http://homepage.homepage.svc.cluster.local:80"
+        hubble-ui:
+          loadBalancer:
+            servers:
+              - url: "http://keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local:8080"

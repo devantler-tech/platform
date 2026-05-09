@@ -28,3 +28,7 @@ spec:
   values:
     crds:
       install: true
+    operator:
+      replicaCount: ${keda_operator_replicas:=1}
+    webhooks:
+      replicaCount: ${keda_webhooks_replicas:=1}

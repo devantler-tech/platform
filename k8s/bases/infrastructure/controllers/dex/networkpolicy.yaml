@@ -1,0 +1,56 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-dex
+  namespace: dex
+spec:
+  endpointSelector: {}
+  ingress:
+    # Gateway ingress for OIDC endpoints (external traffic via Cilium Gateway)
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "5556"
+              protocol: TCP
+    # OIDC token exchange from Headlamp backend (hairpin via gateway ClusterIP
+    # preserves the originating pod identity instead of using the 'ingress' entity)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: headlamp
+      toPorts:
+        - ports:
+            - port: "5556"
+              protocol: TCP
+    # gRPC from oauth2-proxy
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "5556"
+              protocol: TCP
+            - port: "5558"
+              protocol: TCP
+  egress:
+    # Kube API for reading secrets
+    - toEntities:
+        - kube-apiserver
+    # GitHub/OIDC upstream connectors
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

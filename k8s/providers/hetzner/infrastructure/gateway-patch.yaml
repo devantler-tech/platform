@@ -14,5 +14,4 @@ spec:
       load-balancer.hetzner.cloud/location: ${hetzner_lb_location}
       load-balancer.hetzner.cloud/type: ${hetzner_lb_type}
       load-balancer.hetzner.cloud/use-private-ip: "true"
-      load-balancer.hetzner.cloud/ipv6-disabled: "false"
       load-balancer.hetzner.cloud/name: platform-gateway

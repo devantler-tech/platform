@@ -1,0 +1,22 @@
+---
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  name: hubble-ui
+  namespace: kube-system
+spec:
+  hosts:
+    - hubble.${domain}
+  scaleTargetRef:
+    name: hubble-ui
+    service: hubble-ui
+    port: 80
+  replicas:
+    min: 0
+    max: 1 # Hubble UI keeps connection state per pod; pin to 1 so streaming sessions don't bounce.
+  scaledownPeriod: 300
+  scalingMetric:
+    requestRate:
+      granularity: 1s
+      targetValue: 100
+      window: 1m

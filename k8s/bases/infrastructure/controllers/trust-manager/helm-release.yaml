@@ -8,6 +8,7 @@ metadata:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 2m
+  timeout: 10m
   chart:
     spec:
       chart: trust-manager

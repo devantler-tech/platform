@@ -7,6 +7,14 @@ metadata:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 2m
+  timeout: 10m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
   chart:
     spec:
       chart: opencost
@@ -18,7 +26,7 @@ spec:
   #
   # Lightweight FinOps cost allocation. Points at the existing
   # kube-prometheus-stack Prometheus and uses custom pricing derived from
-  # Hetzner Cloud CX23 hourly rates (€0.0064/hr for 2 vCPU / 4 GB RAM).
+  # Hetzner Cloud CX33 hourly rates (€0.0117/hr for 3 vCPU / 8 GB RAM).
   values:
     opencost:
       prometheus:
@@ -28,8 +36,9 @@ spec:
           enabled: true
           url: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
 
-      # Hetzner Cloud custom pricing — CX23 rates decomposed into
+      # Hetzner Cloud custom pricing — CX33 rates decomposed into
       # per-resource-unit hourly USD costs (EUR/USD ≈ 1.09).
+      # CX33: €0.0117/hr → $0.01275/hr, 50/50 CPU-RAM split.
       # https://www.hetzner.com/cloud#pricing
       # https://www.opencost.io/docs/configuration/on-prem#custom-pricing-using-the-opencost-helm-chart
       customPricing:
@@ -37,10 +46,10 @@ spec:
         createConfigmap: true
         provider: custom
         costModel:
-          description: "Hetzner Cloud CX23 — 2 vCPU / 4 GB / 40 GB NVMe (50/50 CPU-RAM split)"
-          CPU: 0.00175
+          description: "Hetzner Cloud CX33 — 3 vCPU / 8 GB / 80 GB NVMe (50/50 CPU-RAM split)"
+          CPU: 0.002125
           spotCPU: 0
-          RAM: 0.00088
+          RAM: 0.000797
           spotRAM: 0
           GPU: 0
           storage: 0.00008
@@ -59,6 +68,8 @@ spec:
 
       ui:
         enabled: true
+        securityContext:
+          readOnlyRootFilesystem: false
         resources:
           requests:
             cpu: 10m
