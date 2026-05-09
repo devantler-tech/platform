@@ -7,6 +7,7 @@ resources:
   #   times out in Docker CI due to controller scheduling delays; Docker overlay
   #   uses substantially different config (standalone DBs, default storageClass)
   #   so CI coverage is not representative of production anyway
+  - ../../../bases/apps/actual-budget/
   - ../../../bases/apps/headlamp/
   - ../../../bases/apps/homepage/
   - ../../../bases/apps/whoami/
