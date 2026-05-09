@@ -67,13 +67,15 @@ jobs:
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@99c97b5f43dc088cdb3ddb9e3d0f1a55a223fe79 # v7.11.1
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@8520b716c1e15ae01cde3fb1b9308d54ba1f7a5a # v7.15.0
         with:
           distribution: Talos
           provider: Docker
-          ksail-version: "7.8.0"
+          ksail-version: "7.15.0"
           init: "false"
           validate: "true"
+          scan: "true"
+          scan-framework: "nsa"
           sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
           hosts-file: ${{ vars.HOSTS_FILE }}
           root-ca-cert-file: ${{ vars.ROOT_CA_CERT_FILE }}
@@ -170,6 +172,15 @@ jobs:
           umask 077
           printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
           chmod 600 ~/.kube/config
+
+      - name: 🔑 Restore talosconfig
+        env:
+          TALOS_CONFIG: ${{ secrets.TALOS_CONFIG }}
+        run: |
+          mkdir -p ~/.talos
+          umask 077
+          printf '%s' "${TALOS_CONFIG}" > ~/.talos/config
+          chmod 600 ~/.talos/config
 
       - name: 🔄 Update cluster
         run: ksail --config ksail.prod.yaml cluster update

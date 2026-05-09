@@ -1,0 +1,53 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-fleetdm
+  namespace: fleetdm
+spec:
+  endpointSelector: {}
+  ingress:
+    # Gateway ingress (direct from Cilium envoy)
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # KEDA HTTP interceptor forwards traffic from gateway
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: keda
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # Intra-namespace (fleet → mysql, fleet → redis)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: fleetdm
+  egress:
+    # Intra-namespace (fleet → mysql, fleet → redis)
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: fleetdm
+    # Kube API
+    - toEntities:
+        - kube-apiserver
+    # External services (agent downloads, update checks, license validation)
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

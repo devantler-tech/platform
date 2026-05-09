@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - ../../../../bases/infrastructure/controllers/
   - coredns/
+  - flux-instance/
   - minio/
 patches:
   - target:

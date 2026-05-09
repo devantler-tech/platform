@@ -7,6 +7,14 @@ metadata:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 2m
+  timeout: 10m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
   chart:
     spec:
       chart: external-dns
@@ -27,8 +35,8 @@ spec:
     domainFilters:
       - "${cloudflare_zone}"
     extraArgs:
-      - --cloudflare-proxied
       - --exclude-target-net=10.0.0.0/8
+      - --cloudflare-proxied
     env:
       - name: CF_API_TOKEN
         valueFrom:

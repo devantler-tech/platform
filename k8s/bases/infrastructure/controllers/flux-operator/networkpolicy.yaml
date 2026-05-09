@@ -1,17 +1,56 @@
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: allow-gateway-to-flux-web
+  name: allow-flux
   namespace: flux-system
 spec:
-  endpointSelector:
-    matchLabels:
-      app.kubernetes.io/instance: flux-operator
-      app.kubernetes.io/name: flux-operator
+  endpointSelector: {}
   ingress:
+    # Gateway ingress for flux-web UI
     - fromEntities:
         - ingress
       toPorts:
         - ports:
             - port: "9080"
+              protocol: TCP
+    # Webhook notifications
+    - fromEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "80"
+              protocol: TCP
+    # Intra-namespace (controller-to-controller communication)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: flux-system
+    # Metrics scraping
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+  egress:
+    # Intra-namespace (controller-to-controller communication)
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: flux-system
+    # Kube API
+    - toEntities:
+        - kube-apiserver
+    # OCI registries, Dex OIDC (all via Cloudflare proxy)
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
               protocol: TCP

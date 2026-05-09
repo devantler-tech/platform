@@ -1,0 +1,25 @@
+# Aggregate ClusterRole that extends the built-in 'edit' ClusterRole with
+# CNPG tenant verbs so any ServiceAccount bound to 'edit' (e.g. wedding-app)
+# can create and manage CloudNativePG Cluster resources in its namespace.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cnpg-tenant-edit
+  labels:
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+rules:
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources:
+      - clusters
+      - backups
+      - scheduledbackups
+      - poolers
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete

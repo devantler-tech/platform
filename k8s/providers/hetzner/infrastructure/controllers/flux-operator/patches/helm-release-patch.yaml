@@ -3,19 +3,4 @@ kind: HelmRelease
 metadata:
   name: flux-operator
   namespace: flux-system
-spec:
-  values:
-    commonAnnotations:
-      configmap.reloader.stakater.com/reload: "cloudflare-origin-ca"
-    extraVolumes:
-      - name: trust-bundle
-        configMap:
-          name: cloudflare-origin-ca
-          optional: true
-    extraVolumeMounts:
-      - name: trust-bundle
-        mountPath: /etc/ssl/certs/cloudflare-origin-ca
-        readOnly: true
-    extraEnvs:
-      - name: SSL_CERT_FILE
-        value: /etc/ssl/certs/cloudflare-origin-ca/ca-certificates.crt
+spec: {}

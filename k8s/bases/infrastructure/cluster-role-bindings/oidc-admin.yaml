@@ -13,4 +13,4 @@ roleRef:
 subjects:
   - apiGroup: rbac.authorization.k8s.io
     kind: User
-    name: "oidc:ned@devantler.tech"
+    name: "oidc:${admin_email}"
