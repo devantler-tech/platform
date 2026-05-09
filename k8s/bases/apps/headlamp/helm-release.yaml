@@ -65,9 +65,25 @@ spec:
                 value:
                   name: tmp-dir
                   mountPath: /tmp
+          - target:
+              kind: Deployment
+              name: headlamp
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: headlamp
+              spec:
+                template:
+                  spec:
+                    volumes:
+                      - name: plugins-dir
+                        emptyDir: null
+                        persistentVolumeClaim:
+                          claimName: headlamp
   # https://github.com/kubernetes-sigs/headlamp/blob/main/charts/headlamp/values.yaml
   values:
-    replicaCount: ${headlamp_replicas:=2}
+    replicaCount: ${headlamp_replicas:=1}
     podDisruptionBudget:
       enabled: true
       minAvailable: 0
@@ -109,5 +125,9 @@ spec:
         installOptions:
           parallel: true
           maxConcurrent: 3
+    persistentVolumeClaim:
+      enabled: false
+    podSecurityContext:
+      fsGroup: 101
     ingress:
       enabled: false
