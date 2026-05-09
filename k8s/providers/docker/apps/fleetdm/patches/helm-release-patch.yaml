@@ -27,3 +27,5 @@ spec:
         persistence:
           enabled: true
           size: 1Gi
+          # Base sets storageClass: hcloud; clear to use the cluster default.
+          storageClass: ""
