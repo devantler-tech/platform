@@ -213,6 +213,9 @@ jobs:
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
+        continue-on-error: true # Manifests are already in GHCR; Flux will reconcile
+        # on its own cycle. A timeout here (e.g. slow HelmRelease upgrade) is
+        # not a deployment failure — just a confirmation delay.
         run: ksail --config ksail.prod.yaml workload reconcile
         env:
           GITHUB_ACTOR: ${{ github.actor }}
@@ -220,7 +223,7 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
       - name: 🩺 Diagnose Flux on failure
-        if: failure() && steps.reconcile.outcome == 'failure'
+        if: steps.reconcile.outcome == 'failure'
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
