@@ -27,3 +27,8 @@ patches:
       name: kubescape
       namespace: kubescape
     path: kubescape/patches/helm-release-patch.yaml
+  - target:
+      kind: KubeVirt
+      name: kubevirt
+      namespace: kubevirt
+    path: kubevirt/patches/kubevirt-cr-patch.yaml

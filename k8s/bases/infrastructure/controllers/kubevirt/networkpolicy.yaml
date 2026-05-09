@@ -1,0 +1,52 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-kubevirt
+  namespace: kubevirt
+spec:
+  endpointSelector: {}
+  ingress:
+    # Webhook traffic from kube-apiserver (hostNetwork on control plane nodes)
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "8443"
+              protocol: TCP
+            - port: "8444"
+              protocol: TCP
+    # Intra-namespace communication (virt-operator, virt-api, virt-controller, virt-handler)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kubevirt
+    # Metrics scraping from monitoring
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "8443"
+              protocol: TCP
+  egress:
+    # Kube API for operator and controller management
+    - toEntities:
+        - kube-apiserver
+    # Intra-namespace communication
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kubevirt
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
