@@ -11,6 +11,10 @@ spec:
         - kube-apiserver
         - remote-node
         - host
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
     # Intra-namespace communication (cdi-operator, cdi-apiserver, cdi-controller, cdi-uploadproxy)
     - fromEndpoints:
         - matchLabels:
@@ -19,6 +23,10 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "8443"
+              protocol: TCP
   egress:
     # Kube API for operator and controller management
     - toEntities:

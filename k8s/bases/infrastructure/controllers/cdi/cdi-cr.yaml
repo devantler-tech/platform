@@ -4,5 +4,4 @@ apiVersion: cdi.kubevirt.io/v1beta1
 kind: CDI
 metadata:
   name: cdi
-  namespace: cdi
 spec: {}
