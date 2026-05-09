@@ -1,0 +1,54 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kubescape
+  namespace: kubescape
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 2m
+  timeout: 15m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  chart:
+    spec:
+      chart: kubescape-operator
+      version: 1.30.7
+      sourceRef:
+        kind: HelmRepository
+        name: kubescape
+  # https://github.com/kubescape/helm-charts/blob/main/charts/kubescape-operator/values.yaml
+  values:
+    clusterName: ${cluster_name}
+    capabilities:
+      configurationScan: enable
+      continuousScan: enable
+      vulnerabilityScan: enable
+      runtimeDetection: enable
+    hostScanner:
+      enabled: true
+    nodeAgent:
+      config:
+        hostSensor:
+          enabled: true
+    # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
+    # to avoid Helm upgrade failures from PVC shrink rejection.
+    persistence:
+      size:
+        backingStorage: 10Gi
+    # Chart defaults are grossly overprovisioned for small clusters.
+    # Align with VPA recommendations.
+    kubevuln:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 256Mi
+        limits:
+          cpu: 500m
+          memory: 1Gi

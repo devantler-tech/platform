@@ -6,4 +6,7 @@ resources:
   - certificates/
   - cluster-policies/
   - cluster-role-bindings/
+  - cluster-roles/
   - gateway/
+  - http-scaled-objects/
+  - security-exceptions/

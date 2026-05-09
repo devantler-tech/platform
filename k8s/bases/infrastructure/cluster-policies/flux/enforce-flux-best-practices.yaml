@@ -1,0 +1,78 @@
+# TODO: Upstream `enforce-flux-best-practices.yaml` to Kyverno policies repository.
+#
+# Validates that every Flux Kustomization and HelmRelease in the cluster
+# follows the recommended settings from the Flux docs:
+#   https://fluxcd.io/flux/components/kustomize/kustomizations/#recommended-settings
+#   https://fluxcd.io/flux/components/helm/helmreleases/
+#
+# Started in Audit mode — flip `validationFailureAction` to `Enforce` once a
+# clean cluster scan confirms nothing trips the policy.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: enforce-flux-best-practices
+  annotations:
+    policies.kyverno.io/title: Enforce Flux Best Practices
+    policies.kyverno.io/category: Flux, Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Kustomization, HelmRelease
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Validates that Flux Kustomization and HelmRelease resources declare the
+      reliability-critical fields recommended by the Flux documentation:
+      `interval`, `timeout`, `retryInterval`, garbage collection (`prune`),
+      health gating (`wait`), and Helm install/upgrade remediation. Catches
+      misconfigured resources at admission instead of waiting for a runtime
+      failure.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: kustomization-recommended-settings
+      match:
+        any:
+          - resources:
+              kinds:
+                - kustomize.toolkit.fluxcd.io/v1/Kustomization
+      validate:
+        message: >-
+          Flux Kustomization must set the recommended reliability fields:
+          `spec.interval`, `spec.timeout`, `spec.retryInterval`,
+          `spec.prune: true` (garbage collection), `spec.wait: true`
+          (health-gated reconciliation), and `spec.sourceRef`.
+          See https://fluxcd.io/flux/components/kustomize/kustomizations/#recommended-settings.
+        pattern:
+          spec:
+            interval: "?*"
+            timeout: "?*"
+            retryInterval: "?*"
+            prune: true
+            wait: true
+            sourceRef:
+              kind: "?*"
+              name: "?*"
+    - name: helmrelease-recommended-settings
+      match:
+        any:
+          - resources:
+              kinds:
+                - helm.toolkit.fluxcd.io/v2/HelmRelease
+                - helm.toolkit.fluxcd.io/v2beta2/HelmRelease
+                - helm.toolkit.fluxcd.io/v2beta1/HelmRelease
+      validate:
+        message: >-
+          Flux HelmRelease must set the recommended reliability fields:
+          `spec.interval`, `spec.timeout`, install + upgrade remediation
+          retries, and `spec.upgrade.remediation.remediateLastFailure: true`.
+          See https://fluxcd.io/flux/components/helm/helmreleases/.
+        pattern:
+          spec:
+            interval: "?*"
+            timeout: "?*"
+            install:
+              remediation:
+                retries: ">=1 | -1"
+            upgrade:
+              remediation:
+                retries: ">=1 | -1"
+                remediateLastFailure: true

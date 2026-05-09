@@ -17,6 +17,7 @@ spec:
         kind: HelmRepository
         name: cilium
   interval: 10m0s
+  timeout: 10m
   install:
     remediation:
       retries: -1
@@ -51,19 +52,31 @@ spec:
     k8sServiceHost: localhost
     k8sServicePort: 7445
     hubble:
+      enabled: true
+      tls:
+        auto:
+          # Use a CronJob (instead of helm) so cert renewal does not require
+          # a Helm release upgrade.
+          method: cronJob
       relay:
+        enabled: true
         replicas: ${cilium_replicas:=2}
+        rollOutPods: true
         podDisruptionBudget:
           enabled: true
           minAvailable: 1
           # Chart defaults set maxUnavailable: 1; PDB can't have both set.
           maxUnavailable: null
       ui:
-        replicas: ${cilium_replicas:=2}
+        enabled: true
+        # KEDA HTTP add-on scales hubble-ui between 0 and 1 based on traffic.
+        # The replica count here is the initial value at HelmRelease apply
+        # time only — KEDA's HTTPScaledObject takes over immediately.
+        replicas: ${hubble_ui_replicas:=1}
+        rollOutPods: true
+        # PDB intentionally disabled: incompatible with scale-to-zero managed by KEDA.
         podDisruptionBudget:
-          enabled: true
-          minAvailable: 1
-          maxUnavailable: null
+          enabled: false
     operator:
       replicas: ${cilium_replicas:=2}
       podDisruptionBudget:
