@@ -15,6 +15,7 @@ spec:
         kind: HelmRepository
         name: hcloud
   interval: 10m0s
+  timeout: 10m
   install:
     remediation:
       retries: -1

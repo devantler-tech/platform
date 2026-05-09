@@ -8,5 +8,6 @@ resources:
   - http-scaled-object.yaml
   - license-secret.yaml
   - mysql-secret.yaml
+  - networkpolicy.yaml
   - pod-disruption-budget.yaml
   - redis-secret.yaml

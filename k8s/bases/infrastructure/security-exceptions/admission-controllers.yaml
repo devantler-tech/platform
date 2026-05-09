@@ -1,0 +1,18 @@
+---
+# Exempt admission controller validation controls (C-0036, C-0039).
+# These controls check webhook timeout configuration, which is set by
+# upstream charts and cannot be changed without breaking functionality.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: admission-controllers
+spec:
+  reason: >-
+    Admission webhook timeouts are configured by upstream Helm charts
+    (Kyverno, cert-manager, VPA, KEDA) at appropriate values for their
+    operation. Changing these would cause admission failures.
+  posture:
+    - controlID: C-0036
+      action: ignore
+    - controlID: C-0039
+      action: ignore

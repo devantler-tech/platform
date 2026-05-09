@@ -1,0 +1,19 @@
+---
+# Exempt label and metadata controls cluster-wide.
+# Third-party Helm charts define their own label conventions which may not
+# include all labels that kubescape expects (e.g. app.kubernetes.io/part-of).
+# Patching every upstream chart's labels is impractical and breaks upgrades.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: helm-chart-metadata
+spec:
+  reason: >-
+    Third-party Helm charts use their own label conventions. Adding all
+    kubescape-expected labels would require patching every chart and would
+    break on upgrades.
+  posture:
+    - controlID: C-0076
+      action: ignore
+    - controlID: C-0077
+      action: ignore

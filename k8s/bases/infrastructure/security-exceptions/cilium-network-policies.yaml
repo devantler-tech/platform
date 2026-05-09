@@ -1,0 +1,21 @@
+---
+# Exempt C-0054 (Cluster internal networking), C-0030 (Ingress and Egress blocked),
+# and C-0260 (Missing network policy) cluster-wide. This platform uses
+# CiliumNetworkPolicies for network segmentation, which kubescape does not
+# recognise as equivalent to Kubernetes NetworkPolicy.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: cilium-network-policies
+spec:
+  reason: >-
+    Platform uses CiliumNetworkPolicies for all network segmentation.
+    Kubescape does not recognise CiliumNetworkPolicy as equivalent to
+    Kubernetes NetworkPolicy.
+  posture:
+    - controlID: C-0054
+      action: ignore
+    - controlID: C-0030
+      action: ignore
+    - controlID: C-0260
+      action: ignore

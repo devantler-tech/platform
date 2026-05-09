@@ -4,10 +4,13 @@ metadata:
   name: homepage
   namespace: homepage
   labels:
-    helm.toolkit.fluxcd.io/helm-test: enabled
+    # Helm test disabled: busybox wget writes index.html which fails under
+    # Kyverno's readOnlyRootFilesystem policy; deployment readiness probe
+    # already validates service health.
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 2m
+  timeout: 10m
   install:
     remediation:
       retries: -1

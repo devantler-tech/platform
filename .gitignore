@@ -15,3 +15,4 @@ hetzner/talos-*/*.raw.xz
 
 .decrypted*
 .playwright-mcp/
+wedding-app-login.png

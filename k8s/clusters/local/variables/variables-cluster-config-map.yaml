@@ -9,6 +9,7 @@ data:
   domain_regex: platform\.lan
   domain: platform.lan
   github_app_client_id: Iv23liZ8GHRgpx32Em2y
+  admin_email: "ned@devantler.tech"
   issuer_group: cert-manager.io
   issuer_kind: ClusterIssuer
   issuer_name: platform-ca

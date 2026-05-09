@@ -10,19 +10,23 @@ spec:
   ref:
     tag: latest
   url: oci://ghcr.io/devantler-tech/wedding-app/manifests
+  secretRef:
+    name: ghcr-auth
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
   labels:
     app.kubernetes.io/managed-by: ksail
+  annotations:
+    ksail.devantler.tech/reconcile-exclude: "true"
   name: wedding-app
   namespace: wedding-app
 spec:
   interval: 1m
   timeout: 5m
   retryInterval: 2m
-  path: ./deploy
+  path: .
   prune: true
   wait: true
   force: true
@@ -31,3 +35,7 @@ spec:
     kind: OCIRepository
     name: wedding-app
   targetNamespace: wedding-app
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age

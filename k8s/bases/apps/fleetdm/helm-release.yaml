@@ -13,6 +13,7 @@ spec:
     remediation:
       retries: -1
   upgrade:
+    force: true
     remediation:
       retries: -1
       remediateLastFailure: true
@@ -152,10 +153,28 @@ spec:
         existingSecret: mysql
       secondary:
         replicaCount: ${fleetdm_mysql_secondary_replicas:=2}
+        persistence:
+          enabled: true
+          size: 20Gi
+        # The chart enables readOnlyRootFilesystem but does not mount an
+        # emptyDir for /opt/bitnami/mysql/tmp; mysqld init writes InnoDB
+        # temp files there and fails on a fresh data dir without it.
+        extraVolumes:
+          - name: tmp
+            emptyDir: {}
+        extraVolumeMounts:
+          - name: tmp
+            mountPath: /opt/bitnami/mysql/tmp
       primary:
         persistence:
           enabled: true
           size: 20Gi
+        extraVolumes:
+          - name: tmp
+            emptyDir: {}
+        extraVolumeMounts:
+          - name: tmp
+            mountPath: /opt/bitnami/mysql/tmp
       metrics:
         enabled: true
         image:
@@ -179,11 +198,13 @@ spec:
         persistence:
           enabled: true
           size: 8Gi
+          storageClass: hcloud
       replica:
         replicaCount: ${fleetdm_redis_replicas:=2}
         persistence:
           enabled: true
           size: 8Gi
+          storageClass: hcloud
       metrics:
         enabled: true
         image:
