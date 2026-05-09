@@ -6,7 +6,7 @@ metadata:
   namespace: flux-system
 spec:
   interval: 60m
-  timeout: 20m
+  timeout: 30m
   retryInterval: 2m
   path: providers/__PROVIDER__/apps
   sourceRef:
