@@ -67,11 +67,11 @@ jobs:
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@8e5775a3ee6532bb7e81f153a1d903138895dc5d # v7.14.0
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@8520b716c1e15ae01cde3fb1b9308d54ba1f7a5a # v7.15.0
         with:
           distribution: Talos
           provider: Docker
-          ksail-version: "7.14.0"
+          ksail-version: "7.15.0"
           init: "false"
           validate: "true"
           scan: "true"
@@ -159,21 +159,19 @@ jobs:
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
 
-      - name: 🔑 Restore kubeconfig and talosconfig
-        # ksail cluster update needs both a valid kubeconfig (for detecting
-        # installed components) and a valid talosconfig (for connecting to the
-        # Talos API to sync machine config and secrets). Both must be kept
-        # up-to-date from the homelab after any cluster recreation.
+      - name: 🔑 Restore kubeconfig
+        # ksail cluster update needs a valid kubeconfig to detect the current
+        # cluster state. Without it, the component detector returns defaults and
+        # triggers spurious changes that all fail. The KUBE_CONFIG secret must be
+        # kept up-to-date from the homelab after any cluster recreation.
+        # See devantler-tech/ksail#4369 for the upstream design context.
         env:
           KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
-          TALOS_CONFIG: ${{ secrets.TALOS_CONFIG }}
         run: |
-          mkdir -p ~/.kube ~/.talos
+          mkdir -p ~/.kube
           umask 077
           printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
           chmod 600 ~/.kube/config
-          printf '%s' "${TALOS_CONFIG}" > ~/.talos/config
-          chmod 600 ~/.talos/config
 
       - name: 🔄 Update cluster
         run: ksail --config ksail.prod.yaml cluster update
@@ -213,9 +211,6 @@ jobs:
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
-        continue-on-error: true # Manifests are already in GHCR; Flux will reconcile
-        # on its own cycle. A timeout here (e.g. slow HelmRelease upgrade) is
-        # not a deployment failure — just a confirmation delay.
         run: ksail --config ksail.prod.yaml workload reconcile
         env:
           GITHUB_ACTOR: ${{ github.actor }}
@@ -223,7 +218,7 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
       - name: 🩺 Diagnose Flux on failure
-        if: steps.reconcile.outcome == 'failure'
+        if: failure() && steps.reconcile.outcome == 'failure'
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
