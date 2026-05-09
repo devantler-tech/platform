@@ -15,6 +15,10 @@ spec:
         - ports:
             - port: "443"
               protocol: TCP
+            - port: "8443"
+              protocol: TCP
+            - port: "8444"
+              protocol: TCP
     # Intra-namespace communication (virt-operator, virt-api, virt-controller, virt-handler)
     - fromEndpoints:
         - matchLabels:
@@ -25,7 +29,7 @@ spec:
             k8s:io.kubernetes.pod.namespace: monitoring
       toPorts:
         - ports:
-            - port: "443"
+            - port: "8443"
               protocol: TCP
   egress:
     # Kube API for operator and controller management

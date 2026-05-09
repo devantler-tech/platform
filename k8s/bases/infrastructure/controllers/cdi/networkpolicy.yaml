@@ -15,6 +15,10 @@ spec:
         - ports:
             - port: "443"
               protocol: TCP
+            - port: "8443"
+              protocol: TCP
+            - port: "8444"
+              protocol: TCP
     # Intra-namespace communication (cdi-operator, cdi-apiserver, cdi-controller, cdi-uploadproxy)
     - fromEndpoints:
         - matchLabels:
