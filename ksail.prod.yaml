@@ -22,7 +22,7 @@ spec:
     autoscaler:
       node:
         enabled: true
-        expander: Price
+        expander: LeastWaste
         maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
         pools:
