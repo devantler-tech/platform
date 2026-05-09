@@ -220,70 +220,11 @@ jobs:
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
-        run: |
-          # ksail workload reconcile hits a client-side rate limiter timeout (~2 min)
-          # when the cluster has many kustomizations. Use kubectl annotations to
-          # trigger reconciliation and poll for readiness directly.
-
-          # Wait for Flux controllers to be ready after the push
-          for deploy in source-controller kustomize-controller helm-controller; do
-            printf '⏳ Waiting for %s rollout…\n' "$deploy"
-            kubectl rollout status deployment/"$deploy" -n flux-system --timeout=180s || true
-          done
-
-          # Annotate the OCI source to trigger immediate reconciliation
-          printf '► Triggering OCI source reconciliation…\n'
-          kubectl annotate --overwrite ocirepository/flux-system -n flux-system \
-            reconcile.fluxcd.io/requestedAt="$(date +%s)"
-
-          # Wait for OCI source to fetch the new artifact
-          printf '⏳ Waiting for OCI source to sync…\n'
-          kubectl wait ocirepository/flux-system -n flux-system \
-            --for=condition=Ready --timeout=300s
-
-          # Trigger kustomization reconciliation in dependency order
-          for ks in variables infrastructure-controllers infrastructure apps; do
-            printf '► Triggering kustomization %s…\n' "$ks"
-            kubectl annotate --overwrite kustomization/"$ks" -n flux-system \
-              reconcile.fluxcd.io/requestedAt="$(date +%s)"
-          done
-
-          # Wait for all kustomizations to become Ready (10 min total timeout)
-          printf '⏳ Waiting for kustomizations to reconcile…\n'
-          deadline=$(($(date +%s) + 600))
-          while true; do
-            all_ready=true
-            for ks in variables infrastructure-controllers infrastructure apps; do
-              status=$(kubectl get kustomization "$ks" -n flux-system \
-                -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
-              if [ "$status" != "True" ]; then
-                all_ready=false
-                break
-              fi
-            done
-
-            if [ "$all_ready" = true ]; then
-              break
-            fi
-
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              printf '⚠️ Timeout waiting for kustomizations\n'
-              break
-            fi
-
-            sleep 15
-          done
-
-          # Final status report
-          printf '\n► Final kustomization status:\n'
-          kubectl get kustomization -n flux-system -o wide
-
-          if [ "$all_ready" = true ]; then
-            printf '✅ All kustomizations reconciled successfully\n'
-          else
-            printf '❌ Some kustomizations are not Ready\n'
-            exit 1
-          fi
+        run: ksail --config ksail.prod.yaml workload reconcile
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
       - name: 🩺 Diagnose Flux on failure
         if: failure() && steps.reconcile.outcome == 'failure'
