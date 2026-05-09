@@ -40,6 +40,8 @@ spec:
                 - kube-node-lease
                 - longhorn-system
                 - kubescape
+                - kubevirt
+                - cdi
       mutate:
         patchStrategicMerge:
           spec:
@@ -61,6 +63,8 @@ spec:
                 - kube-node-lease
                 - longhorn-system
                 - kubescape
+                - kubevirt
+                - cdi
       mutate:
         foreach:
           - list: "request.object.spec.containers"
