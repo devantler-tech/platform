@@ -26,7 +26,7 @@ patches:
         name: apps
         namespace: flux-system
       spec:
-        timeout: 15m
+        timeout: 35m
   # Docker CI has slower image pulls on cold runners. Increase the
   # infrastructure-controllers health-check timeout so VPA (5m default timeout)
   # and keda-http-add-on (10m timeout) can complete before the health check
