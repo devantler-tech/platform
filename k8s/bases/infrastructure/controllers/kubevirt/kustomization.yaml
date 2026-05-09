@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - kubevirt-operator.yaml
   - kubevirt-cr.yaml
+  - networkpolicy.yaml
 patches:
   # Add enforce-version label to match platform pod-security convention.
   - target:

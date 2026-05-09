@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - cdi-operator.yaml
   - cdi-cr.yaml
+  - networkpolicy.yaml
 patches:
   # Add pod-security labels to match platform convention.
   - target:
