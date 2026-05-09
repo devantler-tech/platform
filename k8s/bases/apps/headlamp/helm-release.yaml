@@ -126,10 +126,7 @@ spec:
           parallel: true
           maxConcurrent: 3
     persistentVolumeClaim:
-      enabled: true
-      accessModes:
-        - ReadWriteOnce
-      size: 256Mi
+      enabled: false
     podSecurityContext:
       fsGroup: 101
     ingress:
