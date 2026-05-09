@@ -1,0 +1,17 @@
+---
+# Exempt image signature verification cluster-wide.
+# This platform does not yet have image signing infrastructure (cosign /
+# sigstore). All images are pulled from trusted registries (GHCR, Docker Hub)
+# but are not cryptographically verified.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: image-verification
+spec:
+  reason: >-
+    Image signing infrastructure (cosign/sigstore) is not yet implemented.
+    Images are pulled from trusted registries but are not cryptographically
+    signed or verified.
+  posture:
+    - controlID: C-0237
+      action: ignore

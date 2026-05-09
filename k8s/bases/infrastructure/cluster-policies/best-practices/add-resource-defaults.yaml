@@ -1,0 +1,71 @@
+# Mutates Deployment, StatefulSet, DaemonSet, Job, and CronJob pod templates
+# to stamp default `resources.requests` and `resources.limits` into containers
+# that don't already declare them.
+#
+# Why: the namespace-scoped `default-limitrange` (from `add-ns-quota`) does
+# inject defaults at admission time, but only into the *rendered Pod*. The
+# original Deployment template stays empty `{}`, which kubescape (and many
+# other static scanners) flag as missing limits/requests (C-0268/0269/
+# C-0270/C-0271). Stamping defaults into the template surface itself keeps
+# scanners happy without changing runtime behavior — VPA still adjusts the
+# values once it has recommendations.
+#
+# Uses `+(key)` conditional anchors so explicit chart values are never
+# overwritten. Excludes the same namespaces as `add-security-context` for
+# parity (system + longhorn + kubescape).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: add-resource-defaults
+  annotations:
+    policies.kyverno.io/title: Resource Request/Limit Defaults
+    policies.kyverno.io/category: Best Practices, Resources
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Stamps default resources.requests and resources.limits into containers
+      and initContainers when not explicitly set, so static scanners see the
+      same values that LimitRange admission would inject.
+spec:
+  rules:
+    - name: add-container-resources
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - longhorn-system
+                - kubescape
+      mutate:
+        foreach:
+          - list: "request.object.spec.containers"
+            patchStrategicMerge:
+              spec:
+                containers:
+                  - (name): "{{element.name}}"
+                    resources:
+                      +(requests):
+                        cpu: 50m
+                        memory: 128Mi
+                      +(limits):
+                        cpu: 500m
+                        memory: 512Mi
+          - list: "request.object.spec.initContainers[]"
+            patchStrategicMerge:
+              spec:
+                initContainers:
+                  - (name): "{{element.name}}"
+                    resources:
+                      +(requests):
+                        cpu: 50m
+                        memory: 128Mi
+                      +(limits):
+                        cpu: 500m
+                        memory: 512Mi

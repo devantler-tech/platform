@@ -5,3 +5,4 @@ resources:
   - helm-repository.yaml
   - credentials-secret.yaml
   - helm-release.yaml
+  - networkpolicy.yaml

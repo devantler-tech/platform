@@ -6,3 +6,4 @@ resources:
   - helm-repository.yaml
   - httproute.yaml
   - http-scaled-object.yaml
+  - networkpolicy.yaml

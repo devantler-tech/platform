@@ -1,0 +1,56 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-cert-manager
+  namespace: cert-manager
+spec:
+  endpointSelector: {}
+  ingress:
+    # Webhook traffic from kube-apiserver (hostNetwork on control plane nodes)
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "10250"
+              protocol: TCP
+            - port: "6443"
+              protocol: TCP
+    # Metrics scraping from monitoring
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "9402"
+              protocol: TCP
+  egress:
+    # ACME challenges / CA communication
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+            - port: "80"
+              protocol: TCP
+            # DNS-01 challenge verification queries external nameservers
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # Kube API for managing certificates
+    - toEntities:
+        - kube-apiserver
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

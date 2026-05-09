@@ -2,8 +2,132 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - best-practices/add-ns-quota.yaml
-  - flux/auto-vpa.yaml
+  # Custom policies (no upstream equivalent)
+  - best-practices/add-default-deny.yaml
+  - best-practices/add-resource-defaults.yaml
+  - best-practices/add-security-context.yaml
+  - best-practices/auto-vpa.yaml
+  - best-practices/disable-default-sa-automount.yaml
+  - flux/enforce-flux-best-practices.yaml
   - flux/helm-release-enable-tests.yaml
   - flux/helm-release-install-crds.yaml
   - flux/helm-release-remediation-retries.yaml
+  # Upstream kyverno/policies (synced via reusable-workflows, patched below)
+  - samples/best-practices/add-ns-quota/add-ns-quota.yaml
+  - samples/other/create-pod-antiaffinity/create-pod-antiaffinity.yaml
+  - samples/other/spread-pods-across-topology/spread-pods-across-topology.yaml
+patches:
+  # --- add-ns-quota: exclude system namespaces, set generateExisting, tune resource values ---
+  - target:
+      kind: ClusterPolicy
+      name: add-ns-quota
+    patch: |
+      - op: add
+        path: /spec/rules/0/exclude
+        value:
+          any:
+            - resources:
+                names:
+                  - kube-system
+                  - kube-public
+                  - kube-node-lease
+                  - flux-system
+      - op: add
+        path: /spec/rules/0/generate/generateExisting
+        value: true
+      - op: replace
+        path: /spec/rules/0/generate/data/spec/hard
+        value:
+          requests.cpu: "8"
+          requests.memory: 16Gi
+          limits.cpu: "16"
+          limits.memory: 32Gi
+      - op: add
+        path: /spec/rules/1/exclude
+        value:
+          any:
+            - resources:
+                names:
+                  - kube-system
+                  - kube-public
+                  - kube-node-lease
+                  - flux-system
+      - op: add
+        path: /spec/rules/1/generate/generateExisting
+        value: true
+      - op: replace
+        path: /spec/rules/1/generate/data/spec/limits/0/default
+        value:
+          cpu: 500m
+          memory: 512Mi
+      - op: replace
+        path: /spec/rules/1/generate/data/spec/limits/0/defaultRequest
+        value:
+          cpu: 50m
+          memory: 128Mi
+  # --- Anti-affinity: add StatefulSet match, use app.kubernetes.io/name, exclude kube-system ---
+  - target:
+      kind: ClusterPolicy
+      name: insert-pod-antiaffinity
+    patch: |
+      - op: replace
+        path: /spec/rules/0/match/any
+        value:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+      - op: add
+        path: /spec/rules/0/exclude
+        value:
+          resources:
+            namespaces:
+              - kube-system
+      - op: replace
+        path: /spec/rules/0/preconditions/all/0/key
+        value: "{{request.object.spec.template.metadata.labels.\"app.kubernetes.io/name\" || ''}}"
+      - op: replace
+        path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(affinity)/+(podAntiAffinity)/+(preferredDuringSchedulingIgnoredDuringExecution)/0/podAffinityTerm/labelSelector/matchExpressions/0/key
+        value: "app.kubernetes.io/name"
+      - op: replace
+        path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(affinity)/+(podAntiAffinity)/+(preferredDuringSchedulingIgnoredDuringExecution)/0/podAffinityTerm/labelSelector/matchExpressions/0/values/0
+        value: "{{request.object.spec.template.metadata.labels.\"app.kubernetes.io/name\"}}"
+  # --- Topology spread: remove label gate, add StatefulSet, hostname key, ScheduleAnyway, exclude kube-system ---
+  - target:
+      kind: ClusterPolicy
+      name: spread-pods
+    patch: |
+      - op: replace
+        path: /spec/rules/0/match/any
+        value:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+      - op: add
+        path: /spec/rules/0/exclude
+        value:
+          resources:
+            namespaces:
+              - kube-system
+      - op: add
+        path: /spec/rules/0/preconditions
+        value:
+          all:
+            - key: "{{request.object.spec.template.metadata.labels.\"app.kubernetes.io/name\" || ''}}"
+              operator: NotEquals
+              value: ""
+      - op: replace
+        path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(topologySpreadConstraints)/0/topologyKey
+        value: "kubernetes.io/hostname"
+      - op: replace
+        path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(topologySpreadConstraints)/0/whenUnsatisfiable
+        value: "ScheduleAnyway"
+      - op: replace
+        path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(topologySpreadConstraints)/0/labelSelector
+        value:
+          matchExpressions:
+            - key: "app.kubernetes.io/name"
+              operator: In
+              values:
+                - "{{request.object.spec.template.metadata.labels.\"app.kubernetes.io/name\"}}"
