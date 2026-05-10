@@ -2,9 +2,10 @@
 
 ## Overview
 
-OpenBao stores secrets in a Raft-backed file storage engine. Backups are taken
-daily via a CronJob (`vault-snapshot`) and retained for 3 days in-cluster. The
-Velero daily file-level backup also captures the openbao namespace PVCs.
+OpenBao stores secrets in file-based storage. The Velero daily backup captures
+the openbao namespace PVCs and the `openbao-unseal` Secret (which contains the
+unseal key and root token). The `vault-config` Job auto-initializes OpenBao on
+fresh clusters and auto-unseals on restarts.
 
 ## Recovery Scenarios
 
@@ -12,8 +13,9 @@ Velero daily file-level backup also captures the openbao namespace PVCs.
 
 **Symptom**: OpenBao pod was evicted or restarted; vault shows `sealed: true`.
 
-**Resolution**: The `postStart` hook auto-unseals using the SOPS-decrypted
-`openbao-unseal` Secret. No manual action needed. Verify:
+**Resolution**: The `postStart` hook auto-unseals using the `openbao-unseal`
+Secret (created by the `vault-config` Job on first init, backed up by Velero).
+No manual action needed. Verify:
 
 ```bash
 kubectl exec -n openbao openbao-0 -- bao status
@@ -21,7 +23,7 @@ kubectl exec -n openbao openbao-0 -- bao status
 
 ### Scenario 2: PVC data corruption
 
-**Symptom**: OpenBao fails to start, Raft errors in logs.
+**Symptom**: OpenBao fails to start, storage errors in logs.
 
 **Resolution**:
 
@@ -37,45 +39,70 @@ kubectl exec -n openbao openbao-0 -- bao status
    ```bash
    kubectl scale statefulset -n openbao openbao --replicas=1
    ```
-4. Re-initialize:
+4. Delete the stale `openbao-unseal` Secret (old keys are for the old storage):
    ```bash
-   kubectl exec -n openbao openbao-0 -- bao operator init -key-shares=1 -key-threshold=1
+   kubectl delete secret -n openbao openbao-unseal
    ```
-5. Update the `openbao-unseal-secret.enc.yaml` with new unseal key and root token.
-6. Re-run the `vault-config` Job to restore policies and roles.
-7. Re-seed secrets from SOPS variables (PushSecrets will re-run on next Flux reconciliation).
+5. Trigger Flux reconciliation (`ksail workload reconcile`) — the `vault-config`
+   Job re-runs, auto-initializes with fresh keys, and configures policies/roles.
+6. PushSecrets re-seed the vault from SOPS variables on next reconciliation.
 
-### Scenario 3: Full cluster rebuild
+### Scenario 3: Full cluster rebuild (Velero restore)
 
-**Symptom**: Entire cluster is lost (DR scenario).
+**Symptom**: Entire cluster is lost (DR scenario), Velero backup available.
 
-**Resolution**: SOPS-encrypted secrets in Git remain the source of truth for
+**Resolution**:
+
+1. `ksail cluster create` — provisions infrastructure
+2. Deploy Velero and restore from backup — this restores:
+   - OpenBao PVC (vault data)
+   - `openbao-unseal` Secret (unseal key + root token)
+3. Flux deploys `infrastructure-controllers` → OpenBao starts
+4. The `postStart` hook reads the restored `openbao-unseal` Secret → auto-unseals
+5. `vault-config` Job runs → detects vault is already initialized → skips init →
+   converges policies/roles
+6. ExternalSecrets resume syncing from the restored vault data
+
+**Key point**: Velero backs up both the PVC (vault data) and the `openbao-unseal`
+Secret (unseal credentials). Both are needed for a complete restore.
+
+### Scenario 4: Full cluster rebuild (no Velero backup)
+
+**Symptom**: Cluster and backups are lost. Starting from scratch.
+
+**Resolution**: SOPS-encrypted Secrets in Git remain the source of truth for
 bootstrap. On a fresh cluster:
 
 1. `ksail cluster create` — provisions infrastructure
 2. Flux deploys `variables` → SOPS-encrypted Secrets are available
 3. Flux deploys `infrastructure-controllers` → OpenBao + ESO start
-4. OpenBao initializes fresh (new unseal keys + root token)
-5. Update `openbao-unseal-secret.enc.yaml` and push to Git
-6. `vault-config` Job runs → creates policies, roles, auth config
-7. Flux deploys `infrastructure` → PushSecrets seed vault from SOPS variables
-8. ExternalSecrets sync secrets from vault → all consumers get their Secrets
+4. Flux deploys `infrastructure` → `vault-config` Job auto-initializes:
+   - Detects vault is uninitialized → runs `bao operator init`
+   - Stores unseal key + root token in `openbao-unseal` K8s Secret
+   - Unseals and configures policies/roles
+5. PushSecrets seed the vault from SOPS variables
+6. ExternalSecrets sync secrets to consumer namespaces
 
-**Key point**: SOPS-encrypted Secrets in Git act as the offline backup. Even
-after full migration to OpenBao, the SOPS variables files remain the recovery
-source.
+No manual steps required.
 
-### Scenario 4: Lost unseal keys
+### Scenario 5: Lost unseal key (Secret deleted, no Velero backup)
 
-**Symptom**: The `openbao-unseal-secret.enc.yaml` file is lost or corrupted,
-and the vault is sealed.
+**Symptom**: The `openbao-unseal` Secret was deleted and no backup exists.
+The vault is sealed and cannot be unsealed.
 
-**Resolution**: If the SOPS Age private key is available, the unseal key can
-be recovered from Git history. If both are lost:
+**Resolution**: The vault data is unrecoverable without the unseal key.
+Re-initialize from scratch:
 
-1. Delete the OpenBao PVC (all vault data is lost)
-2. Re-initialize OpenBao from scratch (Scenario 2, steps 3-7)
-3. Re-seed all secrets from SOPS variables
+1. Delete the OpenBao PVC:
+   ```bash
+   kubectl delete pvc -n openbao data-openbao-0
+   ```
+2. Restart the StatefulSet:
+   ```bash
+   kubectl rollout restart statefulset -n openbao openbao
+   ```
+3. Trigger Flux reconciliation — the `vault-config` Job re-initializes the vault.
+4. PushSecrets re-seed all secrets from SOPS variables.
 
 ## Raft Snapshot Restore
 
@@ -85,8 +112,9 @@ To restore from a Raft snapshot (if one was captured before data loss):
 # Copy snapshot to pod
 kubectl cp snapshot.snap openbao/openbao-0:/tmp/snapshot.snap
 
-# Restore (requires root token)
-kubectl exec -n openbao openbao-0 -- bao operator raft snapshot restore /tmp/snapshot.snap
+# Restore (requires root token from openbao-unseal Secret)
+ROOT_TOKEN=$(kubectl get secret -n openbao openbao-unseal -o jsonpath='{.data.root-token}' | base64 -d)
+kubectl exec -n openbao openbao-0 -- env BAO_TOKEN=$ROOT_TOKEN bao operator raft snapshot restore /tmp/snapshot.snap
 ```
 
 ## References

@@ -110,18 +110,17 @@ The platform uses a **hybrid SOPS + OpenBao** model:
 ### First-time vault setup (after cluster creation)
 
 1. Deploy the cluster: `ksail cluster create && ksail workload push && ksail workload reconcile`
-2. OpenBao starts sealed (unseal Secret contains placeholders).
-3. Initialize: `kubectl exec -n openbao openbao-0 -- bao operator init -key-shares=1 -key-threshold=1`
-4. Record the unseal key and root token.
-5. Update `k8s/clusters/<env>/variables/openbao-unseal-secret.enc.yaml`:
-   ```bash
-   sops k8s/clusters/<env>/variables/openbao-unseal-secret.enc.yaml
-   # Replace REPLACE_AFTER_INIT with actual values
-   ```
-6. Push and reconcile: `ksail workload push && ksail workload reconcile`
-7. The auto-unseal hook and vault-config Job will run automatically.
-8. PushSecrets seed the vault from SOPS variables.
-9. ExternalSecrets sync secrets to consumer namespaces.
+2. Flux deploys `infrastructure-controllers` → OpenBao starts (sealed, uninitialized).
+3. Flux deploys `infrastructure` → the `vault-config` Job auto-initializes:
+   - `vault-init` container runs `bao operator init`, captures unseal key + root token
+   - `store-keys` container persists credentials in the `openbao-unseal` K8s Secret
+   - `vault-config` container configures policies, auth roles, and KV engine
+4. The OpenBao `postStart` hook auto-unseals on subsequent pod restarts using the
+   `openbao-unseal` Secret (volume mount with `optional: true`).
+5. PushSecrets seed the vault from SOPS variables.
+6. ExternalSecrets sync secrets to consumer namespaces.
+
+No manual steps are required — cluster creation is fully automated.
 
 ## Adding a new environment
 
