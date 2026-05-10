@@ -151,6 +151,10 @@ spec:
         database: fleet
         username: fleet
         existingSecret: mysql
+      # The chart enables readOnlyRootFilesystem but does not mount an
+      # emptyDir for /opt/bitnami/mysql/tmp; mysqld init writes InnoDB
+      # temp files there and fails on a fresh data dir without it.
+      # This applies to both primary and secondary.
       primary:
         podSecurityContext:
           enabled: true
@@ -184,9 +188,6 @@ spec:
         persistence:
           enabled: true
           size: 20Gi
-        # The chart enables readOnlyRootFilesystem but does not mount an
-        # emptyDir for /opt/bitnami/mysql/tmp; mysqld init writes InnoDB
-        # temp files there and fails on a fresh data dir without it.
         extraVolumes:
           - name: tmp
             emptyDir: {}
