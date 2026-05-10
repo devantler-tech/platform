@@ -78,7 +78,14 @@ spec:
       ui:
         enabled: true
         securityContext:
+          allowPrivilegeEscalation: false
           readOnlyRootFilesystem: false
+          runAsNonRoot: true
+          runAsGroup: 65534
+          capabilities:
+            drop: [ALL]
+          seccompProfile:
+            type: RuntimeDefault
         resources:
           requests:
             cpu: 10m

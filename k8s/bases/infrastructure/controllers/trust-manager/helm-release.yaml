@@ -59,3 +59,15 @@ spec:
                       runAsNonRoot: true
                       seccompProfile:
                         type: RuntimeDefault
+                    containers:
+                      - name: trust-manager
+                        securityContext:
+                          allowPrivilegeEscalation: false
+                          readOnlyRootFilesystem: true
+                          runAsNonRoot: true
+                          runAsGroup: 65534
+                          capabilities:
+                            drop:
+                              - ALL
+                          seccompProfile:
+                            type: RuntimeDefault
