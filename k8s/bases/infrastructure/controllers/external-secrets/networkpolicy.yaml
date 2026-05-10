@@ -5,6 +5,18 @@ metadata:
   namespace: external-secrets
 spec:
   endpointSelector: {}
+  ingress:
+    # Kube API server calls the validating webhook
+    - fromEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "10250"
+              protocol: TCP
+    # Intra-namespace communication (cert-controller → webhook)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: external-secrets
   egress:
     # Kube API for watching ExternalSecret CRs and managing Secrets
     - toEntities:
