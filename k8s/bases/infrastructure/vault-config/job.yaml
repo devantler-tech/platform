@@ -34,6 +34,10 @@ spec:
     spec:
       serviceAccountName: vault-config
       restartPolicy: OnFailure
+      securityContext:
+        runAsUser: 100
+        runAsGroup: 1000
+        fsGroup: 1000
       volumes:
         - name: unseal-keys
           secret:
