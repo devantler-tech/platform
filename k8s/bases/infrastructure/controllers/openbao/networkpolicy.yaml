@@ -6,9 +6,12 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Allow cluster-internal clients (ESO, vault-config Jobs, UI)
+    # Allow same-namespace clients (vault-config Jobs, UI) and
+    # cross-namespace clients (ESO from external-secrets namespace)
     - fromEndpoints:
         - {}
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: external-secrets
       toPorts:
         - ports:
             - port: "8200"
