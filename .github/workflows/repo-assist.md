@@ -78,12 +78,20 @@ safe-outputs:
     title-prefix: "[repo-assist] "
     labels: [automation, repo-assist]
     protected-files: fallback-to-issue
+    excluded-files:
+      - ".sops.yaml"
+      - "ksail.prod.yaml"
+      - "**/*.enc.yaml"
     max: 4
   push-to-pull-request-branch:
     target: "*"
     title-prefix: "[repo-assist] "
     max: 4
     protected-files: fallback-to-issue
+    excluded-files:
+      - ".sops.yaml"
+      - "ksail.prod.yaml"
+      - "**/*.enc.yaml"
   create-issue:
     title-prefix: "[repo-assist] "
     labels: [automation, repo-assist]
@@ -95,11 +103,11 @@ safe-outputs:
   add-labels:
     allowed: [bug, enhancement, "help wanted", "good first issue", "spam", "off topic", documentation, question, duplicate, wontfix, "needs triage", "needs investigation", "breaking change", performance, security, refactor]
     max: 30
-    target: "*" 
+    target: "*"
   remove-labels:
     allowed: [bug, enhancement, "help wanted", "good first issue", "spam", "off topic", documentation, question, duplicate, wontfix, "needs triage", "needs investigation", "breaking change", performance, security, refactor]
     max: 5
-    target: "*" 
+    target: "*"
 
 steps:
   - name: Fetch repo data for task weighting
