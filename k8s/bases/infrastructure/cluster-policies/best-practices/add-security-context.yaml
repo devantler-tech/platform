@@ -1,16 +1,15 @@
 # Mutates pods to apply security best-practices that kubescape checks:
-# - seccompProfile: RuntimeDefault (C-0055 Linux hardening)
+# - seccompProfile: RuntimeDefault (C-0055 Linux hardening) — pod + container
 # - allowPrivilegeEscalation: false (C-0016)
 # - readOnlyRootFilesystem: true (C-0017)
 # - drop ALL capabilities (C-0055)
-#
-# NOTE: runAsNonRoot is NOT set here because many third-party images
-# use non-numeric users (e.g. "node") which Kubernetes cannot verify,
-# or legitimately need root (e.g. host-scanner). Apps should set this
-# explicitly in their own security context.
+# - runAsNonRoot: true (C-0013) — pod + container
+# - runAsGroup: 65534 (C-0013) — container only (pod-level requires
+#   runAsUser which is image-specific; Talos containerd errors if
+#   runAsGroup is set without runAsUser at pod level)
 #
 # Uses +(key) to never overwrite values explicitly set by Helm charts.
-# Excludes kube-system and longhorn-system (require elevated privileges).
+# Excluded namespaces require elevated privileges by design.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -48,6 +47,7 @@ spec:
             securityContext:
               +(seccompProfile):
                 type: RuntimeDefault
+              +(runAsNonRoot): true
     - name: add-container-security-context
       match:
         any:
@@ -75,9 +75,13 @@ spec:
                     securityContext:
                       +(allowPrivilegeEscalation): false
                       +(readOnlyRootFilesystem): true
+                      +(runAsNonRoot): true
+                      +(runAsGroup): 65534
                       +(capabilities):
                         drop:
                           - ALL
+                      +(seccompProfile):
+                        type: RuntimeDefault
           - list: "request.object.spec.initContainers[]"
             patchStrategicMerge:
               spec:
@@ -86,6 +90,10 @@ spec:
                     securityContext:
                       +(allowPrivilegeEscalation): false
                       +(readOnlyRootFilesystem): true
+                      +(runAsNonRoot): true
+                      +(runAsGroup): 65534
                       +(capabilities):
                         drop:
                           - ALL
+                      +(seccompProfile):
+                        type: RuntimeDefault

@@ -6,6 +6,11 @@
 # Infrastructure namespaces are excluded because CNI (Cilium), storage
 # (Longhorn), node monitoring, identity (SPIRE), and backup (Velero)
 # require host-level access by design.
+#
+# Local-path-provisioner helper pods (used in local/CI clusters) are
+# excluded by name pattern because they mount hostPath in app namespaces
+# to provision PersistentVolumes. Production uses Longhorn (excluded by
+# namespace).
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -43,6 +48,10 @@ spec:
                 - cdi
                 - monitoring
                 - velero
+          - resources:
+              names:
+                - "helper-pod-create-pvc-*"
+                - "helper-pod-delete-pvc-*"
       validate:
         message: "hostPath volumes are not allowed."
         pattern:
@@ -69,6 +78,10 @@ spec:
                 - cdi
                 - monitoring
                 - velero
+          - resources:
+              names:
+                - "helper-pod-create-pvc-*"
+                - "helper-pod-delete-pvc-*"
       validate:
         message: "hostNetwork, hostPID, and hostIPC are not allowed."
         pattern:

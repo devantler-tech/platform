@@ -4,16 +4,16 @@
 # - Mutation injects defaults for empty fields (conditional anchors)
 # - This policy blocks explicitly insecure overrides at admission
 #
-# Addresses kubescape controls: C-0016, C-0055, C-0057
+# Addresses kubescape controls: C-0013, C-0016, C-0055, C-0057
 #
 # NOTE: readOnlyRootFilesystem is NOT validated because several charts
 # intentionally set it to false (homepage, opencost UI, actual-budget)
 # and PSS restricted does not require it. It is enforced via HelmRelease
 # values where possible and the mutation policy adds it as a default.
 #
-# NOTE: runAsNonRoot is NOT validated here because the companion mutation
-# policy does not inject it (many third-party images use non-numeric
-# users). C-0013 is handled by setting runAsNonRoot in HelmRelease values.
+# Local-path-provisioner helper pods (used in local/CI clusters) are
+# excluded by name pattern because they run as root with hostPath in
+# app namespaces. Production uses Longhorn (excluded by namespace).
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -52,16 +52,22 @@ spec:
                 - cdi
                 - monitoring
                 - velero
+          - resources:
+              names:
+                - "helper-pod-create-pvc-*"
+                - "helper-pod-delete-pvc-*"
       validate:
         message: >-
           All containers must set allowPrivilegeEscalation=false,
-          privileged=false (or unset), and drop ALL capabilities.
+          privileged=false (or unset), runAsNonRoot=true, and drop
+          ALL capabilities.
         pattern:
           spec:
             containers:
               - securityContext:
                   allowPrivilegeEscalation: false
                   =(privileged): false
+                  runAsNonRoot: true
                   capabilities:
                     drop:
                       - ALL
@@ -69,6 +75,7 @@ spec:
               - securityContext:
                   allowPrivilegeEscalation: false
                   =(privileged): false
+                  runAsNonRoot: true
                   capabilities:
                     drop:
                       - ALL
@@ -76,6 +83,7 @@ spec:
               - securityContext:
                   allowPrivilegeEscalation: false
                   =(privileged): false
+                  runAsNonRoot: true
                   capabilities:
                     drop:
                       - ALL
@@ -99,6 +107,10 @@ spec:
                 - cdi
                 - monitoring
                 - velero
+          - resources:
+              names:
+                - "helper-pod-create-pvc-*"
+                - "helper-pod-delete-pvc-*"
       validate:
         message: "Pod must use seccomp profile RuntimeDefault or Localhost."
         pattern:
@@ -126,6 +138,10 @@ spec:
                 - cdi
                 - monitoring
                 - velero
+          - resources:
+              names:
+                - "helper-pod-create-pvc-*"
+                - "helper-pod-delete-pvc-*"
       validate:
         message: >-
           Container seccomp profile must be RuntimeDefault or Localhost
