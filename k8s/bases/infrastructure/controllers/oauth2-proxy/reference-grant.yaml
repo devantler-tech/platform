@@ -15,9 +15,6 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: kube-system
-    - group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      namespace: openbao
   to:
     - group: ""
       kind: Service

@@ -260,6 +260,12 @@ spec:
               }
               POLICY
 
+              bao policy write vault-admin - <<'POLICY'
+              path "*" {
+                capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+              }
+              POLICY
+
               # --- 5. Create auth roles ---
               echo "Writing Kubernetes auth roles..."
 
@@ -276,5 +282,28 @@ spec:
                 bound_service_account_namespaces=openbao \
                 policies=vault-snapshot-read \
                 ttl=15m
+
+              # --- 6. Enable OIDC auth (Dex) ---
+              if ! bao auth list -format=json | grep -q '"oidc/"'; then
+                echo "Enabling OIDC auth method..."
+                bao auth enable oidc
+              else
+                echo "OIDC auth already enabled."
+              fi
+
+              echo "Configuring OIDC auth with Dex..."
+              bao write auth/oidc/config \
+                oidc_discovery_url="https://dex.${domain}" \
+                oidc_client_id="public-client" \
+                oidc_client_secret="${dex_client_secret}" \
+                default_role="admin"
+
+              bao write auth/oidc/role/admin \
+                bound_audiences="public-client" \
+                allowed_redirect_uris="https://vault.${domain}/ui/vault/auth/oidc/oidc/callback,http://localhost:8250/oidc/callback" \
+                user_claim="email" \
+                groups_claim="groups" \
+                policies="vault-admin" \
+                ttl=8h
 
               echo "Vault configuration complete."

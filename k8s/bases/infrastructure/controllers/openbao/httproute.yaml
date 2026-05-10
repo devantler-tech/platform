@@ -19,13 +19,6 @@ spec:
   hostnames:
     - vault.${domain}
   rules:
-    - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://vault.${domain}/
-      backendRefs:
-        - name: oauth2-proxy
-          namespace: oauth2-proxy
-          port: 80
+    - backendRefs:
+        - name: openbao-ui
+          port: 8200

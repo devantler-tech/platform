@@ -27,7 +27,11 @@ spec:
     server:
       enabled: true
       replicas: ${openbao_replicas:=1}
-      # Mount the SOPS-decrypted unseal key Secret so the postStart hook
+      # External address for OIDC redirect URIs
+      extraEnvironmentVars:
+        BAO_API_ADDR: https://vault.${domain}
+      # Mount the unseal key Secret (created by the vault-config Job on first
+      # init, restored by Velero on cluster rebuild) so the postStart hook
       # can auto-unseal the server after every pod restart.
       volumes:
         - name: unseal-keys

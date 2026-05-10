@@ -25,6 +25,14 @@ spec:
     # Kube API for Kubernetes auth token review
     - toEntities:
         - kube-apiserver
+    # OIDC provider (Dex) — accessed via HTTPS external URL for
+    # discovery and token exchange during user login
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:

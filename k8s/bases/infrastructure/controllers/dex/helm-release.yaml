@@ -75,6 +75,7 @@ spec:
             - "https://oauth2-proxy.${domain}/oauth2/callback"
             - "https://headlamp.${domain}/oidc-callback"
             - "https://budget.${domain}/oidc/callback"
+            - "https://vault.${domain}/ui/vault/auth/oidc/oidc/callback"
           trustedPeers:
             - kubectl
         - name: kubectl
