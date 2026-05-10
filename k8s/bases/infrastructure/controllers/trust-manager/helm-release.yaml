@@ -41,3 +41,21 @@ spec:
           matchLabels:
             app.kubernetes.io/name: trust-manager
             app.kubernetes.io/instance: trust-manager
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: trust-manager
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: trust-manager
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      runAsNonRoot: true
+                      seccompProfile:
+                        type: RuntimeDefault

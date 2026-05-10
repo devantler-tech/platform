@@ -36,6 +36,7 @@ spec:
                 - kube-system
                 - kube-public
                 - kube-node-lease
+                - flux-system
                 - longhorn-system
                 - kubescape
                 - kubevirt
@@ -61,6 +62,7 @@ spec:
                 - kube-system
                 - kube-public
                 - kube-node-lease
+                - flux-system
                 - longhorn-system
                 - kubescape
                 - kubevirt
