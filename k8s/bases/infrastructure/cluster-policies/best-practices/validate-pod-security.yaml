@@ -4,7 +4,7 @@
 # - Mutation injects defaults for empty fields (conditional anchors)
 # - This policy blocks explicitly insecure overrides at admission
 #
-# Addresses kubescape controls: C-0016, C-0055
+# Addresses kubescape controls: C-0016, C-0055, C-0057
 #
 # NOTE: readOnlyRootFilesystem is NOT validated because several charts
 # intentionally set it to false (homepage, opencost UI, actual-budget)
@@ -54,25 +54,28 @@ spec:
                 - velero
       validate:
         message: >-
-          All containers must set allowPrivilegeEscalation=false
-          and drop ALL capabilities.
+          All containers must set allowPrivilegeEscalation=false,
+          privileged=false (or unset), and drop ALL capabilities.
         pattern:
           spec:
             containers:
               - securityContext:
-                  allowPrivilegeEscalation: "false"
+                  allowPrivilegeEscalation: false
+                  =(privileged): false
                   capabilities:
                     drop:
                       - ALL
             =(initContainers):
               - securityContext:
-                  allowPrivilegeEscalation: "false"
+                  allowPrivilegeEscalation: false
+                  =(privileged): false
                   capabilities:
                     drop:
                       - ALL
             =(ephemeralContainers):
               - securityContext:
-                  allowPrivilegeEscalation: "false"
+                  allowPrivilegeEscalation: false
+                  =(privileged): false
                   capabilities:
                     drop:
                       - ALL
@@ -103,3 +106,42 @@ spec:
             securityContext:
               seccompProfile:
                 type: "RuntimeDefault | Localhost"
+    - name: deny-container-seccomp-unconfined
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - flux-system
+                - longhorn-system
+                - kubescape
+                - kubevirt
+                - cdi
+                - monitoring
+                - velero
+      validate:
+        message: >-
+          Container seccomp profile must be RuntimeDefault or Localhost
+          when set. Containers inherit the pod-level seccomp profile
+          unless explicitly overridden.
+        pattern:
+          spec:
+            containers:
+              - =(securityContext):
+                  =(seccompProfile):
+                    type: "RuntimeDefault | Localhost"
+            =(initContainers):
+              - =(securityContext):
+                  =(seccompProfile):
+                    type: "RuntimeDefault | Localhost"
+            =(ephemeralContainers):
+              - =(securityContext):
+                  =(seccompProfile):
+                    type: "RuntimeDefault | Localhost"

@@ -73,6 +73,6 @@ spec:
         message: "hostNetwork, hostPID, and hostIPC are not allowed."
         pattern:
           spec:
-            =(hostNetwork): "false"
-            =(hostPID): "false"
-            =(hostIPC): "false"
+            =(hostNetwork): false
+            =(hostPID): false
+            =(hostIPC): false
