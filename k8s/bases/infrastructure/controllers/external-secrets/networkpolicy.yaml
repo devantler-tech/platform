@@ -6,17 +6,16 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Kube API server calls the validating webhook
+    # Webhook validation requests from the kube-apiserver and
+    # cert-controller → webhook TLS certificate provisioning.
+    # The API server source address varies by CNI path (direct
+    # vs. SNAT), so we allow any cluster-internal traffic.
     - fromEntities:
-        - kube-apiserver
+        - cluster
       toPorts:
         - ports:
             - port: "10250"
               protocol: TCP
-    # Intra-namespace communication (cert-controller → webhook)
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: external-secrets
   egress:
     # Kube API for watching ExternalSecret CRs and managing Secrets
     - toEntities:
