@@ -27,6 +27,11 @@ spec:
   # https://github.com/dexidp/helm-charts/blob/master/charts/dex/values.yaml
   values:
     replicaCount: ${dex_replicas:=2}
+    podSecurityContext:
+      runAsUser: 65534
+      runAsGroup: 65534
+    securityContext:
+      runAsUser: 65534
     podDisruptionBudget:
       enabled: true
       minAvailable: 1

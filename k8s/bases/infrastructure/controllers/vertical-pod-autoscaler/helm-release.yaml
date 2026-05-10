@@ -29,10 +29,19 @@ spec:
   values:
     recommender:
       replicaCount: ${vpa_recommender_replicas:=1}
+      podSecurityContext:
+        runAsUser: 65534
+        runAsGroup: 65534
     updater:
       enabled: true
       replicaCount: ${vpa_updater_replicas:=1}
+      podSecurityContext:
+        runAsUser: 65534
+        runAsGroup: 65534
     admissionController:
       replicaCount: ${vpa_admission_replicas:=2}
+      podSecurityContext:
+        runAsUser: 65534
+        runAsGroup: 65534
       podDisruptionBudget:
         minAvailable: 1

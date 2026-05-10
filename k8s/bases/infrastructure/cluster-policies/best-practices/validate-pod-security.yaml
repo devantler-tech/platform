@@ -1,0 +1,166 @@
+# Validates that pods in non-infrastructure namespaces comply with
+# Pod Security Standards (restricted profile). Works in tandem with
+# the add-security-context mutation policy:
+# - Mutation injects defaults for empty fields (conditional anchors)
+# - This policy blocks explicitly insecure overrides at admission
+#
+# Addresses kubescape controls: C-0013, C-0016, C-0055, C-0057
+#
+# NOTE: readOnlyRootFilesystem is NOT validated because several charts
+# intentionally set it to false (homepage, opencost UI, actual-budget)
+# and PSS restricted does not require it. It is enforced via HelmRelease
+# values where possible and the mutation policy adds it as a default.
+#
+# Local-path-provisioner helper pods (used in local/CI clusters) are
+# excluded by name pattern because they run as root with hostPath in
+# app namespaces. Production uses Longhorn (excluded by namespace).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: validate-pod-security
+  annotations:
+    policies.kyverno.io/title: Validate Pod Security (PSS Restricted)
+    policies.kyverno.io/category: Pod Security, Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Validates that pods comply with Pod Security Standards restricted
+      profile. Blocks explicitly insecure overrides that the mutation
+      policy's conditional anchors would skip.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: validate-container-security
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - flux-system
+                - longhorn-system
+                - local-path-storage
+                - kubescape
+                - kubevirt
+                - cdi
+                - monitoring
+                - velero
+          - resources:
+              names:
+                - "helper-pod-create-pvc-*"
+                - "helper-pod-delete-pvc-*"
+      validate:
+        message: >-
+          All containers must set allowPrivilegeEscalation=false,
+          privileged=false (or unset), runAsNonRoot=true, and drop
+          ALL capabilities.
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: false
+                  =(privileged): false
+                  runAsNonRoot: true
+                  capabilities:
+                    drop:
+                      - ALL
+            =(initContainers):
+              - securityContext:
+                  allowPrivilegeEscalation: false
+                  =(privileged): false
+                  runAsNonRoot: true
+                  capabilities:
+                    drop:
+                      - ALL
+            =(ephemeralContainers):
+              - securityContext:
+                  allowPrivilegeEscalation: false
+                  =(privileged): false
+                  runAsNonRoot: true
+                  capabilities:
+                    drop:
+                      - ALL
+    - name: require-seccomp-profile
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - flux-system
+                - longhorn-system
+                - local-path-storage
+                - kubescape
+                - kubevirt
+                - cdi
+                - monitoring
+                - velero
+          - resources:
+              names:
+                - "helper-pod-create-pvc-*"
+                - "helper-pod-delete-pvc-*"
+      validate:
+        message: "Pod must use seccomp profile RuntimeDefault or Localhost."
+        pattern:
+          spec:
+            securityContext:
+              seccompProfile:
+                type: "RuntimeDefault | Localhost"
+    - name: deny-container-seccomp-unconfined
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - flux-system
+                - longhorn-system
+                - local-path-storage
+                - kubescape
+                - kubevirt
+                - cdi
+                - monitoring
+                - velero
+          - resources:
+              names:
+                - "helper-pod-create-pvc-*"
+                - "helper-pod-delete-pvc-*"
+      validate:
+        message: >-
+          Container seccomp profile must be RuntimeDefault or Localhost
+          when set. Containers inherit the pod-level seccomp profile
+          unless explicitly overridden.
+        pattern:
+          spec:
+            containers:
+              - =(securityContext):
+                  =(seccompProfile):
+                    type: "RuntimeDefault | Localhost"
+            =(initContainers):
+              - =(securityContext):
+                  =(seccompProfile):
+                    type: "RuntimeDefault | Localhost"
+            =(ephemeralContainers):
+              - =(securityContext):
+                  =(seccompProfile):
+                    type: "RuntimeDefault | Localhost"

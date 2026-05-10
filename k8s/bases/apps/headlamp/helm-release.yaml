@@ -129,5 +129,10 @@ spec:
       enabled: false
     podSecurityContext:
       fsGroup: 101
+      runAsUser: 100
+      runAsGroup: 101
+    securityContext:
+      runAsUser: 100
+      runAsGroup: 101
     ingress:
       enabled: false

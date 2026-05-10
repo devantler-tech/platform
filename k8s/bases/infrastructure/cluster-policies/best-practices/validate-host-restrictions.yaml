@@ -1,0 +1,93 @@
+# Validates that pods in non-infrastructure namespaces do not use
+# host-level access (hostPath, hostNetwork, hostPID, hostIPC).
+#
+# Addresses kubescape controls: C-0045, C-0048, C-0041, C-0038
+#
+# Infrastructure namespaces are excluded because CNI (Cilium), storage
+# (Longhorn), node monitoring, identity (SPIRE), and backup (Velero)
+# require host-level access by design.
+#
+# Local-path-provisioner helper pods (used in local/CI clusters) are
+# excluded by name pattern because they mount hostPath in app namespaces
+# to provision PersistentVolumes. Production uses Longhorn (excluded by
+# namespace).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: validate-host-restrictions
+  annotations:
+    policies.kyverno.io/title: Validate Host Restrictions
+    policies.kyverno.io/category: Pod Security, Best Practices
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Blocks host-level access (hostPath, hostNetwork, hostPID, hostIPC)
+      in non-infrastructure namespaces to prevent container escape.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: disallow-host-path
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - flux-system
+                - longhorn-system
+                - local-path-storage
+                - kubescape
+                - kubevirt
+                - cdi
+                - monitoring
+                - velero
+          - resources:
+              names:
+                - "helper-pod-create-pvc-*"
+                - "helper-pod-delete-pvc-*"
+      validate:
+        message: "hostPath volumes are not allowed."
+        pattern:
+          spec:
+            =(volumes):
+              - X(hostPath): {}
+    - name: disallow-host-namespaces
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - flux-system
+                - longhorn-system
+                - local-path-storage
+                - kubescape
+                - kubevirt
+                - cdi
+                - monitoring
+                - velero
+          - resources:
+              names:
+                - "helper-pod-create-pvc-*"
+                - "helper-pod-delete-pvc-*"
+      validate:
+        message: "hostNetwork, hostPID, and hostIPC are not allowed."
+        pattern:
+          spec:
+            =(hostNetwork): false
+            =(hostPID): false
+            =(hostIPC): false

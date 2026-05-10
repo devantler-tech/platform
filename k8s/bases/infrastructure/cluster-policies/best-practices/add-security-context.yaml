@@ -1,16 +1,16 @@
 # Mutates pods to apply security best-practices that kubescape checks:
-# - seccompProfile: RuntimeDefault (C-0055 Linux hardening)
+# - seccompProfile: RuntimeDefault (C-0055 Linux hardening) — pod + container
 # - allowPrivilegeEscalation: false (C-0016)
 # - readOnlyRootFilesystem: true (C-0017)
 # - drop ALL capabilities (C-0055)
+# - runAsNonRoot: true (C-0013) — pod + container
 #
-# NOTE: runAsNonRoot is NOT set here because many third-party images
-# use non-numeric users (e.g. "node") which Kubernetes cannot verify,
-# or legitimately need root (e.g. host-scanner). Apps should set this
-# explicitly in their own security context.
+# NOTE: runAsGroup is intentionally NOT injected because it would
+# override pod-level runAsGroup inheritance at the container level.
+# Charts that need a non-root group should set it explicitly.
 #
 # Uses +(key) to never overwrite values explicitly set by Helm charts.
-# Excludes kube-system and longhorn-system (require elevated privileges).
+# Excluded namespaces require elevated privileges by design.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -38,16 +38,21 @@ spec:
                 - kube-system
                 - kube-public
                 - kube-node-lease
+                - flux-system
                 - longhorn-system
+                - local-path-storage
                 - kubescape
                 - kubevirt
                 - cdi
+                - monitoring
+                - velero
       mutate:
         patchStrategicMerge:
           spec:
             securityContext:
               +(seccompProfile):
                 type: RuntimeDefault
+              +(runAsNonRoot): true
     - name: add-container-security-context
       match:
         any:
@@ -61,10 +66,14 @@ spec:
                 - kube-system
                 - kube-public
                 - kube-node-lease
+                - flux-system
                 - longhorn-system
+                - local-path-storage
                 - kubescape
                 - kubevirt
                 - cdi
+                - monitoring
+                - velero
       mutate:
         foreach:
           - list: "request.object.spec.containers"
@@ -75,9 +84,12 @@ spec:
                     securityContext:
                       +(allowPrivilegeEscalation): false
                       +(readOnlyRootFilesystem): true
+                      +(runAsNonRoot): true
                       +(capabilities):
                         drop:
                           - ALL
+                      +(seccompProfile):
+                        type: RuntimeDefault
           - list: "request.object.spec.initContainers[]"
             patchStrategicMerge:
               spec:
@@ -86,6 +98,9 @@ spec:
                     securityContext:
                       +(allowPrivilegeEscalation): false
                       +(readOnlyRootFilesystem): true
+                      +(runAsNonRoot): true
                       +(capabilities):
                         drop:
                           - ALL
+                      +(seccompProfile):
+                        type: RuntimeDefault

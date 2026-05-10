@@ -29,6 +29,12 @@ spec:
     pdb:
       create: true
       minAvailable: 0
+    podSecurityContext:
+      runAsUser: 65534
+      runAsGroup: 65534
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsUser: 65534
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
@@ -53,3 +59,10 @@ spec:
                   rollingUpdate:
                     maxSurge: 1
                     maxUnavailable: 0
+          - target:
+              kind: ServiceAccount
+              name: whoami
+            patch: |
+              - op: add
+                path: /automountServiceAccountToken
+                value: false

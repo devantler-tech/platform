@@ -1,18 +1,21 @@
 ---
-# Exempt health probe controls for infrastructure namespaces.
-# Many infrastructure controllers, sidecars, and init containers do not
-# expose health endpoints. Adding probes to upstream charts is impractical
-# and they typically have their own readiness mechanisms (leader election,
-# watch loops).
+# Exempt health probe controls for infrastructure and middleware namespaces.
+# Many controllers, sidecars, and init containers do not expose health
+# endpoints. Adding probes to upstream charts is impractical and they
+# typically have their own readiness mechanisms (leader election, watch
+# loops). App namespaces (headlamp, homepage) are included because their
+# charts deploy init containers and sidecars that lack probe endpoints,
+# while main application containers have probes configured.
 apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
   name: health-probes
 spec:
   reason: >-
-    Infrastructure controllers, sidecars, and init containers often lack
-    health probe endpoints. Upstream charts manage their own availability
-    through leader election and watch mechanisms.
+    Infrastructure controllers, middleware, sidecars, and init containers
+    often lack health probe endpoints. Upstream charts manage availability
+    through leader election and watch mechanisms. App namespaces are
+    included for their init containers and sidecars, not main containers.
   posture:
     - controlID: C-0018
       action: ignore
@@ -39,3 +42,9 @@ spec:
             - external-dns
             - kubelet-serving-cert-approver
             - opencost
+            - headlamp
+            - kubevirt
+            - cdi
+            - dex
+            - oauth2-proxy
+            - homepage

@@ -26,10 +26,14 @@ spec:
   # https://github.com/stakater/Reloader/blob/master/deployments/kubernetes/chart/reloader/values.yaml
   values:
     reloader:
+      readOnlyRootFileSystem: true
       reloadStrategy: annotations
       enableHA: true
       deployment:
         replicas: ${reloader_replicas:=2}
+        securityContext:
+          runAsUser: 65534
+          runAsGroup: 65534
         topologySpreadConstraints:
           - maxSkew: 1
             topologyKey: kubernetes.io/hostname
