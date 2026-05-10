@@ -47,6 +47,7 @@ spec:
                 - kube-node-lease
                 - flux-system
                 - longhorn-system
+                - local-path-storage
                 - kubescape
                 - kubevirt
                 - cdi
@@ -102,6 +103,7 @@ spec:
                 - kube-node-lease
                 - flux-system
                 - longhorn-system
+                - local-path-storage
                 - kubescape
                 - kubevirt
                 - cdi
@@ -133,6 +135,7 @@ spec:
                 - kube-node-lease
                 - flux-system
                 - longhorn-system
+                - local-path-storage
                 - kubescape
                 - kubevirt
                 - cdi
