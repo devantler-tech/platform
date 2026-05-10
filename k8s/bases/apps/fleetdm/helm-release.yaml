@@ -155,22 +155,12 @@ spec:
         podSecurityContext:
           enabled: true
           fsGroup: 1001
-          runAsNonRoot: true
           runAsUser: 1001
           runAsGroup: 1001
-          seccompProfile:
-            type: RuntimeDefault
         containerSecurityContext:
           enabled: true
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
-          runAsNonRoot: true
           runAsUser: 1001
           runAsGroup: 1001
-          capabilities:
-            drop: [ALL]
-          seccompProfile:
-            type: RuntimeDefault
         persistence:
           enabled: true
           size: 20Gi
@@ -185,22 +175,12 @@ spec:
         podSecurityContext:
           enabled: true
           fsGroup: 1001
-          runAsNonRoot: true
           runAsUser: 1001
           runAsGroup: 1001
-          seccompProfile:
-            type: RuntimeDefault
         containerSecurityContext:
           enabled: true
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
-          runAsNonRoot: true
           runAsUser: 1001
           runAsGroup: 1001
-          capabilities:
-            drop: [ALL]
-          seccompProfile:
-            type: RuntimeDefault
         persistence:
           enabled: true
           size: 20Gi
@@ -236,22 +216,12 @@ spec:
         podSecurityContext:
           enabled: true
           fsGroup: 1001
-          runAsNonRoot: true
           runAsUser: 1001
           runAsGroup: 1001
-          seccompProfile:
-            type: RuntimeDefault
         containerSecurityContext:
           enabled: true
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
-          runAsNonRoot: true
           runAsUser: 1001
           runAsGroup: 1001
-          capabilities:
-            drop: [ALL]
-          seccompProfile:
-            type: RuntimeDefault
         persistence:
           enabled: true
           size: 8Gi
@@ -261,22 +231,12 @@ spec:
         podSecurityContext:
           enabled: true
           fsGroup: 1001
-          runAsNonRoot: true
           runAsUser: 1001
           runAsGroup: 1001
-          seccompProfile:
-            type: RuntimeDefault
         containerSecurityContext:
           enabled: true
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
-          runAsNonRoot: true
           runAsUser: 1001
           runAsGroup: 1001
-          capabilities:
-            drop: [ALL]
-          seccompProfile:
-            type: RuntimeDefault
         persistence:
           enabled: true
           size: 8Gi

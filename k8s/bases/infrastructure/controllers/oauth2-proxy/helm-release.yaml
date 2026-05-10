@@ -29,10 +29,6 @@ spec:
     deploymentAnnotations:
       configmap.reloader.stakater.com/reload: oauth2-proxy
     replicaCount: ${oauth2_proxy_replicas:=2}
-    podSecurityContext:
-      runAsNonRoot: true
-      seccompProfile:
-        type: RuntimeDefault
     podDisruptionBudget:
       enabled: true
       minAvailable: 1

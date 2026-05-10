@@ -39,10 +39,6 @@ spec:
               spec:
                 template:
                   spec:
-                    securityContext:
-                      runAsNonRoot: true
-                      seccompProfile:
-                        type: RuntimeDefault
                     containers:
                       - name: origin-ca-issuer
                         resources:
@@ -51,13 +47,3 @@ spec:
                             memory: 64Mi
                           limits:
                             memory: 128Mi
-                        securityContext:
-                          allowPrivilegeEscalation: false
-                          readOnlyRootFilesystem: true
-                          runAsNonRoot: true
-                          runAsGroup: 65534
-                          capabilities:
-                            drop:
-                              - ALL
-                          seccompProfile:
-                            type: RuntimeDefault

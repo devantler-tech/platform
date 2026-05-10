@@ -28,21 +28,10 @@ spec:
   values:
     replicaCount: ${dex_replicas:=2}
     podSecurityContext:
-      runAsNonRoot: true
       runAsUser: 65534
       runAsGroup: 65534
-      seccompProfile:
-        type: RuntimeDefault
     securityContext:
-      allowPrivilegeEscalation: false
-      readOnlyRootFilesystem: true
-      runAsNonRoot: true
       runAsUser: 65534
-      runAsGroup: 65534
-      capabilities:
-        drop: [ALL]
-      seccompProfile:
-        type: RuntimeDefault
     podDisruptionBudget:
       enabled: true
       minAvailable: 1

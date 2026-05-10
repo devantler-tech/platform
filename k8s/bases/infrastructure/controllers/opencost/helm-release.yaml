@@ -59,15 +59,6 @@ spec:
 
       exporter:
         replicas: 1
-        securityContext:
-          allowPrivilegeEscalation: false
-          readOnlyRootFilesystem: true
-          runAsNonRoot: true
-          runAsGroup: 65534
-          capabilities:
-            drop: [ALL]
-          seccompProfile:
-            type: RuntimeDefault
         resources:
           requests:
             cpu: 10m
@@ -78,14 +69,7 @@ spec:
       ui:
         enabled: true
         securityContext:
-          allowPrivilegeEscalation: false
           readOnlyRootFilesystem: false
-          runAsNonRoot: true
-          runAsGroup: 65534
-          capabilities:
-            drop: [ALL]
-          seccompProfile:
-            type: RuntimeDefault
         resources:
           requests:
             cpu: 10m

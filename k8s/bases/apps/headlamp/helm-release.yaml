@@ -129,20 +129,10 @@ spec:
       enabled: false
     podSecurityContext:
       fsGroup: 101
-      runAsNonRoot: true
       runAsUser: 100
       runAsGroup: 101
-      seccompProfile:
-        type: RuntimeDefault
     securityContext:
-      allowPrivilegeEscalation: false
-      readOnlyRootFilesystem: true
-      runAsNonRoot: true
       runAsUser: 100
       runAsGroup: 101
-      capabilities:
-        drop: [ALL]
-      seccompProfile:
-        type: RuntimeDefault
     ingress:
       enabled: false
