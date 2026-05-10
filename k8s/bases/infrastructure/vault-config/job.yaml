@@ -45,7 +45,7 @@ spec:
       initContainers:
         # --- 1. Auto-init + unseal ---
         - name: vault-init
-          image: openbao/openbao:2.2.0
+          image: quay.io/openbao/openbao:2.5.3
           env:
             - name: BAO_ADDR
               value: http://openbao.openbao.svc.cluster.local:8200
@@ -146,7 +146,7 @@ spec:
               fi
       containers:
         - name: vault-config
-          image: openbao/openbao:2.2.0
+          image: quay.io/openbao/openbao:2.5.3
           env:
             - name: BAO_ADDR
               value: http://openbao.openbao.svc.cluster.local:8200

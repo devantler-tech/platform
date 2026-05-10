@@ -35,10 +35,14 @@ spec:
           secret:
             secretName: openbao-unseal
             optional: true
+        - name: tmp
+          emptyDir: {}
       volumeMounts:
         - name: unseal-keys
           mountPath: /openbao/unseal
           readOnly: true
+        - name: tmp
+          mountPath: /tmp
       postStart:
         - /bin/sh
         - -ec
