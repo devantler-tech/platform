@@ -86,11 +86,42 @@ See `.github/workflows/` for the exact names.
 ## Template body (do not edit when instantiating)
 
 - `k8s/bases/cluster/` — shared Flux Kustomizations with sentinel paths.
-- `k8s/bases/infrastructure/` — Cilium, cert-manager, Kyverno, alerting configs, etc.
+- `k8s/bases/infrastructure/` — Cilium, cert-manager, Kyverno, alerting configs,
+  OpenBao vault, External Secrets Operator, ClusterSecretStore, vault-config Job,
+  vault-seed PushSecrets, vault-backup CronJob.
 - `k8s/bases/apps/` — reference applications (homepage, whoami, headlamp).
 - `k8s/providers/{docker,hetzner}/` — provider-specific assembly of bases.
 
 Changes here are "platform changes" — upstream them instead of forking them.
+
+## Secrets architecture
+
+The platform uses a **hybrid SOPS + OpenBao** model:
+
+- **SOPS + Age** encrypts bootstrap secrets in Git (vault unseal keys, auth-chain
+  secrets consumed by infrastructure-controllers via Flux `postBuild` substitution).
+- **OpenBao** (self-hosted Vault fork) stores all other secrets. Runs in the
+  `openbao` namespace with Raft file storage.
+- **External Secrets Operator** syncs secrets from OpenBao into native K8s
+  `Secret` objects via `ExternalSecret` and `ClusterSecretStore` CRs.
+- **PushSecret** CRs in `k8s/bases/infrastructure/vault-seed/` seed OpenBao
+  from the SOPS-decrypted Flux variable Secrets during migration.
+
+### First-time vault setup (after cluster creation)
+
+1. Deploy the cluster: `ksail cluster create && ksail workload push && ksail workload reconcile`
+2. OpenBao starts sealed (unseal Secret contains placeholders).
+3. Initialize: `kubectl exec -n openbao openbao-0 -- bao operator init -key-shares=1 -key-threshold=1`
+4. Record the unseal key and root token.
+5. Update `k8s/clusters/<env>/variables/openbao-unseal-secret.enc.yaml`:
+   ```bash
+   sops k8s/clusters/<env>/variables/openbao-unseal-secret.enc.yaml
+   # Replace REPLACE_AFTER_INIT with actual values
+   ```
+6. Push and reconcile: `ksail workload push && ksail workload reconcile`
+7. The auto-unseal hook and vault-config Job will run automatically.
+8. PushSecrets seed the vault from SOPS variables.
+9. ExternalSecrets sync secrets to consumer namespaces.
 
 ## Adding a new environment
 

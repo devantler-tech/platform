@@ -6,8 +6,6 @@ resources:
   - helm-repository.yaml
   - httproute.yaml
   - http-scaled-object.yaml
-  - license-secret.yaml
-  - mysql-secret.yaml
+  - external-secrets.yaml
   - networkpolicy.yaml
   - pod-disruption-budget.yaml
-  - redis-secret.yaml

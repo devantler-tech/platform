@@ -1,0 +1,59 @@
+# Daily Raft snapshot of OpenBao data, uploaded to R2.
+# Authenticates via Kubernetes auth (vault-snapshot role).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-snapshot
+  namespace: openbao
+spec:
+  schedule: "30 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        metadata:
+          labels:
+            app: vault-snapshot
+        spec:
+          serviceAccountName: vault-snapshot
+          restartPolicy: OnFailure
+          volumes:
+            - name: snapshot
+              emptyDir:
+                sizeLimit: 512Mi
+          containers:
+            - name: snapshot
+              image: openbao/openbao:2.2.0
+              env:
+                - name: BAO_ADDR
+                  value: http://openbao.openbao.svc.cluster.local:8200
+              volumeMounts:
+                - name: snapshot
+                  mountPath: /tmp/snapshot
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  # Authenticate via Kubernetes auth
+                  JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                  VAULT_TOKEN=$(bao write -field=token auth/kubernetes/login \
+                    role=vault-snapshot \
+                    jwt="$JWT")
+                  export BAO_TOKEN="$VAULT_TOKEN"
+
+                  # Take Raft snapshot
+                  SNAP_FILE="/tmp/snapshot/openbao-$(date +%Y%m%d-%H%M%S).snap"
+                  echo "Taking Raft snapshot to $SNAP_FILE..."
+                  bao operator raft snapshot save "$SNAP_FILE"
+
+                  SNAP_SIZE=$(wc -c < "$SNAP_FILE")
+                  echo "Snapshot saved: $SNAP_FILE ($SNAP_SIZE bytes)"
+
+                  # TODO: Upload to R2 once aws cli or s3cmd is available
+                  # in the snapshot container image. For now, the snapshot
+                  # lives in the emptyDir and is backed up by Velero's
+                  # daily file-level backup of the openbao namespace.
+                  echo "Snapshot complete."

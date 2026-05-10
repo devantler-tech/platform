@@ -4,5 +4,6 @@ kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
   - cluster-issuers/
+  - external-secrets/
   - local-path-storage-namespace.yaml
   - local-path-storage-networkpolicy.yaml

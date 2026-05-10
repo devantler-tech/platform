@@ -1,0 +1,46 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-openbao
+  namespace: openbao
+spec:
+  endpointSelector: {}
+  ingress:
+    # Allow cluster-internal clients (ESO, vault-config Jobs, UI)
+    - fromEndpoints:
+        - {}
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+    # Raft peer traffic (HA mode)
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: openbao
+      toPorts:
+        - ports:
+            - port: "8201"
+              protocol: TCP
+  egress:
+    # Kube API for Kubernetes auth token review
+    - toEntities:
+        - kube-apiserver
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # Raft peer traffic (HA mode)
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: openbao
+      toPorts:
+        - ports:
+            - port: "8201"
+              protocol: TCP

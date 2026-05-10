@@ -5,3 +5,4 @@ resources:
   - ../../../providers/hetzner/variables
   - variables-cluster-config-map.yaml
   - variables-cluster-secret.enc.yaml
+  - openbao-unseal-secret.enc.yaml

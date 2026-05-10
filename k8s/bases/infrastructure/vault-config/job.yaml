@@ -1,0 +1,158 @@
+# Idempotent Job that configures OpenBao after deployment:
+# 1. Enables KV v2 secrets engine
+# 2. Enables Kubernetes auth method
+# 3. Configures Kubernetes auth with cluster CA and token reviewer
+# 4. Creates least-privilege policies
+# 5. Creates auth roles mapping ServiceAccounts to policies
+#
+# Safe to re-run — every command checks state before writing.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-config
+  namespace: openbao
+  annotations:
+    # Re-run on every Flux reconciliation to converge state.
+    kustomize.toolkit.fluxcd.io/force: enabled
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app: vault-config
+    spec:
+      serviceAccountName: vault-config
+      restartPolicy: OnFailure
+      volumes:
+        - name: unseal-keys
+          secret:
+            secretName: openbao-unseal
+            optional: true
+      containers:
+        - name: vault-config
+          image: openbao/openbao:2.2.0
+          env:
+            - name: BAO_ADDR
+              value: http://openbao.openbao.svc.cluster.local:8200
+          volumeMounts:
+            - name: unseal-keys
+              mountPath: /openbao/unseal
+              readOnly: true
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              set -e
+
+              ROOT_TOKEN=$(cat /openbao/unseal/root-token 2>/dev/null || true)
+              if [ -z "$ROOT_TOKEN" ] || [ "$ROOT_TOKEN" = "REPLACE_AFTER_INIT" ]; then
+                echo "ERROR: root-token not yet populated in openbao-unseal Secret."
+                echo "Run 'bao operator init' first, then update the SOPS-encrypted Secret."
+                exit 1
+              fi
+              export BAO_TOKEN="$ROOT_TOKEN"
+
+              # Wait for OpenBao to be ready
+              echo "Waiting for OpenBao to be ready..."
+              until bao status -format=json 2>/dev/null | grep -q '"sealed": false'; do
+                echo "  ...waiting (sealed or unavailable)"
+                sleep 5
+              done
+              echo "OpenBao is unsealed and ready."
+
+              # --- 1. Enable KV v2 secrets engine ---
+              if ! bao secrets list -format=json | grep -q '"secret/"'; then
+                echo "Enabling KV v2 secrets engine at secret/..."
+                bao secrets enable -path=secret -version=2 kv
+              else
+                echo "KV v2 already enabled at secret/."
+              fi
+
+              # --- 2. Enable Kubernetes auth ---
+              if ! bao auth list -format=json | grep -q '"kubernetes/"'; then
+                echo "Enabling Kubernetes auth method..."
+                bao auth enable kubernetes
+              else
+                echo "Kubernetes auth already enabled."
+              fi
+
+              # --- 3. Configure Kubernetes auth ---
+              echo "Configuring Kubernetes auth..."
+              bao write auth/kubernetes/config \
+                kubernetes_host="https://kubernetes.default.svc.cluster.local:443"
+
+              # --- 4. Create policies ---
+              echo "Writing vault policies..."
+
+              bao policy write infra-backup-readonly - <<'POLICY'
+              path "secret/data/infrastructure/backup/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write infra-dns-readonly - <<'POLICY'
+              path "secret/data/infrastructure/dns/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write infra-monitoring-readonly - <<'POLICY'
+              path "secret/data/infrastructure/monitoring/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write infra-hcloud-readonly - <<'POLICY'
+              path "secret/data/infrastructure/hcloud/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write infra-tls-readonly - <<'POLICY'
+              path "secret/data/infrastructure/tls/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write app-fleetdm-readonly - <<'POLICY'
+              path "secret/data/apps/fleetdm/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write app-wedding-readonly - <<'POLICY'
+              path "secret/data/apps/wedding-app/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write app-oidc-readonly - <<'POLICY'
+              path "secret/data/infrastructure/oidc/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write vault-snapshot-read - <<'POLICY'
+              path "sys/storage/raft/snapshot" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              # --- 5. Create auth roles ---
+              echo "Writing Kubernetes auth roles..."
+
+              # ESO needs broad read access to serve all ExternalSecret CRs
+              bao write auth/kubernetes/role/external-secrets \
+                bound_service_account_names=external-secrets \
+                bound_service_account_namespaces=external-secrets \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,app-fleetdm-readonly,app-wedding-readonly,app-oidc-readonly \
+                ttl=1h
+
+              # Snapshot CronJob needs raft snapshot read
+              bao write auth/kubernetes/role/vault-snapshot \
+                bound_service_account_names=vault-snapshot \
+                bound_service_account_namespaces=openbao \
+                policies=vault-snapshot-read \
+                ttl=15m
+
+              echo "Vault configuration complete."

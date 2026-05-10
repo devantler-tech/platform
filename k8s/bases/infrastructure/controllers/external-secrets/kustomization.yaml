@@ -4,5 +4,4 @@ resources:
   - namespace.yaml
   - helm-release.yaml
   - helm-repository.yaml
-  - pod-disruption-budget.yaml
   - networkpolicy.yaml
