@@ -29,6 +29,23 @@ spec:
   values:
     crds:
       install: true
+    podSecurityContext:
+      fsGroup: 1000
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      supplementalGroups: [1000]
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      runAsGroup: 1000
+      privileged: false
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
     scaler:
       replicas: ${keda_scaler_replicas:=1}
     interceptor:

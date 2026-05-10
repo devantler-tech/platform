@@ -29,10 +29,52 @@ spec:
   values:
     recommender:
       replicaCount: ${vpa_recommender_replicas:=1}
+      podSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      securityContext:
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        runAsGroup: 65534
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
     updater:
       enabled: true
       replicaCount: ${vpa_updater_replicas:=1}
+      podSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      securityContext:
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        runAsGroup: 65534
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
     admissionController:
       replicaCount: ${vpa_admission_replicas:=2}
+      podSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      securityContext:
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        runAsGroup: 65534
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
       podDisruptionBudget:
         minAvailable: 1

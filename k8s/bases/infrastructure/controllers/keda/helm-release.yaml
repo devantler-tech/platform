@@ -28,6 +28,44 @@ spec:
   values:
     crds:
       install: true
+    podSecurityContext:
+      operator:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      metricServer:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      webhooks:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+    securityContext:
+      operator:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsGroup: 65534
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
+      metricServer:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsGroup: 65534
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
+      webhooks:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsGroup: 65534
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
     operator:
       replicaCount: ${keda_operator_replicas:=1}
     webhooks:
