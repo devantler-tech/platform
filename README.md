@@ -1,6 +1,6 @@
 # DevantlerTech Platform ☸️⛴️
 
-<img width="1579" height="1050" alt="image" src="https://github.com/user-attachments/assets/5599a8fe-5bdf-4fcc-917d-57c3fe635af8" />
+<img width="1356" height="786" alt="image" src="https://github.com/user-attachments/assets/1847326a-b44e-4bf6-ad91-98efa72d2fea" />
 
 This repo contains the deployment artifacts for the DevantlerTech Platform. The platform is a Kubernetes cluster that is highly automated with the use of Flux GitOps, CI/CD with Automated Testing, and much more. Feel free to look around. You might find some inspiration 🙌🏻
 
