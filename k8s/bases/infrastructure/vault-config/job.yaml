@@ -270,14 +270,23 @@ spec:
               }
               POLICY
 
+              bao policy write vault-seed-write - <<'POLICY'
+              path "secret/data/*" {
+                capabilities = ["create", "update"]
+              }
+              path "secret/metadata/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              POLICY
+
               # --- 5. Create auth roles ---
               echo "Writing Kubernetes auth roles..."
 
-              # ESO needs broad read access to serve all ExternalSecret CRs
+              # ESO needs broad read access for ExternalSecrets + write for PushSecrets
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,app-fleetdm-readonly,app-wedding-readonly,app-oidc-readonly \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,app-fleetdm-readonly,app-wedding-readonly,app-oidc-readonly,vault-seed-write \
                 ttl=1h
 
               # Snapshot CronJob needs raft snapshot read
