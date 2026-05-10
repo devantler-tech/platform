@@ -1,0 +1,32 @@
+# Encrypt STATE and EPHEMERAL partitions with nodeID-derived keys (LUKS2).
+#
+# nodeID uses the Hetzner VM UUID to derive the encryption key, protecting
+# against drive recovery/reuse (e.g. recycled cloud volumes, stolen disks).
+# This is the strongest option available on Hetzner Cloud (no TPM/SecureBoot).
+#
+# EPHEMERAL uses lockToState so its data is irrecoverable if STATE is wiped,
+# preventing orphaned workload data from surviving a node reset.
+#
+# ⚠️  DESTRUCTIVE: Only takes effect on empty/unformatted partitions.
+#     Existing clusters require a rolling rebuild — see:
+#     https://docs.siderolabs.com/talos/v1.12/configure-your-talos-cluster/storage-and-disk-management/disk-encryption#going-from-unencrypted-to-encrypted-and-vice-versa
+#
+# Reference: https://docs.siderolabs.com/talos/v1.12/configure-your-talos-cluster/storage-and-disk-management/disk-encryption
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: STATE
+encryption:
+  provider: luks2
+  keys:
+    - nodeID: {}
+      slot: 0
+---
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: EPHEMERAL
+encryption:
+  provider: luks2
+  keys:
+    - nodeID: {}
+      slot: 0
+      lockToState: true

@@ -1,0 +1,91 @@
+# Kubernetes API server audit logging.
+#
+# Places an audit policy file on disk and configures the API server to
+# write audit events to a log file on the EPHEMERAL partition.
+#
+# Policy highlights:
+#   - Secret access logged at Metadata (content never recorded)
+#   - RBAC mutations logged at RequestResponse (full detail)
+#   - Workload mutations logged at Request level
+#   - Health/metrics endpoints and watch noise suppressed
+#
+# Log rotation: 30 days, 3 backups, 100 MB max per file.
+#
+# Reference: https://kubernetes.io/docs/tasks/debug/debug-cluster/audit/
+machine:
+  files:
+    - content: |
+        apiVersion: audit.k8s.io/v1
+        kind: Policy
+        rules:
+          # Skip noisy health/metrics endpoints
+          - level: None
+            nonResourceURLs:
+              - /healthz*
+              - /readyz*
+              - /livez*
+              - /metrics
+              - /openapi/*
+
+          # Skip watch/list on high-volume resources to reduce noise
+          - level: None
+            verbs: ["watch"]
+            resources:
+              - group: ""
+                resources: ["events", "endpoints"]
+
+          # Secret access — always Metadata (never log secret content)
+          - level: Metadata
+            resources:
+              - group: ""
+                resources: ["secrets"]
+
+          # RBAC mutations — full detail for forensics
+          - level: RequestResponse
+            resources:
+              - group: "rbac.authorization.k8s.io"
+            verbs: ["create", "update", "patch", "delete"]
+
+          # Workload mutations — request body for change tracking
+          - level: Request
+            resources:
+              - group: ""
+                resources:
+                  - pods
+                  - services
+                  - namespaces
+                  - serviceaccounts
+                  - persistentvolumeclaims
+              - group: "apps"
+                resources:
+                  - deployments
+                  - daemonsets
+                  - statefulsets
+              - group: "batch"
+                resources:
+                  - jobs
+                  - cronjobs
+            verbs: ["create", "update", "patch", "delete"]
+
+          # Catch-all — Metadata for everything else (skip RequestReceived stage)
+          - level: Metadata
+            omitStages:
+              - RequestReceived
+      permissions: 0o644
+      path: /var/etc/kubernetes/audit/audit-policy.yaml
+      op: create
+cluster:
+  apiServer:
+    extraArgs:
+      audit-log-path: /var/log/kubernetes/audit/audit.log
+      audit-log-maxage: "30"
+      audit-log-maxbackup: "3"
+      audit-log-maxsize: "100"
+      audit-policy-file: /etc/kubernetes/audit/audit-policy.yaml
+    extraVolumes:
+      - hostPath: /var/etc/kubernetes/audit
+        mountPath: /etc/kubernetes/audit
+        readonly: true
+      - hostPath: /var/log/kubernetes/audit
+        mountPath: /var/log/kubernetes/audit
+        readonly: false
