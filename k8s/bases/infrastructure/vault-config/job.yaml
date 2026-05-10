@@ -271,10 +271,61 @@ spec:
               POLICY
 
               bao policy write vault-seed-write - <<'POLICY'
-              path "secret/data/*" {
-                capabilities = ["create", "update"]
+              # Write access for seeding vault from PushSecrets.
+              # Paths must be at least as specific as the read-only policies
+              # because Vault ACL uses most-specific-path-wins resolution.
+              path "secret/data/infrastructure/backup/*" {
+                capabilities = ["create", "update", "read"]
               }
-              path "secret/metadata/*" {
+              path "secret/data/infrastructure/dns/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/infrastructure/monitoring/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/infrastructure/hcloud/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/infrastructure/tls/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/infrastructure/oidc/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/fleetdm/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/wedding-app/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/flux/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/backup/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/dns/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/monitoring/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/hcloud/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/tls/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/oidc/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/fleetdm/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/wedding-app/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/flux/*" {
                 capabilities = ["create", "update", "read"]
               }
               POLICY
