@@ -29,6 +29,18 @@ spec:
   # https://github.com/cert-manager/cert-manager/blob/master/deploy/charts/cert-manager/values.yaml
   values:
     replicaCount: ${cert_manager_replicas:=2}
+    securityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
     podDisruptionBudget:
       enabled: true
       minAvailable: 1
@@ -47,6 +59,18 @@ spec:
             app.kubernetes.io/instance: cert-manager
     webhook:
       replicaCount: ${cert_manager_replicas:=2}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containerSecurityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
       podDisruptionBudget:
         enabled: true
         minAvailable: 1
@@ -65,6 +89,18 @@ spec:
               app.kubernetes.io/instance: cert-manager
     cainjector:
       replicaCount: ${cert_manager_replicas:=2}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containerSecurityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
+        capabilities:
+          drop: [ALL]
+        seccompProfile:
+          type: RuntimeDefault
       podDisruptionBudget:
         enabled: true
         minAvailable: 1

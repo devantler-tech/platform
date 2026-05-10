@@ -46,6 +46,23 @@ spec:
   # https://github.com/community-charts/helm-charts/blob/main/charts/actualbudget/values.yaml
   values:
     replicaCount: ${actual_budget_replicas:=1}
+    serviceAccount:
+      automount: false
+    podSecurityContext:
+      runAsNonRoot: true
+      fsGroup: 1001
+      fsGroupChangePolicy: OnRootMismatch
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: false
+      runAsNonRoot: true
+      runAsUser: 1001
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
     ingress:
       enabled: false
     persistence:

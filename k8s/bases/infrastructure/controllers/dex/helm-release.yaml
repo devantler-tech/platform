@@ -27,6 +27,18 @@ spec:
   # https://github.com/dexidp/helm-charts/blob/master/charts/dex/values.yaml
   values:
     replicaCount: ${dex_replicas:=2}
+    podSecurityContext:
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      capabilities:
+        drop: [ALL]
+      seccompProfile:
+        type: RuntimeDefault
     podDisruptionBudget:
       enabled: true
       minAvailable: 1

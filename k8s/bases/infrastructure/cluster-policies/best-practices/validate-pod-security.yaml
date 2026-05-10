@@ -4,11 +4,16 @@
 # - Mutation injects defaults for empty fields (conditional anchors)
 # - This policy blocks explicitly insecure overrides at admission
 #
-# Addresses kubescape controls: C-0016, C-0017, C-0055
+# Addresses kubescape controls: C-0016, C-0055
+#
+# NOTE: readOnlyRootFilesystem is NOT validated because several charts
+# intentionally set it to false (homepage, opencost UI, actual-budget)
+# and PSS restricted does not require it. It is enforced via HelmRelease
+# values where possible and the mutation policy adds it as a default.
 #
 # NOTE: runAsNonRoot is NOT validated here because the companion mutation
 # policy does not inject it (many third-party images use non-numeric
-# users). C-0013 is handled by the pod-security-mutations exception.
+# users). C-0013 is handled by setting runAsNonRoot in HelmRelease values.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -48,28 +53,25 @@ spec:
                 - velero
       validate:
         message: >-
-          All containers must set allowPrivilegeEscalation=false,
-          readOnlyRootFilesystem=true, and drop ALL capabilities.
+          All containers must set allowPrivilegeEscalation=false
+          and drop ALL capabilities.
         pattern:
           spec:
             containers:
               - securityContext:
                   allowPrivilegeEscalation: "false"
-                  readOnlyRootFilesystem: "true"
                   capabilities:
                     drop:
                       - ALL
             =(initContainers):
               - securityContext:
                   allowPrivilegeEscalation: "false"
-                  readOnlyRootFilesystem: "true"
                   capabilities:
                     drop:
                       - ALL
             =(ephemeralContainers):
               - securityContext:
                   allowPrivilegeEscalation: "false"
-                  readOnlyRootFilesystem: "true"
                   capabilities:
                     drop:
                       - ALL
