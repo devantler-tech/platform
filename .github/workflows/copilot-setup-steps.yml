@@ -1,0 +1,35 @@
+name: "Copilot Setup Steps"
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Verify tools
+        run: |
+          echo "--- kustomize ---"
+          kustomize version
+          echo "--- kubectl ---"
+          kubectl version --client
+          echo "--- Validate kustomize builds ---"
+          kustomize build k8s/clusters/local/ > /dev/null
+          kustomize build k8s/clusters/prod/ > /dev/null
+          echo "All kustomize builds passed"
