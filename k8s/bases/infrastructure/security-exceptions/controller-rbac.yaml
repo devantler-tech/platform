@@ -1,8 +1,8 @@
 ---
 # Exempt controllers that legitimately need broad RBAC for their function.
 # Flux controllers, Kyverno, cert-manager, CNPG operator, Velero, KEDA,
-# and monitoring stack all require cluster-wide read/write access to
-# resources they manage.
+# monitoring stack, KubeVirt, CDI, Longhorn, and supporting infrastructure
+# all require cluster-wide read/write access to resources they manage.
 apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
@@ -11,8 +11,9 @@ spec:
   reason: >-
     GitOps controllers (Flux), policy engines (Kyverno), certificate
     managers (cert-manager), database operators (CNPG), backup controllers
-    (Velero), autoscalers (KEDA), and monitoring (Prometheus) require
-    broad RBAC to manage their target resources cluster-wide.
+    (Velero), autoscalers (KEDA), monitoring (Prometheus), virtualisation
+    (KubeVirt, CDI), storage (Longhorn), and supporting infrastructure
+    require broad RBAC to manage their target resources cluster-wide.
   posture:
     - controlID: C-0053
       action: ignore
@@ -49,3 +50,15 @@ spec:
             - monitoring
             - kubescape
             - vertical-pod-autoscaler
+            - kubevirt
+            - cdi
+            - longhorn-system
+            - external-dns
+            - oauth2-proxy
+            - headlamp
+            - kubelet-serving-cert-approver
+            - opencost
+            - reloader
+            - dex
+            - fleetdm
+            - homepage

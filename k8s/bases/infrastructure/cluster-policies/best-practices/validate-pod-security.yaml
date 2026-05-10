@@ -1,0 +1,101 @@
+# Validates that pods in non-infrastructure namespaces comply with
+# Pod Security Standards (restricted profile). Works in tandem with
+# the add-security-context mutation policy:
+# - Mutation injects defaults for empty fields (conditional anchors)
+# - This policy blocks explicitly insecure overrides at admission
+#
+# Addresses kubescape controls: C-0016, C-0017, C-0055
+#
+# NOTE: runAsNonRoot is NOT validated here because the companion mutation
+# policy does not inject it (many third-party images use non-numeric
+# users). C-0013 is handled by the pod-security-mutations exception.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: validate-pod-security
+  annotations:
+    policies.kyverno.io/title: Validate Pod Security (PSS Restricted)
+    policies.kyverno.io/category: Pod Security, Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Validates that pods comply with Pod Security Standards restricted
+      profile. Blocks explicitly insecure overrides that the mutation
+      policy's conditional anchors would skip.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: validate-container-security
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - longhorn-system
+                - kubescape
+                - kubevirt
+                - cdi
+                - monitoring
+                - velero
+      validate:
+        message: >-
+          All containers must set allowPrivilegeEscalation=false,
+          readOnlyRootFilesystem=true, and drop ALL capabilities.
+        pattern:
+          spec:
+            containers:
+              - securityContext:
+                  allowPrivilegeEscalation: "false"
+                  readOnlyRootFilesystem: "true"
+                  capabilities:
+                    drop:
+                      - ALL
+            =(initContainers):
+              - securityContext:
+                  allowPrivilegeEscalation: "false"
+                  readOnlyRootFilesystem: "true"
+                  capabilities:
+                    drop:
+                      - ALL
+            =(ephemeralContainers):
+              - securityContext:
+                  allowPrivilegeEscalation: "false"
+                  readOnlyRootFilesystem: "true"
+                  capabilities:
+                    drop:
+                      - ALL
+    - name: require-seccomp-profile
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - longhorn-system
+                - kubescape
+                - kubevirt
+                - cdi
+                - monitoring
+                - velero
+      validate:
+        message: "Pod must use seccomp profile RuntimeDefault or Localhost."
+        pattern:
+          spec:
+            securityContext:
+              seccompProfile:
+                type: "RuntimeDefault | Localhost"

@@ -5,6 +5,8 @@
 # Velero node-agent (backup) needs: hostPath, privileged
 # Prometheus node-exporter (monitoring) needs: hostPath, hostNetwork, hostPID
 # SPIRE agent (identity) needs: hostPath, hostPID
+# KubeVirt (VM hosting) needs: privileged, hostPath, hostPID, NET_ADMIN
+# CDI (container disk images) needs: privileged for disk operations
 apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
@@ -12,8 +14,9 @@ metadata:
 spec:
   reason: >-
     CNI (Cilium), distributed storage (Longhorn), node monitoring
-    (Prometheus node-exporter), identity (SPIRE agent), and backup
-    (Velero node-agent) require host-level access by design.
+    (Prometheus node-exporter), identity (SPIRE agent), backup
+    (Velero node-agent), and virtualisation (KubeVirt, CDI) require
+    host-level access by design.
   posture:
     - controlID: C-0057
       action: ignore
@@ -47,3 +50,5 @@ spec:
             - longhorn-system
             - monitoring
             - velero
+            - kubevirt
+            - cdi

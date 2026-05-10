@@ -39,3 +39,9 @@ spec:
             - external-dns
             - kubelet-serving-cert-approver
             - opencost
+            - headlamp
+            - kubevirt
+            - cdi
+            - dex
+            - oauth2-proxy
+            - homepage
