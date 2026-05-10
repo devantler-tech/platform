@@ -1,0 +1,12 @@
+# Block all ingress traffic by default. Explicit allow rules are defined
+# per node role in control-planes/ and workers/ directories.
+#
+# In block mode Talos automatically:
+#   - Allows traffic on lo, siderolink, kubespan interfaces
+#   - Allows ICMP/ICMPv6 at 5 pkt/s (blocks timestamp/address-mask CVE-1999-0524)
+#   - Allows traffic between Kubernetes pod/service subnets (native routing CNIs)
+#
+# Reference: https://docs.siderolabs.com/talos/v1.12/networking/ingress-firewall
+apiVersion: v1alpha1
+kind: NetworkDefaultActionConfig
+ingress: block
