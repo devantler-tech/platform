@@ -4,9 +4,10 @@
 # - readOnlyRootFilesystem: true (C-0017)
 # - drop ALL capabilities (C-0055)
 # - runAsNonRoot: true (C-0013) — pod + container
-# - runAsGroup: 65534 (C-0013) — container only (pod-level requires
-#   runAsUser which is image-specific; Talos containerd errors if
-#   runAsGroup is set without runAsUser at pod level)
+#
+# NOTE: runAsGroup is intentionally NOT injected because it would
+# override pod-level runAsGroup inheritance at the container level.
+# Charts that need a non-root group should set it explicitly.
 #
 # Uses +(key) to never overwrite values explicitly set by Helm charts.
 # Excluded namespaces require elevated privileges by design.
@@ -76,7 +77,6 @@ spec:
                       +(allowPrivilegeEscalation): false
                       +(readOnlyRootFilesystem): true
                       +(runAsNonRoot): true
-                      +(runAsGroup): 65534
                       +(capabilities):
                         drop:
                           - ALL
@@ -91,7 +91,6 @@ spec:
                       +(allowPrivilegeEscalation): false
                       +(readOnlyRootFilesystem): true
                       +(runAsNonRoot): true
-                      +(runAsGroup): 65534
                       +(capabilities):
                         drop:
                           - ALL
