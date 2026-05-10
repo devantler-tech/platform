@@ -1,0 +1,31 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: openbao
+  namespace: openbao
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: OpenBao
+    gethomepage.dev/description: Self-hosted secrets vault.
+    gethomepage.dev/group: Security
+    gethomepage.dev/icon: https://raw.githubusercontent.com/openbao/openbao/main/ui/public/favicon.svg
+    gethomepage.dev/href: https://vault.${domain}
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=openbao
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - vault.${domain}
+  rules:
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://vault.${domain}/
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80
