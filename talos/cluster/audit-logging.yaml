@@ -27,7 +27,7 @@ machine:
               - /metrics
               - /openapi/*
 
-          # Skip watch/list on high-volume resources to reduce noise
+          # Skip watch on high-volume resources to reduce noise
           - level: None
             verbs: ["watch"]
             resources:
@@ -73,6 +73,10 @@ machine:
               - RequestReceived
       permissions: 0o644
       path: /var/etc/kubernetes/audit/audit-policy.yaml
+      op: create
+    - content: ""
+      permissions: 0o644
+      path: /var/log/kubernetes/audit/.gitkeep
       op: create
 cluster:
   apiServer:
