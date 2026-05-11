@@ -8,9 +8,10 @@ spec:
     matchLabels:
       app: vault-snapshot
   egress:
-    # OpenBao API for Raft snapshot and Kubernetes auth login
+    # OpenBao API for health check and Kubernetes auth login
     - toEndpoints:
         - matchLabels:
+            k8s:io.kubernetes.pod.namespace: openbao
             app.kubernetes.io/name: openbao
       toPorts:
         - ports:

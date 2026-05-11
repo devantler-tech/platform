@@ -10,7 +10,10 @@ spec:
     # cross-namespace clients (ESO from external-secrets namespace),
     # and Cilium Gateway envoy proxies for external ingress
     - fromEndpoints:
-        - {}
+        - matchLabels:
+            app: vault-config
+        - matchLabels:
+            app: vault-snapshot
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: external-secrets
       toPorts:
@@ -25,14 +28,6 @@ spec:
       toPorts:
         - ports:
             - port: "8200"
-              protocol: TCP
-    # Raft peer traffic (HA mode)
-    - fromEndpoints:
-        - matchLabels:
-            app.kubernetes.io/name: openbao
-      toPorts:
-        - ports:
-            - port: "8201"
               protocol: TCP
   egress:
     # Kube API for Kubernetes auth token review
@@ -57,11 +52,4 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
-    # Raft peer traffic (HA mode)
-    - toEndpoints:
-        - matchLabels:
-            app.kubernetes.io/name: openbao
-      toPorts:
-        - ports:
-            - port: "8201"
-              protocol: TCP
+

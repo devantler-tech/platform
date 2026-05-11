@@ -98,10 +98,11 @@ Changes here are "platform changes" — upstream them instead of forking them.
 
 The platform uses a **hybrid SOPS + OpenBao** model:
 
-- **SOPS + Age** encrypts bootstrap secrets in Git (vault unseal keys, auth-chain
-  secrets consumed by infrastructure-controllers via Flux `postBuild` substitution).
+- **SOPS + Age** encrypts bootstrap secrets in Git (cluster variables and
+  auth-chain secrets consumed by infrastructure-controllers via Flux
+  `postBuild` substitution).
 - **OpenBao** (self-hosted Vault fork) stores all other secrets. Runs in the
-  `openbao` namespace with Raft file storage.
+  `openbao` namespace with standalone file storage.
 - **External Secrets Operator** syncs secrets from OpenBao into native K8s
   `Secret` objects via `ExternalSecret` and `ClusterSecretStore` CRs.
 - **PushSecret** CRs in `k8s/bases/infrastructure/vault-seed/` seed OpenBao

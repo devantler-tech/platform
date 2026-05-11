@@ -7,7 +7,7 @@
 # Main container (vault-config):
 #   1. Enables KV v2 secrets engine
 #   2. Enables Kubernetes auth method
-#   3. Configures Kubernetes auth with cluster CA and token reviewer
+#   3. Configures Kubernetes auth (in-cluster auto-discovery for CA + token reviewer)
 #   4. Creates least-privilege policies
 #   5. Creates auth roles mapping ServiceAccounts to policies
 #
@@ -122,7 +122,7 @@ spec:
               fi
         # --- 2. Persist credentials in K8s Secret (only on fresh init) ---
         - name: store-keys
-          image: bitnami/kubectl:latest
+          image: bitnami/kubectl:1.32
           volumeMounts:
             - name: shared
               mountPath: /shared
@@ -203,6 +203,8 @@ spec:
               fi
 
               # --- 3. Configure Kubernetes auth ---
+              # OpenBao auto-discovers the cluster CA and SA token when running
+              # in-cluster, so only kubernetes_host is required.
               echo "Configuring Kubernetes auth..."
               bao write auth/kubernetes/config \
                 kubernetes_host="https://kubernetes.default.svc.cluster.local:443"
@@ -258,8 +260,8 @@ spec:
               }
               POLICY
 
-              bao policy write vault-snapshot-read - <<'POLICY'
-              path "sys/storage/raft/snapshot" {
+              bao policy write vault-snapshot-readonly - <<'POLICY'
+              path "sys/health" {
                 capabilities = ["read"]
               }
               POLICY
@@ -340,11 +342,11 @@ spec:
                 policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,app-fleetdm-readonly,app-wedding-readonly,app-oidc-readonly,vault-seed-write \
                 ttl=1h
 
-              # Snapshot CronJob needs raft snapshot read
+              # Snapshot CronJob needs health check read
               bao write auth/kubernetes/role/vault-snapshot \
                 bound_service_account_names=vault-snapshot \
                 bound_service_account_namespaces=openbao \
-                policies=vault-snapshot-read \
+                policies=vault-snapshot-readonly \
                 ttl=15m
 
               # --- 6. Enable OIDC auth (Dex) ---

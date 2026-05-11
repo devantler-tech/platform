@@ -6,9 +6,14 @@ metadata:
   name: vault-config
   namespace: openbao
 rules:
+  # create cannot be restricted by resourceNames; scoped by namespace
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get", "create", "update", "patch"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "update", "patch"]
+    resourceNames: ["openbao-unseal"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

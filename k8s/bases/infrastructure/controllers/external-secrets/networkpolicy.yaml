@@ -11,7 +11,9 @@ spec:
     # The API server source address varies by CNI path (direct
     # vs. SNAT), so we allow any cluster-internal traffic.
     - fromEntities:
-        - cluster
+        - kube-apiserver
+        - host
+        - remote-node
       toPorts:
         - ports:
             - port: "10250"

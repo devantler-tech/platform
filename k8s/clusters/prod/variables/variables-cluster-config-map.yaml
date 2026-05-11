@@ -84,7 +84,7 @@ data:
   # --- Alertmanager ---
   alertmanager_replicas: "1"
   # --- OpenBao secrets vault ---
-  openbao_replicas: "3"
+  openbao_replicas: "1"
   openbao_storage_size: 10Gi
   # --- External Secrets Operator ---
   external_secrets_replicas: "2"

@@ -104,20 +104,7 @@ Re-initialize from scratch:
 3. Trigger Flux reconciliation — the `vault-config` Job re-initializes the vault.
 4. PushSecrets re-seed all secrets from SOPS variables.
 
-## Raft Snapshot Restore
-
-To restore from a Raft snapshot (if one was captured before data loss):
-
-```bash
-# Copy snapshot to pod
-kubectl cp snapshot.snap openbao/openbao-0:/tmp/snapshot.snap
-
-# Restore (requires root token from openbao-unseal Secret)
-ROOT_TOKEN=$(kubectl get secret -n openbao openbao-unseal -o jsonpath='{.data.root-token}' | base64 -d)
-kubectl exec -n openbao openbao-0 -- env BAO_TOKEN=$ROOT_TOKEN bao operator raft snapshot restore /tmp/snapshot.snap
-```
-
 ## References
 
-- [OpenBao Operator Raft Snapshot](https://openbao.org/docs/commands/operator/raft/snapshot/)
 - [OpenBao Seal/Unseal](https://openbao.org/docs/concepts/seal/)
+- [Velero Backup and Restore](https://velero.io/docs/)
