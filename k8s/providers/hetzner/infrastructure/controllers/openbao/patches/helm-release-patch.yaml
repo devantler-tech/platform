@@ -1,0 +1,14 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: openbao
+  namespace: openbao
+spec:
+  values:
+    server:
+      # Hetzner rootfs (~36 GiB) is too small for Longhorn to host 10 Gi
+      # OpenBao Raft storage. Use hcloud-csi block storage.
+      dataStorage:
+        storageClass: hcloud
+      auditStorage:
+        storageClass: hcloud
