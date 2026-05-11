@@ -12,8 +12,10 @@ spec:
     - fromEndpoints:
         - matchLabels:
             app: vault-config
+            k8s:io.kubernetes.pod.namespace: openbao
         - matchLabels:
             app: vault-snapshot
+            k8s:io.kubernetes.pod.namespace: openbao
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: external-secrets
       toPorts:

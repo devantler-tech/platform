@@ -1,0 +1,21 @@
+# Self-signed CA Certificate that generates the platform-ca-key-pair Secret.
+# This replaces the former SOPS-encrypted CA key pair — cert-manager creates
+# and rotates the CA automatically.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: platform-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: Platform CA
+  secretName: platform-ca-key-pair
+  duration: 87600h # 10 years
+  renewBefore: 43800h # 5 years
+  issuerRef:
+    name: selfsigned
+    kind: ClusterIssuer
+    group: cert-manager.io
+  privateKey:
+    algorithm: ECDSA
+    size: 256

@@ -32,3 +32,7 @@ patches:
       name: kubevirt
       namespace: kubevirt
     path: kubevirt/patches/kubevirt-cr-patch.yaml
+  - target:
+      kind: Namespace
+      name: openbao
+    path: openbao/patches/namespace-patch.yaml

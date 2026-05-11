@@ -121,6 +121,11 @@ The platform uses a **hybrid SOPS + OpenBao** model:
 5. PushSecrets seed the vault from SOPS variables.
 6. ExternalSecrets sync secrets to consumer namespaces.
 
+Note: the Docker provider's platform CA key pair is **not** stored in OpenBao.
+cert-manager auto-generates it via a self-signed CA Certificate resource
+(see `k8s/providers/docker/infrastructure/cluster-issuers/`). The Hetzner
+provider uses Let's Encrypt and does not need a local CA.
+
 No manual steps are required — cluster creation is fully automated.
 
 ## Adding a new environment
