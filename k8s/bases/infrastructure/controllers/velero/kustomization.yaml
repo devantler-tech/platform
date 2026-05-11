@@ -5,3 +5,4 @@ resources:
   - helm-repository.yaml
   - helm-release.yaml
   - networkpolicy.yaml
+  - velero-r2-credentials.yaml
