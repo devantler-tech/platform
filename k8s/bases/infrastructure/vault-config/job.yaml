@@ -122,7 +122,7 @@ spec:
               fi
         # --- 2. Persist credentials in K8s Secret (only on fresh init) ---
         - name: store-keys
-          image: bitnami/kubectl:1.32
+          image: registry.k8s.io/kubectl:v1.32.0
           volumeMounts:
             - name: shared
               mountPath: /shared
