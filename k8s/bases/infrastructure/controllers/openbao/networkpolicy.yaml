@@ -6,12 +6,16 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Allow same-namespace clients (vault-config Jobs, UI) and
-    # cross-namespace clients (ESO from external-secrets namespace)
+    # Allow same-namespace clients (vault-config Jobs, UI),
+    # cross-namespace clients (ESO from external-secrets namespace),
+    # and Cilium Gateway envoy proxies for external ingress
     - fromEndpoints:
         - {}
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: external-secrets
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: cilium-envoy
       toPorts:
         - ports:
             - port: "8200"
