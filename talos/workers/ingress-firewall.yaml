@@ -2,7 +2,7 @@
 # Requires NetworkDefaultActionConfig (ingress: block) from cluster/.
 #
 # Policy summary (workers are more restrictive than control planes):
-#   - apid (50000): cluster-internal only (manage workers via CPs)
+#   - apid (50000): open to all (KSail manages workers via public IPs)
 #   - kubelet (10250): cluster-internal only
 #   - Cilium VXLAN (8472), health (4240): cluster-internal only
 #   - NodePort range (30000-32767): cluster-internal (Hetzner Cloud LB)
@@ -20,7 +20,8 @@ portSelector:
     - 50000
   protocol: tcp
 ingress:
-  - subnet: 10.0.0.0/16
+  - subnet: 0.0.0.0/0
+  - subnet: ::/0
 ---
 apiVersion: v1alpha1
 kind: NetworkRuleConfig
