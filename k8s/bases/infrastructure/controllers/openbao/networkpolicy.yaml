@@ -13,9 +13,15 @@ spec:
         - {}
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: external-secrets
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: kube-system
-            k8s-app: cilium-envoy
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+    # Cilium Gateway / Ingress traffic (envoy runs with hostNetwork,
+    # so label-based matching doesn't work — use ingress + host entities)
+    - fromEntities:
+        - ingress
+        - host
       toPorts:
         - ports:
             - port: "8200"
