@@ -28,6 +28,7 @@ spec:
       name: headlamp-oidc
       valuesKey: client-secret
       targetPath: config.oidc.clientSecret
+      optional: true
   postRenderers:
     - kustomize:
         patches:

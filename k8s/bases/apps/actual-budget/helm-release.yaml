@@ -27,6 +27,7 @@ spec:
       name: actual-budget-oidc
       valuesKey: client-secret
       targetPath: login.openid.clientSecret
+      optional: true
   postRenderers:
     - kustomize:
         patches:

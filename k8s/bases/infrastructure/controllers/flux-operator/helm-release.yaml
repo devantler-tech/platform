@@ -23,6 +23,7 @@ spec:
       name: flux-operator-oidc
       valuesKey: client-secret
       targetPath: web.config.authentication.oauth2.clientSecret
+      optional: true
   install:
     remediation:
       retries: -1

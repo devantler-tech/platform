@@ -29,10 +29,12 @@ spec:
       name: oauth2-proxy-secrets
       valuesKey: client-secret
       targetPath: config.clientSecret
+      optional: true
     - kind: Secret
       name: oauth2-proxy-secrets
       valuesKey: cookie-secret
       targetPath: config.cookieSecret
+      optional: true
   # https://github.com/oauth2-proxy/manifests/blob/main/helm/oauth2-proxy/values.yaml
   values:
     deploymentAnnotations:

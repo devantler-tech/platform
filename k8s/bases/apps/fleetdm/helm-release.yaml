@@ -134,6 +134,7 @@ spec:
       name: fleetdm-server-key
       valuesKey: FLEET_SERVER_PRIVATE_KEY
       targetPath: environments.FLEET_SERVER_PRIVATE_KEY
+      optional: true
   # https://github.com/fleetdm/fleet/blob/main/charts/fleet/values.yaml
   values:
     hostName: fleetdm.${domain}
