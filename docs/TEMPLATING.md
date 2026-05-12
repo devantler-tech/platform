@@ -98,35 +98,52 @@ Changes here are "platform changes" — upstream them instead of forking them.
 
 The platform uses a **hybrid SOPS + OpenBao** model:
 
-- **SOPS + Age** encrypts bootstrap secrets in Git (cluster variables and
-  auth-chain secrets consumed by infrastructure-controllers via Flux
-  `postBuild` substitution).
-- **OpenBao** (self-hosted Vault fork) stores all other secrets. Runs in the
-  `openbao` namespace with standalone file storage.
+- **SOPS + Age** encrypts externally-sourced secrets in Git (API tokens,
+  service credentials). These are consumed by `infrastructure-controllers`
+  via Flux `postBuild` substitution for bootstrap-critical controllers
+  (e.g., hcloud-csi), and seeded into OpenBao via PushSecrets for all
+  other consumers.
+- **ESO Password generators** create randomly-generatable secrets
+  (database passwords, OIDC client secrets). PushSecrets seed these into
+  OpenBao at first reconciliation.
+- **OpenBao** (self-hosted Vault fork) is the single source of truth for
+  all non-bootstrap secrets. Runs in the `openbao` namespace with
+  standalone file storage.
 - **External Secrets Operator** syncs secrets from OpenBao into native K8s
   `Secret` objects via `ExternalSecret` and `ClusterSecretStore` CRs.
-- **PushSecret** CRs in `k8s/bases/infrastructure/vault-seed/` seed OpenBao
-  from the SOPS-decrypted Flux variable Secrets during migration.
+- **PushSecret** CRs in `k8s/bases/infrastructure/vault-seed/` seed
+  OpenBao from both generators and SOPS-decrypted Flux variable Secrets.
+
+### Secret categories
+
+| Category | Source | Example | Mechanism |
+|----------|--------|---------|-----------|
+| Randomly-generatable | ESO Password generator | DB passwords, OIDC client secrets | Generator -> PushSecret -> OpenBao -> ExternalSecret |
+| Externally-sourced | SOPS-encrypted Git | API tokens, service credentials | SOPS -> PushSecret -> OpenBao -> ExternalSecret |
+| Bootstrap-critical | SOPS + Flux substitution | hcloud token | SOPS -> Flux `postBuild` -> inline K8s Secret |
 
 ### First-time vault setup (after cluster creation)
 
 1. Deploy the cluster: `ksail cluster create && ksail workload push && ksail workload reconcile`
-2. Flux deploys `infrastructure-controllers` → OpenBao starts (sealed, uninitialized).
-3. Flux deploys `infrastructure` → the `vault-config` Job auto-initializes:
+2. Flux deploys `infrastructure-controllers` -> OpenBao starts (sealed, uninitialized).
+   Controllers with placeholder Secrets (Dex, OAuth2-proxy) start with dummy values.
+3. Flux deploys `infrastructure` -> the `vault-config` Job auto-initializes:
    - `vault-init` container runs `bao operator init`, captures unseal key + root token
    - `store-keys` container persists credentials in the `openbao-unseal` K8s Secret
    - `vault-config` container configures policies, auth roles, and KV engine
 4. The OpenBao `postStart` hook auto-unseals on subsequent pod restarts using the
    `openbao-unseal` Secret (volume mount with `optional: true`).
-5. PushSecrets seed the vault from SOPS variables.
-6. ExternalSecrets sync secrets to consumer namespaces.
+5. ESO Password generators create random secrets; PushSecrets seed all values
+   (both generated and SOPS-sourced) into OpenBao.
+6. ExternalSecrets sync secrets to consumer namespaces, overwriting placeholders.
+7. Reloader restarts affected controllers (Dex, OAuth2-proxy) with real secrets.
 
 Note: the Docker provider's platform CA key pair is **not** stored in OpenBao.
 cert-manager auto-generates it via a self-signed CA Certificate resource
 (see `k8s/providers/docker/infrastructure/cluster-issuers/`). The Hetzner
 provider uses Let's Encrypt and does not need a local CA.
 
-No manual steps are required — cluster creation is fully automated.
+No manual steps are required -- cluster creation is fully automated.
 
 ## Adding a new environment
 

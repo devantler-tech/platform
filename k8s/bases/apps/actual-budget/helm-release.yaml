@@ -22,6 +22,11 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: actual-budget
+  valuesFrom:
+    - kind: Secret
+      name: actual-budget-oidc
+      valuesKey: client-secret
+      targetPath: login.openid.clientSecret
   postRenderers:
     - kustomize:
         patches:
@@ -69,6 +74,5 @@ spec:
         providerName: "Dex"
         discoveryUrl: "https://dex.${domain}/.well-known/openid-configuration"
         clientId: "public-client"
-        clientSecret: "${dex_client_secret}"
         authMethod: "openid"
         tokenExpiration: "never"

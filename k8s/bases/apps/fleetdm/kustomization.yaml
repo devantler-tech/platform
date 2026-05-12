@@ -7,5 +7,6 @@ resources:
   - httproute.yaml
   - http-scaled-object.yaml
   - external-secrets.yaml
+  - server-key-external-secret.yaml
   - networkpolicy.yaml
   - pod-disruption-budget.yaml

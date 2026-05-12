@@ -129,6 +129,11 @@ spec:
                         volumeMounts:
                           - name: fleet-home
                             mountPath: /home/fleet
+  valuesFrom:
+    - kind: Secret
+      name: fleetdm-server-key
+      valuesKey: FLEET_SERVER_PRIVATE_KEY
+      targetPath: environments.FLEET_SERVER_PRIVATE_KEY
   # https://github.com/fleetdm/fleet/blob/main/charts/fleet/values.yaml
   values:
     hostName: fleetdm.${domain}
@@ -136,14 +141,6 @@ spec:
     # Ingress is handled by a Gateway API HTTPRoute in this repo.
     ingress:
       enabled: false
-    # FLEET_SERVER_PRIVATE_KEY is substituted by Flux from the
-    # per-cluster SOPS-encrypted `variables-cluster-secret.enc.yaml`
-    # before apply. The rendered Deployment carries the value as a
-    # literal env, readable only to principals with RBAC on the fleetdm
-    # namespace. Stable across restarts; losing this key invalidates
-    # every enrolled device.
-    environments:
-      FLEET_SERVER_PRIVATE_KEY: ${fleetdm_server_private_key}
     fleet:
       # TLS terminates at the platform Gateway (Traefik / Cilium).
       tls:

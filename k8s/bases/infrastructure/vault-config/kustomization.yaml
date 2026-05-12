@@ -4,4 +4,5 @@ resources:
   - serviceaccount.yaml
   - rbac.yaml
   - job.yaml
+  - external-secret.yaml
   - networkpolicy.yaml

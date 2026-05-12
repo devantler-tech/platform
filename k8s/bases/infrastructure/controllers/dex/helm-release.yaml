@@ -54,11 +54,26 @@ spec:
         mountPath: /tmp
     ingress:
       enabled: false
+    podAnnotations:
+      secret.reloader.stakater.com/reload: dex-oidc-secrets
     envVars:
       - name: CLIENT_ID
         value: ${github_app_client_id}
       - name: CLIENT_SECRET
-        value: ${github_app_client_secret}
+        valueFrom:
+          secretKeyRef:
+            name: dex-oidc-secrets
+            key: github-client-secret
+      - name: DEX_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: dex-oidc-secrets
+            key: dex-client-secret
+      - name: FLUX_WEB_CLIENT_SECRET
+        valueFrom:
+          secretKeyRef:
+            name: dex-oidc-secrets
+            key: flux-web-client-secret
     config:
       issuer: https://dex.${domain}
       oauth2:
@@ -70,7 +85,7 @@ spec:
       staticClients:
         - name: Public Client
           id: public-client
-          secret: ${dex_client_secret}
+          secret: $DEX_CLIENT_SECRET
           redirectURIs:
             - "https://oauth2-proxy.${domain}/oauth2/callback"
             - "https://headlamp.${domain}/oidc-callback"
@@ -85,7 +100,7 @@ spec:
             - "http://localhost:8000"
         - name: Flux Web
           id: flux-web
-          secret: ${flux_web_client_secret}
+          secret: $FLUX_WEB_CLIENT_SECRET
           redirectURIs:
             - "https://flux.${domain}/oauth2/callback"
       connectors:
