@@ -104,9 +104,13 @@ spec:
                 echo "Vault is already initialized."
 
                 # Copy keys from the mounted Secret (Velero restore or previous init)
-                if [ -f /openbao/unseal/unseal-key ]; then
+                if [ -f /openbao/unseal/unseal-key ] && [ -f /openbao/unseal/root-token ]; then
                   cat /openbao/unseal/unseal-key > /shared/unseal-key
                   cat /openbao/unseal/root-token > /shared/root-token
+                elif [ -f /openbao/unseal/unseal-key ]; then
+                  echo "WARNING: unseal-key present but root-token missing from openbao-unseal Secret."
+                  echo "Restore the Secret from Velero backup or delete it and re-initialize."
+                  cat /openbao/unseal/unseal-key > /shared/unseal-key
                 fi
 
                 # Unseal if still sealed
