@@ -95,6 +95,32 @@ spec:
                     volumes:
                       - name: fleet-home
                         emptyDir: {}
+                    initContainers:
+                      # Run `fleet prepare db` before the main container starts.
+                      # Idempotent — no-op when schema already exists. Prevents
+                      # CrashLoopBackOff if MySQL data is lost (e.g. PVC recreation
+                      # after storage failures).
+                      - name: fleet-db-init
+                        image: fleetdm/fleet:v4.84.2
+                        command: ["fleet", "prepare", "db"]
+                        securityContext:
+                          runAsUser: 100
+                          runAsGroup: 101
+                        volumeMounts:
+                          - name: fleet-home
+                            mountPath: /home/fleet
+                        env:
+                          - name: FLEET_MYSQL_ADDRESS
+                            value: "fleetdm-mysql-primary.fleetdm:3306"
+                          - name: FLEET_MYSQL_DATABASE
+                            value: "fleet"
+                          - name: FLEET_MYSQL_USERNAME
+                            value: "fleet"
+                          - name: FLEET_MYSQL_PASSWORD
+                            valueFrom:
+                              secretKeyRef:
+                                name: mysql
+                                key: mysql-password
                     containers:
                       - name: fleet
                         securityContext:
@@ -103,6 +129,12 @@ spec:
                         volumeMounts:
                           - name: fleet-home
                             mountPath: /home/fleet
+  valuesFrom:
+    - kind: Secret
+      name: fleetdm-server-key
+      valuesKey: FLEET_SERVER_PRIVATE_KEY
+      targetPath: environments.FLEET_SERVER_PRIVATE_KEY
+      optional: true
   # https://github.com/fleetdm/fleet/blob/main/charts/fleet/values.yaml
   values:
     hostName: fleetdm.${domain}
@@ -110,14 +142,6 @@ spec:
     # Ingress is handled by a Gateway API HTTPRoute in this repo.
     ingress:
       enabled: false
-    # FLEET_SERVER_PRIVATE_KEY is substituted by Flux from the
-    # per-cluster SOPS-encrypted `variables-cluster-secret.enc.yaml`
-    # before apply. The rendered Deployment carries the value as a
-    # literal env, readable only to principals with RBAC on the fleetdm
-    # namespace. Stable across restarts; losing this key invalidates
-    # every enrolled device.
-    environments:
-      FLEET_SERVER_PRIVATE_KEY: ${fleetdm_server_private_key}
     fleet:
       # TLS terminates at the platform Gateway (Traefik / Cilium).
       tls:

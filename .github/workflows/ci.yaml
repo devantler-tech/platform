@@ -71,7 +71,7 @@ jobs:
         with:
           distribution: Talos
           provider: Docker
-          ksail-version: "7.15.0"
+          ksail-version: "7.16.0"
           init: "false"
           validate: "true"
           scan: "true"

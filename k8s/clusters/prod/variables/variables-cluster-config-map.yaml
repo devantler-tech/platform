@@ -77,13 +77,15 @@ data:
   # recommendations continuously.
   vpa_recommender_replicas: "1"
   vpa_updater_replicas: "1"
-  # Kyverno background controller is required for generate rules (auto-vpa
-  # ClusterPolicy). kyverno@3.8.0 rejects 0 replicas for any controller,
-  # so reports and cleanup run at 1 replica each.
+  # --- Kyverno ---
   kyverno_background_replicas: "1"
   kyverno_reports_replicas: "1"
   kyverno_cleanup_replicas: "1"
-  # Alertmanager routes alerts from Prometheus rules. Required for
-  # production observability even without external notification channels.
+  # --- Alertmanager ---
   alertmanager_replicas: "1"
+  # --- OpenBao secrets vault ---
+  openbao_replicas: "1"
+  openbao_storage_size: 10Gi
+  # --- External Secrets Operator ---
+  external_secrets_replicas: "2"
 

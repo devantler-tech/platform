@@ -74,14 +74,10 @@ machine:
       permissions: 0o644
       path: /var/etc/kubernetes/audit/audit-policy.yaml
       op: create
-    - content: ""
-      permissions: 0o644
-      path: /var/log/kubernetes/audit/.gitkeep
-      op: create
 cluster:
   apiServer:
     extraArgs:
-      audit-log-path: /var/log/kubernetes/audit/audit.log
+      audit-log-path: /var/log/audit/kube/audit.log
       audit-log-maxage: "30"
       audit-log-maxbackup: "3"
       audit-log-maxsize: "100"
@@ -90,6 +86,3 @@ cluster:
       - hostPath: /var/etc/kubernetes/audit
         mountPath: /etc/kubernetes/audit
         readonly: true
-      - hostPath: /var/log/kubernetes/audit
-        mountPath: /var/log/kubernetes/audit
-        readonly: false

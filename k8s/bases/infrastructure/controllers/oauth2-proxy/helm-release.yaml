@@ -24,10 +24,22 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: oauth2-proxy
+  valuesFrom:
+    - kind: Secret
+      name: oauth2-proxy-secrets
+      valuesKey: client-secret
+      targetPath: config.clientSecret
+      optional: true
+    - kind: Secret
+      name: oauth2-proxy-secrets
+      valuesKey: cookie-secret
+      targetPath: config.cookieSecret
+      optional: true
   # https://github.com/oauth2-proxy/manifests/blob/main/helm/oauth2-proxy/values.yaml
   values:
     deploymentAnnotations:
       configmap.reloader.stakater.com/reload: oauth2-proxy
+      secret.reloader.stakater.com/reload: oauth2-proxy-secrets
     replicaCount: ${oauth2_proxy_replicas:=2}
     podDisruptionBudget:
       enabled: true
@@ -48,8 +60,6 @@ spec:
         maxUnavailable: 0
     config:
       clientID: "${github_app_client_id}"
-      clientSecret: "${github_app_client_secret}"
-      cookieSecret: "${oauth2_proxy_cookie_secret}"
       configFile: |-
         provider = "github"
         github_users = ["devantler"]

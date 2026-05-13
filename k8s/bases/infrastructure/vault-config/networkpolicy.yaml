@@ -1,0 +1,33 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-vault-config
+  namespace: openbao
+spec:
+  endpointSelector:
+    matchLabels:
+      app: vault-config
+  egress:
+    # OpenBao API
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: openbao
+            app.kubernetes.io/name: openbao
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+    # Kube API for Kubernetes auth configuration
+    - toEntities:
+        - kube-apiserver
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

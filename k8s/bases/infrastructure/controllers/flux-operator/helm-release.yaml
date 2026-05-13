@@ -18,6 +18,12 @@ spec:
         name: flux-operator
   interval: 10m0s
   timeout: 10m
+  valuesFrom:
+    - kind: Secret
+      name: flux-operator-oidc
+      valuesKey: client-secret
+      targetPath: web.config.authentication.oauth2.clientSecret
+      optional: true
   install:
     remediation:
       retries: -1
@@ -34,7 +40,6 @@ spec:
           oauth2:
             provider: OIDC
             clientID: flux-web
-            clientSecret: ${flux_web_client_secret}
             issuerURL: https://dex.${domain}
             scopes:
               - openid

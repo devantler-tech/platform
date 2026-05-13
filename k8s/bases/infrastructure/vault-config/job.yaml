@@ -1,0 +1,396 @@
+# Idempotent Job that initializes and configures OpenBao:
+#
+# Init containers:
+#   1. vault-init  — waits for OpenBao, auto-initializes if needed, unseals
+#   2. store-keys  — persists unseal key + root token in a K8s Secret
+#
+# Main container (vault-config):
+#   1. Enables KV v2 secrets engine
+#   2. Enables Kubernetes auth method
+#   3. Configures Kubernetes auth (in-cluster auto-discovery for CA + token reviewer)
+#   4. Creates least-privilege policies
+#   5. Creates auth roles mapping ServiceAccounts to policies
+#
+# On fresh install the init containers auto-initialize the vault and create
+# the openbao-unseal Secret. On Velero restore the Secret and PVC are both
+# restored, so the postStart hook on the server pod already unseals — the
+# init containers detect this and skip initialization.
+#
+# Safe to re-run — every step checks state before writing.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-config
+  namespace: openbao
+  annotations:
+    # Re-run on every Flux reconciliation to converge state.
+    kustomize.toolkit.fluxcd.io/force: enabled
+spec:
+  backoffLimit: 10
+  template:
+    metadata:
+      labels:
+        app: vault-config
+    spec:
+      serviceAccountName: vault-config
+      restartPolicy: OnFailure
+      securityContext:
+        runAsUser: 100
+        runAsGroup: 1000
+        fsGroup: 1000
+      volumes:
+        - name: unseal-keys
+          secret:
+            secretName: openbao-unseal
+            optional: true
+        - name: shared
+          emptyDir:
+            medium: Memory
+        - name: oidc-secrets
+          secret:
+            secretName: vault-config-oidc
+            optional: true
+      initContainers:
+        # --- 1. Auto-init + unseal ---
+        - name: vault-init
+          image: quay.io/openbao/openbao:2.5.3
+          env:
+            - name: BAO_ADDR
+              value: http://openbao.openbao.svc.cluster.local:8200
+          volumeMounts:
+            - name: unseal-keys
+              mountPath: /openbao/unseal
+              readOnly: true
+            - name: shared
+              mountPath: /shared
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              echo "Waiting for OpenBao server..."
+              until bao status -format=json 2>/dev/null | grep -q '"initialized"'; do
+                echo "  ...server not reachable yet"
+                sleep 3
+              done
+              echo "OpenBao server is reachable."
+
+              if bao status -format=json 2>/dev/null | grep -q '"initialized": false'; then
+                echo "Vault is NOT initialized — running bao operator init..."
+                INIT_OUTPUT=$(bao operator init -key-shares=1 -key-threshold=1)
+
+                UNSEAL_KEY=$(echo "$INIT_OUTPUT" | grep "Unseal Key 1:" | sed 's/.*: //')
+                ROOT_TOKEN=$(echo "$INIT_OUTPUT" | grep "Initial Root Token:" | sed 's/.*: //')
+
+                if [ -z "$UNSEAL_KEY" ] || [ -z "$ROOT_TOKEN" ]; then
+                  echo "ERROR: failed to parse init output:"
+                  echo "$INIT_OUTPUT"
+                  exit 1
+                fi
+
+                printf '%s' "$UNSEAL_KEY" > /shared/unseal-key
+                printf '%s' "$ROOT_TOKEN" > /shared/root-token
+                touch /shared/newly-initialized
+
+                echo "Unsealing vault..."
+                bao operator unseal "$UNSEAL_KEY"
+                echo "Vault initialized and unsealed."
+              else
+                echo "Vault is already initialized."
+
+                # Copy keys from the mounted Secret (Velero restore or previous init)
+                if [ -f /openbao/unseal/unseal-key ] && [ -f /openbao/unseal/root-token ]; then
+                  cat /openbao/unseal/unseal-key > /shared/unseal-key
+                  cat /openbao/unseal/root-token > /shared/root-token
+                elif [ -f /openbao/unseal/unseal-key ]; then
+                  echo "WARNING: unseal-key present but root-token missing from openbao-unseal Secret."
+                  echo "Restore the Secret from Velero backup or delete it and re-initialize."
+                  cat /openbao/unseal/unseal-key > /shared/unseal-key
+                fi
+
+                # Unseal if still sealed
+                if bao status -format=json 2>/dev/null | grep -q '"sealed": true'; then
+                  if [ -f /shared/unseal-key ]; then
+                    echo "Unsealing vault..."
+                    bao operator unseal "$(cat /shared/unseal-key)"
+                    echo "Vault unsealed."
+                  else
+                    echo "ERROR: vault is sealed but no unseal key available."
+                    echo "Restore the openbao-unseal Secret from Velero backup or re-initialize."
+                    exit 1
+                  fi
+                else
+                  echo "Vault is already unsealed."
+                fi
+              fi
+        # --- 2. Persist credentials in K8s Secret (only on fresh init) ---
+        - name: store-keys
+          image: docker.io/bitnami/kubectl:1.32
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              if [ -f /shared/newly-initialized ]; then
+                echo "Storing vault credentials in openbao-unseal Secret..."
+                kubectl create secret generic openbao-unseal \
+                  --namespace=openbao \
+                  --from-file=unseal-key=/shared/unseal-key \
+                  --from-file=root-token=/shared/root-token \
+                  --dry-run=client -o yaml | kubectl apply -f -
+                echo "Secret openbao-unseal created."
+              else
+                echo "Vault was already initialized — no new keys to store."
+              fi
+      containers:
+        - name: vault-config
+          image: quay.io/openbao/openbao:2.5.3
+          env:
+            - name: BAO_ADDR
+              value: http://openbao.openbao.svc.cluster.local:8200
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+              readOnly: true
+            - name: oidc-secrets
+              mountPath: /vault-config/oidc
+              readOnly: true
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              set -e
+
+              ROOT_TOKEN=$(cat /shared/root-token 2>/dev/null || true)
+              if [ -z "$ROOT_TOKEN" ]; then
+                echo "ERROR: root-token not available."
+                echo "The vault-init container should have populated /shared/root-token."
+                exit 1
+              fi
+              export BAO_TOKEN="$ROOT_TOKEN"
+
+              # Wait for OpenBao to be unsealed
+              echo "Waiting for OpenBao to be ready..."
+              until bao status -format=json 2>/dev/null | grep -q '"sealed": false'; do
+                echo "  ...waiting (sealed or unavailable)"
+                sleep 5
+              done
+              echo "OpenBao is unsealed and ready."
+
+              # --- 1. Enable KV v2 secrets engine ---
+              if ! bao secrets list -format=json | grep -q '"secret/"'; then
+                echo "Enabling KV v2 secrets engine at secret/..."
+                bao secrets enable -path=secret -version=2 kv
+              else
+                echo "KV v2 already enabled at secret/."
+              fi
+
+              # --- 2. Enable Kubernetes auth ---
+              if ! bao auth list -format=json | grep -q '"kubernetes/"'; then
+                echo "Enabling Kubernetes auth method..."
+                bao auth enable kubernetes
+              else
+                echo "Kubernetes auth already enabled."
+              fi
+
+              # --- 3. Configure Kubernetes auth ---
+              # OpenBao auto-discovers the cluster CA and SA token when running
+              # in-cluster, so only kubernetes_host is required.
+              echo "Configuring Kubernetes auth..."
+              bao write auth/kubernetes/config \
+                kubernetes_host="https://kubernetes.default.svc.cluster.local:443"
+
+              # --- 4. Create policies ---
+              echo "Writing vault policies..."
+
+              bao policy write infra-backup-readonly - <<'POLICY'
+              path "secret/data/infrastructure/backup/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write infra-dns-readonly - <<'POLICY'
+              path "secret/data/infrastructure/dns/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write infra-monitoring-readonly - <<'POLICY'
+              path "secret/data/infrastructure/monitoring/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write infra-hcloud-readonly - <<'POLICY'
+              path "secret/data/infrastructure/hcloud/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write infra-tls-readonly - <<'POLICY'
+              path "secret/data/infrastructure/tls/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write app-fleetdm-readonly - <<'POLICY'
+              path "secret/data/apps/fleetdm/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write app-wedding-readonly - <<'POLICY'
+              path "secret/data/apps/wedding-app/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write app-oidc-readonly - <<'POLICY'
+              path "secret/data/infrastructure/oidc/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write vault-snapshot-readonly - <<'POLICY'
+              path "sys/health" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              bao policy write vault-admin - <<'POLICY'
+              path "*" {
+                capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+              }
+              POLICY
+
+              bao policy write vault-seed-write - <<'POLICY'
+              # Write access for seeding vault from PushSecrets.
+              # Paths must be at least as specific as the read-only policies
+              # because Vault ACL uses most-specific-path-wins resolution.
+              path "secret/data/infrastructure/backup/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/infrastructure/dns/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/infrastructure/monitoring/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/infrastructure/hcloud/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/infrastructure/tls/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/infrastructure/oidc/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/fleetdm/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/wedding-app/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/flux/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/backup/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/dns/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/monitoring/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/hcloud/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/tls/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/oidc/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/fleetdm/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/wedding-app/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/flux/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              POLICY
+
+              # --- 5. Create auth roles ---
+              echo "Writing Kubernetes auth roles..."
+
+              # ESO needs broad read access for ExternalSecrets + write for PushSecrets
+              bao write auth/kubernetes/role/external-secrets \
+                bound_service_account_names=external-secrets \
+                bound_service_account_namespaces=external-secrets \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,app-fleetdm-readonly,app-wedding-readonly,app-oidc-readonly,vault-seed-write \
+                ttl=1h
+
+              # Snapshot CronJob needs health check read
+              bao write auth/kubernetes/role/vault-snapshot \
+                bound_service_account_names=vault-snapshot \
+                bound_service_account_namespaces=openbao \
+                policies=vault-snapshot-readonly \
+                ttl=15m
+
+              # --- 6. Enable OIDC auth (Dex) ---
+              if ! bao auth list -format=json | grep -q '"oidc/"'; then
+                echo "Enabling OIDC auth method..."
+                bao auth enable oidc
+              else
+                echo "OIDC auth already enabled."
+              fi
+
+              DEX_SECRET=$(cat /vault-config/oidc/dex-client-secret 2>/dev/null || echo "")
+              if [ -n "$DEX_SECRET" ]; then
+                echo "Configuring OIDC auth with Dex..."
+                bao write auth/oidc/config \
+                  oidc_discovery_url="https://dex.${domain}" \
+                  oidc_client_id="public-client" \
+                  oidc_client_secret="$DEX_SECRET" \
+                  default_role="admin"
+
+                bao write auth/oidc/role/admin \
+                  bound_audiences="public-client" \
+                  allowed_redirect_uris="https://vault.${domain}/ui/vault/auth/oidc/oidc/callback,http://localhost:8250/oidc/callback" \
+                  user_claim="email" \
+                  groups_claim="groups" \
+                  oidc_scopes="openid,email,profile,groups" \
+                  policies="vault-admin" \
+                  ttl=8h
+
+                # Make OIDC the default auth method on the login page
+                bao auth tune -listing-visibility=unauth oidc/
+              else
+                echo "OIDC secret not yet available -- skipping OIDC configuration."
+                echo "It will be configured on the next vault-config reconciliation."
+              fi
+
+              echo "Vault configuration complete."

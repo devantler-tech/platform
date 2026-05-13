@@ -1,0 +1,44 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-external-secrets
+  namespace: external-secrets
+spec:
+  endpointSelector: {}
+  ingress:
+    # Webhook validation requests from the kube-apiserver and
+    # cert-controller → webhook TLS certificate provisioning.
+    # The API server source address varies by CNI path (direct
+    # vs. SNAT), so we allow any cluster-internal traffic.
+    - fromEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "10250"
+              protocol: TCP
+  egress:
+    # Kube API for watching ExternalSecret CRs and managing Secrets
+    - toEntities:
+        - kube-apiserver
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+    # OpenBao API for secret retrieval
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: openbao
+            app.kubernetes.io/name: openbao
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP

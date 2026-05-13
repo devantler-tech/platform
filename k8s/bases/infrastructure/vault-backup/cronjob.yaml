@@ -1,0 +1,57 @@
+# Daily backup verification of OpenBao data. Vault data is persisted on a
+# PVC and backed up by Velero. This job logs vault health and seal status
+# for monitoring.
+# Authenticates via Kubernetes auth (vault-snapshot role).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: vault-snapshot
+  namespace: openbao
+spec:
+  schedule: "30 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        metadata:
+          labels:
+            app: vault-snapshot
+        spec:
+          serviceAccountName: vault-snapshot
+          restartPolicy: OnFailure
+          securityContext:
+            runAsUser: 100
+            runAsGroup: 1000
+            fsGroup: 1000
+          containers:
+            - name: snapshot
+              image: quay.io/openbao/openbao:2.5.3
+              env:
+                - name: BAO_ADDR
+                  value: http://openbao.openbao.svc.cluster.local:8200
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  # Authenticate via Kubernetes auth
+                  JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+                  VAULT_TOKEN=$(bao write -field=token auth/kubernetes/login \
+                    role=vault-snapshot \
+                    jwt="$JWT")
+                  export BAO_TOKEN="$VAULT_TOKEN"
+
+                  # Check vault health and seal status
+                  echo "Checking OpenBao health..."
+                  STATUS=$(bao status -format=json)
+                  echo "$STATUS"
+
+                  SEALED=$(echo "$STATUS" | grep -o '"sealed":[a-z]*' | cut -d: -f2)
+                  if [ "$SEALED" = "true" ]; then
+                    echo "ERROR: Vault is sealed!"
+                    exit 1
+                  fi
+
+                  echo "Vault is unsealed and healthy."

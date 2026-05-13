@@ -1,0 +1,30 @@
+# RBAC for the vault-config Job's store-keys init container.
+# Allows creating/updating the openbao-unseal Secret after auto-initialization.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vault-config
+  namespace: openbao
+rules:
+  # create cannot be restricted by resourceNames; scoped by namespace
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "update", "patch"]
+    resourceNames: ["openbao-unseal"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vault-config
+  namespace: openbao
+subjects:
+  - kind: ServiceAccount
+    name: vault-config
+    namespace: openbao
+roleRef:
+  kind: Role
+  name: vault-config
+  apiGroup: rbac.authorization.k8s.io

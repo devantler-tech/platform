@@ -1,0 +1,96 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: openbao
+  namespace: openbao
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 2m
+  timeout: 10m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  chart:
+    spec:
+      chart: openbao
+      version: 0.27.2
+      sourceRef:
+        kind: HelmRepository
+        name: openbao
+  # https://github.com/openbao/openbao-helm/blob/main/values.yaml
+  values:
+    server:
+      enabled: true
+      replicas: ${openbao_replicas:=1}
+      # Mount the unseal key Secret (created by the vault-config Job on first
+      # init, restored by Velero on cluster rebuild) so the postStart hook
+      # can auto-unseal the server after every pod restart.
+      volumes:
+        - name: unseal-keys
+          secret:
+            secretName: openbao-unseal
+            optional: true
+        - name: tmp
+          emptyDir: {}
+      volumeMounts:
+        - name: unseal-keys
+          mountPath: /openbao/unseal
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      postStart:
+        - /bin/sh
+        - -ec
+        - |
+          sleep 5
+          UNSEAL_KEY=$(cat /openbao/unseal/unseal-key 2>/dev/null || true)
+          if [ -n "$UNSEAL_KEY" ] && [ "$UNSEAL_KEY" != "REPLACE_AFTER_INIT" ]; then
+            until bao status -format=json 2>/dev/null | grep -q '"sealed":'; do
+              sleep 2
+            done
+            if bao status -format=json 2>/dev/null | grep -q '"sealed": true'; then
+              bao operator unseal "$UNSEAL_KEY" || true
+            fi
+          fi
+      dataStorage:
+        enabled: true
+        size: ${openbao_storage_size:=1Gi}
+      auditStorage:
+        enabled: true
+        size: 1Gi
+      standalone:
+        enabled: true
+        config: |
+          ui = true
+
+          listener "tcp" {
+            address     = "0.0.0.0:8200"
+            tls_disable = 1
+          }
+
+          storage "file" {
+            path = "/openbao/data"
+          }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: openbao
+              app.kubernetes.io/instance: openbao
+      resources:
+        requests:
+          cpu: 25m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+    injector:
+      enabled: false
+    ui:
+      enabled: true

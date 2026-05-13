@@ -1,0 +1,57 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-openbao
+  namespace: openbao
+spec:
+  endpointSelector: {}
+  ingress:
+    # Allow same-namespace clients (vault-config Jobs, UI),
+    # cross-namespace clients (ESO from external-secrets namespace),
+    # and Cilium Gateway envoy proxies for external ingress
+    - fromEndpoints:
+        - matchLabels:
+            app: vault-config
+            k8s:io.kubernetes.pod.namespace: openbao
+        - matchLabels:
+            app: vault-snapshot
+            k8s:io.kubernetes.pod.namespace: openbao
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: external-secrets
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+    # Cilium Gateway / Ingress traffic (envoy runs with hostNetwork,
+    # so label-based matching doesn't work — use ingress + host entities)
+    - fromEntities:
+        - ingress
+        - host
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+  egress:
+    # Kube API for Kubernetes auth token review
+    - toEntities:
+        - kube-apiserver
+    # OIDC provider (Dex) — accessed via HTTPS external URL for
+    # discovery and token exchange during user login
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+
