@@ -7,9 +7,13 @@
 # /dev/sdc, etc.  Partitioning /dev/sdb with Talos would destroy those
 # volumes and break any PVC backed by hcloud-csi.
 machine:
-  nodeLabels:
-    node.longhorn.io/create-default-disk: "true"
   kubelet:
+    extraArgs:
+      # Talos's NodeApplyController runs after kubelet registration, so
+      # machine.nodeLabels may not be visible to the API server in time.
+      # Pass labels via --node-labels to guarantee they are set at
+      # registration.
+      node-labels: node.longhorn.io/create-default-disk=true
     extraMounts:
       - destination: /var/lib/longhorn
         type: bind
