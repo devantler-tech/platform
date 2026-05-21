@@ -1,0 +1,18 @@
+# Worker role label and Longhorn node label for Talos workers.
+#
+# node-role.kubernetes.io/worker is set via machine.nodeLabels because kubelet
+# --node-labels rejects labels in the kubernetes.io namespace (only admin
+# clients like Talos's NodeApplyController can set them).
+#
+# node.longhorn.io/create-default-disk=true is set via kubelet.extraArgs
+# because it must be present at registration time for Longhorn DaemonSet
+# scheduling.
+#
+# All kubelet extraArgs.node-labels must be combined in this single file
+# because Talos strategic merge overwrites map keys — the last patch wins.
+machine:
+  nodeLabels:
+    node-role.kubernetes.io/worker: ""
+  kubelet:
+    extraArgs:
+      node-labels: "node.longhorn.io/create-default-disk=true"
