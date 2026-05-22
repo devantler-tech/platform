@@ -3,13 +3,8 @@
 # node.longhorn.io/create-default-disk=true must be present at registration
 # time so the Longhorn DaemonSet schedules on workers immediately.
 #
-# NOTE: node-role.kubernetes.io/worker cannot be set here — kubelet rejects
-# labels in the kubernetes.io namespace via --node-labels, and Talos/ksail
-# translates machine.nodeLabels to kubelet args as well. The worker role label
-# must be applied post-registration by an admin client (e.g. kubectl label).
-#
 # All kubelet extraArgs.node-labels must be combined in this single file
-# because Talos strategic merge overwrites map keys — the last patch wins.
+# because Talos strategic merge overwrites map keys -- the last patch wins.
 machine:
   kubelet:
     extraArgs:
