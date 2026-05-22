@@ -4,7 +4,7 @@
 # Policy summary (workers are more restrictive than control planes):
 #   - apid (50000): open to all (KSail manages workers via public IPs)
 #   - kubelet (10250): cluster-internal only
-#   - Cilium VXLAN (8472), health (4240): cluster-internal only
+#   - Cilium VXLAN (8472), health (4240), Hubble peer (4244): cluster-internal only
 #   - NodePort range (30000-32767): cluster-internal (Hetzner Cloud LB)
 #   - Node exporter (9100): cluster-internal (Prometheus scraping)
 #
@@ -52,6 +52,17 @@ portSelector:
   protocol: tcp
 ingress:
   - subnet: 10.0.0.0/16
+---
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: hubble-peer-ingress
+portSelector:
+  ports:
+    - 4244
+  protocol: tcp
+ingress:
+  - subnet: 10.0.0.0/16
+  - subnet: 10.244.0.0/16
 ---
 apiVersion: v1alpha1
 kind: NetworkRuleConfig
