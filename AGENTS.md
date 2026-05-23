@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides project-specific conventions for AI agents (including [Repo Assist](https://github.com/githubnext/agentics/blob/main/docs/repo-assist.md)) working on this repository.
+This file provides project-specific conventions for AI agents working on this repository.
 
 ## Project Overview
 
@@ -65,7 +65,7 @@ CI runs a full Talos+Docker cluster system test on PRs — this takes 3-5 minute
 - **Base files are immutable** — Use Kustomize `patches:` in overlays, never edit `k8s/bases/` directly from cluster or provider overlays
 - **Flux dependency order** — `variables` → `infrastructure-controllers` → `infrastructure` → `apps`
 
-## What's Useful for Repo Assist
+## What's Useful for the AI Assistant
 
 - **Issue labelling and triage** — Very helpful
 - **Issue investigation** — Investigate manifest misconfigurations, Helm chart issues, Flux sync problems
