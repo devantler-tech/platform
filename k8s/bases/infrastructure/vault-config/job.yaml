@@ -26,7 +26,13 @@ metadata:
     # Re-run on every Flux reconciliation to converge state.
     kustomize.toolkit.fluxcd.io/force: enabled
 spec:
-  backoffLimit: 10
+  # Higher backoffLimit because openbao bootstrap can take 20-40 min on
+  # cold CI runners — too low and the Job hits BackoffLimitExceeded before
+  # openbao is fully ready, even though the script is idempotent and
+  # would succeed on a later retry.
+  backoffLimit: 30
+  # Bound total Job runtime so a permanently-stuck pod doesn't run forever.
+  activeDeadlineSeconds: 3600
   template:
     metadata:
       labels:
