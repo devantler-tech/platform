@@ -28,6 +28,14 @@ spec:
       remediateLastFailure: true
   # https://github.com/cert-manager/cert-manager/blob/master/deploy/charts/cert-manager/values.yaml
   values:
+    # Restricted PSS baseline: add runAsNonRoot to container SCs (chart leaves it unset, which fails validate-container-security).
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
     replicaCount: ${cert_manager_replicas:=2}
     podDisruptionBudget:
       enabled: true
@@ -47,6 +55,13 @@ spec:
             app.kubernetes.io/instance: cert-manager
     webhook:
       replicaCount: ${cert_manager_replicas:=2}
+      containerSecurityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
       podDisruptionBudget:
         enabled: true
         minAvailable: 1
@@ -65,6 +80,13 @@ spec:
               app.kubernetes.io/instance: cert-manager
     cainjector:
       replicaCount: ${cert_manager_replicas:=2}
+      containerSecurityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        readOnlyRootFilesystem: true
+        runAsNonRoot: true
       podDisruptionBudget:
         enabled: true
         minAvailable: 1
