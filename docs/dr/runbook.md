@@ -330,11 +330,11 @@ two GitHub `prod` environment secrets:
 | `TALOS_CONFIG` | `~/.talos/config` | `ksail cluster update` machine-config / secret sync |
 
 After a **full rebuild** (Scenario 4) the API endpoint and Talos PKI change,
-so both secrets are stale. Symptom in CI: the `🩺 Verify prod cluster is
-reachable` preflight fails, or `ksail cluster update` reports a bogus "N
-configuration changes" plan (every component shows `Default`/`Disabled`/`None`)
-and then fails with `connection refused` / `x509: certificate signed by unknown
-authority "talos"`.
+so both secrets are stale. Symptom in CI: the
+`🩺 Verify prod cluster is reachable` preflight fails, or
+`ksail cluster update` reports a bogus "N configuration changes" plan (every
+component shows `Default`/`Disabled`/`None`) and then fails with
+`connection refused` / `x509: certificate signed by unknown authority "talos"`.
 
 ```bash
 # Run from a machine that can reach the rebuilt cluster (e.g. the homelab),
