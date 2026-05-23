@@ -28,6 +28,12 @@ metadata:
     # The Job script itself is idempotent — each command checks state first.
     kustomize.toolkit.fluxcd.io/force: enabled
 spec:
+  # Auto-delete the Job (and its pods) 10 minutes after completion. Without
+  # this, the `kustomize.toolkit.fluxcd.io/force: enabled` annotation above
+  # makes Flux delete-and-recreate the Job on any spec change, orphaning the
+  # previous Job's pods (they keep their original ownerReference UID, which
+  # no longer matches anything, so the GC controller never reaps them).
+  ttlSecondsAfterFinished: 600
   # Higher backoffLimit because openbao bootstrap can take 20-40 min on
   # cold CI runners — too low and the Job hits BackoffLimitExceeded before
   # openbao is fully ready, even though the script is idempotent and
