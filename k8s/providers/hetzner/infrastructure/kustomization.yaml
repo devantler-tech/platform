@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
   - cluster-issuers/
+  - vault-seed/
 patches:
   - path: gateway-patch.yaml
     target:
