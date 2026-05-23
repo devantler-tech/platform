@@ -55,6 +55,50 @@ spec:
           # has no /etc/passwd entry. Mount an emptyDir at /home/fleet and run
           # as the image's actual `fleet` user (uid 100, gid 101) so the
           # binary can resolve $HOME and write its history file.
+          # The fleet chart bundles a custom mysql subchart (v1.0.0) that has
+          # no securityContext, mounts the PVC at /var/lib/mysql, and provides
+          # no tmp volume. But it uses the bitnami mysql image which writes
+          # data to /bitnami/mysql and InnoDB temp files to /opt/bitnami/mysql/tmp.
+          # Combined with Kyverno's readOnlyRootFilesystem mutation, this leaves
+          # mysqld with nowhere to write. Patch the rendered StatefulSet to:
+          # 1) Set fsGroup:1001 so fresh PVCs are writable by the mysql user.
+          # 2) Redirect the data volumeMount from /var/lib/mysql to /bitnami/mysql.
+          # 3) Add an emptyDir mount at /opt/bitnami/mysql/tmp for InnoDB temp files.
+          - target:
+              kind: StatefulSet
+              name: fleetdm-mysql
+            patch: |
+              apiVersion: apps/v1
+              kind: StatefulSet
+              metadata:
+                name: fleetdm-mysql
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      fsGroup: 1001
+                      runAsUser: 1001
+                      runAsGroup: 1001
+                      fsGroupChangePolicy: OnRootMismatch
+                    volumes:
+                      - name: tmp
+                        emptyDir: {}
+                    containers:
+                      - name: mysql
+                        securityContext:
+                          runAsUser: 1001
+                          runAsGroup: 1001
+                          readOnlyRootFilesystem: true
+                          allowPrivilegeEscalation: false
+                          runAsNonRoot: true
+                          capabilities:
+                            drop:
+                              - ALL
+                        volumeMounts:
+                          - name: data
+                            mountPath: /bitnami/mysql
+                          - name: tmp
+                            mountPath: /opt/bitnami/mysql/tmp
           - target:
               kind: Job
               name: fleet-migration
