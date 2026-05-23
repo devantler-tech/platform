@@ -111,7 +111,7 @@ spec:
                             mountPath: /home/fleet
                         env:
                           - name: FLEET_MYSQL_ADDRESS
-                            value: "fleetdm-mysql-primary.fleetdm:3306"
+                            value: "fleetdm-mysql.fleetdm:3306"
                           - name: FLEET_MYSQL_DATABASE
                             value: "fleet"
                           - name: FLEET_MYSQL_USERNAME
