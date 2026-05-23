@@ -1,6 +1,10 @@
 # Self-signed CA Certificate that generates the platform-ca-key-pair Secret.
-# This replaces the former SOPS-encrypted CA key pair — cert-manager creates
-# and rotates the CA automatically.
+# This replaces the former SOPS-encrypted CA key pair — cert-manager
+# issues the CA cert and renews it before expiry. The private key is
+# kept across renewals (cert-manager default; we want long-lived CA keys
+# so issued leaf certs don't have to be reissued), so this is "managed"
+# rather than "rotated" — set spec.privateKey.rotationPolicy: Always if
+# you ever want key rotation on renew.
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:

@@ -69,6 +69,14 @@ spec:
         config: |
           ui = true
 
+          # mlock prevents secret material from being paged to swap, but
+          # requires the IPC_LOCK Linux capability. On clusters where
+          # IPC_LOCK is not granted (PSS 'restricted'), this would block
+          # the server from starting. Disable it; we rely on
+          # node-level swap-off and PSS 'baseline' on the namespace
+          # instead.
+          disable_mlock = true
+
           listener "tcp" {
             address     = "0.0.0.0:8200"
             tls_disable = 1
