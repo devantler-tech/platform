@@ -70,8 +70,14 @@ spec:
               kind: StatefulSet
               name: "{{request.object.metadata.name}}"
             updatePolicy:
-              updateMode: "InPlaceOrRecreate"
-              minReplicas: 1
+              # StatefulSets here are singletons backed by ReadWriteOnce hcloud
+              # volumes. Evicting such a pod to apply a recommendation reschedules
+              # it before the old VolumeAttachment releases, causing a Multi-Attach
+              # error and an outage (this took down fleetdm-mysql + the fleet API).
+              # "Initial" still right-sizes pods at creation but never evicts a
+              # running stateful pod, so recommendations land on the next natural
+              # restart (rollout, node maintenance) instead of mid-flight.
+              updateMode: "Initial"
             resourcePolicy:
               containerPolicies:
                 - containerName: "*"
