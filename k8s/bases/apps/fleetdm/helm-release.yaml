@@ -223,12 +223,7 @@ spec:
         image:
           registry: docker.io
           repository: bitnamilegacy/mysqld-exporter
-      # Init container that chowns the data dir before mysqld runs. Needed
-      # because Kyverno's add-pod-security-context strips the chart's
-      # podSecurityContext.fsGroup, so the fresh PVC is owned by root and
-      # mysqld --initialize cannot write to /bitnami/mysql/data.
       volumePermissions:
-        enabled: true
         image:
           registry: docker.io
           repository: bitnamilegacy/os-shell
