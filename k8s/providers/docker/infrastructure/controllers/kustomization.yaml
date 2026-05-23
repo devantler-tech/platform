@@ -6,6 +6,8 @@ resources:
   - coredns/
   - flux-instance/
   - minio/
+  - local-path-storage-namespace.yaml
+  - local-path-storage-networkpolicy.yaml
 patches:
   - target:
       kind: HelmRelease
