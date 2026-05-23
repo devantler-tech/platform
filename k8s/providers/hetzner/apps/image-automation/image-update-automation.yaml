@@ -1,0 +1,35 @@
+# Scans k8s/bases/apps for `$imagepolicy` setter markers and writes the
+# newest manifests-artifact version (selected by each app's ImagePolicy) into
+# the OCIRepository ref.tag, then commits to main. The commit is a Conventional
+# Commit so the platform release pipeline cuts a release and republishes the
+# OCI artifact, after which Flux pulls the bumped tag and rolls the app.
+apiVersion: image.toolkit.fluxcd.io/v1
+kind: ImageUpdateAutomation
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: ksail
+  name: app-manifests
+  namespace: flux-system
+spec:
+  interval: 5m
+  sourceRef:
+    kind: GitRepository
+    name: platform
+  git:
+    checkout:
+      ref:
+        branch: main
+    commit:
+      author:
+        name: flux-image-automation
+        email: flux-image-automation@users.noreply.github.com
+      messageTemplate: |
+        fix: bump app manifests to latest released versions
+
+        {{range .Changed.Changes}}- {{.OldValue}} -> {{.NewValue}}
+        {{end}}
+    push:
+      branch: main
+  update:
+    path: ./k8s/bases/apps
+    strategy: Setters

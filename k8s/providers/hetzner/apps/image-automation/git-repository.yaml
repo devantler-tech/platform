@@ -1,0 +1,21 @@
+# Git source the image-automation-controller clones, edits, and pushes back
+# to. The cluster reconciles workloads from OCI, so this GitRepository exists
+# solely for ImageUpdateAutomation to commit OCIRepository tag bumps.
+#
+# Requires a write-capable credential in the `image-automation-git-auth`
+# secret (SSH deploy key with write access to devantler-tech/platform, keys:
+# identity, identity.pub, known_hosts), and `main` must accept pushes from it.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: ksail
+  name: platform
+  namespace: flux-system
+spec:
+  interval: 5m
+  url: ssh://git@github.com/devantler-tech/platform.git
+  ref:
+    branch: main
+  secretRef:
+    name: image-automation-git-auth
