@@ -8,9 +8,9 @@
 # volumes and break any PVC backed by hcloud-csi.
 #
 # NOTE: node-labels for Longhorn (node.longhorn.io/create-default-disk=true)
-# are set in worker-role-label.yaml to avoid conflicts with the worker role
-# label patch — Talos strategic merge overwrites map keys, so all node-labels
-# must be in a single patch file.
+# are set in node-labels.yaml. Talos strategic merge overwrites map keys,
+# so all kubelet.extraArgs.node-labels values must live in a single patch
+# file — see node-labels.yaml.
 machine:
   kubelet:
     extraMounts:
