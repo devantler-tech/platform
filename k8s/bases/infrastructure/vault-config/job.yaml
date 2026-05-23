@@ -102,8 +102,8 @@ spec:
                 ROOT_TOKEN=$(echo "$INIT_OUTPUT" | grep "Initial Root Token:" | sed 's/.*: //')
 
                 if [ -z "$UNSEAL_KEY" ] || [ -z "$ROOT_TOKEN" ]; then
-                  echo "ERROR: failed to parse init output:"
-                  echo "$INIT_OUTPUT"
+                  echo "ERROR: failed to parse init output (unseal key or root token missing)."
+                  echo "Refusing to print raw output because it may contain secret material."
                   exit 1
                 fi
 
