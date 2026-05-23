@@ -6,6 +6,9 @@ metadata:
   labels:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
+  dependsOn:
+    - name: kube-prometheus-stack
+      namespace: monitoring
   interval: 2m
   timeout: 10m
   install:

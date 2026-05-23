@@ -1,0 +1,14 @@
+# Kubelet node-labels for Talos workers.
+#
+# All node-labels must be combined in this single file: Talos strategic
+# merge overwrites map keys, so if multiple worker patches set
+# kubelet.extraArgs.node-labels the last one wins.
+#
+# Labels set here are applied at kubelet registration time, so DaemonSets
+# (e.g. Longhorn) can match nodes immediately on first boot. Labels set
+# via machine.nodeLabels are applied later by NodeApplyController and
+# would race with registration-time scheduling.
+machine:
+  kubelet:
+    extraArgs:
+      node-labels: "node.longhorn.io/create-default-disk=true"

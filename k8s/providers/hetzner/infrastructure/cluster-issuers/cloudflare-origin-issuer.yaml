@@ -8,12 +8,3 @@ spec:
     tokenRef:
       name: cloudflare-api-token
       key: api-token
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: cloudflare-api-token
-  namespace: cert-manager
-type: Opaque
-stringData:
-  api-token: ${cloudflare_api_token}

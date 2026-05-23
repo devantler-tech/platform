@@ -5,4 +5,3 @@ resources:
   - hcloud-secret.yaml
   - helm-release.yaml
   - helm-repository.yaml
-  - luks-encryption-secret.enc.yaml

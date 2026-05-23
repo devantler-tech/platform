@@ -6,9 +6,12 @@
 # Hetzner — hcloud-csi dynamically attaches Cloud Volumes at /dev/sdb,
 # /dev/sdc, etc.  Partitioning /dev/sdb with Talos would destroy those
 # volumes and break any PVC backed by hcloud-csi.
+#
+# NOTE: node-labels for Longhorn (node.longhorn.io/create-default-disk=true)
+# are set in node-labels.yaml. Talos strategic merge overwrites map keys,
+# so all kubelet.extraArgs.node-labels values must live in a single patch
+# file — see node-labels.yaml.
 machine:
-  nodeLabels:
-    node.longhorn.io/create-default-disk: "true"
   kubelet:
     extraMounts:
       - destination: /var/lib/longhorn

@@ -8,6 +8,7 @@ resources:
   - cilium/
   - cloudnative-pg/
   - dex/
+  - external-secrets/
   - flux-operator/
   - keda/
   - keda-http-add-on/
@@ -17,6 +18,7 @@ resources:
   - kyverno/
   - metrics-server/
   - oauth2-proxy/
+  - openbao/
   - opencost/
   - reloader/
   - trust-manager/

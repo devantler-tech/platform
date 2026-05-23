@@ -35,6 +35,10 @@ spec:
     securityContext:
       allowPrivilegeEscalation: false
       runAsUser: 65534
+      runAsNonRoot: true
+      capabilities:
+        drop:
+          - ALL
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname

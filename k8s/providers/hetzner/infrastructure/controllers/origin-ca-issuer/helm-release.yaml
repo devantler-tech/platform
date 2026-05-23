@@ -4,6 +4,8 @@ metadata:
   name: origin-ca-issuer
   namespace: cert-manager
 spec:
+  dependsOn:
+    - name: cert-manager
   interval: 2m
   timeout: 10m
   install:

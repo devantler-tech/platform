@@ -5,7 +5,7 @@
 #   - apid (50000) and Kubernetes API (6443): open to all (external management)
 #   - kubelet (10250), trustd (50001): cluster-internal only
 #   - etcd (2379-2380): cluster-internal only (Hetzner assigns IPs dynamically)
-#   - Cilium VXLAN (8472), health (4240): cluster-internal only
+#   - Cilium VXLAN (8472), health (4240), Hubble peer (4244): cluster-internal only
 #   - NodePort range (30000-32767): cluster-internal (Hetzner Cloud LB)
 #   - Node exporter (9100): cluster-internal (Prometheus scraping)
 #
@@ -84,6 +84,17 @@ portSelector:
   protocol: tcp
 ingress:
   - subnet: 10.0.0.0/16
+---
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: hubble-peer-ingress
+portSelector:
+  ports:
+    - 4244
+  protocol: tcp
+ingress:
+  - subnet: 10.0.0.0/16
+  - subnet: 10.244.0.0/16
 ---
 apiVersion: v1alpha1
 kind: NetworkRuleConfig

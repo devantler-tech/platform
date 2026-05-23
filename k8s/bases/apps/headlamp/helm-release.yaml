@@ -23,6 +23,12 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: headlamp
+  valuesFrom:
+    - kind: Secret
+      name: headlamp-oidc
+      valuesKey: client-secret
+      targetPath: config.oidc.clientSecret
+      optional: true
   postRenderers:
     - kustomize:
         patches:
@@ -32,7 +38,7 @@ spec:
             patch: |
               - op: add
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
-                value: oidc
+                value: headlamp-oidc
               - op: add
                 path: /spec/strategy
                 value:
@@ -100,7 +106,6 @@ spec:
       watchPlugins: true
       oidc:
         clientID: public-client
-        clientSecret: ${dex_client_secret}
         issuerURL: https://dex.${domain}
         scopes: "profile,email,groups"
     pluginsManager:

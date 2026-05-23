@@ -34,6 +34,16 @@ spec:
           - resources:
               kinds:
                 - kustomize.toolkit.fluxcd.io/v1/Kustomization
+      exclude:
+        # The bootstrap flux-system Kustomization is created and managed by
+        # `flux bootstrap` / ksail and not by GitOps from this repo, so we
+        # cannot set the recommended fields on it. Exclude it from the policy.
+        any:
+          - resources:
+              namespaces:
+                - flux-system
+              names:
+                - flux-system
       validate:
         message: >-
           Flux Kustomization must set the recommended reliability fields:

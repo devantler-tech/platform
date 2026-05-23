@@ -13,3 +13,4 @@ resources:
   - origin-ca-issuer/
 patches:
   - path: flux-operator/patches/helm-release-patch.yaml
+  - path: openbao/patches/helm-release-patch.yaml

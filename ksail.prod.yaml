@@ -74,7 +74,7 @@ spec:
       registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
   provider:
     hetzner:
-      controlPlaneServerType: cx23
+      controlPlaneServerType: cx33
       workerServerType: cx33
       location: fsn1
       networkCidr: 10.0.0.0/16

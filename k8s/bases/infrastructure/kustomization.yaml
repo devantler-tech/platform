@@ -7,6 +7,11 @@ resources:
   - cluster-policies/
   - cluster-role-bindings/
   - cluster-roles/
+  - cluster-secret-stores/
+  - external-secrets/
   - gateway/
   - http-scaled-objects/
   - security-exceptions/
+  - vault-config/
+  - vault-backup/
+  - vault-seed/

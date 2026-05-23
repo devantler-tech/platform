@@ -55,6 +55,50 @@ spec:
           # has no /etc/passwd entry. Mount an emptyDir at /home/fleet and run
           # as the image's actual `fleet` user (uid 100, gid 101) so the
           # binary can resolve $HOME and write its history file.
+          # The fleet chart bundles a custom mysql subchart (v1.0.0) that has
+          # no securityContext, mounts the PVC at /var/lib/mysql, and provides
+          # no tmp volume. But it uses the bitnami mysql image which writes
+          # data to /bitnami/mysql and InnoDB temp files to /opt/bitnami/mysql/tmp.
+          # Combined with Kyverno's readOnlyRootFilesystem mutation, this leaves
+          # mysqld with nowhere to write. Patch the rendered StatefulSet to:
+          # 1) Set fsGroup:1001 so fresh PVCs are writable by the mysql user.
+          # 2) Redirect the data volumeMount from /var/lib/mysql to /bitnami/mysql.
+          # 3) Add an emptyDir mount at /opt/bitnami/mysql/tmp for InnoDB temp files.
+          - target:
+              kind: StatefulSet
+              name: fleetdm-mysql
+            patch: |
+              apiVersion: apps/v1
+              kind: StatefulSet
+              metadata:
+                name: fleetdm-mysql
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      fsGroup: 1001
+                      runAsUser: 1001
+                      runAsGroup: 1001
+                      fsGroupChangePolicy: OnRootMismatch
+                    volumes:
+                      - name: tmp
+                        emptyDir: {}
+                    containers:
+                      - name: mysql
+                        securityContext:
+                          runAsUser: 1001
+                          runAsGroup: 1001
+                          readOnlyRootFilesystem: true
+                          allowPrivilegeEscalation: false
+                          runAsNonRoot: true
+                          capabilities:
+                            drop:
+                              - ALL
+                        volumeMounts:
+                          - name: data
+                            mountPath: /bitnami/mysql
+                          - name: tmp
+                            mountPath: /opt/bitnami/mysql/tmp
           - target:
               kind: Job
               name: fleet-migration
@@ -95,6 +139,32 @@ spec:
                     volumes:
                       - name: fleet-home
                         emptyDir: {}
+                    initContainers:
+                      # Run `fleet prepare db` before the main container starts.
+                      # Idempotent — no-op when schema already exists. Prevents
+                      # CrashLoopBackOff if MySQL data is lost (e.g. PVC recreation
+                      # after storage failures).
+                      - name: fleet-db-init
+                        image: fleetdm/fleet:v4.84.2
+                        command: ["fleet", "prepare", "db"]
+                        securityContext:
+                          runAsUser: 100
+                          runAsGroup: 101
+                        volumeMounts:
+                          - name: fleet-home
+                            mountPath: /home/fleet
+                        env:
+                          - name: FLEET_MYSQL_ADDRESS
+                            value: "fleetdm-mysql.fleetdm:3306"
+                          - name: FLEET_MYSQL_DATABASE
+                            value: "fleet"
+                          - name: FLEET_MYSQL_USERNAME
+                            value: "fleet"
+                          - name: FLEET_MYSQL_PASSWORD
+                            valueFrom:
+                              secretKeyRef:
+                                name: mysql
+                                key: mysql-password
                     containers:
                       - name: fleet
                         securityContext:
@@ -103,6 +173,12 @@ spec:
                         volumeMounts:
                           - name: fleet-home
                             mountPath: /home/fleet
+  valuesFrom:
+    - kind: Secret
+      name: fleetdm-server-key
+      valuesKey: FLEET_SERVER_PRIVATE_KEY
+      targetPath: environments.FLEET_SERVER_PRIVATE_KEY
+      optional: true
   # https://github.com/fleetdm/fleet/blob/main/charts/fleet/values.yaml
   values:
     hostName: fleetdm.${domain}
@@ -110,14 +186,6 @@ spec:
     # Ingress is handled by a Gateway API HTTPRoute in this repo.
     ingress:
       enabled: false
-    # FLEET_SERVER_PRIVATE_KEY is substituted by Flux from the
-    # per-cluster SOPS-encrypted `variables-cluster-secret.enc.yaml`
-    # before apply. The rendered Deployment carries the value as a
-    # literal env, readable only to principals with RBAC on the fleetdm
-    # namespace. Stable across restarts; losing this key invalidates
-    # every enrolled device.
-    environments:
-      FLEET_SERVER_PRIVATE_KEY: ${fleetdm_server_private_key}
     fleet:
       # TLS terminates at the platform Gateway (Traefik / Cilium).
       tls:
@@ -142,7 +210,7 @@ spec:
     # https://github.com/bitnami/containers/issues/83267
     mysql:
       enabled: true
-      architecture: ${fleetdm_mysql_architecture:=replication}
+      architecture: ${fleetdm_mysql_architecture:=standalone}
       image:
         registry: docker.io
         repository: bitnamilegacy/mysql
@@ -206,7 +274,7 @@ spec:
     # https://github.com/bitnami/charts/blob/main/bitnami/redis/values.yaml
     redis:
       enabled: true
-      architecture: ${fleetdm_redis_architecture:=replication}
+      architecture: ${fleetdm_redis_architecture:=standalone}
       image:
         registry: docker.io
         repository: bitnamilegacy/redis

@@ -32,16 +32,37 @@ spec:
       podSecurityContext:
         runAsUser: 65534
         runAsGroup: 65534
+      securityContext:
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
     updater:
       enabled: true
       replicaCount: ${vpa_updater_replicas:=1}
       podSecurityContext:
         runAsUser: 65534
         runAsGroup: 65534
+      securityContext:
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
     admissionController:
       replicaCount: ${vpa_admission_replicas:=2}
       podSecurityContext:
         runAsUser: 65534
         runAsGroup: 65534
+      securityContext:
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
       podDisruptionBudget:
         minAvailable: 1

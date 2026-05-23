@@ -3,6 +3,5 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - helm-repository.yaml
-  - webhook-secret.yaml
   - helm-release.yaml
   - networkpolicy.yaml

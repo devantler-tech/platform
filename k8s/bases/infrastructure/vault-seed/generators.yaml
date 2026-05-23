@@ -1,0 +1,100 @@
+# ESO Password generators for secrets that can be randomly generated.
+# Each generator defines the password spec; PushSecrets in
+# push-generated-secrets.yaml reference these via generatorRef to seed
+# OpenBao on first reconciliation.
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: dex-client-secret
+  namespace: openbao
+spec:
+  length: 32
+  digits: 8
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: flux-web-client-secret
+  namespace: openbao
+spec:
+  length: 32
+  digits: 8
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: oauth2-proxy-cookie-secret
+  namespace: openbao
+spec:
+  length: 32
+  digits: 8
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: fleetdm-mysql-root-password
+  namespace: openbao
+spec:
+  length: 24
+  digits: 6
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: fleetdm-mysql-replication-password
+  namespace: openbao
+spec:
+  length: 24
+  digits: 6
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: fleetdm-mysql-password
+  namespace: openbao
+spec:
+  length: 24
+  digits: 6
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: fleetdm-redis-password
+  namespace: openbao
+spec:
+  length: 24
+  digits: 6
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: fleetdm-server-private-key
+  namespace: openbao
+spec:
+  length: 64
+  digits: 16
+  symbols: 0
+  noUpper: false
+  allowRepeat: true

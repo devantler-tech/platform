@@ -69,6 +69,3 @@ spec:
       - name: hcloud
         defaultStorageClass: false
         reclaimPolicy: Delete
-        extraParameters:
-          csi.storage.k8s.io/node-publish-secret-name: luks-encryption
-          csi.storage.k8s.io/node-publish-secret-namespace: kube-system

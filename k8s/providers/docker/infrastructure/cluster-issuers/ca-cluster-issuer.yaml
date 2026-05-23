@@ -1,7 +1,7 @@
-# CA ClusterIssuer backed by the mkcert root CA.
-# The key pair is stored as a SOPS-encrypted Secret (platform-ca-key-pair.enc.yaml)
-# so it survives cluster recreation. Because the mkcert CA is already trusted
-# in the macOS system keychain, browsers accept certificates issued by this CA.
+# CA ClusterIssuer backed by an auto-generated self-signed CA.
+# cert-manager creates the CA key pair via the Certificate resource in
+# ca-certificate.yaml (issued by the bootstrap selfsigned ClusterIssuer).
+# The resulting Secret (platform-ca-key-pair) is referenced here.
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:

@@ -1,0 +1,12 @@
+# OpenBao runs as non-root with the IPC_LOCK capability (memory-locking
+# secret material so it never hits swap). IPC_LOCK is allowed by PSS
+# 'baseline' but blocked by 'restricted', which would otherwise apply
+# from the cluster default. Enforce 'baseline' explicitly to make the
+# tradeoff visible.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openbao
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest

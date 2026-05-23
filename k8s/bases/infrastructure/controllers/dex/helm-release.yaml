@@ -75,6 +75,7 @@ spec:
             - "https://oauth2-proxy.${domain}/oauth2/callback"
             - "https://headlamp.${domain}/oidc-callback"
             - "https://budget.${domain}/oidc/callback"
+            - "https://vault.${domain}/ui/vault/auth/oidc/oidc/callback"
           trustedPeers:
             - kubectl
         - name: kubectl
@@ -95,6 +96,8 @@ spec:
             clientID: $CLIENT_ID
             clientSecret: $CLIENT_SECRET
             redirectURI: https://dex.${domain}/callback
+            # CLIENT_ID/CLIENT_SECRET come from envVars (Flux substitution).
+            # Dex resolves $VAR references from process env at runtime.
             teamNameField: slug
             useLoginAsID: false
             orgs:

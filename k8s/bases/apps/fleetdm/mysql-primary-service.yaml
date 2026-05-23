@@ -1,0 +1,20 @@
+# The fleet chart bundles a custom mysql subchart (v1.0.0) that creates
+# Service `fleetdm-mysql`, but the fleet Deployment and fleet-migration Job
+# templates hardcode `<release>-mysql-primary` as FLEET_MYSQL_ADDRESS,
+# ignoring `database.address` in values when `mysql.enabled: true`.
+# Provide an alias Service so the chart's hardcoded name resolves.
+apiVersion: v1
+kind: Service
+metadata:
+  name: fleetdm-mysql-primary
+  namespace: fleetdm
+spec:
+  type: ClusterIP
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: mysql
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/instance: fleetdm

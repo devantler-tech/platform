@@ -6,6 +6,8 @@ resources:
   - coredns/
   - flux-instance/
   - minio/
+  - local-path-storage-namespace.yaml
+  - local-path-storage-networkpolicy.yaml
 patches:
   - target:
       kind: HelmRelease
@@ -32,3 +34,7 @@ patches:
       name: kubevirt
       namespace: kubevirt
     path: kubevirt/patches/kubevirt-cr-patch.yaml
+  - target:
+      kind: Namespace
+      name: openbao
+    path: openbao/patches/namespace-patch.yaml
