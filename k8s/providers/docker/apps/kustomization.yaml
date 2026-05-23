@@ -2,7 +2,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  # wedding-app excluded: prod-only tenant needing GHCR, CNPG, and longhorn
+  # wedding-app & ascoachingogvaner excluded: prod-only tenants needing GHCR, CNPG, and longhorn
   # fleetdm excluded: heavy app (MySQL + Redis + migration) that consistently
   #   times out in Docker CI due to controller scheduling delays; Docker overlay
   #   uses substantially different config (standalone DBs, default storageClass)
