@@ -23,7 +23,9 @@ metadata:
   name: vault-config
   namespace: openbao
   annotations:
-    # Re-run on every Flux reconciliation to converge state.
+    # Force-recreate this Job when its spec drifts from the desired state.
+    # Jobs are immutable, so without this Flux cannot reapply spec changes.
+    # The Job script itself is idempotent — each command checks state first.
     kustomize.toolkit.fluxcd.io/force: enabled
 spec:
   # Higher backoffLimit because openbao bootstrap can take 20-40 min on
@@ -271,7 +273,7 @@ spec:
               }
               POLICY
 
-              bao policy write app-oidc-readonly - <<'POLICY'
+              bao policy write infra-oidc-readonly - <<'POLICY'
               path "secret/data/infrastructure/oidc/*" {
                 capabilities = ["read"]
               }
@@ -356,7 +358,7 @@ spec:
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,app-fleetdm-readonly,app-wedding-readonly,app-oidc-readonly,vault-seed-write \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,app-fleetdm-readonly,app-wedding-readonly,infra-oidc-readonly,vault-seed-write \
                 ttl=1h
 
               # Snapshot CronJob needs health check read
