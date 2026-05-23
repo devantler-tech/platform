@@ -67,7 +67,7 @@ jobs:
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@23f1c28e8a314ef074de4585d66b2b697e68e09e # v7.16.2
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@0731600520062f025b53f5a7e3a4176e5f6884b4 # v7.17.3
         with:
           distribution: Talos
           provider: Docker
@@ -132,7 +132,12 @@ jobs:
   deploy-prod:
     name: 🚀 Deploy to Prod
     needs: [changes]
-    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
+    # TEMPORARILY DISABLED: concurrent merge_group runs were clobbering the
+    # prod cluster CP server types (cx33 → cx23) via `ksail cluster update`
+    # against stale kubeconfigs while devantler/feat-self-hosted-secrets-vault
+    # (PR #1510) was in flight. Re-enable once #1510 lands and the cluster is
+    # stable.
+    if: false && github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     environment: prod
     concurrency:
