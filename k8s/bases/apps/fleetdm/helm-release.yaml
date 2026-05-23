@@ -145,7 +145,7 @@ spec:
                       # CrashLoopBackOff if MySQL data is lost (e.g. PVC recreation
                       # after storage failures).
                       - name: fleet-db-init
-                        image: fleetdm/fleet:v4.84.2
+                        image: fleetdm/fleet:v4.85.0
                         command: ["fleet", "prepare", "db"]
                         securityContext:
                           runAsUser: 100
