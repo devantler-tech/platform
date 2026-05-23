@@ -126,7 +126,7 @@ spec:
             version: 0.1.3
           - name: headlamp_kubescape
             source: https://artifacthub.io/packages/headlamp/kubescape-headlamp-plugin/headlamp_kubescape
-            version: 0.11.0
+            version: 0.11.2
         installOptions:
           parallel: true
           maxConcurrent: 3
