@@ -7,8 +7,10 @@ on:
 
 permissions: {}
 
+# Shared with the CI merge-queue deploy-prod job (ci.yaml) so a tag deploy
+# and a merge-queue deploy can never run against the prod cluster at once.
 concurrency:
-  group: ${{ github.workflow }}
+  group: prod-deploy
   cancel-in-progress: false
 
 jobs:

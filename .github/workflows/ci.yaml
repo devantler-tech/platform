@@ -171,8 +171,10 @@ jobs:
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     environment: prod
+    # Shared with the CD tag-deploy workflow (cd.yaml) so a tag deploy and a
+    # merge-queue deploy can never run against the prod cluster at once.
     concurrency:
-      group: deploy-prod
+      group: prod-deploy
       cancel-in-progress: false
     permissions:
       contents: read # checkout repository
