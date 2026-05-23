@@ -44,6 +44,14 @@ data:
   headlamp_replicas: "1"
   whoami_replicas: "1"
   fleetdm_replicas: "1"
+  # Standalone MySQL (no replication). The bitnami replication topology causes
+  # VPA `InPlaceOrRecreate` evictions to drop DDL connections mid-migration on
+  # initial install (3 mysql pods churning simultaneously). Standalone is
+  # simpler, faster to install, and Hetzner CSI snapshots/Velero handle DR.
+  fleetdm_mysql_architecture: "standalone"
+  fleetdm_mysql_secondary_replicas: "0"
+  fleetdm_redis_architecture: "standalone"
+  fleetdm_redis_replicas: "0"
   actual_budget_replicas: "1"
   hubble_ui_replicas: "1"
   # Auth chain: 2 replicas for HA during VPA evictions (prevents 502s).

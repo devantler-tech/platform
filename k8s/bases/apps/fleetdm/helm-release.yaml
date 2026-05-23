@@ -166,7 +166,7 @@ spec:
     # https://github.com/bitnami/containers/issues/83267
     mysql:
       enabled: true
-      architecture: ${fleetdm_mysql_architecture:=replication}
+      architecture: ${fleetdm_mysql_architecture:=standalone}
       image:
         registry: docker.io
         repository: bitnamilegacy/mysql
@@ -230,7 +230,7 @@ spec:
     # https://github.com/bitnami/charts/blob/main/bitnami/redis/values.yaml
     redis:
       enabled: true
-      architecture: ${fleetdm_redis_architecture:=replication}
+      architecture: ${fleetdm_redis_architecture:=standalone}
       image:
         registry: docker.io
         repository: bitnamilegacy/redis
