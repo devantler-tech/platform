@@ -7,6 +7,10 @@ creation_rules:
     encrypted_regex: ^(data|stringData)$
     age: |-
       age1rk6fs67kly3h4zux5za429z3grjtvs8vcunav4sa28pxk738najsk8wgs6
+  - path_regex: ^k8s\/providers\/hetzner\/.+\.enc\.ya?ml$
+    encrypted_regex: ^(data|stringData)$
+    age: |-
+      age1rk6fs67kly3h4zux5za429z3grjtvs8vcunav4sa28pxk738najsk8wgs6
   - path_regex: ^.+\.enc\.ya?ml$
     encrypted_regex: ^(data|stringData)$
     age: |-
