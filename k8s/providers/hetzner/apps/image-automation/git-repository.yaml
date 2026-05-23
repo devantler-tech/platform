@@ -4,8 +4,10 @@
 #
 # Authenticates as the devantler-tech-platform-prod GitHub App (the one dex
 # uses), App ID 1322070 / installation 68329260 — which must be granted
-# Contents: read & write. The image-automation-git-auth secret is provided by
-# external-secret.yaml; the App private key is read from OpenBao (never in git).
+# Contents: read & write. The image-automation-git-auth secret is built by
+# external-secret.yaml; the App private key is SOPS-encrypted in
+# providers/hetzner/infrastructure/vault-seed, seeded into OpenBao by a
+# PushSecret, and read back from there by the ExternalSecret.
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: GitRepository
 metadata:
