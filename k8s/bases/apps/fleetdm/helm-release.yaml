@@ -189,6 +189,27 @@ spec:
           enabled: true
           runAsUser: 1001
           runAsGroup: 1001
+        # Kyverno's add-pod-security-context mutation strips the chart's
+        # pod-level fsGroup, so fresh PVCs are root-owned. This init
+        # container chowns the data dir before mysqld --initialize runs.
+        initContainers:
+          - name: volume-permissions
+            image: docker.io/bitnamilegacy/os-shell:latest
+            imagePullPolicy: IfNotPresent
+            command:
+              - sh
+              - -c
+              - |
+                mkdir -p /bitnami/mysql/data
+                chown -R 1001:1001 /bitnami/mysql
+                chmod 700 /bitnami/mysql/data
+            securityContext:
+              runAsUser: 0
+              runAsNonRoot: false
+              readOnlyRootFilesystem: false
+            volumeMounts:
+              - name: data
+                mountPath: /bitnami/mysql
         persistence:
           enabled: true
           size: 20Gi
