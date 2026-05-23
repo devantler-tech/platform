@@ -1,8 +1,10 @@
 # Scans k8s/bases/apps for `$imagepolicy` setter markers and writes the
 # newest manifests-artifact version (selected by each app's ImagePolicy) into
-# the OCIRepository ref.tag, then commits to main. The commit is a Conventional
-# Commit so the platform release pipeline cuts a release and republishes the
-# OCI artifact, after which Flux pulls the bumped tag and rolls the app.
+# the OCIRepository ref.tag, then commits to main. The commit uses a
+# non-releasing `chore(apps):` type so it does NOT cut a platform release
+# (and thus no full `ksail cluster update`); the reconcile-apps.yaml workflow
+# republishes the OCI artifact and reconciles on the apps-path change, after
+# which Flux pulls the bumped tag and rolls the app.
 apiVersion: image.toolkit.fluxcd.io/v1
 kind: ImageUpdateAutomation
 metadata:
@@ -24,7 +26,7 @@ spec:
         name: flux-image-automation
         email: flux-image-automation@users.noreply.github.com
       messageTemplate: |
-        fix: bump app manifests to latest released versions
+        chore(apps): bump manifests to latest released versions
 
         {{range .Changed.Changes}}- {{.OldValue}} -> {{.NewValue}}
         {{end}}
