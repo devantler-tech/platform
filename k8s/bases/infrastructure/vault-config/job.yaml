@@ -130,7 +130,7 @@ spec:
               fi
         # --- 2. Persist credentials in K8s Secret (only on fresh init) ---
         - name: store-keys
-          image: registry.k8s.io/kubectl:v1.33.1
+          image: alpine/k8s:1.33.1
           volumeMounts:
             - name: shared
               mountPath: /shared
