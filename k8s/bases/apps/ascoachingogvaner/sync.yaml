@@ -1,0 +1,41 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: ksail
+  name: ascoachingogvaner
+  namespace: ascoachingogvaner
+spec:
+  interval: 1m
+  ref:
+    tag: latest
+  url: oci://ghcr.io/devantler-tech/ascoachingogvaner/manifests
+  secretRef:
+    name: ghcr-auth
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: ksail
+  annotations:
+    ksail.devantler.tech/reconcile-exclude: "true"
+  name: ascoachingogvaner
+  namespace: ascoachingogvaner
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  path: .
+  prune: true
+  wait: true
+  force: true
+  serviceAccountName: ascoachingogvaner
+  sourceRef:
+    kind: OCIRepository
+    name: ascoachingogvaner
+  targetNamespace: ascoachingogvaner
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age

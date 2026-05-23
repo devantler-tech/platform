@@ -5,6 +5,12 @@ resources:
   - ../../../bases/apps/
 patches:
   - target:
+      group: kustomize.toolkit.fluxcd.io
+      kind: Kustomization
+      name: ascoachingogvaner
+      namespace: ascoachingogvaner
+    path: ascoachingogvaner/patches/kustomization-patch.yaml
+  - target:
       kind: HelmRelease
       name: fleetdm
       namespace: fleetdm
