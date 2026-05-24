@@ -245,15 +245,25 @@ jobs:
         # the check targets the same cluster `ksail cluster update` will use,
         # regardless of the restored kubeconfig's current-context.
         run: |
+          # A missing admin@prod context means a malformed/incomplete kubeconfig,
+          # not an unreachable cluster — surface that case distinctly.
+          if ! kubectl config get-contexts -o name | grep -qx 'admin@prod'; then
+            echo "::error::Restored kubeconfig has no 'admin@prod' context (ksail.prod.yaml's connection.context). KUBE_CONFIG looks malformed or incomplete — refresh it. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
+            exit 1
+          fi
+          last_err=""
           for attempt in 1 2 3; do
-            if kubectl --context admin@prod get --raw='/readyz' --request-timeout=30s >/dev/null 2>&1; then
+            # Capture kubectl's own stderr so the failure message is accurate.
+            if out=$(kubectl --context admin@prod get --raw='/readyz' --request-timeout=30s 2>&1); then
               echo "✅ Prod API server reachable."
               exit 0
             fi
-            echo "Attempt ${attempt}/3: prod API server (context admin@prod) not reachable yet…"
+            last_err="$out"
+            echo "Attempt ${attempt}/3: prod API server (context admin@prod) not reachable: ${out}"
             sleep 10
           done
-          echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig. KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
+          last_err=$(printf '%s' "$last_err" | tr '\n' ' ')
+          echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig (last kubectl error: ${last_err}). KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
           exit 1
 
       - name: 🔄 Update cluster
