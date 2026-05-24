@@ -7,8 +7,10 @@ on:
 
 permissions: {}
 
+# Shared with the CI merge-queue deploy-prod job (ci.yaml) so a tag deploy
+# and a merge-queue deploy can never run against the prod cluster at once.
 concurrency:
-  group: ${{ github.workflow }}
+  group: prod-deploy
   cancel-in-progress: false
 
 jobs:
@@ -75,6 +77,41 @@ jobs:
           umask 077
           printf '%s' "${TALOS_CONFIG}" > ~/.talos/config
           chmod 600 ~/.talos/config
+
+      - name: 🩺 Verify prod cluster is reachable
+        # Fail fast if the restored kubeconfig can't reach the prod API server.
+        # When the cluster is unreachable — most commonly because KUBE_CONFIG /
+        # TALOS_CONFIG are stale after a cluster rebuild — `ksail cluster update`
+        # otherwise only warns, falls back to a "nothing is installed" baseline,
+        # proposes a full reinstall, and then fails mid-apply against the live
+        # nodes (a confusing, potentially destructive failure mode). Catch it
+        # here with an actionable message instead.
+        # Upstream: devantler-tech/ksail#4868 (fail fast) and #4869 (baseline).
+        # Refresh procedure: docs/dr/runbook.md → "Refresh CI deploy credentials".
+        # Pin --context to admin@prod (ksail.prod.yaml's connection.context) so
+        # the check targets the same cluster `ksail cluster update` will use,
+        # regardless of the restored kubeconfig's current-context.
+        run: |
+          # A missing admin@prod context means a malformed/incomplete kubeconfig,
+          # not an unreachable cluster — surface that case distinctly.
+          if ! kubectl config get-contexts -o name | grep -qx 'admin@prod'; then
+            echo "::error::Restored kubeconfig has no 'admin@prod' context (ksail.prod.yaml's connection.context). KUBE_CONFIG looks malformed or incomplete — refresh it. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
+            exit 1
+          fi
+          last_err=""
+          for attempt in 1 2 3; do
+            # Capture kubectl's own stderr so the failure message is accurate.
+            if out=$(kubectl --context admin@prod get --raw='/readyz' --request-timeout=30s 2>&1); then
+              echo "✅ Prod API server reachable."
+              exit 0
+            fi
+            last_err="$out"
+            echo "Attempt ${attempt}/3: prod API server (context admin@prod) not reachable: ${out}"
+            sleep 10
+          done
+          last_err=$(printf '%s' "$last_err" | tr '\n' ' ')
+          echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig (last kubectl error: ${last_err}). KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
+          exit 1
 
       - name: 🔄 Update cluster
         run: ksail --config ksail.prod.yaml cluster update
