@@ -62,6 +62,20 @@ jobs:
           printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
           chmod 600 ~/.kube/config
 
+      - name: 🔑 Restore talosconfig
+        # ksail cluster update talks to the Talos API to sync machine config.
+        # Without the talosconfig it uses stale/derived certs and fails with
+        # "x509: certificate signed by unknown authority (talos)". The
+        # TALOS_CONFIG secret must be kept up-to-date from the homelab after any
+        # cluster recreation, same as KUBE_CONFIG.
+        env:
+          TALOS_CONFIG: ${{ secrets.TALOS_CONFIG }}
+        run: |
+          mkdir -p ~/.talos
+          umask 077
+          printf '%s' "${TALOS_CONFIG}" > ~/.talos/config
+          chmod 600 ~/.talos/config
+
       - name: 🔄 Update cluster
         run: ksail --config ksail.prod.yaml cluster update
         env:
