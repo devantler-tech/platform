@@ -1,0 +1,24 @@
+# Seeds OpenBao with the GitHub App private key from the SOPS-encrypted
+# image-automation-git-key secret, so the ExternalSecret can hydrate
+# image-automation-git-auth from the store (same pattern as vault-seed).
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: ksail
+  name: seed-image-automation-git
+  namespace: flux-system
+spec:
+  refreshInterval: "0"
+  secretStoreRefs:
+    - name: openbao
+      kind: ClusterSecretStore
+  selector:
+    secret:
+      name: image-automation-git-key
+  data:
+    - match:
+        secretKey: private-key
+        remoteRef:
+          remoteKey: infrastructure/git/image-automation
+          property: private-key

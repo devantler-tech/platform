@@ -1,0 +1,25 @@
+# Git source the image-automation-controller clones, edits, and pushes back
+# to. The cluster reconciles workloads from OCI, so this GitRepository exists
+# solely for ImageUpdateAutomation to commit OCIRepository tag bumps.
+#
+# Authenticates as the devantler-tech-platform-prod GitHub App (the one dex
+# uses), App ID 1322070 / installation 68329260 — which must be granted
+# Contents: read & write. The image-automation-git-auth secret is built by
+# external-secret.yaml; the App private key is SOPS-encrypted in
+# providers/hetzner/infrastructure/vault-seed, seeded into OpenBao by a
+# PushSecret, and read back from there by the ExternalSecret.
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: ksail
+  name: platform
+  namespace: flux-system
+spec:
+  interval: 5m
+  url: https://github.com/devantler-tech/platform.git
+  ref:
+    branch: main
+  provider: github
+  secretRef:
+    name: image-automation-git-auth

@@ -25,6 +25,18 @@
   "github-actions": {
     "enabled": false
   },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Bump the pinned ksail CLI version in workflows (Dependabot can't track a curl-downloaded release asset).",
+      "fileMatch": [
+        "^\\.github/workflows/(cd|ci)\\.yaml$"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) extractVersion=(?<extractVersion>\\S+)\\s+KSAIL_VERSION:\\s*\"(?<currentValue>[^\"]+)\""
+      ]
+    }
+  ],
   "minor": {
     "automerge": true
   },

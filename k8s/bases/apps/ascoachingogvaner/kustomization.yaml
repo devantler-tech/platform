@@ -7,4 +7,5 @@ resources:
   - serviceaccount.yaml
   - sops-age-secret.enc.yaml
   - sync.yaml
+  - image-policy.yaml
   - networkpolicy.yaml
