@@ -31,6 +31,7 @@ jobs:
         # linux tarball. Revert to setup-ksail-cli once a complete ksail release
         # exists. See devantler-tech/ksail v7.20.0 CD failure.
         env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
           KSAIL_VERSION: "7.19.0"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
