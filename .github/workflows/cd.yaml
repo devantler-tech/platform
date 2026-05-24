@@ -26,7 +26,18 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        uses: devantler-tech/actions/setup-ksail-cli@59d3ffbe1a9437fcc39e2794fa2f221abe878310 # v3.3.0
+        # TEMP: pinned to v7.19.0. The v7.20.0 release shipped only desktop
+        # artifacts (CLI binaries missing), so `brew install ksail` 404s on the
+        # linux tarball. Revert to setup-ksail-cli once a complete ksail release
+        # exists. See devantler-tech/ksail v7.20.0 CD failure.
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.19.0"
+        run: |
+          curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
+          tar -xzf /tmp/ksail.tar.gz -C /tmp
+          sudo install /tmp/ksail /usr/local/bin/ksail
+          ksail --version
 
       - name: 🔐 Create SOPS Age key
         env:
