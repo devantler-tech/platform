@@ -12,6 +12,11 @@ spec:
   url: oci://ghcr.io/devantler-tech/wedding-app/manifests
   secretRef:
     name: ghcr-auth
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-app\.yaml@.+$'
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
