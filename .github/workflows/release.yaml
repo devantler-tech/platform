@@ -16,4 +16,4 @@ jobs:
       pull-requests: write # comment on related PRs
       id-token: write # provenance signing
     secrets:
-      app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
