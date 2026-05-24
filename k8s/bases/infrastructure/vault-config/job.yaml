@@ -319,6 +319,9 @@ spec:
               path "secret/data/infrastructure/oidc/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/data/infrastructure/git/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/data/apps/fleetdm/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -344,6 +347,9 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/infrastructure/oidc/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/git/*" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/fleetdm/*" {
