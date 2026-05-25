@@ -21,7 +21,7 @@ spec:
   chart:
     spec:
       chart: opencost
-      version: 2.5.14
+      version: 2.5.18
       sourceRef:
         kind: HelmRepository
         name: opencost
