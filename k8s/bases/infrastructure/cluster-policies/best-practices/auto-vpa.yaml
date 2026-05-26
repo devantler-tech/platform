@@ -47,7 +47,7 @@ spec:
                   controlledValues: RequestsOnly
                   minAllowed:
                     cpu: "50m"
-                    memory: "128Mi"
+                    memory: "64Mi"
     - name: generate-vpa-for-statefulset
       match:
         resources:
@@ -85,7 +85,7 @@ spec:
                   controlledValues: RequestsOnly
                   minAllowed:
                     cpu: "50m"
-                    memory: "128Mi"
+                    memory: "64Mi"
     - name: generate-vpa-for-daemonset
       match:
         resources:
@@ -117,4 +117,4 @@ spec:
                   controlledValues: RequestsOnly
                   minAllowed:
                     cpu: "50m"
-                    memory: "128Mi"
+                    memory: "64Mi"
