@@ -18,7 +18,12 @@ data:
   # --- Critical controllers (2 replicas for HA during VPA evictions) ---
   # With VPA updateMode=InPlaceOrRecreate, single-replica services get 502s
   # during eviction. User-facing auth and admission webhooks need 2+ replicas.
-  cert_manager_replicas: "2"
+  # TEMP (stabilization): trimmed 2->1 to free worker memory+CPU so the Velero
+  # node-agent DaemonSet can schedule, unblocking infrastructure-controllers and
+  # letting the lowered auto-vpa floor reconcile. Restore to "2" once prod has
+  # headroom. cert-manager is a controller (not user-facing), so the brief
+  # single-replica window does not cause 502s.
+  cert_manager_replicas: "1"
   metrics_server_replicas: "2"
   vpa_admission_replicas: "2"
   keda_operator_replicas: "2"
@@ -95,5 +100,8 @@ data:
   openbao_replicas: "1"
   openbao_storage_size: 10Gi
   # --- External Secrets Operator ---
-  external_secrets_replicas: "2"
+  # TEMP (stabilization): trimmed 2->1 alongside cert_manager_replicas to break
+  # the reconciliation deadlock (see comment above). ESO is a controller (not
+  # user-facing); restore to "2" once prod has headroom.
+  external_secrets_replicas: "1"
 
