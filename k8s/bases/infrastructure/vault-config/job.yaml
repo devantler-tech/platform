@@ -279,20 +279,6 @@ spec:
               }
               POLICY
 
-              # Tenant-scoped policy: read (ExternalSecret) + write (PushSecret
-              # seed) limited to the tenant's own prefix. Attached ONLY to the
-              # tenant's own Vault role below — never to the shared
-              # external-secrets role — so a tenant can never reach infra or
-              # another tenant's secrets via the shared ClusterSecretStore.
-              bao policy write app-ascoachingogvaner - <<'POLICY'
-              path "secret/data/apps/ascoachingogvaner/*" {
-                capabilities = ["create", "update", "read"]
-              }
-              path "secret/metadata/apps/ascoachingogvaner/*" {
-                capabilities = ["create", "update", "read"]
-              }
-              POLICY
-
               bao policy write infra-oidc-readonly - <<'POLICY'
               path "secret/data/infrastructure/oidc/*" {
                 capabilities = ["read"]
@@ -385,20 +371,6 @@ spec:
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
                 policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,app-fleetdm-readonly,app-wedding-readonly,infra-oidc-readonly,vault-seed-write \
-                ttl=1h
-
-              # Per-tenant role for self-service tenants that manage their own
-              # OpenBao-backed secrets from their deploy artifact. Bound to the
-              # tenant's ServiceAccount and carrying ONLY the tenant-scoped
-              # policy, so each tenant is isolated to its own apps/<tenant>/*
-              # prefix — tenants never share a role or reach each other's (or
-              # infra) secrets. The tenant's namespaced SecretStore authenticates
-              # via this role (not the shared external-secrets role). Add one
-              # role + one app-<tenant> policy per self-service tenant.
-              bao write auth/kubernetes/role/ascoachingogvaner \
-                bound_service_account_names=ascoachingogvaner \
-                bound_service_account_namespaces=ascoachingogvaner \
-                policies=app-ascoachingogvaner \
                 ttl=1h
 
               # Snapshot CronJob needs health check read
