@@ -6,18 +6,6 @@ metadata:
 spec:
   patches:
     - target:
-        group: postgresql.cnpg.io
-        kind: Cluster
-        name: ascoaching-db
-      patch: |
-        apiVersion: postgresql.cnpg.io/v1
-        kind: Cluster
-        metadata:
-          name: ascoaching-db
-        spec:
-          storage:
-            storageClass: longhorn
-    - target:
         kind: HTTPRoute
         name: ascoachingogvaner
       patch: |
