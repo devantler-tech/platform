@@ -4,12 +4,12 @@ on:
   push:
     branches: [main]
 
-permissions: {}
+permissions:
+  contents: read
+  issues: write
 
 jobs:
   todos:
     uses: devantler-tech/reusable-workflows/.github/workflows/scan-for-todo-comments.yaml@41924797ae44fd5cc674e0914db55712da18e68f # v3.2.0
-    permissions:
-      issues: write # create/update TODO issues
     secrets:
-      app-private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
