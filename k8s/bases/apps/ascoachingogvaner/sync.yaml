@@ -8,7 +8,7 @@ metadata:
 spec:
   interval: 1m
   ref:
-    tag: 1.0.1 # {"$imagepolicy": "ascoachingogvaner:ascoachingogvaner:tag"}
+    tag: 1.1.0 # {"$imagepolicy": "ascoachingogvaner:ascoachingogvaner:tag"}
   url: oci://ghcr.io/devantler-tech/ascoachingogvaner/manifests
   secretRef:
     name: ghcr-auth
