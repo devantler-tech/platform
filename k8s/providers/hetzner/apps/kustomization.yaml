@@ -3,7 +3,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/apps/
-  - image-automation/
 patches:
   - target:
       group: kustomize.toolkit.fluxcd.io

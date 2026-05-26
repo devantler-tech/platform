@@ -6,5 +6,4 @@ resources:
   - rolebinding.yaml
   - serviceaccount.yaml
   - sync.yaml
-  - image-policy.yaml
   - networkpolicy.yaml
