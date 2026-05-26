@@ -13,36 +13,7 @@ spec:
         - ports:
             - port: "3000"
               protocol: TCP
-    # Intra-namespace (app → db, db replication)
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: ascoachingogvaner
-    # CNPG operator needs to reach DB status endpoint (port 8000)
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: cnpg-system
-      toPorts:
-        - ports:
-            - port: "8000"
-              protocol: TCP
-            - port: "5432"
-              protocol: TCP
-    # Metrics scraping from monitoring namespace
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
-      toPorts:
-        - ports:
-            - port: "9187"
-              protocol: TCP
   egress:
-    # Intra-namespace (app → db)
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: ascoachingogvaner
-    # Kube API (for CNPG operator managing the cluster)
-    - toEntities:
-        - kube-apiserver
     # DNS resolution
     - toEndpoints:
         - matchLabels:

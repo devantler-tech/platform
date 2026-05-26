@@ -5,18 +5,10 @@ metadata:
   namespace: ascoachingogvaner
 spec:
   patches:
-    - target:
-        group: postgresql.cnpg.io
-        kind: Cluster
-        name: ascoaching-db
-      patch: |
-        apiVersion: postgresql.cnpg.io/v1
-        kind: Cluster
-        metadata:
-          name: ascoaching-db
-        spec:
-          storage:
-            storageClass: longhorn
+    # The static ascoachingogvaner app no longer ships a CNPG Cluster (it was
+    # removed in the static-site conversion, ascoachingogvaner v1.1.0), so the
+    # former Cluster/ascoaching-db storageClass patch is gone — patching a
+    # non-existent target fails the kustomize build.
     - target:
         kind: HTTPRoute
         name: ascoachingogvaner
