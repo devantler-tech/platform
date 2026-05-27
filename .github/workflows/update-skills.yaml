@@ -15,6 +15,12 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: devantler-tech/reusable-workflows/.github/workflows/update-copilot-skills.yaml@e173ff69586caa379a77782b947f1b47166f922e # v1.39.0+ (post skills-lock refactor)
+    uses: devantler-tech/reusable-workflows/.github/workflows/update-copilot-skills.yaml@e173ff69586caa379a77782b947f1b47166f922e # v4.0.1
     with:
       dir: .agents/skills
+      # Create the update PR with a GitHub App token so it triggers this
+      # repo's required CI (a PR opened with GITHUB_TOKEN does not), instead
+      # of landing permanently blocked on missing required checks.
+      use-app-token: true
+    secrets:
+      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
