@@ -80,10 +80,14 @@ runs:
         echo "::endgroup::"
 
         if [ "${count}" -gt 0 ]; then
-          summary=$(printf '%s' "${new_warnings}" | jq -r 'group_by(.reason) | map("\(length)× \(.[0].reason)") | join(", ")')
+          # Per-reason occurrence totals: sum .count rather than count event
+          # objects, since one crash-looping pod is a single Event with
+          # count=N. jq's group_by sorts its input internally, so the timestamp
+          # ordering of new_warnings never splits a reason across groups.
+          summary=$(printf '%s' "${new_warnings}" | jq -r 'group_by(.reason) | map("\(.[0].reason) ×\(map(.count) | add)") | join(", ")')
           if [ "${FAIL_ON_WARNING}" = "true" ]; then
-            echo "::error title=New event warnings after deploy::${count} Warning event(s) still firing at steady state: ${summary}. See the 'Check for new event warnings' step log."
+            echo "::error title=New event warnings after deploy::${count} distinct Warning event(s) still firing at steady state (by reason, ×=occurrences): ${summary}. See the 'Check for new event warnings' step log."
             exit 1
           fi
-          echo "::warning title=New event warnings after deploy::${count} Warning event(s) still firing at steady state: ${summary}. (report-only)"
+          echo "::warning title=New event warnings after deploy::${count} distinct Warning event(s) still firing at steady state (by reason, ×=occurrences): ${summary}. (report-only)"
         fi
