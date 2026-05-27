@@ -84,16 +84,13 @@ which mint ephemeral users the app would have to re-fetch.
 
 ### Risks & rollback
 
-- **DECISIVE OPEN QUESTION (gates implementation): does the `VaultDynamicSecret`
-  generator re-read on each ExternalSecret refresh, or cache via `GeneratorState`?**
-  ESO's PushSecret + Password generator is known (from v2.5.0 source) to *cache*
-  generator output via a persisted `GeneratorState`. If the read-generator caches
-  the same way, rotation **silently fails**: OpenBao rotates the DB password but
-  fleet keeps the stale one and loses DB access at the first rotation — a latent
-  time-bomb that **CI cannot catch** (the system test never waits a
-  `rotation_period`). This MUST be validated on a local cluster by **forcing a
-  rotation** (`bao write -f database/rotate-role/fleet`) and confirming the
-  ExternalSecret/Secret pick up the new password — before this ships to prod.
+- **Re-read behavior — VALIDATED (2026-05-27, isolated kind spike, ESO v2.5.0).**
+  Unlike the PushSecret + Password generator (which *caches* via `GeneratorState`,
+  per v2.5.0 source), the **`VaultDynamicSecret` generator re-reads on every
+  ExternalSecret refresh**: changing the source value propagated to the synced
+  Secret within one refresh cycle (~10s). So rotation **does** propagate — when
+  OpenBao rotates the static-role password, the generator re-reads it and ESO
+  updates the consumer Secret. No silent-rotation time-bomb.
 - **Post-rotation window**: fleet reads its password once at startup, so after
   every rotation there is a brief window (≈ ExternalSecret refreshInterval +
   pod restart) where existing/new DB connections use the stale password and fail
