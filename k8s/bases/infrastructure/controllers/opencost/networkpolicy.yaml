@@ -16,6 +16,18 @@ spec:
               protocol: TCP
             - port: "9090"
               protocol: TCP
+    # Headlamp's OpenCost plugin queries the cost API/UI through the
+    # kube-apiserver service proxy (/api/v1/namespaces/opencost/services/
+    # opencost:http-ui/proxy/...), so the request reaches OpenCost from the
+    # kube-apiserver (hostNetwork on control plane nodes).
+    - fromEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "9003"
+              protocol: TCP
+            - port: "9090"
+              protocol: TCP
   egress:
     # Kube API
     - toEntities:
