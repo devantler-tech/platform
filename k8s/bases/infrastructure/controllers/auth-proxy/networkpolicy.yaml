@@ -37,6 +37,26 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
+    # Observability UIs: Grafana (3000), Prometheus (9090), Alertmanager (9093).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+            - port: "9090"
+              protocol: TCP
+            - port: "9093"
+              protocol: TCP
+    # OpenCost UI upstream.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: opencost
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:

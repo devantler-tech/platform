@@ -26,6 +26,22 @@ data:
           rule: "Host(`hubble.${domain}`)"
           entryPoints: ["web"]
           service: hubble-ui
+        grafana:
+          rule: "Host(`grafana.${domain}`)"
+          entryPoints: ["web"]
+          service: grafana
+        prometheus:
+          rule: "Host(`prometheus.${domain}`)"
+          entryPoints: ["web"]
+          service: prometheus
+        alertmanager:
+          rule: "Host(`alertmanager.${domain}`)"
+          entryPoints: ["web"]
+          service: alertmanager
+        opencost:
+          rule: "Host(`opencost.${domain}`)"
+          entryPoints: ["web"]
+          service: opencost
       services:
         homepage:
           loadBalancer:
@@ -35,3 +51,19 @@ data:
           loadBalancer:
             servers:
               - url: "http://keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local:8080"
+        grafana:
+          loadBalancer:
+            servers:
+              - url: "http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local:80"
+        prometheus:
+          loadBalancer:
+            servers:
+              - url: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
+        alertmanager:
+          loadBalancer:
+            servers:
+              - url: "http://kube-prometheus-stack-alertmanager.monitoring.svc.cluster.local:9093"
+        opencost:
+          loadBalancer:
+            servers:
+              - url: "http://opencost.opencost.svc.cluster.local:9090"

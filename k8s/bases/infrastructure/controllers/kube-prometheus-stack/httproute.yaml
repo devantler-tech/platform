@@ -1,0 +1,95 @@
+# Expose Grafana, Prometheus and Alertmanager behind oauth2-proxy SSO.
+# Each route backends to the oauth2-proxy service (not the app); after
+# authentication oauth2-proxy forwards to auth-proxy, which routes by Host
+# to the in-cluster service (see auth-proxy config-map.yaml). The same
+# pattern the homepage/hubble UIs use.
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: grafana
+  namespace: monitoring
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Grafana
+    gethomepage.dev/description: Metrics dashboards and log exploration.
+    gethomepage.dev/group: Observability
+    gethomepage.dev/icon: grafana.png
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - grafana.${domain}
+  rules:
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://grafana.${domain}/
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: prometheus
+  namespace: monitoring
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Prometheus
+    gethomepage.dev/description: Metrics, targets and alert rules.
+    gethomepage.dev/group: Observability
+    gethomepage.dev/icon: prometheus.png
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - prometheus.${domain}
+  rules:
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://prometheus.${domain}/
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: alertmanager
+  namespace: monitoring
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Alertmanager
+    gethomepage.dev/description: Active alerts, silences and routing.
+    gethomepage.dev/group: Observability
+    gethomepage.dev/icon: alertmanager.png
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - alertmanager.${domain}
+  rules:
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://alertmanager.${domain}/
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80

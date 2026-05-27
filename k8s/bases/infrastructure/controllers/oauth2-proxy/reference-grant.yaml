@@ -15,6 +15,12 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: kube-system
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: monitoring
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: opencost
   to:
     - group: ""
       kind: Service

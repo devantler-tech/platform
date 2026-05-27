@@ -16,6 +16,14 @@ spec:
               protocol: TCP
             - port: "9090"
               protocol: TCP
+    # auth-proxy (oauth2-proxy SSO) reaches the OpenCost UI after authentication.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
   egress:
     # Kube API
     - toEntities:

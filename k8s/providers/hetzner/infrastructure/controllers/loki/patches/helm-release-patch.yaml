@@ -1,0 +1,17 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: loki
+  namespace: monitoring
+spec:
+  values:
+    singleBinary:
+      # Persist the log store on Hetzner Cloud block storage so a restart
+      # or VPA eviction doesn't drop the 7-day window. Velero's daily
+      # backup of the monitoring namespace ships this volume to R2. The
+      # base leaves persistence off (emptyDir) for local/CI.
+      persistence:
+        enabled: true
+        storageClass: hcloud
+        size: 10Gi

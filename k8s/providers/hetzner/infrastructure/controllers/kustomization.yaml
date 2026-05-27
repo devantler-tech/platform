@@ -14,3 +14,5 @@ resources:
 patches:
   - path: flux-operator/patches/helm-release-patch.yaml
   - path: openbao/patches/helm-release-patch.yaml
+  - path: kube-prometheus-stack/patches/helm-release-patch.yaml
+  - path: loki/patches/helm-release-patch.yaml

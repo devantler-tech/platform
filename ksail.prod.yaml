@@ -50,7 +50,15 @@ spec:
     # Longhorn requires dedicated Hetzner Cloud Volumes on static
     # workers; autoscaler-created nodes are compute-only.
     # The Cluster Autoscaler manages additional workers dynamically.
-    workers: 3
+    #
+    # Bumped 3 -> 4 to host the always-on observability tier (Grafana,
+    # Loki, the persistent Prometheus/Alertmanager StatefulSets). These
+    # are steady-state, not bursty, so they belong on guaranteed static
+    # capacity rather than autoscaler nodes the autoscaler reclaims after
+    # scaleDownUnneededTime. The 4th worker auto-joins Longhorn via the
+    # uniform worker node-label (talos/workers/node-labels.yaml);
+    # longhorn_replica_count stays 3 (replicas spread across 3 of 4).
+    workers: 4
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
