@@ -57,12 +57,19 @@ which mint ephemeral users the app would have to re-fetch.
    - Create static role `fleet`: `username=fleet`, `rotation_period=720h` (30d).
      **Target the app user, never root** (OpenBao does not distinguish root when
      rotating).
-2. **Consume the rotated credential**: replace the `mysql` `ExternalSecret`'s
-   `mysql-password` source from KV (`apps/fleetdm/mysql`) with
-   `database/static-creds/fleet` (password field). Keep `mysql-root-password` /
-   `mysql-replication-password` on KV for now (root rotation is out of scope).
-3. **Propagation**: ESO refresh + the existing Reloader annotation restart the
-   fleet pods when the password changes.
+2. **Consume the rotated credential** — *not* a plain `ExternalSecret`. ESO's
+   Vault provider supports **KV only** ("The KV Secrets Engine is the only one
+   supported by this provider"), so the database engine must be read via the
+   **`VaultDynamicSecret` generator** (`generators.external-secrets.io`). A
+   generator does a GET on `database/static-creds/fleet` and returns the `data`
+   map; an `ExternalSecret` consumes it via `dataFrom.sourceRef.generatorRef` and
+   maps the `password` field into the `mysql` Secret's `mysql-password` key. Keep
+   `mysql-root-password` / `mysql-replication-password` on KV (root rotation is
+   out of scope; never put root under a static role).
+3. **Propagation**: the ExternalSecret's `refreshInterval` re-reads the current
+   static cred; Reloader restarts the fleet pods when `mysql-password` changes.
+   Use a **short** refreshInterval (~1m) so the post-rotation window (below) is
+   small.
 
 ### Credential handover sequence
 
@@ -77,6 +84,21 @@ which mint ephemeral users the app would have to re-fetch.
 
 ### Risks & rollback
 
+- **DECISIVE OPEN QUESTION (gates implementation): does the `VaultDynamicSecret`
+  generator re-read on each ExternalSecret refresh, or cache via `GeneratorState`?**
+  ESO's PushSecret + Password generator is known (from v2.5.0 source) to *cache*
+  generator output via a persisted `GeneratorState`. If the read-generator caches
+  the same way, rotation **silently fails**: OpenBao rotates the DB password but
+  fleet keeps the stale one and loses DB access at the first rotation — a latent
+  time-bomb that **CI cannot catch** (the system test never waits a
+  `rotation_period`). This MUST be validated on a local cluster by **forcing a
+  rotation** (`bao write -f database/rotate-role/fleet`) and confirming the
+  ExternalSecret/Secret pick up the new password — before this ships to prod.
+- **Post-rotation window**: fleet reads its password once at startup, so after
+  every rotation there is a brief window (≈ ExternalSecret refreshInterval +
+  pod restart) where existing/new DB connections use the stale password and fail
+  until Reloader restarts fleet. Inherent to a non-Vault-native app; bounded by a
+  short refreshInterval + a long `rotation_period`. Acceptable for fleetdm.
 - **Risk**: a misconfigured connection/role rotates `fleet` to a value the
   `Secret` doesn't reflect → fleet API loses DB access. **Mitigation**: validate
   the full chain on the local Talos+Docker cluster (CI system test exercises DB
