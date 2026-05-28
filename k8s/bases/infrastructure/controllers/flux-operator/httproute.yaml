@@ -22,3 +22,9 @@ spec:
     - backendRefs:
         - name: flux-operator
           port: 9080
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
