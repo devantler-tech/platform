@@ -52,7 +52,23 @@ spec:
       cookieSecret: "${oauth2_proxy_cookie_secret}"
       configFile: |-
         provider = "github"
+        # Defence in depth: three independent GitHub gates.
+        #   github_org   — only members of devantler-tech can authenticate
+        #                  (mirrors the Dex connector gate used by kubectl)
+        #   github_team  — and only the platform team within that org
+        #   github_users — and on top of that, an explicit allowlist
+        # oauth2-proxy treats github_users as a bypass list (users in the
+        # list pass even if org/team check fails), so the most-restrictive
+        # check practically wins; if github_users is ever cleared the org
+        # + team gate still holds.
+        github_org = "devantler-tech"
+        github_team = "platform"
         github_users = ["devantler"]
+        # email_domains = ["*"] is intentional: GitHub OAuth does not
+        # always return a verified email (users with private emails
+        # surface as <id>+<login>@users.noreply.github.com or empty), so
+        # gating on email_domains would lock out legitimate accounts that
+        # already passed the org/team/users checks above.
         email_domains = [ "*" ]
         cookie_domains=[".${domain}"]
         whitelist_domains = ["${domain}", ".${domain}"]
