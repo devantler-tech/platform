@@ -7,6 +7,8 @@ specific layers it references.
 | Document                                       | Layer                |
 | ---------------------------------------------- | -------------------- |
 | [runbook.md](./runbook.md)                     | Procedure            |
+| [crypto-custody.md](./crypto-custody.md)       | Cryptographic roots  |
+| [openbao.md](./openbao.md)                     | Secret store         |
 | [velero-cnpg.md](./velero-cnpg.md)             | Apps + PVs           |
 | [alerting.md](./alerting.md)                   | Detection            |
 | [restore-drill.md](./restore-drill.md)         | CI verification      |
