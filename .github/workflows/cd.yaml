@@ -141,18 +141,24 @@ jobs:
           # COSIGN_EXPERIMENTAL was retired in cosign 2.x; keyless is now
           # the default when --key is omitted.
           COSIGN_YES: "true"
+          # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
+          COSIGN_VERSION: "2.5.0"
+          # SHA256 of cosign-linux-amd64 for the version above.
+          # Update alongside COSIGN_VERSION (Renovate bumps the version
+          # only; the digest must follow in the same PR — intentional).
+          COSIGN_SHA256: "1f6c194dd0891eb345b436bb71ff9f996768355f5e0ce02dde88567029ac2188"
         run: |
           set -euo pipefail
-          # Pinned via env so Renovate's custom regex manager can bump it.
-          # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
-          COSIGN_VERSION="2.5.0"
           curl -fsSL \
             "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
             -o /tmp/cosign
-          sha=$(sha256sum /tmp/cosign | cut -d' ' -f1)
-          echo "cosign-linux-amd64 sha256: ${sha}"
+          # Verify the binary BEFORE installing as root. Without this,
+          # a compromised release asset would land on the runner under
+          # /usr/local/bin and run as part of the signing chain.
+          echo "${COSIGN_SHA256}  /tmp/cosign" | sha256sum -c -
           chmod +x /tmp/cosign
           sudo install /tmp/cosign /usr/local/bin/cosign
+          rm /tmp/cosign
           cosign version
           # Login to GHCR so cosign can resolve and sign the manifest pushed
           # in the previous step. The signature is uploaded back to GHCR
@@ -178,18 +184,27 @@ jobs:
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           GITHUB_ACTOR: ${{ github.actor }}
+          # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
+          SYFT_VERSION: "1.20.0"
+          # SHA256 of syft_<ver>_linux_amd64.tar.gz for the version above.
+          SYFT_SHA256: "689e12c5cbf67521ce61b9c126068f9eaabe1223e77971b2fede50033ff6b5cc"
+          # Indirected through env to keep the template expansion out
+          # of the shell script body (zizmor: code-injection via
+          # template-expansion).
+          OCI_DIGEST: ${{ steps.cosign-sign.outputs.digest }}
         run: |
           set -euo pipefail
-          # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-          SYFT_VERSION="1.20.0"
           curl -fsSL \
             "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
-            | sudo tar -xz -C /usr/local/bin syft
+            -o /tmp/syft.tar.gz
+          echo "${SYFT_SHA256}  /tmp/syft.tar.gz" | sha256sum -c -
+          sudo tar -xzf /tmp/syft.tar.gz -C /usr/local/bin syft
+          rm /tmp/syft.tar.gz
           syft version
           # Auth so syft can pull the OCI manifest descriptor + layers.
           echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           syft scan --output cyclonedx-json=sbom.cdx.json \
-            "ghcr.io/devantler-tech/platform/manifests@${{ steps.cosign-sign.outputs.digest }}"
+            "ghcr.io/devantler-tech/platform/manifests@${OCI_DIGEST}"
           # Sanity: SBOM file should be non-empty and parseable JSON.
           test -s sbom.cdx.json
           jq -e '.bomFormat == "CycloneDX"' sbom.cdx.json >/dev/null
