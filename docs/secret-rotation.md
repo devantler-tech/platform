@@ -9,30 +9,31 @@ ships as its own reviewed PR.
 - **OpenBao = KV v2 + Kubernetes auth only** (configured by the `vault-config`
   Job). No Database secrets engine is enabled yet.
 - **Two sourcing paths coexist (mid-migration):**
-  - **OpenBao → ESO**: generators (`vault-seed/generators.yaml`) seed OpenBao KV
+  - **OpenBao → ESO**: generators (`k8s/bases/infrastructure/vault-seed/generators.yaml`) seed OpenBao KV
     once; `ExternalSecret`s sync to consumer namespaces (1h refresh). Used by
     fleetdm DB/redis/license, headlamp/actual-budget OIDC, cloudflare token, R2,
     alertmanager.
   - **SOPS → Flux postBuild substitution**: `${dex_client_secret}`,
     `${flux_web_client_secret}`, `${oauth2_proxy_cookie_secret}` etc. are still
-    read from `clusters/*/variables/variables-cluster-secret.enc.yaml`. **Dex
+    read from `k8s/clusters/*/variables/variables-cluster-secret.enc.yaml`. **Dex
     (the OIDC provider) and oauth2-proxy read from here, not OpenBao.**
 
 ### Validated finding — `refreshInterval` does **not** rotate generators
 
-The `push-generated-secrets.yaml` PushSecrets use `refreshInterval: "0"`, and the
-comment implies a non-zero value would rotate. **It would not.** ESO **v2.5.0**'s
-PushSecret reconciler persists a `GeneratorState` (statemanager) and reuses the
-prior state, keeping generator output **stable** across reconciles. Empirically:
-generated values have been unchanged for days and there are no live
-`GeneratorState` instances. **Conclusion: rotation needs an explicit mechanism,
-not a config flip.**
+The `k8s/bases/infrastructure/vault-seed/push-generated-secrets.yaml` PushSecrets
+use `refreshInterval: "0"`, and the comment implies a non-zero value would rotate.
+**It would not.** ESO **v2.5.0**'s
+[PushSecret reconciler](https://github.com/external-secrets/external-secrets/blob/v2.5.0/pkg/controllers/pushsecret/pushsecret_controller.go)
+persists a `GeneratorState` (statemanager) and reuses the prior state, keeping
+generator output **stable** across reconciles. Empirically: generated values have
+been unchanged for days and there are no live `GeneratorState` instances.
+**Conclusion: rotation needs an explicit mechanism, not a config flip.**
 
 ## Feasibility by secret class
 
 | Class | Secrets | OpenBao-native fit | Plan |
 | --- | --- | --- | --- |
-| **Database creds** | fleetdm MySQL `fleet` user, Valkey | ✅ **Database engine, static roles** | Phase 1–2 below |
+| **Database creds** | fleetdm MySQL `fleet` user, Redis | ✅ **Database engine, static roles** | Phase 1–2 below |
 | **Internal random** | oauth2-proxy cookie secret | ❌ no native engine | Migrate consumer to OpenBao, rotate via scheduled Job; no shared party → only forces re-login |
 | **Shared OIDC** | `dex_client_secret`, `flux_web_client_secret` | ❌ no native engine | Unify Dex + clients on OpenBao first; coordinated rotation (short consumer refresh) to avoid auth-mismatch skew |
 | **Provider tokens** | cloudflare, hcloud, github, R2 | ❌ external system-of-record | Scheduled job calling provider API → write OpenBao; mostly out of scope |
@@ -41,10 +42,10 @@ not a config flip.**
 ## OpenBao-native rotation (chosen mechanism)
 
 OpenBao's **Database secrets engine** supports **static roles** for MySQL/MariaDB
-and Valkey: OpenBao stores and **automatically rotates the password of an
-existing database user** on a `rotation_period`. This fits apps that read a
-credential from a `Secret` at startup (like fleetdm) — unlike *dynamic* roles,
-which mint ephemeral users the app would have to re-fetch.
+and Redis (via the Valkey-compatible plugin): OpenBao stores and **automatically
+rotates the password of an existing database user** on a `rotation_period`. This
+fits apps that read a credential from a `Secret` at startup (like fleetdm) —
+unlike *dynamic* roles, which mint ephemeral users the app would have to re-fetch.
 
 ### Phase 1 — fleetdm MySQL `fleet` user
 
@@ -58,8 +59,10 @@ which mint ephemeral users the app would have to re-fetch.
      **Target the app user, never root** (OpenBao does not distinguish root when
      rotating).
 2. **Consume the rotated credential** — *not* a plain `ExternalSecret`. ESO's
-   Vault provider supports **KV only** ("The KV Secrets Engine is the only one
-   supported by this provider"), so the database engine must be read via the
+   Vault provider supports **KV only**
+   ([docs](https://external-secrets.io/latest/provider/hashicorp-vault/): *"The
+   KV Secrets Engine is the only one supported by this provider"*), so the
+   database engine must be read via the
    **`VaultDynamicSecret` generator** (`generators.external-secrets.io`). A
    generator does a GET on `database/static-creds/fleet` and returns the `data`
    map; an `ExternalSecret` consumes it via `dataFrom.sourceRef.generatorRef` and
@@ -107,14 +110,15 @@ which mint ephemeral users the app would have to re-fetch.
 
 ### Validation
 
-- `kubectl kustomize k8s/clusters/{local,prod}/` build; `ksail workload validate`.
+- `kubectl kustomize k8s/clusters/local/` and `kubectl kustomize k8s/clusters/prod/`
+  both build; `ksail workload validate` and `ksail --config ksail.prod.yaml workload validate`.
 - CI's full local-cluster system test must bring fleetdm up healthy with creds
   sourced from `database/static-creds/fleet`.
 
-### Phase 2 — fleetdm Valkey
+### Phase 2 — fleetdm Redis
 
-Same pattern using the Valkey database plugin and a static role for the redis
-user, once Phase 1 is proven.
+Same pattern using OpenBao's Valkey-compatible plugin (Redis-protocol) and a
+static role for the redis user, once Phase 1 is proven.
 
 ## Non-database secrets (not OpenBao-native)
 
@@ -133,6 +137,6 @@ user, once Phase 1 is proven.
 ## Rollout order
 
 1. Phase 1 — fleetdm MySQL static-role rotation (this design's flagship).
-2. Phase 2 — fleetdm Valkey static-role rotation.
+2. Phase 2 — fleetdm Redis static-role rotation.
 3. oauth2-proxy cookie secret migration + scheduled rotation.
 4. Later — OIDC coordination; provider-token jobs; root-secret runbook.
