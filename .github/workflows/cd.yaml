@@ -142,6 +142,41 @@ jobs:
         with:
           cosign-release: 'v${{ env.COSIGN_VERSION }}'
 
+      - name: 🔐 Configure GHCR auth (cosign + buildx + syft)
+        # Pre-create ~/.docker/config.json instead of `cosign login` /
+        # `docker login` so neither emits the "credentials stored
+        # unencrypted in '/home/runner/.docker/config.json'" warning every
+        # run. The on-disk format is byte-identical to what those CLI
+        # commands would have written (base64 of "actor:token") -- the
+        # warning is cosmetic noise on an ephemeral runner that's destroyed
+        # after the job. Writing the auth here once also lets us drop the
+        # per-tool login commands from the steps below: cosign, docker
+        # buildx imagetools, and syft (via anchore/sbom-action) all resolve
+        # GHCR credentials through the standard OCI keychain, which reads
+        # this same file.
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.docker
+          # Build the auth blob in a command substitution so it never
+          # reaches stdout.
+          AUTH=$(printf '%s:%s' "${GITHUB_ACTOR}" "${GHCR_TOKEN}" | base64 -w0)
+          # Register the derived value as a workflow mask so any future
+          # accidental log output (e.g. from a `set -x` added during
+          # debugging) is redacted -- GitHub's automatic secret masking
+          # only matches the raw GHCR_TOKEN literal, not the base64 of
+          # "actor:token" derived from it.
+          echo "::add-mask::${AUTH}"
+          # jq is preinstalled on ubuntu-latest; --arg avoids any shell
+          # quoting issue if the token ever contains a JSON-special char.
+          jq -n --arg auth "${AUTH}" \
+            '{auths: {"ghcr.io": {auth: $auth}}}' \
+            > ~/.docker/config.json
+          chmod 600 ~/.docker/config.json
+
       - name: 🖋️ Sign OCI manifest with cosign (keyless)
         # Signs the platform OCI artifact published by `ksail workload push`
         # using Sigstore keyless signing: Fulcio mints a short-lived cert
@@ -151,17 +186,13 @@ jobs:
         # verifier's matchOIDCIdentity regex (planned for a follow-up).
         id: cosign-sign
         env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           # COSIGN_EXPERIMENTAL was retired in cosign 2.x; keyless is now
-          # the default when --key is omitted.
+          # the default when --key is omitted. GHCR credentials come from
+          # ~/.docker/config.json populated by the "Configure GHCR auth"
+          # step above; cosign reads them through the OCI keychain.
           COSIGN_YES: "true"
         run: |
           set -euo pipefail
-          # Login to GHCR so cosign + docker can read/write the manifest
-          # pushed in the previous step. `cosign login` writes
-          # ~/.docker/config.json, which docker buildx imagetools also reads.
-          echo "${GHCR_TOKEN}" | cosign login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
           REF_TAG="ghcr.io/devantler-tech/platform/manifests:latest"
           # Resolve the tag → digest BEFORE signing so that (a) cosign signs
           # exactly the bytes we resolved -- no tag→digest TOCTOU if a
@@ -178,15 +209,6 @@ jobs:
           cosign sign --yes --recursive "${REF}"
           echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
           echo "ref=${REF_TAG}" >> "${GITHUB_OUTPUT}"
-
-      - name: 🔐 Login to GHCR (for syft)
-        # anchore/sbom-action shells out to syft to pull the OCI manifest's
-        # descriptor + layers. The action has no registry-credentials input,
-        # so docker login must run first — same pattern syft uses on its own.
-        env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-        run: echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
 
       - name: 📋 Generate SBOM (CycloneDX)
         # anchore/sbom-action is the official installer wrapper for syft —
