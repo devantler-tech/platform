@@ -29,7 +29,7 @@ spec:
   #
   # Lightweight FinOps cost allocation. Points at the existing
   # kube-prometheus-stack Prometheus and uses custom pricing derived from
-  # Hetzner Cloud CX33 rates (€0.0117/hr for 3 vCPU / 8 GB RAM).
+  # Hetzner Cloud CX33 rates (€6.49/month for 4 vCPU / 8 GB / 80 GB).
   values:
     opencost:
       prometheus:
@@ -39,32 +39,40 @@ spec:
           enabled: true
           url: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
 
-      # Hetzner Cloud custom pricing — CX33 rates decomposed into
-      # per-resource-unit USD costs (EUR/USD ≈ 1.09).
-      # CX33: €0.0117/hr → $0.01275/hr → $9.31/month per server, 50/50 CPU-RAM split.
+      # Hetzner Cloud custom pricing — CX33 monthly cap decomposed into
+      # per-resource-unit USD costs. CX33 spec verified live with
+      # `kubectl get nodes`: 4 vCPU, 7916176 KiB RAM (8 GB nominal), 80 GB NVMe.
+      # Price source: Hetzner price-adjustment doc, effective 2026-04-01:
+      #   https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/
+      #   CX33 cap = €6.49 / server / month  → $7.01 at EUR/USD ≈ 1.08
+      #   Volumes = €0.0572 / GB / month     → $0.0618 / GB / month
       #
       # IMPORTANT: OpenCost interprets CPU / spotCPU / RAM / spotRAM / GPU / storage
       # in the costModel ConfigMap as USD PER MONTH and divides by HoursPerMonth=730
       # to get an hourly rate (opencost providerconfig.go:188, customprovider.go:95).
       # Network egress fields are passed through as-is (USD per GB transferred).
-      # Per-server monthly: $9.31 / 2 = $4.655 each for CPU and RAM.
-      #   CPU: $4.655 / 3 vCPU ≈ $1.5517 / vCPU-month
-      #   RAM: $4.655 / 8 GB   ≈ $0.5819 / GB-month
-      #   storage: Hetzner Cloud Volume ≈ €0.044/GB-month → ≈ $0.048 / GB-month
-      # https://www.hetzner.com/cloud#pricing
+      #
+      # 50/50 CPU-RAM split of the $7.01/server/month server cost (Hetzner does
+      # not publish a CPU/RAM breakdown — this is an allocation convention):
+      #   CPU: $7.01 × 0.5 / 4 vCPU ≈ $0.876 / vCPU-month
+      #   RAM: $7.01 × 0.5 / 8 GB   ≈ $0.438 / GB-month
+      #
+      # End-to-end sanity check (1 vCPU for 1 hour):
+      #   ConfigMap CPU = 0.876 → OpenCost / 730 = $0.00120 / vCPU-hour
+      #   Real cost     = (€6.49 × 0.5 / 4 vCPU / 730 hr) × 1.08 = $0.00120 / vCPU-hour ✓
       # https://www.opencost.io/docs/configuration/on-prem#custom-pricing-using-the-opencost-helm-chart
       customPricing:
         enabled: true
         createConfigmap: true
         provider: custom
         costModel:
-          description: "Hetzner Cloud CX33 — 3 vCPU / 8 GB / 80 GB NVMe (50/50 CPU-RAM split, USD/month)"
-          CPU: 1.5517
+          description: "Hetzner Cloud CX33 — 4 vCPU / 8 GB / 80 GB NVMe (50/50 CPU-RAM split, USD/month)"
+          CPU: 0.876
           spotCPU: 0
-          RAM: 0.5819
+          RAM: 0.438
           spotRAM: 0
           GPU: 0
-          storage: 0.048
+          storage: 0.0618
           # Egress: passed through as USD per GB transferred; CX33 includes
           # 20 TB/month free, overage ≈ $0.001/GB on Hetzner Cloud.
           zoneNetworkEgress: 0.001
