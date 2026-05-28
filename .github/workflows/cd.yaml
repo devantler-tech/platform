@@ -128,6 +128,20 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
+      - name: ⚙️ Install cosign
+        # sigstore/cosign-installer is the official installer action — it
+        # downloads cosign for the requested release and verifies its own
+        # Sigstore signature against Fulcio + Rekor (keyless), so there is
+        # no per-version SHA256 to track in this repo. Bump cosign by
+        # editing COSIGN_VERSION below; Renovate proposes the bump via the
+        # custom regex manager in .github/renovate.json.
+        env:
+          # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
+          COSIGN_VERSION: "3.0.6"
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v${{ env.COSIGN_VERSION }}'
+
       - name: 🖋️ Sign OCI manifest with cosign (keyless)
         # Signs the platform OCI artifact published by `ksail workload push`
         # using Sigstore keyless signing: Fulcio mints a short-lived cert
@@ -135,31 +149,15 @@ jobs:
         # signature in its append-only transparency log. There is no
         # private key on disk -- the security policy lives in the
         # verifier's matchOIDCIdentity regex (planned for a follow-up).
+        id: cosign-sign
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           # COSIGN_EXPERIMENTAL was retired in cosign 2.x; keyless is now
           # the default when --key is omitted.
           COSIGN_YES: "true"
-          # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
-          COSIGN_VERSION: "3.0.6"
-          # SHA256 of cosign-linux-amd64 for the version above.
-          # Update alongside COSIGN_VERSION (Renovate bumps the version
-          # only; the digest must follow in the same PR — intentional).
-          COSIGN_SHA256: "c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74"
         run: |
           set -euo pipefail
-          curl -fsSL \
-            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
-            -o /tmp/cosign
-          # Verify the binary BEFORE installing as root. Without this,
-          # a compromised release asset would land on the runner under
-          # /usr/local/bin and run as part of the signing chain.
-          echo "${COSIGN_SHA256}  /tmp/cosign" | sha256sum -c -
-          chmod +x /tmp/cosign
-          sudo install /tmp/cosign /usr/local/bin/cosign
-          rm /tmp/cosign
-          cosign version
           # Login to GHCR so cosign can resolve and sign the manifest pushed
           # in the previous step. The signature is uploaded back to GHCR
           # alongside the artifact.
@@ -175,39 +173,34 @@ jobs:
           DIGEST=$(cosign manifest digest "${REF}")
           echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
           echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
-        id: cosign-sign
+
+      - name: 🔐 Login to GHCR (for syft)
+        # anchore/sbom-action shells out to syft to pull the OCI manifest's
+        # descriptor + layers. The action has no registry-credentials input,
+        # so docker login must run first — same pattern syft uses on its own.
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
 
       - name: 📋 Generate SBOM (CycloneDX)
-        # Uses syft to enumerate every package/binary in the OCI manifest
-        # artifact published in the previous step. Output is CycloneDX
-        # JSON, which is the format attest-sbom expects.
+        # anchore/sbom-action is the official installer wrapper for syft —
+        # it manages syft's binary integrity itself, so no per-version
+        # SHA256 to track here either. Bump syft by editing SYFT_VERSION
+        # below; Renovate proposes the bump via the custom regex manager.
+        # Output is CycloneDX JSON, which is the format attest-sbom expects.
+        # `upload-artifact: false` matches today's behaviour (no workflow
+        # artifact); the SBOM is attested to the registry in the next step.
         env:
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          GITHUB_ACTOR: ${{ github.actor }}
           # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
           SYFT_VERSION: "1.44.0"
-          # SHA256 of syft_<ver>_linux_amd64.tar.gz for the version above.
-          SYFT_SHA256: "0e91737aee2b5baf1d255b959630194a302335d848ff97bb07921eb6205b5f5a"
-          # Indirected through env to keep the template expansion out
-          # of the shell script body (zizmor: code-injection via
-          # template-expansion).
-          OCI_DIGEST: ${{ steps.cosign-sign.outputs.digest }}
-        run: |
-          set -euo pipefail
-          curl -fsSL \
-            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
-            -o /tmp/syft.tar.gz
-          echo "${SYFT_SHA256}  /tmp/syft.tar.gz" | sha256sum -c -
-          sudo tar -xzf /tmp/syft.tar.gz -C /usr/local/bin syft
-          rm /tmp/syft.tar.gz
-          syft version
-          # Auth so syft can pull the OCI manifest descriptor + layers.
-          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          syft scan --output cyclonedx-json=sbom.cdx.json \
-            "ghcr.io/devantler-tech/platform/manifests@${OCI_DIGEST}"
-          # Sanity: SBOM file should be non-empty and parseable JSON.
-          test -s sbom.cdx.json
-          jq -e '.bomFormat == "CycloneDX"' sbom.cdx.json >/dev/null
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ghcr.io/devantler-tech/platform/manifests@${{ steps.cosign-sign.outputs.digest }}
+          format: cyclonedx-json
+          output-file: sbom.cdx.json
+          syft-version: 'v${{ env.SYFT_VERSION }}'
+          upload-artifact: false
 
       - name: 🪪 Attest SBOM (Sigstore via cosign keyless)
         # Records the SBOM as a Sigstore in-toto attestation against the
