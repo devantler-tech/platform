@@ -52,14 +52,17 @@ data:
   fleetdm_mysql_secondary_replicas: "0"
   fleetdm_redis_architecture: "standalone"
   fleetdm_redis_replicas: "0"
-  # Parked: deployment + KEDA target both at 0. To re-enable, set all three:
+  # Parked: HelmRelease starts at 0; KEDA holds it at 0 (min=0) but can spin up
+  # 1 pod on a stray HTTP hit (max=1) since KEDA HTTP rejects max=0 at the
+  # translated ScaledObject layer (MinReplicaCount=1 must be less than
+  # MaxReplicaCount=0). SQLite on RWO PVC requires max <= 1 even when re-enabled.
+  # To re-enable as actively-served, set:
   #   actual_budget_replicas: "1"
   #   actual_budget_replicas_min: "1"
   #   actual_budget_replicas_max: "1"
-  # (SQLite on RWO PVC requires max <= 1.)
   actual_budget_replicas: "0"
   actual_budget_replicas_min: "0"
-  actual_budget_replicas_max: "0"
+  actual_budget_replicas_max: "1"
   hubble_ui_replicas: "1"
   # Auth chain: 2 replicas for HA during VPA evictions (prevents 502s).
   dex_replicas: "2"
