@@ -30,10 +30,16 @@ spec:
         - ports:
             - port: "443"
               protocol: TCP
-    # DNS resolution. The `rules.dns: matchPattern: "*"` clause activates
-    # Cilium's L7 DNS proxy so the toFQDNs rule above can be enforced --
-    # without it Cilium has no way to map "api.cloudflare.com" to the
-    # set of IPs the resolver returns.
+    # DNS resolution. rules.dns activates Cilium's L7 DNS proxy so the
+    # toFQDNs rule above can be enforced. The visibility list is
+    # restricted to the names external-dns actually needs to resolve;
+    # any other DNS name is dropped at the proxy, closing off DNS
+    # tunneling exfil via TXT records or label-encoded subdomains:
+    #
+    #   - api.cloudflare.com         — the only external target
+    #   - *.cluster.local            — covers *.<ns>.svc.cluster.local
+    #                                   (kube-apiserver, kube-dns itself,
+    #                                   metrics scraping target)
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -46,4 +52,5 @@ spec:
               protocol: TCP
           rules:
             dns:
-              - matchPattern: "*"
+              - matchName: "api.cloudflare.com"
+              - matchPattern: "*.cluster.local"
