@@ -1,0 +1,29 @@
+# Gitleaks ignore list for historical findings that are known and accepted.
+# Each entry is a finding fingerprint: <commit>:<file>:<rule>:<line>.
+#
+# Do NOT add new entries here without explaining (a) why the finding is
+# acceptable and (b) whether the underlying secret has been rotated.
+
+# ---------------------------------------------------------------------------
+# kind cluster-issuer self-signed CA (2025-05-23 and 2025-05-30)
+# ---------------------------------------------------------------------------
+# These two commits embedded a 4096-bit RSA private key for a *self-signed*
+# CA used by cert-manager inside a now-removed `kind` (Kubernetes-in-Docker)
+# distribution. The CA was:
+#
+#   - never used in production — only in a local kind cluster on a developer
+#     laptop, never reachable from the public internet;
+#   - bound to localhost / *.platform.lan service names only — there is no
+#     way to convince a public client to trust it;
+#   - superseded when the kind distribution was removed; cert-manager now
+#     uses cert-manager.io/v1 self-signed issuers that mint per-resource
+#     keys at install time (k8s/bases/infrastructure/certificates/).
+#
+# Rewriting history to scrub these blobs would invalidate every existing
+# fork, PR reference, and clone of this repository for negligible security
+# benefit. The key is accepted as a permanent historical artifact.
+#
+08d02ccdacc6fb39320bb99a22f522a49273a1f5:k8s/distributions/kind/infrastructure/cluster-issuers/selfsigned-cluster-issuer.yaml:kubernetes-secret-yaml:10
+08d02ccdacc6fb39320bb99a22f522a49273a1f5:k8s/distributions/kind/infrastructure/cluster-issuers/selfsigned-cluster-issuer.yaml:private-key:16
+11d777560e78bfc1a2900e884ccae133e8a1e77b:k8s/distributions/kind/infrastructure/cluster-issuers/selfsigned-cluster-issuer.yaml:kubernetes-secret-yaml:10
+11d777560e78bfc1a2900e884ccae133e8a1e77b:k8s/distributions/kind/infrastructure/cluster-issuers/selfsigned-cluster-issuer.yaml:private-key:16

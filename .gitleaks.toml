@@ -1,0 +1,33 @@
+# Gitleaks configuration for devantler-tech/platform.
+#
+# Extends the upstream default ruleset and layers on a small allowlist for
+# known-public identifiers that gitleaks' generic rules mis-flag. Real
+# historical findings (e.g. the local-only kind cluster's self-signed CA)
+# are pinned in .gitleaksignore by fingerprint, not allowlisted by content,
+# so any *new* secret that happens to look the same will still trip the
+# scan.
+
+# extend the upstream default rules
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known false positives — public identifiers, sample/fixture material"
+
+# OAuth2 client IDs are public by design. They appear in the OAuth
+# redirect URL during sign-in and are not credentials. Variables named
+# *_client_id are platform configuration, not secrets — credentials for
+# the same client live in OpenBao / SOPS-encrypted secrets.
+regexTarget = "match"
+regexes = [
+  '''(github_oauth2_client_id|oauth2_proxy_client_id|oidc_.*_client_id)\s*:\s*[A-Za-z0-9._-]+''',
+]
+
+# Documentation and SOPS-encrypted payloads are intentionally not scanned:
+# - docs/ may legitimately quote redacted fixture material in examples.
+# - *.enc.yaml is SOPS ciphertext; finding ciphertext is not a finding.
+paths = [
+  '''^docs/''',
+  '''\.enc\.ya?ml$''',
+  '''^\.gitleaks(ignore|\.toml)$''',
+]
