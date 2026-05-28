@@ -93,10 +93,13 @@ spec:
         resources:
           requests:
             cpu: 10m
-            memory: 55Mi
+            # Observed steady-state ~75Mi (kubectl top). Request 128Mi so the
+            # scheduler reserves real baseline and the pod isn't first to be
+            # evicted under node memory pressure.
+            memory: 128Mi
           # 256Mi OOM-killed when Headlamp issued the 14d allocation queries —
           # the cost-model engine holds the full window in memory while
-          # aggregating. 512Mi gives ~7× headroom over idle (~75 Mi) and is
+          # aggregating. 512Mi gives ~4× headroom over the request and is
           # still well under the chart's 1Gi default.
           limits:
             memory: 512Mi
