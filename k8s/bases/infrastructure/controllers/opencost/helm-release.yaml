@@ -29,7 +29,7 @@ spec:
   #
   # Lightweight FinOps cost allocation. Points at the existing
   # kube-prometheus-stack Prometheus and uses custom pricing derived from
-  # Hetzner Cloud CX33 hourly rates (€0.0117/hr for 3 vCPU / 8 GB RAM).
+  # Hetzner Cloud CX33 rates (€0.0117/hr for 3 vCPU / 8 GB RAM).
   values:
     opencost:
       prometheus:
@@ -40,8 +40,17 @@ spec:
           url: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
 
       # Hetzner Cloud custom pricing — CX33 rates decomposed into
-      # per-resource-unit hourly USD costs (EUR/USD ≈ 1.09).
-      # CX33: €0.0117/hr → $0.01275/hr, 50/50 CPU-RAM split.
+      # per-resource-unit USD costs (EUR/USD ≈ 1.09).
+      # CX33: €0.0117/hr → $0.01275/hr → $9.31/month per server, 50/50 CPU-RAM split.
+      #
+      # IMPORTANT: OpenCost interprets CPU / spotCPU / RAM / spotRAM / GPU / storage
+      # in the costModel ConfigMap as USD PER MONTH and divides by HoursPerMonth=730
+      # to get an hourly rate (opencost providerconfig.go:188, customprovider.go:95).
+      # Network egress fields are passed through as-is (USD per GB transferred).
+      # Per-server monthly: $9.31 / 2 = $4.655 each for CPU and RAM.
+      #   CPU: $4.655 / 3 vCPU ≈ $1.5517 / vCPU-month
+      #   RAM: $4.655 / 8 GB   ≈ $0.5819 / GB-month
+      #   storage: Hetzner Cloud Volume ≈ €0.044/GB-month → ≈ $0.048 / GB-month
       # https://www.hetzner.com/cloud#pricing
       # https://www.opencost.io/docs/configuration/on-prem#custom-pricing-using-the-opencost-helm-chart
       customPricing:
@@ -49,13 +58,15 @@ spec:
         createConfigmap: true
         provider: custom
         costModel:
-          description: "Hetzner Cloud CX33 — 3 vCPU / 8 GB / 80 GB NVMe (50/50 CPU-RAM split)"
-          CPU: 0.002125
+          description: "Hetzner Cloud CX33 — 3 vCPU / 8 GB / 80 GB NVMe (50/50 CPU-RAM split, USD/month)"
+          CPU: 1.5517
           spotCPU: 0
-          RAM: 0.000797
+          RAM: 0.5819
           spotRAM: 0
           GPU: 0
-          storage: 0.00008
+          storage: 0.048
+          # Egress: passed through as USD per GB transferred; CX33 includes
+          # 20 TB/month free, overage ≈ $0.001/GB on Hetzner Cloud.
           zoneNetworkEgress: 0.001
           regionNetworkEgress: 0.001
           internetNetworkEgress: 0.001
@@ -66,8 +77,12 @@ spec:
           requests:
             cpu: 10m
             memory: 55Mi
+          # 256Mi OOM-killed when Headlamp issued the 14d allocation queries —
+          # the cost-model engine holds the full window in memory while
+          # aggregating. 512Mi gives ~7× headroom over idle (~75 Mi) and is
+          # still well under the chart's 1Gi default.
           limits:
-            memory: 256Mi
+            memory: 512Mi
 
       ui:
         enabled: true
