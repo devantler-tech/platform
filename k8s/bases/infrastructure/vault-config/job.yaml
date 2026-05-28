@@ -10,6 +10,9 @@
 #   3. Configures Kubernetes auth (in-cluster auto-discovery for CA + token reviewer)
 #   4. Creates least-privilege policies
 #   5. Creates auth roles mapping ServiceAccounts to policies
+#   6. Configures OIDC auth (Dex) for human admin access
+#   7. Enables the file audit device (writes to the auditStorage PV)
+#   8. Configures the Database secrets engine for fleetdm MySQL rotation
 #
 # On fresh install the init containers auto-initialize the vault and create
 # the openbao-unseal Secret. On Velero restore the Secret and PVC are both
@@ -434,7 +437,21 @@ spec:
                 echo "It will be configured on the next vault-config reconciliation."
               fi
 
-              # --- 7. Database secrets engine: fleetdm MySQL static-role rotation ---
+              # --- 7. Audit device: file backend to the auditStorage PV ---
+              # OpenBao writes one JSON record per request to /vault/audit/
+              # audit.log (the mount provisioned by auditStorage.enabled in
+              # the HelmRelease). Tail this file from the openbao pod, or
+              # ship it via a sidecar / promtail when the observability
+              # stack lands. Without this device, OpenBao has zero audit
+              # trail -- any read of a Secret goes unrecorded.
+              if ! bao audit list -format=json 2>/dev/null | grep -q '"file/"'; then
+                echo "Enabling file audit device..."
+                bao audit enable file file_path=/vault/audit/audit.log
+              else
+                echo "File audit device already enabled."
+              fi
+
+              # --- 8. Database secrets engine: fleetdm MySQL static-role rotation ---
               # OpenBao owns and periodically rotates the 'fleet' MySQL user's
               # password; ESO reads the current value via the VaultDynamicSecret
               # generator in the fleetdm namespace.
@@ -467,10 +484,18 @@ spec:
                   # re-rotating on every idempotent Job re-run. App user only,
                   # never root.
                   if ! bao read database/static-roles/fleet >/dev/null 2>&1; then
+                    # Default rotation: 168h (7 days). Was 2160h (90 days)
+                    # which gave a leaked credential a 90-day half-life.
+                    # 7 days matches HashiCorp's documented sweet spot for
+                    # interactive workloads (long enough that cache misses
+                    # are rare, short enough that a leak is bounded).
+                    # Overridable via the fleetdm_mysql_rotation_period
+                    # cluster variable for fork operators with different
+                    # constraints.
                     bao write database/static-roles/fleet \
                       db_name=fleetdm-mysql \
                       username="fleet" \
-                      rotation_period="${fleetdm_mysql_rotation_period:=2160h}"
+                      rotation_period="${fleetdm_mysql_rotation_period:=168h}"
                     echo "fleetdm MySQL static role created."
                   else
                     echo "fleetdm MySQL static role already exists."
