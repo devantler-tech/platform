@@ -25,6 +25,45 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: opencost
+  postRenderers:
+    # Zero-downtime, gate-clean rollout. The chart default (maxUnavailable: 1 on
+    # a single replica) kills the old pod the instant the new one is created;
+    # kubelet then fires one last readiness probe ~1s after Cilium tears down
+    # the dead pod's route, emitting `Unhealthy: …:9003/healthz: connect: no
+    # route to host`. That one-shot teardown warning trips the merge-queue
+    # deploy gate (.github/actions/check-event-warnings) even though it is
+    # harmless. Two mitigations:
+    #   1. maxUnavailable: 0 — surge the new pod to Ready before the old is
+    #      terminated (matches the homepage/headlamp convention).
+    #   2. preStop.sleep — keep the opencost container serving :9003 for 15s
+    #      after it is marked for deletion, so kubelet's probes during drain
+    #      land on a live endpoint instead of a torn-down route. Native sleep
+    #      action (GA since k8s 1.30; cluster is 1.32) — no shell needed in the
+    #      distroless image.
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: opencost
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: opencost
+              spec:
+                strategy:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxSurge: 1
+                    maxUnavailable: 0
+                template:
+                  spec:
+                    containers:
+                      - name: opencost
+                        lifecycle:
+                          preStop:
+                            sleep:
+                              seconds: 15
   # https://github.com/opencost/opencost-helm-chart/blob/main/charts/opencost/values.yaml
   #
   # Lightweight FinOps cost allocation. Points at the existing
