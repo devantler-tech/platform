@@ -135,6 +135,32 @@ spec:
                               secretKeyRef:
                                 name: mysql-fleet-rotated
                                 key: mysql-password
+          # The hourly vulnerability-processing CronJob also reads from MySQL.
+          # Without this override every run fails with `Error 1045 Access denied`
+          # because the chart-rendered CronJob points at the stale `mysql` Secret
+          # while OpenBao has rotated the actual fleet user password (the rotated
+          # value lives in `mysql-fleet-rotated`, same as the Deployment uses).
+          - target:
+              kind: CronJob
+              name: fleet-vulnprocessing
+            patch: |
+              apiVersion: batch/v1
+              kind: CronJob
+              metadata:
+                name: fleet-vulnprocessing
+              spec:
+                jobTemplate:
+                  spec:
+                    template:
+                      spec:
+                        containers:
+                          - name: fleet-vulnprocessing
+                            env:
+                              - name: FLEET_MYSQL_PASSWORD
+                                valueFrom:
+                                  secretKeyRef:
+                                    name: mysql-fleet-rotated
+                                    key: mysql-password
           - target:
               kind: Deployment
               name: fleet
