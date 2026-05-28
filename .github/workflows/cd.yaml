@@ -158,27 +158,26 @@ jobs:
           COSIGN_YES: "true"
         run: |
           set -euo pipefail
-          # Login to GHCR so cosign can resolve and sign the manifest pushed
-          # in the previous step. The signature is uploaded back to GHCR
-          # alongside the artifact.
+          # Login to GHCR so cosign + docker can read/write the manifest
+          # pushed in the previous step. `cosign login` writes
+          # ~/.docker/config.json, which docker buildx imagetools also reads.
           echo "${GHCR_TOKEN}" | cosign login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
-          REF="ghcr.io/devantler-tech/platform/manifests:latest"
-          # cosign sign by tag resolves to the current digest internally,
-          # producing a digest-bound signature that survives future tag
-          # mutations.
+          REF_TAG="ghcr.io/devantler-tech/platform/manifests:latest"
+          # Resolve the tag → digest BEFORE signing so that (a) cosign signs
+          # exactly the bytes we resolved -- no tag→digest TOCTOU if a
+          # concurrent deploy mutates the tag between this resolve and the
+          # sign call, (b) cosign stops warning about tag-based references
+          # and we stay forward-compatible with the cosign roadmap that
+          # removes tag-based signing entirely, and (c) cosign skips its
+          # own internal tag→digest lookup -- one fewer registry round-trip.
+          # docker buildx imagetools is preinstalled on ubuntu-latest; the
+          # cosign-native equivalent (`cosign manifest digest`) was removed
+          # in cosign v3.0.
+          DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')
+          REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"
           cosign sign --yes --recursive "${REF}"
-          # Capture the digest so subsequent SBOM + provenance attestation
-          # steps reference the exact bytes that were signed, not whatever
-          # the tag happens to point at by the time those steps run.
-          # cosign 3.0 removed the `cosign manifest digest` subcommand --
-          # calling it now prints the top-level Usage text, which the
-          # GITHUB_OUTPUT writer below rejects with "Invalid format 'Usage:'".
-          # docker buildx imagetools is preinstalled on ubuntu-latest and
-          # reuses the ~/.docker/config.json that `cosign login` above
-          # populates, so it's a drop-in replacement with no extra install.
-          DIGEST=$(docker buildx imagetools inspect "${REF}" --format '{{.Manifest.Digest}}')
           echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
-          echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${REF_TAG}" >> "${GITHUB_OUTPUT}"
 
       - name: 🔐 Login to GHCR (for syft)
         # anchore/sbom-action shells out to syft to pull the OCI manifest's
