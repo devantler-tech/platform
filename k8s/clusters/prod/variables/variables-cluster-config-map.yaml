@@ -52,8 +52,11 @@ data:
   fleetdm_mysql_secondary_replicas: "0"
   fleetdm_redis_architecture: "standalone"
   fleetdm_redis_replicas: "0"
-  # Parked: deployment + KEDA target both at 0. Re-enable by setting
-  # actual_budget_replicas + _min to 1 and _max to 1.
+  # Parked: deployment + KEDA target both at 0. To re-enable, set all three:
+  #   actual_budget_replicas: "1"
+  #   actual_budget_replicas_min: "1"
+  #   actual_budget_replicas_max: "1"
+  # (SQLite on RWO PVC requires max <= 1.)
   actual_budget_replicas: "0"
   actual_budget_replicas_min: "0"
   actual_budget_replicas_max: "0"
