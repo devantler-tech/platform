@@ -10,11 +10,19 @@ data:
     favicon: https://avatars.githubusercontent.com/u/178524219?v=4&s=32
     theme: dark
     color: slate
-    cardBlur: sm
-    background:
-      image: https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?q=80&w=1974&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D
-      blur: sm
-      opacity: 70
+    # No background.image — eliminates the cold-load white→image flash and
+    # the cross-origin Unsplash dependency. The dark gradient backdrop is
+    # painted from custom.css below; cardBlur is omitted because there is
+    # no underlying image for backdrop-filter to blur.
+    headerStyle: clean
+    statusStyle: dot
+    iconStyle: gradient
+    hideVersion: true
+    target: _blank
+    # Layout order also controls render order on the page. Groups not listed
+    # here still appear (Homepage falls back to alphabetical) but get a generic
+    # icon — keep this in sync with the gethomepage.dev/group annotations on
+    # the HTTPRoutes under k8s/bases/apps/** and the service entries below.
     layout:
       Kubernetes:
         icon: si-talos-#FF7300
@@ -22,6 +30,14 @@ data:
         icon: mdi-cellphone-cog
       Diagnostics:
         icon: mdi-stethoscope
+      Security:
+        icon: mdi-shield-lock
+      Finance:
+        icon: mdi-finance
+      Personal Sites:
+        icon: mdi-web
+      Customer Sites:
+        icon: mdi-briefcase-account
       Cloud:
         icon: si-hetzner
       Network:
@@ -140,5 +156,21 @@ data:
             - icon: si-nuget-#1088d6
               href: https://www.nuget.org
   docker.yaml: ""
-  custom.css: ""
+  # Backdrop replaces the previous remote Unsplash background image — no
+  # cross-origin asset, no cold-load flash. A slate-950 base plus two soft
+  # radial auras (blue top-left, violet bottom-right) gives a modern
+  # ambient-mesh feel without any image to download or composite. Applied
+  # to html+body so it covers the viewport even on tall scrollable pages,
+  # and `background-attachment: fixed` keeps the gradient anchored while
+  # cards scroll over it.
+  custom.css: |
+    html,
+    body {
+      background-color: rgb(2, 6, 23);
+      background-image:
+        radial-gradient(at 18% 12%, rgba(59, 130, 246, 0.18), transparent 55%),
+        radial-gradient(at 82% 88%, rgba(168, 85, 247, 0.14), transparent 55%);
+      background-attachment: fixed;
+      background-repeat: no-repeat;
+    }
   custom.js: ""
