@@ -125,6 +125,16 @@ spec:
                         volumeMounts:
                           - name: fleet-home
                             mountPath: /home/fleet
+                        # The migration Job runs on every helm install/upgrade
+                        # AFTER the static role has rotated the fleet password,
+                        # so it must use the rotated credential too — not the
+                        # stale KV-bootstrap value from the `mysql` Secret.
+                        env:
+                          - name: FLEET_MYSQL_PASSWORD
+                            valueFrom:
+                              secretKeyRef:
+                                name: mysql-fleet-rotated
+                                key: mysql-password
           - target:
               kind: Deployment
               name: fleet
