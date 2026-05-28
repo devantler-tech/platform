@@ -142,7 +142,7 @@ jobs:
           # the default when --key is omitted.
           COSIGN_YES: "true"
           # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
-          COSIGN_VERSION: "2.6.3"
+          COSIGN_VERSION: "3.0.6"
           # SHA256 of cosign-linux-amd64 for the version above.
           # Update alongside COSIGN_VERSION (Renovate bumps the version
           # only; the digest must follow in the same PR — intentional).
