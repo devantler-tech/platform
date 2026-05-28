@@ -1,4 +1,14 @@
+# OpenBao runs as non-root with the IPC_LOCK capability (memory-locking
+# secret material so it never hits swap). IPC_LOCK is allowed by PSS
+# 'baseline' but blocked by 'restricted', so the cluster-default
+# 'restricted' (enforced both by the explicit PSA label policy below
+# and the Kyverno validate-pod-security ClusterPolicy) would otherwise
+# reject the OpenBao pod. Enforce 'baseline' explicitly so the tradeoff
+# is visible in this file rather than implicit.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: openbao
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest
