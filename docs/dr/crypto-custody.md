@@ -19,8 +19,8 @@ and [openbao.md](openbao.md) (OpenBao-specific DR).
 | -------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------ | ----------------------------------------------------------------- |
 | **SOPS Age private keys**  | decrypt every `*.enc.yaml` in this repo (per-env)                  | decrypt all committed secrets — rotate underlying values     | re-encrypt every `*.enc.yaml` with a new recipient                |
 | **Talos cluster PKI**      | issue node certs, sign kubelet/etcd identities, bootstrap workers  | impersonate any cluster component                            | full cluster rebuild — re-runs of `ksail cluster create`          |
-| **OpenBao unseal key**     | decrypt the OpenBao master key (which encrypts every KV entry)     | unseal OpenBao and read every secret                         | OpenBao is permanently sealed — restore from a Velero snapshot    |
-| **OpenBao root token**     | bypass every OpenBao policy                                        | full control of OpenBao                                      | mint a new one via the recovery key                               |
+| **OpenBao unseal key**     | decrypt the OpenBao master key (which encrypts every KV entry)     | unseal OpenBao and read every secret                         | if a Velero snapshot still contains the `openbao-unseal` Secret, restore it (see [openbao.md](openbao.md) scenarios); if every copy is gone, re-initialize OpenBao and re-seed the KV (existing encrypted data is unrecoverable) |
+| **OpenBao root token**     | bypass every OpenBao policy                                        | full control of OpenBao                                      | re-mint with the unseal key (`bao operator generate-root`); if both are gone, re-initialize OpenBao |
 | **cosign signing identity**| sign the platform OCI artifact published to GHCR                   | publish artifacts the cluster will trust as ours             | re-sign on next CI run (no on-disk key — see below)               |
 | **Hetzner Cloud token**    | provision / destroy nodes; reconfigure Cloud LB and firewall       | destroy infrastructure; pivot via the LB                     | mint a new one in the Hetzner console; rotate `HCLOUD_TOKEN`      |
 | **Cloudflare API token**   | manage DNS for the platform domain                                 | redirect prod traffic; mint Origin CA certs                  | mint a new one in the Cloudflare dashboard                        |
@@ -119,8 +119,12 @@ posture is:
 1. **Do not commit it to git.** It is `.gitignore`d via the default
    `~/.talos/config` location.
 2. **Keep one copy on each operator workstation** that needs to manage
-   nodes. Replacing a workstation = re-run `ksail cluster update --kubeconfig` or `talosctl config merge` against a node you reach via SSH-equivalent (which Talos does not have — see DR Scenario 4 in
-   [runbook.md](runbook.md) for the rebuild-from-zero path).
+   nodes. Replacing a workstation = re-run `ksail --config ksail.prod.yaml cluster update`
+   (which regenerates the local `~/.talos/config` from the cluster's
+   running PKI), or use `talosctl config merge <talosconfig>` against
+   a backup file. Talos does not have SSH-equivalent — see DR Scenario 4
+   in [runbook.md](runbook.md) for the rebuild-from-zero path when no
+   talosconfig copy exists anywhere.
 3. **CI:** stored as the `TALOS_CONFIG` secret in the GitHub `prod`
    environment. Refreshed by [runbook.md Scenario 9](runbook.md) after
    any cluster rebuild.
@@ -166,7 +170,7 @@ completeness:
 
 ## cosign signing identity (keyless via Fulcio / Rekor)
 
-**What:** the OCI artifact published to `ghcr.io/devantler-tech/platform-manifests`
+**What:** the OCI artifact published to `ghcr.io/devantler-tech/platform/manifests`
 by `cd.yaml` will (after Phase 2.1) be signed with cosign **keyless**
 signing — Fulcio mints a short-lived certificate bound to the GitHub
 Actions OIDC identity of this workflow, the signature is recorded in
@@ -194,13 +198,22 @@ recipient.
 - **Workflow secret leaks:** there is no secret to leak — there is no
   signing key. The worst an attacker who steals a one-shot OIDC token
   could do is sign **one** artifact, and the signature would be recorded
-  in Rekor with a timestamp; you could spot the rogue entry and add a
-  Rekor log index exclusion to the verifier.
+  in Rekor with a timestamp. Detection is via the Rekor entry's
+  timestamp + OIDC subject; **mitigation is on the consumer side** — pin
+  Flux's `OCIRepository.spec.verify.matchOIDCIdentity` to a stricter
+  pattern (e.g. include `refs/tags/v[0-9]+` to reject signatures from
+  non-release runs) so the rogue artifact's signature no longer
+  validates. Flux's verify schema does not natively support Rekor
+  log-index exclusions; the policy lever you actually have is the
+  `matchOIDCIdentity` regex and a `secretRef` containing trusted CA
+  bundles.
 - **GitHub identity gets compromised (the org / workflow itself):** the
   attacker can sign artifacts that will validate against the existing
   `matchOIDCIdentity`. Mitigation: tighten the regex (pin to a specific
-  commit SHA), invalidate any artifacts pushed since the compromise via
-  a verifier-side exclusion list.
+  commit SHA range, e.g. `@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$`), and
+  pin the consumer `OCIRepository.spec.ref.digest` to a known-good
+  release so future tag pushes from the compromised identity are
+  ignored until the regex catches up.
 
 The reference architecture for keyless cosign verification is documented
 upstream at <https://docs.sigstore.dev/cosign/verifying/verify/>.

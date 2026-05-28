@@ -20,7 +20,7 @@ these simultaneously and you cannot recover.
 | Artifact                                | Where it lives                       | Recovery if lost                     |
 | --------------------------------------- | ------------------------------------ | ------------------------------------ |
 | **SOPS Age private keys** (one per env) | Secure vault + offline backup        | Re-encrypt all `*.enc.yaml` (below)  |
-| **OpenBao unseal key + root token**     | `openbao-unseal` Secret (Velero-backed) + operator vault | Cluster rebuild — see [openbao.md](openbao.md) |
+| **OpenBao unseal key + root token**     | `openbao-unseal` Secret (Velero-backed) + operator vault | Restore the `openbao-unseal` Secret + OpenBao PVC from the most recent Velero snapshot ([openbao.md](openbao.md) scenario 3); only if every copy is gone, re-initialize OpenBao and re-seed KV — existing encrypted data is then unrecoverable |
 | **Cloudflare R2 access keys**           | Secure vault                         | Mint new in Cloudflare; SOPS-update  |
 | **Hetzner Cloud API token**             | Secure vault                         | Mint new in Hetzner Cloud console    |
 | **Cloudflare API token**                | Secure vault                         | Mint new in Cloudflare dashboard     |
