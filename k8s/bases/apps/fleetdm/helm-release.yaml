@@ -33,7 +33,7 @@ spec:
             patch: |
               - op: add
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
-                value: mysql,redis,fleet-license
+                value: mysql,mysql-fleet-rotated,redis,fleet-license
               - op: add
                 path: /spec/strategy
                 value:
@@ -163,7 +163,12 @@ spec:
                           - name: FLEET_MYSQL_PASSWORD
                             valueFrom:
                               secretKeyRef:
-                                name: mysql
+                                # OpenBao-rotated via the Database engine static
+                                # role for the 'fleet' MySQL user. The KV-sourced
+                                # `mysql` Secret is used only to bootstrap the
+                                # user at chart init; after the static role
+                                # rotates it, fleet reads the current value here.
+                                name: mysql-fleet-rotated
                                 key: mysql-password
                     containers:
                       - name: fleet
@@ -173,6 +178,16 @@ spec:
                         volumeMounts:
                           - name: fleet-home
                             mountPath: /home/fleet
+                        # Override the chart's default FLEET_MYSQL_PASSWORD
+                        # (which points at the KV-bootstrapped `mysql` Secret)
+                        # to read the OpenBao-rotated value. Strategic merge by
+                        # env `name` replaces just this entry.
+                        env:
+                          - name: FLEET_MYSQL_PASSWORD
+                            valueFrom:
+                              secretKeyRef:
+                                name: mysql-fleet-rotated
+                                key: mysql-password
   valuesFrom:
     - kind: Secret
       name: fleetdm-server-key
