@@ -36,14 +36,21 @@ spec:
     # Kube API for reading secrets
     - toEntities:
         - kube-apiserver
-    # GitHub/OIDC upstream connectors
-    - toEntities:
-        - world
+    # GitHub OAuth flow. Pinned by FQDN rather than world:443 so a
+    # compromised dex pod cannot reach arbitrary external services.
+    # - github.com         — OAuth authorize endpoint
+    # - api.github.com     — user / org / team membership lookups
+    - toFQDNs:
+        - matchName: "github.com"
+        - matchName: "api.github.com"
       toPorts:
         - ports:
             - port: "443"
               protocol: TCP
-    # DNS resolution
+    # DNS resolution. The `rules.dns: matchPattern: "*"` clause activates
+    # Cilium's L7 DNS proxy so the toFQDNs rule above can be enforced --
+    # without it Cilium has no way to map github.com to the set of IPs
+    # the resolver returns.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -54,3 +61,6 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
