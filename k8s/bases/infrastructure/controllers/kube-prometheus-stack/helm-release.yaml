@@ -151,8 +151,14 @@ spec:
             - matchers:
                 - alertname = "Watchdog"
               receiver: heartbeat
+              # Alertmanager re-notifies only when both group_interval AND
+              # repeat_interval have elapsed since the last send. Keeping
+              # group_interval (30s) below repeat_interval (50s) lets the
+              # 50s cadence actually take effect; with group_interval >=
+              # repeat_interval the heartbeat would be silently throttled
+              # to the longer of the two.
               group_wait: 0s
-              group_interval: 1m
+              group_interval: 30s
               repeat_interval: 50s
               continue: false
             - matchers:
