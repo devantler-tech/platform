@@ -22,6 +22,7 @@ jobs:
       contents: read # checkout repository
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
+      attestations: write # write SBOM + SLSA provenance attestations
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -162,6 +163,60 @@ jobs:
           # producing a digest-bound signature that survives future tag
           # mutations.
           cosign sign --yes --recursive "${REF}"
+          # Capture the digest so subsequent SBOM + provenance attestation
+          # steps reference the exact bytes that were signed, not whatever
+          # the tag happens to point at by the time those steps run.
+          DIGEST=$(cosign manifest digest "${REF}")
+          echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
+        id: cosign-sign
+
+      - name: 📋 Generate SBOM (CycloneDX)
+        # Uses syft to enumerate every package/binary in the OCI manifest
+        # artifact published in the previous step. Output is CycloneDX
+        # JSON, which is the format attest-sbom expects.
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
+          SYFT_VERSION="1.20.0"
+          curl -fsSL \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin syft
+          syft version
+          # Auth so syft can pull the OCI manifest descriptor + layers.
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          syft scan --output cyclonedx-json=sbom.cdx.json \
+            "ghcr.io/devantler-tech/platform/manifests@${{ steps.cosign-sign.outputs.digest }}"
+          # Sanity: SBOM file should be non-empty and parseable JSON.
+          test -s sbom.cdx.json
+          jq -e '.bomFormat == "CycloneDX"' sbom.cdx.json >/dev/null
+
+      - name: 🪪 Attest SBOM (Sigstore via cosign keyless)
+        # Records the SBOM as a Sigstore in-toto attestation against the
+        # OCI manifest's digest. The attestation is uploaded to GHCR and
+        # its index recorded in Rekor.
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-digest: ${{ steps.cosign-sign.outputs.digest }}
+          subject-name: ghcr.io/devantler-tech/platform/manifests
+          sbom-path: sbom.cdx.json
+          push-to-registry: true
+
+      - name: 🪪 Attest build provenance (SLSA L3)
+        # Generates a SLSA provenance v1.0 statement and attests it against
+        # the same digest. Provenance captures the workflow file,
+        # invocation parameters, GitHub runner, source repo + SHA, etc.
+        # Combined with the cosign signature above and the SBOM
+        # attestation, this completes the supply-chain transparency
+        # bundle for the platform OCI artifact.
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-digest: ${{ steps.cosign-sign.outputs.digest }}
+          subject-name: ghcr.io/devantler-tech/platform/manifests
+          push-to-registry: true
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
