@@ -15,17 +15,31 @@ spec:
             - port: "7979"
               protocol: TCP
   egress:
-    # Kube API for watching services/ingresses
+    # Kube API for watching services/HTTPRoutes
     - toEntities:
         - kube-apiserver
-    # Cloudflare/Hetzner DNS API
-    - toEntities:
-        - world
+    # External-dns talks to Cloudflare for DNS record management. Pinned
+    # by FQDN rather than world:443 so a compromised external-dns pod
+    # cannot reach arbitrary external services. matchName is exact —
+    # the v4 API is exclusively api.cloudflare.com today. If Cloudflare
+    # ever splits the API into per-service hostnames (api-tokens.,
+    # api-zones., …), widen this rule to a matchPattern.
+    - toFQDNs:
+        - matchName: "api.cloudflare.com"
       toPorts:
         - ports:
             - port: "443"
               protocol: TCP
-    # DNS resolution
+    # DNS resolution. rules.dns activates Cilium's L7 DNS proxy so the
+    # toFQDNs rule above can be enforced. The visibility list is
+    # restricted to the names external-dns actually needs to resolve;
+    # any other DNS name is dropped at the proxy, closing off DNS
+    # tunneling exfil via TXT records or label-encoded subdomains:
+    #
+    #   - api.cloudflare.com         — the only external target
+    #   - *.cluster.local            — covers *.<ns>.svc.cluster.local
+    #                                   (kube-apiserver, kube-dns itself,
+    #                                   metrics scraping target)
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -36,3 +50,7 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchName: "api.cloudflare.com"
+              - matchPattern: "*.cluster.local"
