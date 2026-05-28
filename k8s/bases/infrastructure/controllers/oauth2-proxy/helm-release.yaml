@@ -53,14 +53,23 @@ spec:
       configFile: |-
         provider = "github"
         # Defence in depth: three independent GitHub gates.
-        #   github_org   — only members of devantler-tech can authenticate
-        #                  (mirrors the Dex connector gate used by kubectl)
-        #   github_team  — and only the platform team within that org
-        #   github_users — and on top of that, an explicit allowlist
-        # oauth2-proxy treats github_users as a bypass list (users in the
-        # list pass even if org/team check fails), so the most-restrictive
-        # check practically wins; if github_users is ever cleared the org
-        # + team gate still holds.
+        #   github_org   — only members of devantler-tech can authenticate.
+        #                  This matches the Dex GitHub connector that gates
+        #                  kubectl OIDC (orgs:[devantler-tech], no team
+        #                  restriction). Web auth and kubectl auth now
+        #                  enforce the same org boundary.
+        #   github_team  — additionally restrict to the 'platform' team.
+        #                  This is *stricter* than the Dex connector
+        #                  (intentional — web auth previously had only the
+        #                  github_users bypass list). If the org has no
+        #                  'platform' team, anyone outside github_users
+        #                  will be locked out; drop this line for an
+        #                  org-only gate equivalent to Dex.
+        #   github_users — explicit allowlist that bypasses the org/team
+        #                  check. oauth2-proxy treats this as an OR: users
+        #                  here pass even if the org/team check fails. If
+        #                  the list is ever cleared the org + team gate
+        #                  still holds as the fallback.
         github_org = "devantler-tech"
         github_team = "platform"
         github_users = ["devantler"]
