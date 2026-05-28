@@ -109,8 +109,19 @@ spec:
           # written to /openbao/audit/audit.log as one JSON record per
           # line; tail it from the openbao pod today, ship via promtail
           # once the observability stack lands.
+          #
+          # HCL shape (per https://openbao.org/docs/configuration/audit):
+          #   audit "<arbitrary identifier>" {
+          #     type = "<device>"
+          #     options = { ... }
+          #   }
+          # The label is just a stable name for the device (used in the
+          # API path /sys/audit/<label>), not the backend type.
           audit "file" {
-            file_path = "/openbao/audit/audit.log"
+            type = "file"
+            options = {
+              file_path = "/openbao/audit/audit.log"
+            }
           }
       topologySpreadConstraints:
         - maxSkew: 1
