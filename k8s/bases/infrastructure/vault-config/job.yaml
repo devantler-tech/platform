@@ -11,8 +11,11 @@
 #   4. Creates least-privilege policies
 #   5. Creates auth roles mapping ServiceAccounts to policies
 #   6. Configures OIDC auth (Dex) for human admin access
-#   7. Enables the file audit device (writes to the auditStorage PV)
-#   8. Configures the Database secrets engine for fleetdm MySQL rotation
+#   7. Configures the Database secrets engine for fleetdm MySQL rotation
+#
+# The file audit device is declared in the openbao HelmRelease config
+# (declarative-only — OpenBao rejects runtime audit enables via API),
+# so no runtime step is needed here for auditing.
 #
 # On fresh install the init containers auto-initialize the vault and create
 # the openbao-unseal Secret. On Velero restore the Secret and PVC are both
@@ -453,24 +456,17 @@ spec:
                 echo "It will be configured on the next vault-config reconciliation."
               fi
 
-              # --- 7. Audit device: file backend to the auditStorage PV ---
-              # OpenBao writes one JSON record per request to /openbao/audit/
-              # audit.log. That directory is the auditStorage PV mount path
-              # provisioned by the chart -- /openbao/audit pairs with the
-              # /openbao/data data mount (the OpenBao chart standardised on
-              # /openbao/* paths rather than the upstream HashiCorp Vault
-              # /vault/* paths). Tail this file from the openbao pod, or
-              # ship it via a sidecar / promtail when the observability
-              # stack lands. Without this device, OpenBao has zero audit
-              # trail -- any read of a Secret goes unrecorded.
-              if ! bao audit list -format=json 2>/dev/null | grep -q '"file/"'; then
-                echo "Enabling file audit device..."
-                bao audit enable file file_path=/openbao/audit/audit.log
-              else
-                echo "File audit device already enabled."
-              fi
+              # NOTE: the file audit device used to be enabled here at
+              # runtime. OpenBao rejects that path -- `bao audit enable`
+              # returns "cannot enable audit device via API; use
+              # declarative, config-based audit device management
+              # instead". The audit device is now declared in the
+              # openbao HelmRelease's standalone.config HCL (a
+              # `audit "file" { file_path = "/openbao/audit/audit.log" }`
+              # stanza alongside listener and storage). No runtime step
+              # is needed for OpenBao to start auditing.
 
-              # --- 8. Database secrets engine: fleetdm MySQL static-role rotation ---
+              # --- 7. Database secrets engine: fleetdm MySQL static-role rotation ---
               # OpenBao owns and periodically rotates the 'fleet' MySQL user's
               # password; ESO reads the current value via the VaultDynamicSecret
               # generator in the fleetdm namespace.

@@ -85,6 +85,19 @@ spec:
           storage "file" {
             path = "/openbao/data"
           }
+
+          # Declarative file audit device on the auditStorage PV. OpenBao
+          # blocks runtime audit enables: `bao audit enable file …`
+          # returns "cannot enable audit device via API; use declarative,
+          # config-based audit device management instead", so the device
+          # MUST be declared here in HCL. The mount path /openbao/audit
+          # is the chart's auditStorage default. Every API request is
+          # written to /openbao/audit/audit.log as one JSON record per
+          # line; tail it from the openbao pod today, ship via promtail
+          # once the observability stack lands.
+          audit "file" {
+            file_path = "/openbao/audit/audit.log"
+          }
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
