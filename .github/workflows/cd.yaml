@@ -21,6 +21,7 @@ jobs:
     permissions:
       contents: read # checkout repository
       packages: write # push OCI artifacts to GHCR
+      id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -125,6 +126,42 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+
+      - name: 🖋️ Sign OCI manifest with cosign (keyless)
+        # Signs the platform OCI artifact published by `ksail workload push`
+        # using Sigstore keyless signing: Fulcio mints a short-lived cert
+        # bound to this workflow's OIDC identity and Rekor records the
+        # signature in its append-only transparency log. There is no
+        # private key on disk -- the security policy lives in the
+        # verifier's matchOIDCIdentity regex (planned for a follow-up).
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          # COSIGN_EXPERIMENTAL was retired in cosign 2.x; keyless is now
+          # the default when --key is omitted.
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          # Pinned via env so Renovate's custom regex manager can bump it.
+          # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
+          COSIGN_VERSION="2.5.0"
+          curl -fsSL \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
+            -o /tmp/cosign
+          sha=$(sha256sum /tmp/cosign | cut -d' ' -f1)
+          echo "cosign-linux-amd64 sha256: ${sha}"
+          chmod +x /tmp/cosign
+          sudo install /tmp/cosign /usr/local/bin/cosign
+          cosign version
+          # Login to GHCR so cosign can resolve and sign the manifest pushed
+          # in the previous step. The signature is uploaded back to GHCR
+          # alongside the artifact.
+          echo "${GHCR_TOKEN}" | cosign login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          REF="ghcr.io/devantler-tech/platform/manifests:latest"
+          # cosign sign by tag resolves to the current digest internally,
+          # producing a digest-bound signature that survives future tag
+          # mutations.
+          cosign sign --yes --recursive "${REF}"
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
