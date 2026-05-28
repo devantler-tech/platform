@@ -185,7 +185,7 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           GITHUB_ACTOR: ${{ github.actor }}
           # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-          SYFT_VERSION: "1.20.0"
+          SYFT_VERSION: "1.44.0"
           # SHA256 of syft_<ver>_linux_amd64.tar.gz for the version above.
           SYFT_SHA256: "689e12c5cbf67521ce61b9c126068f9eaabe1223e77971b2fede50033ff6b5cc"
           # Indirected through env to keep the template expansion out
