@@ -25,6 +25,16 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: fleetdm
+    # OpenBao Database secrets engine: the OpenBao server connects to MySQL
+    # to manage and rotate the 'fleet' user's password (static role). The
+    # mysql-database-plugin runs in-process in the OpenBao server pod.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: openbao
+      toPorts:
+        - ports:
+            - port: "3306"
+              protocol: TCP
   egress:
     # Intra-namespace (fleet → mysql, fleet → redis)
     - toEndpoints:
