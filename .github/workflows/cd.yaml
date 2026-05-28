@@ -146,7 +146,7 @@ jobs:
           # SHA256 of cosign-linux-amd64 for the version above.
           # Update alongside COSIGN_VERSION (Renovate bumps the version
           # only; the digest must follow in the same PR — intentional).
-          COSIGN_SHA256: "1f6c194dd0891eb345b436bb71ff9f996768355f5e0ce02dde88567029ac2188"
+          COSIGN_SHA256: "c956e5dfcac53d52bcf058360d579472f0c1d2d9b69f55209e256fe7783f4c74"
         run: |
           set -euo pipefail
           curl -fsSL \
@@ -187,7 +187,7 @@ jobs:
           # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
           SYFT_VERSION: "1.44.0"
           # SHA256 of syft_<ver>_linux_amd64.tar.gz for the version above.
-          SYFT_SHA256: "689e12c5cbf67521ce61b9c126068f9eaabe1223e77971b2fede50033ff6b5cc"
+          SYFT_SHA256: "0e91737aee2b5baf1d255b959630194a302335d848ff97bb07921eb6205b5f5a"
           # Indirected through env to keep the template expansion out
           # of the shell script body (zizmor: code-injection via
           # template-expansion).
