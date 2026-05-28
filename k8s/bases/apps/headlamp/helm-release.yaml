@@ -71,6 +71,21 @@ spec:
                 value:
                   name: tmp-dir
                   mountPath: /tmp
+              # Chart hardcodes liveness/readiness with K8s defaults
+              # (timeoutSeconds: 1, failureThreshold: 3, periodSeconds: 10).
+              # Headlamp is KEDA-scaled to 0 in prod; every cold start logs
+              # 1-3 Unhealthy probe warnings while the Go binary initialises.
+              # Add a startupProbe so liveness/readiness are gated until the
+              # main container is actually serving.
+              - op: add
+                path: /spec/template/spec/containers/0/startupProbe
+                value:
+                  httpGet:
+                    path: /
+                    port: http
+                  periodSeconds: 2
+                  timeoutSeconds: 2
+                  failureThreshold: 30  # 60s max startup window
           - target:
               kind: Deployment
               name: headlamp

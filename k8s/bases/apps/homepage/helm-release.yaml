@@ -52,6 +52,21 @@ spec:
                       matchLabels:
                         app.kubernetes.io/name: homepage
                         app.kubernetes.io/instance: homepage
+              # Chart hardcodes liveness/readiness with K8s defaults
+              # (timeoutSeconds: 1, failureThreshold: 3, periodSeconds: 10).
+              # Homepage takes ~13s to start serving on a fresh pod, so each
+              # rollout produces 3 Unhealthy probe warnings per pod and leaves
+              # only ~17s of headroom before the liveness restart fires. Add
+              # a startupProbe to gate liveness/readiness during initial boot.
+              - op: add
+                path: /spec/template/spec/containers/0/startupProbe
+                value:
+                  httpGet:
+                    path: /
+                    port: http
+                  periodSeconds: 2
+                  timeoutSeconds: 2
+                  failureThreshold: 30  # 60s max startup window
   # ICONS:
   # https://github.com/walkxcode/dashboard-icons
   # https://simpleicons.org
