@@ -20,9 +20,10 @@ spec:
         - kube-apiserver
     # External-dns talks to Cloudflare for DNS record management. Pinned
     # by FQDN rather than world:443 so a compromised external-dns pod
-    # cannot reach arbitrary external services. matchPattern covers
-    # cloudflare's API host and any future api.* subdomain it might
-    # roll into (the v4 API today is exclusively api.cloudflare.com).
+    # cannot reach arbitrary external services. matchName is exact —
+    # the v4 API is exclusively api.cloudflare.com today. If Cloudflare
+    # ever splits the API into per-service hostnames (api-tokens.,
+    # api-zones., …), widen this rule to a matchPattern.
     - toFQDNs:
         - matchName: "api.cloudflare.com"
       toPorts:
