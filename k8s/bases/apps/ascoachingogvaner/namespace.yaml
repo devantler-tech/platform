@@ -3,4 +3,6 @@ kind: Namespace
 metadata:
   labels:
     app.kubernetes.io/managed-by: ksail
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
   name: ascoachingogvaner

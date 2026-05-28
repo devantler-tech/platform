@@ -28,7 +28,7 @@ spec:
             fsGroup: 1000
           containers:
             - name: snapshot
-              image: quay.io/openbao/openbao:2.5.3
+              image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
               env:
                 - name: BAO_ADDR
                   value: http://openbao.openbao.svc.cluster.local:8200

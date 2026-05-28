@@ -67,7 +67,7 @@ spec:
       initContainers:
         # --- 1. Auto-init + unseal ---
         - name: vault-init
-          image: quay.io/openbao/openbao:2.5.3
+          image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
           env:
             - name: BAO_ADDR
               value: http://openbao.openbao.svc.cluster.local:8200
@@ -144,7 +144,7 @@ spec:
               fi
         # --- 2. Persist credentials in K8s Secret (only on fresh init) ---
         - name: store-keys
-          image: alpine/k8s:1.36.1
+          image: alpine/k8s:1.36.1@sha256:692239d739589247c4a791205ed9619c28ae85a21286e19a6211c04a62c56668
           volumeMounts:
             - name: shared
               mountPath: /shared
@@ -172,7 +172,7 @@ spec:
               fi
       containers:
         - name: vault-config
-          image: quay.io/openbao/openbao:2.5.3
+          image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
           env:
             - name: BAO_ADDR
               value: http://openbao.openbao.svc.cluster.local:8200

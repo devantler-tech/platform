@@ -1,3 +1,17 @@
+# PSA enforce label intentionally NOT set on the keda namespace.
+#
+# The keda-add-ons-http-* pods (controller-manager, interceptor,
+# external-scaler) ship a partial securityContext from the upstream
+# chart. With an explicit pod-security.kubernetes.io/enforce label,
+# kube-apiserver's PSA validator rejects them before Kyverno's
+# add-security-context mutating webhook can fill in the missing
+# runAsNonRoot / seccompProfile defaults, so admission fails on cold
+# bootstrap.
+#
+# The Kyverno validate-pod-security ClusterPolicy (Enforce mode) is
+# already a backstop -- it sees the mutated pod and enforces restricted
+# at the webhook layer. Skipping the explicit PSA label trades the
+# defence-in-depth of native PSA for keeping bootstrap reliable.
 apiVersion: v1
 kind: Namespace
 metadata:

@@ -43,7 +43,7 @@ spec:
         - args:
             - -conf
             - /etc/coredns/Corefile
-          image: registry.k8s.io/coredns/coredns:v1.14.3
+          image: registry.k8s.io/coredns/coredns:v1.14.3@sha256:884b72dd6d2f7d367902af420605e0288dffedb0516ce29330423ae3f8f5c6fa
           imagePullPolicy: IfNotPresent
           livenessProbe:
             failureThreshold: 5
