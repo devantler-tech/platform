@@ -14,3 +14,9 @@ spec:
     - backendRefs:
         - name: dex
           port: 5556
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
