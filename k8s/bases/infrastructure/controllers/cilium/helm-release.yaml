@@ -127,7 +127,7 @@ spec:
                 - |
                   chown -R 1000:1000 /run/spire/data
                   chown -R 1000:1000 /tmp/spire-server
-                image: docker.io/library/busybox:1.37.0
+                image: docker.io/library/busybox:1.37.0@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028
                 imagePullPolicy: IfNotPresent
                 name: chown
                 securityContext:
