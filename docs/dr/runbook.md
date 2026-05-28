@@ -20,13 +20,17 @@ these simultaneously and you cannot recover.
 | Artifact                                | Where it lives                       | Recovery if lost                     |
 | --------------------------------------- | ------------------------------------ | ------------------------------------ |
 | **SOPS Age private keys** (one per env) | Secure vault + offline backup        | Re-encrypt all `*.enc.yaml` (below)  |
+| **OpenBao unseal key + root token**     | `openbao-unseal` Secret (Velero-backed) + operator vault | Restore the `openbao-unseal` Secret + OpenBao PVC from the most recent Velero snapshot ([openbao.md](openbao.md) scenario 3); only if every copy is gone, re-initialize OpenBao and re-seed KV — existing encrypted data is then unrecoverable |
 | **Cloudflare R2 access keys**           | Secure vault                         | Mint new in Cloudflare; SOPS-update  |
 | **Hetzner Cloud API token**             | Secure vault                         | Mint new in Hetzner Cloud console    |
 | **Cloudflare API token**                | Secure vault                         | Mint new in Cloudflare dashboard     |
 
 > Recommendation: store these in a shared vault accessible by at least one
 > additional trusted operator, plus an offline copy in a second physical
-> location.
+> location. For the SOPS Age keys, a hardware-backed pair (two YubiKeys via
+> [`age-plugin-yubikey`](https://github.com/str4d/age-plugin-yubikey)) is
+> the strongest configuration; see [`crypto-custody.md`](crypto-custody.md)
+> for the full design and per-artifact threat model.
 
 > **CI deploy credentials** — the `KUBE_CONFIG` and `TALOS_CONFIG` secrets in
 > the GitHub `prod` environment — are deliberately **not** in the table above.
@@ -367,6 +371,8 @@ gh secret set TALOS_CONFIG --env prod --repo devantler-tech/platform < ~/.talos/
 
 ## Related documents
 
+- [Cryptographic custody](./crypto-custody.md) — per-artifact threat model for SOPS keys, Talos PKI, OpenBao seal, cosign identity
+- [OpenBao DR](./openbao.md) — seal/unseal, root-token rotation, restore from Velero
 - [Node autoscaling](../node-autoscaling.md) — architecture, prerequisites, and troubleshooting
 - [Velero + CNPG → R2](./velero-cnpg.md) — application/PV backups
 - [Alerting](./alerting.md) — automated detection of backup failures
