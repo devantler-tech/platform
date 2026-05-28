@@ -57,8 +57,9 @@ In scope:
 - Documentation that, if wrong, would lead an operator to a weaker
   configuration (notably `docs/dr/`, `docs/secret-rotation.md`,
   `docs/oidc-kubectl.md`).
-- The KSail configuration files (`ksail.yaml`, `ksail.prod.yaml`) and the
-  Hetzner provisioning script under `hetzner/`.
+- The KSail configuration files (`ksail.yaml`, `ksail.prod.yaml`). KSail's
+  native Hetzner provider owns the Hetzner Cloud provisioning lifecycle;
+  there is no in-repo provisioning script.
 
 Out of scope:
 
@@ -78,10 +79,16 @@ Out of scope:
 - All in-repo secrets are SOPS-encrypted with Age (`.sops.yaml` lists the
   current recipients). Reporting that ciphertext is present in git is not a
   vulnerability.
-- The platform OCI artifact published to GHCR is signed via cosign keyless
-  signing (Fulcio + Rekor) against the GitHub Actions OIDC identity of this
-  repository's `cd.yaml` workflow. Tampering would require compromising
-  Fulcio, Rekor, or the workflow itself.
+- The platform OCI artifact published to GHCR is **planned** to be signed
+  via cosign keyless signing (Fulcio + Rekor) against the GitHub Actions
+  OIDC identity of this repository's `cd.yaml` workflow. The signing step
+  is being introduced in a separate PR; consumer-side `OCIRepository.spec.verify`
+  is a follow-up after that. Until both are merged and rolled out, the
+  artifact is **not** yet cryptographically verified end-to-end — operate
+  on the assumption that the deploy pipeline is the only enforcement of
+  artifact integrity. See `docs/dr/crypto-custody.md` for the target
+  design and the role of the `matchOIDCIdentity` regex as the policy
+  decision point.
 - Talos PKI, OpenBao unseal material, and the Hetzner API token are the
   three pieces of cryptographic material whose loss would force a full
   cluster rebuild; their custody is documented in `docs/dr/runbook.md`.
@@ -95,8 +102,14 @@ contributions:
   other sensitive material must be SOPS-encrypted (`*.enc.yaml`) and gated
   by the `.sops.yaml` rules.
 - Third-party GitHub Actions must be pinned by commit SHA (not by tag).
-  Renovate keeps these up to date.
-- The platform OCI artifact is signed and verified end-to-end; bypassing
-  that verification in a PR is treated as a security regression.
+  Dependabot is configured to update these (`.github/dependabot.yaml`);
+  Renovate handles other ecosystems but is intentionally disabled for
+  GitHub Actions to avoid two tools racing on the same files.
+- Once cosign keyless signing and consumer-side `spec.verify` are landed
+  (tracked separately in the security-hardening series), bypassing
+  artifact verification in a PR will be treated as a security regression.
+  Until then, the deploy pipeline (`.github/workflows/cd.yaml`) is the
+  only enforcement of artifact integrity; review PRs that touch it with
+  the same care as PRs that would touch verification config.
 
 [CVSS v3.1]: https://www.first.org/cvss/v3.1/specification-document
