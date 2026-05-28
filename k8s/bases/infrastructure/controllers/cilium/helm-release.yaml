@@ -94,6 +94,22 @@ spec:
     ipam:
       mode: kubernetes
     kubeProxyReplacement: true
+    # Transparent WireGuard encryption for all pod-to-pod and node-to-node
+    # traffic.  KubeSpan (Talos-layer WireGuard between nodes) is not
+    # enabled in this cluster, so without this setting inter-node pod
+    # traffic would transit the Hetzner private network in cleartext.
+    # SPIRE mutual authentication below provides workload *identity*; this
+    # block provides on-the-wire *encryption*. They are independent and
+    # complementary.
+    #
+    # Requires the kernel WireGuard module (present in the Talos kernel
+    # since 5.6) and kubeProxyReplacement=true (set above).
+    # Disabled in the Docker provider overlay — local-only traffic never
+    # leaves a single Docker container.
+    encryption:
+      enabled: true
+      type: wireguard
+      nodeEncryption: true
     authentication:
       enabled: true
       mutual:
