@@ -112,13 +112,17 @@ spec:
           #
           # HCL shape (per https://openbao.org/docs/configuration/audit):
           #   audit "<arbitrary identifier>" {
-          #     type = "<device>"
-          #     options = { ... }
+          #     type    = "<device>"
+          #     path    = "<api mount path>"   # what /sys/audit/<path>/ becomes
+          #     options = { ... backend-specific options ... }
           #   }
-          # The label is just a stable name for the device (used in the
-          # API path /sys/audit/<label>), not the backend type.
+          # Both `type` and `path` are required at parse time. `type`
+          # selects the backend; `path` is what `bao audit list` reports
+          # and what API requests address. We use "file/" so the device
+          # is reachable at /sys/audit/file/.
           audit "file" {
-            type = "file"
+            type    = "file"
+            path    = "file/"
             options = {
               file_path = "/openbao/audit/audit.log"
             }

@@ -465,15 +465,16 @@ spec:
               # listener and storage:
               #
               #   audit "file" {
-              #     type = "file"
+              #     type    = "file"
+              #     path    = "file/"
               #     options = {
               #       file_path = "/openbao/audit/audit.log"
               #     }
               #   }
               #
               # See https://openbao.org/docs/configuration/audit for the
-              # full shape. No runtime step is needed for OpenBao to
-              # start auditing.
+              # full shape (both `type` and `path` are required). No
+              # runtime step is needed for OpenBao to start auditing.
 
               # --- 7. Database secrets engine: fleetdm MySQL static-role rotation ---
               # OpenBao owns and periodically rotates the 'fleet' MySQL user's
