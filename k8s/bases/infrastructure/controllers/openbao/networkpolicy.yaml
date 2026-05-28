@@ -54,4 +54,15 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+    # FleetDM MySQL — the Database secrets engine connects to MySQL to
+    # validate database/config/fleetdm-mysql and to rotate the 'fleet'
+    # user's password (the mysql-database-plugin runs in-process inside
+    # the OpenBao server pod, so the egress originates from this namespace).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: fleetdm
+      toPorts:
+        - ports:
+            - port: "3306"
+              protocol: TCP
 
