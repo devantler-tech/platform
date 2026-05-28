@@ -1,4 +1,45 @@
 machine:
   sysctls:
+    # Network buffer tuning (Cilium / high-throughput workloads).
     net.core.rmem_max: "7500000"
     net.core.wmem_max: "7500000"
+
+    # ----- Kernel information disclosure -----
+    # Hide kernel pointers from /proc so a local attacker can't easily
+    # locate gadgets for kernel exploits.
+    kernel.kptr_restrict: "2"
+    # Restrict access to dmesg() so an unprivileged process can't read
+    # the kernel log (which often leaks addresses and dev info).
+    kernel.dmesg_restrict: "1"
+    # Restrict ptrace() to direct children only. Stops one compromised
+    # container from attaching a debugger to a neighbour in the same
+    # PID namespace, even when both run as the same UID.
+    kernel.yama.ptrace_scope: "1"
+
+    # ----- BPF hardening -----
+    # Cilium runs with CAP_BPF/CAP_SYS_ADMIN, so it does not rely on
+    # unprivileged eBPF. Disabling unprivileged eBPF closes a class of
+    # local-privilege-escalation primitives without affecting Cilium.
+    kernel.unprivileged_bpf_disabled: "1"
+
+    # ----- L3 sanity: source routing, redirects, martians -----
+    # Source-routed packets let a remote pick the return path; nothing
+    # legitimate on this cluster needs them.
+    net.ipv4.conf.all.accept_source_route: "0"
+    net.ipv4.conf.default.accept_source_route: "0"
+    net.ipv6.conf.all.accept_source_route: "0"
+    net.ipv6.conf.default.accept_source_route: "0"
+    # ICMP redirects let an on-path attacker rewrite the host's routing
+    # table. Cilium uses BPF for routing decisions, never ICMP redirects.
+    net.ipv4.conf.all.accept_redirects: "0"
+    net.ipv4.conf.default.accept_redirects: "0"
+    net.ipv6.conf.all.accept_redirects: "0"
+    net.ipv6.conf.default.accept_redirects: "0"
+    net.ipv4.conf.all.send_redirects: "0"
+    net.ipv4.conf.default.send_redirects: "0"
+    # Smurf amplification: don't reply to broadcast pings.
+    net.ipv4.icmp_echo_ignore_broadcasts: "1"
+    # Log packets with martian (impossible) source addresses; useful for
+    # spotting misconfigured peers / source-spoofing.
+    net.ipv4.conf.all.log_martians: "1"
+    net.ipv4.conf.default.log_martians: "1"
