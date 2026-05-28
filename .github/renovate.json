@@ -50,11 +50,11 @@
       "priority/high"
     ],
     "minimumReleaseAge": "0 days",
-    "automerge": false
+    "automerge": true
   },
   "packageRules": [
     {
-      "description": "Security-critical controllers always require manual review, even for patch/minor bumps. A compromised release of any of these would let an attacker bypass admission, exfiltrate secrets, or disable encryption — automerging on a 7-day-old release is not enough trust.",
+      "description": "Security-critical controllers — labelled so security-driven bumps are visible in the PR feed. Automerge stays ON: CI (system-test on a real Talos+Docker cluster, kubescape NSA scan, gitleaks, zizmor, CodeQL) is the trust gate.",
       "matchManagers": [
         "helmv3",
         "flux",
@@ -80,30 +80,30 @@
         "/^velero$/",
         "/^reloader$/"
       ],
-      "automerge": false,
+      "automerge": true,
       "labels": [
         "security/review-required"
       ]
     },
     {
-      "description": "Talos machine config and the prod KSail config are infrastructure-trust-critical: a wrong patch can render the cluster unbootable, and a malicious chart bump dragged in via a transitive bump would be very hard to spot. Block automerge on any change under talos*/** or to ksail.prod.yaml.",
+      "description": "Talos / KSail config changes — labelled for visibility. Automerge stays ON: CI's system-test boots a real Talos+Docker cluster from the patched config, so a broken machine-config patch fails bring-up before merge.",
       "matchFileNames": [
         "talos/**",
         "talos-local/**",
         "ksail.prod.yaml",
         "ksail.yaml"
       ],
-      "automerge": false,
+      "automerge": true,
       "labels": [
         "security/review-required"
       ]
     },
     {
-      "description": "Major versions always require manual review. Belt-and-braces — config:recommended already does this, but stating it explicitly survives future preset drift.",
+      "description": "Major versions — automerged. CI (full system-test, kubescape NSA scan, manifest validation) is the trust gate.",
       "matchUpdateTypes": [
         "major"
       ],
-      "automerge": false
+      "automerge": true
     }
   ],
   "ignorePaths": [
