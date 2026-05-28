@@ -1,3 +1,15 @@
+# PSA enforce label intentionally NOT set on the opencost namespace.
+#
+# The upstream opencost chart ships the opencost + opencost-ui
+# containers with a partial securityContext (runAsUser/fsGroup but no
+# runAsNonRoot, no seccompProfile, no capabilities.drop). With an
+# explicit pod-security.kubernetes.io/enforce label, kube-apiserver's
+# PSA validator rejects the pods before Kyverno's add-security-context
+# mutating webhook can fill in the missing defaults.
+#
+# The Kyverno validate-pod-security ClusterPolicy (Enforce mode) is
+# already a backstop -- it sees the mutated pod and enforces restricted
+# at the webhook layer.
 apiVersion: v1
 kind: Namespace
 metadata:
