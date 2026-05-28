@@ -40,7 +40,7 @@ data:
   # saves memory until the first KEDA reconciliation.
   # headlamp: min 0, max 1 (OIDC state in-memory — must stay single-pod)
   # whoami/fleetdm: min 0, max 2
-  # actual-budget: min 1, max 1 (SQLite on RWO PVC — no scale-to-zero)
+  # actual-budget: parked at 0/0 (unused; SQLite on RWO PVC keeps max≤1 when re-enabled)
   headlamp_replicas: "1"
   whoami_replicas: "1"
   fleetdm_replicas: "1"
@@ -52,7 +52,11 @@ data:
   fleetdm_mysql_secondary_replicas: "0"
   fleetdm_redis_architecture: "standalone"
   fleetdm_redis_replicas: "0"
-  actual_budget_replicas: "1"
+  # Parked: deployment + KEDA target both at 0. Re-enable by setting
+  # actual_budget_replicas + _min to 1 and _max to 1.
+  actual_budget_replicas: "0"
+  actual_budget_replicas_min: "0"
+  actual_budget_replicas_max: "0"
   hubble_ui_replicas: "1"
   # Auth chain: 2 replicas for HA during VPA evictions (prevents 502s).
   dex_replicas: "2"
