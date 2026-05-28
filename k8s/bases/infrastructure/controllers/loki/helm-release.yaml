@@ -62,7 +62,13 @@ spec:
     singleBinary:
       replicas: 1
       persistence:
-        enabled: false
+        # The chart's `persistence.enabled: false` means no volume at /var/loki
+        # at all (not an emptyDir) and Loki crashes writing chunks under the
+        # default read-only root filesystem. Use a small PVC against the
+        # cluster's default storage class instead -- local-path on the docker
+        # provider, overridden to hcloud / 10Gi by the hetzner overlay.
+        enabled: true
+        size: 5Gi
       resources:
         requests:
           cpu: 50m
