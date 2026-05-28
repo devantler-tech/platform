@@ -461,10 +461,19 @@ spec:
               # returns "cannot enable audit device via API; use
               # declarative, config-based audit device management
               # instead". The audit device is now declared in the
-              # openbao HelmRelease's standalone.config HCL (a
-              # `audit "file" { file_path = "/openbao/audit/audit.log" }`
-              # stanza alongside listener and storage). No runtime step
-              # is needed for OpenBao to start auditing.
+              # openbao HelmRelease's standalone.config HCL, alongside
+              # listener and storage:
+              #
+              #   audit "file" {
+              #     type = "file"
+              #     options = {
+              #       file_path = "/openbao/audit/audit.log"
+              #     }
+              #   }
+              #
+              # See https://openbao.org/docs/configuration/audit for the
+              # full shape. No runtime step is needed for OpenBao to
+              # start auditing.
 
               # --- 7. Database secrets engine: fleetdm MySQL static-role rotation ---
               # OpenBao owns and periodically rotates the 'fleet' MySQL user's
