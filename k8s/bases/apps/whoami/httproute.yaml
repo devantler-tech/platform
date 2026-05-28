@@ -9,6 +9,8 @@ metadata:
     gethomepage.dev/description: HTTP echo service for network diagnostics.
     gethomepage.dev/group: Diagnostics
     gethomepage.dev/icon: mdi-network-check
+    gethomepage.dev/href: https://whoami.${domain}
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=whoami
 spec:
   parentRefs:
     - name: platform

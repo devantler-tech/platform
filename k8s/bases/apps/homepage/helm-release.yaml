@@ -52,6 +52,20 @@ spec:
                       matchLabels:
                         app.kubernetes.io/name: homepage
                         app.kubernetes.io/instance: homepage
+          # Flicker fix: with replicaCount=2 and the chart's default ClusterIP
+          # service, the Kubernetes widget's poll for node/cluster CPU/memory
+          # round-robins between two pods that each maintain their own
+          # kube-apiserver watcher cache — values pop between slightly-stale
+          # and slightly-fresh on every refresh. Pinning to ClientIP keeps
+          # each oauth2-proxy backend stuck to one homepage replica so the
+          # widget reads from a consistent cache.
+          - target:
+              kind: Service
+              name: homepage
+            patch: |
+              - op: add
+                path: /spec/sessionAffinity
+                value: ClientIP
   # ICONS:
   # https://github.com/walkxcode/dashboard-icons
   # https://simpleicons.org
