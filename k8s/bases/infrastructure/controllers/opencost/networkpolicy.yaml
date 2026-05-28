@@ -16,6 +16,20 @@ spec:
               protocol: TCP
             - port: "9090"
               protocol: TCP
+    # Headlamp's OpenCost plugin queries the cost API/UI through the
+    # kube-apiserver service proxy (/api/v1/namespaces/opencost/services/
+    # opencost:http-ui/proxy/...), so the request reaches OpenCost from the
+    # API server. Its source address varies by CNI path (direct, SNAT'd via
+    # host, or coming from another node), so we allow the three
+    # Cilium-managed entities the API server may appear as.
+    - fromEntities:
+        - kube-apiserver
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "9003"
+              protocol: TCP
     # auth-proxy (oauth2-proxy SSO) reaches the OpenCost UI after authentication.
     - fromEndpoints:
         - matchLabels:

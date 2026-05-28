@@ -139,3 +139,13 @@ spec:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
+    crds:
+      migration:
+        # The kyverno-migrate-resources post-upgrade hook job sets seccompProfile
+        # only at the container level; our require-seccomp-profile ClusterPolicy
+        # checks pod-level securityContext, so set it here too (chart default is {})
+        # to keep the hook pod compliant and stop background-scan PolicyViolations.
+        podSecurityContext:
+          runAsNonRoot: true
+          seccompProfile:
+            type: RuntimeDefault

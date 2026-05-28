@@ -18,17 +18,7 @@ data:
   # --- Critical controllers (2 replicas for HA during VPA evictions) ---
   # With VPA updateMode=InPlaceOrRecreate, single-replica services get 502s
   # during eviction. User-facing auth and admission webhooks need 2+ replicas.
-  # TEMP (stabilization): trimmed 2->1 to free worker memory+CPU so the Velero
-  # node-agent DaemonSet can schedule, unblocking infrastructure-controllers and
-  # letting the lowered auto-vpa floor reconcile. Restore to "2" once prod has
-  # headroom.
-  # Operational risk (accepted, temporary): cert-manager runs an admission
-  # webhook (failurePolicy=Fail). At 1 replica, a restart/rollout briefly makes
-  # the webhook unavailable, which blocks admission of cert-manager.io resources
-  # (Certificate/Issuer) and delays cert issuance/renewal until it recovers.
-  # This is control-plane only (no data-plane / user-facing 502s) and the window
-  # is short, so it is acceptable purely as a stabilization measure.
-  cert_manager_replicas: "1"
+  cert_manager_replicas: "2"
   metrics_server_replicas: "2"
   vpa_admission_replicas: "2"
   keda_operator_replicas: "2"
@@ -110,14 +100,5 @@ data:
   openbao_replicas: "1"
   openbao_storage_size: 10Gi
   # --- External Secrets Operator ---
-  # TEMP (stabilization): trimmed 2->1 alongside cert_manager_replicas to break
-  # the reconciliation deadlock (see comment above). Restore to "2" once prod
-  # has headroom.
-  # Operational risk (accepted, temporary): external-secrets runs an admission
-  # webhook and a cert-controller. At 1 replica, a restart/rollout briefly makes
-  # the webhook unavailable, which blocks admission of external-secrets.io
-  # resources (ExternalSecret/SecretStore) and delays secret reconciliation.
-  # This is control-plane only (no user-facing impact) and short-lived, so it is
-  # acceptable purely as a stabilization measure.
-  external_secrets_replicas: "1"
+  external_secrets_replicas: "2"
 

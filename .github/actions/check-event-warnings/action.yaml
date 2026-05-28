@@ -1,0 +1,93 @@
+name: Check for new event warnings
+description: >
+  Fail when a cluster is still emitting Warning events after a successful
+  deployment. Records a marker timestamp, lets the cluster settle, then
+  inspects Warning events whose most-recent occurrence is at/after the marker —
+  i.e. warnings still firing at steady state (crash loops, repeated probe
+  failures, image back-off, etc.). Transient one-shot warnings emitted during
+  bootstrap are ignored because they fired before the marker. The full Warning
+  history is always printed for context.
+
+inputs:
+  context:
+    description: kubectl context to target. Empty uses the kubeconfig current-context.
+    required: false
+    default: ""
+  settle-seconds:
+    description: How long to let the cluster settle before sampling Warning events.
+    required: false
+    default: "90"
+  fail-on-warning:
+    description: Fail the step when steady-state Warning events are found.
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - name: 🔎 Check for new event warnings
+      shell: bash
+      env:
+        KUBECTL_CONTEXT: ${{ inputs.context }}
+        SETTLE_SECONDS: ${{ inputs.settle-seconds }}
+        FAIL_ON_WARNING: ${{ inputs.fail-on-warning }}
+      run: |
+        set -euo pipefail
+
+        kc=(kubectl)
+        if [ -n "${KUBECTL_CONTEXT}" ]; then
+          kc+=(--context "${KUBECTL_CONTEXT}")
+        fi
+
+        # Record the marker BEFORE settling so the observation window is exactly
+        # the settle period. RFC3339 UTC timestamps compare correctly as strings
+        # when truncated to second precision (fixed-width prefix).
+        marker=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        echo "Marker: ${marker} — letting the cluster settle for ${SETTLE_SECONDS}s, then sampling Warning events that fired at/after the marker."
+        sleep "${SETTLE_SECONDS}"
+
+        events_json=$("${kc[@]}" get events -A -o json)
+
+        # Normalise both event shapes (core/v1 Event and events.k8s.io/v1) and
+        # keep only Warnings whose most-recent occurrence is at/after the marker.
+        new_warnings=$(printf '%s' "${events_json}" | jq -c --arg marker "${marker}" '
+          [ .items[]
+            | select(.type == "Warning")
+            | (.series.lastObservedTime // .lastTimestamp // .deprecatedLastTimestamp // .eventTime // .metadata.creationTimestamp) as $ts
+            | select($ts != null and ($ts[0:19]) >= ($marker[0:19]))
+            | { ns:     (.metadata.namespace // .involvedObject.namespace // .regarding.namespace // "-"),
+                reason: (.reason // "-"),
+                obj:    "\(.involvedObject.kind // .regarding.kind // "?")/\(.involvedObject.name // .regarding.name // "?")",
+                msg:    ((.message // .note // "") | gsub("\\s+"; " ") | .[0:300]),
+                count:  (.count // .series.count // .deprecatedCount // 1),
+                ts:     $ts }
+          ]
+          | sort_by(.ts)
+        ')
+        count=$(printf '%s' "${new_warnings}" | jq 'length')
+
+        echo "::group::New Warning events since ${marker} (${count})"
+        if [ "${count}" -eq 0 ]; then
+          echo "None — no Warning events fired during the ${SETTLE_SECONDS}s steady-state window. ✅"
+        else
+          printf '%s' "${new_warnings}" | jq -r '.[] | "\(.ts)  [\(.ns)] \(.obj)  \(.reason) (x\(.count)): \(.msg)"'
+        fi
+        echo "::endgroup::"
+
+        # Always print the full Warning history (any time) for context — report-only.
+        echo "::group::All Warning events (history, report-only)"
+        "${kc[@]}" get events -A --field-selector type=Warning --sort-by=.lastTimestamp 2>/dev/null | tail -200 || echo "(none / unavailable)"
+        echo "::endgroup::"
+
+        if [ "${count}" -gt 0 ]; then
+          # Per-reason occurrence totals: sum .count rather than count event
+          # objects, since one crash-looping pod is a single Event with
+          # count=N. jq's group_by sorts its input internally, so the timestamp
+          # ordering of new_warnings never splits a reason across groups.
+          summary=$(printf '%s' "${new_warnings}" | jq -r 'group_by(.reason) | map("\(.[0].reason) ×\(map(.count) | add)") | join(", ")')
+          if [ "${FAIL_ON_WARNING}" = "true" ]; then
+            echo "::error title=New event warnings after deploy::${count} distinct Warning event(s) still firing at steady state (by reason, ×=occurrences): ${summary}. See the 'Check for new event warnings' step log."
+            exit 1
+          fi
+          echo "::warning title=New event warnings after deploy::${count} distinct Warning event(s) still firing at steady state (by reason, ×=occurrences): ${summary}. (report-only)"
+        fi
