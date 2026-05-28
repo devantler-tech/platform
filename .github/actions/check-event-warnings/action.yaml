@@ -5,8 +5,12 @@ description: >
   inspects Warning events whose most-recent occurrence is at/after the marker —
   i.e. warnings still firing at steady state (crash loops, repeated probe
   failures, image back-off, etc.). Transient one-shot warnings emitted during
-  bootstrap are ignored because they fired before the marker. The full Warning
-  history is always printed for context.
+  bootstrap are ignored because they fired before the marker. "Unhealthy"
+  (probe-failure) warnings on pods that no longer exist are discounted as
+  rollout teardown artifacts (a final probe after the CNI removed a terminating
+  pod's route); real crash loops and persistent probe failures occur on pods
+  that still exist and remain counted. The full Warning history — and anything
+  discounted — is always printed for context.
 
 inputs:
   context:
@@ -48,23 +52,52 @@ runs:
 
         events_json=$("${kc[@]}" get events -A -o json)
 
-        # Normalise both event shapes (core/v1 Event and events.k8s.io/v1) and
-        # keep only Warnings whose most-recent occurrence is at/after the marker.
-        new_warnings=$(printf '%s' "${events_json}" | jq -c --arg marker "${marker}" '
+        # Snapshot live pods immediately after the events so the two views are
+        # as close in time as possible. Used to discount "Unhealthy" warnings
+        # on pods that no longer exist (teardown artifacts — see the jq below).
+        # On any failure emit "null" so the filter keeps every warning
+        # (fail-safe: never silently hide warnings because the snapshot broke).
+        live_pods_json=$("${kc[@]}" get pods -A -o json 2>/dev/null \
+          | jq -c '[.items[] | "\(.metadata.namespace)/\(.metadata.name)"]' 2>/dev/null) || live_pods_json=""
+        [ -n "${live_pods_json}" ] || live_pods_json="null"
+
+        # Normalise both event shapes (core/v1 Event and events.k8s.io/v1), keep
+        # only Warnings whose most-recent occurrence is at/after the marker, and
+        # tag each as a teardown artifact when it is an "Unhealthy" probe failure
+        # on a Pod absent from the live snapshot. During a rollout kubelet fires
+        # one last liveness/readiness probe ~1s after the CNI tears down a
+        # terminating pod's route, emitting "Unhealthy: … connect: no route to
+        # host / connection refused" against a pod that is already gone. That is
+        # not a steady-state fault, so it is split into `dropped` rather than
+        # failing the gate. Crash loops and persistent probe failures happen on
+        # pods that STILL EXIST, so they land in `kept` and still fail the gate.
+        partitioned=$(printf '%s' "${events_json}" | jq -c --arg marker "${marker}" --argjson livePods "${live_pods_json}" '
           [ .items[]
             | select(.type == "Warning")
             | (.series.lastObservedTime // .lastTimestamp // .deprecatedLastTimestamp // .eventTime // .metadata.creationTimestamp) as $ts
             | select($ts != null and ($ts[0:19]) >= ($marker[0:19]))
-            | { ns:     (.metadata.namespace // .involvedObject.namespace // .regarding.namespace // "-"),
+            | (.metadata.namespace // .involvedObject.namespace // .regarding.namespace // "-") as $ns
+            | (.involvedObject.kind // .regarding.kind // "?") as $kind
+            | (.involvedObject.name // .regarding.name // "?") as $name
+            | { ns:     $ns,
                 reason: (.reason // "-"),
-                obj:    "\(.involvedObject.kind // .regarding.kind // "?")/\(.involvedObject.name // .regarding.name // "?")",
+                obj:    "\($kind)/\($name)",
                 msg:    ((.message // .note // "") | gsub("\\s+"; " ") | .[0:300]),
                 count:  (.count // .series.count // .deprecatedCount // 1),
-                ts:     $ts }
+                ts:     $ts,
+                teardown: ( $livePods != null
+                            and .reason == "Unhealthy"
+                            and $kind == "Pod"
+                            and ( ("\($ns)/\($name)") | IN($livePods[]) | not ) ) }
           ]
           | sort_by(.ts)
+          | { kept:    [ .[] | select(.teardown | not) | del(.teardown) ],
+              dropped: [ .[] | select(.teardown)       | del(.teardown) ] }
         ')
+        new_warnings=$(printf '%s' "${partitioned}" | jq -c '.kept')
+        discounted=$(printf '%s' "${partitioned}" | jq -c '.dropped')
         count=$(printf '%s' "${new_warnings}" | jq 'length')
+        dropped_count=$(printf '%s' "${discounted}" | jq 'length')
 
         echo "::group::New Warning events since ${marker} (${count})"
         if [ "${count}" -eq 0 ]; then
@@ -73,6 +106,14 @@ runs:
           printf '%s' "${new_warnings}" | jq -r '.[] | "\(.ts)  [\(.ns)] \(.obj)  \(.reason) (x\(.count)): \(.msg)"'
         fi
         echo "::endgroup::"
+
+        # Report-only: probe warnings discounted because their pod is already
+        # gone. Printed so a real issue can never be masked without a trace.
+        if [ "${dropped_count}" -gt 0 ]; then
+          echo "::group::Discounted ${dropped_count} Unhealthy warning(s) on already-deleted pods (rollout teardown artifacts, report-only)"
+          printf '%s' "${discounted}" | jq -r '.[] | "\(.ts)  [\(.ns)] \(.obj)  \(.reason) (x\(.count)): \(.msg)"'
+          echo "::endgroup::"
+        fi
 
         # Always print the full Warning history (any time) for context — report-only.
         echo "::group::All Warning events (history, report-only)"
