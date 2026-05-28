@@ -21,6 +21,8 @@ jobs:
     permissions:
       contents: read # checkout repository
       packages: write # push OCI artifacts to GHCR
+      id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
+      attestations: write # write SBOM + SLSA provenance attestations
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -125,6 +127,111 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+
+      - name: 🖋️ Sign OCI manifest with cosign (keyless)
+        # Signs the platform OCI artifact published by `ksail workload push`
+        # using Sigstore keyless signing: Fulcio mints a short-lived cert
+        # bound to this workflow's OIDC identity and Rekor records the
+        # signature in its append-only transparency log. There is no
+        # private key on disk -- the security policy lives in the
+        # verifier's matchOIDCIdentity regex (planned for a follow-up).
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          # COSIGN_EXPERIMENTAL was retired in cosign 2.x; keyless is now
+          # the default when --key is omitted.
+          COSIGN_YES: "true"
+          # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
+          COSIGN_VERSION: "2.5.0"
+          # SHA256 of cosign-linux-amd64 for the version above.
+          # Update alongside COSIGN_VERSION (Renovate bumps the version
+          # only; the digest must follow in the same PR — intentional).
+          COSIGN_SHA256: "1f6c194dd0891eb345b436bb71ff9f996768355f5e0ce02dde88567029ac2188"
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
+            -o /tmp/cosign
+          # Verify the binary BEFORE installing as root. Without this,
+          # a compromised release asset would land on the runner under
+          # /usr/local/bin and run as part of the signing chain.
+          echo "${COSIGN_SHA256}  /tmp/cosign" | sha256sum -c -
+          chmod +x /tmp/cosign
+          sudo install /tmp/cosign /usr/local/bin/cosign
+          rm /tmp/cosign
+          cosign version
+          # Login to GHCR so cosign can resolve and sign the manifest pushed
+          # in the previous step. The signature is uploaded back to GHCR
+          # alongside the artifact.
+          echo "${GHCR_TOKEN}" | cosign login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          REF="ghcr.io/devantler-tech/platform/manifests:latest"
+          # cosign sign by tag resolves to the current digest internally,
+          # producing a digest-bound signature that survives future tag
+          # mutations.
+          cosign sign --yes --recursive "${REF}"
+          # Capture the digest so subsequent SBOM + provenance attestation
+          # steps reference the exact bytes that were signed, not whatever
+          # the tag happens to point at by the time those steps run.
+          DIGEST=$(cosign manifest digest "${REF}")
+          echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${REF}" >> "${GITHUB_OUTPUT}"
+        id: cosign-sign
+
+      - name: 📋 Generate SBOM (CycloneDX)
+        # Uses syft to enumerate every package/binary in the OCI manifest
+        # artifact published in the previous step. Output is CycloneDX
+        # JSON, which is the format attest-sbom expects.
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
+          SYFT_VERSION: "1.20.0"
+          # SHA256 of syft_<ver>_linux_amd64.tar.gz for the version above.
+          SYFT_SHA256: "689e12c5cbf67521ce61b9c126068f9eaabe1223e77971b2fede50033ff6b5cc"
+          # Indirected through env to keep the template expansion out
+          # of the shell script body (zizmor: code-injection via
+          # template-expansion).
+          OCI_DIGEST: ${{ steps.cosign-sign.outputs.digest }}
+        run: |
+          set -euo pipefail
+          curl -fsSL \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+            -o /tmp/syft.tar.gz
+          echo "${SYFT_SHA256}  /tmp/syft.tar.gz" | sha256sum -c -
+          sudo tar -xzf /tmp/syft.tar.gz -C /usr/local/bin syft
+          rm /tmp/syft.tar.gz
+          syft version
+          # Auth so syft can pull the OCI manifest descriptor + layers.
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          syft scan --output cyclonedx-json=sbom.cdx.json \
+            "ghcr.io/devantler-tech/platform/manifests@${OCI_DIGEST}"
+          # Sanity: SBOM file should be non-empty and parseable JSON.
+          test -s sbom.cdx.json
+          jq -e '.bomFormat == "CycloneDX"' sbom.cdx.json >/dev/null
+
+      - name: 🪪 Attest SBOM (Sigstore via cosign keyless)
+        # Records the SBOM as a Sigstore in-toto attestation against the
+        # OCI manifest's digest. The attestation is uploaded to GHCR and
+        # its index recorded in Rekor.
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-digest: ${{ steps.cosign-sign.outputs.digest }}
+          subject-name: ghcr.io/devantler-tech/platform/manifests
+          sbom-path: sbom.cdx.json
+          push-to-registry: true
+
+      - name: 🪪 Attest build provenance (SLSA L3)
+        # Generates a SLSA provenance v1.0 statement and attests it against
+        # the same digest. Provenance captures the workflow file,
+        # invocation parameters, GitHub runner, source repo + SHA, etc.
+        # Combined with the cosign signature above and the SBOM
+        # attestation, this completes the supply-chain transparency
+        # bundle for the platform OCI artifact.
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-digest: ${{ steps.cosign-sign.outputs.digest }}
+          subject-name: ghcr.io/devantler-tech/platform/manifests
+          push-to-registry: true
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
