@@ -46,8 +46,21 @@ spec:
                   controlledResources: ["cpu", "memory"]
                   controlledValues: RequestsOnly
                   minAllowed:
-                    cpu: "50m"
+                    # CPU floor lowered 50m->15m: live data showed 87 containers
+                    # pinned at the 50m floor using avg 4.4m — VPA was floored,
+                    # not the workloads. CPU is compressible; 15m covers observed
+                    # usage with margin and frees ~3 cores of reserved-unused
+                    # requests. Memory floor kept at 64Mi (memory runs ~89% hot).
+                    cpu: "15m"
                     memory: "64Mi"
+                  # Upper bound: stops a leaking/runaway workload from having
+                  # its request pushed to an unschedulable size or silently
+                  # forcing an autoscaler node. 3 CPU / 6Gi still fits a cx33
+                  # worker (the largest node type). Tune against live VPA
+                  # recommendations (kubectl get vpa -A).
+                  maxAllowed:
+                    cpu: "3"
+                    memory: "6Gi"
     - name: generate-vpa-for-statefulset
       match:
         resources:
@@ -84,8 +97,21 @@ spec:
                   controlledResources: ["cpu", "memory"]
                   controlledValues: RequestsOnly
                   minAllowed:
-                    cpu: "50m"
+                    # CPU floor lowered 50m->15m: live data showed 87 containers
+                    # pinned at the 50m floor using avg 4.4m — VPA was floored,
+                    # not the workloads. CPU is compressible; 15m covers observed
+                    # usage with margin and frees ~3 cores of reserved-unused
+                    # requests. Memory floor kept at 64Mi (memory runs ~89% hot).
+                    cpu: "15m"
                     memory: "64Mi"
+                  # Upper bound: stops a leaking/runaway workload from having
+                  # its request pushed to an unschedulable size or silently
+                  # forcing an autoscaler node. 3 CPU / 6Gi still fits a cx33
+                  # worker (the largest node type). Tune against live VPA
+                  # recommendations (kubectl get vpa -A).
+                  maxAllowed:
+                    cpu: "3"
+                    memory: "6Gi"
     - name: generate-vpa-for-daemonset
       match:
         resources:
@@ -116,5 +142,18 @@ spec:
                   controlledResources: ["cpu", "memory"]
                   controlledValues: RequestsOnly
                   minAllowed:
-                    cpu: "50m"
+                    # CPU floor lowered 50m->15m: live data showed 87 containers
+                    # pinned at the 50m floor using avg 4.4m — VPA was floored,
+                    # not the workloads. CPU is compressible; 15m covers observed
+                    # usage with margin and frees ~3 cores of reserved-unused
+                    # requests. Memory floor kept at 64Mi (memory runs ~89% hot).
+                    cpu: "15m"
                     memory: "64Mi"
+                  # Upper bound: stops a leaking/runaway workload from having
+                  # its request pushed to an unschedulable size or silently
+                  # forcing an autoscaler node. 3 CPU / 6Gi still fits a cx33
+                  # worker (the largest node type). Tune against live VPA
+                  # recommendations (kubectl get vpa -A).
+                  maxAllowed:
+                    cpu: "3"
+                    memory: "6Gi"

@@ -66,7 +66,9 @@ patches:
       - op: replace
         path: /spec/rules/1/generate/data/spec/limits/0/defaultRequest
         value:
-          cpu: 50m
+          # CPU floor lowered 50m->15m to match VPA minAllowed (auto-vpa.yaml);
+          # idle controllers default lower until VPA right-sizes them.
+          cpu: 15m
           memory: 128Mi
   # --- Anti-affinity: add StatefulSet match, use app.kubernetes.io/name, exclude kube-system ---
   - target:

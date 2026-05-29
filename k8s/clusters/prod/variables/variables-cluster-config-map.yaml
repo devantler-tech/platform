@@ -78,9 +78,11 @@ data:
   hcloud_ccm_replicas: "1"
   hcloud_csi_controller_replicas: "1"
   # --- Longhorn distributed storage ---
-  # All 3 static workers carry Longhorn disks (labeled with
-  # node.longhorn.io/create-default-disk=true). Replica count matches
-  # worker count so every volume is fully replicated across all nodes.
+  # All 4 static workers carry Longhorn disks (labeled with
+  # node.longhorn.io/create-default-disk=true). Replica count is 3 — one fewer
+  # than the worker count — so every volume keeps 3 copies and a single worker
+  # can drain or fail with its volumes still able to rebuild the 3rd replica
+  # onto the remaining worker.
   longhorn_replica_count: "3"
   # VolumeSnapshot CRDs (snapshot.storage.k8s.io) are not installed; the
   # CSI snapshotter crash-loops trying to list them. Disable until CRDs
