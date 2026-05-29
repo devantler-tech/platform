@@ -29,11 +29,11 @@ gh repo create devantler-tech/<tenant> \
   --template devantler-tech/gitops-tenant-template --private
 ```
 
-The template gives you the shared plumbing (`cd.yaml`, `release.yaml`,
-`template-sync.yaml`, `AGENTS.md`) plus scaffolding you then customise
-(`ci.yaml`, `Dockerfile`, `deploy/`, `.releaserc`, `.gitignore`,
-`.github/dependabot.yml`). See the template's `README.md` for which files it
-*owns* (kept in sync) versus which are *yours*.
+The template gives you the shared plumbing it keeps in sync (`cd.yaml`,
+`release.yaml`, `template-sync.yaml`, `CLAUDE.md`, `zizmor.yml`) plus scaffolding
+you then customise and own (`AGENTS.md`, the `maintain` skill, `ci.yaml`,
+`Dockerfile`, `deploy/`, `.releaserc`, `.gitignore`, `.github/dependabot.yml`).
+See the template's `README.md` for the exact owned-vs-synced split.
 
 ## 2. Fill in your stack
 
@@ -41,7 +41,8 @@ The template gives you the shared plumbing (`cd.yaml`, `release.yaml`,
   listens on the port your `deploy/` manifests expose.
 - **`deploy/`** — your Kubernetes manifests (`kustomization.yaml`,
   `deployment.yaml`, `service.yaml`, `httproute.yaml`, an optional
-  CloudNativePG `cluster.yaml`, and a SOPS-encrypted `*.enc.yaml` secret).
+  CloudNativePG `cluster.yaml`, and — when the app needs secrets — a namespaced
+  `SecretStore` + `ExternalSecret` sourcing them from OpenBao; see §3).
   - The `HTTPRoute` attaches to the shared platform Gateway:
     `parentRefs: [{ name: platform, namespace: kube-system, sectionName: https }]`.
   - **The Deployment's container `name` MUST equal the repository name.** `cd.yaml`
@@ -50,19 +51,34 @@ The template gives you the shared plumbing (`cd.yaml`, `release.yaml`,
 - **`ci.yaml`** — replace the example job with your stack's lint/test/build, kept
   behind the `aggregate-job-checks` required-checks gate.
 - **`.templatesyncignore`** — list every file in the repo that *you* own so
-  template-sync never overwrites it (your `ci.yaml`, `Dockerfile`, `deploy/`,
+  template-sync never overwrites it (your `AGENTS.md`,
+  `.claude/skills/maintain/SKILL.md`, `ci.yaml`, `Dockerfile`, `deploy/`,
   `.releaserc`, `.gitignore`, `.github/dependabot.yml`, `README.md`, `LICENSE`,
   and the `.templatesyncignore` itself). Everything the template ships that is
   not ignored is kept in sync.
 
 ## 3. Secrets
 
-- Tenant app secrets live in `deploy/<name>.enc.yaml`, encrypted with **SOPS**
-  (the platform decrypts them with its cluster age keys — see
-  [`secret-rotation.md`](secret-rotation.md) and the platform `.sops.yaml`).
+Tenant app secrets come from **OpenBao** via **External Secrets** — not SOPS.
+
+- **Store the values in OpenBao** (KV v2, mount `secret`) under your tenant
+  prefix `apps/<tenant>/*`, out of band (OpenBao UI/CLI).
+- **In `deploy/`**, add a **namespaced `SecretStore`** (`kind: SecretStore`) and
+  an `ExternalSecret` that reads `apps/<tenant>/*` and materialises a native
+  Secret. Tenants must use a *namespaced* store, never the shared
+  `ClusterSecretStore` — the Kyverno policy `restrict-tenant-secret-stores`
+  enforces this. The template ships ready-to-edit `secretstore.yaml` +
+  `externalsecret.yaml`.
+- **Platform-side (one-time per tenant)**, in
+  [`vault-config/job.yaml`](../k8s/bases/infrastructure/vault-config/job.yaml):
+  add an `app-<tenant>-readonly` policy scoped to `secret/data/apps/<tenant>/*`
+  (mirror the existing `app-wedding-readonly`) and a Kubernetes auth role binding
+  the tenant's ServiceAccount to it. The tenant's `edit` RoleBinding already
+  aggregates the `external-secrets-tenant-edit` ClusterRole, so it may manage its
+  own `SecretStore`/`ExternalSecret`.
 - The release and template-sync workflows mint a **GitHub App token** from the
-  org-level `APP_ID` variable and `APP_PRIVATE_KEY` secret — these are already
-  available to every repo in the org, so no per-repo setup is needed.
+  org-level `APP_ID` variable and `APP_PRIVATE_KEY` secret — already available to
+  every repo in the org, so no per-repo setup is needed.
 
 ## 4. How publishing & trust fit together
 
@@ -92,9 +108,9 @@ Add `k8s/bases/apps/<tenant>/` (copy `ascoachingogvaner/` and rename), with:
 
 In `sync.yaml`, update the `name`/`namespace`/`url`
 (`oci://ghcr.io/devantler-tech/<tenant>/manifests`) and keep the `verify` block
-pointing at `publish-app.yaml`. If the tenant's secrets need in-cluster
-decryption, add the `spec.decryption` block (`provider: sops`, `secretRef:
-sops-age`) — see `wedding-app/sync.yaml`.
+pointing at `publish-app.yaml`. No Flux `spec.decryption` is needed — tenant
+secrets are delivered by External Secrets from OpenBao (§3), not SOPS-encrypted
+inside the artifact.
 
 Finally, add the directory to
 [`k8s/bases/apps/kustomization.yaml`](../k8s/bases/apps/kustomization.yaml):
