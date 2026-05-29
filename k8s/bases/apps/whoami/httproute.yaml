@@ -9,6 +9,8 @@ metadata:
     gethomepage.dev/description: HTTP echo service for network diagnostics.
     gethomepage.dev/group: Diagnostics
     gethomepage.dev/icon: mdi-network-check
+    gethomepage.dev/href: https://whoami.${domain}
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=whoami
 spec:
   parentRefs:
     - name: platform
@@ -21,3 +23,9 @@ spec:
         - name: keda-add-ons-http-interceptor-proxy
           namespace: keda
           port: 8080
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload

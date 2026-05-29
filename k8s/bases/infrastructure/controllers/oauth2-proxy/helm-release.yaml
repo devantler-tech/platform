@@ -52,12 +52,43 @@ spec:
       cookieSecret: "${oauth2_proxy_cookie_secret}"
       configFile: |-
         provider = "github"
+        # Defence in depth: three independent GitHub gates.
+        #   github_org   — only members of devantler-tech can authenticate.
+        #                  This matches the Dex GitHub connector that gates
+        #                  kubectl OIDC (orgs:[devantler-tech], no team
+        #                  restriction). Web auth and kubectl auth now
+        #                  enforce the same org boundary.
+        #   github_team  — additionally restrict to the 'platform' team.
+        #                  This is *stricter* than the Dex connector
+        #                  (intentional — web auth previously had only the
+        #                  github_users bypass list). If the org has no
+        #                  'platform' team, anyone outside github_users
+        #                  will be locked out; drop this line for an
+        #                  org-only gate equivalent to Dex.
+        #   github_users — explicit allowlist that bypasses the org/team
+        #                  check. oauth2-proxy treats this as an OR: users
+        #                  here pass even if the org/team check fails. If
+        #                  the list is ever cleared the org + team gate
+        #                  still holds as the fallback.
+        github_org = "devantler-tech"
+        github_team = "platform"
         github_users = ["devantler"]
+        # email_domains = ["*"] is intentional: GitHub OAuth does not
+        # always return a verified email (users with private emails
+        # surface as <id>+<login>@users.noreply.github.com or empty), so
+        # gating on email_domains would lock out legitimate accounts that
+        # already passed the org/team/users checks above.
         email_domains = [ "*" ]
         cookie_domains=[".${domain}"]
         whitelist_domains = ["${domain}", ".${domain}"]
         redirect_url = "https://oauth2-proxy.${domain}/oauth2/callback"
         upstreams = [ "http://auth-proxy.oauth2-proxy.svc.cluster.local:80" ]
+        # upstream_timeout — max time to await upstream response headers
+        # (default 30s). Raised to 90s so KEDA scale-to-zero apps behind this
+        # proxy (notably hubble-ui, which cold-starts via auth-proxy → the KEDA
+        # HTTP interceptor) have room to wake before SSO returns a 504. Kept
+        # under Cloudflare's ~100s edge timeout so oauth2-proxy answers first.
+        upstream_timeout = "90s"
         skip_provider_button = true
         reverse_proxy = true
     ingress:

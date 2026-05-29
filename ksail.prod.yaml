@@ -35,7 +35,7 @@ spec:
             serverType: cx33
             location: fsn1
             min: 0
-            max: 1
+            max: 2
     # These components are installed by ksail. There is a known race on
     # Hetzner clusters between ksail's metrics-server install and Flux's
     # kubelet-serving-cert-approver install (required because Talos
@@ -51,7 +51,7 @@ spec:
     # workers; autoscaler-created nodes are compute-only.
     # The Cluster Autoscaler manages additional workers dynamically.
     #
-    # Bumped 3 -> 4 to host the always-on observability tier (Grafana,
+    # 4 static workers host the always-on observability tier (Grafana,
     # Loki, the persistent Prometheus/Alertmanager StatefulSets). These
     # are steady-state, not bursty, so they belong on guaranteed static
     # capacity rather than autoscaler nodes the autoscaler reclaims after

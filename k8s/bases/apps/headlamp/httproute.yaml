@@ -9,6 +9,8 @@ metadata:
     gethomepage.dev/description: A web UI for managing Kubernetes clusters.
     gethomepage.dev/group: Kubernetes
     gethomepage.dev/icon: https://pbs.twimg.com/profile_images/1537480067227566080/waXG0X7n_400x400.jpg
+    gethomepage.dev/href: https://headlamp.${domain}
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=headlamp
 spec:
   parentRefs:
     - name: platform
@@ -21,3 +23,9 @@ spec:
         - name: keda-add-ons-http-interceptor-proxy
           namespace: keda
           port: 8080
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload

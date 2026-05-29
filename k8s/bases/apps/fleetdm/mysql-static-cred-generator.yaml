@@ -1,0 +1,32 @@
+# Reads the OpenBao Database-engine static credential for the fleet MySQL user.
+# ESO's Vault provider supports the KV engine only, so the database engine must
+# be read through a generator. The generator authenticates to OpenBao with a
+# Kubernetes service account JWT (the `fleetdm-mysql-rotated` Vault auth role)
+# bound to the `external-secrets` SA in THIS namespace. The mysql ExternalSecret
+# consumes this via `dataFrom` and maps `password` -> the `mysql-password` key.
+# OpenBao rotates this on its static-role schedule; the generator re-reads on
+# each ExternalSecret refresh (validated on ESO v2.5.0).
+#
+# The SA must live in the generator's own namespace: ESO's generator codepath
+# uses an "empty store kind" for resolving SA refs and silently ignores
+# `serviceAccountRef.namespace` (cross-namespace SA lookup is gated to
+# ClusterSecretStores — ESO issue #4629, closed not-planned). A dedicated Vault
+# role (`fleetdm-mysql-rotated`) keeps the policy surface tight: it carries
+# only `app-fleetdm-db-readonly`, not the broad policy bundle on the
+# `external-secrets` role used by the ClusterSecretStore.
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: VaultDynamicSecret
+metadata:
+  name: fleetdm-mysql-static-cred
+  namespace: fleetdm
+spec:
+  path: "database/static-creds/fleet"
+  method: GET
+  provider:
+    server: "http://openbao.openbao.svc.cluster.local:8200"
+    auth:
+      kubernetes:
+        mountPath: "kubernetes"
+        role: "fleetdm-mysql-rotated"
+        serviceAccountRef:
+          name: "external-secrets"

@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: devantler-tech/reusable-workflows/.github/workflows/update-copilot-skills.yaml@e173ff69586caa379a77782b947f1b47166f922e # v4.0.1
+    uses: devantler-tech/reusable-workflows/.github/workflows/update-copilot-skills.yaml@b748f68a0d14ad477cb9610a6d1f958bf75e91dc # v5.2.0
     with:
       dir: .agents/skills
       # Create the update PR with a GitHub App token so it triggers this

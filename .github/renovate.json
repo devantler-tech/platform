@@ -1,7 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended", 
+    "config:recommended",
     ":disableDependencyDashboard",
     ":semanticCommitTypeAll(fix)"
   ],
@@ -28,12 +28,12 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "Bump the pinned ksail CLI version in workflows (Dependabot can't track a curl-downloaded release asset).",
+      "description": "Bump pinned CLI versions in workflows (Dependabot can't track curl-downloaded release assets). Matches any '# renovate: ...\\n<NAME>_VERSION: \"<ver>\"' pair — currently used for KSAIL_VERSION, COSIGN_VERSION, SYFT_VERSION, GITLEAKS_VERSION.",
       "fileMatch": [
-        "^\\.github/workflows/(cd|ci)\\.yaml$"
+        "^\\.github/workflows/.+\\.ya?ml$"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) extractVersion=(?<extractVersion>\\S+)\\s+KSAIL_VERSION:\\s*\"(?<currentValue>[^\"]+)\""
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) extractVersion=(?<extractVersion>\\S+)\\s+[A-Z][A-Z0-9_]*_VERSION:\\s*\"(?<currentValue>[^\"]+)\""
       ]
     }
   ],
@@ -43,6 +43,69 @@
   "patch": {
     "automerge": true
   },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": [
+      "security",
+      "priority/high"
+    ],
+    "minimumReleaseAge": "0 days",
+    "automerge": true
+  },
+  "packageRules": [
+    {
+      "description": "Security-critical controllers — labelled so security-driven bumps are visible in the PR feed. Automerge stays ON: CI (system-test on a real Talos+Docker cluster, kubescape NSA scan, gitleaks, zizmor, CodeQL) is the trust gate.",
+      "matchManagers": [
+        "helmv3",
+        "flux",
+        "kubernetes"
+      ],
+      "matchPackageNames": [
+        "/^cilium$/",
+        "/^tetragon$/",
+        "/^kyverno$/",
+        "/^kyverno-policies$/",
+        "/^openbao$/",
+        "/^vault$/",
+        "/^cert-manager$/",
+        "/^trust-manager$/",
+        "/^dex$/",
+        "/^oauth2-proxy$/",
+        "/^kubescape-operator$/",
+        "/^trivy-operator$/",
+        "/^external-secrets$/",
+        "/^spire$/",
+        "/^spire-agent$/",
+        "/^spire-server$/",
+        "/^velero$/",
+        "/^reloader$/"
+      ],
+      "automerge": true,
+      "labels": [
+        "security/review-required"
+      ]
+    },
+    {
+      "description": "Talos / KSail config changes — labelled for visibility. Automerge stays ON: CI's system-test boots a real Talos+Docker cluster from the patched config, so a broken machine-config patch fails bring-up before merge.",
+      "matchFileNames": [
+        "talos/**",
+        "talos-local/**",
+        "ksail.prod.yaml",
+        "ksail.yaml"
+      ],
+      "automerge": true,
+      "labels": [
+        "security/review-required"
+      ]
+    },
+    {
+      "description": "Major versions — automerged. CI (full system-test, kubescape NSA scan, manifest validation) is the trust gate.",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": true
+    }
+  ],
   "ignorePaths": [
     "k8s/bases/infrastructure/cluster-policies/samples"
   ]

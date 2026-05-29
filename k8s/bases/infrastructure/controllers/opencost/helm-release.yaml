@@ -25,11 +25,50 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: opencost
+  postRenderers:
+    # Zero-downtime, gate-clean rollout. The chart default (maxUnavailable: 1 on
+    # a single replica) kills the old pod the instant the new one is created;
+    # kubelet then fires one last readiness probe ~1s after Cilium tears down
+    # the dead pod's route, emitting `Unhealthy: …:9003/healthz: connect: no
+    # route to host`. That one-shot teardown warning trips the merge-queue
+    # deploy gate (.github/actions/check-event-warnings) even though it is
+    # harmless. Two mitigations:
+    #   1. maxUnavailable: 0 — surge the new pod to Ready before the old is
+    #      terminated (matches the homepage/headlamp convention).
+    #   2. preStop.sleep — keep the opencost container serving :9003 for 15s
+    #      after it is marked for deletion, so kubelet's probes during drain
+    #      land on a live endpoint instead of a torn-down route. Native sleep
+    #      action (GA since k8s 1.30; cluster is 1.32) — no shell needed in the
+    #      distroless image.
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: opencost
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: opencost
+              spec:
+                strategy:
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxSurge: 1
+                    maxUnavailable: 0
+                template:
+                  spec:
+                    containers:
+                      - name: opencost
+                        lifecycle:
+                          preStop:
+                            sleep:
+                              seconds: 15
   # https://github.com/opencost/opencost-helm-chart/blob/main/charts/opencost/values.yaml
   #
   # Lightweight FinOps cost allocation. Points at the existing
   # kube-prometheus-stack Prometheus and uses custom pricing derived from
-  # Hetzner Cloud CX33 hourly rates (€0.0117/hr for 3 vCPU / 8 GB RAM).
+  # Hetzner Cloud CX33 rates (€6.49/month for 4 vCPU / 8 GB / 80 GB).
   values:
     opencost:
       prometheus:
@@ -39,35 +78,70 @@ spec:
           enabled: true
           url: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
 
-      # Hetzner Cloud custom pricing — CX33 rates decomposed into
-      # per-resource-unit hourly USD costs (EUR/USD ≈ 1.09).
-      # CX33: €0.0117/hr → $0.01275/hr, 50/50 CPU-RAM split.
-      # https://www.hetzner.com/cloud#pricing
+      # Hetzner Cloud custom pricing — CX33 monthly cap decomposed into
+      # per-resource-unit USD costs. CX33 spec verified live with
+      # `kubectl get nodes`: 4 vCPU, 7916176 KiB RAM (8 GB nominal), 80 GB NVMe.
+      # Price source: Hetzner Cloud Pricing API (2026-05, location fsn1, net
+      # of VAT — gross is +25% but VAT is reclaimable / location-dependent and
+      # tracking it in OpenCost would conflate compute cost with tax overhead):
+      #   curl -H "Authorization: Bearer $HCLOUD_TOKEN" \
+      #        https://api.hetzner.cloud/v1/pricing
+      #     CX33 cap = €6.49 / server / month   (hourly €0.0104)
+      #     Volumes  = €0.0572 / GB / month
+      #     Egress   = €1.00 / TB overage  (€0.001 / GB; 20 TiB incl. per server)
+      # FX: ECB EUR→USD reference rate 2026-05-27 = 1.1637.
+      #
+      # IMPORTANT: OpenCost interprets CPU / spotCPU / RAM / spotRAM / GPU / storage
+      # in the costModel ConfigMap as USD PER MONTH and divides by HoursPerMonth=730
+      # to get an hourly rate (opencost providerconfig.go:188, customprovider.go:95).
+      # Network egress fields are passed through as-is (USD per GB transferred).
+      #
+      # Derivation:
+      #   €6.49/server/month × 1.1637 = $7.5524/server/month
+      #   50/50 CPU-RAM split (Hetzner does not publish a breakdown — convention):
+      #     CPU: $7.5524 × 0.5 / 4 vCPU ≈ $0.9441 / vCPU-month
+      #     RAM: $7.5524 × 0.5 / 8 GB   ≈ $0.4720 / GB-month
+      #   Volume: €0.0572 × 1.1637 ≈ $0.0666 / GB-month
+      #   Egress: €0.001  × 1.1637 ≈ $0.001164 / GB
+      #
+      # End-to-end sanity check (1 vCPU for 1 hour):
+      #   ConfigMap CPU = 0.9441 → OpenCost / 730 = $0.001293 / vCPU-hour
+      #   Real cost     = (€6.49 × 0.5 / 4 vCPU / 730 hr) × 1.1637
+      #                 =  €0.001112 × 1.1637 = $0.001294 / vCPU-hour ✓
       # https://www.opencost.io/docs/configuration/on-prem#custom-pricing-using-the-opencost-helm-chart
       customPricing:
         enabled: true
         createConfigmap: true
         provider: custom
         costModel:
-          description: "Hetzner Cloud CX33 — 3 vCPU / 8 GB / 80 GB NVMe (50/50 CPU-RAM split)"
-          CPU: 0.002125
+          description: "Hetzner Cloud CX33 — 4 vCPU / 8 GB / 80 GB NVMe (50/50 CPU-RAM split, USD/month net of VAT)"
+          CPU: 0.9441
           spotCPU: 0
-          RAM: 0.000797
+          RAM: 0.4720
           spotRAM: 0
           GPU: 0
-          storage: 0.00008
-          zoneNetworkEgress: 0.001
-          regionNetworkEgress: 0.001
-          internetNetworkEgress: 0.001
+          storage: 0.0666
+          # Egress: passed through as USD per GB transferred; CX33 includes
+          # 20 TiB/month free, overage ≈ €1.00/TB = $0.001164/GB.
+          zoneNetworkEgress: 0.001164
+          regionNetworkEgress: 0.001164
+          internetNetworkEgress: 0.001164
 
       exporter:
         replicas: 1
         resources:
           requests:
             cpu: 10m
-            memory: 55Mi
+            # Observed steady-state ~75Mi (kubectl top). Request 128Mi so the
+            # scheduler reserves real baseline and the pod isn't first to be
+            # evicted under node memory pressure.
+            memory: 128Mi
+          # 256Mi OOM-killed when Headlamp issued the 14d allocation queries —
+          # the cost-model engine holds the full window in memory while
+          # aggregating. 512Mi gives ~4× headroom over the request and is
+          # still well under the chart's 1Gi default.
           limits:
-            memory: 256Mi
+            memory: 512Mi
 
       ui:
         enabled: true

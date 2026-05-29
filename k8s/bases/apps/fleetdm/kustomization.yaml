@@ -7,6 +7,8 @@ resources:
   - httproute.yaml
   - http-scaled-object.yaml
   - external-secrets.yaml
+  - external-secrets-serviceaccount.yaml
+  - mysql-static-cred-generator.yaml
   - server-key-external-secret.yaml
   - networkpolicy.yaml
   - pod-disruption-budget.yaml

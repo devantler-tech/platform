@@ -67,7 +67,7 @@ spec:
       initContainers:
         # --- 1. Auto-init + unseal ---
         - name: vault-init
-          image: quay.io/openbao/openbao:2.5.3
+          image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
           env:
             - name: BAO_ADDR
               value: http://openbao.openbao.svc.cluster.local:8200
@@ -144,7 +144,7 @@ spec:
               fi
         # --- 2. Persist credentials in K8s Secret (only on fresh init) ---
         - name: store-keys
-          image: alpine/k8s:1.36.1
+          image: alpine/k8s:1.36.1@sha256:692239d739589247c4a791205ed9619c28ae85a21286e19a6211c04a62c56668
           volumeMounts:
             - name: shared
               mountPath: /shared
@@ -172,7 +172,7 @@ spec:
               fi
       containers:
         - name: vault-config
-          image: quay.io/openbao/openbao:2.5.3
+          image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
           env:
             - name: BAO_ADDR
               value: http://openbao.openbao.svc.cluster.local:8200
@@ -273,6 +273,15 @@ spec:
               }
               POLICY
 
+              # Read the OpenBao-rotated MySQL credential for the fleet app user
+              # (Database secrets engine static role). Consumed by ESO via the
+              # VaultDynamicSecret generator in the fleetdm namespace.
+              bao policy write app-fleetdm-db-readonly - <<'POLICY'
+              path "database/static-creds/fleet" {
+                capabilities = ["read"]
+              }
+              POLICY
+
               bao policy write app-wedding-readonly - <<'POLICY'
               path "secret/data/apps/wedding-app/*" {
                 capabilities = ["read"]
@@ -366,11 +375,27 @@ spec:
               # --- 5. Create auth roles ---
               echo "Writing Kubernetes auth roles..."
 
-              # ESO needs broad read access for ExternalSecrets + write for PushSecrets
+              # ESO needs broad read access for ExternalSecrets + write for PushSecrets.
+              # This role is bound to the ESO controller's own SA via the
+              # `openbao` ClusterSecretStore and covers KV-engine reads only.
+              # The fleetdm MySQL Database-engine static credential is handled
+              # by a separate, narrowly scoped role below — keep
+              # app-fleetdm-db-readonly off this bundle.
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
                 policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,app-fleetdm-readonly,app-wedding-readonly,infra-oidc-readonly,vault-seed-write \
+                ttl=1h
+
+              # Dedicated role for the fleetdm VaultDynamicSecret generator.
+              # The generator authenticates with the `external-secrets` SA in
+              # the fleetdm namespace (the generator's own namespace — ESO
+              # silently ignores serviceAccountRef.namespace for generators,
+              # see ESO #4629). Scoped to the database static-creds read only.
+              bao write auth/kubernetes/role/fleetdm-mysql-rotated \
+                bound_service_account_names=external-secrets \
+                bound_service_account_namespaces=fleetdm \
+                policies=app-fleetdm-db-readonly \
                 ttl=1h
 
               # Snapshot CronJob needs health check read
@@ -423,6 +448,55 @@ spec:
               else
                 echo "OIDC secret not yet available -- skipping OIDC configuration."
                 echo "It will be configured on the next vault-config reconciliation."
+              fi
+
+              # --- 7. Database secrets engine: fleetdm MySQL static-role rotation ---
+              # OpenBao owns and periodically rotates the 'fleet' MySQL user's
+              # password; ESO reads the current value via the VaultDynamicSecret
+              # generator in the fleetdm namespace.
+              if ! bao secrets list -format=json | grep -q '"database/"'; then
+                echo "Enabling database secrets engine..."
+                bao secrets enable database
+              else
+                echo "Database secrets engine already enabled."
+              fi
+
+              # OpenBao needs MySQL admin (root) creds to manage the fleet user;
+              # the root password is seeded into KV by the fleetdm PushSecret.
+              FLEET_DB_ROOT=$(bao kv get -mount=secret -field=mysql-root-password apps/fleetdm/mysql 2>/dev/null || echo "")
+              if [ -n "$FLEET_DB_ROOT" ]; then
+                # Writing the connection validates connectivity, so this 400s
+                # until fleetdm-mysql is up (apps layer). Treat that as expected
+                # on early passes -- Flux recreates this Job (force annotation)
+                # and the block succeeds once MySQL is reachable.
+                echo "Configuring fleetdm MySQL database connection..."
+                if bao write database/config/fleetdm-mysql \
+                  plugin_name=mysql-database-plugin \
+                  allowed_roles="fleet" \
+                  connection_url="{{username}}:{{password}}@tcp(fleetdm-mysql.fleetdm.svc.cluster.local:3306)/" \
+                  username="root" \
+                  password="$FLEET_DB_ROOT" 2>/dev/null; then
+
+                  # Create the static role only if absent: creation triggers an
+                  # initial rotation of the 'fleet' user's password (the fleetdm
+                  # ExternalSecret + Reloader then pick it up). Guarding avoids
+                  # re-rotating on every idempotent Job re-run. App user only,
+                  # never root.
+                  if ! bao read database/static-roles/fleet >/dev/null 2>&1; then
+                    bao write database/static-roles/fleet \
+                      db_name=fleetdm-mysql \
+                      username="fleet" \
+                      rotation_period="${fleetdm_mysql_rotation_period:=2160h}"
+                    echo "fleetdm MySQL static role created."
+                  else
+                    echo "fleetdm MySQL static role already exists."
+                  fi
+                else
+                  echo "fleetdm MySQL not reachable yet -- skipping DB role config."
+                  echo "It will be configured on the next vault-config reconciliation."
+                fi
+              else
+                echo "fleetdm MySQL root credential not in KV yet -- skipping DB role config."
               fi
 
               echo "Vault configuration complete."

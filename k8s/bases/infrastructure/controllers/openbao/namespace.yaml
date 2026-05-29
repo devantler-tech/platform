@@ -1,4 +1,29 @@
+# OpenBao is enforced at PSS 'baseline' instead of the cluster-default
+# 'restricted'. This mirrors what the docker provider already shipped as
+# a namespace patch and what prod runs with.
+#
+# Why not 'restricted': the upstream OpenBao chart's StatefulSet pod
+# template ships with a partial securityContext (runAsUser, runAsGroup,
+# fsGroup are set, but runAsNonRoot, seccompProfile, capabilities.drop,
+# and allowPrivilegeEscalation are not). The Kyverno mutate policy
+# 'add-security-context' is supposed to fill the missing fields in via
+# conditional anchors, but the timing between Kyverno's mutate webhook
+# and the built-in PSA validator is not reliable enough on every
+# cluster bootstrap to risk gating production unseal on it. 'baseline'
+# is strict enough (no privileged, no hostPath, no hostNetwork, no
+# capabilities beyond the small allowed set) for OpenBao's actual pod
+# spec, while leaving the seccompProfile / runAsNonRoot dance to
+# Kyverno's webhook chain. The Kyverno validate-pod-security policy
+# (Enforce mode) still gates the pod at the webhook layer.
+#
+# Note: 'disable_mlock = true' in the chart values means OpenBao does
+# NOT request the IPC_LOCK capability, so IPC_LOCK is *not* the
+# constraint -- the constraint is the chart's missing seccompProfile /
+# runAsNonRoot defaults.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: openbao
+  labels:
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/enforce-version: latest

@@ -33,7 +33,7 @@ spec:
             patch: |
               - op: add
                 path: /metadata/annotations/secret.reloader.stakater.com~1reload
-                value: mysql,redis,fleet-license
+                value: mysql,mysql-fleet-rotated,redis,fleet-license
               - op: add
                 path: /spec/strategy
                 value:
@@ -125,6 +125,42 @@ spec:
                         volumeMounts:
                           - name: fleet-home
                             mountPath: /home/fleet
+                        # The migration Job runs on every helm install/upgrade
+                        # AFTER the static role has rotated the fleet password,
+                        # so it must use the rotated credential too — not the
+                        # stale KV-bootstrap value from the `mysql` Secret.
+                        env:
+                          - name: FLEET_MYSQL_PASSWORD
+                            valueFrom:
+                              secretKeyRef:
+                                name: mysql-fleet-rotated
+                                key: mysql-password
+          # The hourly vulnerability-processing CronJob also reads from MySQL.
+          # Without this override every run fails with `Error 1045 Access denied`
+          # because the chart-rendered CronJob points at the stale `mysql` Secret
+          # while OpenBao has rotated the actual fleet user password (the rotated
+          # value lives in `mysql-fleet-rotated`, same as the Deployment uses).
+          - target:
+              kind: CronJob
+              name: fleet-vulnprocessing
+            patch: |
+              apiVersion: batch/v1
+              kind: CronJob
+              metadata:
+                name: fleet-vulnprocessing
+              spec:
+                jobTemplate:
+                  spec:
+                    template:
+                      spec:
+                        containers:
+                          - name: fleet-vulnprocessing
+                            env:
+                              - name: FLEET_MYSQL_PASSWORD
+                                valueFrom:
+                                  secretKeyRef:
+                                    name: mysql-fleet-rotated
+                                    key: mysql-password
           - target:
               kind: Deployment
               name: fleet
@@ -163,7 +199,12 @@ spec:
                           - name: FLEET_MYSQL_PASSWORD
                             valueFrom:
                               secretKeyRef:
-                                name: mysql
+                                # OpenBao-rotated via the Database engine static
+                                # role for the 'fleet' MySQL user. The KV-sourced
+                                # `mysql` Secret is used only to bootstrap the
+                                # user at chart init; after the static role
+                                # rotates it, fleet reads the current value here.
+                                name: mysql-fleet-rotated
                                 key: mysql-password
                     containers:
                       - name: fleet
@@ -173,6 +214,16 @@ spec:
                         volumeMounts:
                           - name: fleet-home
                             mountPath: /home/fleet
+                        # Override the chart's default FLEET_MYSQL_PASSWORD
+                        # (which points at the KV-bootstrapped `mysql` Secret)
+                        # to read the OpenBao-rotated value. Strategic merge by
+                        # env `name` replaces just this entry.
+                        env:
+                          - name: FLEET_MYSQL_PASSWORD
+                            valueFrom:
+                              secretKeyRef:
+                                name: mysql-fleet-rotated
+                                key: mysql-password
   valuesFrom:
     - kind: Secret
       name: fleetdm-server-key
