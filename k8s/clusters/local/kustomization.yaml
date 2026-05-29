@@ -38,6 +38,24 @@ patches:
         namespace: flux-system
       spec:
         timeout: 12m
+  # The vault-config Job co-located in the infrastructure layer (see
+  # bases/infrastructure/vault-config/job.yaml) bootstraps OpenBao —
+  # KV engine, Kubernetes auth, policies, roles — and is depended on
+  # intra-Kustomization by the openbao ClusterSecretStore consumers
+  # (ExternalSecrets, vault-seed PushSecrets). On cold Docker CI runners
+  # the Job legitimately takes longer than the 3m base health-check
+  # budget, which caused system-test flakes (see PR #1636 run
+  # 26603473269: `[Job/openbao/vault-config status: 'InProgress']
+  # (HealthCheckFailed)`). The Job's own activeDeadlineSeconds is 3600s.
+  # 20m mirrors the prod patch value for the same Kustomization.
+  - patch: |
+      apiVersion: kustomize.toolkit.fluxcd.io/v1
+      kind: Kustomization
+      metadata:
+        name: infrastructure
+        namespace: flux-system
+      spec:
+        timeout: 20m
 
 replacements:
   # Point apps / infrastructure / infrastructure-controllers Flux Kustomizations
