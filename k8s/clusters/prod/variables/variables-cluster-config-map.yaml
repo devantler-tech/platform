@@ -86,6 +86,17 @@ data:
   # CSI snapshotter crash-loops trying to list them. Disable until CRDs
   # are added.
   longhorn_csi_snapshotter_replicas: "0"
+  # CSI control-plane sidecars (attacher/provisioner/resizer) default to a
+  # single replica in the base HelmRelease. They are leader-elected, so a
+  # second replica is a cheap warm standby that costs ~nothing when idle.
+  # Run 2 for HA: on 2026-05-28 the sole csi-attacher/provisioner happened to
+  # sit on a worker whose Cilium ClusterIP datapath had degraded, which took
+  # out volume attach/detach orchestration cluster-wide (FailedAttachVolume
+  # storms, pods stuck ContainerCreating). A standby on another node keeps CSI
+  # functioning through a single-node outage.
+  longhorn_csi_attacher_replicas: "2"
+  longhorn_csi_provisioner_replicas: "2"
+  longhorn_csi_resizer_replicas: "2"
   # --- Non-essential services scaled to 0 ---
   # Origin CA issuer requests 1 CPU (50% of worker allocatable) for a simple
   # cert controller. Disabled until we actually need Cloudflare Origin certs.
