@@ -9,7 +9,8 @@
 #
 # Two bindings give a complete read-only picture:
 #   - built-in `view` → namespaced resources (minus Secrets)
-#   - `cluster-reader` → cluster-scoped infra (nodes, PVs, CRDs, ...)
+#   - `cluster-reader` → everything `view` omits: mostly cluster-scoped infra
+#     (nodes, PVs, CRDs, ...) plus RBAC objects and pod metrics
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

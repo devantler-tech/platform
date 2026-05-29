@@ -1,10 +1,12 @@
-# Read-only ClusterRole for the cluster-scoped resources that the built-in
-# `view` role deliberately omits. Bound ALONGSIDE `view` (see
-# cluster-role-bindings/oidc-readonly.yaml) so an OIDC identity gets a
+# Read-only ClusterRole for the resources the built-in `view` role omits.
+# Most are cluster-scoped (nodes, PVs, storage, CRDs, API services, classes,
+# CSRs), but a few are namespaced — RBAC roles/rolebindings and pod metrics —
+# granted cluster-wide here for read-only diagnostics. Bound ALONGSIDE `view`
+# (see cluster-role-bindings/oidc-readonly.yaml) so an OIDC identity gets a
 # complete read-only picture of the cluster:
-#   - `view`           → namespaced resources (pods, deployments, configmaps,
-#                        pod logs, events, ...), minus Secrets.
-#   - `cluster-reader` → cluster-scoped infra below.
+#   - `view`           → namespaced workloads/config (pods, deployments,
+#                        configmaps, pod logs, events, ...), minus Secrets.
+#   - `cluster-reader` → everything `view` omits (see rules below).
 #
 # Deliberately NOT granted: Secrets (kept in the vault on purpose), and any
 # write/exec verb (no pods/exec, pods/portforward, create/update/delete).

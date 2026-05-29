@@ -132,7 +132,7 @@ user whose email matches the Dex `email` claim (`oidc:${admin_email}`) to:
 | Binding | Role | Grants |
 |---|---|---|
 | `oidc-view` | built-in `view` | read all **namespaced** resources (pods, deployments, configmaps, pod logs, events, …) — **excluding Secrets** |
-| `oidc-cluster-reader` | `cluster-reader` | read **cluster-scoped** infra (nodes, PVs, storage classes, CRDs, API services, priority/runtime/ingress classes, CSRs, RBAC objects, node/pod metrics) |
+| `oidc-cluster-reader` | `cluster-reader` | read what `view` omits — mostly **cluster-scoped** infra (nodes, PVs, storage classes, CRDs, API services, priority/runtime/ingress classes, CSRs) plus RBAC objects and node/pod metrics |
 
 ```yaml
 subjects:
