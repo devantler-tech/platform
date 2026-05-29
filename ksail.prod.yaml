@@ -35,7 +35,7 @@ spec:
             serverType: cx33
             location: fsn1
             min: 0
-            max: 1
+            max: 2
     # These components are installed by ksail. There is a known race on
     # Hetzner clusters between ksail's metrics-server install and Flux's
     # kubelet-serving-cert-approver install (required because Talos
@@ -50,7 +50,7 @@ spec:
     # Longhorn requires dedicated Hetzner Cloud Volumes on static
     # workers; autoscaler-created nodes are compute-only.
     # The Cluster Autoscaler manages additional workers dynamically.
-    workers: 3
+    workers: 4
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
