@@ -42,6 +42,15 @@ spec:
       # Restrict Longhorn system-managed pods (instance-managers, etc.)
       # to storage nodes. Prevents ~100Mi overhead per non-storage node.
       systemManagedComponentsNodeSelector: "node.longhorn.io/create-default-disk:true"
+      # Reduce the CPU guaranteed per instance-manager from Longhorn's 12%
+      # default. Live data (2026-05-29): 6 instance-managers each reserved
+      # ~474m (12% of a cx33) while using 8-30m — ~2.7 cores locked, and these
+      # pods are NOT VPA-managed. 6% (~240m on cx33) keeps 8-16x headroom over
+      # observed usage, frees ~1.4 cores, and still leaves margin for the CPU
+      # spikes during Longhorn replica rebuilds.
+      guaranteedInstanceManagerCPU:
+        v1: "6"
+        v2: "6"
 
     persistence:
       # Longhorn is the default StorageClass (replaces hcloud for new PVCs).
