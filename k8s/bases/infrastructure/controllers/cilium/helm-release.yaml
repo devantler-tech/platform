@@ -153,6 +153,25 @@ spec:
                   memory: 128Mi
             # TODO: Remove workaround when SPIRE no longer fails to start (https://github.com/cilium/cilium/issues/40533)
             server:
+              # spire-server is a single replica and the cluster's identity
+              # root: if its node fails, every spire-agent loses its upstream
+              # (dial spire-server ClusterIP -> i/o timeout) and Cilium mutual
+              # auth degrades cluster-wide. Prefer to keep it off whatever
+              # worker runs the Flux controllers, so a single node loss can't
+              # take out BOTH workload identity AND GitOps reconciliation at
+              # once — the combination that turned the 2026-05-28 incident into
+              # a deadlock (reconciliation was needed to apply the fix, but was
+              # down on the same failed node). Soft (preferred) so the single
+              # replica always schedules even when every node hosts a Flux pod.
+              affinity:
+                podAntiAffinity:
+                  preferredDuringSchedulingIgnoredDuringExecution:
+                    - weight: 100
+                      podAffinityTerm:
+                        topologyKey: kubernetes.io/hostname
+                        labelSelector:
+                          matchLabels:
+                            app.kubernetes.io/part-of: flux
               resources:
                 requests:
                   cpu: 50m
