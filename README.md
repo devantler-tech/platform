@@ -156,6 +156,8 @@ The Flux Kustomizations themselves live in `k8s/bases/cluster/` (with sentinel `
 
 See [`docs/TEMPLATING.md`](docs/TEMPLATING.md) for the exact set of files a fork of this repo needs to edit to stand up its own instance.
 
+See [`docs/TENANTS.md`](docs/TENANTS.md) for how to onboard a new GitOps **tenant** (an app that runs on the platform from its own repository).
+
 ## Monthly Cost
 
 > [!NOTE]
