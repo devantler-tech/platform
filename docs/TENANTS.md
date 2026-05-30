@@ -99,6 +99,7 @@ Add `k8s/bases/apps/<tenant>/` (copy `ascoachingogvaner/` and rename), with:
 
 | File | Purpose |
 |---|---|
+| `kustomization.yaml` | Kustomize entrypoint listing the resources in this directory |
 | `namespace.yaml` | Namespace, `pod-security.kubernetes.io/enforce: restricted` |
 | `serviceaccount.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
 | `rolebinding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
