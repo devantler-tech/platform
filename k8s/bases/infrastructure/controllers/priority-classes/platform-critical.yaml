@@ -9,10 +9,12 @@
 # it. Value matches kubevirt-cluster-critical (1000000000): both are the
 # "important platform add-on" tier.
 #
-# Deliberately a custom class rather than system-cluster-critical: system-*
-# pods are *exempt* from node-pressure eviction entirely, which would let a
-# runaway Prometheus drive the node into the kernel OOM-killer instead of being
-# reclaimed. platform-critical is "evicted last" without being un-evictable.
+# Deliberately a custom class rather than system-cluster-critical: putting the
+# monitoring stack at the very top would rank it alongside core infra, so a
+# memory-hungry Prometheus would be reclaimed only after everything else —
+# pushing the node toward the kernel OOM-killer. platform-critical keeps it
+# "evicted after normal workloads" while still leaving it reclaimable before
+# true cluster/node infrastructure.
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
