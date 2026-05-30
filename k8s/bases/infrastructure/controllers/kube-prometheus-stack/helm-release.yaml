@@ -44,6 +44,10 @@ spec:
     prometheus:
       prometheusSpec:
         replicas: 1
+        # Monitoring is critical platform infrastructure — keep it alive under
+        # node memory pressure (evicted only after normal workloads). See the
+        # platform-critical PriorityClass.
+        priorityClassName: platform-critical
         retention: 14d
         retentionSize: "5GiB"
         resources:
@@ -72,6 +76,9 @@ spec:
     alertmanager:
       alertmanagerSpec:
         replicas: ${alertmanager_replicas:=2}
+        # Alerting must survive memory pressure (it is how a degrading node is
+        # noticed in the first place).
+        priorityClassName: platform-critical
         podDisruptionBudget:
           enabled: true
           minAvailable: 1
@@ -138,8 +145,12 @@ spec:
 
     nodeExporter:
       enabled: true
+    # node-exporter subchart passthrough (alias `prometheus-node-exporter`).
+    prometheus-node-exporter:
+      priorityClassName: platform-critical
     kube-state-metrics:
       enabled: true
+      priorityClassName: platform-critical
 
     # Disable the bundled "default" Prometheus rules -- the chart ships
     # ~200 alerts that mostly aren't relevant for a homelab. We add our
@@ -148,6 +159,7 @@ spec:
       create: false
 
     prometheusOperator:
+      priorityClassName: platform-critical
       resources:
         requests:
           cpu: 50m

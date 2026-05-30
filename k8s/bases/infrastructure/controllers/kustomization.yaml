@@ -20,6 +20,7 @@ resources:
   - oauth2-proxy/
   - openbao/
   - opencost/
+  - priority-classes/
   - reloader/
   - trust-manager/
   - velero/
