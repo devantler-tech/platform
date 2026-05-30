@@ -33,6 +33,11 @@ spec:
       # it avoids "topology not in requisite" provisioning failures.
       enableProvidedByTopology: false
     controller:
+      # Provisioning/attach control plane. The chart leaves priorityClassName
+      # unset (priority 0), which makes it a first candidate for node-pressure
+      # eviction. system-cluster-critical exempts it so volume operations keep
+      # working when a node is under memory pressure.
+      priorityClassName: system-cluster-critical
       replicaCount: ${hcloud_csi_controller_replicas:=2}
       hcloudVolumeDefaultLocation: fsn1
       podDisruptionBudget:
@@ -50,6 +55,11 @@ spec:
                     app.kubernetes.io/name: hcloud-csi
                     app.kubernetes.io/instance: hcloud-csi
     node:
+      # Per-node volume mount/unmount plumbing — node-critical. The chart
+      # leaves priorityClassName unset (priority 0); system-node-critical
+      # exempts the DaemonSet from node-pressure eviction so stateful pods can
+      # always mount their storage.
+      priorityClassName: system-node-critical
       affinity:
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

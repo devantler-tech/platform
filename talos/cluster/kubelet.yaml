@@ -1,0 +1,42 @@
+# Kubelet memory-pressure handling — graceful node OOM.
+#
+# Out of the box the kubelet only steps in at its tiny default hard floor
+# (memory.available<100Mi), by which point the Linux kernel OOM-killer may
+# already have reaped a node-critical daemon. This patch makes a node shed
+# load *gracefully* well before that point and guarantees the OS + kubelet
+# always keep headroom:
+#
+#   - systemReserved / kubeReserved carve memory out of node-allocatable so
+#     pods can never starve the OS or the kubelet itself — the usual trigger
+#     for an ungraceful kernel OOM-kill of a system daemon.
+#   - evictionSoft begins reclaiming ~90s before the hard floor by evicting
+#     the lowest-priority / over-request pods first, giving them time to
+#     terminate cleanly (evictionMaxPodGracePeriod bounds that wait).
+#   - evictionHard stays as the last-resort floor before the kernel acts.
+#
+# Node-pressure eviction is priority-aware and skips *critical* pods
+# (system-node-critical / system-cluster-critical), so workload pods are
+# always shed before the critical kube-system control/storage plane.
+#
+# Reference: https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/
+machine:
+  kubelet:
+    extraConfig:
+      # Headroom reserved from allocatable for the OS and kubelet/runtime.
+      systemReserved:
+        memory: 256Mi
+      kubeReserved:
+        memory: 256Mi
+      # Graceful first line: evict low-priority pods before memory is critical.
+      evictionSoft:
+        memory.available: 500Mi
+      evictionSoftGracePeriod:
+        memory.available: 1m30s
+      # Reclaim a little past the threshold so we don't immediately re-trigger.
+      evictionMinimumReclaim:
+        memory.available: 200Mi
+      # Bound how long a soft-evicted pod may take to terminate.
+      evictionMaxPodGracePeriod: 60
+      # Hard floor: last resort before the kernel OOM-killer.
+      evictionHard:
+        memory.available: 100Mi
