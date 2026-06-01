@@ -1,12 +1,13 @@
 name: Check for new event warnings
 description: >
-  Fail when a cluster is still emitting Warning events after a successful
-  deployment. Records a marker timestamp, lets the cluster settle, then
-  inspects Warning events whose most-recent occurrence is at/after the marker —
-  i.e. warnings still firing at steady state (crash loops, repeated probe
-  failures, image back-off, etc.). Transient one-shot warnings emitted during
-  bootstrap are ignored because they fired before the marker. The full Warning
-  history is always printed for context.
+  Fail when a cluster is still emitting Warning events at steady state after a
+  deployment. Lets the cluster settle FIRST (so one-shot warnings emitted while
+  the deploy rolls out — e.g. a controller's readiness probe blipping while it
+  restarts to pick up a config change — drain away), THEN records a marker and
+  observes for a short window, flagging only Warning events whose most-recent
+  occurrence is at/after the marker — i.e. warnings still actively firing past
+  the settle (crash loops, repeated probe failures, image back-off). The full
+  Warning history is always printed for context.
 
 inputs:
   context:
@@ -14,9 +15,19 @@ inputs:
     required: false
     default: ""
   settle-seconds:
-    description: How long to let the cluster settle before sampling Warning events.
+    description: >
+      Grace period to let the deployment and any async rollouts converge before
+      the steady-state observation window begins. Warnings that fire (and stop)
+      during this period are treated as transient and ignored.
     required: false
     default: "90"
+  observe-seconds:
+    description: >
+      Length of the steady-state observation window after settling. A Warning is
+      flagged only if its most-recent occurrence falls at/after the marker (i.e.
+      it is still firing once the cluster has settled).
+    required: false
+    default: "60"
   fail-on-warning:
     description: Fail the step when steady-state Warning events are found.
     required: false
@@ -30,6 +41,7 @@ runs:
       env:
         KUBECTL_CONTEXT: ${{ inputs.context }}
         SETTLE_SECONDS: ${{ inputs.settle-seconds }}
+        OBSERVE_SECONDS: ${{ inputs.observe-seconds }}
         FAIL_ON_WARNING: ${{ inputs.fail-on-warning }}
       run: |
         set -euo pipefail
@@ -39,12 +51,22 @@ runs:
           kc+=(--context "${KUBECTL_CONTEXT}")
         fi
 
-        # Record the marker BEFORE settling so the observation window is exactly
-        # the settle period. RFC3339 UTC timestamps compare correctly as strings
-        # when truncated to second precision (fixed-width prefix).
-        marker=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        echo "Marker: ${marker} — letting the cluster settle for ${SETTLE_SECONDS}s, then sampling Warning events that fired at/after the marker."
+        # Let the deployment and any async rollouts converge FIRST, then record
+        # the marker. Only warnings still firing at/after the marker — i.e. once
+        # the cluster has settled — count as steady-state problems. One-shot
+        # warnings emitted while the deploy was rolling out (e.g. a Flux
+        # controller's /readyz returning "connection refused" while it restarts
+        # to apply a config change, then recovering) fire before the marker and
+        # are correctly ignored. Recording the marker before the settle (the
+        # previous behaviour) flagged exactly those transients. RFC3339 UTC
+        # timestamps compare correctly as strings when truncated to second
+        # precision (fixed-width prefix).
+        echo "Settling for ${SETTLE_SECONDS}s to let the deploy and any rollouts converge before sampling..."
         sleep "${SETTLE_SECONDS}"
+
+        marker=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        echo "Marker: ${marker} — observing for ${OBSERVE_SECONDS}s; flagging Warning events still firing at/after the marker."
+        sleep "${OBSERVE_SECONDS}"
 
         events_json=$("${kc[@]}" get events -A -o json)
 
@@ -68,7 +90,7 @@ runs:
 
         echo "::group::New Warning events since ${marker} (${count})"
         if [ "${count}" -eq 0 ]; then
-          echo "None — no Warning events fired during the ${SETTLE_SECONDS}s steady-state window. ✅"
+          echo "None — no Warning events still firing during the ${OBSERVE_SECONDS}s steady-state window (after a ${SETTLE_SECONDS}s settle). ✅"
         else
           printf '%s' "${new_warnings}" | jq -r '.[] | "\(.ts)  [\(.ns)] \(.obj)  \(.reason) (x\(.count)): \(.msg)"'
         fi
