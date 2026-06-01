@@ -70,6 +70,24 @@ patches:
           # idle controllers default lower until VPA right-sizes them.
           cpu: 15m
           memory: 128Mi
+      # Skip namespaces that are being deleted. A terminating namespace (e.g.
+      # cdi/kubevirt after the prod disable) rejects new ResourceQuota/LimitRange
+      # with "forbidden: namespace is being terminated", which Kyverno surfaces
+      # as PolicyError Warning events that trip the merge-queue event gate.
+      - op: add
+        path: /spec/rules/0/preconditions
+        value:
+          all:
+            - key: "{{ request.object.metadata.deletionTimestamp || '' }}"
+              operator: Equals
+              value: ""
+      - op: add
+        path: /spec/rules/1/preconditions
+        value:
+          all:
+            - key: "{{ request.object.metadata.deletionTimestamp || '' }}"
+              operator: Equals
+              value: ""
   # --- Anti-affinity: add StatefulSet match, use app.kubernetes.io/name, exclude kube-system ---
   - target:
       kind: ClusterPolicy
