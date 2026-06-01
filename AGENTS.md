@@ -171,7 +171,7 @@ This platform uses SOPS with Age encryption for all secrets:
 
 ```bash
 # View an encrypted secret (requires the proper Age private key)
-sops -d k8s/clusters/local/variables/variables-cluster-secret.enc.yaml
+sops -d k8s/clusters/local/bootstrap/variables-cluster-secret.enc.yaml
 
 # Encrypt a new secret
 sops -e --input-type yaml --output-type yaml secret.yaml > secret.enc.yaml

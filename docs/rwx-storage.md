@@ -126,7 +126,7 @@ spec:
 
 ## Tunable variables
 
-These variables can be overridden per environment in `k8s/clusters/<env>/variables/variables-cluster-config-map.yaml`:
+These variables can be overridden per environment in `k8s/clusters/<env>/bootstrap/variables-cluster-config-map.yaml`:
 
 | Variable | Default | Description |
 |---|---|---|

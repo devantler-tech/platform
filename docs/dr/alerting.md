@@ -58,14 +58,14 @@ substituted into the `alertmanager-webhook` Secret at apply time.
 
 | Env   | Where to set                                  | Suggestion             |
 | ----- | --------------------------------------------- | ---------------------- |
-| local | `k8s/clusters/local/variables/variables-cluster-secret.enc.yaml` (already filled with a non-resolvable invalid URL — alerts fail to send, on purpose) | n/a |
+| local | `k8s/clusters/local/bootstrap/variables-cluster-secret.enc.yaml` (already filled with a non-resolvable invalid URL — alerts fail to send, on purpose) | n/a |
 | prod  | same path under `clusters/prod/`              | Discord #prod-alerts   |
 
 To set:
 
 ```bash
 sops --set '["stringData"]["alertmanager_webhook_url"] "<url>"' \
-  k8s/clusters/<env>/variables/variables-cluster-secret.enc.yaml
+  k8s/clusters/<env>/bootstrap/variables-cluster-secret.enc.yaml
 ```
 
 ### Discord webhook recipe

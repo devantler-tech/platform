@@ -16,13 +16,13 @@ Only `data` and `stringData` fields are encrypted (`encrypted_regex: ^(data|stri
 
 ```bash
 # Decrypt (requires matching Age private key)
-sops -d k8s/clusters/local/variables/variables-cluster-secret.enc.yaml
+sops -d k8s/clusters/local/bootstrap/variables-cluster-secret.enc.yaml
 
 # Encrypt a new secret (SOPS auto-selects key from .sops.yaml path rules)
 sops -e secret.yaml > secret.enc.yaml
 
 # Edit in-place
-sops k8s/clusters/local/variables/variables-cluster-secret.enc.yaml
+sops k8s/clusters/local/bootstrap/variables-cluster-secret.enc.yaml
 ```
 
 ## Key Requirements
@@ -34,5 +34,5 @@ sops k8s/clusters/local/variables/variables-cluster-secret.enc.yaml
 ## Convention
 
 - Secret files **must** use the `.enc.yaml` suffix
-- Place secrets under `k8s/clusters/<env>/variables/`
+- Place secrets under `k8s/clusters/<env>/bootstrap/`
 - Never commit unencrypted secrets
