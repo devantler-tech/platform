@@ -7,10 +7,14 @@ metadata:
 spec:
   values:
     singleBinary:
-      # Persist the log store on Hetzner Cloud block storage so a restart
-      # or VPA eviction doesn't drop the 7-day window. Velero's daily
-      # backup of the monitoring namespace ships this volume to R2. The
-      # base leaves persistence off (emptyDir) for local/CI.
+      # Override the base PVC: switch to Hetzner Cloud block storage and
+      # raise the size from 5Gi to 10Gi so a restart or VPA eviction
+      # doesn't drop the 7-day window. Velero's daily backup of the
+      # monitoring namespace ships this volume to R2. The base uses a
+      # 5Gi PVC against the cluster default SC (local-path on docker/CI)
+      # rather than emptyDir, because the Loki chart's
+      # `persistence.enabled: false` leaves /var/loki unmounted and the
+      # container crashes under the default read-only root filesystem.
       persistence:
         enabled: true
         storageClass: hcloud

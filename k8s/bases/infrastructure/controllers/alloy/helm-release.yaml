@@ -24,6 +24,14 @@ spec:
     spec:
       chart: alloy
       version: 1.8.2
+      # Reuses the `grafana` HelmRepository defined in the loki/ controller
+      # directory (same namespace). Both Loki and Alloy come from
+      # https://grafana.github.io/helm-charts, and Flux dedups source
+      # polling per-HelmRepository, so a single shared source is the
+      # intended pattern -- defining a second `grafana` HelmRepository
+      # here would be a kustomize duplicate-resource error, and using a
+      # differently-named one would just double the chart-index polling
+      # against the same URL.
       sourceRef:
         kind: HelmRepository
         name: grafana

@@ -28,10 +28,15 @@ SaaS metrics tier. The stack is production-hardened along four axes:
 | Alloy              | Per-node log shipper → Loki (DaemonSet)             | n/a                       |
 | OpenCost           | Cost allocation against Prometheus                  | n/a                       |
 
-Local/CI runs the same stack with persistence **off** (emptyDir) — losing
-metrics/logs on a restart is fine there. The `hcloud` PVCs are added only
-in the hetzner overlay (`k8s/providers/hetzner/.../*/patches/`), the same
-way OpenBao gets block storage.
+Local/CI runs the same stack with Prometheus and Alertmanager on
+emptyDir — losing those on a restart is fine there. Loki is the lone
+exception: the chart's `persistence.enabled: false` crashes the
+container (no `/var/loki` mount under a read-only root), so the base
+attaches a small 5Gi PVC against the cluster's default storage class,
+which on docker/CI is local-path (host directory, recycled with the
+cluster). The `hcloud` PVC overrides for Prometheus, Alertmanager and
+Loki live in the hetzner overlay (`k8s/providers/hetzner/.../*/patches/`),
+the same way OpenBao gets block storage.
 
 ## Alert routing → Slack
 

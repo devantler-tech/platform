@@ -32,10 +32,14 @@ spec:
   # Single-binary Loki: the smallest production-viable topology. No object
   # store, caches, gateway, or canary -- logs land on a local volume with
   # 7-day retention, which is plenty for post-incident debugging at this
-  # scale. Durability comes from the hetzner overlay (hcloud PVC) +
-  # Velero's daily backup of the monitoring namespace to R2; the base
-  # stays ephemeral for local/CI. Grafana queries it as a datasource and
-  # Alloy ships pod logs into it.
+  # scale. The base attaches a small 5Gi PVC against the cluster's
+  # default storage class (a Loki-chart quirk: `persistence.enabled: false`
+  # leaves /var/loki unmounted and the container crashes against the
+  # default read-only root). On docker/CI that resolves to local-path,
+  # which behaves like a host directory and is recycled with the cluster;
+  # the hetzner overlay overrides this to a 10Gi hcloud block volume that
+  # Velero's daily monitoring-namespace backup ships to R2. Grafana
+  # queries Loki as a datasource and Alloy ships pod logs into it.
   values:
     deploymentMode: SingleBinary
     loki:
