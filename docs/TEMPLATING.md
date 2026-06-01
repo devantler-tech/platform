@@ -25,7 +25,7 @@ Only these fields genuinely vary per instance:
 | `spec.cluster.connection.context` | kubeconfig context | kubeconfig context |
 | `spec.cluster.localRegistry.registry` | n/a | OCI registry URL for the manifest artefact |
 | `spec.provider.hetzner.location` | n/a | primary Hetzner location (`fsn1`, `nbg1`, `hel1`, …) |
-| `spec.provider.hetzner.{controlPlane,worker}ServerType` | n/a | Hetzner server types (default `cx23`) |
+| `spec.provider.hetzner.{controlPlane,worker}ServerType` | n/a | Hetzner server types (default `cx33`) |
 | `spec.provider.hetzner.networkCidr` | n/a | private network CIDR for the cluster |
 | `spec.cluster.autoscaler.node.pools` | n/a | node pool definitions (name, serverType, location, min, max) |
 | `spec.cluster.autoscaler.node.maxNodesTotal` | n/a | hard ceiling on total cluster nodes |
