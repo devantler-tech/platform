@@ -2,7 +2,34 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../../../../bases/infrastructure/controllers/
+  # Base controllers are listed explicitly (instead of the aggregate
+  # `../../../../bases/infrastructure/controllers/` include) so prod can opt
+  # OUT of controllers that are unused on Hetzner, freeing memory while the
+  # cluster is being right-sized. Disabled for now:
+  #   - kubevirt + cdi : no VirtualMachines / DataVolumes exist; virt-handler
+  #                      was crash-looping (1000+ restarts) with zero VMs.
+  # NOTE: a new base controller must be added to this list to reach prod.
+  # Local/CI (docker provider) still deploys the full base controller set.
+  - ../../../../bases/infrastructure/controllers/auth-proxy/
+  - ../../../../bases/infrastructure/controllers/cert-manager/
+  - ../../../../bases/infrastructure/controllers/cilium/
+  - ../../../../bases/infrastructure/controllers/cloudnative-pg/
+  - ../../../../bases/infrastructure/controllers/dex/
+  - ../../../../bases/infrastructure/controllers/external-secrets/
+  - ../../../../bases/infrastructure/controllers/flux-operator/
+  - ../../../../bases/infrastructure/controllers/keda/
+  - ../../../../bases/infrastructure/controllers/keda-http-add-on/
+  - ../../../../bases/infrastructure/controllers/kube-prometheus-stack/
+  - ../../../../bases/infrastructure/controllers/kubescape/
+  - ../../../../bases/infrastructure/controllers/kyverno/
+  - ../../../../bases/infrastructure/controllers/metrics-server/
+  - ../../../../bases/infrastructure/controllers/oauth2-proxy/
+  - ../../../../bases/infrastructure/controllers/openbao/
+  - ../../../../bases/infrastructure/controllers/opencost/
+  - ../../../../bases/infrastructure/controllers/reloader/
+  - ../../../../bases/infrastructure/controllers/trust-manager/
+  - ../../../../bases/infrastructure/controllers/velero/
+  - ../../../../bases/infrastructure/controllers/vertical-pod-autoscaler/
   - coredns/
   - external-dns/
   - flux-instance/
