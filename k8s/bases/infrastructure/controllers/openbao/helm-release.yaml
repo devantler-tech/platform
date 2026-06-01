@@ -63,21 +63,28 @@ spec:
         size: ${openbao_storage_size:=1Gi}
       auditStorage:
         enabled: true
-        # 10Gi (up from the chart default 1Gi). The file audit backend
-        # does not rotate, and OpenBao FAILS CLOSED on audit-write
-        # errors (every API request blocks once the volume is full).
-        # 10Gi gives multi-year headroom for this cluster's request
+        # Chart default. The file audit backend does not rotate, and
+        # OpenBao FAILS CLOSED on audit-write errors (every API request
+        # blocks once the volume is full). At this cluster's request
         # volume (~700 KB/day from current ESO + vault-snapshot
-        # traffic). Once the observability stack lands, promtail will
-        # ship the stream off-PVC and the size will become irrelevant.
-        # Until then, monitor 'kubelet_volume_stats_available_bytes'
-        # on the openbao-audit-* PVC and rotate manually via
-        #   kubectl -n openbao exec openbao-0 -- sh -c \
-        #     'mv /openbao/audit/audit.log /openbao/audit/audit.log.$(date -u +%Y%m%dT%H%M%SZ) && \
-        #      kill -HUP 1'
-        # (OpenBao reopens its audit FD on SIGHUP, so the move +
-        #  signal pattern is safe.)
-        size: ${openbao_audit_storage_size:=10Gi}
+        # traffic) 1Gi gives ~3-4 years of headroom, but the failure
+        # mode is silent until the cluster halts -- monitor
+        # 'kubelet_volume_stats_available_bytes' on the openbao-audit-*
+        # PVC.
+        #
+        # NB: bumping this size in-place is rejected by Kubernetes
+        # because spec.volumeClaimTemplates is immutable on an
+        # existing StatefulSet. The supported resize path is to leave
+        # the chart value alone and expand the PVC directly:
+        #
+        #   kubectl -n openbao patch pvc audit-openbao-0 \
+        #     --type=merge -p '{"spec":{"resources":{"requests":{"storage":"10Gi"}}}}'
+        #
+        # CSI providers with allowVolumeExpansion: true (Hetzner CSI,
+        # most cloud drivers) honour this online. Once the
+        # observability stack lands, promtail will ship the stream
+        # off-PVC and the size question goes away.
+        size: 1Gi
       standalone:
         enabled: true
         config: |
