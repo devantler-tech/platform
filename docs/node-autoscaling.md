@@ -14,12 +14,12 @@ KSail natively installs and manages the Cluster Autoscaler when
 ```
 KSail (static baseline)
 ├── 3 control planes (cx33, 4 vCPU / 8 GB, never autoscaled)
-└── 4 static workers (cx33, 4 vCPU / 8 GB, guaranteed minimum, Longhorn storage nodes)
+└── 3 static workers (cx33, 4 vCPU / 8 GB, guaranteed minimum, Longhorn storage nodes)
 
 Cluster Autoscaler (dynamic workers, managed by KSail)
 ├── Pool: autoscale-small  → 0-1 × CX23 (2 vCPU, 4 GB)
 ├── Pool: autoscale-medium → 0-2 × CX33 (4 vCPU, 8 GB)
-├── max-nodes-total: 10 (3 CPs + 4 workers + headroom for autoscaler nodes)
+├── maxNodesTotal: 10 (3 CPs + 3 workers + headroom for autoscaler nodes)
 └── Expander: LeastWaste
 ```
 
@@ -82,7 +82,7 @@ spec:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `enabled` | `Disabled` | Enable/disable node autoscaling |
+| `enabled` | `false` | Enable/disable node autoscaling |
 | `expander` | `LeastWaste` | Node selection strategy: `Price`, `LeastWaste`, `LeastNodes`, `Random` |
 | `maxNodesTotal` | `0` (unlimited) | Hard ceiling on total cluster nodes (all types) |
 | `scaleDownUnneededTime` | `10m` | Time before an underutilized node is eligible for removal |
@@ -96,9 +96,9 @@ spec:
 
 - **Hard max per pool** — `pools[].max` caps each pool independently.
 - **Hard max total** — `maxNodesTotal` caps the **total cluster node count**
-  (CPs + static workers + autoscaler workers). Set to `10` (3 CPs + 4
-  workers = 7 base, plus the current pool caps of 1 small + 2 medium = 3
-  autoscaler nodes).
+  (CPs + static workers + autoscaler workers). Set to `10` (3 CPs + 3
+  workers = 6 base, plus up to 3 autoscaler nodes from the current pool caps
+  of 1 small + 2 medium).
 - **Expander** — `LeastWaste` (current) picks the node group left with the
   least idle capacity after scheduling; `Price` instead picks the cheapest
   eligible group.
