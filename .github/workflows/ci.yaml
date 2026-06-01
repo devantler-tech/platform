@@ -192,13 +192,14 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        # TEMP: pinned to v7.19.0. The v7.20.0 release shipped only desktop
-        # artifacts (CLI binaries missing), so `brew install ksail` 404s on the
-        # linux tarball. Revert to setup-ksail-cli once a complete ksail release
-        # exists. See devantler-tech/ksail v7.20.0 CD failure.
+        # Install the KSail CLI from the release tarball via curl. We use curl
+        # rather than brew/setup-ksail-cli because the v7.20.0 release shipped
+        # only desktop artifacts (linux CLI missing, 404 on the tarball).
+        # v7.23.4 ships complete linux artifacts again and carries the
+        # cluster-update fixes; renovate keeps this pin current.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.19.0"
+          KSAIL_VERSION: "7.23.4"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
