@@ -59,6 +59,8 @@ replacements:
           namespace: flux-system
         reject:
           - name: variables
+          # priority-classes uses a fixed, provider-agnostic bases/ path.
+          - name: priority-classes
         fieldPaths:
           - spec.path
         options:

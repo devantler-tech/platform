@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - cluster-meta.yaml
   - variables-flux-kustomization.yaml
+  - priority-classes-flux-kustomization.yaml
   - infrastructure-controllers-flux-kustomization.yaml
   - infrastructure-flux-kustomization.yaml
   - apps-flux-kustomization.yaml

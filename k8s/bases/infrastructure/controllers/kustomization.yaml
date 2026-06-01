@@ -2,9 +2,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  # PriorityClasses first — HelmReleases below (e.g. kube-prometheus-stack)
-  # reference platform-critical, so it must be applied before they install.
-  - priority-classes/
   - auth-proxy/
   - cdi/
   - cert-manager/
