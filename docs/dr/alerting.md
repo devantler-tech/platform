@@ -164,8 +164,11 @@ All four are behind GitHub SSO (oauth2-proxy, `devantler` only).
 | Operator       | 50m / 128 Mi      | — / 256 Mi  |
 
 VPA right-sizes the requests at runtime (RequestsOnly), so the limits are
-the real ceilings. The 4th static worker (`ksail.prod.yaml workers: 4`)
-was added to host this always-on tier.
+the real ceilings. The always-on tier (Grafana, Loki, persistent
+Prometheus + Alertmanager) is what motivates the planned bump to a 4th
+static worker (`ksail.prod.yaml`); it's held at 3 today while prod is
+right-sized, and the hetzner overlay opts out of kubevirt/cdi to free
+~1.5 GiB so the tier still fits.
 
 ## Related
 
