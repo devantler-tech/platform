@@ -5,7 +5,7 @@ Automatic horizontal and vertical scaling of Hetzner worker nodes via the
 with the Hetzner Cloud provider.
 
 KSail natively installs and manages the Cluster Autoscaler when
-`spec.cluster.autoscaler.node.enabled: Enabled` is set in the ksail config.
+`spec.cluster.autoscaler.node.enabled: true` is set in the ksail config.
 
 ---
 
@@ -13,22 +13,23 @@ KSail natively installs and manages the Cluster Autoscaler when
 
 ```
 KSail (static baseline)
-├── 3 control planes (cx23, never autoscaled)
-└── 3 static workers (cx23, guaranteed minimum, Longhorn storage nodes)
+├── 3 control planes (cx33, 4 vCPU / 8 GB, never autoscaled)
+└── 3 static workers (cx33, 4 vCPU / 8 GB, guaranteed minimum, Longhorn storage nodes)
 
 Cluster Autoscaler (dynamic workers, managed by KSail)
 ├── Pool: autoscale-small  → 0-1 × CX23 (2 vCPU, 4 GB)
-├── Pool: autoscale-medium → 0-1 × CX33 (4 vCPU, 8 GB)
-├── max-nodes-total: 10 (3 CPs + 3 workers + headroom for autoscaler nodes)
-└── Expander: Price
+├── Pool: autoscale-medium → 0-2 × CX33 (4 vCPU, 8 GB)
+├── maxNodesTotal: 10 (3 CPs + 3 workers + headroom for autoscaler nodes)
+└── Expander: LeastWaste
 ```
 
 - **Horizontal scaling** — autoscaler adds workers when pods are Pending due
   to insufficient resources, and removes underutilized workers after a
   configurable cooldown.
 - **Vertical scaling** — multiple node pools with different server types.
-  The `Price` expander picks the cheapest pool that can satisfy the pending
-  pod's resource requests. See
+  The `LeastWaste` expander picks the pool left with the least idle CPU and
+  memory after scheduling the pending pod (`Price`, which biases toward the
+  cheapest pool, is also available). See
   [cluster-autoscaler FAQ](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md).
 - **KSail integration** — KSail installs the Cluster Autoscaler Helm chart,
   generates the worker config secret (`cluster-autoscaler-config`), and
@@ -62,8 +63,8 @@ spec:
   cluster:
     autoscaler:
       node:
-        enabled: Enabled
-        expander: Price
+        enabled: true
+        expander: LeastWaste
         maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
         pools:
@@ -76,12 +77,12 @@ spec:
             serverType: cx33
             location: fsn1
             min: 0
-            max: 1
+            max: 2
 ```
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `enabled` | `Disabled` | Enable/disable node autoscaling |
+| `enabled` | `false` | Enable/disable node autoscaling |
 | `expander` | `LeastWaste` | Node selection strategy: `Price`, `LeastWaste`, `LeastNodes`, `Random` |
 | `maxNodesTotal` | `0` (unlimited) | Hard ceiling on total cluster nodes (all types) |
 | `scaleDownUnneededTime` | `10m` | Time before an underutilized node is eligible for removal |
@@ -96,10 +97,11 @@ spec:
 - **Hard max per pool** — `pools[].max` caps each pool independently.
 - **Hard max total** — `maxNodesTotal` caps the **total cluster node count**
   (CPs + static workers + autoscaler workers). Set to `10` (3 CPs + 3
-  workers = 6 base; current pool caps allow 2 more). Provides headroom for
-  future pool expansion.
-- **Expander** — `Price` picks the cheapest eligible node group when
-  scaling up.
+  workers = 6 base, plus up to 3 autoscaler nodes from the current pool caps
+  of 1 small + 2 medium).
+- **Expander** — `LeastWaste` (current) picks the node group left with the
+  least idle capacity after scheduling; `Price` instead picks the cheapest
+  eligible group.
 - **Scale-down** — underutilized nodes are removed after 10 minutes.
 
 ### Adding more pools

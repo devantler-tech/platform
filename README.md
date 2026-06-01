@@ -75,7 +75,7 @@ Local development cluster running on Docker via KSail. Uses Talos with the Docke
 
 Cloud cluster running on Hetzner Cloud via KSail's native Hetzner provider. Deployed via `v*` tags through the CD pipeline, and validated in the merge queue via the CI pipeline.
 
-- 3× [Hetzner CX23](https://www.hetzner.com/cloud/) control planes + 3× CX23 static workers + autoscaling (x86 2 vCPU 4Gb RAM 40Gb SSD each)
+- 3× [Hetzner CX33](https://www.hetzner.com/cloud/) control planes + 3× CX33 static workers + autoscaling (x86 4 vCPU 8GB RAM 80GB SSD each)
 - Config: [`ksail.prod.yaml`](ksail.prod.yaml)
 
 ## Structure
@@ -156,6 +156,8 @@ The Flux Kustomizations themselves live in `k8s/bases/cluster/` (with sentinel `
 
 See [`docs/TEMPLATING.md`](docs/TEMPLATING.md) for the exact set of files a fork of this repo needs to edit to stand up its own instance.
 
+See [`docs/TENANTS.md`](docs/TENANTS.md) for how to onboard a new GitOps **tenant** (an app that runs on the platform from its own repository).
+
 ## Monthly Cost
 
 > [!NOTE]
@@ -164,9 +166,9 @@ See [`docs/TEMPLATING.md`](docs/TEMPLATING.md) for the exact set of files a fork
 | Item                      | No. | Per unit | Total in Actual | Total in $ |
 | ------------------------- | --- | -------- | --------------- | ---------- |
 | Cloudflare Domains        | 2   | $0,87    | $1,74           | $1,74      |
-| Hetzner CX23 (prod)       | 6   | €4,51    | €27,06          | $30,72     |
+| Hetzner CX33 (prod)       | 6   | €6,49    | €38,94          | $44,21     |
 | Hetzner Cloud LB LB11 (prod) | 1 | €5,39   | €5,39           | $6,12      |
-| Total                     |     |          |                 | $38,58     |
+| Total                     |     |          |                 | $52,07     |
 
 ## Star History
 

@@ -130,7 +130,7 @@ These variables can be overridden per environment in `k8s/clusters/<env>/variabl
 
 | Variable | Default | Description |
 |---|---|---|
-| `longhorn_replica_count` | `2` | Number of volume replicas (should match worker count) |
+| `longhorn_replica_count` | `3` | Number of volume replicas (matches the storage-worker count) |
 | `longhorn_csi_attacher_replicas` | `1` | CSI attacher replica count |
 | `longhorn_csi_provisioner_replicas` | `1` | CSI provisioner replica count |
 | `longhorn_csi_resizer_replicas` | `1` | CSI resizer replica count |
