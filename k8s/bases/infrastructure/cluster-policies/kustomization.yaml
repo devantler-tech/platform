@@ -66,8 +66,28 @@ patches:
       - op: replace
         path: /spec/rules/1/generate/data/spec/limits/0/defaultRequest
         value:
-          cpu: 50m
+          # CPU floor lowered 50m->15m to match VPA minAllowed (auto-vpa.yaml);
+          # idle controllers default lower until VPA right-sizes them.
+          cpu: 15m
           memory: 128Mi
+      # Skip namespaces that are being deleted. A terminating namespace (e.g.
+      # cdi/kubevirt after the prod disable) rejects new ResourceQuota/LimitRange
+      # with "forbidden: namespace is being terminated", which Kyverno surfaces
+      # as PolicyError Warning events that trip the merge-queue event gate.
+      - op: add
+        path: /spec/rules/0/preconditions
+        value:
+          all:
+            - key: "{{ request.object.metadata.deletionTimestamp || '' }}"
+              operator: Equals
+              value: ""
+      - op: add
+        path: /spec/rules/1/preconditions
+        value:
+          all:
+            - key: "{{ request.object.metadata.deletionTimestamp || '' }}"
+              operator: Equals
+              value: ""
   # --- Anti-affinity: add StatefulSet match, use app.kubernetes.io/name, exclude kube-system ---
   - target:
       kind: ClusterPolicy
@@ -95,7 +115,7 @@ patches:
       - op: replace
         path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(affinity)/+(podAntiAffinity)/+(preferredDuringSchedulingIgnoredDuringExecution)/0/podAffinityTerm/labelSelector/matchExpressions/0/values/0
         value: "{{request.object.spec.template.metadata.labels.\"app.kubernetes.io/name\"}}"
-  # --- Topology spread: remove label gate, add StatefulSet, hostname key, ScheduleAnyway, exclude kube-system ---
+  # --- Topology spread: remove label gate, add StatefulSet, hostname key, DoNotSchedule, exclude kube-system ---
   - target:
       kind: ClusterPolicy
       name: spread-pods
@@ -125,7 +145,16 @@ patches:
         value: "kubernetes.io/hostname"
       - op: replace
         path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(topologySpreadConstraints)/0/whenUnsatisfiable
-        value: "ScheduleAnyway"
+        value: "DoNotSchedule"
+      # Scope skew per ReplicaSet revision so rolling updates don't deadlock under
+      # DoNotSchedule (surge pods of the new revision would otherwise count against
+      # the old revision's skew). Requires k8s >=1.27 (GA in 1.34). For StatefulSets
+      # the pod-template-hash key is absent, so k8s ignores it and falls back to the
+      # labelSelector — fine, since StatefulSet updates roll one pod at a time.
+      - op: add
+        path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(topologySpreadConstraints)/0/matchLabelKeys
+        value:
+          - pod-template-hash
       - op: replace
         path: /spec/rules/0/mutate/patchStrategicMerge/spec/template/spec/+(topologySpreadConstraints)/0/labelSelector
         value:

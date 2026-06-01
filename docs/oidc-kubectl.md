@@ -2,11 +2,13 @@
 
 This guide explains how to use [`kubelogin`](https://github.com/int128/kubelogin) to authenticate `kubectl` against the Kubernetes API via Dex and GitHub.
 
+OIDC is the **default, day-to-day** way to reach the cluster and is intentionally **read-only** (see [RBAC](#rbac)). Write/admin access is **break-glass only** — the root client-certificate kubeconfig kept in the vault (see [Break-glass admin access](#break-glass-admin-access)).
+
 ## Prerequisites
 
 - Access to the cluster (kubeconfig with server address)
 - A GitHub account that is a member of the [`devantler-tech`](https://github.com/devantler-tech) organization
-- The `oidc-admin` ClusterRoleBinding must list your OIDC identity (see [RBAC](#rbac))
+- Your OIDC identity must be bound to the read-only roles (see [RBAC](#rbac))
 
 ## 1 — Install kubelogin
 
@@ -76,6 +78,12 @@ kubectl config set-context oidc@prod \
 ```bash
 kubectl config use-context oidc@local   # or oidc@prod
 kubectl get nodes
+
+# Confirm the identity and that access is read-only:
+kubectl auth whoami                      # Username: oidc:ned@devantler.tech
+kubectl auth can-i list pods             # yes
+kubectl auth can-i get secrets           # no  (Secrets are excluded by design)
+kubectl auth can-i create deployments    # no  (writes are break-glass only)
 ```
 
 On the first run, `kubelogin` opens a browser window. Log in with GitHub
@@ -110,25 +118,66 @@ kube-apiserver validates token
   • groups claim → Kubernetes groups
       │
       ▼
-RBAC: ClusterRoleBinding oidc-admin
-  grants cluster-admin to oidc:ned@devantler.tech
+RBAC: ClusterRoleBindings oidc-view + oidc-cluster-reader
+  grant READ-ONLY (view + cluster-reader) to oidc:ned@devantler.tech
+  (admin is break-glass via the root cert — not OIDC)
 ```
 
 ## RBAC
 
-The `oidc-admin` ClusterRoleBinding
-(`k8s/bases/infrastructure/cluster-role-bindings/oidc-admin.yaml`) grants
-`cluster-admin` to the user whose email matches the `email` claim returned
-by Dex:
+OIDC access is **read-only**. Two ClusterRoleBindings in
+`k8s/bases/infrastructure/cluster-role-bindings/oidc-readonly.yaml` bind the
+user whose email matches the Dex `email` claim (`oidc:${admin_email}`) to:
+
+| Binding | Role | Grants |
+|---|---|---|
+| `oidc-view` | built-in `view` | read all **namespaced** resources (pods, deployments, configmaps, pod logs, events, …) — **excluding Secrets** |
+| `oidc-cluster-reader` | `cluster-reader` | read what `view` omits — mostly **cluster-scoped** infra (nodes, PVs, storage classes, CRDs, API services, priority/runtime/ingress classes, CSRs) plus RBAC objects and node/pod metrics |
 
 ```yaml
 subjects:
   - apiGroup: rbac.authorization.k8s.io
     kind: User
-    name: "oidc:ned@devantler.tech"
+    name: "oidc:${admin_email}"   # → oidc:ned@devantler.tech
 ```
 
-To grant access to additional users, add more subjects to that file.
+What is deliberately **not** granted via OIDC: Secrets (kept in the vault on
+purpose) and any write/exec verb (`create`/`update`/`delete`, `pods/exec`,
+`pods/portforward`). The `cluster-reader` ClusterRole is defined in
+`k8s/bases/infrastructure/cluster-roles/cluster-reader.yaml`.
+
+To grant read-only access to additional users, add more subjects to both
+bindings (or switch the subject to a Dex group such as
+`oidc:devantler-tech:platform`).
+
+## Break-glass admin access
+
+There is **no admin path via OIDC** — by design. When a write or an
+otherwise-forbidden operation is genuinely required, use the root
+**client-certificate** kubeconfig stored in the vault:
+
+1. Retrieve the root kubeconfig from the vault and point `KUBECONFIG` at it
+   (or merge its `admin@prod` context), e.g.:
+
+   ```bash
+   export KUBECONFIG=/path/to/root-kubeconfig.yaml
+   kubectl config use-context admin@prod
+   ```
+
+2. Do the minimal change, then switch back to the OIDC context:
+
+   ```bash
+   unset KUBECONFIG                       # back to ~/.kube/config
+   kubectl config use-context oidc@prod
+   ```
+
+The root cert authenticates directly against the cluster CA and bypasses
+OIDC/RBAC role limits (it is `cluster-admin`), so treat it accordingly: pull
+it only when needed and never persist it in your day-to-day kubeconfig.
+
+Last-resort regeneration (if the vault copy is lost): a fresh admin
+kubeconfig can be minted from the Talos control plane with
+`talosctl --talosconfig <admin-talosconfig> kubeconfig`.
 
 ## Dex client configuration
 
@@ -145,7 +194,8 @@ kube-apiserver's `--oidc-client-id` flag.
 | `error: You must be logged in to the server (Unauthorized)` | Token expired or wrong audience | Run `kubectl oidc-login setup --oidc-issuer-url=... --oidc-client-id=kubectl` to verify the flow |
 | Browser doesn't open | kubelogin not installed or not in `$PATH` | Verify `kubectl oidc-login --help` works |
 | `x509: certificate signed by unknown authority` (local) | mkcert CA not trusted | Pass `--certificate-authority-data` or install the mkcert root CA in your system trust store |
-| `Forbidden` after successful login | Email doesn't match `oidc-admin` subject | Check `kubectl auth whoami` and update the ClusterRoleBinding |
+| `Forbidden` on a **read** | Email not bound, or resource outside the read-only roles | Check `kubectl auth whoami`; confirm the email matches the `oidc-readonly.yaml` subjects |
+| `Forbidden` on a **write** | Expected — OIDC is read-only | Use the [break-glass admin cert](#break-glass-admin-access) for writes |
 
 ## References
 
