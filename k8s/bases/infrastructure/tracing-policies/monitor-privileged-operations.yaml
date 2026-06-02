@@ -1,0 +1,49 @@
+---
+# Observe-only TracingPolicy covering the high-signal, low-noise privileged
+# operations that Kubescape's node-agent runtime detection used to flag. This
+# (together with monitor-sensitive-file-access.yaml, Tetragon's built-in
+# process_exec/exit events, and Cilium/Hubble for network flows) is the
+# runtime-detection parity set that lets the platform disable Kubescape
+# `runtimeDetection` without losing coverage of concrete threat behaviours.
+#
+# There are NO matchActions -> nothing is blocked; events flow to stdout ->
+# Alloy -> Loki for auditing and alerting. Enforcement is separate and opt-in
+# (see enforce-protect-system-files.yaml).
+#
+# Why these hooks specifically: each fires rarely in normal workloads, so they
+# give strong threat signal without the event-flood that broad syscall capture
+# (e.g. every connect()/openat()) would dump into Loki. Network-flow visibility
+# is already provided by Cilium/Hubble, so it is intentionally not duplicated.
+#
+# Coverage map (vs Kubescape runtime threat categories):
+#   - kernel module load / unload  -> rootkit / malicious driver install
+#   - ptrace                       -> process injection / credential theft
+#   - setuid / setgid              -> privilege / identity transition
+#
+# NOT replicated here (paradigm differences, accepted trade-off documented in
+# docs/runtime-security.md): learned-behaviour anomaly detection, malware
+# signature matching, and posture/CVE-correlated runtime alerts.
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: monitor-privileged-operations
+spec:
+  kprobes:
+    # --- Kernel module load / unload: rootkits, malicious drivers. These are
+    #     effectively never invoked by a normal pod (Talos loads modules at
+    #     boot), so any hit is high-signal. ---
+    - call: "sys_finit_module"
+      syscall: true
+    - call: "sys_init_module"
+      syscall: true
+    - call: "sys_delete_module"
+      syscall: true
+    # --- Process injection / tampering: one process attaching to another. ---
+    - call: "sys_ptrace"
+      syscall: true
+    # --- Privilege / identity transitions. Containers that drop privileges at
+    #     startup will emit one event each; escalations stand out in Loki. ---
+    - call: "sys_setuid"
+      syscall: true
+    - call: "sys_setgid"
+      syscall: true
