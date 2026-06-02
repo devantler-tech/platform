@@ -1,0 +1,51 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kube-prometheus-stack
+  namespace: monitoring
+spec:
+  values:
+    prometheus:
+      prometheusSpec:
+        # Persist the TSDB on Hetzner Cloud block storage. The base uses
+        # an emptyDir (fine for local/CI), but in prod a VPA eviction,
+        # node drain, or autoscaler scale-down would otherwise wipe all
+        # metrics history. hcloud block storage (not Longhorn) for the
+        # same reason OpenBao uses it: the ~36 GiB Talos rootfs is too
+        # small to host Longhorn replicas this large.
+        #
+        # 20Gi gives headroom over the 14d / 5GiB retention so a backlog
+        # of unshipped blocks never wedges the WAL. Velero's daily backup
+        # of the monitoring namespace ships this volume to R2 (24h RPO).
+        storageSpec:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: hcloud
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 20Gi
+        # Raise the memory ceiling: VPA only manages requests
+        # (controlledValues: RequestsOnly), so this hard limit is the
+        # real OOM guard under cardinality spikes. 768Mi (base) is tight
+        # once defaultRules + Grafana scrape targets are active.
+        resources:
+          requests:
+            cpu: 50m
+            memory: 256Mi
+          limits:
+            memory: 1536Mi
+    alertmanager:
+      alertmanagerSpec:
+        # Persist silences and the notification log so an operator's
+        # silence survives a restart and the gossiped dedup state has a
+        # durable backing store.
+        storage:
+          volumeClaimTemplate:
+            spec:
+              storageClassName: hcloud
+              accessModes: ["ReadWriteOnce"]
+              resources:
+                requests:
+                  storage: 2Gi

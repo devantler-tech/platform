@@ -52,8 +52,10 @@ spec:
     # The Cluster Autoscaler manages additional workers dynamically.
     # Temporarily held at 3 (matching the 3 healthy nodes) while the
     # cluster is stabilized / right-sized. (A 4th worker previously failed
-    # to join because of the missing Kubernetes version pin — now fixed via
-    # kubernetesVersion below.) Restore to 4 once resourced.
+    # to join because of the missing Kubernetes version pin — now fixed
+    # via kubernetesVersion below.) Restore to 4 once resourced -- the
+    # always-on observability tier (Grafana, Loki, persistent
+    # Prometheus/Alertmanager) is what motivates the eventual bump.
     workers: 3
     # Pin Kubernetes to the version the cluster already runs so
     # 'ksail cluster update' doesn't roll nodes to ksail's newer default

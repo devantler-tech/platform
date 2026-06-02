@@ -18,6 +18,19 @@ spec:
         - ports:
             - port: "9090"
               protocol: TCP
+    # auth-proxy (oauth2-proxy SSO) reaches the Grafana, Prometheus and
+    # Alertmanager UIs after authentication.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+            - port: "9090"
+              protocol: TCP
+            - port: "9093"
+              protocol: TCP
     # Webhook from kube-apiserver (hostNetwork on control plane nodes)
     - fromEntities:
         - kube-apiserver

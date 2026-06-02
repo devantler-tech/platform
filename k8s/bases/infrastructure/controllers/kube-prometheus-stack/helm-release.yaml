@@ -27,18 +27,61 @@ spec:
   timeout: 15m
   # https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/values.yaml
   #
-  # Trimmed-down install: Prometheus + Alertmanager + node-exporter +
-  # kube-state-metrics. No Grafana (no need; this is alerting-only,
-  # operators look at logs / kubectl directly). No remote-write -- alerts
-  # fire from in-cluster, ship via webhook to a free destination
-  # (Discord/email). Caveat documented in docs/dr/alerting.md: a fully
-  # offline cluster cannot self-alert; fine for homelab scope.
+  # Prometheus + Alertmanager + node-exporter + kube-state-metrics +
+  # Grafana. Production-ready posture (see docs/dr/alerting.md):
+  #   - Alerts ship to Slack via native slack_configs.
+  #   - An always-firing Watchdog is pushed to an external heartbeat
+  #     monitor (dead-man's-switch) so a full-cluster outage still pages.
+  #   - Prometheus & Alertmanager get persistent volumes in the hetzner
+  #     overlay; Velero backs the monitoring namespace up to R2 daily.
+  #   - Grafana is exposed behind oauth2-proxy SSO with Prometheus + Loki
+  #     datasources for dashboards and log exploration.
   values:
     crds:
       enabled: true
 
+    # Grafana is exposed behind oauth2-proxy SSO (see httproute.yaml).
+    # Access to the route is already gated to a single GitHub user
+    # (oauth2-proxy github_users), so Grafana itself runs with anonymous
+    # Admin and the login form disabled -- whoever clears the SSO gate is
+    # the operator. This avoids depending on the proxy to forward an
+    # identity header. Loki is wired in as an additional datasource below.
     grafana:
-      enabled: false
+      enabled: true
+      grafana.ini:
+        server:
+          root_url: https://grafana.${domain}
+        auth:
+          disable_login_form: true
+        auth.basic:
+          enabled: false
+        auth.anonymous:
+          enabled: true
+          org_role: Admin
+      # Dashboards are provisioned as code, so the pod can stay ephemeral.
+      persistence:
+        enabled: false
+      defaultDashboardsEnabled: true
+      sidecar:
+        dashboards:
+          enabled: true
+          searchNamespace: ALL
+        datasources:
+          enabled: true
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+      # Loki log datasource (Loki shares the monitoring namespace).
+      additionalDataSources:
+        - name: Loki
+          type: loki
+          access: proxy
+          url: http://loki.monitoring.svc.cluster.local:3100
+          jsonData:
+            maxLines: 1000
 
     # We don't host an external Prometheus and don't expose this one.
     prometheus:
@@ -100,29 +143,73 @@ spec:
         global:
           resolve_timeout: 5m
         route:
-          group_by: ["alertname", "cluster", "severity"]
+          # Group on the labels Prometheus actually sets externally
+          # (externalLabels.domain = ${domain}) -- `cluster` is not a
+          # configured label here, so grouping by it would dedup nothing.
+          group_by: ["alertname", "domain", "severity"]
           group_wait: 30s
           group_interval: 5m
           repeat_interval: 12h
-          receiver: webhook-critical
+          receiver: slack
           routes:
+            # Dead-man's-switch. The Watchdog alert always fires (from the
+            # chart's general rules), so we push it to an external heartbeat
+            # monitor (e.g. healthchecks.io) on a tight cadence. If the
+            # cluster or the Prometheus->Alertmanager pipeline dies, the
+            # monitor stops receiving pings and notifies Slack out-of-band
+            # -- the one failure in-cluster alerting can never cover itself.
+            - matchers:
+                - alertname = "Watchdog"
+              receiver: heartbeat
+              # Alertmanager re-notifies only when both group_interval AND
+              # repeat_interval have elapsed since the last send. Keeping
+              # group_interval (30s) below repeat_interval (50s) lets the
+              # 50s cadence actually take effect; with group_interval >=
+              # repeat_interval the heartbeat would be silently throttled
+              # to the longer of the two.
+              group_wait: 0s
+              group_interval: 30s
+              repeat_interval: 50s
+              continue: false
             - matchers:
                 - severity = "critical"
-              receiver: webhook-critical
+              receiver: slack
               continue: false
             - matchers:
                 - severity = "warning"
-              receiver: webhook-critical
+              receiver: slack
               repeat_interval: 24h
         receivers:
-          - name: webhook-critical
-            webhook_configs:
-              - url_file: /etc/alertmanager/secrets/alertmanager-webhook/webhook_url
+          # Normal alerts -> Slack via a native incoming webhook. The URL
+          # is per-cluster and SOPS-encrypted (alertmanager_webhook_url),
+          # so local clusters get an invalid URL and stay quiet by design.
+          - name: slack
+            slack_configs:
+              - api_url_file: /etc/alertmanager/secrets/alertmanager-webhook/webhook_url
+                channel: "#platform-alerts"
                 send_resolved: true
+                title: '[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .CommonLabels.alertname }}'
+                text: >-
+                  {{ range .Alerts }}*{{ .Labels.severity | toUpper }}* — {{ .Annotations.summary }}
+                  {{ .Annotations.description }}
+                  {{ end }}
+          # Heartbeat receiver: just POSTs to the external monitor URL. No
+          # resolved notifications -- a missing ping is the signal. The URL
+          # is injected by Flux substitution from the per-cluster secret;
+          # if unset (local/CI) it defaults to an invalid URL so the
+          # heartbeat simply never reaches anywhere -- harmless, and the
+          # same "fail closed locally" pattern as the Slack webhook.
+          - name: heartbeat
+            webhook_configs:
+              - url: ${alertmanager_heartbeat_url:=https://example.invalid/no-heartbeat-configured}
+                send_resolved: false
         inhibit_rules:
+          # Equal labels must exist on both source and target alerts;
+          # `cluster` isn't configured here (we set `domain` via
+          # externalLabels), so use that for the cluster-scoped match.
           - source_matchers: [severity = "critical"]
             target_matchers: [severity = "warning"]
-            equal: [alertname, cluster, namespace]
+            equal: [alertname, domain, namespace]
       secrets:
         - alertmanager-webhook
 
@@ -152,11 +239,35 @@ spec:
       enabled: true
       priorityClassName: platform-critical
 
-    # Disable the bundled "default" Prometheus rules -- the chart ships
-    # ~200 alerts that mostly aren't relevant for a homelab. We add our
-    # own focused PrometheusRule (k8s/bases/infrastructure/alerts/platform-critical.yaml) instead.
+    # Enable the chart's well-tested default rules, but prune the groups
+    # for control-plane components we deliberately don't scrape (their
+    # ServiceMonitors are disabled above, so their alerts would only fire
+    # on permanently-absent targets). This gives us:
+    #   - Watchdog (general.rules) -> the dead-man's-switch heartbeat.
+    #   - Self-monitoring: PrometheusOperator/Prometheus/Alertmanager down,
+    #     config-reload failures, TSDB problems.
+    #   - Workload health: KubePodCrashLooping, KubeDeploymentReplicasMismatch,
+    #     KubeContainerWaiting, KubePersistentVolume* etc.
+    # Platform-specific alerts (Velero/CNPG/Flux/cert-manager/autoscaler)
+    # live in k8s/bases/infrastructure/alerts/platform-critical.yaml.
     defaultRules:
-      create: false
+      create: true
+      rules:
+        etcd: false
+        kubeApiserverAvailability: false
+        kubeApiserverBurnrate: false
+        kubeApiserverHistogram: false
+        kubeApiserverSlos: false
+        kubeControllerManager: false
+        kubeProxy: false
+        kubeSchedulerAlerting: false
+        kubeSchedulerRecording: false
+        windows: false
+      # Overcommit alerts are guaranteed noise on a cluster that runs hot
+      # on purpose (VPA right-sizes requests; the autoscaler adds nodes).
+      disabled:
+        KubeCPUOvercommit: true
+        KubeMemoryOvercommit: true
 
     prometheusOperator:
       priorityClassName: platform-critical
