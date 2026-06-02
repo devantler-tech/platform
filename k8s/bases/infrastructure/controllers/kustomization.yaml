@@ -23,6 +23,7 @@ resources:
   - openbao/
   - opencost/
   - reloader/
+  - tetragon/
   - trust-manager/
   - velero/
   - vertical-pod-autoscaler/
