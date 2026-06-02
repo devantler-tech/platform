@@ -62,7 +62,7 @@ substituted into both the Velero and CNPG secrets at Flux apply time.
 Same Velero install, different backend. Local uses an in-cluster
 **Bitnami MinIO** chart (single replica, ephemeral storage) so the entire
 S3 code path runs end-to-end in CI. The redirection happens via Flux
-variable overrides in `k8s/clusters/local/variables/`:
+variable overrides in `k8s/clusters/local/bootstrap/`:
 
 | Variable               | Local value                                       |
 | ---------------------- | ------------------------------------------------- |

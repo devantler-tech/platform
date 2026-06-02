@@ -50,7 +50,7 @@ local-config `cluster-meta` ConfigMap:
 
 ```yaml
 data:
-  cluster_name: <env>          # drives spec.path: clusters/<env>/variables
+  cluster_name: <env>          # drives spec.path: clusters/<env>/bootstrap
   provider: <docker|hetzner>   # drives spec.path: providers/<provider>/...
 ```
 
@@ -61,7 +61,7 @@ values, point ksail at it".
 
 ### 4. Per-cluster variables
 
-Each `k8s/clusters/<env>/variables/` directory contains the only resources
+Each `k8s/clusters/<env>/bootstrap/` directory contains the only resources
 Flux reads that are genuinely per-cluster:
 
 - `variables-cluster-config-map.yaml` — non-secret values (hostnames, URLs,
@@ -150,7 +150,7 @@ No manual steps are required -- cluster creation is fully automated.
 1. `cp -R talos talos-<env>` (or reuse `talos`).
 2. `cp -R k8s/clusters/prod k8s/clusters/<env>` and update `cluster_name` +
    `provider` in the new overlay's `cluster-meta` patch.
-3. Edit `k8s/clusters/<env>/variables/variables-cluster-{config-map,secret.enc}.yaml`.
+3. Edit `k8s/clusters/<env>/bootstrap/variables-cluster-{config-map,secret.enc}.yaml`.
 4. `cp ksail.prod.yaml ksail.<env>.yaml`; update the per-cluster fields.
 5. Add the new environment to `.github/workflows/` pipelines as needed.
 

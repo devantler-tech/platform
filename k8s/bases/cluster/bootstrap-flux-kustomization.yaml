@@ -1,0 +1,28 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  # The bootstrap layer owns cluster-foundational resources that must exist
+  # BEFORE the infrastructure controllers reconcile: substitution variables
+  # (variables-base / variables-cluster) and cluster-scoped PriorityClasses
+  # (e.g. platform-critical, which kube-prometheus-stack references). Everything
+  # else dependsOn this (directly or transitively), so its contents are applied
+  # and ready first — which is what keeps helm-controller from rolling pods that
+  # reference a PriorityClass before that class exists.
+  name: bootstrap
+  namespace: flux-system
+spec:
+  interval: 60m
+  timeout: 3m
+  retryInterval: 2m
+  path: clusters/__CLUSTER__/bootstrap
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age
+  wait: true
+  prune: true
+  force: true
