@@ -288,6 +288,12 @@ spec:
               }
               POLICY
 
+              bao policy write app-umami-readonly - <<'POLICY'
+              path "secret/data/apps/umami/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
               bao policy write infra-oidc-readonly - <<'POLICY'
               path "secret/data/infrastructure/oidc/*" {
                 capabilities = ["read"]
@@ -337,6 +343,9 @@ spec:
               path "secret/data/apps/wedding-app/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/data/apps/umami/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/data/flux/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -367,6 +376,9 @@ spec:
               path "secret/metadata/apps/wedding-app/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/metadata/apps/umami/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/metadata/flux/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -384,7 +396,7 @@ spec:
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,app-fleetdm-readonly,app-wedding-readonly,infra-oidc-readonly,vault-seed-write \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,infra-oidc-readonly,vault-seed-write \
                 ttl=1h
 
               # Dedicated role for the fleetdm VaultDynamicSecret generator.
