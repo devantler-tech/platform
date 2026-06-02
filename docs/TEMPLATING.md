@@ -55,7 +55,7 @@ data:
 ```
 
 Replacements in the same file rewrite the sentinel placeholders
-(`__CLUSTER__`, `__PROVIDER__`) that come from `k8s/bases/cluster/`. Adding a
+(`__CLUSTER__`, `__PROVIDER__`) that come from `k8s/clusters/base/`. Adding a
 new environment is "copy an existing overlay directory, change these two
 values, point ksail at it".
 
@@ -85,7 +85,7 @@ See `.github/workflows/` for the exact names.
 
 ## Template body (do not edit when instantiating)
 
-- `k8s/bases/cluster/` — shared Flux Kustomizations with sentinel paths.
+- `k8s/clusters/base/` — shared Flux Kustomizations with sentinel paths.
 - `k8s/bases/infrastructure/` — Cilium, cert-manager, Kyverno, alerting configs,
   OpenBao vault, External Secrets Operator, ClusterSecretStore, vault-config Job,
   vault-seed PushSecrets, vault-backup CronJob.

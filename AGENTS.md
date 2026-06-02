@@ -24,13 +24,13 @@ This is a **GitOps-based Kubernetes platform** — not a traditional code reposi
 ```
 k8s/                  # All Kubernetes manifests
   bases/              # Shared base resources (never modify directly from overlays)
-    cluster/          # Cluster-level Flux Kustomization wiring (bootstrap, infra, apps ordering)
     bootstrap/        # Flux post-build substitution variables (ConfigMap + SOPS secret)
     infrastructure/   # Organized by resource type: controllers/, certificates/, gateway/,
                       #   cluster-policies/, external-secrets/, alerts/, vault-*/, etc.
     apps/             # Application deployments
   providers/          # Provider-specific overlays (docker, hetzner)
   clusters/           # Per-environment overlays (local, prod)
+    base/             # Cluster-level Flux Kustomization wiring (bootstrap, infra, apps ordering)
 talos-local/          # Talos machine config patches for Docker (local)
 talos/                # Talos machine config patches for Hetzner (prod): cluster/, control-planes/, workers/
 docs/                 # Additional documentation (incl. docs/dr/ disaster-recovery runbooks)
