@@ -44,7 +44,15 @@ spec:
               containerPolicies:
                 - containerName: "*"
                   controlledResources: ["cpu", "memory"]
-                  controlledValues: RequestsOnly
+                  # RequestsAndLimits (not RequestsOnly): VPA also scales each
+                  # container's limit in proportion to the request it sets,
+                  # preserving the authored limit:request ratio. Under
+                  # RequestsOnly the limit stayed fixed, so any workload whose
+                  # VPA target outgrew its static memory limit was capped below
+                  # its known need and OOMKilled (e.g. loki once audit-log
+                  # ingest grew). The request is still bounded by maxAllowed
+                  # below; CPU limits only loosen (less throttling, no OOM).
+                  controlledValues: RequestsAndLimits
                   minAllowed:
                     # CPU floor lowered 50m->15m: live data showed 87 containers
                     # pinned at the 50m floor using avg 4.4m — VPA was floored,
@@ -95,7 +103,15 @@ spec:
               containerPolicies:
                 - containerName: "*"
                   controlledResources: ["cpu", "memory"]
-                  controlledValues: RequestsOnly
+                  # RequestsAndLimits (not RequestsOnly): VPA also scales each
+                  # container's limit in proportion to the request it sets,
+                  # preserving the authored limit:request ratio. Under
+                  # RequestsOnly the limit stayed fixed, so any workload whose
+                  # VPA target outgrew its static memory limit was capped below
+                  # its known need and OOMKilled (e.g. loki once audit-log
+                  # ingest grew). The request is still bounded by maxAllowed
+                  # below; CPU limits only loosen (less throttling, no OOM).
+                  controlledValues: RequestsAndLimits
                   minAllowed:
                     # CPU floor lowered 50m->15m: live data showed 87 containers
                     # pinned at the 50m floor using avg 4.4m — VPA was floored,
@@ -140,7 +156,15 @@ spec:
               containerPolicies:
                 - containerName: "*"
                   controlledResources: ["cpu", "memory"]
-                  controlledValues: RequestsOnly
+                  # RequestsAndLimits (not RequestsOnly): VPA also scales each
+                  # container's limit in proportion to the request it sets,
+                  # preserving the authored limit:request ratio. Under
+                  # RequestsOnly the limit stayed fixed, so any workload whose
+                  # VPA target outgrew its static memory limit was capped below
+                  # its known need and OOMKilled (e.g. loki once audit-log
+                  # ingest grew). The request is still bounded by maxAllowed
+                  # below; CPU limits only loosen (less throttling, no OOM).
+                  controlledValues: RequestsAndLimits
                   minAllowed:
                     # CPU floor lowered 50m->15m: live data showed 87 containers
                     # pinned at the 50m floor using avg 4.4m — VPA was floored,

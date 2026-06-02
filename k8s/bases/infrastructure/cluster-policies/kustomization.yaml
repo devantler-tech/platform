@@ -41,10 +41,17 @@ patches:
       - op: replace
         path: /spec/rules/0/generate/data/spec/hard
         value:
+          # Quota only the REQUESTS dimension. auto-vpa.yaml runs VPA with
+          # controlledValues: RequestsAndLimits, so VPA raises container LIMITS
+          # dynamically (ratio-preserving). A static limits.cpu/limits.memory
+          # quota would then reject the very rollouts VPA triggers once limits
+          # rise -- an unrecoverable evict-then-can't-recreate loop -- and
+          # monitoring already sat at 96% of limits.cpu=16. requests.* still
+          # govern aggregate reserved capacity (each pod's request is bounded by
+          # VPA maxAllowed), which is the dimension that actually reserves node
+          # resources; limits are burst ceilings VPA now owns per pod.
           requests.cpu: "8"
           requests.memory: 16Gi
-          limits.cpu: "16"
-          limits.memory: 32Gi
       - op: add
         path: /spec/rules/1/exclude
         value:
