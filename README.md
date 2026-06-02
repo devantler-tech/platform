@@ -96,7 +96,7 @@ The cluster configuration is stored in the `k8s/*` directories where the structu
   - [`cluster`](k8s/bases/cluster): Contains the shared Flux Kustomizations with sentinel paths (`__CLUSTER__`, `__PROVIDER__`).
   - [`infrastructure`](k8s/bases/infrastructure): Contains the different infrastructure components that are used for the different clusters and providers.
   - [`apps`](k8s/bases/apps): Contains the different apps that are used for the different clusters and providers.
-  - [`variables`](k8s/bases/variables): Contains the shared base variables (ConfigMap and Secret).
+  - [`bootstrap`](k8s/bases/bootstrap): Contains the shared base variables (ConfigMap and Secret).
 
 ### Kustomize and Flux Kustomization Flow
 
