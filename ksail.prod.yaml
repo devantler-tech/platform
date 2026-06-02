@@ -50,7 +50,7 @@ spec:
     # Longhorn requires dedicated Hetzner Cloud Volumes on static
     # workers; autoscaler-created nodes are compute-only.
     # The Cluster Autoscaler manages additional workers dynamically.
-    # Restored to 4 — the kubernetesVersion pin below unblocks the 4th worker.
+    # Restored to 4 — unblocked by the kubernetesVersion pin below and the KSail >= 7.23.4 scale-up fix.
     workers: 4
     # Pin Kubernetes to the version the cluster already runs so
     # 'ksail cluster update' doesn't roll nodes to ksail's newer default
