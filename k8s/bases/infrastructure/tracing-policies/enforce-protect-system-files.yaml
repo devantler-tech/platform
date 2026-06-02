@@ -1,0 +1,65 @@
+---
+# ENFORCING TracingPolicy: SIGKILLs any process that attempts to WRITE to
+# system / binary directories (a classic tampering / persistence pattern).
+#
+# OPT-IN, ZERO DEFAULT BLAST RADIUS:
+#   spec.podSelector matches only pods carrying the label
+#   `tetragon.devantler.tech/enforce-file-integrity: "true"`. With no pod
+#   labelled, this policy enforces on nothing. Requires the policy filter,
+#   which is enabled on the agent (tetragon.enablePolicyFilter: true).
+#
+# This deliberately does NOT enforce on /var/log or /dev/log (legitimate
+# log writes) and does NOT enforce on file *reads* -- system daemons read
+# /etc/shadow etc. legitimately. Reads are covered observe-only by
+# monitor-sensitive-file-access.yaml.
+#
+# Rollout: add the label to one workload's pods, watch the observe policy
+# in Loki to confirm no legitimate writes would be killed, then widen.
+#
+# Action choice: `Sigkill` is a post-hook signal and does NOT require any
+# special kernel config. The stronger `Override` action (fail the syscall
+# before it executes) requires CONFIG_BPF_KPROBE_OVERRIDE -- verify that on
+# the pinned Talos kernel before switching to Override.
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: enforce-protect-system-files
+spec:
+  podSelector:
+    matchLabels:
+      tetragon.devantler.tech/enforce-file-integrity: "true"
+  kprobes:
+    - call: "security_file_permission"
+      syscall: false
+      return: true
+      args:
+        - index: 0
+          type: "file" # (struct file *) used for getting the path
+        - index: 1
+          type: "int" # 0x04 is MAY_READ, 0x02 is MAY_WRITE
+      returnArg:
+        index: 0
+        type: "int"
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: "Prefix"
+              values:
+                - "/etc"
+                - "/boot"
+                - "/lib"
+                - "/lib64"
+                - "/bin"
+                - "/usr/lib"
+                - "/usr/local/lib"
+                - "/usr/local/sbin"
+                - "/usr/local/bin"
+                - "/usr/bin"
+                - "/usr/sbin"
+                - "/root/.ssh"
+            - index: 1
+              operator: "Equal"
+              values:
+                - "2" # MAY_WRITE
+          matchActions:
+            - action: Sigkill
