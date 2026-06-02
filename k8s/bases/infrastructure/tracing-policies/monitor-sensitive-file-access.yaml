@@ -1,0 +1,117 @@
+---
+# Observe-only TracingPolicy: emits a Tetragon event whenever a process
+# reads sensitive files (credentials, shell configs) or writes to system
+# directories. There are NO matchActions, so nothing is blocked -- the
+# events flow to stdout -> Alloy -> Loki for auditing and alerting.
+#
+# Cluster-scoped (applies to all pods on all nodes). Enforcement of these
+# patterns (Sigkill) is added separately and opt-in; see the
+# enforce-*.yaml policy.
+#
+# Derived from the upstream Tetragon quickstart file_monitoring example:
+# https://github.com/cilium/tetragon/blob/v1.7.0/examples/quickstart/file_monitoring.yaml
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: monitor-sensitive-file-access
+spec:
+  kprobes:
+    - call: "security_file_permission"
+      syscall: false
+      return: true
+      args:
+        - index: 0
+          type: "file" # (struct file *) used for getting the path
+        - index: 1
+          type: "int" # 0x04 is MAY_READ, 0x02 is MAY_WRITE
+      returnArg:
+        index: 0
+        type: "int"
+      selectors:
+        # Reads of sensitive files / directories.
+        - matchArgs:
+            - index: 0
+              operator: "Prefix"
+              values:
+                - "/boot"
+                - "/root/.ssh"
+                - "/etc/shadow"
+                - "/etc/profile"
+                - "/etc/sudoers"
+                - "/etc/pam.conf"
+                - "/etc/bashrc"
+                - "/etc/csh.cshrc"
+                - "/etc/csh.login"
+            - index: 1
+              operator: "Equal"
+              values:
+                - "4" # MAY_READ
+        # Reads of per-user shell config files.
+        - matchArgs:
+            - index: 0
+              operator: "Postfix"
+              values:
+                - ".bashrc"
+                - ".bash_profile"
+                - ".bash_login"
+                - ".bash_logout"
+                - ".cshrc"
+                - ".cshdirs"
+                - ".profile"
+                - ".login"
+                - ".logout"
+                - ".history"
+            - index: 1
+              operator: "Equal"
+              values:
+                - "4" # MAY_READ
+        # Writes to system directories.
+        - matchArgs:
+            - index: 0
+              operator: "Prefix"
+              values:
+                - "/etc"
+                - "/boot"
+                - "/lib"
+                - "/lib64"
+                - "/bin"
+                - "/usr/lib"
+                - "/usr/local/lib"
+                - "/usr/local/sbin"
+                - "/usr/local/bin"
+                - "/usr/bin"
+                - "/usr/sbin"
+                - "/var/log"
+                - "/dev/log"
+                - "/root/.ssh"
+            - index: 1
+              operator: "Equal"
+              values:
+                - "2" # MAY_WRITE
+    - call: "security_path_truncate"
+      syscall: false
+      return: true
+      args:
+        - index: 0
+          type: "path" # (struct path *) used for getting the path
+      returnArg:
+        index: 0
+        type: "int"
+      selectors:
+        - matchArgs:
+            - index: 0
+              operator: "Prefix"
+              values:
+                - "/etc"
+                - "/boot"
+                - "/lib"
+                - "/lib64"
+                - "/usr/lib"
+                - "/usr/local/lib"
+                - "/usr/local/sbin"
+                - "/usr/local/bin"
+                - "/usr/bin"
+                - "/usr/sbin"
+                - "/var/log"
+                - "/dev/log"
+                - "/root/.ssh"

@@ -44,6 +44,16 @@ spec:
   # change -- the Override action additionally needs CONFIG_BPF_KPROBE_OVERRIDE
   # verified on the pinned Talos kernel.
   values:
+    # CRDs (TracingPolicy, TracingPolicyNamespaced, ...) are rendered by the
+    # chart and applied by Flux (the helm.toolkit.fluxcd.io/crds label above)
+    # at release install, instead of the chart default of the operator
+    # installing them at runtime. This makes the CRDs deterministically present
+    # before the `infrastructure` Flux layer (which dependsOn
+    # infrastructure-controllers, wait:true) applies the TracingPolicy
+    # resources -- otherwise the first reconcile could race the operator and
+    # fail with "no matches for kind TracingPolicy".
+    crds:
+      installMethod: helm
     # ------------------------------------------------------------------
     # Talos: tracefs is mounted at /sys/kernel/tracing (debugfs is NOT
     # mounted on Talos), and Tetragon needs it to attach kprobes /

@@ -12,6 +12,7 @@ resources:
   - gateway/
   - http-scaled-objects/
   - security-exceptions/
+  - tracing-policies/
   - vault-config/
   - vault-backup/
   - vault-seed/
