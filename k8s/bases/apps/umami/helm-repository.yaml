@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: umami
+  namespace: umami
+spec:
+  # HelmForge community chart for Umami (privacy-first web analytics).
+  # https://docs.umami.is/docs/guides/running-on-helmforge
+  url: https://repo.helmforge.dev
+  interval: 60m

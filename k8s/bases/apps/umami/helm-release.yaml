@@ -1,0 +1,93 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: umami
+  namespace: umami
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 2m
+  timeout: 10m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  chart:
+    spec:
+      chart: umami
+      version: 2.0.0
+      sourceRef:
+        kind: HelmRepository
+        name: umami
+  # https://github.com/helmforgedev/charts/blob/main/charts/umami/values.yaml
+  values:
+    replicaCount: ${umami_replicas:=1}
+    serviceAccount:
+      # Umami needs no Kubernetes API access.
+      automountServiceAccountToken: false
+    umami:
+      port: 3000
+      # Stable APP_SECRET from the SOPS-encrypted Secret (app-secret.enc.yaml).
+      # A fixed value keeps login sessions and the daily visitor-hash salt stable
+      # across chart upgrades (the chart otherwise auto-generates a fresh one).
+      existingSecret: umami-app
+      existingSecretKey: app-secret
+      # Privacy/quiet defaults: no phone-home telemetry or update checks.
+      disableTelemetry: true
+      disableUpdates: true
+      # TLS is terminated upstream (Cloudflare + the platform Gateway); the HSTS
+      # header is added on the HTTPRoute, so Umami must not also force SSL.
+      forceSSL: false
+    # Disable the chart's bundled PostgreSQL subchart — the database is the
+    # CloudNativePG cluster in postgres-cluster.yaml.
+    postgresql:
+      enabled: false
+    database:
+      # Use the external-PostgreSQL path pointed at the CloudNativePG cluster
+      # defined in postgres-cluster.yaml. CNPG publishes the password in the
+      # auto-generated `umami-db-app` Secret.
+      external:
+        host: umami-db-rw.umami.svc.cluster.local
+        port: "5432"
+        name: umami
+        username: umami
+        existingSecret: umami-db-app
+        existingSecretPasswordKey: password
+    service:
+      # Service port 80 -> container port 3000 (named `http`).
+      port: 80
+    # Routing, ingress and NetworkPolicy are handled by the platform's own
+    # resources (httproute.yaml + networkpolicy.yaml), not the chart.
+    gatewayAPI:
+      enabled: false
+    ingress:
+      enabled: false
+    networkPolicy:
+      enabled: false
+    # restricted Pod Security Standard. The Umami image runs as the non-root
+    # `nextjs` user (uid/gid 1001).
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1001
+      runAsGroup: 1001
+      fsGroup: 1001
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop:
+          - ALL
+      # Next.js (standalone) writes its cache under /app/.next, so the root
+      # filesystem cannot be read-only.
+      readOnlyRootFilesystem: false
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        memory: 512Mi

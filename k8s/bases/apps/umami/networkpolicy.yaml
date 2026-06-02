@@ -1,0 +1,60 @@
+# Mirrors the wedding-app policy: an always-on web app plus a CloudNativePG
+# cluster in one namespace. Covers Gateway ingress to Umami (3000), intra-namespace
+# app<->db traffic, CNPG operator management (cnpg-system) and Prometheus metrics
+# scraping of the database (9187).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-umami
+  namespace: umami
+spec:
+  endpointSelector: {}
+  ingress:
+    # Gateway ingress -> Umami HTTP
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+    # Intra-namespace (Umami -> DB, CNPG replication)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: umami
+    # CNPG operator reaches the instance status (8000) and PostgreSQL (5432)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: cnpg-system
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+            - port: "5432"
+              protocol: TCP
+    # Metrics scraping from the monitoring namespace
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "9187"
+              protocol: TCP
+  egress:
+    # Intra-namespace (Umami -> DB)
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: umami
+    # Kube API (CNPG operator manages the cluster)
+    - toEntities:
+        - kube-apiserver
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

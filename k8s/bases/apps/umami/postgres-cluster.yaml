@@ -1,0 +1,35 @@
+# CloudNativePG-managed PostgreSQL for Umami — the platform's standard Postgres
+# operator (see infrastructure/controllers/cloudnative-pg). CNPG bootstraps the
+# `umami` database owned by the `umami` role and publishes the connection
+# credentials in an auto-generated Secret named `<cluster>-app` (here:
+# `umami-db-app`, keys: username/password/dbname/host/port/uri). The Umami
+# HelmRelease consumes that Secret via `database.external.existingSecret`.
+#
+# longhorn is hardcoded because Umami is a prod-only app (it is excluded from the
+# local/docker overlay, which has no CNPG operator or longhorn — same as the
+# wedding-app and ascoachingogvaner tenants).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: umami-db
+  namespace: umami
+spec:
+  instances: 1
+  storage:
+    size: 5Gi
+    storageClass: longhorn
+  bootstrap:
+    initdb:
+      database: umami
+      owner: umami
+      postInitApplicationSQL:
+        # Umami 2.x+ uses gen_random_uuid() (built into PostgreSQL 13+); pgcrypto
+        # is created here as a harmless safeguard for older code paths and runs in
+        # the bootstrap superuser context (the app role cannot create extensions).
+        - CREATE EXTENSION IF NOT EXISTS pgcrypto
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
