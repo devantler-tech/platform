@@ -76,9 +76,17 @@ spec:
       resources:
         requests:
           cpu: 50m
-          memory: 128Mi
+          # 128Mi -> 256Mi: shipping the kube-apiserver audit log to Loki
+          # (#1696) raised steady-state ingest; VPA now recommends ~728Mi.
+          # A warmer floor covers cold start before VPA's Initial-mode
+          # recommendation re-applies on pod (re)creation.
+          memory: 256Mi
         limits:
-          memory: 512Mi
+          # 512Mi -> 1Gi: the old cap sat below the VPA target (~728Mi), so
+          # VPA (controlledValues: RequestsOnly) could not raise the request
+          # past the limit and Loki was OOMKilled. 1Gi clears the target with
+          # headroom for further audit-log ingest growth.
+          memory: 1Gi
     # Single-binary mode only -- zero out the scalable-topology targets.
     backend:
       replicas: 0
