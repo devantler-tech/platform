@@ -7,7 +7,7 @@ applyTo: "k8s/**/*.yaml"
 ## Overlay Hierarchy
 
 ```
-k8s/clusters/<env>/   → per-environment (cluster-meta ConfigMap, variables)
+k8s/clusters/<env>/   → per-environment (cluster-meta ConfigMap, bootstrap)
 k8s/providers/<provider>/ → provider-specific assembly (patches, extra resources)
 k8s/bases/             → shared base resources (never modified by overlays in-place)
 ```
@@ -27,8 +27,8 @@ Resources are organized by **resource type**, not by component:
 
 ## Flux Dependency Chain (strict order)
 
-1. `variables` — ConfigMaps and Secrets (no dependencies)
-2. `infrastructure-controllers` — Helm controllers (depends on: variables)
+1. `bootstrap` — ConfigMaps and Secrets (no dependencies)
+2. `infrastructure-controllers` — Helm controllers (depends on: bootstrap)
 3. `infrastructure` — Core infra resources (depends on: infrastructure-controllers)
 4. `apps` — Applications (depends on: infrastructure)
 
