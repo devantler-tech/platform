@@ -24,7 +24,7 @@ This is a **GitOps-based Kubernetes platform** — not a traditional code reposi
 ```
 k8s/                  # All Kubernetes manifests
   bases/              # Shared base resources (never modify directly from overlays)
-    bootstrap/        # Flux post-build substitution variables (ConfigMap + SOPS secret) + PriorityClasses
+    bootstrap/        # Flux post-build substitution variables (ConfigMap + SOPS secret)
     infrastructure/   # Organized by resource type: controllers/, certificates/, gateway/,
                       #   cluster-policies/, external-secrets/, alerts/, vault-*/, etc.
     apps/             # Application deployments

@@ -76,6 +76,7 @@ spec:
             - "https://headlamp.${domain}/oidc-callback"
             - "https://budget.${domain}/oidc/callback"
             - "https://vault.${domain}/ui/vault/auth/oidc/oidc/callback"
+            - "https://grafana.${domain}/login/generic_oauth"
           trustedPeers:
             - kubectl
         - name: kubectl
