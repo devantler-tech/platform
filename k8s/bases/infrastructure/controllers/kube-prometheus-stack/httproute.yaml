@@ -29,6 +29,11 @@ spec:
             set:
               - name: X-Auth-Request-Redirect
                 value: https://grafana.${domain}/
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
       backendRefs:
         - name: oauth2-proxy
           namespace: oauth2-proxy
@@ -59,6 +64,11 @@ spec:
             set:
               - name: X-Auth-Request-Redirect
                 value: https://prometheus.${domain}/
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
       backendRefs:
         - name: oauth2-proxy
           namespace: oauth2-proxy
@@ -89,6 +99,11 @@ spec:
             set:
               - name: X-Auth-Request-Redirect
                 value: https://alertmanager.${domain}/
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
       backendRefs:
         - name: oauth2-proxy
           namespace: oauth2-proxy
