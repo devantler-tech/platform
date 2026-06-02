@@ -16,12 +16,13 @@ For the production cluster:
 - [Hetzner Cloud](https://www.hetzner.com/cloud/) — Infrastructure provider and managed Cloud Load Balancer for cluster ingress. KSail's native Hetzner provider handles Talos boot, CCM, CSI, and kubeconfig.
 - [Cloudflare](https://www.cloudflare.com) — DNS (A/AAAA records pointed at the Hetzner Cloud Load Balancer) and Origin CA.
 - [Flux GitOps](https://fluxcd.io) - For managing the kubernetes applications and infrastructure declaratively.
-- [SOPS](https://getsops.io) and [Age](https://github.com/FiloSottile/age) - For encrypting secrets at rest, allowing me to store them in this repository with confidence.
+- [SOPS](https://getsops.io) and [Age](https://github.com/FiloSottile/age) - For encrypting the seed secrets that are committed to this repository (the `*.enc.yaml` files), allowing me to store them in git with confidence.
+- [OpenBao](https://openbao.org) and the [External Secrets Operator](https://external-secrets.io) - The runtime secret store. SOPS-decrypted seeds are pushed into OpenBao at bootstrap, and `ExternalSecret`s sync them into the namespaces that consume them. See [`docs/secret-rotation.md`](docs/secret-rotation.md) for the full secrets architecture.
 
 ## Usage
 
 > [!IMPORTANT]
-> This setup uses SOPS to encrypt secrets at rest. If you want to run the platform locally, or in your own Hetzner project, you will need to:
+> Secrets committed to this repo are encrypted at rest with SOPS + Age; at bootstrap they seed OpenBao, and the External Secrets Operator distributes them to workloads at runtime. If you want to run the platform locally, or in your own Hetzner project, you will need to:
 >
 > 1. Fork this repo
 > 2. Create your own Age keys
@@ -77,6 +78,30 @@ Cloud cluster running on Hetzner Cloud via KSail's native Hetzner provider. Depl
 
 - 3× [Hetzner CX33](https://www.hetzner.com/cloud/) control planes + 3× CX33 static workers + autoscaling (x86 4 vCPU 8GB RAM 80GB SSD each)
 - Config: [`ksail.prod.yaml`](ksail.prod.yaml)
+
+## Platform components
+
+A high-level inventory of what Flux reconciles onto the cluster. The manifests live under [`k8s/bases/infrastructure/`](k8s/bases/infrastructure) and [`k8s/bases/apps/`](k8s/bases/apps), with provider-specific pieces (Hetzner CCM/CSI, Longhorn, external-dns, …) under [`k8s/providers/`](k8s/providers).
+
+**Infrastructure**
+
+- **GitOps & config** — Flux Operator, Reloader
+- **Networking** — Cilium (CNI + Gateway API), CoreDNS, external-dns (Cloudflare), Hetzner CCM (prod)
+- **Certificates** — cert-manager, trust-manager, Cloudflare Origin CA issuer
+- **Secrets** — OpenBao + External Secrets Operator (runtime), SOPS + Age (at-rest seeds)
+- **Identity / SSO** — Dex (OIDC) with oauth2-proxy / auth-proxy; see [`docs/oidc-kubectl.md`](docs/oidc-kubectl.md)
+- **Policy & runtime security** — Kyverno, Kubescape, Tetragon; see [`docs/runtime-security.md`](docs/runtime-security.md)
+- **Storage** — Longhorn (replicated block/RWX, prod via Hetzner CSI), CloudNativePG (PostgreSQL operator); see [`docs/rwx-storage.md`](docs/rwx-storage.md)
+- **Autoscaling** — Cluster Autoscaler (nodes), Vertical Pod Autoscaler, KEDA + KEDA HTTP add-on; see [`docs/node-autoscaling.md`](docs/node-autoscaling.md)
+- **Observability** — kube-prometheus-stack (Prometheus, Grafana, Alertmanager), Loki (logs), Grafana Alloy (collection), OpenCost (cost)
+- **Backup / DR** — Velero with CloudNativePG backups; see [`docs/dr/`](docs/dr)
+- **Virtualization** — KubeVirt + CDI
+- **Testing** — Testkube
+
+**Apps** ([`k8s/bases/apps/`](k8s/bases/apps))
+
+- Homepage (dashboard), Headlamp (Kubernetes UI), FleetDM (device management), Actual Budget (budgeting), `whoami` (debug)
+- **Tenants** — apps deployed from their own repositories (`ascoachingogvaner`, `wedding-app`); see [`docs/TENANTS.md`](docs/TENANTS.md)
 
 ## Structure
 
@@ -157,6 +182,19 @@ The Flux Kustomizations themselves live in `k8s/clusters/base/` (with sentinel `
 See [`docs/TEMPLATING.md`](docs/TEMPLATING.md) for the exact set of files a fork of this repo needs to edit to stand up its own instance.
 
 See [`docs/TENANTS.md`](docs/TENANTS.md) for how to onboard a new GitOps **tenant** (an app that runs on the platform from its own repository).
+
+## Documentation
+
+Deeper guides and design notes live in [`docs/`](docs):
+
+- [`TEMPLATING.md`](docs/TEMPLATING.md) — the exact set of files a fork needs to edit to stand up its own instance.
+- [`TENANTS.md`](docs/TENANTS.md) — onboarding a new GitOps tenant (an app that runs on the platform from its own repository).
+- [`node-autoscaling.md`](docs/node-autoscaling.md) — how the Cluster Autoscaler is configured on Hetzner.
+- [`oidc-kubectl.md`](docs/oidc-kubectl.md) — authenticating `kubectl` against the cluster via OIDC.
+- [`runtime-security.md`](docs/runtime-security.md) — Tetragon runtime security.
+- [`rwx-storage.md`](docs/rwx-storage.md) — Longhorn replicated / RWX storage.
+- [`secret-rotation.md`](docs/secret-rotation.md) — the secrets architecture (SOPS → OpenBao → External Secrets) and rotation design.
+- [`dr/`](docs/dr) — disaster-recovery runbooks (backup/restore drills, OpenBao crypto custody, Velero + CloudNativePG, alerting).
 
 ## Monthly Cost
 
