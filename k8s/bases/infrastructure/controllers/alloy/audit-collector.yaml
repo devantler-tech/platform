@@ -1,0 +1,130 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: alloy-audit
+  namespace: monitoring
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  # Needs Loki's push endpoint; reuses the `grafana` HelmRepository and the
+  # monitoring namespace defined by the loki release.
+  dependsOn:
+    - name: loki
+      namespace: monitoring
+  interval: 5m
+  timeout: 10m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  chart:
+    spec:
+      chart: alloy
+      version: 1.8.2
+      sourceRef:
+        kind: HelmRepository
+        name: grafana
+  # A SECOND, dedicated Alloy DaemonSet whose only job is to ship the
+  # kube-apiserver AUDIT log to Loki. It is deliberately separate from the main
+  # `alloy` pod-log shipper for two reasons:
+  #
+  #   1. Scope. The audit log only exists on CONTROL-PLANE nodes, at the
+  #      Talos-managed host path /var/log/audit/kube — Talos' `KubernetesAuditLogDir`
+  #      on the EPHEMERAL partition (audit logging is on by default; the prod
+  #      policy is enriched in talos/cluster/audit-logging.yaml). So this runs
+  #      ONLY on control planes (nodeSelector + control-plane toleration), while
+  #      the main alloy DaemonSet stays on the workers.
+  #   2. Privilege. The API server writes those files root-owned and mode 0600,
+  #      so the reader must run as root / with CAP_DAC_READ_SEARCH. Isolating that
+  #      here keeps the main pod-log alloy unprivileged.
+  #
+  # Why ship it at all: the audit trail otherwise lives ONLY on a node's
+  # EPHEMERAL partition — so it is lost whenever a (cattle) node is rebuilt, and
+  # cannot be queried centrally. Shipping to Loki makes it durable across
+  # rebuilds and visible in Grafana next to everything else. (It survives plain
+  # apiserver restarts already; node rebuilds are the gap.)
+  #
+  # The root + hostPath profile is permitted by design: `monitoring` is exempt
+  # from the Kyverno PSS / host-restriction policies and is listed in the
+  # kubescape `infrastructure-privileged` ClusterSecurityException.
+  values:
+    controller:
+      type: daemonset
+      # Control-plane nodes only — that is where the audit log lives.
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: ""
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+      volumes:
+        extra:
+          # Read-only host mount of the Talos-managed audit log directory.
+          # DirectoryOrCreate (not Directory) so the pod still starts cleanly on
+          # the off chance the dir isn't present yet — the file match below then
+          # simply finds nothing rather than wedging the pod in ContainerCreating.
+          - name: kube-audit-log
+            hostPath:
+              path: /var/log/audit/kube
+              type: DirectoryOrCreate
+    alloy:
+      # Pure file forwarding — no clustering needed.
+      clustering:
+        enabled: false
+      # Run as root with only CAP_DAC_READ_SEARCH (to read the root-owned 0600
+      # audit files); everything else dropped. `monitoring` is policy-exempt, so
+      # this profile is allowed.
+      securityContext:
+        runAsUser: 0
+        runAsGroup: 0
+        runAsNonRoot: false
+        capabilities:
+          drop:
+            - ALL
+          add:
+            - DAC_READ_SEARCH
+      mounts:
+        extra:
+          - name: kube-audit-log
+            mountPath: /var/log/audit/kube
+            readOnly: true
+      extraEnv:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+      configMap:
+        content: |
+          // Tail the Talos-managed kube-apiserver audit log. The `*.log` glob
+          // catches the active audit.log plus any rotated audit-*.log files.
+          // Inert where no such file exists (so it's a no-op off control planes).
+          local.file_match "kube_audit" {
+            path_targets = [{
+              __path__ = "/var/log/audit/kube/*.log",
+              job      = "kube-audit",
+              node     = sys.env("NODE_NAME"),
+            }]
+          }
+
+          loki.source.file "kube_audit" {
+            targets    = local.file_match.kube_audit.targets
+            forward_to = [loki.write.default.receiver]
+          }
+
+          loki.write "default" {
+            endpoint {
+              url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
+            }
+          }
+    # No ServiceMonitor — this is a single-purpose forwarder, not a scrape target.
+    serviceMonitor:
+      enabled: false
