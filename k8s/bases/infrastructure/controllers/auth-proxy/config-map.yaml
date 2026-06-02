@@ -26,10 +26,6 @@ data:
           rule: "Host(`hubble.${domain}`)"
           entryPoints: ["web"]
           service: hubble-ui
-        grafana:
-          rule: "Host(`grafana.${domain}`)"
-          entryPoints: ["web"]
-          service: grafana
         prometheus:
           rule: "Host(`prometheus.${domain}`)"
           entryPoints: ["web"]
@@ -51,10 +47,6 @@ data:
           loadBalancer:
             servers:
               - url: "http://keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local:8080"
-        grafana:
-          loadBalancer:
-            servers:
-              - url: "http://kube-prometheus-stack-grafana.monitoring.svc.cluster.local:80"
         prometheus:
           loadBalancer:
             servers:
