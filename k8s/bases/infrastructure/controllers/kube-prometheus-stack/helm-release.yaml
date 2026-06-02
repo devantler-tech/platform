@@ -63,9 +63,19 @@ spec:
           auto_login: true
           client_id: public-client
           scopes: openid profile email groups
+          # Split the OIDC endpoints so this works on every cluster (mirrors
+          # oauth2-proxy): the browser-facing authorize endpoint stays the
+          # public Dex URL (the browser resolves dex.${domain} via the host
+          # /etc/hosts locally, public DNS in prod), while the server-side
+          # token + userinfo calls use the in-cluster Dex Service the Grafana
+          # pod can always resolve. dex.${domain} does NOT resolve via
+          # in-cluster CoreDNS on the docker/local cluster, so targeting the
+          # public URL here fails the back-channel token exchange with
+          # "Failed to get token from provider". The dex NetworkPolicy allows
+          # the matching monitoring->5556 ingress.
           auth_url: https://dex.${domain}/auth
-          token_url: https://dex.${domain}/token
-          api_url: https://dex.${domain}/userinfo
+          token_url: http://dex.dex.svc.cluster.local:5556/token
+          api_url: http://dex.dex.svc.cluster.local:5556/userinfo
           # JMESPath string literal -> every authenticated user gets Admin.
           role_attribute_path: "'Admin'"
       # Client secret (Dex 'public-client') from the grafana-oidc
@@ -130,6 +140,17 @@ spec:
         ruleSelectorNilUsesHelmValues: false
         probeSelectorNilUsesHelmValues: false
         scrapeConfigSelectorNilUsesHelmValues: false
+        # Discover targets through EndpointSlices rather than the default
+        # core/v1 Endpoints API. ServiceMonitor discovery inherently lists
+        # *every* endpoint in a monitor's target namespace and keeps only the
+        # matching Service, dropping the rest -- so a large "dropped" count on
+        # Prometheus' Service Discovery page is expected, not a fault (each of
+        # the ~14 monitors in this namespace scans ~50 endpoints). EndpointSlice
+        # is the scalable, operator-recommended SD role: it trims the apiserver
+        # watch + relabel churn behind those drops and future-proofs against the
+        # core/v1 Endpoints deprecation (k8s 1.33). It does not (and need not)
+        # lower the dropped count -- that is just how ServiceMonitors select.
+        serviceDiscoveryRole: EndpointSlice
         # External labels so the webhook payload identifies the source
         # cluster.
         externalLabels:
