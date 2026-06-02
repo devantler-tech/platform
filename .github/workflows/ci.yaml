@@ -179,6 +179,7 @@ jobs:
     permissions:
       contents: read # checkout repository
       packages: write # push OCI artifacts to GHCR
+      id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -279,6 +280,60 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+
+      # ----- Supply-chain signing (mirrors cd.yaml's deploy job) -----
+      # The merge queue publishes the SAME ghcr.io/.../manifests:latest artifact
+      # that tag deploys (cd.yaml) do. Without signing here, whether prod's
+      # artifact is signed depends on which path last deployed it — and merges
+      # happen far more often than tags. These three steps are a faithful copy of
+      # cd.yaml's signing block; keep them in sync. SBOM (syft) + SLSA provenance
+      # attestation are intentionally NOT mirrored yet: the cosign signature is the
+      # integrity property a Flux-side verifier checks, and attestation parity is a
+      # follow-up (ideally by extracting cd.yaml's block into a shared composite
+      # action so the two paths can never drift again).
+      - name: ⚙️ Install cosign
+        env:
+          # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
+          COSIGN_VERSION: "3.0.6"
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v${{ env.COSIGN_VERSION }}'
+
+      - name: 🔐 Configure GHCR auth (cosign)
+        # Pre-create ~/.docker/config.json so cosign + buildx imagetools resolve
+        # GHCR creds via the OCI keychain (no `cosign login`/`docker login`
+        # "credentials stored unencrypted" warning). Byte-identical to cd.yaml.
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.docker
+          AUTH=$(printf '%s:%s' "${GITHUB_ACTOR}" "${GHCR_TOKEN}" | base64 -w0)
+          echo "::add-mask::${AUTH}"
+          jq -n --arg auth "${AUTH}" \
+            '{auths: {"ghcr.io": {auth: $auth}}}' \
+            > ~/.docker/config.json
+          chmod 600 ~/.docker/config.json
+
+      - name: 🖋️ Sign OCI manifest with cosign (keyless)
+        # Resolve tag → digest, then sign by digest: no tag→digest TOCTOU under a
+        # concurrent deploy, and forward-compatible with cosign v3 (which removed
+        # tag-based signing). Fulcio binds the signature to THIS workflow's OIDC
+        # identity (…/.github/workflows/ci.yaml@…), so a Flux-side verifier's
+        # matchOIDCIdentity must allow both ci.yaml and cd.yaml identities.
+        id: cosign-sign
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          REF_TAG="ghcr.io/devantler-tech/platform/manifests:latest"
+          DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')
+          REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"
+          cosign sign --yes --recursive "${REF}"
+          echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${REF_TAG}" >> "${GITHUB_OUTPUT}"
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
