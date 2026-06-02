@@ -130,6 +130,17 @@ spec:
         ruleSelectorNilUsesHelmValues: false
         probeSelectorNilUsesHelmValues: false
         scrapeConfigSelectorNilUsesHelmValues: false
+        # Discover targets through EndpointSlices rather than the default
+        # core/v1 Endpoints API. ServiceMonitor discovery inherently lists
+        # *every* endpoint in a monitor's target namespace and keeps only the
+        # matching Service, dropping the rest -- so a large "dropped" count on
+        # Prometheus' Service Discovery page is expected, not a fault (each of
+        # the ~14 monitors in this namespace scans ~50 endpoints). EndpointSlice
+        # is the scalable, operator-recommended SD role: it trims the apiserver
+        # watch + relabel churn behind those drops and future-proofs against the
+        # core/v1 Endpoints deprecation (k8s 1.33). It does not (and need not)
+        # lower the dropped count -- that is just how ServiceMonitors select.
+        serviceDiscoveryRole: EndpointSlice
         # External labels so the webhook payload identifies the source
         # cluster.
         externalLabels:
