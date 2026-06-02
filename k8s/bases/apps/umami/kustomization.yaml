@@ -4,6 +4,7 @@ resources:
   - namespace.yaml
   - serviceaccount.yaml
   - external-secret.yaml
+  - admin-external-secret.yaml
   - postgres-cluster.yaml
   - db-superuser-pushsecret.yaml
   - db-rotated-external-secret.yaml
@@ -11,3 +12,4 @@ resources:
   - helm-release.yaml
   - httproute.yaml
   - networkpolicy.yaml
+  - websites-job.yaml
