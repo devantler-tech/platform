@@ -62,7 +62,11 @@ spec:
       resources:
         requests:
           cpu: 100m
-          memory: 256Mi
+          # Right-sized 256Mi -> 160Mi: the agent uses ~63-124Mi in practice, and
+          # 256Mi failed to schedule on a request-saturated prod worker (97% mem
+          # requests), stranding the DaemonSet at 5/6 and hanging the HelmRelease's
+          # install wait, which stalled the infrastructure-controllers -> apps chain.
+          memory: 160Mi
       # Enrich exec / kprobe events with process capabilities and
       # namespaces (both default to false). enablePolicyFilter (default
       # true) is required for the K8s namespace / pod-label filtering that
