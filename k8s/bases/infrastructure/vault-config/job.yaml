@@ -282,6 +282,15 @@ spec:
               }
               POLICY
 
+              # Read the OpenBao-rotated PostgreSQL credential for the umami app
+              # user (Database secrets engine static role). Consumed by ESO via
+              # the VaultDynamicSecret generator in the umami namespace.
+              bao policy write app-umami-db-readonly - <<'POLICY'
+              path "database/static-creds/umami" {
+                capabilities = ["read"]
+              }
+              POLICY
+
               bao policy write app-wedding-readonly - <<'POLICY'
               path "secret/data/apps/wedding-app/*" {
                 capabilities = ["read"]
@@ -410,6 +419,15 @@ spec:
                 policies=app-fleetdm-db-readonly \
                 ttl=1h
 
+              # Dedicated role for the umami VaultDynamicSecret generator (the
+              # `external-secrets` SA in the umami namespace — same ESO #4629
+              # constraint as fleetdm). Scoped to the umami DB static-creds read.
+              bao write auth/kubernetes/role/umami-db-rotated \
+                bound_service_account_names=external-secrets \
+                bound_service_account_namespaces=umami \
+                policies=app-umami-db-readonly \
+                ttl=1h
+
               # Snapshot CronJob needs health check read
               bao write auth/kubernetes/role/vault-snapshot \
                 bound_service_account_names=vault-snapshot \
@@ -509,6 +527,47 @@ spec:
                 fi
               else
                 echo "fleetdm MySQL root credential not in KV yet -- skipping DB role config."
+              fi
+
+              # --- 8. Database secrets engine: umami PostgreSQL static-role rotation ---
+              # OpenBao owns and rotates the 'umami' PostgreSQL user's password on
+              # a 7-day static-role schedule; ESO reads the current value via the
+              # VaultDynamicSecret generator in the umami namespace. The connection
+              # admin is the CNPG-managed postgres superuser (stable, not rotated),
+              # whose password is synced into KV by the umami db-superuser PushSecret.
+              UMAMI_DB_SUPER=$(bao kv get -mount=secret -field=postgres-password apps/umami/db 2>/dev/null || echo "")
+              if [ -n "$UMAMI_DB_SUPER" ]; then
+                # Writing the connection validates connectivity, so this fails
+                # until umami-db (CNPG, apps layer) is up. Treat that as expected
+                # on early passes -- Flux recreates this Job (force annotation)
+                # and the block succeeds once PostgreSQL is reachable.
+                echo "Configuring umami PostgreSQL database connection..."
+                if bao write database/config/umami-postgres \
+                  plugin_name=postgresql-database-plugin \
+                  allowed_roles="umami" \
+                  connection_url="postgresql://{{username}}:{{password}}@umami-db-rw.umami.svc.cluster.local:5432/umami?sslmode=require" \
+                  username="postgres" \
+                  password="$UMAMI_DB_SUPER" 2>/dev/null; then
+
+                  # Create the static role only if absent: creation triggers an
+                  # initial rotation of the 'umami' user's password (the umami
+                  # ExternalSecret then picks it up). Guarding avoids re-rotating
+                  # on every idempotent Job re-run. App user only, never superuser.
+                  if ! bao read database/static-roles/umami >/dev/null 2>&1; then
+                    bao write database/static-roles/umami \
+                      db_name=umami-postgres \
+                      username="umami" \
+                      rotation_period="${umami_db_rotation_period:=168h}"
+                    echo "umami PostgreSQL static role created."
+                  else
+                    echo "umami PostgreSQL static role already exists."
+                  fi
+                else
+                  echo "umami PostgreSQL not reachable yet -- skipping DB role config."
+                  echo "It will be configured on the next vault-config reconciliation."
+                fi
+              else
+                echo "umami PostgreSQL superuser credential not in KV yet -- skipping DB role config."
               fi
 
               echo "Vault configuration complete."

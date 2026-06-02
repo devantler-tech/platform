@@ -46,15 +46,17 @@ spec:
     postgresql:
       enabled: false
     database:
-      # Use the external-PostgreSQL path pointed at the CloudNativePG cluster
-      # defined in postgres-cluster.yaml. CNPG publishes the password in the
-      # auto-generated `umami-db-app` Secret.
+      # External-PostgreSQL path pointed at the CloudNativePG cluster in
+      # postgres-cluster.yaml. The password is OWNED AND ROTATED by OpenBao's
+      # Database secrets engine (7-day static role — see vault-config), surfaced
+      # by db-rotated-external-secret.yaml as the `umami-db-rotated` Secret
+      # (not CNPG's static umami-db-app). Mirrors the fleetdm MySQL rotation.
       external:
         host: umami-db-rw.umami.svc.cluster.local
         port: "5432"
         name: umami
         username: umami
-        existingSecret: umami-db-app
+        existingSecret: umami-db-rotated
         existingSecretPasswordKey: password
     service:
       # Service port 80 -> container port 3000 (named `http`).

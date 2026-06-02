@@ -15,6 +15,12 @@ metadata:
   namespace: umami
 spec:
   instances: 1
+  # Expose the postgres superuser so OpenBao's Database secrets engine has a
+  # stable admin to rotate the `umami` application role's password (the engine
+  # cannot rotate a role using that same role's credentials, so it needs a
+  # separate stable admin). The superuser secret (umami-db-superuser) is pushed
+  # to OpenBao KV by db-superuser-pushsecret.yaml and used only in-cluster.
+  enableSuperuserAccess: true
   storage:
     size: 5Gi
     storageClass: longhorn
