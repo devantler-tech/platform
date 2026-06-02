@@ -41,7 +41,7 @@ Current recipients (public halves are in `.sops.yaml`):
 - `age1rk6fs67…sk8wgs6` — **prod** (`k8s/clusters/prod/**`, `k8s/providers/hetzner/**`)
 
 Both keys also wrap files that are not cluster-scoped (`k8s/bases/**/*.enc.yaml`,
-`k8s/bases/variables/*.enc.yaml`), so either key can decrypt those.
+`k8s/bases/bootstrap/*.enc.yaml`), so either key can decrypt those.
 
 ### Custody recommendations
 
