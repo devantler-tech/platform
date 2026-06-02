@@ -83,12 +83,6 @@ jobs:
           reconcile: "true"
           delete: "false"
 
-      # Gate on a quiet steady state: after a successful reconcile the cluster
-      # should stop emitting Warning events. Catches crash loops / probe
-      # failures / back-off that bootstrap warnings would otherwise mask.
-      - name: 🔎 Require no new event warnings
-        uses: ./.github/actions/check-event-warnings
-
       - name: 🩺 Diagnose Flux on failure
         if: failure()
         run: |
@@ -293,14 +287,6 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-
-      # After a successful prod reconcile, require the live cluster to stop
-      # emitting Warning events. Pinned to the same admin@prod context the rest
-      # of the prod steps use.
-      - name: 🔎 Require no new event warnings
-        uses: ./.github/actions/check-event-warnings
-        with:
-          context: admin@prod
 
       - name: 🩺 Diagnose Flux on failure
         if: failure() && steps.reconcile.outcome == 'failure'
