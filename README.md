@@ -121,7 +121,7 @@ The cluster configuration is stored in the `k8s/*` directories where the structu
 - [`bases/`](k8s/bases): Contains the different bases that are used for the different clusters and providers.
   - [`infrastructure`](k8s/bases/infrastructure): Contains the different infrastructure components that are used for the different clusters and providers.
   - [`apps`](k8s/bases/apps): Contains the different apps that are used for the different clusters and providers.
-  - [`bootstrap`](k8s/bases/bootstrap): Contains the shared base variables (ConfigMap and Secret).
+  - [`bootstrap`](k8s/bases/bootstrap): The foundational **bootstrap layer** (renamed from `variables/`). Holds the shared substitution variables (`variables-base` ConfigMap + SOPS-encrypted Secret) and cluster-scoped PriorityClasses (e.g. `platform-critical`), reconciled by the `bootstrap` Flux Kustomization before everything that `dependsOn` it.
 
 ### Kustomize and Flux Kustomization Flow
 
@@ -177,7 +177,7 @@ This means that for every Flux Kustomization applied to a cluster, there should 
 - `k8s/providers/<provider-name>/infrastructure/`
 - `k8s/bases/infrastructure/`
 
-The Flux Kustomizations themselves live in `k8s/clusters/base/` (with sentinel `__CLUSTER__` / `__PROVIDER__` values in `spec.path`). Each `k8s/clusters/<cluster-name>/` overlay supplies a tiny `cluster-meta` ConfigMap and kustomize `replacements:` that rewrite those sentinels with the cluster's real values. Only the per-cluster `bootstrap/` directory holds cluster-specific manifests.
+The Flux Kustomizations themselves live in `k8s/clusters/base/` (with sentinel `__CLUSTER__` / `__PROVIDER__` values in `spec.path`). Each `k8s/clusters/<cluster-name>/` overlay patches the `cluster-meta` ConfigMap with its `cluster_name` / `provider` and uses kustomize `replacements:` to rewrite those sentinels with the cluster's real values. Only the per-cluster `bootstrap/` directory holds cluster-specific manifests.
 
 See [`docs/TEMPLATING.md`](docs/TEMPLATING.md) for the exact set of files a fork of this repo needs to edit to stand up its own instance.
 
