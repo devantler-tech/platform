@@ -8,7 +8,7 @@ argo*
 aws*
 best-practices-cel*
 best-practices*
-!best-practices/add-ns-quota
+!best-practices/add-ns-quota/add-ns-quota.yaml
 castai*
 cert-manager*
 cleanup*
@@ -29,8 +29,8 @@ nginx*
 openshift*
 other-cel*
 other*
-!other/create-pod-antiaffinity
-!other/spread-pods-across-topology
+!other/create-pod-antiaffinity/create-pod-antiaffinity.yaml
+!other/spread-pods-across-topology/spread-pods-across-topology.yaml
 pod-security-cel*
 pod-security*
 psa-cel*
