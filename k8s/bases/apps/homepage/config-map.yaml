@@ -26,26 +26,26 @@ data:
     layout:
       Kubernetes:
         icon: si-talos-#FF7300
-      Device Management:
-        icon: mdi-cellphone-cog
-      Diagnostics:
-        icon: mdi-stethoscope
+      Observability:
+        icon: si-grafana
       Security:
         icon: mdi-shield-lock
-      Finance:
-        icon: mdi-finance
-      Personal Sites:
-        icon: mdi-web
-      Customer Sites:
-        icon: mdi-briefcase-account
+      Diagnostics:
+        icon: mdi-stethoscope
+      Device Management:
+        icon: mdi-cellphone-cog
       Cloud:
         icon: si-hetzner
       Network:
         icon: si-cloudflare
-      Monitoring:
-        icon: si-grafana
+      Finance:
+        icon: mdi-finance
       Analytics:
         icon: si-googleanalytics
+      Personal Sites:
+        icon: mdi-web
+      Customer Sites:
+        icon: mdi-briefcase-account
   kubernetes.yaml: |
     mode: cluster
     gateway: true
@@ -93,11 +93,6 @@ data:
             icon: google-analytics
             href: https://analytics.google.com
             description: Web analytics service.
-    - Monitoring:
-        - Grafana:
-            icon: grafana
-            href: https://devantler.grafana.net
-            description: Central hub for monitoring my infrastructure.
   bookmarks.yaml: |
     - Personal:
         - Personal Site:

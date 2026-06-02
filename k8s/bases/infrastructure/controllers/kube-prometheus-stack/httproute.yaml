@@ -1,8 +1,12 @@
-# Expose Grafana, Prometheus and Alertmanager behind oauth2-proxy SSO.
-# Each route backends to the oauth2-proxy service (not the app); after
+# Prometheus and Alertmanager are exposed behind oauth2-proxy SSO: each
+# route backends to the oauth2-proxy service (not the app); after
 # authentication oauth2-proxy forwards to auth-proxy, which routes by Host
-# to the in-cluster service (see auth-proxy config-map.yaml). The same
+# to the in-cluster service (see auth-proxy config-map.yaml) -- the same
 # pattern the homepage/hubble UIs use.
+#
+# Grafana is the exception: it authenticates against Dex itself (native
+# auth.generic_oauth, see helm-release.yaml), so its route backends
+# straight to the Grafana Service with no oauth2-proxy hop.
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -24,19 +28,13 @@ spec:
     - grafana.${domain}
   rules:
     - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://grafana.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
               - name: Strict-Transport-Security
                 value: max-age=63072000; includeSubDomains; preload
       backendRefs:
-        - name: oauth2-proxy
-          namespace: oauth2-proxy
+        - name: kube-prometheus-stack-grafana
           port: 80
 ---
 apiVersion: gateway.networking.k8s.io/v1

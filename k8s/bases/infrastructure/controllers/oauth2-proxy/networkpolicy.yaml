@@ -25,7 +25,11 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
-    # Dex for OIDC
+    # Dex token exchange (redeem_url) + JWKS (oidc_jwks_url) over the
+    # in-cluster Dex Service. oauth2-proxy does its server-side OIDC calls
+    # in-cluster (skip_oidc_discovery; see helm-release.yaml), which the pod
+    # can always resolve -- unlike the public dex.${domain} URL, which does
+    # not resolve in-cluster on the docker/local cluster.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: dex
@@ -33,7 +37,9 @@ spec:
         - ports:
             - port: "5556"
               protocol: TCP
-    # GitHub OAuth
+    # Outbound HTTPS. oauth2-proxy no longer calls Dex or GitHub over the
+    # internet (Dex is reached in-cluster above; GitHub is Dex's upstream
+    # connector), but keep general egress for resilience.
     - toEntities:
         - world
       toPorts:

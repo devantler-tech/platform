@@ -137,12 +137,12 @@ Flux Kustomizations are reconciled sequentially. Each layer waits for the previo
 
 ```mermaid
 graph TB
-  variables["variables"]
+  bootstrap["bootstrap"]
   controllers["infrastructure-controllers"]
   infra["infrastructure"]
   apps["apps"]
 
-  controllers -- "depends on" --> variables
+  controllers -- "depends on" --> bootstrap
   infra -- "depends on" --> controllers
   apps -- "depends on" --> infra
 ```
@@ -152,7 +152,7 @@ This means that for every Flux Kustomization applied to a cluster, there should 
 - `k8s/providers/<provider-name>/infrastructure/`
 - `k8s/bases/infrastructure/`
 
-The Flux Kustomizations themselves live in `k8s/bases/cluster/` (with sentinel `__CLUSTER__` / `__PROVIDER__` values in `spec.path`). Each `k8s/clusters/<cluster-name>/` overlay supplies a tiny `cluster-meta` ConfigMap and kustomize `replacements:` that rewrite those sentinels with the cluster's real values. Only the per-cluster `variables/` directory holds cluster-specific manifests.
+The Flux Kustomizations themselves live in `k8s/bases/cluster/` (with sentinel `__CLUSTER__` / `__PROVIDER__` values in `spec.path`). Each `k8s/clusters/<cluster-name>/` overlay supplies a tiny `cluster-meta` ConfigMap and kustomize `replacements:` that rewrite those sentinels with the cluster's real values. Only the per-cluster `bootstrap/` directory holds cluster-specific manifests.
 
 See [`docs/TEMPLATING.md`](docs/TEMPLATING.md) for the exact set of files a fork of this repo needs to edit to stand up its own instance.
 

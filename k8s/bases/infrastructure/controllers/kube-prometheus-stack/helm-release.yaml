@@ -40,12 +40,14 @@ spec:
     crds:
       enabled: true
 
-    # Grafana is exposed behind oauth2-proxy SSO (see httproute.yaml).
-    # Access to the route is already gated to a single GitHub user
-    # (oauth2-proxy github_users), so Grafana itself runs with anonymous
-    # Admin and the login form disabled -- whoever clears the SSO gate is
-    # the operator. This avoids depending on the proxy to forward an
-    # identity header. Loki is wired in as an additional datasource below.
+    # Grafana authenticates users directly against Dex via native OIDC
+    # (auth.generic_oauth) -- it is NOT fronted by oauth2-proxy (its
+    # HTTPRoute backends straight to the Grafana Service). Every user who
+    # clears the Dex gate is mapped to Admin (single-operator homelab) via
+    # the JMESPath literal in role_attribute_path. auto_login +
+    # disable_login_form send users straight to Dex with no Grafana login
+    # form (break-glass: https://grafana.${domain}/login?disableAutoLogin=true).
+    # Loki is wired in as an additional datasource below.
     grafana:
       enabled: true
       grafana.ini:
@@ -55,9 +57,30 @@ spec:
           disable_login_form: true
         auth.basic:
           enabled: false
-        auth.anonymous:
+        auth.generic_oauth:
           enabled: true
-          org_role: Admin
+          name: Dex
+          auto_login: true
+          client_id: public-client
+          scopes: openid profile email groups
+          auth_url: https://dex.${domain}/auth
+          token_url: https://dex.${domain}/token
+          api_url: https://dex.${domain}/userinfo
+          # JMESPath string literal -> every authenticated user gets Admin.
+          role_attribute_path: "'Admin'"
+      # Client secret (Dex 'public-client') from the grafana-oidc
+      # ExternalSecret. GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET overrides the
+      # grafana.ini value. optional:true so a bootstrap race fails login
+      # closed instead of crash-looping the pod; reloader restarts Grafana
+      # when ESO lands the secret.
+      envValueFrom:
+        GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET:
+          secretKeyRef:
+            name: grafana-oidc
+            key: client-secret
+            optional: true
+      annotations:
+        secret.reloader.stakater.com/reload: grafana-oidc
       # Dashboards are provisioned as code, so the pod can stay ephemeral.
       persistence:
         enabled: false

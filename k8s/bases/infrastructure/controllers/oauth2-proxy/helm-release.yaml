@@ -47,38 +47,45 @@ spec:
         maxSurge: 1
         maxUnavailable: 0
     config:
-      clientID: "${github_app_client_id}"
-      clientSecret: "${github_app_client_secret}"
+      # oauth2-proxy authenticates against Dex (the cluster's single OIDC
+      # IdP) using the shared confidential 'public-client'. Dex federates to
+      # GitHub, so the GitHub app credentials now live only on Dex's
+      # connector (github_app_client_id/secret) -- not here.
+      clientID: "public-client"
+      clientSecret: "${dex_client_secret}"
       cookieSecret: "${oauth2_proxy_cookie_secret}"
       configFile: |-
-        provider = "github"
-        # Defence in depth: three independent GitHub gates.
-        #   github_org   — only members of devantler-tech can authenticate.
-        #                  This matches the Dex GitHub connector that gates
-        #                  kubectl OIDC (orgs:[devantler-tech], no team
-        #                  restriction). Web auth and kubectl auth now
-        #                  enforce the same org boundary.
-        #   github_team  — additionally restrict to the 'platform' team.
-        #                  This is *stricter* than the Dex connector
-        #                  (intentional — web auth previously had only the
-        #                  github_users bypass list). If the org has no
-        #                  'platform' team, anyone outside github_users
-        #                  will be locked out; drop this line for an
-        #                  org-only gate equivalent to Dex.
-        #   github_users — explicit allowlist that bypasses the org/team
-        #                  check. oauth2-proxy treats this as an OR: users
-        #                  here pass even if the org/team check fails. If
-        #                  the list is ever cleared the org + team gate
-        #                  still holds as the fallback.
-        github_org = "devantler-tech"
-        github_team = "platform"
-        github_users = ["devantler"]
-        # email_domains = ["*"] is intentional: GitHub OAuth does not
-        # always return a verified email (users with private emails
-        # surface as <id>+<login>@users.noreply.github.com or empty), so
-        # gating on email_domains would lock out legitimate accounts that
-        # already passed the org/team/users checks above.
-        email_domains = [ "*" ]
+        provider = "oidc"
+        oidc_issuer_url = "https://dex.${domain}"
+        # Split the OIDC endpoints so this works on every cluster: the
+        # browser-facing authorize endpoint stays the public Dex URL (the
+        # browser resolves dex.${domain} via the host /etc/hosts locally,
+        # public DNS in prod), while the server-side token + JWKS calls use
+        # the in-cluster Dex Service the pod can always resolve. This also
+        # disables eager discovery (skip_oidc_discovery) -- otherwise
+        # oauth2-proxy blocks at startup fetching .well-known from
+        # dex.${domain}, which the pod cannot resolve on the docker/local
+        # cluster (dex.platform.lan exists only in the host's /etc/hosts), and
+        # crash-loops so the Flux HelmRelease never goes Ready. ID tokens
+        # still carry iss=https://dex.${domain}, so issuer validation matches.
+        skip_oidc_discovery = true
+        login_url = "https://dex.${domain}/auth"
+        redeem_url = "http://dex.dex.svc.cluster.local:5556/token"
+        oidc_jwks_url = "http://dex.dex.svc.cluster.local:5556/keys"
+        # Request the groups scope so Dex returns the user's GitHub teams as
+        # group claims (its github connector uses teamNameField: slug), then
+        # gate on the 'platform' team -- preserving the stricter team
+        # restriction the github provider enforced. NOTE: OIDC mode has no
+        # per-user bypass (the old github_users escape hatch is gone), so the
+        # authenticating user MUST be a member of devantler-tech/platform.
+        # Drop allowed_groups for an org-only gate (Dex's connector already
+        # restricts to the devantler-tech org).
+        scope = "openid email profile groups"
+        allowed_groups = ["devantler-tech:platform"]
+        # email_domains = ["*"] is intentional: GitHub (via Dex) does not
+        # always return a public email, and the real gate is now
+        # allowed_groups -- so don't additionally gate on the email domain.
+        email_domains = ["*"]
         cookie_domains=[".${domain}"]
         whitelist_domains = ["${domain}", ".${domain}"]
         redirect_url = "https://oauth2-proxy.${domain}/oauth2/callback"
@@ -89,6 +96,9 @@ spec:
         # HTTP interceptor) have room to wake before SSO returns a 504. Kept
         # under Cloudflare's ~100s edge timeout so oauth2-proxy answers first.
         upstream_timeout = "90s"
+        # Button-less flow: with skip_provider_button + Dex skipApprovalScreen
+        # + a single Dex connector, app -> oauth2-proxy -> Dex -> GitHub -> back
+        # needs no extra clicks.
         skip_provider_button = true
         reverse_proxy = true
     ingress:
