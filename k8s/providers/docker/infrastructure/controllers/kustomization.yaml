@@ -30,6 +30,11 @@ patches:
       namespace: kubescape
     path: kubescape/patches/helm-release-patch.yaml
   - target:
+      kind: HelmRelease
+      name: tetragon
+      namespace: kube-system
+    path: tetragon/patches/helm-release-patch.yaml
+  - target:
       kind: KubeVirt
       name: kubevirt
       namespace: kubevirt

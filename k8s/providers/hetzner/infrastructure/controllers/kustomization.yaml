@@ -29,6 +29,7 @@ resources:
   - ../../../../bases/infrastructure/controllers/openbao/
   - ../../../../bases/infrastructure/controllers/opencost/
   - ../../../../bases/infrastructure/controllers/reloader/
+  - ../../../../bases/infrastructure/controllers/tetragon/
   - ../../../../bases/infrastructure/controllers/trust-manager/
   - ../../../../bases/infrastructure/controllers/velero/
   - ../../../../bases/infrastructure/controllers/vertical-pod-autoscaler/
