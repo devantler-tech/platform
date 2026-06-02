@@ -59,7 +59,7 @@ Replacements in the same file rewrite the sentinel placeholders
 new environment is "copy an existing overlay directory, change these two
 values, point ksail at it".
 
-### 4. Per-cluster variables
+### 4. Per-cluster bootstrap
 
 Each `k8s/clusters/<env>/bootstrap/` directory contains the only resources
 Flux reads that are genuinely per-cluster:
