@@ -13,7 +13,7 @@ k8s/bases/             → shared base resources (never modified by overlays in-
 ```
 
 - **Never modify base files** from cluster or provider overlays — use `patches:` in kustomization.yaml instead.
-- Cluster overlays only set `cluster-meta` ConfigMap data and reference `../../bases/cluster`.
+- Cluster overlays only set `cluster-meta` ConfigMap data and reference `../base`.
 - Provider overlays import bases via relative `resources:` and add provider-specific patches or extra resources.
 
 ## Resource Organization (`k8s/bases/infrastructure/`)
