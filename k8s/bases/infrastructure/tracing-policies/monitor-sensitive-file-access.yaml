@@ -43,9 +43,12 @@ spec:
                 - "/etc/csh.cshrc"
                 - "/etc/csh.login"
             - index: 1
-              operator: "Equal"
+              # Bitmask, not exact match: fires when the MAY_READ (0x4) bit is
+              # set, including combined opens such as read+write (0x6). Equal "4"
+              # would have missed those.
+              operator: "Mask"
               values:
-                - "4" # MAY_READ
+                - "4" # MAY_READ bit
         # Reads of per-user shell config files.
         - matchArgs:
             - index: 0
@@ -62,9 +65,12 @@ spec:
                 - ".logout"
                 - ".history"
             - index: 1
-              operator: "Equal"
+              # Bitmask, not exact match: fires when the MAY_READ (0x4) bit is
+              # set, including combined opens such as read+write (0x6). Equal "4"
+              # would have missed those.
+              operator: "Mask"
               values:
-                - "4" # MAY_READ
+                - "4" # MAY_READ bit
         # Writes to system directories.
         - matchArgs:
             - index: 0
@@ -85,9 +91,12 @@ spec:
                 - "/dev/log"
                 - "/root/.ssh"
             - index: 1
-              operator: "Equal"
+              # Bitmask, not exact match: fires when the MAY_WRITE (0x2) bit is
+              # set, including combined opens such as read+write (0x6). Equal "2"
+              # would have missed those.
+              operator: "Mask"
               values:
-                - "2" # MAY_WRITE
+                - "2" # MAY_WRITE bit
     - call: "security_path_truncate"
       syscall: false
       return: true
