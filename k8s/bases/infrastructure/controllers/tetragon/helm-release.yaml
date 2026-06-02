@@ -59,10 +59,19 @@ spec:
       # lesson as the cilium-agent OOM cascade. Limits are intentionally
       # left unset (an event burst must not get the agent OOMKilled),
       # matching the cilium-agent posture.
+      #
+      # memory is sized to observed prod usage (agents run 64-105Mi), not
+      # a round guess. The original 256Mi did not fit the request-saturated
+      # prod workers (~97% of allocatable already requested), so one
+      # DaemonSet pod stayed Pending ("Insufficient memory") -- and because
+      # Helm waits for full DaemonSet readiness, that single pod wedged the
+      # entire prod reconcile (HelmRelease stuck InProgress -> Kustomization
+      # HealthCheckFailed). 128Mi stays comfortably Burstable (preserving
+      # the anti-BestEffort intent) while fitting the available budget.
       resources:
         requests:
           cpu: 100m
-          memory: 256Mi
+          memory: 128Mi
       # Enrich exec / kprobe events with process capabilities and
       # namespaces (both default to false). enablePolicyFilter (default
       # true) is required for the K8s namespace / pod-label filtering that
