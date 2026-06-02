@@ -30,13 +30,20 @@ spec:
       configurationScan: enable
       continuousScan: enable
       vulnerabilityScan: enable
-      runtimeDetection: enable
+      # Runtime threat detection is owned by Tetragon now (see
+      # docs/runtime-security.md and k8s/bases/infrastructure/tracing-policies/).
+      # Kubescape stays as the posture platform -- config/CVE/compliance
+      # scanning, its real differentiators -- and we drop its node-agent so the
+      # cluster runs a single eBPF runtime sensor. This is the documented
+      # "revisit" path #1 in docs/runtime-security.md: it trades Kubescape's
+      # learned-behaviour anomaly detection for Tetragon's explicit, low-overhead
+      # TracingPolicies (file integrity, privileged ops) plus enforcement.
+      runtimeDetection: disable
+    # Host configuration scanning (CIS/NSA host checks) is posture, not runtime,
+    # so it stays enabled. The node-agent runtime host sensor is intentionally
+    # not configured -- runtimeDetection above is off.
     hostScanner:
       enabled: true
-    nodeAgent:
-      config:
-        hostSensor:
-          enabled: true
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.
     persistence:
