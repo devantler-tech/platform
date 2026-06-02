@@ -29,7 +29,7 @@ spec:
           name: ascoachingogvaner
           annotations:
             gethomepage.dev/enabled: "true"
-            gethomepage.dev/name: AS Coaching og Væren
+            gethomepage.dev/name: AS - Coaching, vaner og ro
             gethomepage.dev/description: Personal/business static site.
             gethomepage.dev/group: Customer Sites
             gethomepage.dev/icon: mdi-account-tie

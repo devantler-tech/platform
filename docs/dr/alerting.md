@@ -120,18 +120,18 @@ Two sources:
 ## Per-environment setup (manual SOPS steps)
 
 The Slack webhook and heartbeat URL are secrets, so they live in the
-per-cluster `variables-cluster-secret.enc.yaml` and must be set by hand
-(the agent cannot edit `*.enc.yaml`). Both are read from the `Secret`
-`variables-cluster`, which is a Flux `substituteFrom` source.
+per-cluster `variables-cluster-secret.enc.yaml` (under `bootstrap/`) and
+must be set by hand. Both are read from the `Secret` `variables-cluster`,
+which is a Flux `substituteFrom` source.
 
 ```bash
 # 1. Slack incoming webhook for alert notifications.
 sops --set '["stringData"]["alertmanager_webhook_url"] "https://hooks.slack.com/services/XXX/YYY/ZZZ"' \
-  k8s/clusters/prod/variables/variables-cluster-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
 
 # 2. External heartbeat-monitor ping URL (e.g. healthchecks.io).
 sops --set '["stringData"]["alertmanager_heartbeat_url"] "https://hc-ping.com/<uuid>"' \
-  k8s/clusters/prod/variables/variables-cluster-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
 ```
 
 Slack side: create an incoming webhook for the `#platform-alerts` channel

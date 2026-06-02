@@ -13,7 +13,11 @@ spec:
     kind: OCIRepository
     name: flux-system
   dependsOn:
-    - name: variables
+    # The bootstrap layer applies cluster PriorityClasses (e.g. platform-critical)
+    # and substitution variables; it must be ready before these controllers
+    # reconcile, since e.g. kube-prometheus-stack references platform-critical and
+    # helm-controller would otherwise roll its pods before the class exists.
+    - name: bootstrap
   decryption:
     provider: sops
     secretRef:

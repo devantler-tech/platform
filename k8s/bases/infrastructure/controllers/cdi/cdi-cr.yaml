@@ -4,4 +4,9 @@ apiVersion: cdi.kubevirt.io/v1beta1
 kind: CDI
 metadata:
   name: cdi
-spec: {}
+spec:
+  # Run the CDI control plane (cdi-apiserver / cdi-controller / cdi-uploadproxy)
+  # at the KubeVirt-ecosystem critical tier so it survives node memory pressure.
+  # CDI is a KubeVirt subproject and kubevirt-cluster-critical (value
+  # 1000000000) is created by the KubeVirt operator already deployed here.
+  priorityClass: kubevirt-cluster-critical
