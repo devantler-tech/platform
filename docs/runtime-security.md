@@ -70,17 +70,15 @@ misbehaved; it will not stop it.
 
 ### Tetragon — *enforcement and precise kernel observability*
 
-Being introduced via the stacked PRs
-[#1688](https://github.com/devantler-tech/platform/pull/1688) (install +
-observability), [#1689](https://github.com/devantler-tech/platform/pull/1689)
-(observe-only `TracingPolicy` for sensitive files), and
-[#1690](https://github.com/devantler-tech/platform/pull/1690) (opt-in
-enforcement). Lives under
-`k8s/bases/infrastructure/controllers/tetragon/` and
+Installed via [#1688](https://github.com/devantler-tech/platform/pull/1688)
+(agent + operator), with its enforcement policy under
 `k8s/bases/infrastructure/tracing-policies/`.
 
-Tetragon is a **purpose-built runtime engine**. Two things make it
-complementary rather than redundant:
+Tetragon's job here is the one thing Kubescape's node-agent cannot do:
+**enforcement**. We deliberately do **not** use Tetragon to duplicate
+Kubescape's runtime *detection* (anomaly profiling, sensitive-file/exec/network
+visibility, posture correlation) — that is Kubescape's domain and it does it
+better. Tetragon adds:
 
 1. **Enforcement.** A `TracingPolicy` can carry a `SIGKILL` action that
    **terminates the offending process** as soon as Tetragon observes a matching
@@ -88,17 +86,19 @@ complementary rather than redundant:
    termination — the triggering syscall may already have completed, so it kills
    the **process**, it does not block the call. (Tetragon's `Override` action can
    block the syscall itself where the kernel supports it; this platform uses
-   SIGKILL — see #1690.) Either way it does something a detection-only tool
-   can't: it stops the workload rather than just alerting. Opt-in per workload
-   (via a pod label) so it starts safe.
+   SIGKILL.) It does something a detection-only tool can't: it stops the
+   workload rather than just alerting. The policy
+   ([`enforce-protect-system-files.yaml`](../k8s/bases/infrastructure/tracing-policies/enforce-protect-system-files.yaml))
+   is **opt-in per workload** via a pod label, so it starts safe — zero blast
+   radius until a workload opts in.
 2. **Precise, declarative kernel hooks.** `TracingPolicy` targets specific
-   kprobes/tracepoints (a syscall, an LSM hook, a file path) with low overhead,
-   rather than profiling everything. That makes it the right tool for narrow,
-   high-value invariants like "no one rewrites `/etc` or the kubelet binary."
+   kprobes/tracepoints (a syscall, an LSM hook, a file path) with low overhead.
+   That makes it the right tool for narrow, high-value *invariants you enforce*,
+   like "no one rewrites `/etc` or a system binary."
 
-What it does **not** do: it has no notion of compliance frameworks, image CVEs,
-or a learned baseline of "normal" — it enforces and observes the rules *you
-write*, nothing more.
+What it does **not** do: no compliance frameworks, image CVEs, or a learned
+"normal" baseline — and, **by choice, no standalone detection policies** (that
+would duplicate Kubescape). It enforces the rules *you write*.
 
 ---
 
@@ -142,17 +142,19 @@ attacks (Kubescape-only) or give up **posture-correlated detection**
 
 ## When to revisit this decision
 
-This is a *deliberate* overlap, not a permanent one. Reopen it if either of
-these becomes true:
+Running two eBPF sensors is a *deliberate* overlap — **Kubescape for detection,
+Tetragon for the enforcement Kubescape lacks** — not a permanent one. Reopen it
+if either becomes true:
 
-1. **Node memory pressure becomes acute.** The first lever is to narrow the
-   **heavier** sensor: set Kubescape `capabilities.runtimeDetection: disable`
-   (keeping its config-scan, image-CVE, and compliance scanning, which are its
-   real differentiators) and let **Tetragon own all runtime**. This trades
-   posture-correlated anomaly detection for a smaller footprint.
-2. **Tetragon's detection matures** — if observe-only `TracingPolicy` coverage
-   (plus any future anomaly tooling around it) grows to cover the cases we rely
-   on Kubescape's node-agent for, consolidating onto Tetragon becomes the
-   simpler architecture.
+1. **Kubescape gains comparable enforcement.** Tetragon exists here specifically
+   because Kubescape's node-agent is detection-only. If Kubescape (or whatever
+   posture platform we run) ships process-killing / syscall-blocking enforcement
+   we trust, Tetragon's reason to exist shrinks to its precise kernel-hook
+   policies — at which point dropping Tetragon and letting Kubescape own all
+   runtime becomes the simpler architecture.
+2. **Node memory pressure becomes acute.** Two sensors cost memory per node. The
+   preferred lever is to trim **Tetragon** to only the enforcement policies in
+   active use — *not* to disable Kubescape's runtime detection, which is the
+   capability we lean on most (use Kubescape as much as possible).
 
-Until one of those holds, **both run, by design.**
+Until one of those holds, **both run: Kubescape detects, Tetragon enforces.**
