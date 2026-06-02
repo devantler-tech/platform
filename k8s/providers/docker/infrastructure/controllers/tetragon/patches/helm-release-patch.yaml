@@ -1,0 +1,16 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: tetragon
+  namespace: kube-system
+spec:
+  # eBPF tracing support on Docker-provider Talos nodes is unverified (cf.
+  # kubescape disabling its eBPF runtime detection locally). Don't block
+  # the kustomize-controller health window on the agent DaemonSet becoming
+  # Ready -- the manifests still apply, so CI exercises them, but a slow or
+  # degraded agent on the nested Docker kernel won't fail the HelmRelease.
+  install:
+    disableWait: true
+  upgrade:
+    disableWait: true
