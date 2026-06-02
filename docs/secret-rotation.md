@@ -76,7 +76,7 @@ unlike *dynamic* roles, which mint ephemeral users the app would have to re-fetc
 
 ### Credential handover sequence
 
-- **Fresh cluster** (Flux order `bootstrap → infra-controllers → infra → apps`):
+- **Fresh cluster** (Flux order `bootstrap → infrastructure-controllers → infrastructure → apps`):
   KV seeds → ESO writes `mysql` Secret → bitnami MySQL bootstraps the `fleet`
   user with that password → `vault-config` enables the DB engine and creates the
   static role → OpenBao performs the **initial rotation** of `fleet` → ESO
