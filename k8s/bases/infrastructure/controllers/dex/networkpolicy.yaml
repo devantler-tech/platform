@@ -32,6 +32,17 @@ spec:
               protocol: TCP
             - port: "5558"
               protocol: TCP
+    # OIDC token + userinfo exchange from Grafana (native auth.generic_oauth).
+    # Same in-cluster path as headlamp/oauth2-proxy: Grafana's server-side
+    # calls hit the Dex Service directly and arrive with the monitoring pod
+    # identity, so they must be allowed explicitly here.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: monitoring
+      toPorts:
+        - ports:
+            - port: "5556"
+              protocol: TCP
   egress:
     # Kube API for reading secrets
     - toEntities:

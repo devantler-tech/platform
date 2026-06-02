@@ -63,9 +63,19 @@ spec:
           auto_login: true
           client_id: public-client
           scopes: openid profile email groups
+          # Split the OIDC endpoints so this works on every cluster (mirrors
+          # oauth2-proxy): the browser-facing authorize endpoint stays the
+          # public Dex URL (the browser resolves dex.${domain} via the host
+          # /etc/hosts locally, public DNS in prod), while the server-side
+          # token + userinfo calls use the in-cluster Dex Service the Grafana
+          # pod can always resolve. dex.${domain} does NOT resolve via
+          # in-cluster CoreDNS on the docker/local cluster, so targeting the
+          # public URL here fails the back-channel token exchange with
+          # "Failed to get token from provider". The dex NetworkPolicy allows
+          # the matching monitoring->5556 ingress.
           auth_url: https://dex.${domain}/auth
-          token_url: https://dex.${domain}/token
-          api_url: https://dex.${domain}/userinfo
+          token_url: http://dex.dex.svc.cluster.local:5556/token
+          api_url: http://dex.dex.svc.cluster.local:5556/userinfo
           # JMESPath string literal -> every authenticated user gets Admin.
           role_attribute_path: "'Admin'"
       # Client secret (Dex 'public-client') from the grafana-oidc
