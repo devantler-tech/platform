@@ -25,7 +25,9 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
-    # Dex for OIDC
+    # Dex (in-cluster service path). oauth2-proxy reaches Dex via the public
+    # HTTPS issuer URL (world:443 below), so this in-cluster path is a
+    # harmless fallback kept for parity with the other OIDC clients.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: dex
@@ -33,7 +35,9 @@ spec:
         - ports:
             - port: "5556"
               protocol: TCP
-    # GitHub OAuth
+    # Dex OIDC discovery + token exchange via the public issuer URL
+    # (https://dex.${domain}, fronted by Cloudflare). GitHub is reached by
+    # Dex's connector, not by oauth2-proxy directly.
     - toEntities:
         - world
       toPorts:
