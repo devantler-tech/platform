@@ -104,12 +104,18 @@ spec:
           memory: 128Mi
       configMap:
         content: |
-          // Tail the Talos-managed kube-apiserver audit log. The `*.log` glob
-          // catches the active audit.log plus any rotated audit-*.log files.
-          // Inert where no such file exists (so it's a no-op off control planes).
+          // Tail the Talos-managed kube-apiserver audit log. The `audit*` glob
+          // catches the active audit.log AND its rotated backups under either
+          // naming scheme: the apiserver's built-in lumberjack rotation
+          // (--audit-log-max*) writes `audit-<timestamp>.log`, and logrotate-style
+          // `audit.log.N` if anything external ever rotates it. A plain `*.log`
+          // would miss logrotate backups; `audit.log*` would miss lumberjack's —
+          // `audit*` covers both, so a restart after a rotation re-discovers the
+          // backups and doesn't drop events. Inert where no such file exists (a
+          // no-op off control planes).
           local.file_match "kube_audit" {
             path_targets = [{
-              __path__ = "/var/log/audit/kube/*.log",
+              __path__ = "/var/log/audit/kube/audit*",
               job      = "kube-audit",
               node     = sys.env("NODE_NAME"),
             }]
