@@ -29,7 +29,7 @@ they sit inside a wider set of controls:
 | Kernel hardening | **sysctls** ([`talos/cluster/sysctls.yaml`](../talos/cluster/sysctls.yaml)) | `kptr_restrict`, `ptrace_scope`, unprivileged-eBPF off, etc. — shrinks the local-privesc surface |
 | Network | **Cilium + Hubble** | L3–L7 flow visibility and default-deny [CiliumNetworkPolicy](../k8s/bases/infrastructure/cluster-policies/best-practices/add-default-deny.yaml) per namespace |
 | Runtime detection | **Kubescape node-agent** | Learned-behaviour anomaly detection, correlated with config/CVE/compliance posture |
-| Runtime enforcement | **Tetragon** | Declarative kernel-hook policies that can **kill** a process inline |
+| Runtime enforcement | **Tetragon** | Declarative kernel-hook policies that **terminate the offending process** (SIGKILL) on a policy match |
 | Forensics | **API audit log** ([`talos/cluster/audit-logging.yaml`](../talos/cluster/audit-logging.yaml)) | Who-did-what record of control-plane mutations |
 
 This document focuses on the two middle-to-bottom rows — the eBPF sensors.
@@ -82,11 +82,15 @@ enforcement). Lives under
 Tetragon is a **purpose-built runtime engine**. Two things make it
 complementary rather than redundant:
 
-1. **Enforcement.** A `TracingPolicy` can carry a `Sigkill` action, so Tetragon
-   can terminate a process *in-kernel, synchronously*, the moment it crosses a
-   line (e.g. writes to a protected system path). Detection tools can only alert
-   after the fact. Enforcement is opt-in per workload (via a pod label) so it
-   starts safe.
+1. **Enforcement.** A `TracingPolicy` can carry a `SIGKILL` action that
+   **terminates the offending process** as soon as Tetragon observes a matching
+   event (e.g. a write to a protected system path). This is *post-event*
+   termination — the triggering syscall may already have completed, so it kills
+   the **process**, it does not block the call. (Tetragon's `Override` action can
+   block the syscall itself where the kernel supports it; this platform uses
+   SIGKILL — see #1690.) Either way it does something a detection-only tool
+   can't: it stops the workload rather than just alerting. Opt-in per workload
+   (via a pod label) so it starts safe.
 2. **Precise, declarative kernel hooks.** `TracingPolicy` targets specific
    kprobes/tracepoints (a syscall, an LSM hook, a file path) with low overhead,
    rather than profiling everything. That makes it the right tool for narrow,
@@ -103,7 +107,7 @@ write*, nothing more.
 | If we kept only… | We would lose |
 | --- | --- |
 | **Tetragon** | Compliance/CVE/posture correlation, learned-behaviour anomaly detection, the single-pane Kubescape view — i.e. *"is this CVE actually reachable at runtime?"* |
-| **Kubescape node-agent** | Inline **enforcement** (Sigkill), and expressive low-overhead kernel-hook policies for system-file integrity |
+| **Kubescape node-agent** | **Enforcement** — killing an offending process (SIGKILL) on a match (with `Override` available for true syscall-blocking) — and expressive low-overhead kernel-hook policies for system-file integrity |
 
 They sit at opposite ends of the detect → enforce spectrum:
 
