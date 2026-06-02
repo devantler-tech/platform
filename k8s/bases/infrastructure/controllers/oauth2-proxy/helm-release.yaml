@@ -57,6 +57,21 @@ spec:
       configFile: |-
         provider = "oidc"
         oidc_issuer_url = "https://dex.${domain}"
+        # Split the OIDC endpoints so this works on every cluster: the
+        # browser-facing authorize endpoint stays the public Dex URL (the
+        # browser resolves dex.${domain} via the host /etc/hosts locally,
+        # public DNS in prod), while the server-side token + JWKS calls use
+        # the in-cluster Dex Service the pod can always resolve. This also
+        # disables eager discovery (skip_oidc_discovery) -- otherwise
+        # oauth2-proxy blocks at startup fetching .well-known from
+        # dex.${domain}, which the pod cannot resolve on the docker/local
+        # cluster (dex.platform.lan exists only in the host's /etc/hosts), and
+        # crash-loops so the Flux HelmRelease never goes Ready. ID tokens
+        # still carry iss=https://dex.${domain}, so issuer validation matches.
+        skip_oidc_discovery = true
+        login_url = "https://dex.${domain}/auth"
+        redeem_url = "http://dex.dex.svc.cluster.local:5556/token"
+        oidc_jwks_url = "http://dex.dex.svc.cluster.local:5556/keys"
         # Request the groups scope so Dex returns the user's GitHub teams as
         # group claims (its github connector uses teamNameField: slug), then
         # gate on the 'platform' team -- preserving the stricter team
