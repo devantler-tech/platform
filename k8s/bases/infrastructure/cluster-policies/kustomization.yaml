@@ -15,10 +15,13 @@ resources:
   - flux/helm-release-enable-tests.yaml
   - flux/helm-release-install-crds.yaml
   - flux/helm-release-remediation-retries.yaml
-  # Upstream kyverno/policies (synced via reusable-workflows, patched below)
-  - samples/best-practices/add-ns-quota/add-ns-quota.yaml
-  - samples/other/create-pod-antiaffinity/create-pod-antiaffinity.yaml
-  - samples/other/spread-pods-across-topology/spread-pods-across-topology.yaml
+  # Vendored from kyverno/policies and pinned here (patched below). NOT auto-synced
+  # into samples/: the sync's .policyignore whitelist can't be honored by its
+  # find-based filter (it deletes these), and the positional patches below would
+  # break on blind upstream updates. Re-vendor manually when an upstream change is wanted.
+  - vendored/add-ns-quota.yaml
+  - vendored/create-pod-antiaffinity.yaml
+  - vendored/spread-pods-across-topology.yaml
 patches:
   # --- add-ns-quota: exclude system namespaces, set generateExisting, tune resource values ---
   - target:
