@@ -10,11 +10,14 @@ patches:
       name: ascoachingogvaner
       namespace: ascoachingogvaner
     path: ascoachingogvaner/patches/kustomization-patch.yaml
-  - target:
-      kind: HelmRelease
-      name: fleetdm
-      namespace: fleetdm
-    path: fleetdm/patches/helm-release-patch.yaml
+  # fleetdm disabled 2026-06-03 — see bases/apps/kustomization.yaml. This
+  # prod-only HelmRelease patch is parked until fleetdm is re-enabled; the
+  # patch file (fleetdm/patches/helm-release-patch.yaml) is retained.
+  # - target:
+  #     kind: HelmRelease
+  #     name: fleetdm
+  #     namespace: fleetdm
+  #   path: fleetdm/patches/helm-release-patch.yaml
   - target:
       kind: HelmRelease
       name: headlamp

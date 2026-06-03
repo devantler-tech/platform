@@ -3,7 +3,13 @@ kind: Kustomization
 resources:
 - actual-budget/
 - ascoachingogvaner/
-- fleetdm/
+# fleetdm disabled 2026-06-03 — not in use. The manifests under
+# bases/apps/fleetdm/ are retained; re-enable by uncommenting the line below
+# (and the matching HelmRelease patch in
+# providers/hetzner/apps/kustomization.yaml). The infra-layer plumbing
+# (OpenBao policies/seeds, NetworkPolicies, Kubescape security exceptions,
+# prod config-map vars) is intentionally left idle in place.
+# - fleetdm/
 - headlamp/
 - homepage/
 - umami/
