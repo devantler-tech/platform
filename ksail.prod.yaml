@@ -37,38 +37,41 @@ spec:
     # rejects Price+Hetzner (and the autoscaler would crash on startup);
     # LeastWaste is the supported cost-targeting choice.
     #
-    # maxNodesTotal: 4 is the real ceiling — serverLimit defaults to 10 and
-    # controlPlanes(3) + workers(3) + autoscaler must stay <= it, leaving 4.
-    # Per-pool max is the same 4 so any single type can absorb the whole
-    # budget; the global cap binds. To grow this, raise serverLimit too, and
-    # only within the Hetzner project's actual server limit.
+    # maxNodesTotal is the HARD CEILING ON TOTAL CLUSTER NODES (control-planes
+    # + static workers + autoscaler nodes): KSail passes it straight to the
+    # cluster-autoscaler --max-nodes-total, which counts EVERY node, so it
+    # must exceed the static baseline or scale-up is blocked outright. 10 =
+    # 6 static (3 control-planes + 3 workers) + up to 4 autoscaler nodes, and
+    # equals the Hetzner serverLimit (default 10). Each pool is capped at 1,
+    # so the 4 pools add at most 4 nodes; to grow headroom raise both
+    # maxNodesTotal and serverLimit together, within the Hetzner project limit.
     autoscaler:
       node:
         enabled: true
         expander: LeastWaste
-        maxNodesTotal: 4
+        maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
         pools:
           - name: autoscale-cx23
             serverType: cx23
             location: fsn1
             min: 0
-            max: 4
+            max: 1
           - name: autoscale-cx33
             serverType: cx33
             location: fsn1
             min: 0
-            max: 4
+            max: 1
           - name: autoscale-cx43
             serverType: cx43
             location: fsn1
             min: 0
-            max: 4
+            max: 1
           - name: autoscale-cx53
             serverType: cx53
             location: fsn1
             min: 0
-            max: 4
+            max: 1
     # These components are installed by ksail. There is a known race on
     # Hetzner clusters between ksail's metrics-server install and Flux's
     # kubelet-serving-cert-approver install (required because Talos
