@@ -87,6 +87,10 @@ spec:
                 secretKeyRef:
                   name: umami-ascoachingogvaner
                   key: password
+                  # Bootstrap only: read solely when first creating the user.
+                  # optional so the Job still starts (and re-runs cleanly) if the
+                  # bootstrap Secret is removed once the customer owns their password.
+                  optional: true
             # Declarative source of truth: one team per tenant, its websites, and
             # any extra member logins. The website UUIDs are the values hard-pinned
             # in each site's tracking script — adding a site = add an entry here +
@@ -172,23 +176,31 @@ spec:
                 return u ? u.id : null;
               }
               async function ensureMember(token, teamId, m) {
-                const password = process.env[m.passwordEnv];
-                if (!password) throw new Error('missing password env ' + m.passwordEnv + ' for member ' + m.username);
-                let userId = null;
-                const c = await fetch(base + '/api/users', { method: 'POST', headers: H(token), body: JSON.stringify({ username: m.username, password, role: m.accountRole || 'user' }) });
-                if (c.ok) {
-                  userId = (await c.json()).id;
-                  console.log('user created:', m.username);
+                // Resolve the member, creating it only if missing. The bootstrap
+                // password is read ONLY on the create path — once the user exists
+                // (and owns its own password after first login), m.passwordEnv is
+                // never touched, so the bootstrap Secret can be removed after
+                // onboarding without breaking re-runs.
+                let userId = await findUserId(token, m.username);
+                if (userId) {
+                  console.log('user exists:', m.username);
                 } else {
-                  // User already exists: resolve its id but DO NOT reset the
-                  // password — the customer owns it after their first-login change.
-                  const body = await c.text();
-                  if (c.status === 400 && /exist/i.test(body)) {
-                    userId = await findUserId(token, m.username);
-                    if (!userId) throw new Error('user ' + m.username + ' exists but id not resolvable');
-                    console.log('user exists:', m.username);
+                  const password = process.env[m.passwordEnv];
+                  if (!password) throw new Error('cannot create member ' + m.username + ': bootstrap password env ' + m.passwordEnv + ' is empty');
+                  const c = await fetch(base + '/api/users', { method: 'POST', headers: H(token), body: JSON.stringify({ username: m.username, password, role: m.accountRole || 'user' }) });
+                  if (c.ok) {
+                    userId = (await c.json()).id;
+                    console.log('user created:', m.username);
                   } else {
-                    throw new Error('create user ' + m.username + ' failed: ' + c.status + ' ' + body);
+                    const body = await c.text();
+                    // Created by a racing run between our lookup and this POST: re-resolve.
+                    if (c.status === 400 && /exist/i.test(body)) {
+                      userId = await findUserId(token, m.username);
+                      if (!userId) throw new Error('user ' + m.username + ' exists but id not resolvable');
+                      console.log('user exists:', m.username);
+                    } else {
+                      throw new Error('create user ' + m.username + ' failed: ' + c.status + ' ' + body);
+                    }
                   }
                 }
                 const role = m.teamRole || 'team-view-only';
