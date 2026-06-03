@@ -25,7 +25,7 @@ Only these fields genuinely vary per instance:
 | `spec.cluster.connection.context` | kubeconfig context | kubeconfig context |
 | `spec.cluster.localRegistry.registry` | n/a | OCI registry URL for the manifest artefact |
 | `spec.provider.hetzner.location` | n/a | primary Hetzner location (`fsn1`, `nbg1`, `hel1`, …) |
-| `spec.provider.hetzner.{controlPlane,worker}ServerType` | n/a | Hetzner server types (default `cx23`) |
+| `spec.provider.hetzner.{controlPlane,worker}ServerType` | n/a | Hetzner server types (default `cx33`) |
 | `spec.provider.hetzner.networkCidr` | n/a | private network CIDR for the cluster |
 | `spec.cluster.autoscaler.node.pools` | n/a | node pool definitions (name, serverType, location, min, max) |
 | `spec.cluster.autoscaler.node.maxNodesTotal` | n/a | hard ceiling on total cluster nodes |
@@ -50,18 +50,18 @@ local-config `cluster-meta` ConfigMap:
 
 ```yaml
 data:
-  cluster_name: <env>          # drives spec.path: clusters/<env>/variables
+  cluster_name: <env>          # drives spec.path: clusters/<env>/bootstrap
   provider: <docker|hetzner>   # drives spec.path: providers/<provider>/...
 ```
 
 Replacements in the same file rewrite the sentinel placeholders
-(`__CLUSTER__`, `__PROVIDER__`) that come from `k8s/bases/cluster/`. Adding a
+(`__CLUSTER__`, `__PROVIDER__`) that come from `k8s/clusters/base/`. Adding a
 new environment is "copy an existing overlay directory, change these two
 values, point ksail at it".
 
-### 4. Per-cluster variables
+### 4. Per-cluster bootstrap
 
-Each `k8s/clusters/<env>/variables/` directory contains the only resources
+Each `k8s/clusters/<env>/bootstrap/` directory contains the only resources
 Flux reads that are genuinely per-cluster:
 
 - `variables-cluster-config-map.yaml` — non-secret values (hostnames, URLs,
@@ -85,7 +85,7 @@ See `.github/workflows/` for the exact names.
 
 ## Template body (do not edit when instantiating)
 
-- `k8s/bases/cluster/` — shared Flux Kustomizations with sentinel paths.
+- `k8s/clusters/base/` — shared Flux Kustomizations with sentinel paths.
 - `k8s/bases/infrastructure/` — Cilium, cert-manager, Kyverno, alerting configs,
   OpenBao vault, External Secrets Operator, ClusterSecretStore, vault-config Job,
   vault-seed PushSecrets, vault-backup CronJob.
@@ -150,7 +150,7 @@ No manual steps are required -- cluster creation is fully automated.
 1. `cp -R talos talos-<env>` (or reuse `talos`).
 2. `cp -R k8s/clusters/prod k8s/clusters/<env>` and update `cluster_name` +
    `provider` in the new overlay's `cluster-meta` patch.
-3. Edit `k8s/clusters/<env>/variables/variables-cluster-{config-map,secret.enc}.yaml`.
+3. Edit `k8s/clusters/<env>/bootstrap/variables-cluster-{config-map,secret.enc}.yaml`.
 4. `cp ksail.prod.yaml ksail.<env>.yaml`; update the per-cluster fields.
 5. Add the new environment to `.github/workflows/` pipelines as needed.
 

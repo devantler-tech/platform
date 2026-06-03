@@ -32,7 +32,7 @@ allowing low-level access to OS-specific features through osquery.
 ## Secrets
 
 All secrets live in the per-cluster SOPS-encrypted
-`k8s/clusters/<env>/variables/variables-cluster-secret.enc.yaml` and are
+`k8s/clusters/<env>/bootstrap/variables-cluster-secret.enc.yaml` and are
 substituted at Flux reconcile time:
 
 | Variable | Purpose |
@@ -49,12 +49,12 @@ substituted at Flux reconcile time:
 ```sh
 # Generate a new MDM private key (WARNING: invalidates all enrolled devices)
 NEW_KEY=$(openssl rand -hex 32)
-sops set k8s/clusters/prod/variables/variables-cluster-secret.enc.yaml \
+sops set k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml \
   '["stringData"]["fleetdm_server_private_key"]' "\"$NEW_KEY\""
 
 # Generate a new password
 NEW_PASS=$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-28)
-sops set k8s/clusters/prod/variables/variables-cluster-secret.enc.yaml \
+sops set k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml \
   '["stringData"]["fleetdm_mysql_password"]' "\"$NEW_PASS\""
 ```
 

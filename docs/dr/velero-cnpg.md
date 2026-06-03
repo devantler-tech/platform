@@ -62,7 +62,7 @@ substituted into both the Velero and CNPG secrets at Flux apply time.
 Same Velero install, different backend. Local uses an in-cluster
 **Bitnami MinIO** chart (single replica, ephemeral storage) so the entire
 S3 code path runs end-to-end in CI. The redirection happens via Flux
-variable overrides in `k8s/clusters/local/variables/`:
+variable overrides in `k8s/clusters/local/bootstrap/`:
 
 | Variable               | Local value                                       |
 | ---------------------- | ------------------------------------------------- |
@@ -119,16 +119,16 @@ etc.) see [`runbook.md`](./runbook.md).
 
 ## Credential rotation
 
-Stored in `k8s/bases/variables/variables-base-secret.enc.yaml`. Rotation
+Stored in `k8s/bases/bootstrap/variables-base-secret.enc.yaml`. Rotation
 flow:
 
 ```bash
 # 1. Mint a new R2 token in Cloudflare; revoke the old one only after step 4.
 # 2. Update both keys in-place with sops:
 sops --set '["stringData"]["r2_access_key_id"] "<new-id>"' \
-  k8s/bases/variables/variables-base-secret.enc.yaml
+  k8s/bases/bootstrap/variables-base-secret.enc.yaml
 sops --set '["stringData"]["r2_secret_access_key"] "<new-secret>"' \
-  k8s/bases/variables/variables-base-secret.enc.yaml
+  k8s/bases/bootstrap/variables-base-secret.enc.yaml
 # 3. PR + merge -> Flux reconciles the new Secret -> Velero/CNPG pick it up
 #    on next run (Velero re-reads the credentials secret per backup).
 # 4. Revoke the old token in Cloudflare.

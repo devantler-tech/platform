@@ -27,6 +27,26 @@ spec:
     server:
       enabled: true
       replicas: ${openbao_replicas:=1}
+      # The chart's default readinessProbe is `exec: bao status`, which
+      # returns exit code 2 on a sealed server -- so the Pod stays NotReady
+      # until something unseals it. On a fresh cluster that "something" is
+      # the vault-config Job in the downstream `infrastructure` Flux layer,
+      # which can't run until this HelmRelease (in `infrastructure-controllers`)
+      # is Ready. The install therefore deadlocks: Helm waits up to `timeout`,
+      # `install.remediation.retries: -1` uninstalls + reinstalls, repeat --
+      # cold-cluster bootstrap historically took 20-40 min waiting for that
+      # race to resolve (see vault-config Job comment + PR #1636 system-test
+      # failure).
+      #
+      # Switching to the HTTP health probe with `sealedcode=204` and
+      # `uninitcode=204` makes a sealed-but-running server Ready immediately.
+      # The chart template renders the httpGet branch as soon as `path` is
+      # set (server-statefulset.yaml: `{{- if .Values.server.readinessProbe.path }}`)
+      # and `openbao.scheme` returns "http" when `global.tlsDisable: true`
+      # (chart default; matches the `tls_disable = 1` listener below).
+      # The HashiCorp Vault chart uses the same pattern for the same reason.
+      readinessProbe:
+        path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
       # Mount the unseal key Secret (created by the vault-config Job on first
       # init, restored by Velero on cluster rebuild) so the postStart hook
       # can auto-unseal the server after every pod restart.
@@ -63,6 +83,27 @@ spec:
         size: ${openbao_storage_size:=1Gi}
       auditStorage:
         enabled: true
+        # Chart default. The file audit backend does not rotate, and
+        # OpenBao FAILS CLOSED on audit-write errors (every API request
+        # blocks once the volume is full). At this cluster's request
+        # volume (~700 KB/day from current ESO + vault-snapshot
+        # traffic) 1Gi gives ~3-4 years of headroom, but the failure
+        # mode is silent until the cluster halts -- monitor
+        # 'kubelet_volume_stats_available_bytes' on the openbao-audit-*
+        # PVC.
+        #
+        # NB: bumping this size in-place is rejected by Kubernetes
+        # because spec.volumeClaimTemplates is immutable on an
+        # existing StatefulSet. The supported resize path is to leave
+        # the chart value alone and expand the PVC directly:
+        #
+        #   kubectl -n openbao patch pvc audit-openbao-0 \
+        #     --type=merge -p '{"spec":{"resources":{"requests":{"storage":"10Gi"}}}}'
+        #
+        # CSI providers with allowVolumeExpansion: true (Hetzner CSI,
+        # most cloud drivers) honour this online. Once the
+        # observability stack lands, promtail will ship the stream
+        # off-PVC and the size question goes away.
         size: 1Gi
       standalone:
         enabled: true
@@ -84,6 +125,34 @@ spec:
 
           storage "file" {
             path = "/openbao/data"
+          }
+
+          # Declarative file audit device on the auditStorage PV. OpenBao
+          # blocks runtime audit enables: `bao audit enable file …`
+          # returns "cannot enable audit device via API; use declarative,
+          # config-based audit device management instead", so the device
+          # MUST be declared here in HCL. The mount path /openbao/audit
+          # is the chart's auditStorage default. Every API request is
+          # written to /openbao/audit/audit.log as one JSON record per
+          # line; tail it from the openbao pod today, ship via promtail
+          # once the observability stack lands.
+          #
+          # HCL shape (per https://openbao.org/docs/configuration/audit):
+          #   audit "<arbitrary identifier>" {
+          #     type    = "<device>"
+          #     path    = "<api mount path>"   # what /sys/audit/<path>/ becomes
+          #     options = { ... backend-specific options ... }
+          #   }
+          # Both `type` and `path` are required at parse time. `type`
+          # selects the backend; `path` is what `bao audit list` reports
+          # and what API requests address. We use "file/" so the device
+          # is reachable at /sys/audit/file/.
+          audit "file" {
+            type    = "file"
+            path    = "file/"
+            options = {
+              file_path = "/openbao/audit/audit.log"
+            }
           }
       topologySpreadConstraints:
         - maxSkew: 1

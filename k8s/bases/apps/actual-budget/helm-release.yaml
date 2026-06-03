@@ -49,6 +49,23 @@ spec:
                       matchLabels:
                         app.kubernetes.io/name: actualbudget
                         app.kubernetes.io/instance: actual-budget
+              # Chart hardcodes startupProbe absence; values override the
+              # liveness/readiness blocks below but not startupProbe. Gate
+              # liveness/readiness on the container actually serving HTTP.
+              # initialDelaySeconds skips past the ~10s cold-start window so
+              # the first probe lands on a serving container — zero failure
+              # events during the merge-queue's 90s steady-state Warning
+              # check.
+              - op: add
+                path: /spec/template/spec/containers/0/startupProbe
+                value:
+                  httpGet:
+                    path: /
+                    port: http
+                  initialDelaySeconds: 20
+                  periodSeconds: 5
+                  timeoutSeconds: 3
+                  failureThreshold: 12  # 60s grace beyond initial delay
   # https://github.com/community-charts/helm-charts/blob/main/charts/actualbudget/values.yaml
   values:
     replicaCount: ${actual_budget_replicas:=1}

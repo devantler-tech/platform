@@ -1,0 +1,28 @@
+# Priority tier for important platform add-ons that are NOT core Kubernetes /
+# node infrastructure but must still survive node memory pressure — currently
+# the monitoring & alerting stack (kube-prometheus-stack).
+#
+# Sits ABOVE normal workloads (priority 0) so the kubelet evicts workload pods
+# first, but BELOW the built-in system-* classes (2000000000) so true cluster
+# and node infrastructure — CNI (Cilium), CSI (hcloud-csi/Longhorn), DNS
+# (CoreDNS), cloud-controller-manager, and the control plane — always outrank
+# it. Value matches kubevirt-cluster-critical (1000000000): both are the
+# "important platform add-on" tier.
+#
+# Deliberately a custom class rather than system-cluster-critical: putting the
+# monitoring stack at the very top would rank it alongside core infra, so a
+# memory-hungry Prometheus would be reclaimed only after everything else —
+# pushing the node toward the kernel OOM-killer. platform-critical keeps it
+# "evicted after normal workloads" while still leaving it reclaimable before
+# true cluster/node infrastructure.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: platform-critical
+value: 1000000000
+globalDefault: false
+description: >-
+  Important platform add-ons (monitoring/alerting) that must survive node
+  memory pressure. Ranked far above normal workloads but below the system-*
+  classes reserved for core cluster/node infrastructure. Not eviction-exempt.

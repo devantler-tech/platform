@@ -1,0 +1,10 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - variables-base-config-map.yaml
+  - variables-base-secret.enc.yaml
+  # Cluster-scoped PriorityClasses (provider- and cluster-agnostic) live in the
+  # bootstrap layer so they exist before infrastructure-controllers reconciles —
+  # e.g. kube-prometheus-stack references platform-critical.
+  - priority-classes/

@@ -18,6 +18,30 @@ spec:
         - ports:
             - port: "9090"
               protocol: TCP
+    # auth-proxy (oauth2-proxy SSO) reaches the Prometheus and Alertmanager
+    # UIs after authentication. Grafana is no longer fronted by oauth2-proxy
+    # (it does native Dex OIDC and is reached directly from the Gateway --
+    # see the ingress rule below), so port 3000 is dropped here.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+            - port: "9093"
+              protocol: TCP
+    # Cilium Gateway ingress to the Grafana UI. Grafana authenticates
+    # against Dex itself, so the Gateway hits it directly on 3000. Envoy
+    # runs hostNetwork, so match the ingress + host entities (as
+    # allow-openbao does for its directly-routed UI).
+    - fromEntities:
+        - ingress
+        - host
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
     # Webhook from kube-apiserver (hostNetwork on control plane nodes)
     - fromEntities:
         - kube-apiserver

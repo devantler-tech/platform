@@ -1,0 +1,39 @@
+# Read-only cluster access for the operator's OIDC identity (authenticated
+# via Dex + GitHub, members of the devantler-tech org). The email matches
+# the `email` claim returned by Dex; the apiserver prefixes it with `oidc:`.
+#
+# Daily access is intentionally read-only. ADMIN (break-glass) is NOT granted
+# via OIDC — it is the root client-certificate kubeconfig/talosconfig kept in
+# the vault, used only when a write is genuinely required. See
+# docs/oidc-kubectl.md.
+#
+# Two bindings give a complete read-only picture:
+#   - built-in `view` → namespaced resources (minus Secrets)
+#   - `cluster-reader` → everything `view` omits: mostly cluster-scoped infra
+#     (nodes, PVs, CRDs, ...) plus RBAC objects and pod metrics
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oidc-view
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: "oidc:${admin_email}"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oidc-cluster-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-reader
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: User
+    name: "oidc:${admin_email}"

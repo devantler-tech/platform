@@ -74,7 +74,7 @@ Secret (unseal credentials). Both are needed for a complete restore.
 bootstrap. On a fresh cluster:
 
 1. `ksail cluster create` -- provisions infrastructure
-2. Flux deploys `variables` -> SOPS-encrypted Secrets are available
+2. Flux deploys `bootstrap` -> SOPS-encrypted Secrets are available
 3. Flux deploys `infrastructure-controllers` -> OpenBao + ESO start.
    Controllers with placeholder Secrets (Dex, OAuth2-proxy) start with
    dummy values.

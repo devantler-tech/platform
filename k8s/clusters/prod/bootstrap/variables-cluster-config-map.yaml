@@ -1,0 +1,131 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: variables-cluster
+  namespace: flux-system
+data:
+  cluster_name: prod
+  domain_regex: platform\.devantler\.tech
+  domain: platform.devantler.tech
+  github_app_client_id: Iv23limfvbk93bAXZI6b
+  issuer_group: cert-manager.io
+  issuer_kind: ClusterIssuer
+  issuer_name: letsencrypt-prod
+  # Per-env prefixes inside the shared R2 bucket.
+  r2_prefix_velero: velero/prod
+  r2_prefix_cnpg: cnpg/prod
+  # --- Critical controllers (2 replicas for HA during VPA evictions) ---
+  # With VPA updateMode=InPlaceOrRecreate, single-replica services get 502s
+  # during eviction. User-facing auth and admission webhooks need 2+ replicas.
+  cert_manager_replicas: "2"
+  metrics_server_replicas: "2"
+  vpa_admission_replicas: "2"
+  keda_operator_replicas: "2"
+  keda_webhooks_replicas: "2"
+  keda_scaler_replicas: "2"
+  keda_interceptor_min_replicas: "2"
+  # --- Non-critical operators (1 replica — leader-elected) ---
+  # Brief blip during rolling upgrade does not affect data plane.
+  trust_manager_replicas: "1"
+  reloader_replicas: "1"
+  cilium_replicas: "2"
+  velero_replicas: "1"
+  cloudnative_pg_replicas: "1"
+  # Homepage: 2 replicas for HA during VPA evictions (it is behind oauth2-proxy
+  # and cannot use KEDA HTTP scale-to-zero).
+  homepage_replicas: "2"
+  # KEDA-managed apps: HelmRelease replicas are the initial value only;
+  # KEDA HTTPScaledObject overrides at runtime. Setting the initial to 1
+  # saves memory until the first KEDA reconciliation.
+  # headlamp: min 0, max 1 (OIDC state in-memory — must stay single-pod)
+  # whoami/fleetdm: min 0, max 2
+  # actual-budget: parked at 0/0 (unused; SQLite on RWO PVC keeps max≤1 when re-enabled)
+  headlamp_replicas: "1"
+  whoami_replicas: "1"
+  fleetdm_replicas: "1"
+  # Standalone MySQL (no replication). The bitnami replication topology causes
+  # VPA `InPlaceOrRecreate` evictions to drop DDL connections mid-migration on
+  # initial install (3 mysql pods churning simultaneously). Standalone is
+  # simpler, faster to install, and Hetzner CSI snapshots/Velero handle DR.
+  fleetdm_mysql_architecture: "standalone"
+  fleetdm_mysql_secondary_replicas: "0"
+  fleetdm_redis_architecture: "standalone"
+  fleetdm_redis_replicas: "0"
+  # Parked: HelmRelease starts at 0; KEDA holds it at 0 (min=0) but can spin up
+  # 1 pod on a stray HTTP hit (max=1) since KEDA HTTP rejects max=0 at the
+  # translated ScaledObject layer (MinReplicaCount=1 must be less than
+  # MaxReplicaCount=0). SQLite on RWO PVC requires max <= 1 even when re-enabled.
+  # To re-enable as actively-served, set:
+  #   actual_budget_replicas: "1"
+  #   actual_budget_replicas_min: "1"
+  #   actual_budget_replicas_max: "1"
+  actual_budget_replicas: "0"
+  actual_budget_replicas_min: "0"
+  actual_budget_replicas_max: "1"
+  hubble_ui_replicas: "1"
+  # Umami analytics: always-on (direct Gateway routing, not KEDA); a single
+  # instance backed by its own CloudNativePG database.
+  umami_replicas: "1"
+  # Auth chain: 2 replicas for HA during VPA evictions (prevents 502s).
+  dex_replicas: "2"
+  oauth2_proxy_replicas: "2"
+  auth_proxy_replicas: "2"
+  # --- Hetzner Cloud ---
+  hetzner_lb_location: "fsn1"
+  hetzner_lb_type: "lb11"
+  hcloud_network: "prod-network"
+  # --- Contact ---
+  admin_email: "ned@devantler.tech"
+  # Leader-elected controllers: 1 replica is sufficient.
+  hcloud_ccm_replicas: "1"
+  hcloud_csi_controller_replicas: "1"
+  # --- Longhorn distributed storage ---
+  # All 3 static workers carry Longhorn disks (labeled with
+  # node.longhorn.io/create-default-disk=true). Replica count matches the
+  # worker count (3), so every volume is fully replicated across all storage
+  # nodes.
+  longhorn_replica_count: "3"
+  # VolumeSnapshot CRDs (snapshot.storage.k8s.io) are not installed; the
+  # CSI snapshotter crash-loops trying to list them. Disable until CRDs
+  # are added.
+  longhorn_csi_snapshotter_replicas: "0"
+  # CSI control-plane sidecars (attacher/provisioner/resizer) default to a
+  # single replica in the base HelmRelease. They are leader-elected, so a
+  # second replica is a cheap warm standby that costs ~nothing when idle.
+  # Run 2 for HA: on 2026-05-28 the sole csi-attacher/provisioner happened to
+  # sit on a worker whose Cilium ClusterIP datapath had degraded, which took
+  # out volume attach/detach orchestration cluster-wide (FailedAttachVolume
+  # storms, pods stuck ContainerCreating). A standby on another node keeps CSI
+  # functioning through a single-node outage.
+  longhorn_csi_attacher_replicas: "2"
+  longhorn_csi_provisioner_replicas: "2"
+  longhorn_csi_resizer_replicas: "2"
+  # --- Non-essential services scaled to 0 ---
+  # Origin CA issuer requests 1 CPU (50% of worker allocatable) for a simple
+  # cert controller. Disabled until we actually need Cloudflare Origin certs.
+  origin_ca_issuer_replicas: "0"
+  # VPA recommender computes resource recommendations; admission controller
+  # applies them at pod start. Updater evicts pods to apply new resource
+  # recommendations continuously.
+  vpa_recommender_replicas: "1"
+  vpa_updater_replicas: "1"
+  # --- Kyverno ---
+  kyverno_background_replicas: "1"
+  kyverno_reports_replicas: "1"
+  kyverno_cleanup_replicas: "1"
+  # --- Alertmanager ---
+  # 2 replicas for HA: Alertmanager gossips notification/silence state, so
+  # a second replica means a rolling restart or single-node loss never
+  # drops an alert notification. Restored 1 -> 2 (was trimmed to 1 during
+  # the #1585 stabilization) now that prod has regained headroom via the
+  # lowered VPA floor (#1585), cert-manager/ESO restore (#1601), and the
+  # kubevirt/cdi opt-out (#1671); the planned 4th-worker bump is tracked
+  # separately in ksail.prod.yaml.
+  alertmanager_replicas: "2"
+  # --- OpenBao secrets vault ---
+  openbao_replicas: "1"
+  openbao_storage_size: 10Gi
+  # --- External Secrets Operator ---
+  external_secrets_replicas: "2"
+

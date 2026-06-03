@@ -1,0 +1,111 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: tetragon
+  namespace: kube-system
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  chart:
+    spec:
+      chart: tetragon
+      version: 1.7.0
+      sourceRef:
+        kind: HelmRepository
+        name: cilium
+  interval: 10m0s
+  timeout: 10m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  # https://github.com/cilium/tetragon/blob/main/install/kubernetes/tetragon/values.yaml
+  #
+  # eBPF-based runtime security observability. Sibling to the Cilium
+  # install (same vendor, same helm.cilium.io repo), so it reuses the
+  # `cilium` HelmRepository in this namespace instead of defining a
+  # duplicate source against the same URL -- the same dedup pattern as
+  # alloy reusing loki's `grafana` repo.
+  #
+  # Deployed to kube-system because the agent needs hostNetwork + hostPath
+  # + host PID, which the validate-host-restrictions Kyverno policy blocks
+  # in every namespace except the infrastructure set (kube-system among
+  # them). kube-system is also exempt from the add-default-deny CNP, so no
+  # NetworkPolicy is required for Prometheus to scrape the metrics ports.
+  #
+  # Observability-only for now: no TracingPolicies are shipped yet, so the
+  # agent emits its built-in process_exec / process_exit events. Runtime
+  # enforcement (Sigkill / Override actions) is a later, separately-gated
+  # change -- the Override action additionally needs CONFIG_BPF_KPROBE_OVERRIDE
+  # verified on the pinned Talos kernel.
+  values:
+    # CRDs (TracingPolicy, ...) are rendered by the chart and applied by Flux
+    # (the helm.toolkit.fluxcd.io/crds label above) at release install, instead
+    # of the chart default of the operator installing them at runtime. This
+    # makes the CRD deterministically present before the `infrastructure` Flux
+    # layer (dependsOn infrastructure-controllers, wait:true) applies the
+    # enforce-protect-system-files TracingPolicy -- avoiding a CRD-not-found
+    # race on first reconcile.
+    crds:
+      installMethod: helm
+    # ------------------------------------------------------------------
+    # Talos: tracefs is mounted at /sys/kernel/tracing (debugfs is NOT
+    # mounted on Talos), and Tetragon needs it to attach kprobes /
+    # tracepoints. BTF is auto-detected from /sys/kernel/btf/vmlinux
+    # (Talos ships CONFIG_DEBUG_INFO_BTF=y), so tetragon.btf stays empty.
+    # ------------------------------------------------------------------
+    extraHostPathMounts:
+      - name: sys-kernel-tracing
+        mountPath: /sys/kernel/tracing
+    tetragon:
+      # Resource requests promote the per-node agent DaemonSet out of
+      # BestEffort QoS so it survives node memory pressure -- the same
+      # lesson as the cilium-agent OOM cascade. Limits are intentionally
+      # left unset (an event burst must not get the agent OOMKilled),
+      # matching the cilium-agent posture.
+      #
+      # Memory request right-sized 256Mi -> 128Mi: live prod agents use
+      # only 63-128Mi, and the 256Mi reservation no longer fit a
+      # request-saturated prod worker (~158Mi free for requests despite
+      # ample RAM actually free -- request inflation, not real pressure).
+      # The node-pinned DaemonSet pod stayed Pending ("Insufficient
+      # memory"), so the HelmRelease never reached the Ready state Flux
+      # waits on and the prod deploy timed out. 128Mi fits every node and
+      # stays Burstable (out of BestEffort). With no memory limit, lowering
+      # the request neither caps the agent's actual usage nor adds a
+      # limit-driven OOMKill; it only shrinks the scheduling reservation
+      # (the pod stays subject to node-pressure eviction like any other,
+      # acceptable here given the real RAM headroom).
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+      # Enrich exec / kprobe events with process capabilities and
+      # namespaces (both default to false). enablePolicyFilter (default
+      # true) is required for the K8s namespace / pod-label filtering that
+      # TracingPolicies will rely on.
+      enableProcessCred: true
+      enableProcessNs: true
+      prometheus:
+        enabled: true
+        # Prometheus discovers ServiceMonitors cluster-wide
+        # (serviceMonitorSelectorNilUsesHelmValues: false), so enabling
+        # this is all that's needed for the agent metrics (:2112) to be
+        # scraped.
+        serviceMonitor:
+          enabled: true
+    tetragonOperator:
+      # Operator metrics (:2113); operator already ships resource requests
+      # and a non-root securityContext by default.
+      prometheus:
+        serviceMonitor:
+          enabled: true
+    # The export-stdout sidecar is on by default (export.mode: stdout), so
+    # Tetragon's JSON events go to the pod's stdout -- where Alloy tails
+    # them into Loki, making them searchable in Grafana with no extra
+    # wiring.

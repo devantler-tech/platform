@@ -38,3 +38,28 @@ spec:
           - op: add
             path: /spec/template/spec/containers/0/args/-
             value: --requeue-dependency=5s
+      # Spread the four Flux controllers across worker nodes. They are
+      # single-replica Deployments that all carry app.kubernetes.io/part-of=flux,
+      # so a per-controller topology spread keyed on that label distributes the
+      # set (skew <= 1) instead of letting the scheduler stack them on one node.
+      # On 2026-05-28 kustomize-controller landed on prod-worker-2 when that
+      # node's Cilium ClusterIP datapath degraded after an OOMKill; it then
+      # crash-looped on "dial tcp 10.96.0.1:443: i/o timeout" and GitOps
+      # reconciliation stalled — so the fix for the underlying OOM could not be
+      # applied (a deadlock GitOps cannot self-heal from). Keeping the
+      # controllers spread means a single bad worker cannot decapitate
+      # reconciliation. Soft (ScheduleAnyway) so it never blocks scheduling on
+      # the capacity-constrained 3-worker cluster.
+      - target:
+          kind: Deployment
+          labelSelector: app.kubernetes.io/part-of=flux
+        patch: |
+          - op: add
+            path: /spec/template/spec/topologySpreadConstraints
+            value:
+              - maxSkew: 1
+                topologyKey: kubernetes.io/hostname
+                whenUnsatisfiable: ScheduleAnyway
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/part-of: flux

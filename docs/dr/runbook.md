@@ -223,9 +223,9 @@ find . -name '*.enc.yaml' -print0 | xargs -0 -n1 sops updatekeys --yes
 
 # 2. Update the encrypted secret in-place
 sops --set '["stringData"]["r2_access_key_id"] "<new-id>"' \
-  k8s/bases/variables/variables-base-secret.enc.yaml
+  k8s/bases/bootstrap/variables-base-secret.enc.yaml
 sops --set '["stringData"]["r2_secret_access_key"] "<new-secret>"' \
-  k8s/bases/variables/variables-base-secret.enc.yaml
+  k8s/bases/bootstrap/variables-base-secret.enc.yaml
 
 # 3. PR + merge. Flux propagates within one reconciliation cycle.
 

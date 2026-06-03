@@ -1,0 +1,17 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: variables-base
+  namespace: flux-system
+data:
+  cloudflare_account_id: 634e9016d402443e427865dc35457728
+  r2_endpoint: https://634e9016d402443e427865dc35457728.r2.cloudflarestorage.com
+  r2_region: auto
+  # Shared bucket for Velero and CNPG backups across all clusters.
+  # Velero / CNPG namespace themselves with per-env prefixes — set in
+  # each clusters/<env>/bootstrap/variables-cluster-config-map.yaml.
+  r2_bucket: devantler-platform-backups
+  cloudflare_zone: devantler.tech
+  r2_prefix_velero: velero
+  r2_prefix_cnpg: cnpg

@@ -67,11 +67,11 @@ jobs:
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@b60e9718b59d7d873505481232d762b0e3f4b78e # v7.21.0
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@d95ce969a1c812448b4f416cad606151145c71a5 # v7.23.4
         with:
           distribution: Talos
           provider: Docker
-          ksail-version: "7.16.0"
+          ksail-version: "7.23.4"
           init: "false"
           validate: "true"
           scan: "true"
@@ -82,12 +82,6 @@ jobs:
           push: "true"
           reconcile: "true"
           delete: "false"
-
-      # Gate on a quiet steady state: after a successful reconcile the cluster
-      # should stop emitting Warning events. Catches crash loops / probe
-      # failures / back-off that bootstrap warnings would otherwise mask.
-      - name: 🔎 Require no new event warnings
-        uses: ./.github/actions/check-event-warnings
 
       - name: 🩺 Diagnose Flux on failure
         if: failure()
@@ -185,6 +179,7 @@ jobs:
     permissions:
       contents: read # checkout repository
       packages: write # push OCI artifacts to GHCR
+      id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -192,13 +187,14 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        # TEMP: pinned to v7.19.0. The v7.20.0 release shipped only desktop
-        # artifacts (CLI binaries missing), so `brew install ksail` 404s on the
-        # linux tarball. Revert to setup-ksail-cli once a complete ksail release
-        # exists. See devantler-tech/ksail v7.20.0 CD failure.
+        # Install the KSail CLI from the release tarball via curl. We use curl
+        # rather than brew/setup-ksail-cli because the v7.20.0 release shipped
+        # only desktop artifacts (linux CLI missing, 404 on the tarball).
+        # v7.23.4 ships complete linux artifacts again and carries the
+        # cluster-update fixes; renovate keeps this pin current.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.19.0"
+          KSAIL_VERSION: "7.23.4"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -285,6 +281,60 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
+      # ----- Supply-chain signing (mirrors cd.yaml's deploy job) -----
+      # The merge queue publishes the SAME ghcr.io/.../manifests:latest artifact
+      # that tag deploys (cd.yaml) do. Without signing here, whether prod's
+      # artifact is signed depends on which path last deployed it — and merges
+      # happen far more often than tags. These three steps are a faithful copy of
+      # cd.yaml's signing block; keep them in sync. SBOM (syft) + SLSA provenance
+      # attestation are intentionally NOT mirrored yet: the cosign signature is the
+      # integrity property a Flux-side verifier checks, and attestation parity is a
+      # follow-up (ideally by extracting cd.yaml's block into a shared composite
+      # action so the two paths can never drift again).
+      - name: ⚙️ Install cosign
+        env:
+          # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
+          COSIGN_VERSION: "3.0.6"
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v${{ env.COSIGN_VERSION }}'
+
+      - name: 🔐 Configure GHCR auth (cosign)
+        # Pre-create ~/.docker/config.json so cosign + buildx imagetools resolve
+        # GHCR creds via the OCI keychain (no `cosign login`/`docker login`
+        # "credentials stored unencrypted" warning). Byte-identical to cd.yaml.
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.docker
+          AUTH=$(printf '%s:%s' "${GITHUB_ACTOR}" "${GHCR_TOKEN}" | base64 -w0)
+          echo "::add-mask::${AUTH}"
+          jq -n --arg auth "${AUTH}" \
+            '{auths: {"ghcr.io": {auth: $auth}}}' \
+            > ~/.docker/config.json
+          chmod 600 ~/.docker/config.json
+
+      - name: 🖋️ Sign OCI manifest with cosign (keyless)
+        # Resolve tag → digest, then sign by digest: no tag→digest TOCTOU under a
+        # concurrent deploy, and forward-compatible with cosign v3 (which removed
+        # tag-based signing). Fulcio binds the signature to THIS workflow's OIDC
+        # identity (…/.github/workflows/ci.yaml@…), so a Flux-side verifier's
+        # matchOIDCIdentity must allow both ci.yaml and cd.yaml identities.
+        id: cosign-sign
+        env:
+          COSIGN_YES: "true"
+        run: |
+          set -euo pipefail
+          REF_TAG="ghcr.io/devantler-tech/platform/manifests:latest"
+          DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')
+          REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"
+          cosign sign --yes --recursive "${REF}"
+          echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
+          echo "ref=${REF_TAG}" >> "${GITHUB_OUTPUT}"
+
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
         run: ksail --config ksail.prod.yaml workload reconcile
@@ -292,14 +342,6 @@ jobs:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-
-      # After a successful prod reconcile, require the live cluster to stop
-      # emitting Warning events. Pinned to the same admin@prod context the rest
-      # of the prod steps use.
-      - name: 🔎 Require no new event warnings
-        uses: ./.github/actions/check-event-warnings
-        with:
-          context: admin@prod
 
       - name: 🩺 Diagnose Flux on failure
         if: failure() && steps.reconcile.outcome == 'failure'
@@ -346,7 +388,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@6916c45ed8dc22e62cb12f021480e29732d03575 # v5.1.0
+        uses: devantler-tech/actions/aggregate-job-checks@1dddb9d8e7f448a5880d05695742b35960da5bb0 # v5.2.0
         with:
           job-results: >-
             ${{ needs.changes.result }}

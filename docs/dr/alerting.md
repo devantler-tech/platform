@@ -1,117 +1,183 @@
-# In-cluster alerting
+# Observability
 
 `kube-prometheus-stack` (Prometheus + Alertmanager + node-exporter +
-kube-state-metrics) running per cluster, no Grafana, no remote-write, no
-SaaS. Alerts ship via webhook to a free destination (Discord channel /
-email-to-webhook bridge) — the URL is per-cluster and SOPS-encrypted.
+kube-state-metrics + Grafana) plus **Loki** (logs), **Alloy** (log
+shipper) and **OpenCost** (cost), running per cluster. Self-hosted, no
+SaaS metrics tier. The stack is production-hardened along four axes:
 
-## Why no Grafana
+1. **Alerts go to Slack** via Alertmanager's native `slack_configs`.
+2. **A dead-man's-switch** (the always-firing `Watchdog` alert) is pushed
+   to an external heartbeat monitor — the one failure mode in-cluster
+   alerting can never cover (the whole cluster being down).
+3. **State is persistent** — Prometheus, Alertmanager and Loki use Hetzner
+   Cloud block volumes in prod, and Velero ships the `monitoring`
+   namespace to R2 daily (24 h RPO).
+4. **Everything is reachable** behind oauth2-proxy SSO: Grafana,
+   Prometheus, Alertmanager and OpenCost.
 
-This is **alerting only**. Operators look at logs and `kubectl` for
-debugging; we don't run a dashboard tier on the homelab to keep the
-resource budget small (Grafana adds ~512 MiB and another HelmRelease to
-keep current).
+## Components
 
-## Why no remote-write
+| Component          | Role                                                | Persistence (prod)        |
+| ------------------ | --------------------------------------------------- | ------------------------- |
+| Prometheus         | Metrics + alert evaluation, 14 d / 5 GiB retention  | `hcloud` PVC, 20 Gi       |
+| Alertmanager       | Routing, grouping, silences (2 replicas, gossiped)  | `hcloud` PVC, 2 Gi        |
+| node-exporter      | Node metrics (DaemonSet)                            | n/a                       |
+| kube-state-metrics | Kubernetes object metrics                           | n/a                       |
+| Grafana            | Dashboards + log exploration (Prometheus + Loki DS) | ephemeral (provisioned)   |
+| Loki               | Log store, single-binary, 7 d retention             | `hcloud` PVC, 10 Gi       |
+| Alloy              | Per-node log shipper → Loki (DaemonSet)             | n/a                       |
+| OpenCost           | Cost allocation against Prometheus                  | n/a                       |
 
-Same reason — no external dashboard tier. Critical alerts route directly
-out of Alertmanager.
+Local/CI runs the same stack with Prometheus and Alertmanager on
+emptyDir — losing those on a restart is fine there. Loki is the lone
+exception: the chart's `persistence.enabled: false` crashes the
+container (no `/var/loki` mount under a read-only root), so the base
+attaches a small 5Gi PVC against the cluster's default storage class,
+which on docker/CI is local-path (host directory, recycled with the
+cluster). The `hcloud` PVC overrides for Prometheus, Alertmanager and
+Loki live in the hetzner overlay (`k8s/providers/hetzner/.../*/patches/`),
+the same way OpenBao gets block storage.
+
+## Alert routing → Slack
+
+Alertmanager sends to a Slack incoming webhook (`slack_configs` with
+`api_url_file`). The URL is per-cluster and SOPS-encrypted, so local
+clusters get an invalid URL and stay quiet by design.
+
+- `critical` → Slack immediately, repeat every 12 h.
+- `warning`  → Slack, repeat every 24 h.
+- `critical` inhibits matching `warning` (same alertname/cluster/namespace).
+
+## Dead-man's-switch (off-cluster heartbeat)
+
+In-cluster Alertmanager cannot tell you the cluster is down — it's down
+too. To cover that, the chart's always-firing `Watchdog` alert is routed
+to a dedicated `heartbeat` receiver that POSTs to an **external** monitor
+on a tight cadence (`repeat_interval: 50s`). If the cluster — or the
+Prometheus → Alertmanager pipeline — dies, the monitor stops receiving
+pings and notifies Slack out-of-band.
+
+Recommended monitor: [healthchecks.io](https://healthchecks.io) (free,
+open-source, native Slack integration). Create a check with a ~5 min
+period and ~10 min grace, connect it to Slack, and put its ping URL in
+`alertmanager_heartbeat_url` (below). A self-hosted alternative is a
+scheduled GitHub Actions workflow that probes the public Gateway and posts
+to Slack — fully under your control, no third-party monitor.
+
+The heartbeat URL is injected by Flux substitution
+(`${alertmanager_heartbeat_url}`); unset, it defaults to an invalid URL,
+so local/CI simply never heartbeat — harmless.
+
+## Off-cluster metric/log backup
+
+There is no remote-write or SaaS mirror. Instead, the persistent
+Prometheus, Alertmanager and Loki volumes live in the `monitoring`
+namespace, which Velero's `daily-full` schedule backs up to R2 every day
+(`includedNamespaces: ["*"]`, Kopia fs-backup). Restore is the standard
+Velero flow in [runbook.md](./runbook.md). Backups are filesystem-level
+and crash-consistent (Prometheus/Loki recover via their WAL on restore);
+fine for a 24 h RPO.
+
+## Grafana
+
+Self-hosted, exposed at `grafana.${domain}` behind oauth2-proxy SSO. Since
+the route is already gated to a single GitHub user, Grafana runs with
+anonymous **Admin** and the login form disabled — whoever clears the SSO
+gate is the operator. Datasources: Prometheus (auto-wired by the chart)
+and Loki. Default Kubernetes dashboards are provisioned; the pod stays
+ephemeral because dashboards are config, not state.
 
 ## What gets alerted
 
-See `k8s/bases/infrastructure/alerts/platform-critical.yaml`.
+Two sources:
+
+1. **Curated chart default rules** (`defaultRules.create: true`). We keep
+   the well-tested groups — `general` (incl. `Watchdog`), `alertmanager`,
+   `prometheus`, `prometheusOperator`, `kubernetesApps`
+   (CrashLooping/ReplicasMismatch/…), `kubernetesStorage`, `node`,
+   `kubeStateMetrics` — and disable the groups for control-plane
+   components we don't scrape (etcd, kube-apiserver/-scheduler/-controller-
+   manager, kube-proxy, windows). `KubeCPUOvercommit` / `KubeMemoryOvercommit`
+   are disabled — guaranteed noise on a cluster that runs hot on purpose.
+
+2. **Platform-specific rules** in
+   `k8s/bases/infrastructure/alerts/platform-critical.yaml` (not in the
+   chart): Velero/CNPG backups, Flux reconciliation, cert-manager expiry,
+   cluster-autoscaler and resource-pressure.
 
 | Alert                       | Severity | Why                                       |
 | --------------------------- | -------- | ----------------------------------------- |
-| `NodeNotReady`              | critical | Single node loss; PDBs cover but you should still know |
-| `NodeDiskFillingUp`         | warning  | >90% root fs                              |
+| `Watchdog`                  | none     | Always firing → external heartbeat        |
+| `NodeNotReady`              | critical | Single node loss                          |
 | `PersistentVolumeFillingUp` | critical | >90% PVC                                  |
 | `CertificateExpiringSoon`   | warning  | <14 d to expiry, cert-manager not renewing |
 | `FluxKustomizationNotReady` | critical | Reconciliation broken >15 min             |
-| `VeleroBackupFailed`        | critical | Any failure in last hour                  |
-| `VeleroNoRecentBackup`      | critical | RPO breach -- no successful backup in 30h |
-| `CNPGNoRecentBackup`        | critical | Same, for Postgres                        |
+| `VeleroNoRecentBackup`      | critical | RPO breach — no successful backup in 30h  |
 | `CNPGClusterDegraded`       | critical | Primary alone, no streaming replica       |
 
-`defaultRules.create: false` is set on the chart so we don't drown in the
-~200 generic chart-bundled alerts that aren't useful at homelab scale.
+(plus the chart's workload/storage/self-monitoring alerts.)
 
-## Caveat: in-cluster Alertmanager won't fire if the whole cluster is down
+## Per-environment setup (manual SOPS steps)
 
-This is the deliberate tradeoff for "no SaaS". Mitigations:
-
-1. **Daily Velero schedule runs independently.** On next recovery,
-   you'll see the missed backup in R2.
-2. **CI restore drill** validates that `PrometheusRule` manifests are
-   accepted and the monitoring stack reconciles on every PR — so a
-   regression in the alert spec is caught before merge
-   (see [restore-drill.md](./restore-drill.md)).
-3. If true off-cluster alerting becomes necessary later, the documented
-   follow-up is to add Grafana Cloud free tier (10k metrics, ample for
-   these alerts) and configure a remote-write target in
-   `prometheus.prometheusSpec.remoteWrite`. No code restructure required.
-
-## Per-environment webhook URL
-
-Stored in `variables-cluster-secret.enc.yaml` as `alertmanager_webhook_url`,
-substituted into the `alertmanager-webhook` Secret at apply time.
-
-| Env   | Where to set                                  | Suggestion             |
-| ----- | --------------------------------------------- | ---------------------- |
-| local | `k8s/clusters/local/variables/variables-cluster-secret.enc.yaml` (already filled with a non-resolvable invalid URL — alerts fail to send, on purpose) | n/a |
-| prod  | same path under `clusters/prod/`              | Discord #prod-alerts   |
-
-To set:
+The Slack webhook and heartbeat URL are secrets, so they live in the
+per-cluster `variables-cluster-secret.enc.yaml` (under `bootstrap/`) and
+must be set by hand. Both are read from the `Secret` `variables-cluster`,
+which is a Flux `substituteFrom` source.
 
 ```bash
-sops --set '["stringData"]["alertmanager_webhook_url"] "<url>"' \
-  k8s/clusters/<env>/variables/variables-cluster-secret.enc.yaml
+# 1. Slack incoming webhook for alert notifications.
+sops --set '["stringData"]["alertmanager_webhook_url"] "https://hooks.slack.com/services/XXX/YYY/ZZZ"' \
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
+
+# 2. External heartbeat-monitor ping URL (e.g. healthchecks.io).
+sops --set '["stringData"]["alertmanager_heartbeat_url"] "https://hc-ping.com/<uuid>"' \
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
 ```
 
-### Discord webhook recipe
+Slack side: create an incoming webhook for the `#platform-alerts` channel
+(the channel in the config is cosmetic — an incoming webhook posts to the
+channel it was created for). healthchecks.io side: create the check,
+connect its Slack integration, copy the ping URL.
 
-1. Server settings → Integrations → Webhooks → New Webhook → copy URL.
-2. Append `/slack` to the URL — Discord accepts Slack-formatted payloads
-   natively, and Alertmanager's `slack_configs` is a closer match. Or use
-   a tiny shim (e.g. `alertmanager-discord`) — tracked as a possible
-   follow-up but not required.
-3. Drop the URL into the SOPS secret per the command above.
+| Env   | `alertmanager_webhook_url`        | `alertmanager_heartbeat_url`       |
+| ----- | --------------------------------- | ---------------------------------- |
+| local | invalid URL (alerts stay local)   | unset → invalid (no heartbeat)     |
+| prod  | Slack `#platform-alerts` webhook  | healthchecks.io ping URL           |
 
-### Email-to-webhook bridge
+## On-call: silence and inspect
 
-Free options: Mailgun (5k/mo free), Resend (3k/mo free), or AWS SES via
-its HTTPS API. Configure the same way — paste the webhook URL into the
-encrypted secret.
+- **Silence an alert** while you work: Alertmanager UI at
+  `https://alertmanager.${domain}` → Silences → New.
+- **Check why an alert fired / query metrics**: Prometheus at
+  `https://prometheus.${domain}` (Graph / Alerts / Targets), or a Grafana
+  dashboard at `https://grafana.${domain}`.
+- **Read logs**: Grafana → Explore → Loki datasource, e.g.
+  `{namespace="velero"} |= "error"`.
+- **Cost**: OpenCost at `https://opencost.${domain}`.
 
-## Local clusters
+All four are behind GitHub SSO (oauth2-proxy, `devantler` only).
 
-Identical install, with:
+## Resource footprint (prod)
 
-- Webhook URL pointed at `http://example.invalid/no-webhook-on-local`
-  (deliberately fails). CI asserts this fail mode is acceptable — the
-  alerts still fire inside Alertmanager, the webhook just can't reach
-  anywhere. The CI restore drill verifies the monitoring stack reconciles
-  and `PrometheusRule` manifests are accepted; the lack of an external
-  destination is by design.
+| Component      | Requests          | Limits      |
+| -------------- | ----------------- | ----------- |
+| Prometheus     | 50m / 256 Mi      | — / 1.5 Gi  |
+| Alertmanager   | 50m / 64 Mi (×2)  | — / 128 Mi  |
+| Grafana        | 50m / 128 Mi      | — / 256 Mi  |
+| Loki           | 50m / 128 Mi      | — / 512 Mi  |
+| Alloy          | 25m / 96 Mi (×node) | — / 256 Mi |
+| Operator       | 50m / 128 Mi      | — / 256 Mi  |
 
-## Tuning resource footprint
-
-Current chart values:
-
-| Component      | Requests              | Limits        |
-| -------------- | --------------------- | ------------- |
-| Prometheus     | 100m CPU / 512 Mi     | — / 1 Gi      |
-| Alertmanager   | 50m CPU / 64 Mi       | — / 128 Mi    |
-| Operator       | 50m CPU / 128 Mi      | — / 256 Mi    |
-| node-exporter  | (chart defaults)      | (chart defaults) |
-| kube-state-metrics | (chart defaults)  | (chart defaults) |
-
-Total ~1 GiB committed memory. If
-this becomes too heavy, the first thing to drop is `nodeExporter` and
-the related node-level alerts.
+VPA right-sizes the requests at runtime (RequestsOnly), so the limits are
+the real ceilings. The always-on tier (Grafana, Loki, persistent
+Prometheus + Alertmanager) is what motivates the planned bump to a 4th
+static worker (`ksail.prod.yaml`); it's held at 3 today while prod is
+right-sized, and the hetzner overlay opts out of kubevirt/cdi to free
+~1.5 GiB so the tier still fits.
 
 ## Related
 
-- [DR runbook](./runbook.md) — what to do when an alert fires
-- [Velero + CNPG](./velero-cnpg.md) — the systems whose health is being checked
+- [DR runbook](./runbook.md) — what to do when an alert fires, and restore
+- [Velero + CNPG](./velero-cnpg.md) — the systems whose health is checked
+- [restore-drill.md](./restore-drill.md) — CI validation of the stack
 - [HA primitives](../../README.md) — cluster environments and topology

@@ -15,7 +15,7 @@ ships as its own reviewed PR.
     alertmanager.
   - **SOPS → Flux postBuild substitution**: `${dex_client_secret}`,
     `${flux_web_client_secret}`, `${oauth2_proxy_cookie_secret}` etc. are still
-    read from `k8s/clusters/*/variables/variables-cluster-secret.enc.yaml`. **Dex
+    read from `k8s/clusters/*/bootstrap/variables-cluster-secret.enc.yaml`. **Dex
     (the OIDC provider) and oauth2-proxy read from here, not OpenBao.**
 
 ### Validated finding — `refreshInterval` does **not** rotate generators
@@ -76,7 +76,7 @@ unlike *dynamic* roles, which mint ephemeral users the app would have to re-fetc
 
 ### Credential handover sequence
 
-- **Fresh cluster** (Flux order `variables → infra-controllers → infra → apps`):
+- **Fresh cluster** (Flux order `bootstrap → infrastructure-controllers → infrastructure → apps`):
   KV seeds → ESO writes `mysql` Secret → bitnami MySQL bootstraps the `fleet`
   user with that password → `vault-config` enables the DB engine and creates the
   static role → OpenBao performs the **initial rotation** of `fleet` → ESO

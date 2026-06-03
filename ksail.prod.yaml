@@ -50,7 +50,15 @@ spec:
     # Longhorn requires dedicated Hetzner Cloud Volumes on static
     # workers; autoscaler-created nodes are compute-only.
     # The Cluster Autoscaler manages additional workers dynamically.
+    # Restored to 4 — unblocked by the kubernetesVersion pin below and the KSail >= 7.23.4 scale-up fix.
     workers: 4
+    # Pin Kubernetes to the version the cluster already runs so
+    # 'ksail cluster update' doesn't roll nodes to ksail's newer default
+    # (currently 1.36.0), which Talos v1.12.4 rejects with
+    # "kubelet image is not valid: version of Kubernetes ... is too new".
+    # Talos v1.12.4 supports Kubernetes up to 1.35.x; bump this deliberately
+    # in lockstep with the Talos version rather than letting the default drift.
+    kubernetesVersion: v1.32.0
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
