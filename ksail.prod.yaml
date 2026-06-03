@@ -79,12 +79,7 @@ spec:
     metricsServer: Enabled
     policyEngine: Kyverno
     controlPlanes: 3
-    # Baseline workers — guaranteed minimum even if autoscaler is down.
-    # Longhorn requires dedicated Hetzner Cloud Volumes on static
-    # workers; autoscaler-created nodes are compute-only.
-    # The Cluster Autoscaler manages additional workers dynamically.
-    # Restored to 4 — unblocked by the kubernetesVersion pin below and the KSail >= 7.23.4 scale-up fix.
-    workers: 4
+    workers: 3
     # Pin Kubernetes deliberately so 'ksail cluster update' doesn't roll nodes
     # to ksail's newer default when that default outruns what the pinned Talos
     # version supports (rejected with "kubelet image is not valid: version of
