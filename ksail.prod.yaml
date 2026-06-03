@@ -53,10 +53,10 @@ spec:
     # Restored to 4 — unblocked by the kubernetesVersion pin below and the KSail >= 7.23.4 scale-up fix.
     workers: 4
     # Pin Kubernetes deliberately so 'ksail cluster update' doesn't roll nodes
-    # to ksail's newer default (currently 1.36.0), which Talos v1.12.4 rejects:
-    # "kubelet image is not valid: version of Kubernetes ... is too new".
-    # Talos v1.12.4 supports Kubernetes 1.30-1.35; bump in lockstep with Talos
-    # rather than letting the default drift.
+    # to ksail's newer default when that default outruns what the pinned Talos
+    # version supports (rejected with "kubelet image is not valid: version of
+    # Kubernetes ... is too new"). Talos v1.12.4 supports Kubernetes 1.30-1.35;
+    # bump in lockstep with Talos rather than letting the default drift.
     #
     # Bumped 1.32.0 -> 1.33.12 to enable in-place Pod resize: the
     # InPlacePodVerticalScaling feature gate is beta and ON by default from
