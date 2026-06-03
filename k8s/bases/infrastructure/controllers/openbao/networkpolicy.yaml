@@ -65,4 +65,14 @@ spec:
         - ports:
             - port: "3306"
               protocol: TCP
+    # Umami PostgreSQL — same pattern: the Database secrets engine connects to
+    # the CNPG cluster to validate database/config/umami-postgres and rotate the
+    # 'umami' static role (postgresql-database-plugin runs in-process here).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: umami
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
 
