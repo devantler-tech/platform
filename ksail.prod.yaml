@@ -62,7 +62,7 @@ spec:
     # from k8s 1.33) lets VPA -- already 1.6 with updateMode InPlaceOrRecreate
     # -- resize pods, including the kube-system datapath now under auto-vpa, in
     # place instead of evicting them. Upgraded one minor at a time
-    # (1.32 -> 1.33 -> 1.34); landed on 1.34 because 1.33 reached EOL
+    # (1.32 -> 1.33 -> 1.34); landed on 1.34 because 1.33 reaches EOL
     # 2026-06-28. Talos v1.12.4's ceiling is Kubernetes 1.35.
     kubernetesVersion: v1.34.8
     talos:
