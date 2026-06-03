@@ -8,18 +8,18 @@
   "assigneesFromCodeOwners": true,
   "minimumReleaseAge": "7 days",
   "flux": {
-    "fileMatch": [
-      "^k8s/.+\\.ya?ml$"
+    "managerFilePatterns": [
+      "/^k8s/.+\\.ya?ml$/"
     ]
   },
   "argocd": {
-    "fileMatch": [
-      "^k8s/.+\\.yaml$"
+    "managerFilePatterns": [
+      "/^k8s/.+\\.yaml$/"
     ]
   },
   "kubernetes": {
-    "fileMatch": [
-      "^k8s/.+\\.ya?ml$"
+    "managerFilePatterns": [
+      "/^k8s/.+\\.ya?ml$/"
     ]
   },
   "github-actions": {
@@ -29,8 +29,8 @@
     {
       "customType": "regex",
       "description": "Bump pinned CLI versions in workflows (Dependabot can't track curl-downloaded release assets). Matches any '# renovate: ...\\n<NAME>_VERSION: \"<ver>\"' pair — currently used for KSAIL_VERSION, COSIGN_VERSION, SYFT_VERSION, GITLEAKS_VERSION.",
-      "fileMatch": [
-        "^\\.github/workflows/.+\\.ya?ml$"
+      "managerFilePatterns": [
+        "/^\\.github/workflows/.+\\.ya?ml$/"
       ],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) extractVersion=(?<extractVersion>\\S+)\\s+[A-Z][A-Z0-9_]*_VERSION:\\s*\"(?<currentValue>[^\"]+)\""
