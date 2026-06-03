@@ -79,10 +79,15 @@ spec:
           enabled: false
     operator:
       replicas: ${cilium_replicas:=2}
+      # memory 256Mi -> 128Mi: live prod usage is 36-77Mi across both
+      # replicas (2026-06-03). 128Mi keeps the operator in Burstable QoS
+      # (request > 0 -- the BestEffort escape that matters) with ~1.7x
+      # headroom over the observed peak. The operator runs on the
+      # control-plane nodes, so this frees control-plane memory requests.
       resources:
         requests:
           cpu: 100m
-          memory: 256Mi
+          memory: 128Mi
       podDisruptionBudget:
         enabled: true
         minAvailable: 1
@@ -115,7 +120,13 @@ spec:
       resources:
         requests:
           cpu: 50m
-          memory: 128Mi
+          # memory 128Mi -> 64Mi: the standalone cilium-envoy DaemonSet uses
+          # only 17-29Mi per node in live prod (2026-06-03). 64Mi keeps it in
+          # Burstable QoS (still out of BestEffort, so it survives node memory
+          # pressure -- the protection this block exists for) with >2x headroom
+          # over peak, while freeing ~64Mi of reserved-unused request on every
+          # node (~256Mi across the workers, which sat at 98-99% memory requests).
+          memory: 64Mi
     # Transparent WireGuard encryption for all pod-to-pod and node-to-node
     # traffic.  KubeSpan (Talos-layer WireGuard between nodes) is not
     # enabled in this cluster, so without this setting inter-node pod
