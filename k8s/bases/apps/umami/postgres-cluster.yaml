@@ -29,9 +29,8 @@ spec:
       database: umami
       owner: umami
       postInitApplicationSQL:
-        # Umami 2.x+ uses gen_random_uuid() (built into PostgreSQL 13+); pgcrypto
-        # is created here as a harmless safeguard for older code paths and runs in
-        # the bootstrap superuser context (the app role cannot create extensions).
+        # Provision pgcrypto for Umami up front, in the bootstrap superuser
+        # context (the app role cannot CREATE EXTENSION). Harmless if unused.
         - CREATE EXTENSION IF NOT EXISTS pgcrypto
   resources:
     requests:

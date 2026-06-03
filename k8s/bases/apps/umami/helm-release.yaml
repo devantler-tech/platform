@@ -30,9 +30,10 @@ spec:
       automountServiceAccountToken: false
     umami:
       port: 3000
-      # Stable APP_SECRET from the SOPS-encrypted Secret (app-secret.enc.yaml).
-      # A fixed value keeps login sessions and the daily visitor-hash salt stable
-      # across chart upgrades (the chart otherwise auto-generates a fresh one).
+      # Stable APP_SECRET from OpenBao via External Secrets — the `umami-app`
+      # Secret produced by external-secret.yaml. A fixed value keeps login
+      # sessions and the daily visitor-hash salt stable across chart upgrades
+      # (the chart otherwise auto-generates a fresh one each release).
       existingSecret: umami-app
       existingSecretKey: app-secret
       # Privacy/quiet defaults: no phone-home telemetry or update checks.

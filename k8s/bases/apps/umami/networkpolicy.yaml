@@ -39,6 +39,16 @@ spec:
         - ports:
             - port: "9187"
               protocol: TCP
+    # OpenBao Database secrets engine: the OpenBao server connects to PostgreSQL
+    # to validate database/config/umami-postgres and rotate the 'umami' static
+    # role (the postgresql-database-plugin runs in-process in the OpenBao pod).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: openbao
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
   egress:
     # Intra-namespace (Umami -> DB)
     - toEndpoints:
