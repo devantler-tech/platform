@@ -17,12 +17,12 @@ For the production cluster:
 - [Cloudflare](https://www.cloudflare.com) — DNS (A/AAAA records pointed at the Hetzner Cloud Load Balancer) and Origin CA.
 - [Flux GitOps](https://fluxcd.io) - For managing the kubernetes applications and infrastructure declaratively.
 - [SOPS](https://getsops.io) and [Age](https://github.com/FiloSottile/age) - For encrypting the seed secrets that are committed to this repository (the `*.enc.yaml` files), allowing me to store them in git with confidence.
-- [OpenBao](https://openbao.org) and the [External Secrets Operator](https://external-secrets.io) - The runtime secret store. SOPS-decrypted seeds are pushed into OpenBao at bootstrap, and `ExternalSecret`s sync them into the namespaces that consume them. See [`docs/secret-rotation.md`](docs/secret-rotation.md) for the full secrets architecture.
+- [OpenBao](https://openbao.org) and the [External Secrets Operator](https://external-secrets.io) - The runtime secret store for most workloads. SOPS-decrypted seeds are pushed into OpenBao at bootstrap, and `ExternalSecret`s sync them into the namespaces that consume them. A few secrets (Dex and oauth2-proxy) are still read directly from the SOPS-encrypted bootstrap secrets via Flux `postBuild` substitution while the migration to OpenBao completes. See [`docs/secret-rotation.md`](docs/secret-rotation.md) for the full secrets architecture.
 
 ## Usage
 
 > [!IMPORTANT]
-> Secrets committed to this repo are encrypted at rest with SOPS + Age; at bootstrap they seed OpenBao, and the External Secrets Operator distributes them to workloads at runtime. If you want to run the platform locally, or in your own Hetzner project, you will need to:
+> Secrets committed to this repo are encrypted at rest with SOPS + Age. At bootstrap they seed OpenBao, and the External Secrets Operator distributes most of them to workloads at runtime; a few (Dex, oauth2-proxy) are still injected directly via Flux `postBuild` substitution while the OpenBao migration completes. If you want to run the platform locally, or in your own Hetzner project, you will need to:
 >
 > 1. Fork this repo
 > 2. Create your own Age keys
@@ -81,7 +81,7 @@ Cloud cluster running on Hetzner Cloud via KSail's native Hetzner provider. Depl
 
 ## Platform components
 
-A high-level inventory of what Flux reconciles onto the cluster. The manifests live under [`k8s/bases/infrastructure/`](k8s/bases/infrastructure) and [`k8s/bases/apps/`](k8s/bases/apps), with provider-specific pieces (Hetzner CCM/CSI, Longhorn, external-dns, …) under [`k8s/providers/`](k8s/providers).
+A high-level inventory of what Flux reconciles onto the cluster. The manifests live under [`k8s/bases/infrastructure/`](k8s/bases/infrastructure) and [`k8s/bases/apps/`](k8s/bases/apps), with provider-specific pieces (Hetzner CCM/CSI, Longhorn, external-dns, …) under [`k8s/providers/`](k8s/providers). The exact set is overlay-dependent: local/CI (docker) deploys the full base set, while the Hetzner/prod overlay opts out of a few controllers to save resources (noted inline below).
 
 **Infrastructure**
 
@@ -95,8 +95,8 @@ A high-level inventory of what Flux reconciles onto the cluster. The manifests l
 - **Autoscaling** — Cluster Autoscaler (nodes), Vertical Pod Autoscaler, KEDA + KEDA HTTP add-on; see [`docs/node-autoscaling.md`](docs/node-autoscaling.md)
 - **Observability** — kube-prometheus-stack (Prometheus, Grafana, Alertmanager), Loki (logs), Grafana Alloy (collection), OpenCost (cost)
 - **Backup / DR** — Velero with CloudNativePG backups; see [`docs/dr/`](docs/dr)
-- **Virtualization** — KubeVirt + CDI
-- **Testing** — Testkube
+- **Virtualization** — KubeVirt + CDI _(local/CI only; disabled on the Hetzner/prod overlay)_
+- **Testing** — Testkube _(local/CI only; not deployed to prod)_
 
 **Apps** ([`k8s/bases/apps/`](k8s/bases/apps))
 
