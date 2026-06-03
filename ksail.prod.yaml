@@ -37,38 +37,38 @@ spec:
     # rejects Price+Hetzner (and the autoscaler would crash on startup);
     # LeastWaste is the supported cost-targeting choice.
     #
-    # maxNodesTotal: 3 is the real ceiling — serverLimit defaults to 10 and
-    # controlPlanes(3) + workers(4) + autoscaler must stay <= it, leaving 3.
-    # Per-pool max is the same 3 so any single type can absorb the whole
+    # maxNodesTotal: 4 is the real ceiling — serverLimit defaults to 10 and
+    # controlPlanes(3) + workers(3) + autoscaler must stay <= it, leaving 4.
+    # Per-pool max is the same 4 so any single type can absorb the whole
     # budget; the global cap binds. To grow this, raise serverLimit too, and
     # only within the Hetzner project's actual server limit.
     autoscaler:
       node:
         enabled: true
         expander: LeastWaste
-        maxNodesTotal: 3
+        maxNodesTotal: 4
         scaleDownUnneededTime: "10m"
         pools:
           - name: autoscale-cx23
             serverType: cx23
             location: fsn1
             min: 0
-            max: 3
+            max: 4
           - name: autoscale-cx33
             serverType: cx33
             location: fsn1
             min: 0
-            max: 3
+            max: 4
           - name: autoscale-cx43
             serverType: cx43
             location: fsn1
             min: 0
-            max: 3
+            max: 4
           - name: autoscale-cx53
             serverType: cx53
             location: fsn1
             min: 0
-            max: 3
+            max: 4
     # These components are installed by ksail. There is a known race on
     # Hetzner clusters between ksail's metrics-server install and Flux's
     # kubelet-serving-cert-approver install (required because Talos
