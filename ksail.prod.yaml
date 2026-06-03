@@ -19,23 +19,56 @@ spec:
     # autoscaler.node.enabled is set. KSail installs, configures, and
     # reconciles the autoscaler — no Flux manifests needed. Initial
     # static node counts still apply on `cluster create`.
+    #
+    # Cost-optimized overflow: one pool per cost-optimized Hetzner x86
+    # shared-vCPU type (the CX line), so the autoscaler can pick the smallest
+    # *adequate* node for whatever can't schedule on the static workers. Sizes
+    # double cleanly per step (cx23 2c/4G → cx33 4c/8G → cx43 8c/16G →
+    # cx53 16c/32G; ~€4.99/€8.11/€14.99/€28.11 gross/mo in fsn1). All pools
+    # scale to zero (min: 0) so idle capacity costs nothing; the static
+    # workers are the guaranteed baseline and the only Longhorn storage nodes
+    # (autoscaler nodes are compute-only). CAX/ARM is cheaper but needs an ARM
+    # Talos image — not applicable to this x86 cluster.
+    #
+    # expander: LeastWaste — selects the node group leaving the least idle
+    # CPU/memory, i.e. the cheapest adequate type in this linearly-priced
+    # family. "Price" would be the direct cost optimizer, but the Hetzner
+    # cluster-autoscaler provider does not implement the pricing API, so KSail
+    # rejects Price+Hetzner (and the autoscaler would crash on startup);
+    # LeastWaste is the supported cost-targeting choice.
+    #
+    # maxNodesTotal: 3 is the real ceiling — serverLimit defaults to 10 and
+    # controlPlanes(3) + workers(4) + autoscaler must stay <= it, leaving 3.
+    # Per-pool max is the same 3 so any single type can absorb the whole
+    # budget; the global cap binds. To grow this, raise serverLimit too, and
+    # only within the Hetzner project's actual server limit.
     autoscaler:
       node:
         enabled: true
         expander: LeastWaste
-        maxNodesTotal: 10
+        maxNodesTotal: 3
         scaleDownUnneededTime: "10m"
         pools:
-          - name: autoscale-small
+          - name: autoscale-cx23
             serverType: cx23
             location: fsn1
             min: 0
-            max: 1
-          - name: autoscale-medium
+            max: 3
+          - name: autoscale-cx33
             serverType: cx33
             location: fsn1
             min: 0
-            max: 2
+            max: 3
+          - name: autoscale-cx43
+            serverType: cx43
+            location: fsn1
+            min: 0
+            max: 3
+          - name: autoscale-cx53
+            serverType: cx53
+            location: fsn1
+            min: 0
+            max: 3
     # These components are installed by ksail. There is a known race on
     # Hetzner clusters between ksail's metrics-server install and Flux's
     # kubelet-serving-cert-approver install (required because Talos
