@@ -74,6 +74,24 @@ spec:
                   periodSeconds: 5
                   timeoutSeconds: 3
                   failureThreshold: 12  # 60s grace beyond initial delay
+              # Once the startupProbe succeeds, liveness/readiness take over
+              # with the chart's tight timeoutSeconds: 1. When a replica lands
+              # on a CPU-pressured node its event loop is briefly starved and
+              # GET / can't answer within 1s, so liveness fails 3×10s and
+              # SIGTERMs an otherwise-healthy pod (observed in steady state:
+              # 4 restarts, exitCode 0 / Completed, 119Mi of 512Mi — not an
+              # OOMKill). Relax the timeout, and make liveness slower to act,
+              # so transient starvation doesn't restart a healthy pod; a
+              # genuinely hung container is still caught within ~60s.
+              - op: add
+                path: /spec/template/spec/containers/0/livenessProbe/timeoutSeconds
+                value: 5
+              - op: add
+                path: /spec/template/spec/containers/0/livenessProbe/failureThreshold
+                value: 6
+              - op: add
+                path: /spec/template/spec/containers/0/readinessProbe/timeoutSeconds
+                value: 5
           # Flicker fix: with replicaCount=2 and the chart's default ClusterIP
           # service, the Kubernetes widget's poll for node/cluster CPU/memory
           # round-robins between two pods that each maintain their own
