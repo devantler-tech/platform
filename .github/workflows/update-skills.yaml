@@ -1,4 +1,4 @@
-name: Update Copilot Skills
+name: Update Agent Skills
 on:
   workflow_dispatch:
   schedule:
@@ -11,11 +11,11 @@ concurrency:
 permissions: {}
 
 jobs:
-  update-copilot-skills:
+  update-agent-skills:
     permissions:
       contents: write
       pull-requests: write
-    uses: devantler-tech/reusable-workflows/.github/workflows/update-copilot-skills.yaml@d6c7133cb8cb13189b97993aeb3f4d120f27479d # v5.4.1
+    uses: devantler-tech/reusable-workflows/.github/workflows/update-agent-skills.yaml@d4d382168eeef3d08606ed7c6fb2671e3d4170fc # v5.5.2
     with:
       dir: .agents/skills
       # Create the update PR with a GitHub App token so it triggers this
