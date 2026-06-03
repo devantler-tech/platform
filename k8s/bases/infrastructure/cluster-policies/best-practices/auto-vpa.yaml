@@ -1,4 +1,20 @@
 # TODO: Upstream `auto-vpa.yaml` to Kyverno policies repository.
+#
+# kube-system is intentionally NOT excluded: its controllers (cilium,
+# cilium-envoy, spire-agent, coredns, metrics-server, hubble, hcloud
+# ccm/csi, tetragon, cluster-autoscaler) carry ~10Gi of hand-tuned request
+# floors that VPA can right-size to observed usage instead. Static
+# control-plane pods (kube-apiserver/etcd/scheduler/controller-manager) are
+# bare Pods, not Deployment/StatefulSet/DaemonSet, so they never match.
+#
+# EVICTION CAVEAT: the InPlacePodVerticalScaling feature gate is alpha and
+# off on this k8s 1.32 cluster, so updateMode InPlaceOrRecreate falls back
+# to Recreate -- VPA applies a recommendation by EVICTING the pod. For the
+# kube-system DaemonSets (cilium / spire-agent) that is a brief per-node
+# datapath blip as each pod restarts, one node at a time; spire-server
+# (StatefulSet) uses updateMode Initial and is never evicted. Enable
+# InPlacePodVerticalScaling (Talos kubelet + apiserver feature gate) to make
+# these resizes non-disruptive.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -10,7 +26,9 @@ metadata:
     policies.kyverno.io/subject: Deployment,StatefulSet,DaemonSet
     policies.kyverno.io/description: >-
       Generates a VerticalPodAutoscaler for every Deployment, StatefulSet,
-      and DaemonSet outside kube-system. VPA controls both CPU and memory
+      and DaemonSet in every namespace, including kube-system, so the
+      cluster's control-plane add-ons and datapath controllers are
+      right-sized to observed usage too. VPA controls both CPU and memory
       to ensure workloads do not over-request resources. KEDA-managed
       workloads use HTTP request rate (not CPU) for horizontal scaling,
       so VPA CPU management does not conflict.
@@ -21,10 +39,6 @@ spec:
         resources:
           kinds:
             - Deployment
-      exclude:
-        resources:
-          namespaces:
-            - kube-system
       generate:
         apiVersion: autoscaling.k8s.io/v1
         kind: VerticalPodAutoscaler
@@ -74,10 +88,6 @@ spec:
         resources:
           kinds:
             - StatefulSet
-      exclude:
-        resources:
-          namespaces:
-            - kube-system
       generate:
         apiVersion: autoscaling.k8s.io/v1
         kind: VerticalPodAutoscaler
@@ -133,10 +143,6 @@ spec:
         resources:
           kinds:
             - DaemonSet
-      exclude:
-        resources:
-          namespaces:
-            - kube-system
       generate:
         apiVersion: autoscaling.k8s.io/v1
         kind: VerticalPodAutoscaler
