@@ -35,6 +35,19 @@
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+) extractVersion=(?<extractVersion>\\S+)\\s+[A-Z][A-Z0-9_]*_VERSION:\\s*\"(?<currentValue>[^\"]+)\""
       ]
+    },
+    {
+      "customType": "regex",
+      "description": "Track the flux-operator OCI Helm chart version in its HelmRelease via the docker datasource. The built-in `flux` manager silently stopped proposing flux-operator bumps after 0.48.0 (2026-04-21) even though 0.49.0/0.50.0 published, letting the version drift from the chart KSail seeds at bootstrap. This regex manager tracks ghcr.io/controlplaneio-fluxcd/charts/flux-operator deterministically (same datasource that bumps Dockerfile FROM tags elsewhere) so it cannot silently drift again.",
+      "fileMatch": [
+        "^k8s/bases/infrastructure/controllers/flux-operator/helm-release\\.ya?ml$"
+      ],
+      "matchStrings": [
+        "chart:\\s*flux-operator\\s+version:\\s*(?<currentValue>\\S+)"
+      ],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "ghcr.io/controlplaneio-fluxcd/charts/flux-operator",
+      "versioningTemplate": "semver"
     }
   ],
   "minor": {
@@ -53,6 +66,17 @@
     "automerge": true
   },
   "packageRules": [
+    {
+      "description": "flux-operator is tracked by the dedicated regex customManager above (the built-in `flux` manager stalled on it). Disable the `flux` manager for this chart so the two managers cannot open duplicate PRs if the flux manager later resumes.",
+      "matchManagers": [
+        "flux"
+      ],
+      "matchPackageNames": [
+        "flux-operator",
+        "ghcr.io/controlplaneio-fluxcd/charts/flux-operator"
+      ],
+      "enabled": false
+    },
     {
       "description": "Security-critical controllers — labelled so security-driven bumps are visible in the PR feed. Automerge stays ON: CI (system-test on a real Talos+Docker cluster, kubescape NSA scan, gitleaks, zizmor, CodeQL) is the trust gate.",
       "matchManagers": [
