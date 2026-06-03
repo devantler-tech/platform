@@ -58,13 +58,13 @@ spec:
     # Kubernetes ... is too new"). Talos v1.12.4 supports Kubernetes 1.30-1.35;
     # bump in lockstep with Talos rather than letting the default drift.
     #
-    # Bumped 1.32.0 -> 1.33.12 to enable in-place Pod resize: the
-    # InPlacePodVerticalScaling feature gate is beta and ON by default from
-    # k8s 1.33, so VPA (already 1.6 with updateMode InPlaceOrRecreate) resizes
-    # pods -- including the kube-system datapath now under auto-vpa -- in place
-    # instead of evicting them. Upgrade one minor at a time (1.32 -> 1.33); a
-    # follow-up moves to 1.34 since 1.33 reaches EOL 2026-06-28.
-    kubernetesVersion: v1.33.12
+    # In-place Pod resize (InPlacePodVerticalScaling, beta and ON by default
+    # from k8s 1.33) lets VPA -- already 1.6 with updateMode InPlaceOrRecreate
+    # -- resize pods, including the kube-system datapath now under auto-vpa, in
+    # place instead of evicting them. Upgraded one minor at a time
+    # (1.32 -> 1.33 -> 1.34); landed on 1.34 because 1.33 reached EOL
+    # 2026-06-28. Talos v1.12.4's ceiling is Kubernetes 1.35.
+    kubernetesVersion: v1.34.8
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
