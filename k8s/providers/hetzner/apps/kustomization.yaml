@@ -10,14 +10,12 @@ patches:
       name: ascoachingogvaner
       namespace: ascoachingogvaner
     path: ascoachingogvaner/patches/kustomization-patch.yaml
-  # fleetdm disabled 2026-06-03 — see bases/apps/kustomization.yaml. This
-  # prod-only HelmRelease patch is parked until fleetdm is re-enabled; the
-  # patch file (fleetdm/patches/helm-release-patch.yaml) is retained.
-  # - target:
-  #     kind: HelmRelease
-  #     name: fleetdm
-  #     namespace: fleetdm
-  #   path: fleetdm/patches/helm-release-patch.yaml
+  # fleetdm disabled 2026-06-03 (see bases/apps/kustomization.yaml). Its
+  # prod-only HelmRelease patch (timeout + MySQL primary service address +
+  # hcloud storageClass) and the providers/hetzner/apps/fleetdm/ dir were
+  # removed with the app: an unreferenced patch fragment is schema-validated
+  # standalone by `ksail workload validate`, and a partial HelmRelease (no
+  # spec.interval) fails. Restore the patch from git history if re-enabling.
   - target:
       kind: HelmRelease
       name: headlamp
