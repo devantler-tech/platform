@@ -7,7 +7,7 @@ metadata:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: Umami
     gethomepage.dev/description: Privacy-first web analytics.
-    gethomepage.dev/group: Monitoring
+    gethomepage.dev/group: Analytics
     gethomepage.dev/icon: si-umami
     gethomepage.dev/href: https://analytics.${domain}
     gethomepage.dev/pod-selector: app.kubernetes.io/name=umami

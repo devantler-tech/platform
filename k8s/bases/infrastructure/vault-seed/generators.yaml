@@ -122,3 +122,15 @@ spec:
   symbols: 0
   noUpper: false
   allowRepeat: true
+---
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: umami-ascoachingogvaner-password
+  namespace: openbao
+spec:
+  length: 32
+  digits: 8
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
