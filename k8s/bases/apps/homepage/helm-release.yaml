@@ -114,6 +114,32 @@ spec:
   # https://github.com/M0NsTeRRR/helm-charts/blob/main/charts/homepage/values.yaml
   values:
     replicaCount: ${homepage_replicas:=2}
+    # Homepage is a single-threaded Next.js server: it idles near ~3m CPU but
+    # bursts hard on every load — server-rendering the page, polling ~14
+    # service statuses against kube-apiserver, and aggregating the cluster /
+    # node Kubernetes widget. With no explicit block it inherits the namespace
+    # LimitRange's default CPU limit of 500m, and auto-vpa (controlledValues:
+    # RequestsAndLimits) preserves that stingy default limit:request ratio, so
+    # the limit stays pinned near 500m and can never grow to absorb a burst.
+    # Measured result: the container was CFS-throttled in 35-60% of scheduled
+    # periods, starving the event loop — the "GET / can't answer within 1s"
+    # stall the probe tuning below was only working around, and the real cause
+    # of the dashboard feeling slow.
+    #
+    # Author resources explicitly (Kyverno add-resource-defaults uses +(key)
+    # anchors, so these win and stay scanner-visible). Pin the CPU request to
+    # the auto-vpa minAllowed floor (15m) on purpose: VPA keeps the request
+    # there, and because it preserves the authored limit:request ratio the
+    # generous 2-core limit survives its proportional scaling. CPU is
+    # compressible and the namespace ResourceQuota caps requests, not limits,
+    # so a 2-core ceiling reserves nothing while it idles.
+    resources:
+      requests:
+        cpu: 15m
+        memory: 192Mi
+      limits:
+        cpu: "2"
+        memory: 512Mi
     config:
       allowedHosts:
         - ${domain}
