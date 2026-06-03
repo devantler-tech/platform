@@ -17,11 +17,11 @@ KSail (static baseline)
 └── 3 static workers (cx33, 4 vCPU / 8 GB, guaranteed minimum, Longhorn storage nodes)
 
 Cluster Autoscaler (dynamic workers, managed by KSail)
-├── Pool: autoscale-cx23 → 0-1 × CX23 (2 vCPU, 4 GB)
-├── Pool: autoscale-cx33 → 0-1 × CX33 (4 vCPU, 8 GB)
-├── Pool: autoscale-cx43 → 0-1 × CX43 (8 vCPU, 16 GB)
-├── Pool: autoscale-cx53 → 0-1 × CX53 (16 vCPU, 32 GB)
-├── maxNodesTotal: 10 (6 base + up to 4 autoscaler nodes)
+├── Pool: autoscale-cx23 → 0-4 × CX23 (2 vCPU, 4 GB)
+├── Pool: autoscale-cx33 → 0-4 × CX33 (4 vCPU, 8 GB)
+├── Pool: autoscale-cx43 → 0-4 × CX43 (8 vCPU, 16 GB)
+├── Pool: autoscale-cx53 → 0-4 × CX53 (16 vCPU, 32 GB)
+├── maxNodesTotal: 10 (6 base + up to 4 autoscaler nodes — caps the total)
 └── Expander: LeastWaste
 ```
 
@@ -76,22 +76,22 @@ spec:
             serverType: cx23
             location: fsn1
             min: 0
-            max: 1
+            max: 4
           - name: autoscale-cx33
             serverType: cx33
             location: fsn1
             min: 0
-            max: 1
+            max: 4
           - name: autoscale-cx43
             serverType: cx43
             location: fsn1
             min: 0
-            max: 1
+            max: 4
           - name: autoscale-cx53
             serverType: cx53
             location: fsn1
             min: 0
-            max: 1
+            max: 4
 ```
 
 | Field | Default | Description |
@@ -108,12 +108,20 @@ spec:
 
 ### Cost guardrails
 
-- **Hard max per pool** — `pools[].max` caps each pool independently.
+- **Hard max per pool** — `pools[].max` caps each pool independently. Set to
+  `4` so any single CX type can serve a full burst (e.g. 4× cx23) instead of
+  forcing larger types; `maxNodesTotal` still caps the autoscaler **total** at
+  4, so this changes only the type distribution, never the node count.
 - **Hard max total** — `maxNodesTotal` caps the **total cluster node count**
-  (CPs + static workers + autoscaler workers). Set to `10` (3 CPs + 3
-  workers = 6 base, plus up to 4 autoscaler nodes — one per CX pool, each
-  capped at 1). It must stay ≥ the static baseline, or the autoscaler treats
-  the cluster as already full and never scales up.
+  (CPs + static workers + autoscaler workers). Set to `10` (3 CPs + 3 workers
+  = 6 base + up to 4 autoscaler nodes). It must stay ≥ the static baseline, or
+  the autoscaler treats the cluster as already full and never scales up. **This
+  is the real cap on autoscaler growth.**
+- **serverLimit** (`spec.provider.hetzner.serverLimit`) — a KSail
+  config-validation guard, **not** a runtime cap and not passed to the
+  autoscaler. KSail validates `CP + workers + min(maxNodesTotal, Σ pool.max) ≤
+  serverLimit`, so with per-pool `max: 4` it is set to `16` (`3 + 3 + min(10,
+  16)`). The live cluster never exceeds `maxNodesTotal` (10).
 - **Expander** — `LeastWaste` (current) picks the node group left with the
   least idle capacity after scheduling — the cheapest adequate type in a
   linearly-priced family. (`Price` is unsupported on Hetzner.)

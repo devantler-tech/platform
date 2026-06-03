@@ -38,13 +38,19 @@ spec:
     # LeastWaste is the supported cost-targeting choice.
     #
     # maxNodesTotal is the HARD CEILING ON TOTAL CLUSTER NODES (control-planes
-    # + static workers + autoscaler nodes): KSail passes it straight to the
-    # cluster-autoscaler --max-nodes-total, which counts EVERY node, so it
-    # must exceed the static baseline or scale-up is blocked outright. 10 =
-    # 6 static (3 control-planes + 3 workers) + up to 4 autoscaler nodes, and
-    # equals the Hetzner serverLimit (default 10). Each pool is capped at 1,
-    # so the 4 pools add at most 4 nodes; to grow headroom raise both
-    # maxNodesTotal and serverLimit together, within the Hetzner project limit.
+    # + static workers + autoscaler) — KSail passes it straight to the
+    # cluster-autoscaler --max-nodes-total, which counts EVERY node, so it must
+    # exceed the static baseline or scale-up is blocked outright. 10 = 6 static
+    # (3 control-planes + 3 workers) + up to 4 autoscaler nodes. THIS is the
+    # real cap on autoscaler growth (+4).
+    #
+    # Per-pool max is 4 (not 1): each CX type may supply up to 4 nodes, so a
+    # burst can be served entirely by the cheapest adequate type (e.g. 4x cx23)
+    # or any mix — maxNodesTotal still caps the autoscaler total at 4, so this
+    # only changes the type distribution, never the count. (serverLimit is
+    # raised to 16 purely to satisfy KSail's config validation, which sums
+    # min(maxNodesTotal, Σ pool.max) onto the static baseline; see provider
+    # block. To grow real capacity, raise maxNodesTotal within that limit.)
     autoscaler:
       node:
         enabled: true
@@ -56,22 +62,22 @@ spec:
             serverType: cx23
             location: fsn1
             min: 0
-            max: 1
+            max: 4
           - name: autoscale-cx33
             serverType: cx33
             location: fsn1
             min: 0
-            max: 1
+            max: 4
           - name: autoscale-cx43
             serverType: cx43
             location: fsn1
             min: 0
-            max: 1
+            max: 4
           - name: autoscale-cx53
             serverType: cx53
             location: fsn1
             min: 0
-            max: 1
+            max: 4
     # These components are installed by ksail. There is a known race on
     # Hetzner clusters between ksail's metrics-server install and Flux's
     # kubelet-serving-cert-approver install (required because Talos
@@ -119,6 +125,12 @@ spec:
       registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
   provider:
     hetzner:
+      # Config-validation guard ONLY (not a runtime cap; not passed to the
+      # autoscaler). KSail's check is controlPlanes + workers +
+      # min(maxNodesTotal, Σ pool.max) <= serverLimit = 3 + 3 + min(10, 16) =
+      # 16, so this must be >= 16 to accept per-pool max 4. The live cluster
+      # still never exceeds maxNodesTotal (10) — see the autoscaler block.
+      serverLimit: 16
       controlPlaneServerType: cx33
       workerServerType: cx33
       location: fsn1
