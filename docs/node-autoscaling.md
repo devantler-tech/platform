@@ -17,9 +17,11 @@ KSail (static baseline)
 └── 3 static workers (cx33, 4 vCPU / 8 GB, guaranteed minimum, Longhorn storage nodes)
 
 Cluster Autoscaler (dynamic workers, managed by KSail)
-├── Pool: autoscale-small  → 0-1 × CX23 (2 vCPU, 4 GB)
-├── Pool: autoscale-medium → 0-2 × CX33 (4 vCPU, 8 GB)
-├── maxNodesTotal: 10 (3 CPs + 3 workers + headroom for autoscaler nodes)
+├── Pool: autoscale-cx23 → 0-4 × CX23 (2 vCPU, 4 GB)
+├── Pool: autoscale-cx33 → 0-4 × CX33 (4 vCPU, 8 GB)
+├── Pool: autoscale-cx43 → 0-4 × CX43 (8 vCPU, 16 GB)
+├── Pool: autoscale-cx53 → 0-4 × CX53 (16 vCPU, 32 GB)
+├── maxNodesTotal: 10 (total cluster nodes incl. baseline: 6 static + 4 autoscaler)
 └── Expander: LeastWaste
 ```
 
@@ -28,8 +30,10 @@ Cluster Autoscaler (dynamic workers, managed by KSail)
   configurable cooldown.
 - **Vertical scaling** — multiple node pools with different server types.
   The `LeastWaste` expander picks the pool left with the least idle CPU and
-  memory after scheduling the pending pod (`Price`, which biases toward the
-  cheapest pool, is also available). See
+  memory after scheduling the pending pod — the cheapest adequate type in a
+  linearly-priced family. (`Price` is **not supported on Hetzner**: the
+  cluster-autoscaler hcloud provider implements no pricing API, so KSail
+  rejects it and the autoscaler crashes on startup.) See
   [cluster-autoscaler FAQ](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md).
 - **KSail integration** — KSail installs the Cluster Autoscaler Helm chart,
   generates the worker config secret (`cluster-autoscaler-config`), and
@@ -68,23 +72,33 @@ spec:
         maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
         pools:
-          - name: autoscale-small
+          - name: autoscale-cx23
             serverType: cx23
             location: fsn1
             min: 0
-            max: 1
-          - name: autoscale-medium
+            max: 4
+          - name: autoscale-cx33
             serverType: cx33
             location: fsn1
             min: 0
-            max: 2
+            max: 4
+          - name: autoscale-cx43
+            serverType: cx43
+            location: fsn1
+            min: 0
+            max: 4
+          - name: autoscale-cx53
+            serverType: cx53
+            location: fsn1
+            min: 0
+            max: 4
 ```
 
 | Field | Default | Description |
 |-------|---------|-------------|
 | `enabled` | `false` | Enable/disable node autoscaling |
-| `expander` | `LeastWaste` | Node selection strategy: `Price`, `LeastWaste`, `LeastNodes`, `Random` |
-| `maxNodesTotal` | `0` (unlimited) | Hard ceiling on total cluster nodes (all types) |
+| `expander` | `LeastWaste` | Node selection strategy: `LeastWaste`, `LeastNodes`, `Random` (`Price` is unsupported on Hetzner — no pricing API) |
+| `maxNodesTotal` | `0` (unlimited) | Hard ceiling on total cluster nodes, including the static baseline (see [ksail#5017](https://github.com/devantler-tech/ksail/issues/5017)) |
 | `scaleDownUnneededTime` | `10m` | Time before an underutilized node is eligible for removal |
 | `pools[].name` | — | DNS-1123 pool identifier |
 | `pools[].serverType` | — | Hetzner server type (e.g., `cx23`, `cx33`) |
@@ -94,14 +108,24 @@ spec:
 
 ### Cost guardrails
 
-- **Hard max per pool** — `pools[].max` caps each pool independently.
-- **Hard max total** — `maxNodesTotal` caps the **total cluster node count**
-  (CPs + static workers + autoscaler workers). Set to `10` (3 CPs + 3
-  workers = 6 base, plus up to 3 autoscaler nodes from the current pool caps
-  of 1 small + 2 medium).
+- **Hard max per pool** — `pools[].max` caps each pool independently. Set to
+  `4` so any single CX type can serve a full burst (e.g. 4× cx23) instead of
+  forcing larger types; the `maxNodesTotal` total ceiling still caps the
+  autoscaler at 4 (`10 − 6` baseline), so this changes only the type
+  distribution, never the node count.
+- **Total node ceiling** — `maxNodesTotal` caps the **total cluster node
+  count, including** the static baseline. Set to `10` (6 static + up to 4
+  autoscaler). It is passed straight to cluster-autoscaler's
+  `--max-nodes-total`, so the runtime already enforces this total.
+- **serverLimit** (`spec.provider.hetzner.serverLimit`) — the Hetzner account
+  hard cap (`10`). Under the in-progress KSail change
+  ([ksail#5017](https://github.com/devantler-tech/ksail/issues/5017)) the
+  autoscaler validation becomes `maxNodesTotal ≤ serverLimit` (`10 ≤ 10`);
+  until it ships, the old validation (`CP + workers + min(maxNodesTotal, Σ
+  pool.max)`) rejects this config, so the KSail change must land first.
 - **Expander** — `LeastWaste` (current) picks the node group left with the
-  least idle capacity after scheduling; `Price` instead picks the cheapest
-  eligible group.
+  least idle capacity after scheduling — the cheapest adequate type in a
+  linearly-priced family. (`Price` is unsupported on Hetzner.)
 - **Scale-down** — underutilized nodes are removed after 10 minutes.
 
 ### Adding more pools

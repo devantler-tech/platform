@@ -185,8 +185,8 @@ spec:
                     cpu: "15m"
                     memory: "64Mi"
                   # Lower upper bound than Deployments/StatefulSets: a DaemonSet
-                  # pod must schedule on EVERY node, including autoscale-small
-                  # cx23 workers (2 vCPU / 4 GB). Bound it to fit a cx23 next to
+                  # pod must schedule on EVERY node, including autoscale-cx23
+                  # workers (2 vCPU / 4 GB). Bound it to fit a cx23 next to
                   # the other per-node agents; this still covers the heaviest
                   # auto-VPA'd DaemonSet observed (kubescape node-agent ~0.7Gi).
                   maxAllowed:
