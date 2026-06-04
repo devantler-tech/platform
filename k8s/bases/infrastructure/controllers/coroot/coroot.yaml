@@ -8,10 +8,9 @@ metadata:
   name: coroot
   namespace: coroot
 spec:
-  # Pin the Coroot app version so component upgrades stay deliberate (Renovate
-  # bumps the operator HelmRelease; bump this in lockstep). Without a pin the
-  # operator tracks latest, which would upgrade outside Flux's control.
-  version: "1.14.3"
+  # NB: the Coroot app version is managed by the operator (pin via
+  # spec.communityEdition.image if ever needed) — there is no spec.version
+  # field. The operator HelmRelease itself stays Flux/Renovate-pinned.
 
   # CE has no native OIDC/SSO (Enterprise only), so the UI is fronted by the
   # existing oauth2-proxy (Dex) via httproute.yaml — exactly how Prometheus /
