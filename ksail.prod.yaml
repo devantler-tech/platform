@@ -37,25 +37,25 @@ spec:
     # rejects Price+Hetzner (and the autoscaler would crash on startup);
     # LeastWaste is the supported cost-targeting choice.
     #
-    # maxNodesTotal is the autoscaler-only budget: the max number of nodes the
-    # autoscaler may ADD, excluding the static baseline. 4 = Hetzner account cap
-    # (10) - 6 static (3 control-planes + 3 workers). Each pool max is also 4,
-    # so any single CX type can fill the whole budget (e.g. 4x cx23) or any mix;
-    # the budget caps the autoscaler total at 4 regardless of type. Matches
-    # KSail's config validation: controlPlanes + workers + min(maxNodesTotal,
-    # Σ pool.max) <= serverLimit (3 + 3 + 4 = 10).
+    # maxNodesTotal is the HARD CEILING ON TOTAL CLUSTER NODES, INCLUDING the
+    # static baseline. 10 = the Hetzner account cap: 6 static (3 control-planes
+    # + 3 workers) + up to 4 autoscaler nodes. KSail passes it to
+    # cluster-autoscaler --max-nodes-total, which counts every node, so this
+    # total framing already matches the runtime. Each pool max is 4, so any
+    # single CX type can fill the 4-node autoscaler headroom (or any mix); the
+    # cluster total stays <= 10.
     #
-    # ⚠️ Upstream bug ksail#5017: KSail currently passes maxNodesTotal straight
-    # to cluster-autoscaler's --max-nodes-total, which counts EVERY node
-    # (baseline + autoscaler) — so until that fix lands the runtime sees 4 < 6
-    # static and refuses to scale. The intended value (4) is set here in
-    # preparation for the fix; the autoscaler is in any case currently blocked
-    # by the user_data limit (ksail#5015), so this is not a new regression.
+    # NB KSail's config validation is being changed (ksail#5017) to expect
+    # maxNodesTotal as this total (validate maxNodesTotal <= serverLimit). Until
+    # that ships, the old validation computes controlPlanes + workers +
+    # min(maxNodesTotal, Σ pool.max) = 3 + 3 + 10 = 16 and would reject this, so
+    # the KSail change must land before this deploys. (Scale-up is in any case
+    # currently blocked by the user_data limit, ksail#5015.)
     autoscaler:
       node:
         enabled: true
         expander: LeastWaste
-        maxNodesTotal: 4
+        maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
         pools:
           - name: autoscale-cx23
@@ -125,9 +125,9 @@ spec:
       registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
   provider:
     hetzner:
-      # Hetzner account hard cap: at most 10 servers total. Doubles as KSail's
-      # config-validation guard: controlPlanes + workers + min(maxNodesTotal,
-      # Σ pool.max) <= serverLimit, i.e. 3 + 3 + min(4, 16) = 10.
+      # Hetzner account hard cap: at most 10 servers total. Under the in-progress
+      # KSail change (ksail#5017) the autoscaler validation becomes
+      # maxNodesTotal <= serverLimit (10 <= 10). See the autoscaler block.
       serverLimit: 10
       controlPlaneServerType: cx33
       workerServerType: cx33
