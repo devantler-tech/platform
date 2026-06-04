@@ -11,12 +11,19 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: coroot
-    # The eBPF node-agent runs with host networking on every node; its
-    # telemetry push to the in-cluster Coroot/ClickHouse Services appears as
-    # the host / remote-node entity rather than a coroot-namespace endpoint.
+    # The eBPF node-agent runs with host networking on every node, so its
+    # telemetry push appears as the host / remote-node entity rather than a
+    # coroot-namespace endpoint. It pushes everything (metrics, logs, traces,
+    # profiles) to the Coroot app's /v1/* endpoints on :8080 only — it does not
+    # reach Prometheus or ClickHouse directly (the app fans those out
+    # intra-namespace), so this is scoped to :8080 for least privilege.
     - fromEntities:
         - host
         - remote-node
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
     # auth-proxy (oauth2-proxy SSO) reaches the Coroot UI after authentication.
     - fromEndpoints:
         - matchLabels:
