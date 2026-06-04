@@ -64,9 +64,9 @@ template func) to the **exact Slack incoming-webhook the prometheus stack used**
 
 The project's agent API key (`coroot-api-key`) is **created automatically by the
 operator** (generated in-cluster, no seed), so describing the project doesn't
-break agent telemetry. Prod-only: local/CI has no real webhook — and its
-placeholder would fail the CRD's `https://` URL validation — so it stays quiet by
-design, exactly as the old Alertmanager did.
+break agent telemetry. This lives only in the hetzner overlay — the base Coroot
+CR has no `projects`/webhook integration — so local/CI has nothing to send and
+stays quiet by design, exactly as the old Alertmanager did.
 
 ### Changed from the old stack
 

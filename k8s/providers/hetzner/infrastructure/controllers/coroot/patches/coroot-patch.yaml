@@ -38,9 +38,10 @@ spec:
   # exact Slack incoming-webhook the prometheus stack used:
   # ${alertmanager_webhook_url}, injected by Flux from the per-cluster
   # variables-cluster Secret (same value, same source as before -- nothing to
-  # fill in). Wired in the hetzner overlay only: local/CI has no real webhook
-  # (its placeholder would also fail the CRD's https:// url validation) and
-  # stays quiet by design, exactly as the old Alertmanager did.
+  # fill in). This lives only in the hetzner overlay: the base Coroot CR has no
+  # `projects`/webhook integration at all, so local/CI (docker overlay) has
+  # nothing to send and stays quiet by design, exactly as the old Alertmanager
+  # did. Slack alerting is a prod-only concern.
   #
   # Describing a project re-homes the bundled agents onto its API key, but the
   # keySecret is created automatically by the operator (generated in-cluster,
