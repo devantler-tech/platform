@@ -8,7 +8,7 @@ metadata:
     helm.toolkit.fluxcd.io/crds: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
-  interval: 30m
+  interval: 10m0s
   install:
     crds: CreateReplace
     remediation:
