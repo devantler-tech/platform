@@ -32,27 +32,34 @@ spec:
   logsTTL: 7d
   tracesTTL: 7d
   profilesTTL: 7d
-  # --- Slack alerting --------------------------------------------------------
-  # Coroot CE configures notification channels per project. The simplest path
-  # is the UI once, post-deploy: Project Settings -> Integrations -> Slack,
-  # paste a Bot User OAuth token (xoxb-…) + "#platform-alerts"; Coroot persists
-  # it in its own (now durable) storage. Coroot's built-in SLO + auto-inspection
-  # alerts (node down, OOM, crashloop, disk-filling, app latency/errors) then
-  # ship to Slack. The dead-man's-switch is the coroot-heartbeat CronJob.
+  # --- Slack alerting (fully declarative, prod-only) --------------------------
+  # Coroot CE has no pre-fillable bot-token Slack integration, but its generic
+  # *webhook* integration POSTs a templated body to any URL -- so we reuse the
+  # exact Slack incoming-webhook the prometheus stack used:
+  # ${alertmanager_webhook_url}, injected by Flux from the per-cluster
+  # variables-cluster Secret (same value, same source as before -- nothing to
+  # fill in). Wired in the hetzner overlay only: local/CI has no real webhook
+  # (its placeholder would also fail the CRD's https:// url validation) and
+  # stays quiet by design, exactly as the old Alertmanager did.
   #
-  # To manage Slack as code instead, seed the bot token into OpenBao
-  # (infrastructure/monitoring/coroot), add a `coroot-slack` ExternalSecret in
-  # the coroot namespace, and uncomment — validate on a live cluster first, as
-  # describing `projects` re-wires the bundled agents to this project's key:
-  #
-  # projects:
-  #   - name: platform
-  #     apiKeys:
-  #       - key: <in-cluster ingest key>   # in-cluster only; NetworkPolicy-isolated
-  #     notificationIntegrations:
-  #       slack:
-  #         tokenSecret:
-  #           name: coroot-slack
-  #           key: token
-  #         defaultChannel: "#platform-alerts"
-  #         incidents: true
+  # Describing a project re-homes the bundled agents onto its API key, but the
+  # keySecret is created automatically by the operator (generated in-cluster,
+  # no seed), so telemetry keeps flowing with zero manual steps.
+  projects:
+    - name: platform
+      apiKeys:
+        - keySecret:
+            name: coroot-api-key
+            key: key
+          description: bundled node-agent + cluster-agent
+      notificationIntegrations:
+        webhook:
+          url: ${alertmanager_webhook_url:=https://example.invalid/no-slack-configured}
+          incidents: true
+          alerts: true
+          # Slack-mrkdwn payloads. `json` (json.Marshal) escapes each
+          # interpolated field so quotes/newlines can't break the JSON body.
+          incidentTemplate: |
+            {"text": {{ if eq .Status "OK" }}{{ json (printf ":white_check_mark: <%s|%s/%s> incident resolved" .URL .Application.Namespace .Application.Name) }}{{ else }}{{ json (printf ":fire: %s: <%s|%s/%s> is not meeting its SLOs\n%s" .Status .URL .Application.Namespace .Application.Name .RCASummary) }}{{ end }}}
+          alertTemplate: |
+            {"text": {{ if eq .Status "OK" }}{{ json (printf ":white_check_mark: %s resolved - <%s|%s/%s>" .RuleName .URL .Application.Namespace .Application.Name) }}{{ else }}{{ json (printf ":rotating_light: [%s] %s - <%s|%s/%s>\n%s" .Severity .RuleName .URL .Application.Namespace .Application.Name .Summary) }}{{ end }}}

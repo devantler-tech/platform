@@ -54,16 +54,19 @@ OOM kills, container restarts/crashloops, disk filling up, deployment issues,
 CPU/memory saturation. These deliver to Slack (and PagerDuty / Teams / Opsgenie
 / webhook).
 
-Configure Slack once, post-deploy, in the UI: **Project Settings →
-Integrations → Slack**, paste a Slack **Bot User OAuth token** (`xoxb-…`) and
-`#platform-alerts`. Coroot persists it in its own (durable, in prod) storage.
-Local/CI: leave it unset → no Slack, quiet by design.
+Slack is wired **fully declaratively** in the hetzner overlay — no UI step, no
+token to paste. Coroot CE has no pre-fillable bot-token integration, so its
+generic **webhook** integration is used instead: it POSTs a Slack-mrkdwn payload
+(rendered from `incidentTemplate` / `alertTemplate`, JSON-escaped via the `json`
+template func) to the **exact Slack incoming-webhook the prometheus stack used** —
+`${alertmanager_webhook_url}`, injected by Flux from the per-cluster
+`variables-cluster` Secret. Nothing new to set; the value is inherited.
 
-> To manage Slack as code instead, seed the bot token into OpenBao and add a
-> `coroot-slack` ExternalSecret + `projects[].notificationIntegrations.slack`
-> block in the hetzner `coroot-patch.yaml` (a commented template is there).
-> Validate on a live cluster first — describing `projects` re-wires the bundled
-> agents to that project's API key.
+The project's agent API key (`coroot-api-key`) is **created automatically by the
+operator** (generated in-cluster, no seed), so describing the project doesn't
+break agent telemetry. Prod-only: local/CI has no real webhook — and its
+placeholder would fail the CRD's `https://` URL validation — so it stays quiet by
+design, exactly as the old Alertmanager did.
 
 ### Changed from the old stack
 
@@ -102,25 +105,31 @@ schedule backs up to R2 every day (`includedNamespaces: ["*"]`, Kopia
 fs-backup). Restore is the standard Velero flow in [runbook.md](./runbook.md);
 backups are filesystem-level and crash-consistent, fine for a 24 h RPO.
 
-## Per-environment setup (manual steps)
+## Per-environment setup
 
-1. **Heartbeat URL** — SOPS-encrypted, in the per-cluster
-   `variables-cluster-secret.enc.yaml` (under `bootstrap/`), read by the
-   heartbeat CronJob via Flux `substituteFrom`:
+**No new setup** — both values are inherited from the previous stack, already
+present in the per-cluster `variables-cluster-secret.enc.yaml` (under
+`bootstrap/`) and injected by Flux `substituteFrom`:
 
-   ```bash
-   sops --set '["stringData"]["alertmanager_heartbeat_url"] "https://hc-ping.com/<uuid>"' \
-     k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
-   ```
+- `alertmanager_webhook_url` — Slack incoming-webhook, reused by Coroot's
+  webhook integration (prod-only).
+- `alertmanager_heartbeat_url` — external heartbeat monitor, reused by the
+  `coroot-heartbeat` CronJob.
 
-2. **Slack** — create a Slack App with a Bot User OAuth token, invite it to
-   `#platform-alerts`, and paste the token in the Coroot UI (Project Settings →
-   Integrations → Slack). No SOPS step in the default (UI) path.
+| Env   | `alertmanager_webhook_url`        | `alertmanager_heartbeat_url`     |
+| ----- | --------------------------------- | -------------------------------- |
+| local | placeholder (Slack stays quiet)   | unset → invalid (no heartbeat)   |
+| prod  | Slack `#platform-alerts` webhook  | healthchecks.io ping URL         |
 
-| Env   | Slack                          | `alertmanager_heartbeat_url`     |
-| ----- | ------------------------------ | -------------------------------- |
-| local | unset (quiet)                  | unset → invalid (no heartbeat)   |
-| prod  | bot token via Coroot UI        | healthchecks.io ping URL         |
+To change either, `sops --set` it in the prod secret, e.g.:
+
+```bash
+sops --set '["stringData"]["alertmanager_heartbeat_url"] "https://hc-ping.com/<uuid>"' \
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
+```
+
+Recommended heartbeat monitor: [healthchecks.io](https://healthchecks.io) — a
+~5 min period / ~10 min grace check with its Slack integration connected.
 
 ## On-call: inspect
 
