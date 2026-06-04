@@ -33,12 +33,15 @@ data:
     # Layout order also controls render order on the page. Groups not listed
     # here still appear (Homepage falls back to alphabetical) but get a generic
     # icon — keep this in sync with the gethomepage.dev/group annotations on
-    # the HTTPRoutes under k8s/bases/apps/** and the service entries below.
+    # the HTTPRoutes under k8s/bases/apps/** and k8s/**/infrastructure/** (incl.
+    # provider overlays, e.g. Longhorn on Hetzner) and the service entries below.
     layout:
       Kubernetes:
         icon: si-talos-#FF7300
       Observability:
         icon: si-grafana
+      Storage:
+        icon: mdi-harddisk
       Security:
         icon: mdi-shield-lock
       Diagnostics:

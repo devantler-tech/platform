@@ -56,6 +56,16 @@ spec:
         - ports:
             - port: "9090"
               protocol: TCP
+    # Longhorn UI upstream (Hetzner-only). longhorn-frontend forwards to the
+    # longhorn-ui pod on container port 8000; inert on local/CI where the
+    # longhorn-system namespace is absent.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: longhorn-system
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:

@@ -37,6 +37,15 @@ data:
           rule: "Host(`opencost.${domain}`)"
           entryPoints: ["web"]
           service: opencost
+        # Hetzner-only: Longhorn is deployed solely on prod. On local/CI the
+        # backend (longhorn-frontend.longhorn-system) does not exist, but this
+        # router is inert there -- no HTTPRoute sends longhorn.${domain} to
+        # oauth2-proxy, so it is never matched (matches how base policies
+        # already scope the prod-only longhorn-system namespace).
+        longhorn:
+          rule: "Host(`longhorn.${domain}`)"
+          entryPoints: ["web"]
+          service: longhorn
       services:
         homepage:
           loadBalancer:
@@ -58,3 +67,7 @@ data:
           loadBalancer:
             servers:
               - url: "http://opencost.opencost.svc.cluster.local:9090"
+        longhorn:
+          loadBalancer:
+            servers:
+              - url: "http://longhorn-frontend.longhorn-system.svc.cluster.local:80"
