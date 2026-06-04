@@ -5,7 +5,7 @@ metadata:
   # The bootstrap layer owns cluster-foundational resources that must exist
   # BEFORE the infrastructure controllers reconcile: substitution variables
   # (variables-base / variables-cluster) and cluster-scoped PriorityClasses
-  # (e.g. platform-critical, which kube-prometheus-stack references). Everything
+  # (e.g. platform-critical, which Coroot's node-agent references). Everything
   # else dependsOn this (directly or transitively), so its contents are applied
   # and ready first — which is what keeps helm-controller from rolling pods that
   # reference a PriorityClass before that class exists.

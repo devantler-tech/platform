@@ -15,8 +15,8 @@ spec:
   dependsOn:
     # The bootstrap layer applies cluster PriorityClasses (e.g. platform-critical)
     # and substitution variables; it must be ready before these controllers
-    # reconcile, since e.g. kube-prometheus-stack references platform-critical and
-    # helm-controller would otherwise roll its pods before the class exists.
+    # reconcile, since e.g. Coroot's node-agent references platform-critical and
+    # the operator would otherwise roll its pods before the class exists.
     - name: bootstrap
   decryption:
     provider: sops

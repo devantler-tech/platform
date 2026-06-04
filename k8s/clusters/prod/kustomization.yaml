@@ -16,9 +16,9 @@ patches:
       data:
         cluster_name: prod
         provider: hetzner
-  # Prod has heavier components (Longhorn, etc.) that need more time to
-  # reconcile than the 3m base timeout allows. kube-prometheus-stack has a
-  # 15m HelmRelease timeout itself; adding margin gives the full chain
+  # Prod has heavier components (Longhorn, Coroot's operator + ClickHouse +
+  # Prometheus, etc.) that need more time to reconcile than the 3m base
+  # timeout allows; adding margin gives the full chain
   # (infrastructure-controllers → infrastructure → apps) room to complete
   # within the ksail connection.timeout (30m).
   - patch: |

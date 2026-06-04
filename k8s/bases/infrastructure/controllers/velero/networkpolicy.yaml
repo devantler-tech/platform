@@ -5,15 +5,6 @@ metadata:
   namespace: velero
 spec:
   endpointSelector: {}
-  ingress:
-    # Metrics scraping
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
-      toPorts:
-        - ports:
-            - port: "8085"
-              protocol: TCP
   egress:
     # Kube API for backup operations
     - toEntities:

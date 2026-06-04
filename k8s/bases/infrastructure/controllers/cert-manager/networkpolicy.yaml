@@ -17,14 +17,6 @@ spec:
               protocol: TCP
             - port: "6443"
               protocol: TCP
-    # Metrics scraping from monitoring
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
-      toPorts:
-        - ports:
-            - port: "9402"
-              protocol: TCP
   egress:
     # ACME challenges / CA communication
     - toEntities:

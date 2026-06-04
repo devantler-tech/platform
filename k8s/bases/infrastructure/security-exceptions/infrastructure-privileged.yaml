@@ -3,7 +3,7 @@
 # Cilium (CNI) needs: privileged, hostPath, hostNetwork, hostPID, NET_ADMIN, SYS_ADMIN
 # Longhorn (storage) needs: privileged, hostPath, hostPID
 # Velero node-agent (backup) needs: hostPath, privileged
-# Prometheus node-exporter (monitoring) needs: hostPath, hostNetwork, hostPID
+# Coroot node-agent (coroot) needs: privileged, hostPath, hostPID for eBPF
 # SPIRE agent (identity) needs: hostPath, hostPID
 # KubeVirt (VM hosting) needs: privileged, hostPath, hostPID, NET_ADMIN
 # CDI (container disk images) needs: privileged for disk operations
@@ -13,8 +13,8 @@ metadata:
   name: infrastructure-privileged
 spec:
   reason: >-
-    CNI (Cilium), distributed storage (Longhorn), node monitoring
-    (Prometheus node-exporter), identity (SPIRE agent), backup
+    CNI (Cilium), distributed storage (Longhorn), node telemetry
+    (Coroot node-agent), identity (SPIRE agent), backup
     (Velero node-agent), and virtualisation (KubeVirt, CDI) require
     host-level access by design.
   posture:
@@ -48,7 +48,7 @@ spec:
           values:
             - kube-system
             - longhorn-system
-            - monitoring
+            - coroot
             - velero
             - kubevirt
             - cdi

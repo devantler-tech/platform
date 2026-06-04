@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: coroot
+  labels:
+    # Coroot's node-agent DaemonSet uses eBPF + hostPath/hostPID to collect
+    # metrics, logs, traces and profiles from every node — it requires
+    # privileged PSS, exactly like the prometheus node-exporter it replaces.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest

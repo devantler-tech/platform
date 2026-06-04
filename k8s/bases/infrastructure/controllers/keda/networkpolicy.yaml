@@ -44,10 +44,6 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: keda
-    # Metrics scraping
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
   egress:
     # Kube API for watching scalers
     - toEntities:
@@ -91,14 +87,6 @@ spec:
       toPorts:
         - ports:
             - port: "8081"
-              protocol: TCP
-    # Prometheus for metrics-based scaling
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
-      toPorts:
-        - ports:
-            - port: "9090"
               protocol: TCP
     # DNS resolution
     - toEndpoints:

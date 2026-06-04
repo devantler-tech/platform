@@ -1,183 +1,163 @@
-# Observability
+# Observability & Alerting
 
-`kube-prometheus-stack` (Prometheus + Alertmanager + node-exporter +
-kube-state-metrics + Grafana) plus **Loki** (logs), **Alloy** (log
-shipper) and **OpenCost** (cost), running per cluster. Self-hosted, no
-SaaS metrics tier. The stack is production-hardened along four axes:
+**Coroot** (Community Edition, fully self-hosted) is the single observability
+tool — metrics, logs, traces, continuous profiling, a service map, predefined
+dashboards/inspections and SLO-based alerting, all out of the box — plus
+**OpenCost** (cost), running per cluster. No SaaS tier, no remote-write.
 
-1. **Alerts go to Slack** via Alertmanager's native `slack_configs`.
-2. **A dead-man's-switch** (the always-firing `Watchdog` alert) is pushed
-   to an external heartbeat monitor — the one failure mode in-cluster
-   alerting can never cover (the whole cluster being down).
-3. **State is persistent** — Prometheus, Alertmanager and Loki use Hetzner
-   Cloud block volumes in prod, and Velero ships the `monitoring`
-   namespace to R2 daily (24 h RPO).
-4. **Everything is reachable** behind oauth2-proxy SSO: Grafana,
-   Prometheus, Alertmanager and OpenCost.
+It replaces the previous `kube-prometheus-stack` + Loki + Alloy assembly: one
+operator and one custom resource collapse Prometheus, Grafana, Alertmanager,
+node-exporter, kube-state-metrics, the log store and the log shipper into a
+single eBPF-based stack.
 
-## Components
+## Architecture
 
-| Component          | Role                                                | Persistence (prod)        |
-| ------------------ | --------------------------------------------------- | ------------------------- |
-| Prometheus         | Metrics + alert evaluation, 14 d / 5 GiB retention  | `hcloud` PVC, 20 Gi       |
-| Alertmanager       | Routing, grouping, silences (2 replicas, gossiped)  | `hcloud` PVC, 2 Gi        |
-| node-exporter      | Node metrics (DaemonSet)                            | n/a                       |
-| kube-state-metrics | Kubernetes object metrics                           | n/a                       |
-| Grafana            | Dashboards + log exploration (Prometheus + Loki DS) | ephemeral (provisioned)   |
-| Loki               | Log store, single-binary, 7 d retention             | `hcloud` PVC, 10 Gi       |
-| Alloy              | Per-node log shipper → Loki (DaemonSet)             | n/a                       |
-| OpenCost           | Cost allocation against Prometheus                  | n/a                       |
+The `coroot-operator` HelmRelease installs the operator + the `Coroot` CRD; the
+`Coroot` custom resource (`coroot.yaml`) is reconciled into the workloads:
 
-Local/CI runs the same stack with Prometheus and Alertmanager on
-emptyDir — losing those on a restart is fine there. Loki is the lone
-exception: the chart's `persistence.enabled: false` crashes the
-container (no `/var/loki` mount under a read-only root), so the base
-attaches a small 5Gi PVC against the cluster's default storage class,
-which on docker/CI is local-path (host directory, recycled with the
-cluster). The `hcloud` PVC overrides for Prometheus, Alertmanager and
-Loki live in the hetzner overlay (`k8s/providers/hetzner/.../*/patches/`),
-the same way OpenBao gets block storage.
+| Component         | Role                                                          | Persistence (prod)   |
+| ----------------- | ------------------------------------------------------------- | -------------------- |
+| Coroot (UI/app)   | Web UI, dashboards, inspections, alerting engine              | `hcloud` PVC, 2 Gi   |
+| Prometheus        | Bundled metrics TSDB (14 d retention), queryable by OpenCost  | `hcloud` PVC, 20 Gi  |
+| ClickHouse        | Logs, traces and continuous profiles (+ 1 keeper)             | `hcloud` PVC, 15 Gi  |
+| node-agent        | eBPF DaemonSet: per-node + per-pod metrics, logs, traces      | n/a                  |
+| cluster-agent     | kube-state-metrics-equivalent cluster inventory               | n/a                  |
+| OpenCost          | Cost allocation, querying Coroot's bundled Prometheus         | n/a                  |
 
-## Alert routing → Slack
+The node-agent uses eBPF, so it observes every pod's traffic, latency, errors,
+logs and traces **without** per-app scrape config or ServiceMonitors — there is
+no prometheus-operator and no `ServiceMonitor`/`PodMonitor`/`PrometheusRule`
+CRD any more. It runs `platform-critical` so per-node telemetry survives memory
+pressure (the operator only exposes `priorityClassName` on the node-agent).
 
-Alertmanager sends to a Slack incoming webhook (`slack_configs` with
-`api_url_file`). The URL is per-cluster and SOPS-encrypted, so local
-clusters get an invalid URL and stay quiet by design.
+Local/CI (docker provider) runs the same CR on the cluster's default storage
+class (ephemeral — losing telemetry on a restart is fine there). The `hcloud`
+PVC overrides and longer retention live in the hetzner overlay
+(`k8s/providers/hetzner/infrastructure/controllers/coroot/patches/`), the same
+way OpenBao gets block storage.
 
-- `critical` → Slack immediately, repeat every 12 h.
-- `warning`  → Slack, repeat every 24 h.
-- `critical` inhibits matching `warning` (same alertname/cluster/namespace).
+## SSO
+
+Coroot CE has no native OIDC (SSO is an Enterprise feature), so the UI is
+fronted by **oauth2-proxy** (Dex) — the same forward-auth pattern the Prometheus
+and Alertmanager UIs used. The `coroot.${domain}` HTTPRoute backends to
+oauth2-proxy; after authentication, auth-proxy routes by Host to the Coroot
+Service (`coroot-coroot.coroot.svc:8080`). The CR sets `authAnonymousRole:
+Admin`, so whoever clears the GitHub SSO gate (oauth2-proxy, `devantler` only)
+is the operator — mirroring the old "everyone → Grafana Admin" posture.
+
+## Alerting → Slack
+
+Coroot ships **built-in alerting** with no rules to author: SLO-based alerts
+(per-application latency/error budgets) plus automatic inspections — node down,
+OOM kills, container restarts/crashloops, disk filling up, deployment issues,
+CPU/memory saturation. These deliver to Slack (and PagerDuty / Teams / Opsgenie
+/ webhook).
+
+Slack is wired **fully declaratively** in the hetzner overlay — no UI step, no
+token to paste. Coroot CE has no pre-fillable bot-token integration, so its
+generic **webhook** integration is used instead: it POSTs a Slack-mrkdwn payload
+(rendered from `incidentTemplate` / `alertTemplate`, JSON-escaped via the `json`
+template func) to the **exact Slack incoming-webhook the prometheus stack used** —
+`${alertmanager_webhook_url}`, injected by Flux from the per-cluster
+`variables-cluster` Secret. Nothing new to set; the value is inherited.
+
+The project's agent API key (`coroot-api-key`) is **created automatically by the
+operator** (generated in-cluster, no seed), so describing the project doesn't
+break agent telemetry. This lives only in the hetzner overlay — the base Coroot
+CR has no `projects`/webhook integration — so local/CI has nothing to send and
+stays quiet by design, exactly as the old Alertmanager did.
+
+### Changed from the old stack
+
+- **Custom PromQL platform alerts are gone.** The old
+  `alerts/platform-critical.yaml` (Velero/CNPG backup, cert expiry,
+  `FluxKustomizationNotReady`, autoscaler) had no 1:1 in Coroot's SLO/inspection
+  model and was dropped. Node/pod/OOM/disk/crashloop health is covered by
+  Coroot's auto-inspections; the backup/cert/Flux checks can be re-expressed
+  later as Coroot `alertingRules` if needed.
+- **kube-apiserver audit-log retention is gone.** Coroot's node-agent ingests
+  container logs/traces, not host audit-log files, so the previous
+  alloy-audit → Loki pipeline was removed.
 
 ## Dead-man's-switch (off-cluster heartbeat)
 
-In-cluster Alertmanager cannot tell you the cluster is down — it's down
-too. To cover that, the chart's always-firing `Watchdog` alert is routed
-to a dedicated `heartbeat` receiver that POSTs to an **external** monitor
-on a tight cadence (`repeat_interval: 50s`). If the cluster — or the
-Prometheus → Alertmanager pipeline — dies, the monitor stops receiving
-pings and notifies Slack out-of-band.
+In-cluster alerting cannot tell you the cluster is down — it's down too. A tiny
+`coroot-heartbeat` CronJob (`coroot` namespace, every minute) covers that: it
+confirms the metrics pipeline is alive (Coroot's bundled Prometheus answers
+`/-/healthy`) and only then pings an **external** monitor. If the cluster, the
+scheduler, egress, or the pipeline dies, the pings stop and the monitor
+notifies Slack out-of-band.
 
 Recommended monitor: [healthchecks.io](https://healthchecks.io) (free,
-open-source, native Slack integration). Create a check with a ~5 min
-period and ~10 min grace, connect it to Slack, and put its ping URL in
-`alertmanager_heartbeat_url` (below). A self-hosted alternative is a
-scheduled GitHub Actions workflow that probes the public Gateway and posts
-to Slack — fully under your control, no third-party monitor.
+open-source, native Slack integration). Create a check with a ~5 min period and
+~10 min grace, connect it to Slack, and put its ping URL in
+`alertmanager_heartbeat_url` (below — the variable name is retained from the old
+stack for compatibility). The URL is injected by Flux substitution; unset, it
+defaults to an invalid URL, so local/CI simply never heartbeat — harmless
+(`|| true` keeps the Job from flapping).
 
-The heartbeat URL is injected by Flux substitution
-(`${alertmanager_heartbeat_url}`); unset, it defaults to an invalid URL,
-so local/CI simply never heartbeat — harmless.
+## Off-cluster backup
 
-## Off-cluster metric/log backup
+There is no remote-write or SaaS mirror. The persistent Coroot, Prometheus and
+ClickHouse volumes live in the `coroot` namespace, which Velero's `daily-full`
+schedule backs up to R2 every day (`includedNamespaces: ["*"]`, Kopia
+fs-backup). Restore is the standard Velero flow in [runbook.md](./runbook.md);
+backups are filesystem-level and crash-consistent, fine for a 24 h RPO.
 
-There is no remote-write or SaaS mirror. Instead, the persistent
-Prometheus, Alertmanager and Loki volumes live in the `monitoring`
-namespace, which Velero's `daily-full` schedule backs up to R2 every day
-(`includedNamespaces: ["*"]`, Kopia fs-backup). Restore is the standard
-Velero flow in [runbook.md](./runbook.md). Backups are filesystem-level
-and crash-consistent (Prometheus/Loki recover via their WAL on restore);
-fine for a 24 h RPO.
+## Per-environment setup
 
-## Grafana
+**No new setup** — both values are inherited from the previous stack, already
+present in the per-cluster `variables-cluster-secret.enc.yaml` (under
+`bootstrap/`) and injected by Flux `substituteFrom`:
 
-Self-hosted, exposed at `grafana.${domain}` behind oauth2-proxy SSO. Since
-the route is already gated to a single GitHub user, Grafana runs with
-anonymous **Admin** and the login form disabled — whoever clears the SSO
-gate is the operator. Datasources: Prometheus (auto-wired by the chart)
-and Loki. Default Kubernetes dashboards are provisioned; the pod stays
-ephemeral because dashboards are config, not state.
+- `alertmanager_webhook_url` — Slack incoming-webhook, reused by Coroot's
+  webhook integration (prod-only).
+- `alertmanager_heartbeat_url` — external heartbeat monitor, reused by the
+  `coroot-heartbeat` CronJob.
 
-## What gets alerted
+| Env   | `alertmanager_webhook_url`        | `alertmanager_heartbeat_url`     |
+| ----- | --------------------------------- | -------------------------------- |
+| local | placeholder (Slack stays quiet)   | unset → invalid (no heartbeat)   |
+| prod  | Slack `#platform-alerts` webhook  | healthchecks.io ping URL         |
 
-Two sources:
-
-1. **Curated chart default rules** (`defaultRules.create: true`). We keep
-   the well-tested groups — `general` (incl. `Watchdog`), `alertmanager`,
-   `prometheus`, `prometheusOperator`, `kubernetesApps`
-   (CrashLooping/ReplicasMismatch/…), `kubernetesStorage`, `node`,
-   `kubeStateMetrics` — and disable the groups for control-plane
-   components we don't scrape (etcd, kube-apiserver/-scheduler/-controller-
-   manager, kube-proxy, windows). `KubeCPUOvercommit` / `KubeMemoryOvercommit`
-   are disabled — guaranteed noise on a cluster that runs hot on purpose.
-
-2. **Platform-specific rules** in
-   `k8s/bases/infrastructure/alerts/platform-critical.yaml` (not in the
-   chart): Velero/CNPG backups, Flux reconciliation, cert-manager expiry,
-   cluster-autoscaler and resource-pressure.
-
-| Alert                       | Severity | Why                                       |
-| --------------------------- | -------- | ----------------------------------------- |
-| `Watchdog`                  | none     | Always firing → external heartbeat        |
-| `NodeNotReady`              | critical | Single node loss                          |
-| `PersistentVolumeFillingUp` | critical | >90% PVC                                  |
-| `CertificateExpiringSoon`   | warning  | <14 d to expiry, cert-manager not renewing |
-| `FluxKustomizationNotReady` | critical | Reconciliation broken >15 min             |
-| `VeleroNoRecentBackup`      | critical | RPO breach — no successful backup in 30h  |
-| `CNPGClusterDegraded`       | critical | Primary alone, no streaming replica       |
-
-(plus the chart's workload/storage/self-monitoring alerts.)
-
-## Per-environment setup (manual SOPS steps)
-
-The Slack webhook and heartbeat URL are secrets, so they live in the
-per-cluster `variables-cluster-secret.enc.yaml` (under `bootstrap/`) and
-must be set by hand. Both are read from the `Secret` `variables-cluster`,
-which is a Flux `substituteFrom` source.
+To change either, `sops --set` it in the prod secret, e.g.:
 
 ```bash
-# 1. Slack incoming webhook for alert notifications.
-sops --set '["stringData"]["alertmanager_webhook_url"] "https://hooks.slack.com/services/XXX/YYY/ZZZ"' \
-  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
-
-# 2. External heartbeat-monitor ping URL (e.g. healthchecks.io).
 sops --set '["stringData"]["alertmanager_heartbeat_url"] "https://hc-ping.com/<uuid>"' \
   k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
 ```
 
-Slack side: create an incoming webhook for the `#platform-alerts` channel
-(the channel in the config is cosmetic — an incoming webhook posts to the
-channel it was created for). healthchecks.io side: create the check,
-connect its Slack integration, copy the ping URL.
+Recommended heartbeat monitor: [healthchecks.io](https://healthchecks.io) — a
+~5 min period / ~10 min grace check with its Slack integration connected.
 
-| Env   | `alertmanager_webhook_url`        | `alertmanager_heartbeat_url`       |
-| ----- | --------------------------------- | ---------------------------------- |
-| local | invalid URL (alerts stay local)   | unset → invalid (no heartbeat)     |
-| prod  | Slack `#platform-alerts` webhook  | healthchecks.io ping URL           |
+## On-call: inspect
 
-## On-call: silence and inspect
+- **Everything** — Coroot UI at `https://coroot.${domain}`: the service map,
+  per-app SLOs, metrics, logs (full-text over ClickHouse), traces, continuous
+  profiling, and the active inspections/incidents.
+- **Cost** — OpenCost at `https://opencost.${domain}`.
 
-- **Silence an alert** while you work: Alertmanager UI at
-  `https://alertmanager.${domain}` → Silences → New.
-- **Check why an alert fired / query metrics**: Prometheus at
-  `https://prometheus.${domain}` (Graph / Alerts / Targets), or a Grafana
-  dashboard at `https://grafana.${domain}`.
-- **Read logs**: Grafana → Explore → Loki datasource, e.g.
-  `{namespace="velero"} |= "error"`.
-- **Cost**: OpenCost at `https://opencost.${domain}`.
+Both are behind GitHub SSO (oauth2-proxy, `devantler` only).
 
-All four are behind GitHub SSO (oauth2-proxy, `devantler` only).
+## Resource footprint (prod, approximate)
 
-## Resource footprint (prod)
+| Component   | Notes                                                        |
+| ----------- | ------------------------------------------------------------ |
+| Coroot app  | small web app; 2 Gi state PVC                                |
+| Prometheus  | bundled TSDB, 14 d retention, 20 Gi PVC                      |
+| ClickHouse  | logs/traces/profiles store, 15 Gi PVC (+ 2 Gi keeper)        |
+| node-agent  | eBPF DaemonSet (×node), `platform-critical`                  |
+| cluster-agent / operator | lightweight controllers                         |
 
-| Component      | Requests          | Limits      |
-| -------------- | ----------------- | ----------- |
-| Prometheus     | 50m / 256 Mi      | — / 1.5 Gi  |
-| Alertmanager   | 50m / 64 Mi (×2)  | — / 128 Mi  |
-| Grafana        | 50m / 128 Mi      | — / 256 Mi  |
-| Loki           | 50m / 128 Mi      | — / 512 Mi  |
-| Alloy          | 25m / 96 Mi (×node) | — / 256 Mi |
-| Operator       | 50m / 128 Mi      | — / 256 Mi  |
-
-VPA right-sizes the requests at runtime (RequestsOnly), so the limits are
-the real ceilings. The always-on tier (Grafana, Loki, persistent
-Prometheus + Alertmanager) is what motivates the planned bump to a 4th
-static worker (`ksail.prod.yaml`); it's held at 3 today while prod is
-right-sized, and the hetzner overlay opts out of kubevirt/cdi to free
-~1.5 GiB so the tier still fits.
+ClickHouse is a new stateful component versus the old stack; on the
+memory-constrained Hetzner cluster keep retention modest (`logsTTL` /
+`tracesTTL` / `profilesTTL` = 7 d in prod, 3 d in base) and watch node memory
+after rollout. VPA right-sizes requests at runtime.
 
 ## Related
 
 - [DR runbook](./runbook.md) — what to do when an alert fires, and restore
 - [Velero + CNPG](./velero-cnpg.md) — the systems whose health is checked
-- [restore-drill.md](./restore-drill.md) — CI validation of the stack
+- [restore-drill.md](./restore-drill.md) — CI validation of backups
 - [HA primitives](../../README.md) — cluster environments and topology

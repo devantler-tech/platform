@@ -23,14 +23,6 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: cdi
-    # Metrics scraping from monitoring
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
-      toPorts:
-        - ports:
-            - port: "8443"
-              protocol: TCP
   egress:
     # Kube API for operator and controller management
     - toEntities:
