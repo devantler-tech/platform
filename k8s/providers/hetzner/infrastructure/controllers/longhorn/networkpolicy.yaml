@@ -19,10 +19,6 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: longhorn-system
-    # Metrics scraping
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
   egress:
     # Kube API
     - toEntities:

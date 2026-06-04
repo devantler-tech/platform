@@ -15,14 +15,6 @@ spec:
         - ports:
             - port: "9443"
               protocol: TCP
-    # Metrics scraping from Prometheus
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
-      toPorts:
-        - ports:
-            - port: "8080"
-              protocol: TCP
   egress:
     # Kube API for managing PG clusters
     - toEntities:

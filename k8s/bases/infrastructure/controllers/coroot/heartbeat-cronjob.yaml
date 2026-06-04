@@ -1,0 +1,64 @@
+# Dead-man's-switch heartbeat — replaces the Alertmanager Watchdog -> external
+# monitor pattern that the prometheus stack used. Every minute it confirms the
+# observability pipeline is alive (Coroot's bundled Prometheus answers
+# /-/healthy) and only then pings the external heartbeat monitor
+# (${alertmanager_heartbeat_url}, e.g. healthchecks.io). If the cluster, the
+# scheduler, egress, or the metrics pipeline dies, the pings stop and the
+# external monitor notifies out-of-band — the one failure in-cluster alerting
+# can never cover itself.
+#
+# The URL is injected by Flux substitution from the per-cluster SOPS secret;
+# unset (local/CI) it defaults to an invalid URL so the ping reaches nowhere.
+# `|| true` keeps the Job from flapping into a failed state when the monitor is
+# unset/unreachable — the dead-man's-switch is the *absence* of pings, observed
+# externally, not the Job's exit code.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: coroot-heartbeat
+  namespace: coroot
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 30
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 30
+      template:
+        metadata:
+          labels:
+            app: coroot-heartbeat
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: heartbeat
+              image: curlimages/curl:8.11.1
+              command:
+                - /bin/sh
+                - -c
+                - >-
+                  curl -sf --max-time 5
+                  http://coroot-prometheus.coroot.svc.cluster.local:9090/-/healthy
+                  && curl -sf --max-time 10
+                  "${alertmanager_heartbeat_url:=https://example.invalid/no-heartbeat-configured}"
+                  || true
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 16Mi
+                limits:
+                  memory: 32Mi

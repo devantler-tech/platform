@@ -38,7 +38,7 @@ data:
       Kubernetes:
         icon: si-talos-#FF7300
       Observability:
-        icon: si-grafana
+        icon: coroot
       Security:
         icon: mdi-shield-lock
       Diagnostics:

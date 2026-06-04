@@ -29,8 +29,8 @@ spec:
   # eBPF-based runtime security observability. Sibling to the Cilium
   # install (same vendor, same helm.cilium.io repo), so it reuses the
   # `cilium` HelmRepository in this namespace instead of defining a
-  # duplicate source against the same URL -- the same dedup pattern as
-  # alloy reusing loki's `grafana` repo.
+  # duplicate source against the same URL -- the same dedup pattern used
+  # elsewhere for charts that share a single upstream Helm repository.
   #
   # Deployed to kube-system because the agent needs hostNetwork + hostPath
   # + host PID, which the validate-host-restrictions Kyverno policy blocks
@@ -93,19 +93,17 @@ spec:
       enableProcessNs: true
       prometheus:
         enabled: true
-        # Prometheus discovers ServiceMonitors cluster-wide
-        # (serviceMonitorSelectorNilUsesHelmValues: false), so enabling
-        # this is all that's needed for the agent metrics (:2112) to be
-        # scraped.
+        # The prometheus-operator ServiceMonitor CRD left with
+        # kube-prometheus-stack. The agent metrics endpoint (:2112) stays up;
+        # Coroot's node-agent observes the pod instead of a ServiceMonitor.
         serviceMonitor:
-          enabled: true
+          enabled: false
     tetragonOperator:
       # Operator metrics (:2113); operator already ships resource requests
       # and a non-root securityContext by default.
       prometheus:
         serviceMonitor:
-          enabled: true
+          enabled: false
     # The export-stdout sidecar is on by default (export.mode: stdout), so
-    # Tetragon's JSON events go to the pod's stdout -- where Alloy tails
-    # them into Loki, making them searchable in Grafana with no extra
-    # wiring.
+    # Tetragon's JSON events go to the pod's stdout -- where Coroot's node-agent
+    # ingests them, making them searchable in the Coroot UI with no extra wiring.

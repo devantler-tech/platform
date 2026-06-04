@@ -6,16 +6,6 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Metrics scraping from monitoring
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
-      toPorts:
-        - ports:
-            - port: "9003"
-              protocol: TCP
-            - port: "9090"
-              protocol: TCP
     # Headlamp's OpenCost plugin queries the cost API/UI through the
     # kube-apiserver service proxy (/api/v1/namespaces/opencost/services/
     # opencost:http-ui/proxy/...), so the request reaches OpenCost from the
@@ -42,10 +32,10 @@ spec:
     # Kube API
     - toEntities:
         - kube-apiserver
-    # Prometheus for cost data
+    # Coroot's bundled Prometheus for cost data
     - toEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
+            k8s:io.kubernetes.pod.namespace: coroot
       toPorts:
         - ports:
             - port: "9090"

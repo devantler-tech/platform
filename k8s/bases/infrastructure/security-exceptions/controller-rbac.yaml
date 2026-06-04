@@ -1,7 +1,7 @@
 ---
 # Exempt controllers and middleware that legitimately need broad RBAC.
 # Infrastructure controllers (Flux, Kyverno, cert-manager, CNPG, Velero,
-# KEDA, monitoring, KubeVirt, CDI, Longhorn) and platform middleware
+# KEDA, Coroot, KubeVirt, CDI, Longhorn) and platform middleware
 # (headlamp cluster dashboard, homepage service discovery, fleetdm device
 # management, dex identity, oauth2-proxy auth, opencost cost monitoring,
 # reloader config watcher) all require cluster-wide read or read/write
@@ -16,7 +16,7 @@ spec:
     to manage their target resources cluster-wide. This includes GitOps
     (Flux), policy engines (Kyverno), certificate managers (cert-manager),
     database operators (CNPG), backup controllers (Velero), autoscalers
-    (KEDA), monitoring (Prometheus/opencost), virtualisation (KubeVirt,
+    (KEDA), observability (Coroot/opencost), virtualisation (KubeVirt,
     CDI), storage (Longhorn), cluster dashboards (headlamp), service
     discovery (homepage), device management (fleetdm), identity (dex),
     auth proxies (oauth2-proxy), and config watchers (reloader).
@@ -53,7 +53,7 @@ spec:
             - cnpg-system
             - velero
             - keda
-            - monitoring
+            - coroot
             - kubescape
             - vertical-pod-autoscaler
             - kubevirt

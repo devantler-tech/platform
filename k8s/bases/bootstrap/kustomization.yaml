@@ -6,5 +6,5 @@ resources:
   - variables-base-secret.enc.yaml
   # Cluster-scoped PriorityClasses (provider- and cluster-agnostic) live in the
   # bootstrap layer so they exist before infrastructure-controllers reconciles —
-  # e.g. kube-prometheus-stack references platform-critical.
+  # e.g. Coroot's node-agent references platform-critical.
   - priority-classes/

@@ -19,10 +19,6 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: testkube
-    # Metrics scraping
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
   egress:
     # Kube API for test execution and CRD management
     - toEntities:

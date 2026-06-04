@@ -1,0 +1,58 @@
+---
+apiVersion: coroot.com/v1
+kind: Coroot
+metadata:
+  name: coroot
+  namespace: coroot
+spec:
+  # Persist on Hetzner Cloud block storage. The base uses the default storage
+  # class (fine for ephemeral local/CI), but in prod a VPA eviction, node
+  # drain, or autoscaler scale-down would otherwise wipe all telemetry. hcloud
+  # block storage (not Longhorn) for the same reason OpenBao/Prometheus used
+  # it: the ~36 GiB Talos rootfs is too small to host Longhorn replicas this
+  # large. Velero's daily backup of the coroot namespace ships these to R2.
+  storage:
+    className: hcloud
+    size: 2Gi
+  prometheus:
+    # 14d metrics retention (matches the old kube-prometheus-stack posture).
+    retention: 14d
+    storage:
+      className: hcloud
+      size: 20Gi
+  clickhouse:
+    storage:
+      className: hcloud
+      size: 15Gi
+    keeper:
+      storage:
+        className: hcloud
+        size: 2Gi
+  # Longer log/trace/profile retention now that storage is durable.
+  logsTTL: 7d
+  tracesTTL: 7d
+  profilesTTL: 7d
+  # --- Slack alerting --------------------------------------------------------
+  # Coroot CE configures notification channels per project. The simplest path
+  # is the UI once, post-deploy: Project Settings -> Integrations -> Slack,
+  # paste a Bot User OAuth token (xoxb-…) + "#platform-alerts"; Coroot persists
+  # it in its own (now durable) storage. Coroot's built-in SLO + auto-inspection
+  # alerts (node down, OOM, crashloop, disk-filling, app latency/errors) then
+  # ship to Slack. The dead-man's-switch is the coroot-heartbeat CronJob.
+  #
+  # To manage Slack as code instead, seed the bot token into OpenBao
+  # (infrastructure/monitoring/coroot), add a `coroot-slack` ExternalSecret in
+  # the coroot namespace, and uncomment — validate on a live cluster first, as
+  # describing `projects` re-wires the bundled agents to this project's key:
+  #
+  # projects:
+  #   - name: platform
+  #     apiKeys:
+  #       - key: <in-cluster ingest key>   # in-cluster only; NetworkPolicy-isolated
+  #     notificationIntegrations:
+  #       slack:
+  #         tokenSecret:
+  #           name: coroot-slack
+  #           key: token
+  #         defaultChannel: "#platform-alerts"
+  #         incidents: true

@@ -68,8 +68,8 @@ spec:
                   # preserving the authored limit:request ratio. Under
                   # RequestsOnly the limit stayed fixed, so any workload whose
                   # VPA target outgrew its static memory limit was capped below
-                  # its known need and OOMKilled (e.g. loki once audit-log
-                  # ingest grew). The request is still bounded by maxAllowed
+                  # its known need and OOMKilled (e.g. a metrics/log store whose
+                  # target outgrew its static limit). The request is bounded by maxAllowed
                   # below; CPU limits only loosen (less throttling, no OOM).
                   controlledValues: RequestsAndLimits
                   minAllowed:
@@ -123,8 +123,8 @@ spec:
                   # preserving the authored limit:request ratio. Under
                   # RequestsOnly the limit stayed fixed, so any workload whose
                   # VPA target outgrew its static memory limit was capped below
-                  # its known need and OOMKilled (e.g. loki once audit-log
-                  # ingest grew). The request is still bounded by maxAllowed
+                  # its known need and OOMKilled (e.g. a metrics/log store whose
+                  # target outgrew its static limit). The request is bounded by maxAllowed
                   # below; CPU limits only loosen (less throttling, no OOM).
                   controlledValues: RequestsAndLimits
                   minAllowed:
@@ -172,8 +172,8 @@ spec:
                   # preserving the authored limit:request ratio. Under
                   # RequestsOnly the limit stayed fixed, so any workload whose
                   # VPA target outgrew its static memory limit was capped below
-                  # its known need and OOMKilled (e.g. loki once audit-log
-                  # ingest grew). The request is still bounded by maxAllowed
+                  # its known need and OOMKilled (e.g. a metrics/log store whose
+                  # target outgrew its static limit). The request is bounded by maxAllowed
                   # below; CPU limits only loosen (less throttling, no OOM).
                   controlledValues: RequestsAndLimits
                   minAllowed:
