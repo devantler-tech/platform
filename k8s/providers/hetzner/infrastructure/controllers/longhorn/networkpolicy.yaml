@@ -23,6 +23,16 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: monitoring
+    # Longhorn UI reached via auth-proxy (oauth2-proxy SSO) after
+    # authentication. longhorn-frontend forwards to the longhorn-ui pod, which
+    # serves on container port 8000 (Service longhorn-frontend: 80 -> 8000).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
   egress:
     # Kube API
     - toEntities:
