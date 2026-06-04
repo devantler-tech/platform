@@ -6,9 +6,25 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Gateway ingress to interceptor proxy
+    # Gateway ingress to interceptor proxy. Apps routed straight from the
+    # Cilium Gateway to the interceptor (whoami, headlamp, actual-budget)
+    # arrive with the reserved "ingress" identity.
     - fromEntities:
         - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # auth-proxy ingress to interceptor proxy. Hubble UI needs SSO, so its
+    # cold-start path is Gateway -> oauth2-proxy -> auth-proxy -> interceptor.
+    # The client reaching :8080 is therefore the auth-proxy pod, not the
+    # "ingress" identity above. Without this rule the request is silently
+    # dropped by default-deny, the interceptor never sees it, hubble-ui never
+    # scales from zero, and the request hangs until the edge returns a 504.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+            app: auth-proxy
       toPorts:
         - ports:
             - port: "8080"

@@ -1,0 +1,44 @@
+# Expose the Longhorn UI behind oauth2-proxy SSO (the same forward-auth
+# pattern the other admin UIs use -- Hubble, Prometheus, Alertmanager,
+# OpenCost). The Longhorn frontend ships no built-in authentication, so SSO at
+# the gateway is the only access control: the route backends to oauth2-proxy
+# (not longhorn-frontend); after authentication oauth2-proxy forwards to
+# auth-proxy, which routes longhorn.${domain} by Host to the longhorn-frontend
+# Service (see k8s/bases/infrastructure/controllers/auth-proxy/config-map.yaml).
+# The gethomepage.dev annotations surface it on the dashboard under "Storage".
+# Hetzner-only: Longhorn is deployed solely on prod (k8s/providers/hetzner).
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: longhorn
+  namespace: longhorn-system
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Longhorn
+    gethomepage.dev/description: Distributed block storage and volume management.
+    gethomepage.dev/group: Storage
+    gethomepage.dev/icon: longhorn.png
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - longhorn.${domain}
+  rules:
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://longhorn.${domain}/
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80

@@ -6,3 +6,4 @@ resources:
   - helm-repository.yaml
   - helm-release.yaml
   - networkpolicy.yaml
+  - httproute.yaml

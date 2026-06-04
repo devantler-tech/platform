@@ -35,6 +35,17 @@ patches:
                   - kube-public
                   - kube-node-lease
                   - flux-system
+                  # Platform observability stack. coroot runs the eBPF
+                  # node-agent DaemonSet, which must schedule a pod on EVERY
+                  # node -- including autoscaler-provisioned ones -- and carries
+                  # a VPA-governed footprint that legitimately exceeds the
+                  # generic tenant quota. A hard requests.memory ResourceQuota
+                  # here rejects those DaemonSet pods on any new node, which
+                  # stalls the coroot-operator and the infrastructure-controllers
+                  # Flux Kustomization cluster-wide. Exempt it like the other
+                  # platform-owned namespaces; its sizing is VPA-owned, not
+                  # quota-bounded. The LimitRange (rule 1) still applies.
+                  - coroot
       - op: add
         path: /spec/rules/0/generate/generateExisting
         value: true
