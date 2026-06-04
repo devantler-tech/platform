@@ -128,6 +128,16 @@
         "major"
       ],
       "automerge": true
+    },
+    {
+      "description": "Internal devantler-tech dependencies are trusted (our own code) — bump immediately with no release-age cooldown (e.g. the KSAIL_VERSION custom-manager dep devantler-tech/ksail).",
+      "matchPackageNames": [
+        "devantler-tech/**",
+        "github.com/devantler-tech/**",
+        "ghcr.io/devantler-tech/**",
+        "@devantler-tech/**"
+      ],
+      "minimumReleaseAge": "0 days"
     }
   ],
   "ignorePaths": [
