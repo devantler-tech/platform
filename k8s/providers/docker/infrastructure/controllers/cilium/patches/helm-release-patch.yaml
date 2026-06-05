@@ -10,6 +10,10 @@ spec:
     # node-to-node wire, and pod-to-pod traffic stays inside one Linux
     # network namespace. Disabling encryption and SPIRE mTLS keeps the
     # local cluster lean and avoids the WireGuard kernel module setup.
+    # The prod-only require-mutual-auth CiliumClusterwideNetworkPolicy
+    # (hetzner overlay) is therefore not rendered for local/CI — a policy
+    # requiring an auth handshake with SPIRE off would drop pod-to-pod
+    # traffic here.
     encryption:
       enabled: false
     authentication:
