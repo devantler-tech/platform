@@ -7,6 +7,7 @@ resources:
   - cluster-role-bindings/
   - cluster-roles/
   - cluster-secret-stores/
+  - coroot/
   - external-secrets/
   - gateway/
   - http-scaled-objects/
