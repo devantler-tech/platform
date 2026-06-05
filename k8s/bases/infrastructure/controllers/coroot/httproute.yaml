@@ -15,7 +15,12 @@ metadata:
     gethomepage.dev/name: Coroot
     gethomepage.dev/description: Metrics, logs, traces, profiling and alerts.
     gethomepage.dev/group: Observability
-    gethomepage.dev/icon: coroot.png
+    # Coroot isn't in the dashboard-icons / selfh.st / simple-icons sets Homepage
+    # resolves, so `coroot.png` 404s and the card renders blank. Point at Coroot's
+    # upstream brand SVG instead — the same upstream-URL pattern this repo already
+    # uses for the Cilium and OpenBao routes. Homepage fetches icons client-side,
+    # so the cluster egress NetworkPolicy doesn't block it.
+    gethomepage.dev/icon: https://raw.githubusercontent.com/coroot/coroot/main/front/public/icon.svg
 spec:
   parentRefs:
     - name: platform

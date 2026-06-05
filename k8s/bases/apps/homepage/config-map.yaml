@@ -43,7 +43,8 @@ data:
       Kubernetes:
         icon: si-talos-#FF7300
       Observability:
-        icon: coroot
+        # `coroot` is not in any icon set Homepage resolves; use an MDI icon.
+        icon: mdi-chart-line
       Storage:
         icon: mdi-harddisk
       Security:
