@@ -189,8 +189,13 @@ spec:
                   }
                   async function ensureWebsite(token, s, teamId) {
                     const g = await fetch(base + '/api/websites/' + s.id, { headers: H(token) });
-                    if (g.ok) {
-                      const w = await g.json();
+                    // Umami returns 200 with a `null` body (NOT a 404) for a website id
+                    // that doesn't exist yet, so a 2xx alone doesn't mean it's present —
+                    // only treat it as existing when the body is a real website object,
+                    // otherwise fall through to create. (Dereferencing the null body here
+                    // is what crashed every run, leaving Umami with no websites.)
+                    const w = g.ok ? await g.json() : null;
+                    if (w && w.id) {
                       if (w.teamId === teamId) { console.log('website ok:', s.domain); return; }
                       const t = await fetch(base + '/api/websites/' + s.id + '/transfer', { method: 'POST', headers: H(token), body: JSON.stringify({ teamId }) });
                       if (!t.ok) throw new Error('transfer website ' + s.domain + ' failed: ' + t.status + ' ' + (await t.text()));
