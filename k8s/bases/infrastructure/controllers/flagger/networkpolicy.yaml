@@ -1,0 +1,46 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-flagger
+  namespace: flagger-system
+spec:
+  endpointSelector: {}
+  ingress:
+    # Intra-namespace: Flagger calls the load-tester's webhook server (:8080).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: flagger-system
+  egress:
+    # Kube API — Flagger reconciles Canary/Deployment/Service/HTTPRoute objects.
+    - toEntities:
+        - kube-apiserver
+    # Coroot's bundled Prometheus — canary SLO metric queries (success-rate,
+    # latency). Same endpoint OpenCost queries; Coroot's netpol allows this
+    # namespace in on :9090.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: coroot
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+    # Intra-namespace (Flagger -> load-tester webhook).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: flagger-system
+    # NOTE: when an app is onboarded to a Canary, the load-tester needs extra
+    # egress to drive traffic — to the platform Gateway in kube-system (:80/:443)
+    # for `hey` load tests and to the app's `<app>-canary` Service for acceptance
+    # (smoke) tests. Add those rules here per the onboarding recipe in
+    # docs/progressive-delivery.md.
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

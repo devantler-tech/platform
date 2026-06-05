@@ -1,0 +1,80 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: flagger
+  namespace: flagger-system
+  labels:
+    # The chart ships the Canary / MetricTemplate / AlertProvider CRDs (gated by
+    # `crd.create`); let Flux manage them. The helm-release-install-crds Kyverno
+    # policy turns this label into install/upgrade `crds: CreateReplace`.
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  # Flagger queries Coroot's bundled Prometheus for canary SLO metrics, so the
+  # operator that stands that stack up should reconcile first (mirrors opencost,
+  # which depends on the same Prometheus). Flagger does not need Prometheus at
+  # install time — only while a Canary is being analysed.
+  dependsOn:
+    - name: coroot-operator
+      namespace: coroot
+  interval: 2m
+  timeout: 10m
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  chart:
+    spec:
+      chart: flagger
+      version: 1.43.0
+      sourceRef:
+        kind: HelmRepository
+        name: flagger
+  # https://github.com/fluxcd/flagger/blob/main/charts/flagger/values.yaml
+  values:
+    # Gateway API provider — Flagger owns each onboarded app's HTTPRoute and
+    # shifts traffic by rewriting backendRef weights (Cilium honours them).
+    meshProvider: gatewayapi:v1
+
+    # Reuse Coroot's bundled Prometheus (the metrics TSDB the coroot-operator
+    # deploys, the same endpoint OpenCost queries). Coroot's eBPF node-agent
+    # exports server-side HTTP metrics — container_http_inbound_requests_total
+    # and ..._duration_seconds_total — which the MetricTemplates in the
+    # `infrastructure` layer turn into request-success-rate / latency SLOs.
+    metricsServer: http://coroot-prometheus.coroot.svc.cluster.local:9090
+    prometheus:
+      install: false
+
+    # CRDs (Canary, MetricTemplate, AlertProvider) ship in the chart's `crds/`
+    # directory and are managed by Flux via `install/upgrade.crds: CreateReplace`
+    # (the helm.toolkit.fluxcd.io/crds label above). Leave the chart's own
+    # `crd.create` at its default (false) so the CRDs are not also rendered as
+    # templates — defining them twice in one release would conflict.
+
+    # Restricted PSA — fully specified container securityContext so the pod is
+    # compliant at admission (no dependency on the Kyverno mutating webhook on a
+    # cold bootstrap).
+    securityContext:
+      enabled: true
+      context:
+        runAsNonRoot: true
+        runAsUser: 10001
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        seccompProfile:
+          type: RuntimeDefault
+        capabilities:
+          drop:
+            - ALL
+
+    resources:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 256Mi

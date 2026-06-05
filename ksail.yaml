@@ -31,10 +31,16 @@ spec:
     sourceDirectory: k8s
     kustomizationFile: clusters/local
     validation:
-      # Skip the Coroot CR (coroot.com/v1) during `ksail workload validate`: its
-      # datreeio CRDs-catalog schema is stale (additionalProperties: false, missing
-      # newer fields like nodeAgent/clickhouse), so kubeconform rejects valid
-      # manifests. Requires ksail >= 7.26.0 (the --skip-kinds / skipKinds feature).
+      # Skip CRs whose CRD-catalog schemas kubeconform cannot resolve during
+      # `ksail workload validate` (requires ksail >= 7.26.0):
+      #   - Coroot (coroot.com/v1): the datreeio catalog schema is stale
+      #     (additionalProperties: false, missing newer fields like
+      #     nodeAgent/clickhouse), so kubeconform rejects valid manifests.
+      #   - MetricTemplate (flagger.app/v1beta1): the Flagger CRDs are installed
+      #     by the flagger HelmRelease at runtime and are not in the catalog, so
+      #     the request-success-rate / request-duration templates can't be
+      #     schema-checked offline.
       skipKinds:
         - Coroot
+        - MetricTemplate
 

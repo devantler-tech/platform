@@ -205,6 +205,8 @@ Resources under `k8s/bases/infrastructure/` are organized by **resource type**, 
 
 Central gateway resources (the Cilium `Gateway` and its TLS `Certificate`) are deployed to `kube-system` (the Cilium namespace) rather than to a dedicated namespace.
 
+Progressive delivery uses **Flagger** (Gateway API canary deployments); like Coroot, its CRDs ship with the controller HelmRelease in `controllers/flagger/`, so its `MetricTemplate` CRs live one layer later in `infrastructure/flagger/` to avoid the CR-and-its-CRD-in-one-Kustomization deadlock. See [`docs/progressive-delivery.md`](docs/progressive-delivery.md).
+
 ### Kustomization Flow
 
 The platform uses a hierarchical kustomization structure: **base** configurations in `k8s/bases/` → **provider-specific** overlays in `k8s/providers/` → **cluster-specific** overlays in `k8s/clusters/`. The cluster overlay's `cluster-meta` ConfigMap drives Kustomize `replacements:` that repoint each Flux Kustomization (`bootstrap`, `infrastructure-controllers`, `infrastructure`, `apps`) at the correct provider/cluster path.

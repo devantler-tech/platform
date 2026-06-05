@@ -1,0 +1,44 @@
+# Canary SLO: HTTP request success rate (%) of the Flagger `-primary` workload,
+# derived from Coroot's eBPF node-agent server-side metric
+# `container_http_inbound_requests_total` (stored in the bundled Prometheus).
+#
+# LAYER PLACEMENT — this CR lives in the `infrastructure` Flux Kustomization, NOT
+# next to the Flagger HelmRelease in `controllers/flagger/`. The HelmRelease ships
+# the MetricTemplate CRD; a CR of that kind in the same Kustomization fails the
+# kustomize-controller's server-side dry-run (`no matches for kind
+# "MetricTemplate"`) and aborts the whole set. `infrastructure` dependsOn (and
+# wait:true's) `infrastructure-controllers`, so the CRD is established first
+# (same pattern as infrastructure/coroot/coroot.yaml).
+#
+# ⚠️ VALIDATE AGAINST LIVE DATA before onboarding the first app: confirm in
+# coroot-prometheus that (a) the `container_id` label format is
+# `/k8s/<namespace>/<pod>/<container>`, and (b) the `status` label holds the
+# numeric HTTP code (so `status=~"5.."` selects 5xx). Adjust the selectors here
+# if Coroot's schema differs — the query is just a string.
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: coroot-request-success-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://coroot-prometheus.coroot.svc.cluster.local:9090
+  query: |
+    sum(
+        rate(
+            container_http_inbound_requests_total{
+              container_id=~"/k8s/{{ namespace }}/{{ target }}-primary-.*",
+              status!~"5.."
+            }[{{ interval }}]
+        )
+    )
+    /
+    sum(
+        rate(
+            container_http_inbound_requests_total{
+              container_id=~"/k8s/{{ namespace }}/{{ target }}-primary-.*"
+            }[{{ interval }}]
+        )
+    )
+    * 100
