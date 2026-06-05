@@ -92,6 +92,25 @@ spec:
               - op: add
                 path: /spec/template/spec/containers/0/readinessProbe/timeoutSeconds
                 value: 5
+              # Graceful drain on termination. The release rolls often (helm
+              # revisions + reloader restarts) and the Service's ClientIP
+              # affinity (below) pins each auth-proxy pod to one homepage
+              # replica. Without draining, a rolling pod stops serving the
+              # instant it is SIGTERMed while auth-proxy is still routed to it,
+              # so the rollout window returns 502 Bad Gateway — and the
+              # dashboard's ~14 /api/* polls per refresh amplify that into a
+              # latency+error incident on oauth2-proxy and auth-proxy. A short
+              # preStop keeps the old pod answering until it has been removed
+              # from the Service endpoints and the affinity has rebalanced.
+              - op: add
+                path: /spec/template/spec/terminationGracePeriodSeconds
+                value: 30
+              - op: add
+                path: /spec/template/spec/containers/0/lifecycle
+                value:
+                  preStop:
+                    exec:
+                      command: ["/bin/sh", "-c", "sleep 10"]
           # Flicker fix: with replicaCount=2 and the chart's default ClusterIP
           # service, the Kubernetes widget's poll for node/cluster CPU/memory
           # round-robins between two pods that each maintain their own
