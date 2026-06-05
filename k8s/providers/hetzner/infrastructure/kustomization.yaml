@@ -10,6 +10,12 @@ resources:
   # ~16x the real bill). Lives in this `infrastructure` layer because it targets
   # the `platform` project the coroot-patch below adds to the Coroot CR.
   - coroot/custom-cloud-pricing-cronjob.yaml
+  # Longhorn CSI VolumeSnapshotClass for Velero CSI backups. Kept in this
+  # `infrastructure` layer (not `infrastructure/controllers/`) so the
+  # snapshot.storage.k8s.io CRDs shipped by the snapshot-controller HelmRelease
+  # are established first — see volume-snapshot-classes/longhorn.yaml. (hcloud
+  # block storage has no snapshot support, so openbao stays on FSB.)
+  - volume-snapshot-classes/
 patches:
   - path: gateway-patch.yaml
     target:

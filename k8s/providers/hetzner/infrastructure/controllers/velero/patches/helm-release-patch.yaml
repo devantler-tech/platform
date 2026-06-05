@@ -1,0 +1,29 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: velero
+  namespace: velero
+spec:
+  values:
+    configuration:
+      # Enable the CSI snapshot path. Velero 1.18 ships the CSI plugin in core,
+      # so this feature flag is all that's needed (the velero-plugin-for-aws
+      # initContainer for the R2 BackupStorageLocation stays).
+      #
+      # defaultVolumesToFsBackup is intentionally LEFT at the base default
+      # (true). It is the fail-safe fallback for every volume the volume policy
+      # below does NOT match — i.e. openbao on hcloud block storage (no CSI
+      # snapshot support) and any future non-Longhorn PVC — so they are always
+      # captured via Kopia file-system backup.
+      features: EnableCSI
+    schedules:
+      daily-full:
+        template:
+          # Volume Policy: route by storage backend. Velero evaluates this
+          # BEFORE the FSB opt-in/opt-out default (volume policies are higher
+          # priority), so Longhorn PVCs take the CSI snapshot path while
+          # everything else falls back to FSB. snapshotMoveData (set in the base
+          # schedule) makes the data mover upload the Longhorn snapshots to R2.
+          resourcePolicy:
+            kind: configmap
+            name: velero-volume-policies
