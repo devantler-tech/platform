@@ -13,4 +13,4 @@ resources:
   - helm-release.yaml
   - httproute.yaml
   - networkpolicy.yaml
-  - provision-job.yaml
+  - provision-cronjob.yaml
