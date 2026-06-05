@@ -71,7 +71,10 @@ jobs:
         with:
           distribution: Talos
           provider: Docker
-          ksail-version: "7.25.0"
+          # 7.26.0 adds `workload validate --skip-kinds` / spec.workload.validation.skipKinds,
+          # which ksail.yaml uses to skip the Coroot CR (its CRDs-catalog schema is stale).
+          # Manual pin (the curl KSAIL_VERSION pins below are the Renovate-tracked ones).
+          ksail-version: "7.26.0"
           init: "false"
           validate: "true"
           scan: "true"
