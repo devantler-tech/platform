@@ -5,6 +5,12 @@ resources:
   - ../../../bases/infrastructure/
   - cluster-issuers/
   - vault-seed/
+  # Longhorn CSI VolumeSnapshotClass for Velero CSI backups. Kept in this
+  # `infrastructure` layer (not `infrastructure/controllers/`) so the
+  # snapshot.storage.k8s.io CRDs shipped by the snapshot-controller HelmRelease
+  # are established first — see volume-snapshot-classes/longhorn.yaml. (hcloud
+  # block storage has no snapshot support, so openbao stays on FSB.)
+  - volume-snapshot-classes/
 patches:
   - path: gateway-patch.yaml
     target:

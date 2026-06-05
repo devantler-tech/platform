@@ -30,20 +30,65 @@ substituted into both the Velero and CNPG secrets at Flux apply time.
 ## Velero
 
 - Chart: `vmware-tanzu/velero` (HelmRepository at
-  `https://vmware-tanzu.github.io/helm-charts`).
+  `https://vmware-tanzu.github.io/helm-charts`), Velero 1.18.
 - Namespace: `velero`.
-- File-level backups via **Kopia** (modern uploader, dedup, no per-GB Hetzner
-  CSI snapshot cost). `defaultVolumesToFsBackup: true` so any new PVC is
-  picked up automatically — no opt-in annotation needed.
-- BackupStorageLocation: `default` → R2, prefix `velero`.
-- VolumeSnapshotLocation: **none**. Cost decision (CSI snapshots are billed
-  per-GB on Hetzner Cloud, file-level on R2 is flat).
-- HA: 2 replicas, PDB minAvailable=1, hostname topologySpread, RollingUpdate
-  maxUnavailable=0 — same posture as the rest of the operator tier.
+- BackupStorageLocation: `default` → R2, prefix `velero/<env>`.
 - Daily schedule `daily-full` at 02:17, 14-day TTL, all namespaces except
   `kube-system` and `velero`. Long-term retention is enforced by R2 object
   lock + lifecycle rules (configured on the bucket) so even a misconfigured
   Velero cannot delete history beyond the 30-day governance window.
+- HA: `velero_replicas` (prod = 1, leader-elected), hostname topologySpread,
+  `Recreate` strategy — **no PDB** (a single leader-elected pod with a PDB
+  would deadlock rolling upgrades). The node-agent runs as a DaemonSet on
+  every node (required for both Kopia FSB and the CSI data mover).
+
+### Backup method: per-StorageClass (prod) vs uniform FSB (local)
+
+Backups always land in R2 as a Kopia repository, so they are portable for
+cross-provider/cross-distribution restore regardless of how the volume was
+captured. *How* each volume is captured depends on its storage backend:
+
+| Storage backend                    | Method                               | Why                                                                                  |
+| ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------ |
+| Longhorn (`longhorn` SC)           | CSI snapshot → Kopia data mover → R2  | Crash-consistent; also backs up PVCs of scaled-to-zero apps (no running pod needed).  |
+| hcloud (`hcloud` SC, e.g. openbao) | File-system backup (Kopia) → R2       | **Hetzner block storage has no CSI snapshot support** (the driver advertises no `CREATE_DELETE_SNAPSHOT`; Hetzner has no volume-snapshot product). |
+| anything else / new PVCs           | File-system backup (Kopia) → R2       | Fail-safe default.                                                                    |
+
+The routing is declarative (by StorageClass), not per-pod annotations:
+
+- `defaultVolumesToFsBackup: true` everywhere is the **fail-safe default** — any
+  volume not otherwise routed is Kopia-FSB'd, so nothing is ever silently
+  skipped.
+- **prod only:** a Velero **Volume Policy** ConfigMap (`velero-volume-policies`,
+  referenced by the schedule's `spec.resourcePolicy`) routes `storageClass:
+  [longhorn]` → the `snapshot` action. Volume policies take precedence over the
+  FSB default, so Longhorn PVCs take the CSI path and everything else falls back
+  to FSB. `snapshotMoveData: true` makes the data mover upload the CSI snapshots
+  to R2 (so they are not tied to Longhorn at restore time).
+- **local/CI:** no Volume Policy and no CSI (the docker `local-path` provider
+  cannot snapshot) → every volume uses FSB. That is the same Kopia FSB code path
+  prod uses for its hcloud/fallback volumes, so the CI restore drill still
+  regression-tests it.
+
+### CSI snapshot prerequisites (prod/hetzner)
+
+CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
+
+- **snapshot-controller + the `snapshot.storage.k8s.io` CRDs** — the piraeus
+  `snapshot-controller` chart (appVersion = kubernetes-csi external-snapshotter
+  v8.5.0, the version Longhorn 1.11 targets), in `kube-system`. The conversion
+  webhook is disabled (only the v1 API is used).
+- **Longhorn CSI snapshotter sidecar** — enabled via
+  `longhorn_csi_snapshotter_replicas: "1"`. Longhorn `dependsOn`
+  snapshot-controller so the CRDs exist before the sidecar starts.
+- **`VolumeSnapshotClass` `longhorn-snapshot-vsc`** (`type: snap`, labelled
+  `velero.io/csi-volumesnapshot-class`) — a plain in-cluster Longhorn snapshot
+  (NOT a billed cloud snapshot, and NOT Longhorn's own `bak` backup target)
+  which the data mover reads and then deletes. It lives in the `infrastructure`
+  Flux layer so the CRDs (installed in `infrastructure-controllers`) are
+  established first.
+- Velero `features: EnableCSI` (the CSI plugin is built into Velero 1.18 core,
+  so no extra plugin beyond `velero-plugin-for-aws` for the R2 BSL).
 
 ## CloudNativePG
 

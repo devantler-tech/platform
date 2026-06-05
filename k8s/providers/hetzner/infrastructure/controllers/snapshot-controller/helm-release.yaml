@@ -1,0 +1,56 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: snapshot-controller
+  namespace: kube-system
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  timeout: 10m
+  chart:
+    spec:
+      chart: snapshot-controller
+      # appVersion v8.5.0 — the external-snapshotter version Longhorn 1.11
+      # targets. Installs the snapshot.storage.k8s.io CRDs + the cluster
+      # snapshot-controller. Renovate tracks the chart version.
+      version: 5.0.4
+      sourceRef:
+        kind: HelmRepository
+        name: piraeus
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  # https://artifacthub.io/packages/helm/piraeus-charts/snapshot-controller
+  values:
+    # The cluster-wide snapshot.storage.k8s.io CRDs (VolumeSnapshot{,Class,
+    # Content} + the VolumeGroupSnapshot set). Longhorn's CSI snapshotter
+    # sidecar and Velero's EnableCSI path both require these. Only Longhorn
+    # consumes them — Hetzner block storage (hcloud-csi) has no snapshot
+    # support, so openbao stays on file-system backup.
+    installCRDs: true
+    # Disable the conversion webhook. It only converts the deprecated v1beta1
+    # API to v1; on this cluster every object uses v1 (the v8.5.0 CRDs serve
+    # only v1, with no spec.conversion block), so it is never invoked. Keeping
+    # it off avoids putting a webhook in the VolumeSnapshot API path (its outage
+    # would fail Velero's nightly snapshot) and avoids Flux re-rendering its
+    # self-signed TLS on every reconcile.
+    webhook:
+      enabled: false
+    controller:
+      # Leader-elected singleton; only active while a backup is taking CSI
+      # snapshots. One replica is sufficient.
+      replicaCount: 1
+      resources:
+        requests:
+          cpu: 10m
+          memory: 32Mi
+        limits:
+          memory: 64Mi

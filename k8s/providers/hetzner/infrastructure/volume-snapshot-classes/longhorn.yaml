@@ -1,0 +1,33 @@
+# Longhorn CSI VolumeSnapshotClass for Velero CSI backups with data movement.
+#
+# Only Longhorn volumes use this. Hetzner block storage (hcloud-csi) advertises
+# no CSI snapshot capability, so openbao (deliberately on hcloud) is backed up
+# by Velero file-system backup instead — see the openbao hetzner patch.
+#
+# LAYER PLACEMENT — this lives in the `infrastructure` Flux Kustomization, NOT
+# next to the snapshot-controller HelmRelease in `infrastructure/controllers/`.
+# The snapshot-controller chart ships the snapshot.storage.k8s.io CRDs, so a CR
+# of kind VolumeSnapshotClass cannot live in the same Kustomization: the
+# kustomize-controller server-side dry-runs the whole set at once and the CR
+# fails with `no matches for kind "VolumeSnapshotClass"`, aborting the entire
+# `infrastructure-controllers` set (the same deadlock documented for the Coroot
+# CR in bases/infrastructure/coroot/coroot.yaml). `infrastructure` dependsOn
+# (+ wait:true) `infrastructure-controllers`, so the CRDs are established before
+# this is applied.
+#
+# `type: snap` makes Longhorn take a plain in-cluster snapshot (stored on the
+# existing Longhorn disks — NOT a billed cloud snapshot); Velero's data mover
+# (Kopia, via the node-agent) then copies that snapshot to R2 and deletes it.
+# This is distinct from `type: bak`, which would route through Longhorn's own
+# backupTarget (not configured here). The `velero.io/csi-volumesnapshot-class`
+# label makes Velero auto-select this class for driver.longhorn.io volumes.
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: longhorn-snapshot-vsc
+  labels:
+    velero.io/csi-volumesnapshot-class: "true"
+driver: driver.longhorn.io
+deletionPolicy: Delete
+parameters:
+  type: snap
