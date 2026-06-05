@@ -12,7 +12,7 @@ This is a **GitOps-based Kubernetes platform** — not a traditional code reposi
 
 - **Flux CD** — GitOps engine reconciling from OCI artifacts
 - **Kustomize** — manifest templating and overlays
-- **Cilium** — CNI and Gateway API (SPIRE-based mutual authentication is enabled in prod; the Docker provider overlay disables it for local/CI)
+- **Cilium** — CNI and Gateway API (transparent WireGuard encryption is enabled in prod and disabled in the Docker overlay for local/CI; SPIRE-based mutual authentication is currently disabled cluster-wide — no policy requires `authentication.mode: required`, so it only produced spire-agent noise — and is re-enabled in the Cilium HelmRelease when a mutual-auth policy is introduced)
 - **Talos Linux** — immutable Kubernetes OS
 - **KSail** — unified cluster and workload lifecycle management (Talos + Docker for local, Talos + Hetzner for prod)
 - **SOPS + Age** — secret encryption at rest (per-environment Age keys)
