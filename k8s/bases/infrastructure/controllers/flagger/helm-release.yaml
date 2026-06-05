@@ -16,7 +16,7 @@ spec:
   # install time — only while a Canary is being analysed.
   dependsOn:
     - name: coroot-operator
-      namespace: coroot
+      namespace: observability
   interval: 2m
   timeout: 10m
   install:
@@ -46,7 +46,7 @@ spec:
     # exports server-side HTTP metrics — container_http_inbound_requests_total
     # and ..._duration_seconds_total — which the MetricTemplates in the
     # `infrastructure` layer turn into request-success-rate / latency SLOs.
-    metricsServer: http://coroot-prometheus.coroot.svc.cluster.local:9090
+    metricsServer: http://coroot-prometheus.observability.svc.cluster.local:9090
     prometheus:
       install: false
 

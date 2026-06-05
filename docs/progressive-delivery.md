@@ -20,7 +20,7 @@ Promotion vs rollback is gated on:
 
 - **SLO metrics** — there is no Istio/Envoy telemetry and no app instrumentation
   here, so the `MetricTemplate`s query **Coroot's bundled Prometheus** (the same
-  endpoint OpenCost uses, `coroot-prometheus.coroot.svc:9090`). Coroot's eBPF
+  endpoint OpenCost uses, `coroot-prometheus.observability.svc:9090`). Coroot's eBPF
   node-agent exports server-side `container_http_inbound_requests_total{status}`
   (a counter) plus the `container_http_inbound_requests_duration_seconds_total`
   histogram — a standard Prometheus histogram, so its queryable bucket series is

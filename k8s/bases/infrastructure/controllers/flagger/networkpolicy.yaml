@@ -14,12 +14,12 @@ spec:
     # Kube API — Flagger reconciles Canary/Deployment/Service/HTTPRoute objects.
     - toEntities:
         - kube-apiserver
-    # Coroot's bundled Prometheus — canary SLO metric queries (success-rate,
-    # latency). Same endpoint OpenCost queries; Coroot's netpol allows this
-    # namespace in on :9090.
+    # Coroot's bundled Prometheus (in the observability namespace) — canary SLO
+    # metric queries (success-rate, latency). Same endpoint OpenCost queries;
+    # Coroot's netpol allows this namespace in on :9090.
     - toEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: coroot
+            k8s:io.kubernetes.pod.namespace: observability
       toPorts:
         - ports:
             - port: "9090"

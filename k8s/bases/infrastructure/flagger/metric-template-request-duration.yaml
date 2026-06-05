@@ -22,7 +22,7 @@ metadata:
 spec:
   provider:
     type: prometheus
-    address: http://coroot-prometheus.coroot.svc.cluster.local:9090
+    address: http://coroot-prometheus.observability.svc.cluster.local:9090
   query: |
     histogram_quantile(0.99,
       sum(
