@@ -143,11 +143,21 @@ spec:
       enabled: true
       type: wireguard
       nodeEncryption: true
+    # SPIRE mutual authentication is DISABLED. It provides workload *identity*
+    # for policies with `authentication.mode: required`, but no
+    # CiliumNetworkPolicy in this platform uses that mode — so SPIRE issued no
+    # identities and produced nothing but a constant per-node spire-agent
+    # "no identity issued" error stream (flagged by Coroot), plus an idle
+    # spire-server + 7-pod spire-agent DaemonSet. WireGuard encryption (above)
+    # is orthogonal and already protects all pod/node traffic on the wire;
+    # SPIRE adds no value until a mutual-auth policy actually exists. The
+    # `install:` block is kept (inert) so re-enabling is a one-line flip — at
+    # which point also restore the docker overlay's explicit opt-out.
     authentication:
-      enabled: true
+      enabled: false
       mutual:
         spire:
-          enabled: true
+          enabled: false
           install:
             namespace: kube-system
             existingNamespace: true
