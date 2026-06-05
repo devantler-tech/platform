@@ -4,5 +4,7 @@ metadata:
   name: flagger
   namespace: flagger-system
 spec:
-  # Hosts both the `flagger` controller and the `loadtester` charts.
-  url: https://fluxcd.github.io/helm-charts
+  # The canonical Flagger Helm repo — hosts both the `flagger` controller and the
+  # `loadtester` charts (https://fluxcd.github.io/helm-charts is the Flux project's
+  # own charts and 404s for flagger/loadtester).
+  url: https://flagger.app
