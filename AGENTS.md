@@ -41,7 +41,7 @@ ksail.prod.yaml       # KSail production cluster config (Talos + Hetzner, kustom
 .releaserc            # semantic-release configuration
 ```
 
-Detailed, path-scoped conventions live in this file's sections below — Kustomize overlays,
+Detailed, topic-scoped conventions live in this file's sections below — Kustomize overlays,
 Flux dependency ordering and HelmRelease conventions (manifest structure), Talos machine-config
 patch structure, and the SOPS encryption workflow and key rules. They are also distilled into the
 review checklist [`.github/copilot-instructions.md`](.github/copilot-instructions.md), which is what
