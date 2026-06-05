@@ -1,0 +1,73 @@
+# The Coroot custom resource the operator reconciles into the full stack.
+# Community Edition, self-hosted. Defaults are deliberately minimal so the
+# install is feature-complete out of the box; the hetzner overlay patch adds
+# persistent (hcloud) storage and prod notification wiring.
+#
+# LAYER PLACEMENT — DO NOT move this back next to the operator HelmRelease in
+# `infrastructure/controllers/coroot/`. The operator chart ships the `Coroot`
+# CRD, so a CR of that kind cannot live in the same Flux Kustomization as the
+# operator: kustomize-controller server-side dry-runs the whole set at once,
+# the CR fails with `no matches for kind "Coroot" in version "coroot.com/v1"`,
+# and the entire `infrastructure-controllers` Kustomization aborts — which also
+# blocks the operator that would have installed the CRD (a hard deadlock). This
+# CR therefore lives in the `infrastructure` Kustomization, which `dependsOn`
+# (and `wait: true`s for) `infrastructure-controllers`, so the operator is
+# installed and the CRD is established before this resource is applied.
+apiVersion: coroot.com/v1
+kind: Coroot
+metadata:
+  name: coroot
+  namespace: coroot
+spec:
+  # NB: the Coroot app version is managed by the operator (pin via
+  # spec.communityEdition.image if ever needed) — there is no spec.version
+  # field. The operator HelmRelease itself stays Flux/Renovate-pinned.
+
+  # CE has no native OIDC/SSO (Enterprise only), so the UI is fronted by the
+  # existing oauth2-proxy (Dex) via httproute.yaml — exactly how Prometheus /
+  # Alertmanager were exposed. Every request that clears the proxy is treated
+  # as Admin, mirroring the old single-operator "everyone -> Grafana Admin".
+  authAnonymousRole: Admin
+
+  metricsRefreshInterval: 15s
+  cacheTTL: 30d
+
+  # The Coroot app's own state (users, custom dashboards, UI-configured
+  # integrations). Small; className comes from the hetzner overlay (hcloud).
+  storage:
+    size: 2Gi
+
+  # Bundled Prometheus = the metrics TSDB. Kept as a real Prometheus (we do
+  # NOT set storeMetricsInClickhouse) precisely so OpenCost can still query it
+  # at http://coroot-prometheus.coroot.svc.cluster.local:9090.
+  prometheus:
+    retention: 7d
+    storage:
+      size: 10Gi
+
+  # ClickHouse stores logs, traces and continuous profiles. A single
+  # shard/replica (+ one keeper for replication metadata) is plenty for a
+  # homelab and keeps the footprint small on a memory-constrained cluster.
+  clickhouse:
+    shards: 1
+    replicas: 1
+    keeper:
+      replicas: 1
+    storage:
+      size: 10Gi
+  logsTTL: 3d
+  tracesTTL: 3d
+  profilesTTL: 3d
+
+  # eBPF node-agent runs on every node, including the tainted control planes.
+  # platform-critical so per-node telemetry survives node memory pressure
+  # (the operator only exposes priorityClassName on the node-agent, not on the
+  # bundled Prometheus/ClickHouse).
+  nodeAgent:
+    priorityClassName: platform-critical
+    tolerations:
+      - operator: Exists
+
+  # cluster-agent is left at its default (enabled) — it provides the
+  # kube-state-metrics-equivalent cluster inventory, replacing the standalone
+  # kube-state-metrics from the prometheus stack.

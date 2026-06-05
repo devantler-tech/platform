@@ -1,0 +1,66 @@
+---
+apiVersion: coroot.com/v1
+kind: Coroot
+metadata:
+  name: coroot
+  namespace: coroot
+spec:
+  # Persist on Hetzner Cloud block storage. The base uses the default storage
+  # class (fine for ephemeral local/CI), but in prod a VPA eviction, node
+  # drain, or autoscaler scale-down would otherwise wipe all telemetry. hcloud
+  # block storage (not Longhorn) for the same reason OpenBao/Prometheus used
+  # it: the ~36 GiB Talos rootfs is too small to host Longhorn replicas this
+  # large. Velero's daily backup of the coroot namespace ships these to R2.
+  storage:
+    className: hcloud
+    size: 2Gi
+  prometheus:
+    # 14d metrics retention (matches the old kube-prometheus-stack posture).
+    retention: 14d
+    storage:
+      className: hcloud
+      size: 20Gi
+  clickhouse:
+    storage:
+      className: hcloud
+      size: 15Gi
+    keeper:
+      storage:
+        className: hcloud
+        size: 2Gi
+  # Longer log/trace/profile retention now that storage is durable.
+  logsTTL: 7d
+  tracesTTL: 7d
+  profilesTTL: 7d
+  # --- Slack alerting (fully declarative, prod-only) --------------------------
+  # Coroot CE has no pre-fillable bot-token Slack integration, but its generic
+  # *webhook* integration POSTs a templated body to any URL -- so we reuse the
+  # exact Slack incoming-webhook the prometheus stack used:
+  # ${alertmanager_webhook_url}, injected by Flux from the per-cluster
+  # variables-cluster Secret (same value, same source as before -- nothing to
+  # fill in). This lives only in the hetzner overlay: the base Coroot CR has no
+  # `projects`/webhook integration at all, so local/CI (docker overlay) has
+  # nothing to send and stays quiet by design, exactly as the old Alertmanager
+  # did. Slack alerting is a prod-only concern.
+  #
+  # Describing a project re-homes the bundled agents onto its API key, but the
+  # keySecret is created automatically by the operator (generated in-cluster,
+  # no seed), so telemetry keeps flowing with zero manual steps.
+  projects:
+    - name: platform
+      apiKeys:
+        - keySecret:
+            name: coroot-api-key
+            key: key
+          description: bundled node-agent + cluster-agent
+      notificationIntegrations:
+        webhook:
+          url: ${alertmanager_webhook_url:=https://example.invalid/no-slack-configured}
+          incidents: true
+          alerts: true
+          # Slack-mrkdwn payloads. `json` (json.Marshal) escapes each
+          # interpolated field so quotes/newlines can't break the JSON body.
+          incidentTemplate: |
+            {"text": {{ if eq .Status "OK" }}{{ json (printf ":white_check_mark: <%s|%s/%s> incident resolved" .URL .Application.Namespace .Application.Name) }}{{ else }}{{ json (printf ":fire: %s: <%s|%s/%s> is not meeting its SLOs\n%s" .Status .URL .Application.Namespace .Application.Name .RCASummary) }}{{ end }}}
+          alertTemplate: |
+            {"text": {{ if eq .Status "OK" }}{{ json (printf ":white_check_mark: %s resolved - <%s|%s/%s>" .RuleName .URL .Application.Namespace .Application.Name) }}{{ else }}{{ json (printf ":rotating_light: [%s] %s - <%s|%s/%s>\n%s" .Severity .RuleName .URL .Application.Namespace .Application.Name .Summary) }}{{ end }}}

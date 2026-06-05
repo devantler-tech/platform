@@ -1,0 +1,72 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-coroot
+  namespace: coroot
+spec:
+  endpointSelector: {}
+  ingress:
+    # Intra-namespace: Coroot UI <-> bundled Prometheus <-> ClickHouse <->
+    # cluster-agent, plus the heartbeat CronJob probing Prometheus.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: coroot
+    # The eBPF node-agent runs with host networking on every node, so its
+    # telemetry push appears as the host / remote-node entity rather than a
+    # coroot-namespace endpoint. It pushes everything (metrics, logs, traces,
+    # profiles) to the Coroot app's /v1/* endpoints on :8080 only — it does not
+    # reach Prometheus or ClickHouse directly (the app fans those out
+    # intra-namespace), so this is scoped to :8080 for least privilege.
+    - fromEntities:
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # auth-proxy (oauth2-proxy SSO) reaches the Coroot UI after authentication.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # OpenCost queries the bundled Prometheus for cost allocation.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: opencost
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+  egress:
+    # Kube API for the cluster-agent's service discovery / kube-state inventory.
+    - toEntities:
+        - kube-apiserver
+    # Reach scrape targets across namespaces and the nodes themselves.
+    - toEndpoints:
+        - matchExpressions:
+            - key: k8s:io.kubernetes.pod.namespace
+              operator: Exists
+    - toEntities:
+        - host
+        - remote-node
+    # Slack notifications + Coroot version checks (HTTPS egress).
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

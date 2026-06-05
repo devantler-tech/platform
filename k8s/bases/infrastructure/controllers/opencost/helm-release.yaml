@@ -7,8 +7,8 @@ metadata:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   dependsOn:
-    - name: kube-prometheus-stack
-      namespace: monitoring
+    - name: coroot-operator
+      namespace: coroot
   interval: 2m
   timeout: 10m
   install:
@@ -66,9 +66,9 @@ spec:
                               seconds: 15
   # https://github.com/opencost/opencost-helm-chart/blob/main/charts/opencost/values.yaml
   #
-  # Lightweight FinOps cost allocation. Points at the existing
-  # kube-prometheus-stack Prometheus and uses custom pricing derived from
-  # Hetzner Cloud CX33 rates (€6.49/month for 4 vCPU / 8 GB / 80 GB).
+  # Lightweight FinOps cost allocation. Points at Coroot's bundled Prometheus
+  # (the metrics TSDB the operator deploys) and uses custom pricing derived
+  # from Hetzner Cloud CX33 rates (€6.49/month for 4 vCPU / 8 GB / 80 GB).
   values:
     opencost:
       prometheus:
@@ -76,7 +76,7 @@ spec:
           enabled: false
         external:
           enabled: true
-          url: "http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090"
+          url: "http://coroot-prometheus.coroot.svc.cluster.local:9090"
 
       # Hetzner Cloud custom pricing — CX33 monthly cap decomposed into
       # per-resource-unit USD costs. CX33 spec verified live with
@@ -154,6 +154,9 @@ spec:
           limits:
             memory: 128Mi
 
+      # The prometheus-operator ServiceMonitor CRD no longer exists (it left
+      # with kube-prometheus-stack). OpenCost still computes cost from Coroot's
+      # Prometheus; its own /metrics are observed by Coroot's node-agent.
       metrics:
         serviceMonitor:
-          enabled: true
+          enabled: false

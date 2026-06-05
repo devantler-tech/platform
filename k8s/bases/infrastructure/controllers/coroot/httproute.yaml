@@ -1,31 +1,35 @@
-# Expose the OpenCost UI behind oauth2-proxy SSO (same forward-auth
-# pattern as the Coroot UI). OpenCost serves its UI on port 9090.
+# Expose the Coroot UI behind oauth2-proxy SSO (the same forward-auth pattern
+# the Prometheus / Alertmanager UIs used): the route backends to the
+# oauth2-proxy Service; after authentication oauth2-proxy forwards to
+# auth-proxy, which routes by Host to the Coroot Service (see auth-proxy
+# config-map.yaml). Coroot CE has no native OIDC, so this is how SSO is
+# enforced. The Coroot app serves its UI on port 8080.
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: opencost
-  namespace: opencost
+  name: coroot
+  namespace: coroot
   annotations:
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/name: OpenCost
-    gethomepage.dev/description: Kubernetes cost allocation and FinOps.
+    gethomepage.dev/name: Coroot
+    gethomepage.dev/description: Metrics, logs, traces, profiling and alerts.
     gethomepage.dev/group: Observability
-    gethomepage.dev/icon: opencost.png
+    gethomepage.dev/icon: coroot.png
 spec:
   parentRefs:
     - name: platform
       namespace: kube-system
       sectionName: https
   hostnames:
-    - opencost.${domain}
+    - coroot.${domain}
   rules:
     - filters:
         - type: RequestHeaderModifier
           requestHeaderModifier:
             set:
               - name: X-Auth-Request-Redirect
-                value: https://opencost.${domain}/
+                value: https://coroot.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:

@@ -15,14 +15,6 @@ spec:
         - ports:
             - port: "9443"
               protocol: TCP
-    # Metrics scraping
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
-      toPorts:
-        - ports:
-            - port: "8000"
-              protocol: TCP
   egress:
     # Kube API for policy enforcement
     - toEntities:

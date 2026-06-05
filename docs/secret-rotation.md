@@ -11,8 +11,7 @@ ships as its own reviewed PR.
 - **Two sourcing paths coexist (mid-migration):**
   - **OpenBao → ESO**: generators (`k8s/bases/infrastructure/vault-seed/generators.yaml`) seed OpenBao KV
     once; `ExternalSecret`s sync to consumer namespaces (1h refresh). Used by
-    fleetdm DB/redis/license, headlamp/actual-budget OIDC, cloudflare token, R2,
-    alertmanager.
+    fleetdm DB/redis/license, headlamp/actual-budget OIDC, cloudflare token, R2.
   - **SOPS → Flux postBuild substitution**: `${dex_client_secret}`,
     `${flux_web_client_secret}`, `${oauth2_proxy_cookie_secret}` etc. are still
     read from `k8s/clusters/*/bootstrap/variables-cluster-secret.enc.yaml`. **Dex

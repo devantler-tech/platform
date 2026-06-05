@@ -27,14 +27,6 @@ spec:
               protocol: TCP
             - port: "5432"
               protocol: TCP
-    # Metrics scraping from monitoring namespace
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
-      toPorts:
-        - ports:
-            - port: "9187"
-              protocol: TCP
   egress:
     # Intra-namespace (app → db)
     - toEndpoints:

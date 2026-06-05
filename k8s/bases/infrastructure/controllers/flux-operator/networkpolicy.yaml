@@ -24,10 +24,6 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: flux-system
-    # Metrics scraping
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: monitoring
   egress:
     # Intra-namespace (controller-to-controller communication)
     - toEndpoints:

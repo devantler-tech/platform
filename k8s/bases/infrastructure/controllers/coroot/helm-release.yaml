@@ -1,0 +1,35 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: coroot-operator
+  namespace: coroot
+  labels:
+    # The operator chart ships the `Coroot` CRD; let Flux manage it.
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m0s
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  # https://github.com/coroot/helm-charts/tree/main/charts/coroot-operator
+  #
+  # The operator is the maintained install path (the all-in-one `coroot`
+  # chart is deprecated). It reconciles the `Coroot` custom resource
+  # (coroot.yaml) into the actual workloads: the Coroot UI, a bundled
+  # Prometheus (metrics TSDB), ClickHouse (logs/traces/profiles), the eBPF
+  # node-agent (per-node telemetry) and the cluster-agent (kube-state-metrics
+  # equivalent). Coroot Community Edition — fully self-hosted.
+  chart:
+    spec:
+      chart: coroot-operator
+      version: 0.9.6
+      sourceRef:
+        kind: HelmRepository
+        name: coroot

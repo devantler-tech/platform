@@ -93,7 +93,7 @@ A high-level inventory of what Flux reconciles onto the cluster. The manifests l
 - **Policy & runtime security** — Kyverno, Kubescape, Tetragon; see [`docs/runtime-security.md`](docs/runtime-security.md)
 - **Storage** — Longhorn (replicated block/RWX, prod via Hetzner CSI), CloudNativePG (PostgreSQL operator); see [`docs/rwx-storage.md`](docs/rwx-storage.md)
 - **Autoscaling** — Cluster Autoscaler (nodes), Vertical Pod Autoscaler, KEDA + KEDA HTTP add-on; see [`docs/node-autoscaling.md`](docs/node-autoscaling.md)
-- **Observability** — kube-prometheus-stack (Prometheus, Grafana, Alertmanager), Loki (logs), Grafana Alloy (collection), OpenCost (cost)
+- **Observability** — Coroot (self-hosted, eBPF: metrics, logs, traces, profiling, service map, SLO alerting), OpenCost (cost); see [`docs/dr/alerting.md`](docs/dr/alerting.md)
 - **Backup / DR** — Velero with CloudNativePG backups; see [`docs/dr/`](docs/dr)
 - **Virtualization** — KubeVirt + CDI _(local/CI only; disabled on the Hetzner/prod overlay)_
 - **Testing** — Testkube _(local/CI only; not deployed to prod)_

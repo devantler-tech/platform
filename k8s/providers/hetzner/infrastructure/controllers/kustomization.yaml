@@ -10,20 +10,18 @@ resources:
   #                      was crash-looping (1000+ restarts) with zero VMs.
   # NOTE: a new base controller must be added to this list to reach prod.
   # Local/CI (docker provider) still deploys the full base controller set.
-  - ../../../../bases/infrastructure/controllers/alloy/
   - ../../../../bases/infrastructure/controllers/auth-proxy/
   - ../../../../bases/infrastructure/controllers/cert-manager/
   - ../../../../bases/infrastructure/controllers/cilium/
   - ../../../../bases/infrastructure/controllers/cloudnative-pg/
+  - ../../../../bases/infrastructure/controllers/coroot/
   - ../../../../bases/infrastructure/controllers/dex/
   - ../../../../bases/infrastructure/controllers/external-secrets/
   - ../../../../bases/infrastructure/controllers/flux-operator/
   - ../../../../bases/infrastructure/controllers/keda/
   - ../../../../bases/infrastructure/controllers/keda-http-add-on/
-  - ../../../../bases/infrastructure/controllers/kube-prometheus-stack/
   - ../../../../bases/infrastructure/controllers/kubescape/
   - ../../../../bases/infrastructure/controllers/kyverno/
-  - ../../../../bases/infrastructure/controllers/loki/
   - ../../../../bases/infrastructure/controllers/metrics-server/
   - ../../../../bases/infrastructure/controllers/oauth2-proxy/
   - ../../../../bases/infrastructure/controllers/openbao/
@@ -44,5 +42,6 @@ resources:
 patches:
   - path: flux-operator/patches/helm-release-patch.yaml
   - path: openbao/patches/helm-release-patch.yaml
-  - path: kube-prometheus-stack/patches/helm-release-patch.yaml
-  - path: loki/patches/helm-release-patch.yaml
+  # NB: the Coroot CR moved to the `infrastructure` layer (so the operator's
+  # CRD is installed first), so its hetzner patch now lives in
+  # ../coroot/patches/ and is applied by ../kustomization.yaml, not here.
