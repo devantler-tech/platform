@@ -27,14 +27,14 @@ spec:
       namespace: kube-system
       sectionName: https
   hostnames:
-    - coroot.${domain}
+    - observability.${domain}
   rules:
     - filters:
         - type: RequestHeaderModifier
           requestHeaderModifier:
             set:
               - name: X-Auth-Request-Redirect
-                value: https://coroot.${domain}/
+                value: https://observability.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:

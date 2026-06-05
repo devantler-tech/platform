@@ -61,7 +61,7 @@ spec:
         # deep-link back to the affected app in this instance. Same host the
         # HTTPRoute + auth-proxy serve the UI on; `${domain}` is substituted by
         # Flux from the per-cluster variables-cluster ConfigMap.
-        baseURL: https://coroot.${domain}
+        baseURL: https://observability.${domain}
         webhook:
           url: ${alertmanager_webhook_url:=https://example.invalid/no-slack-configured}
           incidents: true
