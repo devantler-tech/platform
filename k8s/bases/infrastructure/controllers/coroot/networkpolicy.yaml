@@ -2,7 +2,7 @@ apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
   name: allow-coroot
-  namespace: coroot
+  namespace: observability
 spec:
   endpointSelector: {}
   ingress:
@@ -10,10 +10,10 @@ spec:
     # cluster-agent, plus the heartbeat CronJob probing Prometheus.
     - fromEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: coroot
+            k8s:io.kubernetes.pod.namespace: observability
     # The eBPF node-agent runs with host networking on every node, so its
     # telemetry push appears as the host / remote-node entity rather than a
-    # coroot-namespace endpoint. It pushes everything (metrics, logs, traces,
+    # observability-namespace endpoint. It pushes everything (metrics, logs, traces,
     # profiles) to the Coroot app's /v1/* endpoints on :8080 only — it does not
     # reach Prometheus or ClickHouse directly (the app fans those out
     # intra-namespace), so this is scoped to :8080 for least privilege.

@@ -17,7 +17,7 @@ spec:
       namespace: kube-system
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
-      namespace: coroot
+      namespace: observability
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: opencost

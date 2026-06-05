@@ -35,7 +35,7 @@ spec:
     # Coroot's bundled Prometheus for cost data
     - toEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: coroot
+            k8s:io.kubernetes.pod.namespace: observability
       toPorts:
         - ports:
             - port: "9090"

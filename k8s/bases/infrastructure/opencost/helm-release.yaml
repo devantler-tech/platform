@@ -8,7 +8,7 @@ metadata:
 spec:
   # LAYER PLACEMENT — this HelmRelease lives in the `infrastructure` Kustomization
   # (not `infrastructure-controllers`). OpenCost FTL-exits on boot if it cannot
-  # reach Coroot's bundled Prometheus at coroot-prometheus.coroot.svc:9090, which
+  # reach Coroot's bundled Prometheus at coroot-prometheus.observability.svc:9090, which
   # the operator only builds from the Coroot CR in the `infrastructure` layer.
   # Keeping OpenCost in `infrastructure-controllers` is a hard deadlock: that
   # layer health-checks OpenCost (never Ready without the Prometheus) while the CR
@@ -18,7 +18,7 @@ spec:
   # built coroot-prometheus, so it is not sufficient on its own; the layer move is.
   dependsOn:
     - name: coroot-operator
-      namespace: coroot
+      namespace: observability
   interval: 2m
   timeout: 10m
   install:
@@ -86,7 +86,7 @@ spec:
           enabled: false
         external:
           enabled: true
-          url: "http://coroot-prometheus.coroot.svc.cluster.local:9090"
+          url: "http://coroot-prometheus.observability.svc.cluster.local:9090"
 
       # Hetzner Cloud custom pricing — CX33 monthly cap decomposed into
       # per-resource-unit USD costs. CX33 spec verified live with

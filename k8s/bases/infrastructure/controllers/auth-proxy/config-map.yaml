@@ -54,7 +54,7 @@ data:
         coroot:
           loadBalancer:
             servers:
-              - url: "http://coroot-coroot.coroot.svc.cluster.local:8080"
+              - url: "http://coroot-coroot.observability.svc.cluster.local:8080"
         opencost:
           loadBalancer:
             servers:

@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: coroot
+  name: observability
   labels:
     # Coroot's node-agent DaemonSet uses eBPF + hostPath/hostPID to collect
     # metrics, logs, traces and profiles from every node — it requires
