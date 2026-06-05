@@ -27,3 +27,12 @@ patches:
       name: wedding-app
       namespace: wedding-app
     path: wedding-app/patches/kustomization-patch.yaml
+  # Pilot user namespaces (hostUsers: false) on the stateless whoami pod —
+  # prod-only because the local Docker provider runs Talos nested in Docker
+  # where userns support is not guaranteed. See the patch file for the full
+  # rationale.
+  - target:
+      kind: HelmRelease
+      name: whoami
+      namespace: whoami
+    path: whoami/patches/helm-release-patch.yaml
