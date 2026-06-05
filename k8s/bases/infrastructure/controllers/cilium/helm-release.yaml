@@ -206,6 +206,24 @@ spec:
                   name: spire-data
                 - mountPath: /tmp/spire-server/private
                   name: spire-server-socket
+              # Pod-level security context. The chart injects a `cilium-init`
+              # bootstrap container (with no securityContext of its own) into this
+              # pod; it seeds the SPIRE registration entries for Cilium and must run
+              # as 1000 to MATCH spire-server. cilium-init reaches spire-server's
+              # admin socket via /proc/<pid>/root, which is ptrace-gated — the
+              # caller's uid+gid must equal the target's. If cilium-init runs as root
+              # (0) while spire-server runs as 1000 it is denied, hangs forever on
+              # "Waiting for spire-server to start...", and never creates the entries.
+              # SPIRE then issues no SVIDs, so the require-mutual-auth policy
+              # black-holes pod-to-pod traffic cluster-wide (kustomize/helm-controller
+              # can no longer reach source-controller — wedging every Flux
+              # reconciliation). `server.securityContext` below sets only the
+              # spire-server *container* and leaves cilium-init as root, so this
+              # pod-level block is what actually fixes the bootstrap.
+              # (cilium/cilium#40533)
+              podSecurityContext:
+                runAsGroup: 1000
+                runAsUser: 1000
               securityContext:
                 runAsGroup: 1000
                 runAsUser: 1000
