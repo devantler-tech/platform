@@ -26,8 +26,8 @@ spec:
   #
   # The load-tester is the webhook target Flagger calls during a canary to run
   # acceptance (smoke) tests and generate load so Coroot has request traffic to
-  # measure. No app is onboarded yet (foundation only); see
-  # docs/progressive-delivery.md for the per-app onboarding recipe.
+  # measure. Used by the onboarded canaries (umami, homepage, opencost); see
+  # docs/progressive-delivery.md for the onboarding recipe.
   values:
     # Restricted PSA — the chart ships hardening disabled by default, so set it
     # explicitly at both the pod and container level.
