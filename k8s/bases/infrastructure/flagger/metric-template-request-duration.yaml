@@ -1,13 +1,16 @@
-# Canary SLO: p99 HTTP request latency (milliseconds) of the Flagger `-primary`
-# workload, from Coroot's node-agent histogram
+# Canary SLO: p99 HTTP request latency (milliseconds) of the workload **under
+# test**, from Coroot's node-agent histogram
 # `container_http_inbound_requests_duration_seconds_total` (le buckets).
+#
+# MEASURES THE CANARY, NOT THE PRIMARY — see the success-rate template for the
+# rationale and the vowel-free pod-template-hash regex that selects canary pods
+# while excluding `<target>-primary-*`.
 #
 # Returns milliseconds (×1000) to match the usual Flagger latency convention, so
 # a Canary expresses the threshold in ms, e.g. `thresholdRange: { max: 500 }`.
 #
-# See the success-rate template for the layer-placement rationale and the
-# live-validation caveat (here: confirm the histogram bucket series name and that
-# it carries an `le` label).
+# Same layer-placement rationale and live-validation caveat as the success-rate
+# template (here also confirm the histogram bucket series name + `le` label).
 apiVersion: flagger.app/v1beta1
 kind: MetricTemplate
 metadata:
@@ -22,7 +25,7 @@ spec:
       sum(
           rate(
               container_http_inbound_requests_duration_seconds_total{
-                container_id=~"/k8s/{{ namespace }}/{{ target }}-primary-.*"
+                container_id=~"/k8s/{{ namespace }}/{{ target }}-[bcdfghjklmnpqrstvwxz2-9]+-[a-z0-9]+/.*"
               }[{{ interval }}]
           )
       ) by (le)

@@ -36,11 +36,12 @@ spec:
       #   - Coroot (coroot.com/v1): the datreeio catalog schema is stale
       #     (additionalProperties: false, missing newer fields like
       #     nodeAgent/clickhouse), so kubeconform rejects valid manifests.
-      #   - MetricTemplate (flagger.app/v1beta1): the Flagger CRDs are installed
-      #     by the flagger HelmRelease at runtime and are not in the catalog, so
-      #     the request-success-rate / request-duration templates can't be
-      #     schema-checked offline.
+      #   - MetricTemplate / Canary (flagger.app/v1beta1): the Flagger CRDs are
+      #     installed by the flagger HelmRelease at runtime and are not in the
+      #     catalog, so the MetricTemplates and the onboarded Canaries (umami,
+      #     homepage, opencost) can't be schema-checked offline.
       skipKinds:
         - Coroot
         - MetricTemplate
+        - Canary
 

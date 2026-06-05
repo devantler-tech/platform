@@ -28,11 +28,28 @@ spec:
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: flagger-system
-    # NOTE: when an app is onboarded to a Canary, the load-tester needs extra
-    # egress to drive traffic — to the platform Gateway in kube-system (:80/:443)
-    # for `hey` load tests and to the app's `<app>-canary` Service for acceptance
-    # (smoke) tests. Add those rules here per the onboarding recipe in
-    # docs/progressive-delivery.md.
+    # Load-tester -> the onboarded apps' `<app>-canary` Services, for acceptance
+    # (smoke) tests + generated load during analysis. The webhooks target the
+    # canary Service directly (not via the gateway), so no gateway egress is
+    # needed. Add a namespace+port here when onboarding a new app
+    # (docs/progressive-delivery.md). umami is prod-only — this rule is an inert
+    # no-op in the docker overlay where the umami namespace does not exist.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: umami
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: homepage
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: opencost
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:

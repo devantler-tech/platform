@@ -22,9 +22,23 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: umami
+  postRenderers:
+    # Flagger owns the canary (umami-umami) Deployment's replicas — it scales the
+    # deployment to zero between rollouts. Strip the chart's replicas field so
+    # Flux's reconcile does not fight Flagger's scaling (otherwise the pod flaps
+    # every interval). See k8s/bases/apps/umami/canary.yaml.
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: umami-umami
+            patch: |
+              - op: remove
+                path: /spec/replicas
   # https://github.com/helmforgedev/charts/blob/main/charts/umami/values.yaml
   values:
-    replicaCount: ${umami_replicas:=1}
+    # replicaCount intentionally omitted — Flagger manages canary replicas
+    # (see the postRenderer above).
     serviceAccount:
       # Umami needs no Kubernetes API access.
       automountServiceAccountToken: false

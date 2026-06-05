@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - metric-template-request-success-rate.yaml
   - metric-template-request-duration.yaml
+  - canary-opencost.yaml

@@ -3,194 +3,136 @@
 Flagger is the platform's standard **progressive-delivery** controller. Instead of
 a plain `RollingUpdate` — where a bad release reaches 100% of traffic before
 anyone notices — an onboarded app is rolled out as a **canary**: Flagger shifts a
-small, increasing slice of traffic to the new version, checks request
-success-rate and latency at each step, and **automatically rolls back** if the new
-version misbehaves.
+small, increasing slice of traffic to the new version (or, for blue/green,
+validates it out-of-band), checks request success-rate and latency at each step,
+and **automatically rolls back** if the new version misbehaves.
 
 This follows the upstream
-[Flagger Gateway API tutorial](https://docs.flagger.app/tutorials/gatewayapi-progressive-delivery),
+[Flagger Gateway API tutorial](https://docs.flagger.app/tutorials/gatewayapi-progressive-delivery)
+and [KEDA ScaledObject tutorial](https://docs.flagger.app/tutorials/keda-scaledobject),
 adapted to this platform's Cilium Gateway API + Coroot stack.
-
-> **Status: foundation only.** The controller, load-tester and metric templates
-> are deployed, but **no app is onboarded to a `Canary` yet**. This document is
-> both the design note and the onboarding recipe.
 
 ## How it works
 
-```
-                 ┌─────────────────────────── Flagger ───────────────────────────┐
-   git push ▶ Flux ▶ Deployment <app>      (1) detect change, clone to <app>-primary
-                          │                 (2) create <app>-primary / <app>-canary Services
-                          ▼                 (3) own the HTTPRoute, split weights
-              Cilium Gateway (platform)  ◀──(4) shift 10% → 20% … → 50% to canary
-                          │                 (5) query SLOs each step; promote or roll back
-                          ▼
-            ┌─────────────┴─────────────┐
-       <app>-primary               <app>-canary
-            │                            │
-            └──────── Coroot eBPF node-agent (server-side HTTP metrics) ──────────┐
-                                                                                  ▼
-                                                            coroot-prometheus:9090
-                                                                                  ▲
-                          Flagger MetricTemplate queries ────────────────────────┘
-```
+Flagger watches a `Canary`, clones the target `Deployment` to `<name>-primary`,
+creates `<name>-primary` / `<name>-canary` Services, and drives an analysis loop.
+Promotion vs rollback is gated on:
 
-**Traffic shifting.** Flagger owns each onboarded app's `HTTPRoute` and rewrites
-the `backendRefs` weights between `<app>-primary` and `<app>-canary`. Cilium's
-Gateway API implementation honours `backendRef.weight`, so no service mesh is
-required.
+- **SLO metrics** — there is no Istio/Envoy telemetry and no app instrumentation
+  here, so the `MetricTemplate`s query **Coroot's bundled Prometheus** (the same
+  endpoint OpenCost uses, `coroot-prometheus.coroot.svc:9090`). Coroot's eBPF
+  node-agent exports server-side `container_http_inbound_requests_total{status}`
+  and `..._duration_seconds_total` per container. The templates measure the
+  **canary** pods — see [the canary-vs-primary note](#measuring-the-canary).
+- **Webhooks** — `flagger-loadtester` runs an acceptance (smoke) test before
+  traffic shifts and generates load during analysis (so Coroot has requests to
+  measure). The webhooks hit the `<name>-canary` Service directly.
 
-**Metrics (SLO gating).** There is no Istio/Envoy telemetry and no app
-instrumentation here, so Flagger reuses **Coroot's bundled Prometheus** — the same
-endpoint OpenCost queries (`coroot-prometheus.coroot.svc.cluster.local:9090`).
-Coroot's eBPF node-agent already exports **server-side** HTTP metrics for every
-container:
+### Two delivery modes
 
-| Metric | Type | Used for |
-| --- | --- | --- |
-| `container_http_inbound_requests_total{status}` | counter | request success-rate (non-5xx ÷ total) |
-| `container_http_inbound_requests_duration_seconds_total{le}` | histogram | p99 latency |
+| Mode | Flagger `provider` | When | Traffic |
+| --- | --- | --- | --- |
+| **Weighted canary** | `gatewayapi:v1` | App is routed **directly** by the Gateway | Flagger owns the `HTTPRoute` and shifts `backendRef` weights 10% → 50% |
+| **Blue/green** | `kubernetes` | App is **behind oauth2-proxy** (no gateway-level split possible) | No live split; canary validated via the load-tester, then the apex Service is repointed |
 
-Workload identity is encoded in the `container_id` label
-(`/k8s/<namespace>/<pod>/<container>`), so the templates target the canary's
-primary pods with `container_id=~"/k8s/{{ namespace }}/{{ target }}-primary-.*"`.
-
-**Load & smoke tests.** `flagger-loadtester` is the webhook target Flagger calls
-during analysis to run an acceptance (smoke) test before shifting traffic and to
-generate load so Coroot has requests to measure.
-
-## What's deployed (foundation)
+## What's deployed
 
 | Component | Layer | Path |
 | --- | --- | --- |
-| `flagger` controller (`meshProvider: gatewayapi:v1`) | infrastructure-controllers | [`k8s/bases/infrastructure/controllers/flagger/`](../k8s/bases/infrastructure/controllers/flagger) |
-| `flagger-loadtester` | infrastructure-controllers | same dir |
-| `coroot-request-success-rate` / `coroot-request-duration` `MetricTemplate`s | infrastructure | [`k8s/bases/infrastructure/flagger/`](../k8s/bases/infrastructure/flagger) |
+| `flagger` controller + `flagger-loadtester` | infra-controllers | [`controllers/flagger/`](../k8s/bases/infrastructure/controllers/flagger) |
+| `coroot-request-success-rate` / `coroot-request-duration` `MetricTemplate`s | infrastructure | [`infrastructure/flagger/`](../k8s/bases/infrastructure/flagger) |
+| **umami** Canary (weighted) | apps | [`apps/umami/canary.yaml`](../k8s/bases/apps/umami/canary.yaml) |
+| **homepage** Canary (blue/green) | apps | [`apps/homepage/canary.yaml`](../k8s/bases/apps/homepage/canary.yaml) |
+| **opencost** Canary (blue/green) | infrastructure | [`infrastructure/flagger/canary-opencost.yaml`](../k8s/bases/infrastructure/flagger/canary-opencost.yaml) |
 
-> **Why two layers?** The Flagger HelmRelease ships the `Canary` / `MetricTemplate`
-> CRDs. A CR of those kinds in the *same* Flux Kustomization as the HelmRelease
-> fails the kustomize-controller's server-side dry-run (`no matches for kind`) and
-> deadlocks the whole set. The `MetricTemplate` CRs therefore live in the
-> `infrastructure` layer, which `dependsOn` (and `wait:true`s)
-> `infrastructure-controllers` — the same split as
+> **CRD-vs-CR layering.** The flagger HelmRelease ships the `Canary` /
+> `MetricTemplate` CRDs (infra-controllers). A CR of those kinds in the *same*
+> Flux Kustomization fails the server-side dry-run (`no matches for kind`) and
+> deadlocks the set. So **app** Canaries live in the apps layer and the
+> **opencost** Canary + the MetricTemplates live in the `infrastructure` layer
+> (both depend on, and wait for, infra-controllers) — the same split as
 > [`infrastructure/coroot/coroot.yaml`](../k8s/bases/infrastructure/coroot/coroot.yaml).
 
-### Before onboarding the first app — validate the metric queries
+### Onboarded apps & status
 
-The `MetricTemplate` PromQL is written against Coroot's documented schema but has
-**not** been verified against live data. Once the stack is reconciled, port-forward
-or curl `coroot-prometheus` and confirm:
+- **umami** — weighted Gateway API canary. ⚠️ **Prod-only** (excluded from the
+  docker/CI overlay, so it is **not** exercised by the system test) and stateful
+  (one shared CloudNativePG DB; do not land a schema-changing upgrade as a
+  canary). Its old route's HSTS header is re-added via `service.headers`; the
+  `gethomepage.dev/*` tile annotations are not reproducible on a Flagger route.
+- **homepage** — blue/green (it's the root dashboard behind oauth2-proxy). High
+  blast radius; the primary runs 1 replica (was 2) since Flagger owns replicas.
+- **opencost** — blue/green infra workload. ⚠️ Headlamp's cost plugin uses the
+  `opencost:http-ui` **named** port via the apiserver proxy; `portDiscovery` may
+  not preserve that name — watch the Headlamp cost panel after rollout.
 
-1. `container_http_inbound_requests_total` exists and its `status` label holds the
-   numeric HTTP code (so `status=~"5.."` selects 5xx). If Coroot uses a status
-   *class*, adjust the selector.
-2. The `container_id` label format is `/k8s/<namespace>/<pod>/<container>`.
-3. The latency histogram bucket series name and `le` label match
-   `metric-template-request-duration.yaml`.
+### Excluded (and why)
 
-Tune the two templates if anything differs — the query is just a string.
+| Workload | Reason |
+| --- | --- |
+| whoami, headlamp, actual-budget, fleetdm, hubble-ui | KEDA **HTTP add-on** (scale-to-zero). whoami keeps scale-to-zero by choice; headlamp = single-pod in-memory OIDC; actual-budget = single-writer file DB — none can run concurrent canary pods. |
+| openbao | StatefulSet — Flagger only manages Deployments / DaemonSets. |
+| coroot UI, hubble-ui | Operator-reconciled Deployments — the operator fights Flagger for ownership. |
+| dex, oauth2-proxy, flux-operator | Critical SSO / GitOps — too risky to canary. |
 
-## Onboarding an app to a Canary
+## Onboarding a new app
 
-> Pick stateless, always-on, **directly-routed** apps first. Read the
-> [constraints](#per-app-constraints) below — most current apps need a routing
-> change before they can be canaried.
+1. **Pick the mode** (table above). Stateless, directly-routed apps → weighted;
+   oauth2-proxy-fronted apps → blue/green.
+2. **Free the route** (weighted only) — delete the app's `httproute.yaml`;
+   Flagger generates the route from the Canary's `gatewayRefs` + `hosts`. Re-add
+   any response-header filters via `spec.service.headers`. Blue/green keeps the
+   existing route untouched.
+3. **Let Flagger own replicas** — add a HelmRelease postRenderer that strips
+   `/spec/replicas` from the Deployment, otherwise Flux re-applies the chart's
+   replica count and fights Flagger's scale-to-zero of the canary (flapping). See
+   any onboarded app's `helm-release.yaml`.
+4. **Add the `Canary`** — copy umami's (weighted) or homepage's (blue/green),
+   referencing the two `MetricTemplate`s and a loadtester acceptance + load-test
+   webhook on `<app>-canary`.
+5. **Open the netpols** — app namespace: ingress from `flagger-system` on the app
+   port; `flagger-system`: load-tester egress to the app namespace+port (in
+   [`controllers/flagger/networkpolicy.yaml`](../k8s/bases/infrastructure/controllers/flagger/networkpolicy.yaml)).
+6. **Place the Canary** in the apps layer (app) or the `infrastructure` layer
+   (infra component) — never in `infrastructure/controllers`.
 
-1. **Free the HTTPRoute.** Flagger generates and owns the app's `HTTPRoute`, so
-   remove the app's hand-written `httproute.yaml`. If the app is fronted by the
-   KEDA HTTP add-on, also remove its `http-scaled-object.yaml` (scale-to-zero and
-   Flagger traffic-splitting are mutually exclusive — the app becomes always-on,
-   `min 1`).
+### KEDA apps (documented pattern — not currently used)
 
-2. **Add the `Canary`** to the app's base dir (apps layer):
+Flagger's KEDA integration is for **core `keda.sh ScaledObject`**, NOT the
+`http.keda.sh HTTPScaledObject` (HTTP add-on) this platform uses for scale-to-zero.
+To canary a plain-ScaledObject app, reference it from the Canary and let Flagger
+manage the `-primary` scaler:
 
-   ```yaml
-   apiVersion: flagger.app/v1beta1
-   kind: Canary
-   metadata:
-     name: <app>
-     namespace: <app>
-   spec:
-     provider: gatewayapi:v1
-     targetRef:
-       apiVersion: apps/v1
-       kind: Deployment
-       name: <app>
-     # No autoscalerRef — the platform uses VPA/KEDA, not HPA.
-     progressDeadlineSeconds: 600
-     service:
-       port: <service-port>
-       targetPort: <container-port>
-       hosts:
-         - <app>.${domain}
-       gatewayRefs:
-         - name: platform
-           namespace: kube-system
-     analysis:
-       interval: 1m
-       threshold: 5        # consecutive failed checks before rollback
-       maxWeight: 50
-       stepWeight: 10
-       metrics:
-         - name: success-rate
-           templateRef:
-             name: coroot-request-success-rate
-             namespace: flagger-system
-           thresholdRange:
-             min: 99       # %
-           interval: 1m
-         - name: latency-p99
-           templateRef:
-             name: coroot-request-duration
-             namespace: flagger-system
-           thresholdRange:
-             max: 500      # ms
-           interval: 1m
-       webhooks:
-         - name: acceptance-test
-           type: pre-rollout
-           url: http://flagger-loadtester.flagger-system/
-           timeout: 30s
-           metadata:
-             type: bash
-             cmd: "curl -sf http://<app>-canary.<app>:<service-port>/"
-         - name: load-test
-           type: rollout
-           url: http://flagger-loadtester.flagger-system/
-           timeout: 30s
-           metadata:
-             cmd: "hey -z 1m -q 10 -c 2 -host <app>.${domain} http://cilium-gateway-platform.kube-system/"
-   ```
+```yaml
+spec:
+  autoscalerRef:
+    apiVersion: keda.sh/v1alpha1
+    kind: ScaledObject
+    name: myapp-so
+    primaryScalerQueries:      # rewrite each trigger query for the primary
+      requests: sum(rate(container_http_inbound_requests_total{...primary...}[1m]))
+```
 
-3. **Open the network policies:**
-   - **App namespace:** allow ingress from the Cilium Gateway (entity `ingress`)
-     to the app's `targetPort`; drop the old `from keda` rule.
-   - **`flagger-system`:** extend the load-tester's egress in
-     [`controllers/flagger/networkpolicy.yaml`](../k8s/bases/infrastructure/controllers/flagger/networkpolicy.yaml)
-     to reach the platform Gateway in `kube-system` (`:80`/`:443`) and the app's
-     `<app>-canary` Service.
-   - **KEDA namespace:** if the app left the KEDA HTTP add-on, drop its
-     `keda → <app>` egress rule.
+Onboarding a HTTP-add-on app (whoami/headlamp/…) this way means **replacing its
+`HTTPScaledObject` with a `ScaledObject`**, giving up HTTP cold-start
+scale-to-zero — a deliberate trade not taken here.
 
-4. **Homepage discovery.** The `gethomepage.dev/*` annotations lived on the old
-   `HTTPRoute`. Flagger's generated route does not carry them, so re-add the app
-   to the homepage dashboard another way (e.g. a static `homepage` config entry).
+## Measuring the canary
 
-5. **Validate & ship:** `kubectl kustomize k8s/clusters/local/` (and `prod/`)
-   must build; open a draft PR. CI's Talos+Docker system test exercises the
-   reconcile.
+Flagger gates on the **canary** (`{{ target }}` = `targetRef.name`, the original
+deployment), not the primary. Coroot labels metrics by pod-name `container_id`
+and RE2 lacks negative lookahead, so the `MetricTemplate`s select canary pods
+while excluding `<target>-primary-*` by exploiting that Kubernetes pod-template
+hashes are **vowel-free** (`bcdfghjklmnpqrstvwxz2456789`): `[bcdfghjklmnpqrstvwxz2-9]+`
+matches a hash but never "primary" (it has i/a).
 
-### Per-app constraints
-
-| App(s) | Routing today | To canary |
-| --- | --- | --- |
-| `whoami`, `headlamp`, `actual-budget` | KEDA HTTP add-on (scale-to-zero) | Drop the `HTTPScaledObject`; app becomes always-on. Mutually exclusive with KEDA HTTP. |
-| `homepage` | oauth2-proxy fronts the route | The public route targets oauth2-proxy, not the app — needs a custom split behind the proxy; not a clean Gateway API fit. |
-| `umami` | direct → `umami-umami` Service | Cleanest route fit, **but** stateful (CloudNativePG) and prod-only — two app versions share one DB; avoid schema-changing migrations mid-canary. |
-| `ascoachingogvaner`, `wedding-app` | tenant OCI-sync static sites | Owned by the tenant repos; onboard from there, not here. |
+⚠️ The PromQL is written against Coroot's documented schema but **not validated
+against live data** — before trusting auto-promotion, confirm in
+`coroot-prometheus` the `status` label format, the `container_id` format, and the
+latency bucket series, and tune
+[`infrastructure/flagger/metric-template-*.yaml`](../k8s/bases/infrastructure/flagger).
 
 ## References
-
 - [Flagger Gateway API tutorial](https://docs.flagger.app/tutorials/gatewayapi-progressive-delivery)
-- [Flagger Canary spec](https://docs.flagger.app/usage/how-it-works)
+- [Flagger KEDA ScaledObject tutorial](https://docs.flagger.app/tutorials/keda-scaledobject)
 - [Coroot node-agent metrics](https://docs.coroot.com/metrics/node-agent/)
