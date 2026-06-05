@@ -1,0 +1,49 @@
+---
+# Prod-only: fail-closed WireGuard encryption (egress strict mode).
+#
+# The base HelmRelease enables WireGuard transparent encryption
+# (encryption.enabled: true, type: wireguard, nodeEncryption: true), but
+# WireGuard is fail-OPEN: while a node's WireGuard tunnel to a peer is not yet
+# established (a new/rebooted node joining, a cilium-agent restart, key
+# propagation lag) pod traffic to that peer can briefly egress in CLEARTEXT.
+# Strict mode makes it fail-CLOSED — such traffic is dropped rather than sent
+# unencrypted.
+#
+# egress.cidr is the cluster pod CIDR (Talos default 10.244.0.0/16; Cilium
+# allocates per-node pod ranges from it via ipam.mode: kubernetes). Strict
+# mode only enforces encryption for traffic exiting a node to this CIDR — i.e.
+# pod-to-pod across nodes, exactly what WireGuard already encrypts. Same-node
+# pod traffic (never leaves the host) and pod->node-IP / pod->internet traffic
+# (destinations outside the pod CIDR) are unaffected and not dropped.
+#
+# allowRemoteNodeIdentities is left at its default (false): the Hetzner node
+# CIDR (10.0.0.0/16 — ksail.prod.yaml networkCidr) does not overlap the pod
+# CIDR (10.244.0.0/16), so no remote-node-identity exemption is required.
+#
+# Uses the non-deprecated encryption.strictMode.egress.* keys (the top-level
+# encryption.strictMode.{enabled,cidr} keys are deprecated as of Cilium 1.19).
+# Pods are single-stack IPv4 here, so strict mode's documented IPv6 limitation
+# ("IPv6 traffic is not protected under strict mode") does not apply.
+#
+# Ingress strict mode (encryption.strictMode.ingress.enabled — drops ALL
+# unencrypted overlay ingress) is a further fail-closed layer left OFF for
+# now; consider adding it once egress strict mode is confirmed healthy live.
+#
+# PROD/HETZNER ONLY: encryption is disabled in the docker overlay (local has
+# no node-to-node wire), so strict mode would only drop local pod traffic for
+# no gain. It therefore lives in this hetzner patch, not the base.
+# ⚠️  Fail-closed + prod-only ⇒ the docker CI System Test does NOT exercise
+#     this. Validate on the first prod reconcile (pod-to-pod connectivity +
+#     cilium-agent logs) and be ready to revert if legitimate traffic drops.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  values:
+    encryption:
+      strictMode:
+        egress:
+          enabled: true
+          cidr: 10.244.0.0/16
