@@ -25,7 +25,6 @@ resources:
   - ../../../../bases/infrastructure/controllers/metrics-server/
   - ../../../../bases/infrastructure/controllers/oauth2-proxy/
   - ../../../../bases/infrastructure/controllers/openbao/
-  - ../../../../bases/infrastructure/controllers/opencost/
   - ../../../../bases/infrastructure/controllers/reloader/
   - ../../../../bases/infrastructure/controllers/tetragon/
   - ../../../../bases/infrastructure/controllers/trust-manager/

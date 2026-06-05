@@ -6,6 +6,16 @@ metadata:
   labels:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
+  # LAYER PLACEMENT — this HelmRelease lives in the `infrastructure` Kustomization
+  # (not `infrastructure-controllers`). OpenCost FTL-exits on boot if it cannot
+  # reach Coroot's bundled Prometheus at coroot-prometheus.coroot.svc:9090, which
+  # the operator only builds from the Coroot CR in the `infrastructure` layer.
+  # Keeping OpenCost in `infrastructure-controllers` is a hard deadlock: that
+  # layer health-checks OpenCost (never Ready without the Prometheus) while the CR
+  # that produces the Prometheus can't apply until the layer goes Ready.
+  # The dependsOn below only gates *install start* on the operator HelmRelease
+  # being Ready (the operator pod up) — it does NOT wait for the operator to have
+  # built coroot-prometheus, so it is not sufficient on its own; the layer move is.
   dependsOn:
     - name: coroot-operator
       namespace: coroot
