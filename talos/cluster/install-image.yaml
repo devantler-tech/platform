@@ -11,11 +11,13 @@
 # image tag below, resolved from siderolabs/talos GitHub releases — the Image Factory
 # registry doesn't support OCI tag listing, so the image's own registry can't be the
 # datasource (and Dependabot, which can only query that registry, can't track it).
-# New releases are surfaced on Renovate's Dependency Dashboard for manual approval —
-# this is never auto-opened or auto-merged. After approving, complete the upgrade in
-# lockstep: bump `talos.version` AND the Hetzner `iso` snapshot id in the protected
-# ksail.prod.yaml (plus `kubernetesVersion` if Talos's supported Kubernetes range
-# moves). Re-generate the schematic id below only when the extension list changes.
+# Renovate opens the bump PR automatically (no Dependency Dashboard approval gate) and
+# updates this image tag, the schematic-URL version comment above, AND the `talos.version`
+# pin in ksail.prod.yaml in the same PR. It is NOT auto-merged: a maintainer completes the
+# upgrade by setting the Hetzner `iso` snapshot id in ksail.prod.yaml (not a version
+# string, so it can't be auto-derived), bumping `kubernetesVersion` if Talos's supported
+# Kubernetes range moves, and re-generating the schematic id below only when the extension
+# list changes.
 machine:
   install:
     image: factory.talos.dev/installer/e187c9b90f773cd8c84e5a3265c5554ee787b2fe67b508d9f955e90e7ae8c96c:v1.12.4

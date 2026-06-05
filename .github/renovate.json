@@ -51,16 +51,32 @@
     },
     {
       "customType": "regex",
-      "description": "Track the Talos Linux distribution version pinned in the prod node install image (talos/cluster/install-image.yaml). The image is served by the Talos Image Factory (factory.talos.dev), whose OCI registry does NOT implement tag listing (`/v2/<schematic>/tags/list` returns 404), so the image's own registry cannot be a version datasource — which is also why Dependabot cannot track it (its docker manager can only query the image registry, and has no regex/custom manager to point the lookup elsewhere). Resolve the version from the authoritative siderolabs/talos GitHub releases instead. Both matchStrings capture the numeric version only and extractVersionTemplate strips the leading `v` from the `vX.Y.Z` release tags, so the resolved version matches both captures; the image tag keeps its `v` via a regex literal outside the group. This keeps the image tag (`:vX.Y.Z`) and the schematic-URL comment (`version=X.Y.Z`) updated in sync. This only edits this file; the source-of-truth talos.version and the Hetzner iso snapshot id in the protected ksail.prod.yaml must be bumped in lockstep by a maintainer (see the matching packageRule below, which holds it on the Dependency Dashboard for manual approval and disables automerge).",
+      "description": "Track the Talos Linux distribution version pinned in the prod node install image (talos/cluster/install-image.yaml). The image is served by the Talos Image Factory (factory.talos.dev), whose OCI registry does NOT implement tag listing (`/v2/<schematic>/tags/list` returns 404), so the image's own registry cannot be a version datasource — which is also why Dependabot cannot track it (its docker manager can only query the image registry, and has no regex/custom manager to point the lookup elsewhere). Resolve the version from the authoritative siderolabs/talos GitHub releases instead. Both matchStrings capture the numeric version only and extractVersionTemplate strips the leading `v` from the `vX.Y.Z` release tags, so the resolved version matches both captures; the image tag keeps its `v` via a regex literal outside the group. This keeps the image tag (`:vX.Y.Z`) and the schematic-URL comment (`version=X.Y.Z`) updated in sync. This also bumps the source-of-truth talos.version pin in ksail.prod.yaml in the same PR; the Hetzner iso snapshot id there is not a version string and cannot be auto-derived, so a maintainer completes the iso (and any lockstep kubernetesVersion) edit before merging. Renovate opens the PR automatically — there is no Dependency Dashboard approval gate (see the matching packageRule below, which keeps automerge off).",
       "managerFilePatterns": [
-        "/^talos/cluster/install-image\\.ya?ml$/"
+        "/^talos/cluster/install-image\\.ya?ml$/",
+        "/^ksail\\.prod\\.ya?ml$/"
       ],
       "matchStrings": [
         "image:\\s*factory\\.talos\\.dev/installer/[a-f0-9]+:v(?<currentValue>[0-9.]+)",
-        "target=hcloud&version=(?<currentValue>[0-9.]+)"
+        "target=hcloud&version=(?<currentValue>[0-9.]+)",
+        "\\s+version:\\s*v(?<currentValue>[0-9.]+)"
       ],
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "siderolabs/talos",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the Kubernetes version pinned for the prod cluster in ksail.prod.yaml (kubernetesVersion), resolved from the authoritative kubernetes/kubernetes GitHub releases. This pin is the version's ONLY home in the repo, so Renovate edits ksail.prod.yaml to bump it. KSail/Talos own this pin and the docker system-test runs off ksail.yaml (which has no kubernetesVersion), so the built-in kubernetes/flux managers — scoped to k8s/** — never see it; a custom manager is the only way to track it. The v regex literal sits outside the capture group and extractVersionTemplate strips the leading v from the vX.Y.Z release tags, so the resolved version matches the captured X.Y.Z while the file keeps its v prefix. Renovate opens the PR automatically — the same flow as every other dependency, with no Dependency Dashboard approval gate. It is NOT automerged (see the matching packageRule): CI never validates this prod pin, and a Kubernetes minor/major can exceed the pinned Talos version's supported Kubernetes ceiling, so each bump is reviewed and promoted in lockstep with Talos.",
+      "managerFilePatterns": [
+        "/^ksail\\.prod\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "kubernetesVersion:\\s*v(?<currentValue>[0-9.]+)"
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "kubernetes/kubernetes",
       "versioningTemplate": "semver",
       "extractVersionTemplate": "^v(?<version>.+)$"
     }
@@ -155,14 +171,23 @@
       "minimumReleaseAge": "0 days"
     },
     {
-      "description": "Talos Linux distribution upgrades (tracked by the custom manager above; depName siderolabs/talos) are surfaced for manual, coordinated promotion — never automerged like the other deps here. A Talos bump spans files no bot may fully edit: this manager only touches talos/cluster/install-image.yaml, but the source-of-truth talos.version and the Hetzner iso snapshot id live in the protected ksail.prod.yaml, and a lockstep kubernetesVersion bump may be needed when Talos's supported Kubernetes range moves. dependencyDashboardApproval holds the update on the Dependency Dashboard until a maintainer approves it; automerge:false (placed last so it overrides the broad talos/** and major-update automerge rules above) then keeps the resulting PR open for the maintainer to complete the lockstep ksail.prod.yaml edits before merging.",
+      "description": "Talos Linux distribution upgrades (tracked by the custom manager above; depName siderolabs/talos). Renovate opens the PR automatically — the same flow as every other dependency, with no Dependency Dashboard approval gate. It is NOT automerged: the custom manager bumps the installer image tag/schematic in talos/cluster/install-image.yaml and the talos.version pin in ksail.prod.yaml, but the Hetzner iso snapshot id in ksail.prod.yaml is not a version string and cannot be auto-derived, and a lockstep kubernetesVersion bump may be needed when Talos's supported Kubernetes range moves. CI's system-test also runs off ksail.yaml (docker), so it never boots this prod config. A maintainer completes the iso (and any kubernetesVersion) edit on the open PR, then merges. automerge:false is placed last so it overrides the broad talos/** and major-update automerge rules above.",
       "matchPackageNames": [
         "siderolabs/talos"
       ],
       "automerge": false,
-      "dependencyDashboardApproval": true,
       "addLabels": [
         "talos"
+      ]
+    },
+    {
+      "description": "Kubernetes version upgrades (tracked by the custom manager above; depName kubernetes/kubernetes, pinned in ksail.prod.yaml). Renovate opens the PR automatically — the same flow as every other dependency, with no Dependency Dashboard approval gate. It is NOT automerged: CI's system-test runs off ksail.yaml (docker), which has no kubernetesVersion, so the prod pin is never validated before merge; and a Kubernetes minor/major can exceed the pinned Talos version's supported Kubernetes ceiling (e.g. Talos v1.12.4 supports up to 1.35), which would break prod bring-up. A maintainer reviews each bump — pairing a minor that crosses the ceiling with a Talos upgrade — then merges. automerge:false is placed last so it overrides the broad ksail.prod.yaml and major-update automerge rules above.",
+      "matchPackageNames": [
+        "kubernetes/kubernetes"
+      ],
+      "automerge": false,
+      "addLabels": [
+        "kubernetes"
       ]
     }
   ],
