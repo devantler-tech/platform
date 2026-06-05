@@ -1,0 +1,151 @@
+# Corrects Coroot's node cost model for Hetzner (prod-only).
+#
+# WHY: Coroot only ships embedded pricing for AWS, GCP and Azure. For nodes on
+# any other cloud — Hetzner here — it falls back to "GCP C4, us-central1"
+# on-demand rates (db/custom_cloud_pricing.go defaultCustomCloudPricing:
+# per_cpu_core $0.03465/h, per_memory_gb $0.003938/h). On our 4 vCPU / 8 GB
+# nodes that prices a server at ~$122/mo and the whole fleet at ~$795/mo —
+# roughly 16x the real Hetzner bill (~€43 ≈ $50/mo). Idle-cost and every
+# per-app cost allocation inherit the same inflation.
+#
+# WHAT: pin the project's Custom Cloud Pricing to Hetzner's CX33 rate, using the
+# EXACT same source of truth as the OpenCost costModel (k8s/bases/infrastructure/
+# opencost/helm-release.yaml) so the two cost views agree to the cent:
+#   CX33 = €6.49/server/month (4 vCPU / 8 GB) · ECB EUR->USD 1.1637 (2026-05-27)
+#   50/50 CPU:RAM split (Hetzner publishes no breakdown — convention)
+#     CPU: €6.49 x 1.1637 x 0.5 / 4 vCPU = $0.9441 /vCPU-month  -> /730 = $0.0012933 /vCPU-hour
+#     RAM: €6.49 x 1.1637 x 0.5 / 8 GB   = $0.4720 /GB-month    -> /730 = $0.0006466 /GB-hour
+# Coroot prices a node as cpu*per_cpu_core + memGB*per_memory_gb, so a CX33 lands
+# at ~$7.55/mo and the autoscale CX23 (2 vCPU / 4 GB) at ~$3.78/mo. The whole CX
+# line is a fixed 1 vCPU : 2 GB ratio, so this single per-unit rate is exact for
+# our six CX33 control-plane/worker nodes; Hetzner's mild economy-of-scale (CX23
+# €2.00/vCPU -> CX53 €1.41/vCPU) makes it a few % off for other autoscale sizes —
+# still ~16x closer than the GCP fallback, and identical to what OpenCost reports.
+# Coroot's model is per-CPU/per-GB only; it cannot do the per-instance hcloud-API
+# lookup OpenCost's native hcloud provider (opencost#3710) can, so a blended CX
+# rate is the correct-by-design approach for Coroot.
+#
+# WHY AN API CRONJOB (not the CR or a UI click): the coroot-operator's
+# ProjectSpec has no pricing field and Coroot exposes Custom Cloud Pricing only
+# in the UI — but it is settable via POST /api/project/{id}/custom_cloud_pricing,
+# and the value PERSISTS: Coroot's config bootstrap (config/bootstrap.go) merges
+# only api keys / notifications / categories onto existing project settings and
+# never touches CustomCloudPricing, so an operator reconcile or pod restart will
+# not reset it. authAnonymousRole=Admin (set on the CR) means an in-cluster
+# request that bypasses oauth2-proxy is already Admin, so no credential is needed.
+# A CronJob (not a one-shot Job — same lesson as umami-provision-tenants) makes
+# this a self-healing reconcile loop: it sets the price on first install, and
+# re-asserts it after a DR restore / PVC wipe that reverts the project to the
+# GCP-C4 default. It is idempotent — a steady-state tick is two GETs and no write.
+#
+# PROD-ONLY: the `platform` project (and real cloud spend) exist only on Hetzner;
+# the base CR has no `projects`, so local/CI carry only Coroot's auto `default`
+# project with no real cost to correct — exactly how the Slack wiring is split.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: coroot-custom-cloud-pricing
+  namespace: observability
+spec:
+  # Static config — re-asserted on a slow cadence purely to self-heal after a DR
+  # restore; a no-op tick is cheap. The schedule IS the retry loop (backoffLimit
+  # 0 + restartPolicy Never), mirroring umami-provision-tenants.
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 200
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Backstop for a hung run; sits well above the script's ~5m wait-for-coroot
+      # loop so a normal "coroot unreachable" failure exits with its real error.
+      activeDeadlineSeconds: 420
+      template:
+        metadata:
+          labels:
+            app: coroot-custom-cloud-pricing
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: set-pricing
+              # Same pinned image as the heartbeat CronJob (curl + busybox sh /
+              # grep / sed / awk — no jq needed for this tiny JSON).
+              image: docker.io/curlimages/curl:8.20.0@sha256:b3f1fb2a51d923260350d21b8654bbc607164a987e2f7c84a0ac199a67df812a
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 64Mi
+              env:
+                # Coroot CX33-derived per-unit rates (USD/hour). Keep in lockstep
+                # with the OpenCost costModel CPU/RAM (those values / 730).
+                - name: PER_CPU_CORE
+                  value: "0.0012933"
+                - name: PER_MEMORY_GB
+                  value: "0.0006466"
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -u
+                  BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
+
+                  # Resolve the operator-created 'platform' project id (a random
+                  # NanoId, so match by name). Retry while Coroot / the project
+                  # are still warming up.
+                  pid=""
+                  i=0
+                  while [ "$i" -lt 60 ]; do
+                    user="$(curl -sf --max-time 10 "$BASE/api/user" 2>/dev/null || true)"
+                    pid="$(printf '%s' "$user" | grep -oE '"id":"[^"]+","name":"platform"' | head -n1 | sed -E 's/.*"id":"([^"]+)".*/\1/')"
+                    [ -n "$pid" ] && break
+                    echo "waiting for coroot and the 'platform' project..."
+                    i=$((i + 1))
+                    sleep 5
+                  done
+                  if [ -z "$pid" ]; then
+                    echo "ERROR: 'platform' project not found after retries"
+                    exit 1
+                  fi
+
+                  # Skip if Hetzner pricing is already applied (Coroot reports
+                  # default:true while still on the GCP-C4 fallback). The numeric
+                  # compare keeps the loop declarative: any drift re-POSTs.
+                  cur="$(curl -sf --max-time 10 "$BASE/api/project/$pid/custom_cloud_pricing" 2>/dev/null || true)"
+                  isdefault="$(printf '%s' "$cur" | grep -c '"default":true' 2>/dev/null || true)"
+                  curcpu="$(printf '%s' "$cur" | sed -n 's/.*"per_cpu_core":\([0-9.eE+-]*\).*/\1/p')"
+                  curmem="$(printf '%s' "$cur" | sed -n 's/.*"per_memory_gb":\([0-9.eE+-]*\).*/\1/p')"
+                  if [ "${isdefault:-0}" = "0" ] && [ -n "$curcpu" ] && [ -n "$curmem" ] && \
+                     awk -v a="$curcpu" -v b="$PER_CPU_CORE" -v c="$curmem" -v d="$PER_MEMORY_GB" \
+                       'BEGIN { x = a - b; if (x < 0) x = -x; y = c - d; if (y < 0) y = -y; exit !(x < 1e-7 && y < 1e-7) }'; then
+                    echo "custom cloud pricing already correct for project $pid; nothing to do"
+                    exit 0
+                  fi
+
+                  # anonymous == Admin in-cluster (oauth2-proxy fronts only the
+                  # external route), so no credential is needed.
+                  resp="$(curl -s -w '\n%{http_code}' --max-time 10 \
+                    -X POST "$BASE/api/project/$pid/custom_cloud_pricing" \
+                    -H 'content-type: application/json' \
+                    -d "{\"per_cpu_core\":$PER_CPU_CORE,\"per_memory_gb\":$PER_MEMORY_GB}")"
+                  code="$(printf '%s' "$resp" | tail -n1)"
+                  body="$(printf '%s' "$resp" | sed '$d')"
+                  if [ "$code" != "200" ]; then
+                    echo "ERROR: set custom cloud pricing failed (HTTP $code): $body"
+                    exit 1
+                  fi
+                  echo "applied Hetzner custom cloud pricing to project $pid: per_cpu_core=$PER_CPU_CORE/h per_memory_gb=$PER_MEMORY_GB/h"
