@@ -32,7 +32,7 @@ spec:
     kustomizationFile: clusters/local
     validation:
       # Skip the Coroot CR (coroot.com/v1) during `ksail workload validate`: its
-      # datreeio CRDs-catalog schema is stale (additionalProperties:false, missing
+      # datreeio CRDs-catalog schema is stale (additionalProperties: false, missing
       # newer fields like nodeAgent/clickhouse), so kubeconform rejects valid
       # manifests. Requires ksail >= 7.26.0 (the --skip-kinds / skipKinds feature).
       skipKinds:
