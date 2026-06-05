@@ -1,24 +1,37 @@
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources:
-  # wedding-app & ascoachingogvaner excluded: prod-only tenants needing GHCR, CNPG, and longhorn
-  # fleetdm excluded: heavy app (MySQL + Redis + migration) that consistently
-  #   times out in Docker CI due to controller scheduling delays; Docker overlay
-  #   uses substantially different config (standalone DBs, default storageClass)
-  #   so CI coverage is not representative of production anyway
-  - ../../../bases/apps/actual-budget/
-  - ../../../bases/apps/headlamp/
-  - ../../../bases/apps/homepage/
-  - ../../../bases/apps/whoami/
-patches:
-  - target:
-      kind: HelmRelease
-      name: actual-budget
-      namespace: actual-budget
-    path: actual-budget/patches/helm-release-patch.yaml
-  - target:
-      kind: HelmRelease
-      name: headlamp
-      namespace: headlamp
-    path: headlamp/patches/helm-release-patch.yaml
+# The local (Docker) cluster deploys NO apps by default — a local bring-up only
+# needs the platform infrastructure, and most local testing doesn't exercise the
+# apps. Apps are therefore opt-in for local testing.
+#
+# To enable one or more apps locally, replace `resources: []` below with the
+# entries you want (and add the matching `patches:` block for any app that has
+# one — currently actual-budget and headlamp), then run:
+#   ksail workload push && ksail workload reconcile
+#
+# Available apps (copy the lines you need):
+#   resources:
+#     - ../../../bases/apps/actual-budget/   # also add the actual-budget patch below
+#     - ../../../bases/apps/headlamp/        # also add the headlamp patch below
+#     - ../../../bases/apps/homepage/
+#     - ../../../bases/apps/whoami/
+#
+#   patches:
+#     - target:
+#         kind: HelmRelease
+#         name: actual-budget
+#         namespace: actual-budget
+#       path: actual-budget/patches/helm-release-patch.yaml
+#     - target:
+#         kind: HelmRelease
+#         name: headlamp
+#         namespace: headlamp
+#       path: headlamp/patches/helm-release-patch.yaml
+#
+# Not available on the local cluster (intentionally excluded):
+#   wedding-app, ascoachingogvaner — prod-only tenants (need GHCR, CNPG, longhorn)
+#   fleetdm                        — heavy app (MySQL + Redis + migration) that
+#                                    consistently times out in Docker CI; its
+#                                    Docker config would differ from prod anyway
+resources: []

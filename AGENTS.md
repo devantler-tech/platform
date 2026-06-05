@@ -111,7 +111,7 @@ ksail workload push
 ksail workload reconcile
 ```
 
-Local services are reachable at `https://platform.lan` and the per-app subdomains listed in the `hosts` file (e.g. `headlamp.platform.lan`, `whoami.platform.lan`), which map to `127.0.0.1`.
+By default the local cluster brings up **only the platform infrastructure — no apps**; infrastructure UIs are reachable via the `hosts` file's `*.platform.lan` → `127.0.0.1` mappings (e.g. `dex.platform.lan`, `flux.platform.lan`). Apps are opt-in: to enable one, replace `resources: []` in the docker apps overlay (`k8s/providers/docker/apps/kustomization.yaml`) with the entries you want — its comments carry a copy-paste template, including the `patches:` block needed for `actual-budget`/`headlamp` — then re-run `ksail workload push` + `ksail workload reconcile`. Only then do their routes respond — the apex `https://platform.lan` (served by the homepage app) and per-app subdomains such as `headlamp.platform.lan` or `whoami.platform.lan`.
 
 **Cleanup:**
 
