@@ -48,6 +48,17 @@
       "datasourceTemplate": "docker",
       "depNameTemplate": "ghcr.io/controlplaneio-fluxcd/charts/flux-operator",
       "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the pinned Kubernetes version in ksail.prod.yaml against kubernetes/kubernetes GitHub releases. Dependabot can't track a bare `kubernetesVersion:` string (no regex/custom managers, no generic version ecosystem), so Renovate owns it via the `# renovate:` annotation above the field. NB: a Kubernetes MINOR must land in lockstep with a Talos version that supports it (Talos v1.12.4's ceiling is k8s 1.35) — the kubernetes/kubernetes packageRule below blocks auto-merge for minor/major so a human pairs it with a Talos bump; only 1.x patch bumps auto-merge.",
+      "managerFilePatterns": [
+        "/^ksail\\.prod\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+kubernetesVersion:\\s*(?<currentValue>\\S+)"
+      ],
+      "versioningTemplate": "semver"
     }
   ],
   "minor": {
@@ -98,9 +109,6 @@
         "/^kubescape-operator$/",
         "/^trivy-operator$/",
         "/^external-secrets$/",
-        "/^spire$/",
-        "/^spire-agent$/",
-        "/^spire-server$/",
         "/^velero$/",
         "/^reloader$/"
       ],
@@ -138,6 +146,17 @@
         "@devantler-tech/**"
       ],
       "minimumReleaseAge": "0 days"
+    },
+    {
+      "description": "Kubernetes (kubernetes/kubernetes) is pinned in ksail.prod.yaml: a minor/major bump must be paired with a Talos version that supports it (Talos v1.12.4's ceiling is k8s 1.35). Bumping the K8s minor without bumping Talos first breaks prod bring-up, and CI's system-test runs off ksail.yaml (no kubernetesVersion) so it does NOT exercise the prod pin. Track every version, but require manual review for minor + major; 1.x patch bumps still auto-merge via the ksail.prod.yaml file rule above. This rule is intentionally last so it wins on automerge.",
+      "matchPackageNames": [
+        "kubernetes/kubernetes"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "major"
+      ],
+      "automerge": false
     }
   ],
   "ignorePaths": [

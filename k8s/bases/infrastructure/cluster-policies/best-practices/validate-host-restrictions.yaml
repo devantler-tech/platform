@@ -4,8 +4,8 @@
 # Addresses kubescape controls: C-0045, C-0048, C-0041, C-0038
 #
 # Infrastructure namespaces are excluded because CNI (Cilium), storage
-# (Longhorn), node telemetry (Coroot), identity (SPIRE), and backup (Velero)
-# require host-level access by design.
+# (Longhorn), node telemetry (Coroot), and backup (Velero) require
+# host-level access by design.
 #
 # Local-path-provisioner helper pods (used in local/CI clusters) are
 # excluded by name pattern because they mount hostPath in app namespaces

@@ -131,9 +131,17 @@ spec:
     # traffic.  KubeSpan (Talos-layer WireGuard between nodes) is not
     # enabled in this cluster, so without this setting inter-node pod
     # traffic would transit the Hetzner private network in cleartext.
-    # SPIRE mutual authentication below provides workload *identity*; this
-    # block provides on-the-wire *encryption*. They are independent and
-    # complementary.
+    # This is the platform's single, native, transparent encryption layer:
+    # it lives in the CNI and needs zero per-workload configuration.
+    #
+    # Cilium mutual authentication (SPIRE) was deliberately removed: it
+    # provided workload *identity* only (not encryption), no NetworkPolicy
+    # enforced `authentication.mode: required`, and it ran spire-server + a
+    # per-node spire-agent (with a chown init-container workaround for
+    # cilium/cilium#40533) for no actual enforcement. Native K8s Pod
+    # Certificates (KEP-4317, beta/off in 1.35) are likewise identity-only
+    # and require per-app changes, so they do not replace this layer.
+    # Identity-based mTLS can be reintroduced here if a policy ever needs it.
     #
     # Requires the kernel WireGuard module (present in the Talos kernel
     # since 5.6) and kubeProxyReplacement=true (set above).
@@ -143,52 +151,6 @@ spec:
       enabled: true
       type: wireguard
       nodeEncryption: true
-    authentication:
-      enabled: true
-      mutual:
-        spire:
-          enabled: true
-          install:
-            namespace: kube-system
-            existingNamespace: true
-            # Resource requests promote spire-server and spire-agent pods
-            # out of BestEffort QoS. cilium-agent's SPIRE Delegate API
-            # client relies on the per-node spire-agent admin socket — if
-            # the agent is evicted/OOMKilled the cilium-agent on that
-            # node stays stuck retrying "SPIRE admin socket does not
-            # exist" and ClusterIP routing degrades alongside it.
-            agent:
-              resources:
-                requests:
-                  cpu: 50m
-                  memory: 128Mi
-            # TODO: Remove workaround when SPIRE no longer fails to start (https://github.com/cilium/cilium/issues/40533)
-            server:
-              resources:
-                requests:
-                  cpu: 50m
-                  memory: 128Mi
-              initContainers:
-              - command:
-                - /bin/sh
-                - -c
-                - |
-                  chown -R 1000:1000 /run/spire/data
-                  chown -R 1000:1000 /tmp/spire-server
-                image: docker.io/library/busybox:1.38.0@sha256:fd8d9aa63ba2f0982b5304e1ee8d3b90a210bc1ffb5314d980eb6962f1a9715d
-                imagePullPolicy: IfNotPresent
-                name: chown
-                securityContext:
-                  runAsGroup: 0
-                  runAsUser: 0
-                volumeMounts:
-                - mountPath: /run/spire/data
-                  name: spire-data
-                - mountPath: /tmp/spire-server/private
-                  name: spire-server-socket
-              securityContext:
-                runAsGroup: 1000
-                runAsUser: 1000
     gatewayAPI:
       enabled: true
       enableAlpn: true

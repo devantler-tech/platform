@@ -8,15 +8,10 @@ spec:
   values:
     # Local Docker provider has a single Talos container — there is no
     # node-to-node wire, and pod-to-pod traffic stays inside one Linux
-    # network namespace. Disabling encryption and SPIRE mTLS keeps the
-    # local cluster lean and avoids the WireGuard kernel module setup.
+    # network namespace. Disabling encryption keeps the local cluster lean
+    # and avoids the WireGuard kernel module setup.
     encryption:
       enabled: false
-    authentication:
-      enabled: false
-      mutual:
-        spire:
-          enabled: false
     gatewayAPI:
       hostNetwork:
         enabled: true

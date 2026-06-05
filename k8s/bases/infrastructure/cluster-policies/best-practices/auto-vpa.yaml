@@ -1,7 +1,7 @@
 # TODO: Upstream `auto-vpa.yaml` to Kyverno policies repository.
 #
 # kube-system is intentionally NOT excluded: its controllers (cilium,
-# cilium-envoy, spire-agent, coredns, metrics-server, hubble, hcloud
+# cilium-envoy, coredns, metrics-server, hubble, hcloud
 # ccm/csi, tetragon, cluster-autoscaler) carry ~10Gi of hand-tuned request
 # floors that VPA can right-size to observed usage instead. Static
 # control-plane pods (kube-apiserver/etcd/scheduler/controller-manager) are
@@ -15,11 +15,11 @@
 #
 # On k8s < 1.33 the gate is alpha/off, so InPlaceOrRecreate falls back to
 # Recreate: VPA applies a recommendation by EVICTING the pod. For the
-# kube-system DaemonSets (cilium / spire-agent) that is a brief per-node
-# datapath blip as each pod restarts, one node at a time; spire-server
-# (StatefulSet) uses updateMode Initial and is never evicted. Until prod is
-# upgraded to >= 1.33 (target 1.34; Talos 1.12 supports k8s 1.30-1.35),
-# expect a one-time round of such evictions as VPA applies its initial recs.
+# kube-system DaemonSets (e.g. cilium) that is a brief per-node datapath
+# blip as each pod restarts, one node at a time; singleton StatefulSets use
+# updateMode Initial and are never evicted. Prod now runs k8s >= 1.33
+# (1.35; Talos 1.12 supports k8s 1.30-1.35), so in-place resize is active
+# and this eviction fallback no longer applies.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
