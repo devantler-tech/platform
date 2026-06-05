@@ -9,6 +9,7 @@ resources:
   - cluster-secret-stores/
   - coroot/
   - external-secrets/
+  - flagger/
   - gateway/
   - http-scaled-objects/
   # OpenCost lives in the `infrastructure` layer (not `controllers`) because it

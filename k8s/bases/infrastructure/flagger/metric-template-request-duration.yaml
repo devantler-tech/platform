@@ -1,0 +1,35 @@
+# Canary SLO: p99 HTTP request latency (milliseconds) of the workload **under
+# test**. Coroot's node-agent exports the inbound request-duration as a standard
+# Prometheus histogram named `container_http_inbound_requests_duration_seconds_total`,
+# so the queryable bucket series is `..._total_bucket{le=...}` (the base name ends
+# in `_total`, and Prometheus appends `_bucket`). Verified against the
+# coroot-node-agent source (containers/metrics.go, L7InboundLatency).
+#
+# MEASURES THE CANARY, NOT THE PRIMARY — see the success-rate template for the
+# rationale and the vowel-free pod-template-hash regex that selects canary pods
+# while excluding `<target>-primary-*`.
+#
+# Returns milliseconds (×1000) to match the usual Flagger latency convention, so
+# a Canary expresses the threshold in ms, e.g. `thresholdRange: { max: 500 }`.
+#
+# Same layer-placement rationale and live-validation caveat as the success-rate
+# template (here also confirm the histogram bucket series name + `le` label).
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: coroot-request-duration
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://coroot-prometheus.observability.svc.cluster.local:9090
+  query: |
+    histogram_quantile(0.99,
+      sum(
+          rate(
+              container_http_inbound_requests_duration_seconds_total_bucket{
+                container_id=~"/k8s/{{ namespace }}/{{ target }}-[bcdfghjklmnpqrstvwxz2-9]+-[a-z0-9]+/.*"
+              }[{{ interval }}]
+          )
+      ) by (le)
+    ) * 1000

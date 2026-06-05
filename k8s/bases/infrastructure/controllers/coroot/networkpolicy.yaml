@@ -40,6 +40,16 @@ spec:
         - ports:
             - port: "9090"
               protocol: TCP
+    # Flagger queries the bundled Prometheus for canary SLO metrics
+    # (request-success-rate / latency derived from the node-agent's
+    # container_http_inbound_requests_* series).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: flagger-system
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
   egress:
     # Kube API for the cluster-agent's service discovery / kube-state inventory.
     - toEntities:

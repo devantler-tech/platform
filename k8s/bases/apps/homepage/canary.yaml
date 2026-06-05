@@ -1,0 +1,61 @@
+# Blue/green canary for Homepage (the root dashboard, `${domain}`). It sits behind
+# oauth2-proxy (auth-proxy forwards ${domain} -> homepage.homepage.svc:80), so a
+# gateway-level weighted split isn't possible. Flagger's `kubernetes` provider
+# does blue/green instead: it builds homepage-primary, runs the analysis against
+# the homepage-canary Service, and promotes by repointing the apex Service to the
+# new version. The public path (httproute.yaml -> oauth2-proxy -> auth-proxy ->
+# homepage apex Service) is untouched and always resolves to the primary.
+#
+# ⚠️ High blast radius (platform front page) — watch the first rollout. Flagger
+# owns replicas (stripped in the HelmRelease), so the primary runs the chart
+# default (1) instead of 2: a minor HA reduction. Latency threshold is generous
+# because Homepage is a single-threaded Next.js SSR app that bursts under load.
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: homepage
+  namespace: homepage
+spec:
+  provider: kubernetes
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: homepage
+  progressDeadlineSeconds: 600
+  service:
+    port: 80
+    targetPort: 3000
+  analysis:
+    interval: 1m
+    threshold: 5
+    iterations: 5
+    metrics:
+      - name: success-rate
+        templateRef:
+          name: coroot-request-success-rate
+          namespace: flagger-system
+        thresholdRange:
+          min: 99
+        interval: 1m
+      - name: latency-p99
+        templateRef:
+          name: coroot-request-duration
+          namespace: flagger-system
+        thresholdRange:
+          max: 2000
+        interval: 1m
+    webhooks:
+      - name: acceptance-test
+        type: pre-rollout
+        url: http://flagger-loadtester.flagger-system/
+        timeout: 30s
+        metadata:
+          type: bash
+          cmd: "curl -sf http://homepage-canary.homepage/"
+      - name: load-test
+        type: rollout
+        url: http://flagger-loadtester.flagger-system/
+        timeout: 30s
+        metadata:
+          type: cmd
+          cmd: "hey -z 1m -q 5 -c 2 http://homepage-canary.homepage/"

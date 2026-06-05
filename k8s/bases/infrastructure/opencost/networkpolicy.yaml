@@ -28,6 +28,14 @@ spec:
         - ports:
             - port: "9090"
               protocol: TCP
+    # Flagger load-tester (blue/green acceptance smoke + load) -> the canary UI.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: flagger-system
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
   egress:
     # Kube API
     - toEntities:

@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flagger-system
+  labels:
+    # Flagger and the load-tester are ordinary workloads with a fully specified
+    # restricted securityContext (see the HelmReleases), so they are PSA-compliant
+    # at admission without relying on the Kyverno add-security-context webhook.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

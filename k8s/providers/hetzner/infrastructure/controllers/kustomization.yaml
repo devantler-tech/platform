@@ -17,6 +17,7 @@ resources:
   - ../../../../bases/infrastructure/controllers/coroot/
   - ../../../../bases/infrastructure/controllers/dex/
   - ../../../../bases/infrastructure/controllers/external-secrets/
+  - ../../../../bases/infrastructure/controllers/flagger/
   - ../../../../bases/infrastructure/controllers/flux-operator/
   - ../../../../bases/infrastructure/controllers/keda/
   - ../../../../bases/infrastructure/controllers/keda-http-add-on/
