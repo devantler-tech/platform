@@ -74,6 +74,16 @@ spec:
                           preStop:
                             sleep:
                               seconds: 15
+          # Flagger owns the canary (opencost) Deployment's replicas — it scales
+          # the deployment to zero between rollouts. Strip the chart's replicas
+          # field so Flux does not fight Flagger's scaling. See
+          # infrastructure/flagger/canary-opencost.yaml.
+          - target:
+              kind: Deployment
+              name: opencost
+            patch: |
+              - op: remove
+                path: /spec/replicas
   # https://github.com/opencost/opencost-helm-chart/blob/main/charts/opencost/values.yaml
   #
   # Lightweight FinOps cost allocation. Points at Coroot's bundled Prometheus
@@ -138,7 +148,8 @@ spec:
           internetNetworkEgress: 0.001164
 
       exporter:
-        replicas: 1
+        # replicas omitted — Flagger manages the canary deployment's replicas
+        # (stripped by the postRenderer above).
         resources:
           requests:
             cpu: 10m

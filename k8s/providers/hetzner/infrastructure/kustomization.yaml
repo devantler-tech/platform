@@ -5,6 +5,11 @@ resources:
   - ../../../bases/infrastructure/
   - cluster-issuers/
   - vault-seed/
+  # Prod-only: reconcile Coroot's node Custom Cloud Pricing to Hetzner rates
+  # (Coroot otherwise prices non-AWS/GCP/Azure nodes at the GCP-C4 fallback,
+  # ~16x the real bill). Lives in this `infrastructure` layer because it targets
+  # the `platform` project the coroot-patch below adds to the Coroot CR.
+  - coroot/custom-cloud-pricing-cronjob.yaml
   # Longhorn CSI VolumeSnapshotClass for Velero CSI backups. Kept in this
   # `infrastructure` layer (not `infrastructure/controllers/`) so the
   # snapshot.storage.k8s.io CRDs shipped by the snapshot-controller HelmRelease

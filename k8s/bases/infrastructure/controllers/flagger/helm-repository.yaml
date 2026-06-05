@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: flagger
+  namespace: flagger-system
+spec:
+  # The canonical Flagger Helm repo — hosts both the `flagger` controller and the
+  # `loadtester` charts (https://fluxcd.github.io/helm-charts is the Flux project's
+  # own charts and 404s for flagger/loadtester).
+  url: https://flagger.app

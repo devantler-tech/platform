@@ -48,6 +48,21 @@
       "datasourceTemplate": "docker",
       "depNameTemplate": "ghcr.io/controlplaneio-fluxcd/charts/flux-operator",
       "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the Talos Linux distribution version pinned in the prod node install image (talos/cluster/install-image.yaml). The image is served by the Talos Image Factory (factory.talos.dev), whose OCI registry does NOT implement tag listing (`/v2/<schematic>/tags/list` returns 404), so the image's own registry cannot be a version datasource — which is also why Dependabot cannot track it (its docker manager can only query the image registry, and has no regex/custom manager to point the lookup elsewhere). Resolve the version from the authoritative siderolabs/talos GitHub releases instead. Both matchStrings capture the numeric version only and extractVersionTemplate strips the leading `v` from the `vX.Y.Z` release tags, so the resolved version matches both captures; the image tag keeps its `v` via a regex literal outside the group. This keeps the image tag (`:vX.Y.Z`) and the schematic-URL comment (`version=X.Y.Z`) updated in sync. This only edits this file; the source-of-truth talos.version and the Hetzner iso snapshot id in the protected ksail.prod.yaml must be bumped in lockstep by a maintainer (see the matching packageRule below, which holds it on the Dependency Dashboard for manual approval and disables automerge).",
+      "managerFilePatterns": [
+        "/^talos/cluster/install-image\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "image:\\s*factory\\.talos\\.dev/installer/[a-f0-9]+:v(?<currentValue>[0-9.]+)",
+        "target=hcloud&version=(?<currentValue>[0-9.]+)"
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "siderolabs/talos",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>.+)$"
     }
   ],
   "minor": {
@@ -138,6 +153,17 @@
         "@devantler-tech/**"
       ],
       "minimumReleaseAge": "0 days"
+    },
+    {
+      "description": "Talos Linux distribution upgrades (tracked by the custom manager above; depName siderolabs/talos) are surfaced for manual, coordinated promotion — never automerged like the other deps here. A Talos bump spans files no bot may fully edit: this manager only touches talos/cluster/install-image.yaml, but the source-of-truth talos.version and the Hetzner iso snapshot id live in the protected ksail.prod.yaml, and a lockstep kubernetesVersion bump may be needed when Talos's supported Kubernetes range moves. dependencyDashboardApproval holds the update on the Dependency Dashboard until a maintainer approves it; automerge:false (placed last so it overrides the broad talos/** and major-update automerge rules above) then keeps the resulting PR open for the maintainer to complete the lockstep ksail.prod.yaml edits before merging.",
+      "matchPackageNames": [
+        "siderolabs/talos"
+      ],
+      "automerge": false,
+      "dependencyDashboardApproval": true,
+      "addLabels": [
+        "talos"
+      ]
     }
   ],
   "ignorePaths": [

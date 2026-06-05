@@ -32,6 +32,11 @@ spec:
               kind: Deployment
               name: homepage
             patch: |
+              # Flagger owns the canary deployment's replicas (it scales to zero
+              # between rollouts) — strip the chart's replicas so Flux does not
+              # fight it. See canary.yaml.
+              - op: remove
+                path: /spec/replicas
               - op: add
                 path: /metadata/annotations/configmap.reloader.stakater.com~1reload
                 value: homepage
@@ -92,6 +97,25 @@ spec:
               - op: add
                 path: /spec/template/spec/containers/0/readinessProbe/timeoutSeconds
                 value: 5
+              # Graceful drain on termination. The release rolls often (helm
+              # revisions + reloader restarts) and the Service's ClientIP
+              # affinity (below) pins each auth-proxy pod to one homepage
+              # replica. Without draining, a rolling pod stops serving the
+              # instant it is SIGTERMed while auth-proxy is still routed to it,
+              # so the rollout window returns 502 Bad Gateway — and the
+              # dashboard's ~14 /api/* polls per refresh amplify that into a
+              # latency+error incident on oauth2-proxy and auth-proxy. A short
+              # preStop keeps the old pod answering until it has been removed
+              # from the Service endpoints and the affinity has rebalanced.
+              - op: add
+                path: /spec/template/spec/terminationGracePeriodSeconds
+                value: 30
+              - op: add
+                path: /spec/template/spec/containers/0/lifecycle
+                value:
+                  preStop:
+                    exec:
+                      command: ["/bin/sh", "-c", "sleep 10"]
           # Flicker fix: with replicaCount=2 and the chart's default ClusterIP
           # service, the Kubernetes widget's poll for node/cluster CPU/memory
           # round-robins between two pods that each maintain their own
@@ -113,7 +137,9 @@ spec:
   # ---
   # https://github.com/M0NsTeRRR/helm-charts/blob/main/charts/homepage/values.yaml
   values:
-    replicaCount: ${homepage_replicas:=2}
+    # replicaCount intentionally omitted — Flagger manages canary replicas (the
+    # chart's replicas field is stripped by the postRenderer above). The primary
+    # therefore runs the chart default of 1 instead of 2.
     # Homepage is a single-threaded Next.js server: it idles near ~3m CPU but
     # bursts hard on every load — server-rendering the page, polling ~14
     # service statuses against kube-apiserver, and aggregating the cluster /

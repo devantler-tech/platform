@@ -12,7 +12,7 @@ This is a **GitOps-based Kubernetes platform** — not a traditional code reposi
 
 - **Flux CD** — GitOps engine reconciling from OCI artifacts
 - **Kustomize** — manifest templating and overlays
-- **Cilium** — CNI and Gateway API (SPIRE-based mutual authentication is enabled in prod; the Docker provider overlay disables it for local/CI)
+- **Cilium** — CNI and Gateway API. SPIRE-based mutual authentication is enabled **and enforced** in prod: a cluster-wide `CiliumClusterwideNetworkPolicy` (`require-mutual-auth`, hetzner overlay) requires `authentication.mode: required` on all pod-to-pod ingress, complementary to WireGuard wire encryption (WireGuard encrypts the wire; SPIRE authenticates the workload identity — both are wanted). The Docker provider overlay disables SPIRE for local/CI, so the policy is prod-only.
 - **Talos Linux** — immutable Kubernetes OS
 - **KSail** — unified cluster and workload lifecycle management (Talos + Docker for local, Talos + Hetzner for prod)
 - **SOPS + Age** — secret encryption at rest (per-environment Age keys)
@@ -205,6 +205,8 @@ You **cannot** decrypt existing secrets without the proper Age keys. For local d
 Resources under `k8s/bases/infrastructure/` are organized by **resource type**, not by the component that uses them — for example `certificates/`, `cluster-policies/`, `controllers/` (HelmRelease / HelmRepository and related resources, each in a subdirectory by component name), `gateway/` (Gateway and infrastructure-level HTTPRoute resources such as the HTTP→HTTPS redirect), `external-secrets/`, `alerts/`, and the `vault-*/` (OpenBao) directories.
 
 Central gateway resources (the Cilium `Gateway` and its TLS `Certificate`) are deployed to `kube-system` (the Cilium namespace) rather than to a dedicated namespace.
+
+Progressive delivery uses **Flagger** (Gateway API canary deployments); like Coroot, its CRDs ship with the controller HelmRelease in `controllers/flagger/`, so its `MetricTemplate` CRs live one layer later in `infrastructure/flagger/` to avoid the CR-and-its-CRD-in-one-Kustomization deadlock. See [`docs/progressive-delivery.md`](docs/progressive-delivery.md).
 
 ### Kustomization Flow
 

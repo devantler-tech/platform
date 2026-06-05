@@ -1,0 +1,52 @@
+# Canary SLO: HTTP request success rate (%) of the workload **under test**,
+# derived from Coroot's eBPF node-agent server-side metric
+# `container_http_inbound_requests_total` (stored in the bundled Prometheus).
+#
+# MEASURES THE CANARY, NOT THE PRIMARY. Flagger's `{{ target }}` =
+# canary.spec.targetRef.name (the original deployment), and analysis must gate on
+# the NEW version. Coroot labels by pod-name `container_id`
+# (`/k8s/<ns>/<pod>/<container>`) and RE2 has no negative lookahead, so to select
+# the canary pods (`<target>-<hash>-<suffix>`) while EXCLUDING the primary
+# (`<target>-primary-<hash>-<suffix>`) we exploit that Kubernetes pod-template
+# hashes use a vowel-free alphabet (`bcdfghjklmnpqrstvwxz2456789`): "primary"
+# contains i/a, so it can never be a hash and the `[bcdfghjklmnpqrstvwxz2-9]+`
+# class cleanly excludes it.
+#
+# LAYER PLACEMENT — this CR lives in the `infrastructure` Flux Kustomization, NOT
+# next to the Flagger HelmRelease in `controllers/flagger/`. The HelmRelease ships
+# the MetricTemplate CRD; a CR of that kind in the same Kustomization fails the
+# kustomize-controller's server-side dry-run (`no matches for kind`) and aborts
+# the set. `infrastructure` dependsOn (+ wait:true) `infrastructure-controllers`
+# (same pattern as infrastructure/coroot/coroot.yaml).
+#
+# ⚠️ VALIDATE AGAINST LIVE DATA before relying on it: confirm in coroot-prometheus
+# that `container_http_inbound_requests_total` exists, that its `status` label
+# holds the numeric HTTP code (so `status=~"5.."` selects 5xx), and that the
+# `container_id` format is `/k8s/<namespace>/<pod>/<container>`. Tune if it differs.
+apiVersion: flagger.app/v1beta1
+kind: MetricTemplate
+metadata:
+  name: coroot-request-success-rate
+  namespace: flagger-system
+spec:
+  provider:
+    type: prometheus
+    address: http://coroot-prometheus.observability.svc.cluster.local:9090
+  query: |
+    sum(
+        rate(
+            container_http_inbound_requests_total{
+              container_id=~"/k8s/{{ namespace }}/{{ target }}-[bcdfghjklmnpqrstvwxz2-9]+-[a-z0-9]+/.*",
+              status!~"5.."
+            }[{{ interval }}]
+        )
+    )
+    /
+    sum(
+        rate(
+            container_http_inbound_requests_total{
+              container_id=~"/k8s/{{ namespace }}/{{ target }}-[bcdfghjklmnpqrstvwxz2-9]+-[a-z0-9]+/.*"
+            }[{{ interval }}]
+        )
+    )
+    * 100

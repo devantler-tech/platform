@@ -1,0 +1,63 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-flagger
+  namespace: flagger-system
+spec:
+  endpointSelector: {}
+  ingress:
+    # Intra-namespace: Flagger calls the load-tester's webhook server (:8080).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: flagger-system
+  egress:
+    # Kube API — Flagger reconciles Canary/Deployment/Service/HTTPRoute objects.
+    - toEntities:
+        - kube-apiserver
+    # Coroot's bundled Prometheus (in the observability namespace) — canary SLO
+    # metric queries (success-rate, latency). Same endpoint OpenCost queries;
+    # Coroot's netpol allows this namespace in on :9090.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+    # Intra-namespace (Flagger -> load-tester webhook).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: flagger-system
+    # Load-tester -> the onboarded apps' `<app>-canary` Services, for acceptance
+    # (smoke) tests + generated load during analysis. The webhooks target the
+    # canary Service directly (not via the gateway), so no gateway egress is
+    # needed. Add a namespace+port here when onboarding a new app
+    # (docs/progressive-delivery.md). umami is prod-only — this rule is an inert
+    # no-op in the docker overlay where the umami namespace does not exist.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: umami
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: homepage
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: opencost
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+    # DNS resolution
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

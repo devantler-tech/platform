@@ -1,0 +1,76 @@
+# Weighted Gateway API canary for Umami (the platform's one directly-routed,
+# non-KEDA app). Flagger generates and OWNS the HTTPRoute (replacing the deleted
+# httproute.yaml), creates umami-umami-primary/-canary Deployments + Services, and
+# shifts gateway traffic in 10% steps while gating on Coroot SLOs + load tests.
+#
+# ⚠️ PROD-ONLY (umami is excluded from the docker/CI overlay, so this canary is
+# NOT exercised by the system test) and STATEFUL (one shared CloudNativePG DB —
+# primary and canary run the same schema; do NOT land a schema-changing umami
+# upgrade as a canary). The MetricTemplate PromQL is unvalidated offline. Review
+# and watch the first rollout in prod before trusting auto-promotion.
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: umami-umami
+  namespace: umami
+spec:
+  provider: gatewayapi:v1
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: umami-umami
+  # No autoscalerRef — Umami uses VPA, not HPA/ScaledObject. Flagger manages the
+  # canary's replicas (the chart's replicas field is stripped in the HelmRelease).
+  progressDeadlineSeconds: 600
+  service:
+    port: 80
+    targetPort: 3000
+    hosts:
+      - analytics.${domain}
+    gatewayRefs:
+      - name: platform
+        namespace: kube-system
+    # Re-add the HSTS header the hand-written route used to set. (Edge HSTS is
+    # also applied by Cloudflare in prod, so this is defence-in-depth.) The old
+    # route's gethomepage.dev/* tile annotations are NOT reproducible on a
+    # Flagger-generated route — re-add Umami to the homepage dashboard via static
+    # config if the tile is wanted.
+    headers:
+      response:
+        set:
+          Strict-Transport-Security: "max-age=63072000; includeSubDomains; preload"
+  analysis:
+    interval: 1m
+    threshold: 5
+    maxWeight: 50
+    stepWeight: 10
+    metrics:
+      - name: success-rate
+        templateRef:
+          name: coroot-request-success-rate
+          namespace: flagger-system
+        thresholdRange:
+          min: 99
+        interval: 1m
+      - name: latency-p99
+        templateRef:
+          name: coroot-request-duration
+          namespace: flagger-system
+        thresholdRange:
+          max: 500
+        interval: 1m
+    webhooks:
+      - name: acceptance-test
+        type: pre-rollout
+        url: http://flagger-loadtester.flagger-system/
+        timeout: 30s
+        metadata:
+          type: bash
+          cmd: "curl -sf http://umami-umami-canary.umami/"
+      - name: load-test
+        type: rollout
+        url: http://flagger-loadtester.flagger-system/
+        timeout: 30s
+        metadata:
+          type: cmd
+          cmd: "hey -z 1m -q 5 -c 2 http://umami-umami-canary.umami/"

@@ -1,0 +1,69 @@
+# Blue/green canary for OpenCost (an infrastructure cost UI), behind oauth2-proxy
+# (auth-proxy -> opencost.opencost.svc:9090). The `kubernetes` provider does
+# blue/green (no gateway weighting). It builds opencost-primary, analyses against
+# the opencost-canary Service, and promotes by repointing the apex Service.
+#
+# LAYER: this Canary lives in the `infrastructure` Flux Kustomization, NOT in
+# `infrastructure/controllers` where the opencost HelmRelease lives. The Canary
+# CRD ships with the flagger HelmRelease (infra-controllers), so a Canary CR there
+# would fail the server-side dry-run and deadlock the set — same rule as the
+# MetricTemplates and infrastructure/coroot/coroot.yaml.
+#
+# ⚠️ NAMED-PORT RISK: Headlamp's OpenCost plugin reaches the cost API via the
+# kube-apiserver service proxy using the `opencost:http-ui` *named* port (see
+# opencost/networkpolicy.yaml). Flagger regenerates the Services; portDiscovery
+# copies the container ports but may not preserve the `http-ui` port NAME. If the
+# Headlamp cost panel breaks after this lands, this is the cause — revert this
+# Canary or pin the port name.
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: opencost
+  namespace: opencost
+spec:
+  provider: kubernetes
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: opencost
+  progressDeadlineSeconds: 600
+  service:
+    port: 9090
+    targetPort: 9090
+    # Discover the other container ports (notably :9003, the cost API Headlamp
+    # queries) so the generated Services expose them too.
+    portDiscovery: true
+  analysis:
+    interval: 1m
+    threshold: 5
+    iterations: 5
+    metrics:
+      - name: success-rate
+        templateRef:
+          name: coroot-request-success-rate
+          namespace: flagger-system
+        thresholdRange:
+          min: 99
+        interval: 1m
+      - name: latency-p99
+        templateRef:
+          name: coroot-request-duration
+          namespace: flagger-system
+        thresholdRange:
+          max: 1000
+        interval: 1m
+    webhooks:
+      - name: acceptance-test
+        type: pre-rollout
+        url: http://flagger-loadtester.flagger-system/
+        timeout: 30s
+        metadata:
+          type: bash
+          cmd: "curl -sf http://opencost-canary.opencost:9090/"
+      - name: load-test
+        type: rollout
+        url: http://flagger-loadtester.flagger-system/
+        timeout: 30s
+        metadata:
+          type: cmd
+          cmd: "hey -z 1m -q 5 -c 2 http://opencost-canary.opencost:9090/"

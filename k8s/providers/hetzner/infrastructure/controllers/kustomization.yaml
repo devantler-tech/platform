@@ -17,6 +17,7 @@ resources:
   - ../../../../bases/infrastructure/controllers/coroot/
   - ../../../../bases/infrastructure/controllers/dex/
   - ../../../../bases/infrastructure/controllers/external-secrets/
+  - ../../../../bases/infrastructure/controllers/flagger/
   - ../../../../bases/infrastructure/controllers/flux-operator/
   - ../../../../bases/infrastructure/controllers/keda/
   - ../../../../bases/infrastructure/controllers/keda-http-add-on/
@@ -30,6 +31,10 @@ resources:
   - ../../../../bases/infrastructure/controllers/trust-manager/
   - ../../../../bases/infrastructure/controllers/velero/
   - ../../../../bases/infrastructure/controllers/vertical-pod-autoscaler/
+  # Prod-only: layers a cluster-wide mutual-auth (SPIRE mTLS) policy on top of
+  # the base Cilium controller listed above. SPIRE is enabled only on Hetzner,
+  # so the policy lives here, not in the base — see cilium/ for the rationale.
+  - cilium/
   - coredns/
   - external-dns/
   - flux-instance/

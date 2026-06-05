@@ -11,6 +11,8 @@ resources:
   - db-rotated-external-secret.yaml
   - helm-repository.yaml
   - helm-release.yaml
-  - httproute.yaml
+  # httproute.yaml removed — Flagger generates and owns Umami's HTTPRoute from
+  # canary.yaml (Gateway API weighted canary).
+  - canary.yaml
   - networkpolicy.yaml
   - provision-cronjob.yaml

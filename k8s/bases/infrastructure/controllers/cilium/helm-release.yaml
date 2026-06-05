@@ -164,6 +164,26 @@ spec:
                   memory: 128Mi
             # TODO: Remove workaround when SPIRE no longer fails to start (https://github.com/cilium/cilium/issues/40533)
             server:
+              # spire-server is a single-replica StatefulSet backed by an
+              # SQLite datastore on a ReadWriteOnce PVC (Cilium chart default).
+              # Now that the hetzner require-mutual-auth policy enforces
+              # pod-to-pod mTLS, this server sits in the data path: while it is
+              # down, NEW identity pairs cannot authenticate. Established flows
+              # ride through via cilium-agent's auth cache, and the
+              # cilium-operator re-syncs entries from CiliumIdentities, so brief
+              # restarts are tolerable. Datastore durability already comes from
+              # the PVC binding to longhorn (the cluster-default StorageClass,
+              # 3-way replicated). Do NOT make these tempting "HA" changes:
+              #   * replicas > 1 — the SQLite + RWO datastore is single-writer;
+              #     real HA needs an external SQL datastore (a much larger
+              #     change, out of scope here).
+              #   * a minAvailable PodDisruptionBudget — with one replica it
+              #     only blocks node drains / autoscaler scale-down / Talos
+              #     upgrades, without adding any availability.
+              #   * pinning dataStorage.storageClass — a StatefulSet
+              #     volumeClaimTemplate is immutable, so changing it would wedge
+              #     the Helm upgrade on the live cluster (the PVC already lands
+              #     on longhorn via the default StorageClass anyway).
               resources:
                 requests:
                   cpu: 50m

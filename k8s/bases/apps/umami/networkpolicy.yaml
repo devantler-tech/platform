@@ -16,6 +16,14 @@ spec:
         - ports:
             - port: "3000"
               protocol: TCP
+    # Flagger load-tester (acceptance smoke + load) -> the canary pods.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: flagger-system
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
     # Intra-namespace (Umami -> DB, CNPG replication)
     - fromEndpoints:
         - matchLabels:

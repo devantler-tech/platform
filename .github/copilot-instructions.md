@@ -29,8 +29,10 @@ read it, so everything needed for review is restated here.)
   component that drops a required `dependsOn` or creates a cycle.
 - `HelmRelease`: pin chart versions; prefer a `HelmRepository`/`OCIRepository` source over inline values
   sprawl. Flag unpinned or `latest` chart refs.
-- Provider split: SPIRE mutual auth is on in prod and disabled in the Docker overlay — keep changes overlay-scoped,
-  don't leak a local-only setting into a base or the prod path.
+- Provider split: SPIRE mutual auth is enabled **and enforced** in prod (a cluster-wide `CiliumClusterwideNetworkPolicy`,
+  `require-mutual-auth`, in the hetzner overlay requires `authentication.mode: required` on pod-to-pod ingress; WireGuard
+  wire encryption is orthogonal and also on) and disabled in the Docker overlay, so the policy is prod-only — keep changes
+  overlay-scoped, don't leak a local-only setting into a base or the prod path.
 
 ## Validation (static only — never run a cluster for review)
 
