@@ -23,6 +23,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations
+      artifact-metadata: write # create the attestation storage record (GHCR linked-artifacts index)
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -216,7 +217,7 @@ jobs:
         # it manages syft's binary integrity itself, so no per-version
         # SHA256 to track here either. Bump syft by editing SYFT_VERSION
         # below; Renovate proposes the bump via the custom regex manager.
-        # Output is CycloneDX JSON, which is the format attest-sbom expects.
+        # Output is CycloneDX JSON, a format actions/attest accepts via sbom-path.
         # `upload-artifact: false` matches today's behaviour (no workflow
         # artifact); the SBOM is attested to the registry in the next step.
         env:
@@ -233,8 +234,10 @@ jobs:
       - name: 🪪 Attest SBOM (Sigstore via cosign keyless)
         # Records the SBOM as a Sigstore in-toto attestation against the
         # OCI manifest's digest. The attestation is uploaded to GHCR and
-        # its index recorded in Rekor.
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        # its index recorded in Rekor. actions/attest-sbom v4 is now just a
+        # deprecated wrapper around actions/attest, so call attest directly
+        # and let its sbom-path input auto-select the SBOM predicate type.
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-digest: ${{ steps.cosign-sign.outputs.digest }}
           subject-name: ghcr.io/devantler-tech/platform/manifests
