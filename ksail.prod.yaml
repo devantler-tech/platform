@@ -101,7 +101,7 @@ spec:
     # place instead of evicting them. Upgraded one minor at a time
     # (1.32 -> 1.33 -> 1.34); landed on 1.34 because 1.33 reaches EOL
     # 2026-06-28. Talos v1.12.4's ceiling is Kubernetes 1.35.
-    kubernetesVersion: v1.34.8
+    kubernetesVersion: v1.36.1
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
