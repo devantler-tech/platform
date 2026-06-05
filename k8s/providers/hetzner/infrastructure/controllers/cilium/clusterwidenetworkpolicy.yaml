@@ -8,7 +8,8 @@
 # entries to issue and every cilium-agent delegated-identity subscription
 # logs `no identity issued` ~1/sec on every node
 # (devantler-tech/platform#1777). This policy requires mutual auth on all
-# pod-to-pod ingress, so Cilium registers identities with SPIRE, the SVIDs
+# pod-to-pod ingress (except DNS to CoreDNS — see the endpointSelector
+# carve-out below), so Cilium registers identities with SPIRE, the SVIDs
 # get issued, and the error stream clears — while actually enforcing
 # pod-to-pod mTLS (the goal), not merely silencing the logs.
 #
@@ -39,8 +40,31 @@ kind: CiliumClusterwideNetworkPolicy
 metadata:
   name: require-mutual-auth
 spec:
-  # Every pod is a potential destination ...
-  endpointSelector: {}
+  # Every pod is a potential destination EXCEPT CoreDNS. DNS must never
+  # sit behind the mutual-auth handshake. CoreDNS is a regular (non
+  # host-network) pod, so without this carve-out the blanket ingress rule
+  # below makes every pod -> CoreDNS query require mutual auth. A TCP flow
+  # survives that (the first packet is dropped, the auth handshake fires,
+  # and the kernel's retransmit rides the now-established auth), but DNS
+  # over UDP has no transport-layer retransmit: Cilium drops every datagram
+  # until auth is established, and the resolver just times out. Applying
+  # this policy with endpointSelector: {} took prod-wide DNS down within
+  # seconds (every pod logging `lookup <name> ... i/o timeout` against
+  # kube-dns; devantler-tech/platform#1783-followup, 2026-06-05).
+  #
+  # Only CoreDNS needs exempting: a scan of the live cluster found DNS the
+  # *sole* failing traffic class (no post-resolution connection errors),
+  # and the SPIRE control plane is unaffected because cilium-operator and
+  # spire-agent are host-network — their traffic to spire-server is matched
+  # as a `host` entity, not by the fromEndpoints rule below — so there is no
+  # auth-bootstrap dependency to break. k8s-app=kube-dns is the only pod
+  # carrying that label, so the NotIn selector excludes exactly CoreDNS.
+  endpointSelector:
+    matchExpressions:
+      - key: k8s-app
+        operator: NotIn
+        values:
+          - kube-dns
   # ... but only ADD the mutual-auth requirement; never deny unmatched
   # traffic (see header comment).
   enableDefaultDeny:
