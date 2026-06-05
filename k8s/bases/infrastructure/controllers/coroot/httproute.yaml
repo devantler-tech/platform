@@ -21,9 +21,9 @@ metadata:
     # `app.kubernetes.io/name=coroot`. But the coroot-operator labels the app pod
     # `app.kubernetes.io/component=coroot` (+ `part-of=coroot`) and sets NO
     # `app.kubernetes.io/name` label — so the default selector matches zero pods
-    # and the card renders offline even though
-    # Coroot is healthy. Target the app pod explicitly (same reason the Cilium
-    # route pins `k8s-app=hubble-ui` and FleetDM pins `app=fleet`).
+    # and the card renders offline even though Coroot is healthy. Target the app
+    # pod explicitly (same reason the Cilium route pins `k8s-app=hubble-ui` and
+    # FleetDM pins `app=fleet`).
     gethomepage.dev/pod-selector: app.kubernetes.io/part-of=coroot,app.kubernetes.io/component=coroot
     # Coroot isn't in the dashboard-icons / selfh.st / simple-icons sets Homepage
     # resolves, so `coroot.png` 404s and the card renders blank. Point at Coroot's
