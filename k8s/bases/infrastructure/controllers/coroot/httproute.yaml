@@ -17,10 +17,11 @@ metadata:
     gethomepage.dev/group: Observability
     # Status dot: Homepage derives a service's health from the readiness of pods
     # matching `gethomepage.dev/pod-selector`. With no selector it defaults to
-    # `app.kubernetes.io/name=<gethomepage.dev/app|route-name>` = `name=coroot`,
-    # but the coroot-operator labels the app pod `app.kubernetes.io/component=coroot`
-    # (+ `part-of=coroot`) and sets NO `app.kubernetes.io/name` label — so the
-    # default selector matches zero pods and the card renders offline even though
+    # `app.kubernetes.io/name=<gethomepage.dev/app|route-name>`, i.e.
+    # `app.kubernetes.io/name=coroot`. But the coroot-operator labels the app pod
+    # `app.kubernetes.io/component=coroot` (+ `part-of=coroot`) and sets NO
+    # `app.kubernetes.io/name` label — so the default selector matches zero pods
+    # and the card renders offline even though
     # Coroot is healthy. Target the app pod explicitly (same reason the Cilium
     # route pins `k8s-app=hubble-ui` and FleetDM pins `app=fleet`).
     gethomepage.dev/pod-selector: app.kubernetes.io/part-of=coroot,app.kubernetes.io/component=coroot
