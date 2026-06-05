@@ -10,4 +10,9 @@ patches:
     target:
       kind: Gateway
       name: platform
+  # Prod-only Coroot tuning: hcloud-backed persistent storage + Slack webhook
+  # wiring. The CR it patches comes from ../../../bases/infrastructure/coroot/
+  # (the `infrastructure` layer); the strategic-merge patch matches on the
+  # embedded coroot.com/v1 Coroot/coroot identity, so no explicit target.
+  - path: coroot/patches/coroot-patch.yaml
 

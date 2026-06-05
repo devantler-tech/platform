@@ -2,6 +2,17 @@
 # Community Edition, self-hosted. Defaults are deliberately minimal so the
 # install is feature-complete out of the box; the hetzner overlay patch adds
 # persistent (hcloud) storage and prod notification wiring.
+#
+# LAYER PLACEMENT — DO NOT move this back next to the operator HelmRelease in
+# `infrastructure/controllers/coroot/`. The operator chart ships the `Coroot`
+# CRD, so a CR of that kind cannot live in the same Flux Kustomization as the
+# operator: kustomize-controller server-side dry-runs the whole set at once,
+# the CR fails with `no matches for kind "Coroot" in version "coroot.com/v1"`,
+# and the entire `infrastructure-controllers` Kustomization aborts — which also
+# blocks the operator that would have installed the CRD (a hard deadlock). This
+# CR therefore lives in the `infrastructure` Kustomization, which `dependsOn`
+# (and `wait: true`s for) `infrastructure-controllers`, so the operator is
+# installed and the CRD is established before this resource is applied.
 apiVersion: coroot.com/v1
 kind: Coroot
 metadata:

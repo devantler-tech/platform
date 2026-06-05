@@ -1,11 +1,15 @@
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# This is the operator layer: it provides the `coroot.com/v1` CRD (via the
+# coroot-operator HelmRelease) plus the namespace, network policy, SSO route
+# and heartbeat. The `Coroot` CR itself deliberately lives one layer down, in
+# `bases/infrastructure/coroot/`, so the CRD exists before the CR is applied —
+# see that directory's coroot.yaml for the deadlock rationale.
 resources:
   - namespace.yaml
   - helm-repository.yaml
   - helm-release.yaml
-  - coroot.yaml
   - httproute.yaml
   - networkpolicy.yaml
   - heartbeat-cronjob.yaml
