@@ -7,7 +7,28 @@ metadata:
 data:
   settings.yaml: |
     title: Platform
-    favicon: https://avatars.githubusercontent.com/u/178524219?v=4&s=32
+    # `favicon` also drives the iOS Add-to-Home-Screen icon: Homepage emits
+    # <link rel="apple-touch-icon" sizes="180x180" href={favicon}> and has no
+    # separate apple-touch-icon setting. At s=32 iOS upscaled a 32px image to
+    # 180px, so the installed PWA tile was badly blurred. Request s=180 to match
+    # the apple-touch-icon size exactly — a crisp, unscaled render (the avatar
+    # tops out at 460x460 upstream) — which the browser also downsamples for the
+    # tab favicon.
+    favicon: https://avatars.githubusercontent.com/u/178524219?v=4&s=180
+    # PWA manifest icons for the installed app. Without this the manifest falls
+    # back to Homepage's own logo; point it at the DevantlerTech avatar so an
+    # installed app stays on-brand. iOS uses the apple-touch-icon above for the
+    # home-screen tile; these cover the web manifest (Android / desktop install /
+    # splash). s=512 is capped to the avatar's native 460x460 — still far sharper
+    # than the old 32px asset.
+    pwa:
+      icons:
+        - src: https://avatars.githubusercontent.com/u/178524219?v=4&s=192
+          type: image/jpeg
+          sizes: 192x192
+        - src: https://avatars.githubusercontent.com/u/178524219?v=4&s=512
+          type: image/jpeg
+          sizes: 512x512
     theme: dark
     # zinc, not slate: homepage's gray chrome (text, card fills, borders, and
     # the #__next page background) follows this `color` ramp. slate is a
@@ -269,8 +290,13 @@ data:
       background-repeat: no-repeat;
     }
 
-    /* Top widgets bar: a hairline separator + soft green halo on the logo,
-       echoing devantler's glass header and glowing hero avatar. */
+    /* Top widgets bar: a hairline separator under the widgets. The logo sat on a
+       hard 16px green halo that read as a glowing ring; drop it and instead
+       feather the logo's own edges into the dark backdrop with a soft radial
+       mask, so the near-black badge dissolves into hsl(224,10%,10%) and reads as
+       a subtle, understated mark rather than a green-rimmed sticker. The mask
+       stays fully opaque across the emblem (inner ~65%) and only fades the flat
+       black margin and corners, so no logo detail is dimmed. */
     #information-widgets {
       border-bottom: 1px solid rgba(255, 255, 255, 0.08);
       padding-bottom: 0.85rem;
@@ -278,7 +304,8 @@ data:
     }
     #information-widgets img {
       border-radius: 12px;
-      box-shadow: 0 0 16px rgba(57, 255, 20, 0.22);
+      -webkit-mask-image: radial-gradient(circle, #000 65%, transparent 100%);
+              mask-image: radial-gradient(circle, #000 65%, transparent 100%);
     }
 
     /* Thin, dark scrollbar with a green thumb. */
