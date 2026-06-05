@@ -21,6 +21,23 @@ spec:
       className: hcloud
       size: 20Gi
   clickhouse:
+    # ClickHouse ships config.xml with max_server_memory_usage=0 (auto), so it
+    # derives its memory ceiling from the cgroup limit. Left at the auto-vpa
+    # floor (≈128Mi req / 512Mi limit) that ceiling lands at ~224 MiB, and
+    # ClickHouse then throws "Code 241: memory limit exceeded" on every
+    # background merge and on Coroot's own trace ingestion — by far the largest
+    # source of Coroot's self-reported error logs/alerts. Pin a generous
+    # limit:request ratio: the auto-vpa generated VPA runs in
+    # controlledValues:RequestsAndLimits, so it preserves this 4:1 ratio when it
+    # sets the request from live usage — keeping the limit (and thus ClickHouse's
+    # memory ceiling) ~4x the request instead of clamping it back to the floor.
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 2Gi
     storage:
       className: hcloud
       size: 15Gi
