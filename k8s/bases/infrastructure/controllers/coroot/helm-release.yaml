@@ -9,6 +9,7 @@ metadata:
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
   interval: 10m0s
+  timeout: 10m
   install:
     crds: CreateReplace
     remediation:
