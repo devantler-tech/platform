@@ -45,7 +45,7 @@ patches:
                   # Flux Kustomization cluster-wide. Exempt it like the other
                   # platform-owned namespaces; its sizing is VPA-owned, not
                   # quota-bounded. The LimitRange (rule 1) still applies.
-                  - coroot
+                  - observability
       - op: add
         path: /spec/rules/0/generate/generateExisting
         value: true

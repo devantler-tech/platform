@@ -47,7 +47,7 @@ spec:
                 - kubescape
                 - kubevirt
                 - cdi
-                - coroot
+                - observability
                 - velero
           - resources:
               names:
@@ -78,7 +78,7 @@ spec:
                 - kubescape
                 - kubevirt
                 - cdi
-                - coroot
+                - observability
                 - velero
           - resources:
               names:

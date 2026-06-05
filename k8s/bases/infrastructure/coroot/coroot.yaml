@@ -17,7 +17,7 @@ apiVersion: coroot.com/v1
 kind: Coroot
 metadata:
   name: coroot
-  namespace: coroot
+  namespace: observability
 spec:
   # NB: the Coroot app version is managed by the operator (pin via
   # spec.communityEdition.image if ever needed) — there is no spec.version
@@ -39,7 +39,7 @@ spec:
 
   # Bundled Prometheus = the metrics TSDB. Kept as a real Prometheus (we do
   # NOT set storeMetricsInClickhouse) precisely so OpenCost can still query it
-  # at http://coroot-prometheus.coroot.svc.cluster.local:9090.
+  # at http://coroot-prometheus.observability.svc.cluster.local:9090.
   prometheus:
     retention: 7d
     storage:

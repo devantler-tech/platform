@@ -15,4 +15,4 @@ resources:
   # canary.yaml (Gateway API weighted canary).
   - canary.yaml
   - networkpolicy.yaml
-  - provision-job.yaml
+  - provision-cronjob.yaml

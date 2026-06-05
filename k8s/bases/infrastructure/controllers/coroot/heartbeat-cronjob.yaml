@@ -16,7 +16,7 @@ apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: coroot-heartbeat
-  namespace: coroot
+  namespace: observability
 spec:
   schedule: "* * * * *"
   concurrencyPolicy: Forbid
@@ -40,13 +40,13 @@ spec:
               type: RuntimeDefault
           containers:
             - name: heartbeat
-              image: docker.io/curlimages/curl:8.11.1@sha256:c1fe1679c34d9784c1b0d1e5f62ac0a79fca01fb6377cdd33e90473c6f9f9a69
+              image: docker.io/curlimages/curl:8.20.0@sha256:b3f1fb2a51d923260350d21b8654bbc607164a987e2f7c84a0ac199a67df812a
               command:
                 - /bin/sh
                 - -c
                 - >-
                   curl -sf --max-time 5
-                  http://coroot-prometheus.coroot.svc.cluster.local:9090/-/healthy
+                  http://coroot-prometheus.observability.svc.cluster.local:9090/-/healthy
                   && curl -sf --max-time 10
                   "${alertmanager_heartbeat_url:=https://example.invalid/no-heartbeat-configured}"
                   || true

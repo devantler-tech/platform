@@ -26,7 +26,7 @@ data:
           entryPoints: ["web"]
           service: hubble-ui
         coroot:
-          rule: "Host(`coroot.${domain}`)"
+          rule: "Host(`observability.${domain}`)"
           entryPoints: ["web"]
           service: coroot
         opencost:
@@ -54,7 +54,7 @@ data:
         coroot:
           loadBalancer:
             servers:
-              - url: "http://coroot-coroot.coroot.svc.cluster.local:8080"
+              - url: "http://coroot-coroot.observability.svc.cluster.local:8080"
         opencost:
           loadBalancer:
             servers:
