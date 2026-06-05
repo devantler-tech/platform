@@ -38,7 +38,7 @@ ksail workload push
 ksail workload reconcile
 ```
 
-Ports 80 and 443 are automatically mapped to localhost via `extraPortMappings` in `ksail.yaml`. By default the local cluster runs only the platform infrastructure; apps are opt-in — enable the ones you want by uncommenting them in `k8s/providers/docker/apps/kustomization.yaml`, then re-run `ksail workload push && ksail workload reconcile`. Reach the deployed services at their `*.platform.lan` hostnames (the `hosts` file maps these to `127.0.0.1`).
+Ports 80 and 443 are automatically mapped to localhost via `extraPortMappings` in `ksail.yaml`. By default the local cluster runs only the platform infrastructure; apps are opt-in — to enable one, replace `resources: []` in `k8s/providers/docker/apps/kustomization.yaml` with the entries you want (its comments include a copy-paste template), then re-run `ksail workload push && ksail workload reconcile`. Reach the deployed services at their `*.platform.lan` hostnames (the `hosts` file maps these to `127.0.0.1`).
 
 To tear down:
 
