@@ -13,7 +13,7 @@ resources:
   - http-scaled-objects/
   # OpenCost lives in the `infrastructure` layer (not `controllers`) because it
   # hard-fails at startup unless it can query Coroot's bundled Prometheus
-  # (coroot-prometheus.coroot.svc:9090), which the operator only builds from the
+  # (coroot-prometheus.observability.svc:9090), which the operator only builds from the
   # Coroot CR in *this* layer. In `infrastructure-controllers` it would deadlock:
   # that layer's health check would wait for OpenCost to become Ready, but the CR
   # that produces its Prometheus can't be applied until the layer is Ready.

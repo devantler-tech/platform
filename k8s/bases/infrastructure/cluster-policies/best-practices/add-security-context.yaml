@@ -44,7 +44,7 @@ spec:
                 - kubescape
                 - kubevirt
                 - cdi
-                - coroot
+                - observability
                 - velero
       mutate:
         patchStrategicMerge:
@@ -72,7 +72,7 @@ spec:
                 - kubescape
                 - kubevirt
                 - cdi
-                - coroot
+                - observability
                 - velero
       mutate:
         foreach:

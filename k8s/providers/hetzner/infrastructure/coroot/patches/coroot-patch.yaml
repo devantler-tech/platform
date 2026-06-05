@@ -3,14 +3,14 @@ apiVersion: coroot.com/v1
 kind: Coroot
 metadata:
   name: coroot
-  namespace: coroot
+  namespace: observability
 spec:
   # Persist on Hetzner Cloud block storage. The base uses the default storage
   # class (fine for ephemeral local/CI), but in prod a VPA eviction, node
   # drain, or autoscaler scale-down would otherwise wipe all telemetry. hcloud
   # block storage (not Longhorn) for the same reason OpenBao/Prometheus used
   # it: the ~36 GiB Talos rootfs is too small to host Longhorn replicas this
-  # large. Velero's daily backup of the coroot namespace ships these to R2.
+  # large. Velero's daily backup of the observability namespace ships these to R2.
   storage:
     className: hcloud
     size: 2Gi

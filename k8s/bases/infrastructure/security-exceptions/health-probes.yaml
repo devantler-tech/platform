@@ -33,7 +33,7 @@ spec:
             - cnpg-system
             - velero
             - keda
-            - coroot
+            - observability
             - kubescape
             - vertical-pod-autoscaler
             - longhorn-system

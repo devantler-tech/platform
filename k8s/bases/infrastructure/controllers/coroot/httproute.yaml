@@ -9,7 +9,7 @@ apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: coroot
-  namespace: coroot
+  namespace: observability
   annotations:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: Coroot

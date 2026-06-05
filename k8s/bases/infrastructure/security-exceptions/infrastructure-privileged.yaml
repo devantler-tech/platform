@@ -3,7 +3,7 @@
 # Cilium (CNI) needs: privileged, hostPath, hostNetwork, hostPID, NET_ADMIN, SYS_ADMIN
 # Longhorn (storage) needs: privileged, hostPath, hostPID
 # Velero node-agent (backup) needs: hostPath, privileged
-# Coroot node-agent (coroot) needs: privileged, hostPath, hostPID for eBPF
+# Coroot node-agent (observability) needs: privileged, hostPath, hostPID for eBPF
 # SPIRE agent (identity) needs: hostPath, hostPID
 # KubeVirt (VM hosting) needs: privileged, hostPath, hostPID, NET_ADMIN
 # CDI (container disk images) needs: privileged for disk operations
@@ -48,7 +48,7 @@ spec:
           values:
             - kube-system
             - longhorn-system
-            - coroot
+            - observability
             - velero
             - kubevirt
             - cdi
