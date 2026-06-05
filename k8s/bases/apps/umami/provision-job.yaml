@@ -58,16 +58,25 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      backoffLimit: 2
-      # Caps a single reconcile (the script itself waits up to ~5m for Umami);
-      # a failed run is retried by the next schedule, not held open forever.
-      activeDeadlineSeconds: 600
+      # The */15 schedule IS the retry loop, so each run is a single attempt
+      # (backoffLimit 0 + restartPolicy Never below): a failed run surfaces the
+      # script's real error and the next tick retries it, instead of burning
+      # in-Job retries against the deadline.
+      backoffLimit: 0
+      # Backstop for a hung run only. It sits comfortably above the script's
+      # ~5m wait-for-Umami loop, so a normal "Umami unreachable" failure exits
+      # with its real error well before this — never masquerading as
+      # DeadlineExceeded.
+      activeDeadlineSeconds: 420
       template:
         metadata:
           labels:
             app: umami-provision-tenants
         spec:
-          restartPolicy: OnFailure
+          # One attempt per scheduled run (paired with backoffLimit 0); the
+          # CronJob schedule provides retries. A failed Job's pod is retained
+          # (up to failedJobsHistoryLimit) for log inspection.
+          restartPolicy: Never
           automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
