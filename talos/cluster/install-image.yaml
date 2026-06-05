@@ -18,6 +18,14 @@
 # string, so it can't be auto-derived), bumping `kubernetesVersion` if Talos's supported
 # Kubernetes range moves, and re-generating the schematic id below only when the extension
 # list changes.
+#
+# Upgrading EXISTING nodes: this Factory image is the one to roll out — it
+# carries the extensions above. Do NOT use `ksail cluster update
+# --update-distribution`: it upgrades nodes to the bare
+# `ghcr.io/siderolabs/installer:<ver>` and strips these extensions, breaking
+# Longhorn and the Hetzner guest agent (upstream: devantler-tech/ksail#5077).
+# Roll it by hand instead — `talosctl upgrade --image <this image> --preserve`,
+# one node at a time. See docs/dr/runbook.md → Scenario 2.
 machine:
   install:
     image: factory.talos.dev/installer/e187c9b90f773cd8c84e5a3265c5554ee787b2fe67b508d9f955e90e7ae8c96c:v1.13.3

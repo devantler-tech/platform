@@ -67,24 +67,72 @@ kubectl -n <ns> rollout restart deployment/<name>
 
 ## Scenario 2 — Planned rolling Talos / Kubernetes upgrade
 
-Bump the Talos ISO ID in `ksail.prod.yaml` (or the Kubernetes version
-in the ksail config) and re-run `ksail cluster update`. ksail cordons and
-replaces nodes one at a time; PDBs hold the line.
+> ⚠️ **The Talos OS upgrade on this cluster is NOT driven by `ksail cluster
+> update`.** A plain `ksail cluster update` ignores a changed
+> `spec.cluster.talos.version` (it prints the diff but does not roll the OS),
+> and `ksail cluster update --update-distribution` upgrades nodes with the
+> *bare* `ghcr.io/siderolabs/installer:<ver>`, which **drops the
+> `iscsi-tools` / `util-linux-tools` / `qemu-guest-agent` extensions** and
+> would break Longhorn storage and the Hetzner guest agent. Upgrade the OS
+> manually with the **Factory** image instead (below).
+> Upstream: [devantler-tech/ksail#5077](https://github.com/devantler-tech/ksail/issues/5077).
+
+**Pre-flight (either upgrade)** — confirm HA so a rolling node reboot holds the line:
 
 ```bash
-# Pre-flight: confirm every multi-replica workload has a PDB
+# Every multi-replica workload has a PodDisruptionBudget
 kubectl get pdb -A
 
-# Pre-flight: confirm RollingUpdate strategy uses maxUnavailable: 0
+# RollingUpdate strategy uses maxUnavailable: 0
 kubectl get deploy -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}\t{.spec.strategy.rollingUpdate.maxUnavailable}{"\n"}{end}'
-
-# Apply the upgrade
-ksail --config ksail.prod.yaml cluster update
 ```
 
 If anything reports `maxUnavailable` other than `0`, that workload was
 either added without an HA configuration or has a chart limitation — fix
 before upgrading.
+
+### Talos OS version
+
+1. Land the version bump in git first: `spec.cluster.talos.version` +
+   `machine.install.image` in `talos/cluster/install-image.yaml` (Renovate
+   opens this PR automatically) and the matching Hetzner `iso` snapshot id in
+   `ksail.prod.yaml` (maintainer step — not auto-derivable). New nodes boot
+   from a schematic snapshot ksail builds from `talos.version` + `extensions`,
+   so the `iso` field is currently informational for boot — but keep it
+   consistent with the pinned version.
+2. Roll the upgrade **manually**, one node at a time (workers first, then
+   control-planes), using the **Factory installer image pinned in
+   `talos/cluster/install-image.yaml`** — it carries the extensions, so they
+   survive the upgrade (the ksail flag does not — see the warning above):
+
+```bash
+# Exact image (incl. schematic id) is in talos/cluster/install-image.yaml:
+IMAGE="factory.talos.dev/installer/e187c9b90f773cd8c84e5a3265c5554ee787b2fe67b508d9f955e90e7ae8c96c:v1.13.3"
+
+kubectl get nodes -o wide   # node IPs; do workers first, control-planes last
+
+for node in <worker-ips...> <control-plane-ips...>; do
+  talosctl --talosconfig ~/.talos/config --nodes "$node" \
+    upgrade --image "$IMAGE" --preserve --wait
+  kubectl get nodes          # wait until this node is Ready again before the next
+  talosctl --nodes "$node" get extensions   # confirm extensions survived
+done
+```
+
+`--preserve` keeps the data partitions and lets Talos manage the etcd
+member leave/rejoin on control-planes; upgrading sequentially keeps etcd
+quorum. Never upgrade more than one node at a time.
+
+### Kubernetes version
+
+Bump `spec.cluster.kubernetesVersion` in `ksail.prod.yaml` (keep it within the
+pinned Talos release's supported range) and apply with a plain update — ksail
+re-renders the machine config with the pinned kube-\* / kubelet versions and
+rolls them onto the nodes (no `--update-distribution`, which would touch the OS):
+
+```bash
+ksail --config ksail.prod.yaml cluster update
+```
 
 ---
 
