@@ -1,6 +1,9 @@
 # Canary SLO: p99 HTTP request latency (milliseconds) of the workload **under
-# test**, from Coroot's node-agent histogram
-# `container_http_inbound_requests_duration_seconds_total` (le buckets).
+# test**. Coroot's node-agent exports the inbound request-duration as a standard
+# Prometheus histogram named `container_http_inbound_requests_duration_seconds_total`,
+# so the queryable bucket series is `..._total_bucket{le=...}` (the base name ends
+# in `_total`, and Prometheus appends `_bucket`). Verified against the
+# coroot-node-agent source (containers/metrics.go, L7InboundLatency).
 #
 # MEASURES THE CANARY, NOT THE PRIMARY — see the success-rate template for the
 # rationale and the vowel-free pod-template-hash regex that selects canary pods
@@ -24,7 +27,7 @@ spec:
     histogram_quantile(0.99,
       sum(
           rate(
-              container_http_inbound_requests_duration_seconds_total{
+              container_http_inbound_requests_duration_seconds_total_bucket{
                 container_id=~"/k8s/{{ namespace }}/{{ target }}-[bcdfghjklmnpqrstvwxz2-9]+-[a-z0-9]+/.*"
               }[{{ interval }}]
           )

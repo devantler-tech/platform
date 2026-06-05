@@ -22,7 +22,9 @@ Promotion vs rollback is gated on:
   here, so the `MetricTemplate`s query **Coroot's bundled Prometheus** (the same
   endpoint OpenCost uses, `coroot-prometheus.coroot.svc:9090`). Coroot's eBPF
   node-agent exports server-side `container_http_inbound_requests_total{status}`
-  and `..._duration_seconds_total` per container. The templates measure the
+  (a counter) plus the `container_http_inbound_requests_duration_seconds_total`
+  histogram — a standard Prometheus histogram, so its queryable bucket series is
+  `..._total_bucket{le}` — per container. The templates measure the
   **canary** pods — see [the canary-vs-primary note](#measuring-the-canary).
 - **Webhooks** — `flagger-loadtester` runs an acceptance (smoke) test before
   traffic shifts and generates load during analysis (so Coroot has requests to
