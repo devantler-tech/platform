@@ -3,8 +3,9 @@
 This is a **GitOps-based Kubernetes platform**, not a code repo: all "code" is Kubernetes YAML managed with
 **Kustomize** overlays and reconciled by **Flux CD** from OCI artifacts. Stack: Talos Linux, Cilium (CNI +
 Gateway API), KSail (cluster/workload lifecycle), SOPS + Age (secrets), Kyverno (policy), GHCR (OCI).
-Canonical conventions live in [`AGENTS.md`](../AGENTS.md); this is the concise review checklist — flag
-violations of the rules below.
+This file is the **authoritative, self-contained review checklist** — flag violations of the rules below.
+(Human maintainers: [`AGENTS.md`](../AGENTS.md) holds the full conventions; Copilot code review does not
+read it, so everything needed for review is restated here.)
 
 ## Always (every PR)
 
@@ -33,12 +34,13 @@ violations of the rules below.
 
 ## Validation (static only — never run a cluster for review)
 
-- Maintenance is **static validation only**. The intended checks are `ksail workload validate`
-  (+ `--config ksail.prod.yaml`) or, without KSail, `kubectl kustomize k8s/clusters/{local,prod}/` and
+- Maintenance is **static validation only**. The intended checks are `ksail workload validate` (local) or
+  `ksail --config ksail.prod.yaml workload validate` (prod — the global `--config` flag precedes the
+  subcommand) or, without KSail, `kubectl kustomize k8s/clusters/{local,prod}/` and
   `kubectl apply --dry-run=client -f <file>`. Flag a PR that would break a `kustomize build`.
 - `flux check` and anything needing a live cluster are **not** part of review. CI runs a full Talos + Docker
-  **system test** only on PRs touching `k8s/**`, `ksail*.yaml`, `.sops.yaml`, `talos*/**`, or `ci.yaml` —
-  let CI run it; it cannot run locally without Docker + KSail.
+  **system test** only on PRs touching `k8s/**`, `ksail*.yaml`, `.sops.yaml`, `talos*/**`, or
+  `.github/workflows/ci.yaml` — let CI run it; it cannot run locally without Docker + KSail.
 
 ## Talos & CI
 
@@ -46,4 +48,5 @@ violations of the rules below.
   `control-planes/`, `workers/`). Keep patches minimal and environment-scoped.
 - Pin third-party GitHub Actions; keep workflows `actionlint`-/`zizmor`-clean.
 
-When unsure, defer to [`AGENTS.md`](../AGENTS.md) and its `## Maintenance` section.
+This checklist is authoritative for review; [`AGENTS.md`](../AGENTS.md) and its `## Maintenance` section are
+optional background for human maintainers.
