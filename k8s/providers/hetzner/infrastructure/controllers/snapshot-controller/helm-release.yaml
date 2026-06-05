@@ -35,6 +35,12 @@ spec:
     # sidecar and Velero's EnableCSI path both require these. Only Longhorn
     # consumes them — Hetzner block storage (hcloud-csi) has no snapshot
     # support, so openbao stays on file-system backup.
+    #
+    # This value is the authoritative CRD control: the piraeus chart ships the
+    # CRDs as templates gated by `installCRDs`, NOT in a chart `crds/` dir — so
+    # the `helm.toolkit.fluxcd.io/crds` label and `install/upgrade.crds` policy
+    # above (which only govern a chart's `crds/` dir) are no-ops here; they are
+    # kept only for consistency with the other HelmReleases.
     installCRDs: true
     # Disable the conversion webhook. It only converts the deprecated v1beta1
     # API to v1; on this cluster every object uses v1 (the v8.5.0 CRDs serve

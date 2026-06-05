@@ -90,6 +90,14 @@ CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
 - Velero `features: EnableCSI` (the CSI plugin is built into Velero 1.18 core,
   so no extra plugin beyond `velero-plugin-for-aws` for the R2 BSL).
 
+> **Transient disk during the backup window.** For each Longhorn PVC the data
+> mover provisions a short-lived PVC from the snapshot (on `longhorn`, so
+> ×`longhorn_replica_count`) and a node-agent pod copies it to R2, then deletes
+> both. On the space-constrained cx23 workers this transiently consumes up to
+> the source volume's size × replica count per PVC during the 02:17 run — fine
+> for the current set (umami 5Gi, actual-budget 10Gi, headlamp 256Mi) but worth
+> watching if larger Longhorn volumes are added.
+
 ## CloudNativePG
 
 - The operator was already installed; the platform adds a **reusable Barman
@@ -135,7 +143,10 @@ inside the local Docker cluster, and is wiped on every
 # List backup storage locations
 kubectl -n velero get backupstoragelocations.velero.io
 
-# Trigger an ad-hoc backup
+# Trigger an ad-hoc backup. NOTE: unlike the daily-full schedule, a manual
+# Backup does NOT inherit the volume policy. Add resourcePolicy (prod) if you
+# want Longhorn PVCs captured via CSI snapshot; without it every volume is
+# FSB'd (safe, just not crash-consistent for Longhorn). Omit it on local.
 kubectl -n velero create -f - <<EOF
 apiVersion: velero.io/v1
 kind: Backup
@@ -145,6 +156,9 @@ metadata:
 spec:
   ttl: 720h
   defaultVolumesToFsBackup: true
+  resourcePolicy:
+    kind: configmap
+    name: velero-volume-policies
 EOF
 
 # Restore (e.g. into a fresh cluster after etcd restore)
