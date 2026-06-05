@@ -23,7 +23,11 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations
-      artifact-metadata: write # create the attestation storage record (GHCR linked-artifacts index)
+      # No artifact-metadata:write — the attest steps below set
+      # create-storage-record: false, so the storage-record API is never called.
+      # #1787 granted it to clear a "no artifacts found" warning, but the grant
+      # was necessary-but-not-sufficient (actions/attest-build-provenance#781);
+      # see the Attest SBOM step for the full rationale.
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -237,12 +241,24 @@ jobs:
         # its index recorded in Rekor. actions/attest-sbom v4 is now just a
         # deprecated wrapper around actions/attest, so call attest directly
         # and let its sbom-path input auto-select the SBOM predicate type.
+        #
+        # create-storage-record: false opts out of GitHub's artifact-metadata
+        # storage record — a GHCR "linked artifacts" discoverability index, not a
+        # supply-chain control. It cannot succeed here: the manifest is pushed by
+        # oras/ksail + cosign, not a GitHub-native artifact flow, so the
+        # artifact-metadata service has no registered artifact to attach to and
+        # warns "no artifacts found" on every deploy. #1787 mis-read this as a
+        # missing artifact-metadata:write grant; the grant shipped (v1.34.5) and
+        # the warning persisted, because per actions/attest-build-provenance#781
+        # the permission is necessary-but-not-sufficient. The cosign signature,
+        # SBOM attestation, SLSA provenance, and Rekor entry are all unaffected.
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-digest: ${{ steps.cosign-sign.outputs.digest }}
           subject-name: ghcr.io/devantler-tech/platform/manifests
           sbom-path: sbom.cdx.json
           push-to-registry: true
+          create-storage-record: false
 
       - name: 🪪 Attest build provenance (SLSA L3)
         # Generates a SLSA provenance v1.0 statement and attests it against
@@ -251,11 +267,13 @@ jobs:
         # Combined with the cosign signature above and the SBOM
         # attestation, this completes the supply-chain transparency
         # bundle for the platform OCI artifact.
+        # create-storage-record: false for the same reason as the SBOM step above.
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
           subject-digest: ${{ steps.cosign-sign.outputs.digest }}
           subject-name: ghcr.io/devantler-tech/platform/manifests
           push-to-registry: true
+          create-storage-record: false
 
       - name: 🔁 Trigger Flux reconciliation
         id: reconcile
