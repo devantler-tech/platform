@@ -54,6 +54,14 @@ spec:
             key: key
           description: bundled node-agent + cluster-agent
       notificationIntegrations:
+        # Required by the Coroot CRD whenever any notificationIntegrations are
+        # set (`spec.projects[].notificationIntegrations.baseURL`, pattern
+        # ^https?://.+$). Coroot interpolates it into the `.URL` template
+        # variable used in the Slack templates below, so incident/alert links
+        # deep-link back to the affected app in this instance. Same host the
+        # HTTPRoute + auth-proxy serve the UI on; `${domain}` is substituted by
+        # Flux from the per-cluster variables-cluster ConfigMap.
+        baseURL: https://coroot.${domain}
         webhook:
           url: ${alertmanager_webhook_url:=https://example.invalid/no-slack-configured}
           incidents: true
