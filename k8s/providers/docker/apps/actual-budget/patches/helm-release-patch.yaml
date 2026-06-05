@@ -4,6 +4,9 @@ metadata:
   name: actual-budget
   namespace: actual-budget
 spec:
+  # Required by the HelmRelease v2 schema so ksail (>= 7.26.0) can validate this
+  # opt-in patch standalone; matches the base, so it's a no-op once merged in.
+  interval: 2m
   values:
     persistence:
       size: 2Gi
