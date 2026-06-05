@@ -6,6 +6,16 @@
 #     - siderolabs/qemu-guest-agent (Hetzner Cloud VM integration)
 #
 # Schematic: https://factory.talos.dev/?arch=amd64&extensions=siderolabs%2Fiscsi-tools&extensions=siderolabs%2Fqemu-guest-agent&extensions=siderolabs%2Futil-linux-tools&target=hcloud&version=1.12.4
+#
+# Renovate (.github/renovate.json custom manager) tracks the Talos version in the
+# image tag below, resolved from siderolabs/talos GitHub releases — the Image Factory
+# registry doesn't support OCI tag listing, so the image's own registry can't be the
+# datasource (and Dependabot, which can only query that registry, can't track it).
+# New releases are surfaced on Renovate's Dependency Dashboard for manual approval —
+# this is never auto-opened or auto-merged. After approving, complete the upgrade in
+# lockstep: bump `talos.version` AND the Hetzner `iso` snapshot id in the protected
+# ksail.prod.yaml (plus `kubernetesVersion` if Talos's supported Kubernetes range
+# moves). Re-generate the schematic id below only when the extension list changes.
 machine:
   install:
     image: factory.talos.dev/installer/e187c9b90f773cd8c84e5a3265c5554ee787b2fe67b508d9f955e90e7ae8c96c:v1.12.4
