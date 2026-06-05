@@ -185,6 +185,38 @@ kubectl cnpg restore <new-cluster-name> \
   --target-time '2026-04-17T22:00:00Z'
 ```
 
+> **Cross-provider / cross-distribution restore (StorageClass mapping).**
+> The backup data in R2 is storage-agnostic (Kopia repository), so there is no
+> Longhorn/Hetzner dependency at the destination — this is what makes a GitOps
+> migration to another distribution/provider possible. Two things to handle on
+> the target cluster:
+>
+> 1. **StorageClass names.** Velero recreates each PVC with the *same*
+>    StorageClass name it had on the source (`longhorn`, `hcloud`). If the
+>    destination's classes are named differently (e.g. `gp3`, `standard`,
+>    `local-path`), those PVCs stay `Pending`. Map them before restoring with a
+>    `velero.io/change-storage-class` ConfigMap in the `velero` namespace:
+>
+>    ```yaml
+>    apiVersion: v1
+>    kind: ConfigMap
+>    metadata:
+>      name: change-storage-class-config
+>      namespace: velero
+>      labels:
+>        velero.io/change-storage-class: RestoreItemAction
+>    data:
+>      longhorn: <target-default-storageclass>
+>      hcloud: <target-default-storageclass>
+>    ```
+>
+> 2. **Restore-side capabilities.** The destination Velero needs the **node-agent**
+>    (DaemonSet) to rehydrate Kopia data — both for FSB backups (openbao/hcloud)
+>    and for data-mover (Longhorn CSI) backups. For the data-mover backups it
+>    also needs `features: EnableCSI`; the target does **not** need Longhorn or
+>    any CSI-snapshot support of its own (the data is replayed into a fresh PVC
+>    by Kopia, per Velero's CSI snapshot data-movement restore).
+
 ---
 
 ## Scenario 6 — SOPS Age key rotation

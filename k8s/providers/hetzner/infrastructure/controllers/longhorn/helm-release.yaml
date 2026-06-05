@@ -8,6 +8,13 @@ metadata:
     helm.toolkit.fluxcd.io/crds: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
+  # The Longhorn CSI snapshotter sidecar (enabled via
+  # longhorn_csi_snapshotter_replicas) needs the snapshot.storage.k8s.io CRDs to
+  # exist or it crash-loops. Gate Longhorn on the snapshot-controller (which
+  # installs those CRDs) so the sidecar never starts before they are present.
+  dependsOn:
+    - name: snapshot-controller
+      namespace: kube-system
   chart:
     spec:
       chart: longhorn

@@ -1,0 +1,36 @@
+# Velero Volume Policy (prod/hetzner only) — routes each PVC to the right backup
+# method by StorageClass. Referenced by name from the daily-full schedule's
+# spec.resourcePolicy (see patches/helm-release-patch.yaml).
+#
+# Why a policy instead of per-pod annotations: it is declarative (by
+# StorageClass, not volume name), and fail-safe — any volume that does NOT match
+# a rule falls back to the legacy behaviour, which here is
+# defaultVolumesToFsBackup: true (Kopia FSB). So new/unmatched PVCs are always
+# backed up; nothing is silently skipped.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: velero-volume-policies
+  namespace: velero
+  labels:
+    # Conventional marker for Velero resource-policy ConfigMaps; the binding
+    # that actually applies the policy is the schedule's resourcePolicy.name.
+    velero.io/volume-policy: "true"
+data:
+  policy.yaml: |
+    version: v1
+    volumePolicies:
+      # Longhorn PVCs → CSI snapshot. The base schedule's snapshotMoveData:true
+      # makes Velero's data mover (Kopia, via the node-agent) copy the snapshot
+      # to the R2 BackupStorageLocation, so it is restorable on another cluster/
+      # provider. The longhorn-snapshot-vsc VolumeSnapshotClass (labelled
+      # velero.io/csi-volumesnapshot-class) is auto-selected for this driver.
+      - conditions:
+          storageClass:
+            - longhorn
+        action:
+          type: snapshot
+      # No rule for hcloud or any other StorageClass: unmatched volumes fall
+      # back to defaultVolumesToFsBackup: true → Kopia file-system backup. This
+      # keeps openbao (hcloud, which has no CSI snapshot support) and any future
+      # PVC backed up by default.

@@ -86,10 +86,12 @@ data:
   # worker count (3), so every volume is fully replicated across all storage
   # nodes.
   longhorn_replica_count: "3"
-  # VolumeSnapshot CRDs (snapshot.storage.k8s.io) are not installed; the
-  # CSI snapshotter crash-loops trying to list them. Disable until CRDs
-  # are added.
-  longhorn_csi_snapshotter_replicas: "0"
+  # The snapshot.storage.k8s.io CRDs are now installed cluster-wide by the
+  # snapshot-controller HelmRelease (providers/hetzner/infrastructure/
+  # controllers/snapshot-controller), so the CSI snapshotter no longer
+  # crash-loops. Run it (1 replica, leader-elected) to service the
+  # VolumeSnapshots Velero creates for CSI backups of Longhorn volumes.
+  longhorn_csi_snapshotter_replicas: "1"
   # CSI control-plane sidecars (attacher/provisioner/resizer) default to a
   # single replica in the base HelmRelease. They are leader-elected, so a
   # second replica is a cheap warm standby that costs ~nothing when idle.

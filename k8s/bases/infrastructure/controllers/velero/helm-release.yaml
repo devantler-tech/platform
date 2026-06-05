@@ -57,7 +57,16 @@ spec:
             s3ForcePathStyle: "true"
             s3Url: ${r2_endpoint}
             checksumAlgorithm: ""
-      # No CSI snapshots -- file-level only via Kopia (cost decision).
+      # Base / local-CI default: file-system backup via Kopia (the docker
+      # local-path provider cannot take CSI snapshots). The hetzner overlay
+      # adds a Velero Volume Policy that routes Longhorn-backed PVCs to CSI
+      # snapshot + data mover; everything else — e.g. openbao on hcloud block
+      # storage, which has no snapshot support — falls back to this FSB default.
+      # defaultVolumesToFsBackup stays true precisely so it is the fail-safe for
+      # any volume the policy does not match. Data lands in the same R2 BSL
+      # either way, so backups stay portable for cross-provider restore.
+      # volumeSnapshotLocation stays empty: with the data mover, CSI snapshot
+      # data goes to the BackupStorageLocation, not a VolumeSnapshotLocation.
       volumeSnapshotLocation: []
       defaultVolumesToFsBackup: true
       uploaderType: kopia
@@ -112,6 +121,10 @@ spec:
           excludedNamespaces:
             - kube-system
             - velero
+          # snapshotMoveData makes Velero's data mover upload CSI snapshots to
+          # the R2 BSL. No-op on base/local (no CSI — everything uses FSB);
+          # active in prod, where the hetzner overlay sets features: EnableCSI
+          # and a volume policy routes Longhorn PVCs to the snapshot path.
           snapshotMoveData: true
           defaultVolumesToFsBackup: true
 
