@@ -9,9 +9,13 @@ data:
     title: Platform
     favicon: https://avatars.githubusercontent.com/u/178524219?v=4&s=32
     theme: dark
-    color: slate
+    # zinc, not slate: homepage's gray chrome (text, card fills, borders, and
+    # the #__next page background) follows this `color` ramp. slate is a
+    # ~47%-saturated blue and read as "too blue"; zinc (hue 240, ~6% saturation)
+    # matches devantler.tech's low-saturation cool-gray ramp. See custom.css.
+    color: zinc
     # No background.image — eliminates the cold-load white→image flash and
-    # the cross-origin Unsplash dependency. The dark gradient backdrop is
+    # the cross-origin Unsplash dependency. The dark, flat backdrop is
     # painted from custom.css below; cardBlur is omitted because there is
     # no underlying image for backdrop-filter to blur.
     headerStyle: clean
@@ -162,21 +166,29 @@ data:
             - icon: si-nuget-#1088d6
               href: https://www.nuget.org
   docker.yaml: ""
-  # Theme: mirror https://devantler.tech on the dashboard. devantler.tech is an
-  # Astro Starlight site whose signature is a "Matrix" neon-green accent
-  # (#39ff14) over a dark near-black base, with frosted-glass cards that glow
-  # green and lift on hover, green section accents, and green selection/focus.
-  # We reproduce that purely in CSS — no background.image, because (a) the
-  # cluster egress NetworkPolicy blocks external assets and (b) a remote image
-  # caused a cold-load flash. cardBlur stays unset: the theme already paints a
-  # translucent card fill (dark:bg-white/5 ≈ devantler's rgba(255,255,255,.045)
-  # glass), so the glass look comes from a faint border + glow here rather than
-  # backdrop-filter (which has nothing high-frequency behind it to blur).
-  # color:slate (settings.yaml) already matches devantler's blue-tinted gray
-  # family, so only the accent layer changes below. gethomepage hooks used:
-  # html/body, .service-card, .bookmark, .service-group-name /
-  # .bookmark-group-name, #information-widgets, scoped to #layout-groups /
-  # #services / #bookmarks so they win over the chart's Tailwind utilities.
+  # Theme: mirror https://devantler.tech. That site is Astro Starlight with the
+  # stock dark palette — a gray ramp at hue 224 but only ~6-14% saturation, i.e.
+  # a near-neutral, faintly-cool dark — and the accent swapped to a "Matrix"
+  # neon green (--sl-color-accent #39ff14, high #7aff6e). Cards are frosted glass
+  # that glow green and lift on hover; section accents and selection are green.
+  # Reproduced purely in CSS — no background.image, because (a) the cluster
+  # egress NetworkPolicy blocks external assets and (b) a remote image caused a
+  # cold-load flash.
+  #
+  # Two levers carry the look:
+  #   1. color:zinc (settings.yaml) — homepage's gray chrome (text, card fills,
+  #      borders, and the #__next page background, all `theme-*` / --color-*
+  #      driven) follows the `color` ramp. slate is ~47%-saturated blue and read
+  #      as "too blue"; zinc (hue 240, ~6% saturation) is the closest match to
+  #      devantler's low-saturation cool gray, so this de-blues the page at once.
+  #   2. The CSS below — a flat backdrop at devantler's exact hsl(224,10%,10%)
+  #      plus the green accent layer (borders / glow / underlines / selection).
+  # cardBlur stays unset: the theme already paints a translucent fill
+  # (dark:bg-white/5 ≈ devantler's glass), so the glass look comes from a faint
+  # border + glow here, not backdrop-filter (nothing high-frequency to blur).
+  # gethomepage hooks: #__next + html/body (page bg), .service-card, .bookmark,
+  # .service-group-name / .bookmark-group-name, #information-widgets, scoped to
+  # #layout-groups / #services / #bookmarks so they beat the chart's utilities.
   custom.css: |
     :root {
       --dt-accent: #39ff14;                     /* Matrix neon green */
@@ -186,18 +198,21 @@ data:
       --dt-card-border-hover: rgba(57, 255, 20, 0.45);
     }
 
-    /* Page backdrop: devantler's dark near-black base with two soft green
-       "Matrix" auras (replaces the previous blue/violet auras). Painted on
-       html+body so it covers tall scrollable pages; fixed so cards scroll
-       over a stable backdrop. */
+    /* Page backdrop. Homepage paints the VISIBLE page background on #__next
+       (the Next.js root, height:100%) via `background-color: rgb(var(--bg-color))`,
+       where dark-theme --bg-color = color-800 of the `color` setting. That rule
+       carries ID specificity, so it sits above a plain `body {}` background —
+       which is why the earlier html/body auras here were never seen. Match
+       devantler.tech's flat backdrop by painting its exact --sl-color-bg,
+       hsl(224, 10%, 10%) (a near-neutral dark with a faint cool tint — not the
+       saturated slate-800 the chart shipped), on #__next too. The `body #__next`
+       selector outranks the chart's grouped rule regardless of stylesheet order.
+       Flat, no auras — devantler's body background is flat. */
     html,
-    body {
-      background-color: #0b0e14;
-      background-image:
-        radial-gradient(at 18% 12%, rgba(57, 255, 20, 0.10), transparent 55%),
-        radial-gradient(at 82% 88%, rgba(57, 255, 20, 0.06), transparent 60%);
-      background-attachment: fixed;
-      background-repeat: no-repeat;
+    body,
+    body #__next {
+      background-color: hsl(224, 10%, 10%);
+      background-image: none;
     }
 
     /* Neon-green text selection + keyboard focus ring, matching devantler.tech. */
