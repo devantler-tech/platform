@@ -171,19 +171,29 @@ spec:
               # down, NEW identity pairs cannot authenticate. Established flows
               # ride through via cilium-agent's auth cache, and the
               # cilium-operator re-syncs entries from CiliumIdentities, so brief
-              # restarts are tolerable. Datastore durability already comes from
-              # the PVC binding to longhorn (the cluster-default StorageClass,
-              # 3-way replicated). Do NOT make these tempting "HA" changes:
+              # restarts are tolerable.
+              #
+              # The datastore StorageClass is intentionally NOT set here. On
+              # hetzner it is pinned to hcloud-csi by the prod overlay
+              # (providers/hetzner/.../cilium/patches/spire-datastorage-patch.yaml)
+              # — NOT the cluster-default longhorn. The reason is a circular
+              # dependency: Longhorn's own control plane is pod-to-pod traffic
+              # behind this very mTLS gate, so binding spire-server's PVC to
+              # longhorn means that when SPIRE is down Longhorn cannot attach the
+              # PVC, so SPIRE cannot start, so it stays down — a deadlock that
+              # wedged all of prod during the 2026-06-06 Talos node roll. An
+              # hcloud Cloud Volume attaches via the Hetzner API (not pod-to-pod)
+              # and survives node death, breaking the cycle. See the overlay
+              # patch for the full rationale and the one-time StatefulSet-recreate
+              # step (volumeClaimTemplate is immutable).
+              #
+              # Do NOT make these tempting "HA" changes:
               #   * replicas > 1 — the SQLite + RWO datastore is single-writer;
               #     real HA needs an external SQL datastore (a much larger
               #     change, out of scope here).
               #   * a minAvailable PodDisruptionBudget — with one replica it
               #     only blocks node drains / autoscaler scale-down / Talos
               #     upgrades, without adding any availability.
-              #   * pinning dataStorage.storageClass — a StatefulSet
-              #     volumeClaimTemplate is immutable, so changing it would wedge
-              #     the Helm upgrade on the live cluster (the PVC already lands
-              #     on longhorn via the default StorageClass anyway).
               resources:
                 requests:
                   cpu: 50m
@@ -206,6 +216,24 @@ spec:
                   name: spire-data
                 - mountPath: /tmp/spire-server/private
                   name: spire-server-socket
+              # Pod-level security context. The chart injects a `cilium-init`
+              # bootstrap container (with no securityContext of its own) into this
+              # pod; it seeds the SPIRE registration entries for Cilium and must run
+              # as 1000 to MATCH spire-server. cilium-init reaches spire-server's
+              # admin socket via /proc/<pid>/root, which is ptrace-gated — the
+              # caller's uid+gid must equal the target's. If cilium-init runs as root
+              # (0) while spire-server runs as 1000 it is denied, hangs forever on
+              # "Waiting for spire-server to start...", and never creates the entries.
+              # SPIRE then issues no SVIDs, so the require-mutual-auth policy
+              # black-holes pod-to-pod traffic cluster-wide (kustomize/helm-controller
+              # can no longer reach source-controller — wedging every Flux
+              # reconciliation). `server.securityContext` below sets only the
+              # spire-server *container* and leaves cilium-init as root, so this
+              # pod-level block is what actually fixes the bootstrap.
+              # (cilium/cilium#40533)
+              podSecurityContext:
+                runAsGroup: 1000
+                runAsUser: 1000
               securityContext:
                 runAsGroup: 1000
                 runAsUser: 1000

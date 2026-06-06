@@ -1,0 +1,44 @@
+# Container image signature verification (Talos 1.13+, ImageVerificationConfig).
+#
+# Verifies cosign signatures at the containerd PULL layer on every node — a
+# defense-in-depth complement to the GitOps-source verification Flux already
+# performs on OCI *manifest* artifacts (apps' sync.yaml verify.provider:
+# cosign). This gates the actual container-image bytes containerd pulls, which
+# Flux and the Kyverno admission layer never see (e.g. kubelet-managed static
+# pods, a compromised registry serving a tampered image).
+#
+# Scope: FIRST-PARTY images only (ghcr.io/devantler-tech/*). These are built,
+# pushed, and keyless-cosign-signed by the shared reusable workflow
+# devantler-tech/reusable-workflows/.github/workflows/publish-app.yaml (it runs
+# `cosign sign` on BOTH the manifests artifact and the container image). That
+# is the SAME signing identity the apps' Flux OCIRepository verify blocks
+# already pin, so this adds no new trust root. Currently covers the wedding-app
+# and ascoachingogvaner container images running in prod.
+#
+# FAIL-OPEN by design: an image is verified only when it MATCHES a rule; an
+# image matching NO rule is pulled WITHOUT verification. So third-party chart
+# images (Cilium, Longhorn, Coroot, registry.k8s.io control-plane images, …)
+# are unaffected — this is intentionally NOT a deny-all-unsigned control, and
+# there is deliberately no broad `deny:` catch-all. Note the converse: an image
+# that DOES match this rule but fails verification is blocked (ImagePullBackOff),
+# so the glob is kept to first-party images whose signing pipeline is known.
+#
+# A rule over a system registry (e.g. registry.k8s.io/*, the canonical Talos
+# example) would gate control-plane/etcd image pulls — high blast radius on
+# this cluster given the manual-talosctl recovery path — so it is deliberately
+# omitted for now and can be added later once the first-party rule is proven.
+#
+# This does NOT satisfy kubescape C-0237 (see
+# k8s/bases/infrastructure/security-exceptions/image-verification.yaml): that
+# control scans workload image refs at the cluster layer, cannot observe Talos
+# node-level verification, and still fails while unsigned third-party images run.
+#
+# Reference:
+#   https://docs.siderolabs.com/talos/v1.13/reference/configuration/security/imageverificationconfig/
+apiVersion: v1alpha1
+kind: ImageVerificationConfig
+rules:
+  - image: ghcr.io/devantler-tech/*
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-app\.yaml@.+$

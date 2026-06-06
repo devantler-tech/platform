@@ -51,6 +51,11 @@ resources:
 patches:
   - path: flux-operator/patches/helm-release-patch.yaml
   - path: openbao/patches/helm-release-patch.yaml
+  # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
+  - path: cilium/patches/helm-release-patch.yaml
+  # Prod-only: move the SPIRE server datastore off Longhorn onto hcloud-csi to
+  # break the SPIRE <-> Longhorn <-> mTLS circular deadlock — see file.
+  - path: cilium/patches/spire-datastorage-patch.yaml
   # Prod-only: switch Velero to a MIXED backup model — CSI volume snapshots +
   # data movement for Longhorn-backed PVCs (→ R2), file-system (Kopia) backup
   # for openbao + any non-Longhorn PVC. The base tier stays all-FSB because the
