@@ -1,0 +1,21 @@
+# Use the platform-provided hostname (the Hetzner server name) instead of
+# Talos's auto-generated stable hostname.
+#
+# Talos v1.13 changed the HostnameConfig default to `auto: stable`, which
+# derives the node hostname from the machine's identity (e.g. `talos-6jk-4yw`)
+# rather than the cloud platform's server name (`prod-worker-2`, etc.). On the
+# 1.12.4 -> 1.13.3 upgrade this renamed every existing node, which broke the
+# hcloud cloud-controller-manager: it matches Kubernetes node names to Hetzner
+# server names, so it logged `no matching server found for node 'talos-...':
+# server not found` and never assigned a providerID. The renamed nodes kept the
+# `node.cloudprovider.kubernetes.io/uninitialized` taint, became unschedulable,
+# and the resulting capacity crunch wedged reconciliation cluster-wide
+# (2026-06-06/07 incident).
+#
+# `auto: off` disables Talos's auto-generated hostname so the node uses the
+# hostname supplied by the Hetzner platform metadata (the server name), which is
+# what the CCM expects. Autoscaler-provisioned nodes already use platform
+# hostnames, so this only restores the prior behaviour for upgraded nodes.
+apiVersion: v1alpha1
+kind: HostnameConfig
+auto: "off"
