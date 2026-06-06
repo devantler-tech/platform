@@ -176,10 +176,29 @@ After a full cluster rebuild (`ksail cluster delete` + `create`):
 
 ### Talos version upgrades
 
-When bumping the Talos version in `ksail.prod.yaml`:
+When bumping the Talos (or Kubernetes) version in `ksail.prod.yaml`, the
+deploy's `ksail cluster update` brings **both** node classes onto the new
+baseline:
+
 1. KSail's snapshot lifecycle manager creates or updates the Talos
-   snapshot automatically during `cluster update`.
-2. The worker machine config is regenerated to match.
+   snapshot automatically during `cluster update`, and the worker machine
+   config is regenerated to match — so **new** autoscaler nodes boot the new
+   version.
+2. The static control planes and workers are upgraded in place (rolling).
+3. **Existing autoscaler nodes are recycled automatically** so they follow the
+   new baseline instead of drifting on the old version: after the refreshed
+   cluster-autoscaler is ready, KSail cordons and drains each autoscaler node
+   one at a time (via the Kubernetes eviction API, honoring
+   PodDisruptionBudgets) and deletes its Hetzner server; the autoscaler then
+   re-provisions any still-needed capacity from the new snapshot on demand.
+   This runs only when the version actually changes — a no-op `cluster update`
+   leaves autoscaler nodes untouched. See the KSail
+   [Autoscaler Node Upgrades](https://ksail.devantler.tech/providers/hetzner/#autoscaler-node-upgrades)
+   docs.
+
+> A strict PodDisruptionBudget on a workload running on autoscaler nodes can
+> slow or block the drain (the update fails rather than force-evicting), so keep
+> PDBs realistic for compute-only/burstable workloads.
 
 ### Hetzner server type changes
 
