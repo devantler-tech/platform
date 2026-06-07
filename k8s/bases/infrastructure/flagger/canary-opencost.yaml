@@ -30,6 +30,15 @@ spec:
   service:
     port: 9090
     targetPort: 9090
+    # Name the primary 9090 port `http-ui` to match the real opencost Service
+    # (http-ui=9090). Without this, Flagger names the primary port `http` by
+    # default, which collides with the `http`=9003 port that portDiscovery copies
+    # below — the generated opencost-canary Service is then rejected with
+    # "spec.ports[1].name: Duplicate value: http", leaving the Canary stuck
+    # Initializing forever (never builds the primary/canary Services). Pinning the
+    # name also preserves the `http-ui` named port the Headlamp OpenCost plugin
+    # depends on (see the NAMED-PORT RISK note above).
+    portName: http-ui
     # Discover the other container ports (notably :9003, the cost API Headlamp
     # queries) so the generated Services expose them too.
     portDiscovery: true

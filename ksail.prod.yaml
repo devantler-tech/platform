@@ -23,7 +23,7 @@ spec:
     # Cost-optimized overflow: one pool per cost-optimized Hetzner x86
     # shared-vCPU type (the CX line), so the autoscaler can pick the smallest
     # *adequate* node for whatever can't schedule on the static workers. Sizes
-    # double cleanly per step (cx23 2c/4G → cx33 4c/8G → cx43 8c/16G →
+    # double cleanly per step (cx33 4c/8G → cx43 8c/16G →
     # cx53 16c/32G; ~€4.99/€8.11/€14.99/€28.11 gross/mo in fsn1). All pools
     # scale to zero (min: 0) so idle capacity costs nothing; the static
     # workers are the guaranteed baseline and the only Longhorn storage nodes
@@ -58,11 +58,6 @@ spec:
         maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
         pools:
-          - name: autoscale-cx23
-            serverType: cx23
-            location: fsn1
-            min: 0
-            max: 4
           - name: autoscale-cx33
             serverType: cx33
             location: fsn1

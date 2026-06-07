@@ -27,6 +27,15 @@ spec:
   timeout: 15m
   # https://github.com/vmware-tanzu/helm-charts/blob/main/charts/velero/values.yaml
   values:
+    # Disable the bundled `velero install --crds-only` upgrade hook. The chart
+    # ships its CRDs under crds/, and this HelmRelease already sets
+    # install.crds/upgrade.crds: CreateReplace, so Flux manages the velero CRDs
+    # directly. The redundant hook Job (velero-upgrade-crds) repeatedly hung
+    # during cluster recovery and wedged the whole infrastructure-controllers
+    # reconcile (2026-06-07 incident: upgrade/rollback thrash, then a stuck
+    # pre-upgrade hook). Removing it lets velero reconcile cleanly via Flux while
+    # CRDs stay managed by CreateReplace.
+    upgradeCRDs: false
     image:
       repository: velero/velero
     initContainers:

@@ -1,0 +1,81 @@
+# Prod / FinOps-only: bias workload scheduling toward the static baseline
+# workers so the cost-optimized autoscaler nodes (the `autoscale-cx*` pools in
+# ksail.prod.yaml) stay idle and scale back to zero whenever the baseline has
+# room. The baseline (3 cx33 workers) is paid for 24/7; every autoscaler node
+# is incremental spend, so keeping them empty until the baseline is full is the
+# cheapest steady state.
+#
+# Mechanism: a SOFT node affinity (preferredDuringSchedulingIgnoredDuringExecution).
+# The scheduler packs pods onto baseline nodes first but may still freely use
+# autoscaler nodes for burst — nothing goes Pending for lack of an explicit
+# toleration, and the autoscaler's scale-down reclaims the burst capacity once
+# load drops. A hard nodeAffinity (or a NoSchedule taint) would defeat burst,
+# which is why the strength is "preferred", not "required".
+#
+# DISCRIMINATOR — KSail contract: autoscaler-provisioned nodes are expected to
+# carry the node label `ksail.io/autoscaled: "true"`; baseline (static) workers
+# and control planes do NOT. There is currently NO Kubernetes node label that
+# distinguishes the two — static workers and autoscaler nodes share an
+# identical Talos worker config (same kubelet --node-labels, same
+# node.longhorn.io/create-default-disk=true, overlapping cx33 instance-type),
+# differing only by node-name prefix (prod-worker-* vs autoscale-*). For this
+# preference to take effect, KSail must stamp this label onto its autoscaler
+# node groups (per-pool kubelet --node-labels in the autoscaler cloud-init).
+# Until that lands this policy is an inert no-op: with the label absent on every
+# node, `DoesNotExist` matches all nodes equally and scheduling is unchanged —
+# so it is safe to ship ahead of the KSail change.
+#
+# Coverage: mutates Pods directly for the broadest reach (Deployments,
+# StatefulSets, DaemonSets, Jobs, CronJobs, bare and operator-created pods).
+# DaemonSet placement ignores soft node affinity, so node-local agents still
+# land on autoscaler nodes. Only the four core control-plane namespaces are
+# excluded; everything else is biased toward baseline to maximize the FinOps
+# benefit.
+#
+# Non-clobbering: `affinity` is left unanchored so strategic merge preserves an
+# existing podAntiAffinity (e.g. the one insert-pod-antiaffinity injects), while
+# the `+(nodeAffinity)` add-anchor leaves any pod that already declares its own
+# nodeAffinity (required or preferred) completely untouched.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: prefer-baseline-nodes
+  annotations:
+    policies.kyverno.io/title: Prefer Baseline Nodes
+    policies.kyverno.io/category: Best Practices, FinOps
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Adds a soft (preferred) node affinity biasing pods toward the static
+      baseline workers and away from the cost-optimized autoscaler nodes
+      (labelled ksail.io/autoscaled=true), so autoscaler capacity stays minimal
+      for better FinOps. Inert until KSail labels its autoscaler nodes.
+spec:
+  rules:
+    - name: prefer-baseline-nodes
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - flux-system
+      mutate:
+        patchStrategicMerge:
+          spec:
+            affinity:
+              # Add a nodeAffinity block only when the pod declares none of its
+              # own — never overwrite a chart/operator's node affinity.
+              +(nodeAffinity):
+                preferredDuringSchedulingIgnoredDuringExecution:
+                  - weight: 100
+                    preference:
+                      matchExpressions:
+                        - key: ksail.io/autoscaled
+                          operator: DoesNotExist

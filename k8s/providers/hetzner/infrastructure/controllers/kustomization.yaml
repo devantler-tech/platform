@@ -48,6 +48,11 @@ resources:
   # HelmRelease is included via ../../../../bases/...; this dir only adds the
   # prod-only ConfigMap, and the patch below rewires the HelmRelease.
   - velero/
+components:
+  # Platform-wide HelmRelease drift detection (mode: enabled). Restores
+  # Helm-rendered resources deleted/mutated out-of-band — the cause of the
+  # silently-broken keda external-scaler and homepage Deployments.
+  - ../../../../bases/components/helmrelease-drift-detection
 patches:
   - path: flux-operator/patches/helm-release-patch.yaml
   - path: openbao/patches/helm-release-patch.yaml

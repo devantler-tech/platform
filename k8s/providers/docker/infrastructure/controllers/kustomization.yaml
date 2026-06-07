@@ -8,6 +8,10 @@ resources:
   - minio/
   - local-path-storage-namespace.yaml
   - local-path-storage-networkpolicy.yaml
+components:
+  # Platform-wide HelmRelease drift detection (mode: enabled) — see
+  # bases/components/helmrelease-drift-detection.
+  - ../../../../bases/components/helmrelease-drift-detection
 patches:
   - target:
       kind: HelmRelease
