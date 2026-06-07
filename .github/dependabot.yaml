@@ -9,3 +9,11 @@ updates:
       # devantler-tech actions/workflows are our own code — bump now, no cooldown.
       exclude:
         - "devantler-tech/*"
+    ignore:
+      # Hold the ksail-cluster composite action at v7.27.0. v7.27.1+ (incl. latest
+      # v7.29.0) reference a local ./.github/actions/pull-registry-image that only
+      # resolves inside ksail's own repo, breaking the System Test job here (upstream
+      # ksail PR #5102 regression). Remove this ignore once upstream repo-qualifies
+      # that path. The ksail-cluster action pin lives in .github/workflows/ci.yaml.
+      - dependency-name: "devantler-tech/ksail"
+        versions: [">=7.27.1"]

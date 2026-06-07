@@ -67,7 +67,13 @@ jobs:
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@002029a874fbbc27db8033d743ca75a7b570267b # v7.27.2
+        # Pinned to v7.27.0 (last good). v7.27.1+ — including the latest v7.29.0 —
+        # make the ksail-cluster composite action call `uses: ./.github/actions/pull-registry-image`,
+        # a local path that only resolves inside ksail's own repo, so it breaks System Test
+        # for external consumers ("Can't find action.yml ... under .../pull-registry-image").
+        # Upstream regression from ksail PR #5102. Do NOT bump past v7.27.0 until upstream
+        # repo-qualifies that path; Dependabot is told to ignore >=7.27.1 (see .github/dependabot.yaml).
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@bea170d2a6cf059f96d7fbe3352b7780b89dc8b8 # v7.27.0
         with:
           distribution: Talos
           provider: Docker
