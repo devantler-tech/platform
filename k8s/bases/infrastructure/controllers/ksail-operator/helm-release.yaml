@@ -1,0 +1,76 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: ksail-operator
+  namespace: ksail-operator
+  labels:
+    # The chart ships the `Cluster` CRD (clusters.ksail.io); let Flux manage it.
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m0s
+  timeout: 10m
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  chart:
+    spec:
+      chart: ksail-operator
+      version: 0.1.0
+      sourceRef:
+        kind: HelmRepository
+        name: ksail-operator
+  # https://github.com/devantler-tech/ksail/tree/main/charts/ksail-operator
+  #
+  # The operator reconciles `Cluster` resources (ksail.io/v1alpha1) and serves
+  # the embedded web UI + REST API on the same port (api.bindPort). All product
+  # features are enabled: operator, REST API, web UI and native OIDC auth.
+  values:
+    # Clean resource names (Service/Deployment "ksail-operator" instead of the
+    # default "<release>-ksail-operator").
+    fullnameOverride: ksail-operator
+    operator:
+      # The chart defaults the image tag to appVersion (0.1.0), which is not a
+      # real image tag -- the operator ships in the main ksail image. Pin to a
+      # released tag (Renovate-trackable). Drop this once the chart appVersion
+      # tracks released ksail images.
+      image:
+        tag: v7.35.0
+      # dockerSocket stays disabled: it mounts the host /var/run/docker.sock,
+      # which is privileged and does not exist on Talos nodes (containerd, no
+      # Docker) -- enabling it would crash-loop the pod.
+      dockerSocket:
+        enabled: false
+    api:
+      # REST API + embedded web UI (consumed same-origin by the SPA).
+      bindPort: 8080
+    ui:
+      # GitOps-enforced platform: the UI is read-only (enforced server-side via
+      # the API) so the Git repository stays the single source of truth. OIDC,
+      # UI and API remain fully enabled -- only write actions are locked.
+      readOnly: true
+    auth:
+      # Native, app-driven OIDC against Dex (Headlamp-style): the operator API
+      # owns the login/callback as a confidential client and establishes a
+      # session cookie. Reuses the shared `public-client` confidential client
+      # (same as oauth2-proxy / Vault / Headlamp) so no new SOPS secret is
+      # needed -- the redirect URI is registered on that client in the dex
+      # HelmRelease.
+      oidc:
+        enabled: true
+        issuerURL: https://dex.${domain}
+        clientID: public-client
+        clientSecret: ${dex_client_secret}
+        redirectURL: https://ksail.${domain}/api/v1/auth/callback
+        scopes: "openid email profile groups"
+    rbac:
+      # Least-privilege ClusterRole the operator ships with; clusterAdmin stays
+      # off (it is a privilege-escalation opt-in, not a product feature).
+      create: true

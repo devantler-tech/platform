@@ -21,6 +21,7 @@ resources:
   - ../../../../bases/infrastructure/controllers/flux-operator/
   - ../../../../bases/infrastructure/controllers/keda/
   - ../../../../bases/infrastructure/controllers/keda-http-add-on/
+  - ../../../../bases/infrastructure/controllers/ksail-operator/
   - ../../../../bases/infrastructure/controllers/kubescape/
   - ../../../../bases/infrastructure/controllers/kyverno/
   - ../../../../bases/infrastructure/controllers/metrics-server/
