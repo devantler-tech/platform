@@ -275,6 +275,7 @@ jobs:
         # an anonymous 401 → ImagePullBackOff. Must stay in lockstep with the
         # identical flag in cd.yaml's prod deploy (a `cluster update` without it
         # drops the auth). See cd.yaml for the full rationale.
+        # Workaround tracked upstream: devantler-tech/ksail#5132.
         run: ksail --config ksail.prod.yaml cluster update --mirror-registry "devantler:${GHCR_TOKEN}@ghcr.io=https://ghcr.io"
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}

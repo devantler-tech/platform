@@ -136,6 +136,9 @@ jobs:
         # NOTE: ksail has no persistent config field for this, so a `cluster update`
         # run WITHOUT this flag drops the auth again — any manual update must
         # include it too. ci.yaml's prod deploy carries the identical flag.
+        # Workaround tracked upstream: devantler-tech/ksail#5132 — once ksail
+        # expands env vars in distribution config files, replace this flag with a
+        # committed talos/cluster/registries.yaml patch using ${GHCR_TOKEN}.
         run: ksail --config ksail.prod.yaml cluster update --mirror-registry "devantler:${GHCR_TOKEN}@ghcr.io=https://ghcr.io"
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
