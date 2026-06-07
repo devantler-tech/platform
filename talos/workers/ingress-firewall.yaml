@@ -4,7 +4,7 @@
 # Policy summary (workers are more restrictive than control planes):
 #   - apid (50000): open to all (KSail manages workers via public IPs)
 #   - kubelet (10250): cluster-internal only
-#   - Cilium VXLAN (8472), WireGuard (51871), health (4240), Hubble peer (4244): cluster-internal only
+#   - Cilium VXLAN (8472), WireGuard (51871), health (4240), Hubble peer (4244), mutual-auth (4250): cluster-internal only
 #   - NodePort range (30000-32767): cluster-internal (Hetzner Cloud LB)
 #   - Node exporter (9100): cluster-internal (Prometheus scraping)
 #
@@ -83,6 +83,29 @@ portSelector:
 ingress:
   - subnet: 10.0.0.0/16
   - subnet: 10.244.0.0/16
+---
+# Cilium SPIRE mutual authentication (authentication.mutual.spire.enabled in
+# the cilium HelmRelease). cilium-agents perform the agent-to-agent mTLS
+# handshake on TCP 4250 (the mesh-auth listener) for every pod-to-pod flow
+# the hetzner require-mutual-auth CiliumClusterwideNetworkPolicy marks
+# `authentication.mode: required`. The source is the peer node's
+# host-network cilium-agent, so the traffic arrives from the node CIDR.
+# NetworkDefaultActionConfig: block drops inbound 4250 unless allowed here;
+# without this rule the cross-node handshake times out
+# (`dial tcp 10.0.1.x:4250: i/o timeout`) and Cilium black-holes the
+# authenticated flow. That silently broke the coroot-heartbeat dead-man's
+# switch: its coroot-prometheus health-gate only succeeded when the CronJob
+# happened to land on Prometheus's node, so the external healthchecks.io
+# ping was suppressed almost every minute.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: cilium-mutual-auth-ingress
+portSelector:
+  ports:
+    - 4250
+  protocol: tcp
+ingress:
+  - subnet: 10.0.0.0/16
 ---
 apiVersion: v1alpha1
 kind: NetworkRuleConfig
