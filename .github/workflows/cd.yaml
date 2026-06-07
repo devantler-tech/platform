@@ -122,7 +122,21 @@ jobs:
           exit 1
 
       - name: 🔄 Update cluster
-        run: ksail --config ksail.prod.yaml cluster update
+        # --mirror-registry wires ghcr.io credentials into the Talos machine
+        # config (machine.registries.config["ghcr.io"].auth). WITHOUT it, Talos's
+        # ImageVerificationConfig (talos/cluster/image-verification.yaml) fetches
+        # the cosign signature of ghcr.io/devantler-tech/* images ANONYMOUSLY and
+        # gets HTTP 401 on our PRIVATE packages, so any FRESH pull of a first-party
+        # image (e.g. a new tenant release, or after a node roll evicts the cache)
+        # fails verification → ImagePullBackOff. Image *layers* still pull via the
+        # k8s ghcr-auth imagePullSecret; only the node-level signature fetch needs
+        # this. The "=https://ghcr.io" remote is a mirror-to-self: it carries no
+        # redirect, it only attaches the auth. ${GHCR_TOKEN} is expanded by the
+        # shell from the step env (masked in logs); it is NOT committed.
+        # NOTE: ksail has no persistent config field for this, so a `cluster update`
+        # run WITHOUT this flag drops the auth again — any manual update must
+        # include it too. ci.yaml's prod deploy carries the identical flag.
+        run: ksail --config ksail.prod.yaml cluster update --mirror-registry "devantler:${GHCR_TOKEN}@ghcr.io=https://ghcr.io"
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
