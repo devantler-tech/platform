@@ -16,6 +16,11 @@ resources:
   # are established first — see volume-snapshot-classes/longhorn.yaml. (hcloud
   # block storage has no snapshot support, so openbao stays on FSB.)
   - volume-snapshot-classes/
+components:
+  # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
+  # opencost HelmRelease in this layer. See
+  # bases/components/helmrelease-drift-detection.
+  - ../../../bases/components/helmrelease-drift-detection
 patches:
   - path: gateway-patch.yaml
     target:

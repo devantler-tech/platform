@@ -3,6 +3,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/apps/
+components:
+  # Platform-wide HelmRelease drift detection (mode: enabled) — see
+  # bases/components/helmrelease-drift-detection.
+  - ../../../bases/components/helmrelease-drift-detection
 patches:
   - target:
       group: kustomize.toolkit.fluxcd.io

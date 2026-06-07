@@ -1,0 +1,67 @@
+---
+# Platform-wide HelmRelease drift detection.
+#
+# WHY: Flux's helm-controller only re-applies a chart's rendered resources on a
+# chart/values change (a Helm upgrade). If a Helm-rendered resource is deleted or
+# mutated out-of-band, nothing restores it — the HelmRelease still reports
+# "install succeeded" while the workload is silently broken. This happened twice:
+# the keda-add-ons-http `external-scaler` Deployment and the homepage (Flagger
+# source) Deployment were both deleted and never came back, which silently broke
+# all HTTP autoscaling and spammed Flagger "deployment not found" warnings for
+# days while Flux still reported everything Ready.
+#
+# WHAT: turn on `driftDetection.mode: enabled` for every HelmRelease so the
+# helm-controller continuously reconciles the cluster back to the rendered
+# release — recreating deleted resources and reverting out-of-band edits.
+#
+# IGNORES: a few fields are legitimately owned by OTHER controllers at runtime;
+# enforcing the chart's value would make Flux fight them in a hot loop:
+#   * /spec/replicas (Deployment/StatefulSet) — HPA / KEDA / Flagger / autoscaler
+#   * Validating/Mutating webhook `.webhooks[].clientConfig.caBundle` — injected
+#     by cert-manager and patched at runtime by operators (cloudnative-pg,
+#     external-secrets, keda, kubescape, vertical-pod-autoscaler)
+#   * APIService `.spec.caBundle` — aggregated-apiserver cert injection
+#   * CRD conversion `.caBundle` — cert-manager CA injection
+# These are field-level ignores only: a wholesale DELETE of any such resource is
+# still drift and is restored.
+#
+# This is a Kustomize Component so the policy is defined once and applied to
+# every layer/provider build that renders HelmReleases (see the `components:`
+# references in the providers/*/{infrastructure,infrastructure/controllers,apps}
+# kustomizations).
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+    patch: |
+      - op: add
+        path: /spec/driftDetection
+        value:
+          mode: enabled
+          ignore:
+            - target:
+                kind: Deployment
+              paths:
+                - /spec/replicas
+            - target:
+                kind: StatefulSet
+              paths:
+                - /spec/replicas
+            - target:
+                kind: ValidatingWebhookConfiguration
+              paths:
+                - /webhooks
+            - target:
+                kind: MutatingWebhookConfiguration
+              paths:
+                - /webhooks
+            - target:
+                kind: APIService
+              paths:
+                - /spec/caBundle
+            - target:
+                kind: CustomResourceDefinition
+              paths:
+                - /spec/conversion/webhook/clientConfig/caBundle
