@@ -77,7 +77,8 @@ spec:
       # Service port 80 -> container port 3000 (named `http`).
       port: 80
     # Routing, ingress and NetworkPolicy are handled by the platform's own
-    # resources (httproute.yaml + networkpolicy.yaml), not the chart.
+    # resources (canary.yaml's Flagger-generated HTTPRoute + networkpolicy.yaml),
+    # not the chart.
     gatewayAPI:
       enabled: false
     ingress:

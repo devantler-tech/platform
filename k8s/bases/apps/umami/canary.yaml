@@ -30,11 +30,26 @@ spec:
     gatewayRefs:
       - name: platform
         namespace: kube-system
+    # Tile metadata for the Homepage dashboard. Flagger copies spec.service.apex
+    # annotations/labels onto the HTTPRoute it generates (pkg/router/gateway_api.go),
+    # so the gethomepage.dev/* annotations the hand-written route used to carry are
+    # reproduced here — Umami reappears under the Analytics group, discovered the
+    # same way as every other app. pod-selector keys on app.kubernetes.io/instance
+    # (NOT /name): Flagger's default --selector-labels (app,name,
+    # app.kubernetes.io/name) rewrites app.kubernetes.io/name to
+    # "umami-umami-primary" on the primary Deployment, while leaving
+    # app.kubernetes.io/instance=umami intact on the running pods.
+    apex:
+      annotations:
+        gethomepage.dev/enabled: "true"
+        gethomepage.dev/name: Umami
+        gethomepage.dev/description: Privacy-first web analytics.
+        gethomepage.dev/group: Analytics
+        gethomepage.dev/icon: si-umami
+        gethomepage.dev/href: https://analytics.${domain}
+        gethomepage.dev/pod-selector: app.kubernetes.io/instance=umami
     # Re-add the HSTS header the hand-written route used to set. (Edge HSTS is
-    # also applied by Cloudflare in prod, so this is defence-in-depth.) The old
-    # route's gethomepage.dev/* tile annotations are NOT reproducible on a
-    # Flagger-generated route — re-add Umami to the homepage dashboard via static
-    # config if the tile is wanted.
+    # also applied by Cloudflare in prod, so this is defence-in-depth.)
     headers:
       response:
         set:
