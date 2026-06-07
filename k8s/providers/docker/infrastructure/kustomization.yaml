@@ -4,3 +4,8 @@ kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
   - cluster-issuers/
+components:
+  # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
+  # opencost HelmRelease in this layer. See
+  # bases/components/helmrelease-drift-detection.
+  - ../../../bases/components/helmrelease-drift-detection
