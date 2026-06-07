@@ -14,16 +14,26 @@
 # helm-controller continuously reconciles the cluster back to the rendered
 # release — recreating deleted resources and reverting out-of-band edits.
 #
-# IGNORES: a few fields are legitimately owned by OTHER controllers at runtime;
-# enforcing the chart's value would make Flux fight them in a hot loop:
+# IGNORES: some fields/subtrees are legitimately owned by OTHER controllers at
+# runtime; enforcing the chart's value would make Flux fight them or spam
+# DriftDetected every reconcile:
 #   * /spec/replicas (Deployment/StatefulSet) — HPA / KEDA / Flagger / autoscaler
+#   * /spec/template (Deployment/StatefulSet/DaemonSet) — the pod template is
+#     rewritten on admission by the cluster's Kyverno mutate policies
+#     (add-resource-defaults, add-security-context, insert-pod-antiaffinity,
+#     prefer-baseline-nodes, spread-pods, disable-default-sa-automount), so the
+#     rendered chart spec NEVER matches the live (mutated) spec. Without this,
+#     all 21 workload HelmReleases logged a harmless-but-perpetual DriftDetected
+#     every reconcile, drowning out real drift. Trade-off: a hand-edit to a
+#     running pod template is no longer auto-reverted by drift detection — it is
+#     still re-applied on the next chart/values reconcile, and a DELETE of the
+#     whole workload is still drift and is restored (deletion-recovery — the
+#     reason this component exists — is unaffected; ignores are field-level only).
 #   * Validating/Mutating webhook `.webhooks[].clientConfig.caBundle` — injected
 #     by cert-manager and patched at runtime by operators (cloudnative-pg,
 #     external-secrets, keda, kubescape, vertical-pod-autoscaler)
 #   * APIService `.spec.caBundle` — aggregated-apiserver cert injection
 #   * CRD conversion `.caBundle` — cert-manager CA injection
-# These are field-level ignores only: a wholesale DELETE of any such resource is
-# still drift and is restored.
 #
 # This is a Kustomize Component so the policy is defined once and applied to
 # every layer/provider build that renders HelmReleases (see the `components:`
@@ -45,10 +55,16 @@ patches:
                 kind: Deployment
               paths:
                 - /spec/replicas
+                - /spec/template
             - target:
                 kind: StatefulSet
               paths:
                 - /spec/replicas
+                - /spec/template
+            - target:
+                kind: DaemonSet
+              paths:
+                - /spec/template
             - target:
                 kind: ValidatingWebhookConfiguration
               paths:

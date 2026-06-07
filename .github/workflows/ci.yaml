@@ -71,10 +71,6 @@ jobs:
         with:
           distribution: Talos
           provider: Docker
-          # 7.26.0 adds `workload validate --skip-kinds` / spec.workload.validation.skipKinds,
-          # which ksail.yaml uses to skip the Coroot CR (its CRDs-catalog schema is stale).
-          # Manual pin (the curl KSAIL_VERSION pins below are the Renovate-tracked ones).
-          ksail-version: "7.26.0"
           init: "false"
           validate: "true"
           scan: "true"
@@ -197,7 +193,7 @@ jobs:
         # cluster-update fixes; renovate keeps this pin current.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.31.0"
+          KSAIL_VERSION: "7.33.0"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
