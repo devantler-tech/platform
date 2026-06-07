@@ -207,7 +207,11 @@ spec:
                     console.log('website created:', s.domain);
                   }
                   async function findUserId(token, username) {
-                    const r = await fetch(base + '/api/users?pageSize=200&search=' + encodeURIComponent(username), { headers: H(token) });
+                    // List users via the admin endpoint: in Umami 3.x `/api/users`
+                    // only handles POST (create); GET lives at `/api/admin/users`
+                    // (paged + `search`, admin-gated). Hitting `/api/users` here
+                    // returned 405 and aborted every member-provisioning run.
+                    const r = await fetch(base + '/api/admin/users?pageSize=200&search=' + encodeURIComponent(username), { headers: H(token) });
                     if (!r.ok) throw new Error('list users failed: ' + r.status + ' ' + (await r.text()));
                     const u = asArray(await r.json()).find((u) => u.username === username);
                     return u ? u.id : null;
