@@ -5,6 +5,16 @@ metadata:
   namespace: wedding-app
 spec:
   patches:
+    # The wedding-db CNPG Cluster ships from the tenant's OCI artifact as a
+    # single instance. Patch it to longhorn storage AND to 3 instances (1
+    # primary + 2 replicas) for high availability: a single-instance Cluster
+    # gets a `<cluster>-primary` PodDisruptionBudget with minAvailable=1 on the
+    # sole pod, which blocks every voluntary eviction (a node drain during a
+    # Talos roll or autoscaler scale-down hangs) and drops the database on any
+    # node loss. With 3 instances CNPG promotes a replica to drain a node and
+    # sets the replica PDB to minAvailable=instances-1, so drains proceed and
+    # the database survives a node shutdown. The 3 instances spread one per
+    # static Longhorn storage worker via CNPG's default pod anti-affinity.
     - target:
         group: postgresql.cnpg.io
         kind: Cluster
@@ -15,6 +25,7 @@ spec:
         metadata:
           name: wedding-db
         spec:
+          instances: 3
           storage:
             storageClass: longhorn
     - target:
