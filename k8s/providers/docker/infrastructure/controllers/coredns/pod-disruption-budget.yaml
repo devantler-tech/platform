@@ -4,7 +4,11 @@ metadata:
   name: coredns
   namespace: kube-system
 spec:
-  minAvailable: 1
+  # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880):
+  # it never deadlocks a node drain regardless of replica count and still bounds
+  # disruption to one pod at a time. This CoreDNS Deployment runs 2 replicas, so
+  # maxUnavailable: 1 is behaviourally identical to the old minAvailable: 1.
+  maxUnavailable: 1
   selector:
     matchLabels:
       k8s-app: kube-dns
