@@ -22,6 +22,11 @@ resources:
   # are established first — see volume-snapshot-classes/longhorn.yaml. (hcloud
   # block storage has no snapshot support, so openbao stays on FSB.)
   - volume-snapshot-classes/
+  # Prod-only KEDA HTTP scale-to-zero for the Longhorn UI. Kept in this
+  # `infrastructure` layer (not `infrastructure/controllers/`) so the
+  # http.keda.sh CRD shipped by the keda-http-add-on HelmRelease is established
+  # first. longhorn-system is Hetzner-only, so this can't live in bases/.
+  - http-scaled-objects/
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
   # opencost HelmRelease in this layer. See

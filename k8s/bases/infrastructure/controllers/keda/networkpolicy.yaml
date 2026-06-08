@@ -88,6 +88,15 @@ spec:
         - ports:
             - port: "8081"
               protocol: TCP
+    # longhorn-ui (Hetzner-only; Service longhorn-frontend :80 -> pod :8000).
+    # Inert on local where longhorn-system has no pods.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: longhorn-system
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:

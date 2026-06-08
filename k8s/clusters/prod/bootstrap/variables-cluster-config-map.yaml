@@ -95,6 +95,17 @@ data:
   longhorn_csi_attacher_replicas: "2"
   longhorn_csi_provisioner_replicas: "2"
   longhorn_csi_resizer_replicas: "2"
+  # The longhorn-ui (longhorn-frontend) is the web dashboard only — it is NOT in
+  # the storage data path (longhorn-manager, the CSI sidecars, and the
+  # instance-managers run the data plane and never touch the UI). It is wired for
+  # KEDA HTTP scale-to-zero like hubble-ui, so this is the INITIAL replica count
+  # only: the longhorn-ui HTTPScaledObject (providers/hetzner/infrastructure/
+  # http-scaled-objects/longhorn.yaml) owns /spec/replicas at runtime — held at 0
+  # while idle, scaled 0->1 on the first request to longhorn.${domain} (Gateway ->
+  # oauth2-proxy -> auth-proxy -> KEDA interceptor -> longhorn-ui), then back to 0
+  # after the scaledownPeriod. Start at 0 to avoid running the pod until first use.
+  # (Flux drift detection ignores Deployment /spec/replicas, so it won't fight KEDA.)
+  longhorn_ui_replicas: "0"
   # --- Non-essential services scaled to 0 ---
   # Origin CA issuer requests 1 CPU (50% of worker allocatable) for a simple
   # cert controller. Disabled until we actually need Cloudflare Origin certs.
