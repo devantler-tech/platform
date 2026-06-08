@@ -39,8 +39,9 @@ spec:
     operator:
       # The chart defaults the image tag to appVersion (7.36.0, no "v"), but the
       # released ksail image is tagged "v7.36.0" -- the no-"v" tag does not
-      # exist, so the default would ImagePullBackOff. Pin the "v"-prefixed tag
-      # explicitly (Renovate-trackable). Keep in sync with chart.spec.version.
+      # exist, so the chart default would ImagePullBackOff. Pin the "v"-prefixed
+      # tag explicitly. Renovate tracks chart.spec.version (flux manager) but
+      # NOT this values image tag, so bump it in lockstep when the chart bumps.
       image:
         tag: v7.36.0
       # dockerSocket stays disabled: it mounts the host /var/run/docker.sock,
@@ -71,6 +72,7 @@ spec:
         redirectURL: https://ksail.${domain}/api/v1/auth/callback
         scopes: "openid email profile groups"
     rbac:
-      # Least-privilege ClusterRole the operator ships with; clusterAdmin stays
-      # off (it is a privilege-escalation opt-in, not a product feature).
-      create: true
+      # Use the chart's least-privilege ClusterRole; clusterAdmin (a full
+      # cluster-admin wildcard) stays off -- it is a privilege-escalation
+      # opt-in, not a product feature.
+      clusterAdmin: false
