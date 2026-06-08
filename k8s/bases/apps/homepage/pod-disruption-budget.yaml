@@ -4,7 +4,15 @@ metadata:
   name: homepage
   namespace: homepage
 spec:
-  minAvailable: 1
+  # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880).
+  # Homepage is a Flagger target: replicas are stripped from the HelmRelease so
+  # the primary actually runs the chart default of 1 (not homepage_replicas: 2),
+  # which minAvailable: 1 would render undrainable. The disruption controller
+  # sums the scales of every managed controller this selector matches
+  # (homepage-primary + the scaled-to-0 canary Deployment), so maxUnavailable: 1
+  # permits exactly one eviction at the steady state and stays 1-at-a-time
+  # during a rollout.
+  maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: homepage
