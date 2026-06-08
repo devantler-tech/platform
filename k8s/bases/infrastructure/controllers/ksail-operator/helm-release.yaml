@@ -37,13 +37,11 @@ spec:
     # default "<release>-ksail-operator").
     fullnameOverride: ksail-operator
     operator:
-      # The chart defaults the image tag to appVersion (7.36.0, no "v"), but the
-      # released ksail image is tagged "v7.36.0" -- the no-"v" tag does not
-      # exist, so the chart default would ImagePullBackOff. Pin the "v"-prefixed
-      # tag explicitly. Renovate tracks chart.spec.version (flux manager) but
-      # NOT this values image tag, so bump it in lockstep when the chart bumps.
-      image:
-        tag: v7.36.0
+      # Image tag is left to the chart default (v<appVersion>, per ksail #5168);
+      # chart.spec.version above selects the operator image version. Requires a
+      # chart release carrying #5168 AND a cosign-signed image (ksail #5165, for
+      # prod Talos image verification / platform #1889) -- bump chart.spec.version
+      # to that release.
       # dockerSocket stays disabled: it mounts the host /var/run/docker.sock,
       # which is privileged and does not exist on Talos nodes (containerd, no
       # Docker) -- enabling it would crash-loop the pod.
