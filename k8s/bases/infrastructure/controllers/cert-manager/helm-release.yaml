@@ -39,7 +39,10 @@ spec:
     replicaCount: ${cert_manager_replicas:=2}
     podDisruptionBudget:
       enabled: true
-      minAvailable: 1
+      # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never deadlocks
+      # a node drain regardless of replica count (minAvailable: 1 would the
+      # moment cert_manager_replicas dropped to 1).
+      maxUnavailable: 1
     strategy:
       type: RollingUpdate
       rollingUpdate:
@@ -64,7 +67,9 @@ spec:
         runAsNonRoot: true
       podDisruptionBudget:
         enabled: true
-        minAvailable: 1
+        # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
+        # deadlocks a node drain regardless of replica count.
+        maxUnavailable: 1
       strategy:
         type: RollingUpdate
         rollingUpdate:
@@ -89,7 +94,9 @@ spec:
         runAsNonRoot: true
       podDisruptionBudget:
         enabled: true
-        minAvailable: 1
+        # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
+        # deadlocks a node drain regardless of replica count.
+        maxUnavailable: 1
       strategy:
         type: RollingUpdate
         rollingUpdate:

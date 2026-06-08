@@ -10,6 +10,7 @@ resources:
   - best-practices/disable-default-sa-automount.yaml
   - best-practices/restrict-tenant-secret-stores.yaml
   - best-practices/validate-host-restrictions.yaml
+  - best-practices/validate-pdb-drain-safe.yaml
   - best-practices/validate-pod-security.yaml
   - flux/enforce-flux-best-practices.yaml
   - flux/helm-release-enable-tests.yaml

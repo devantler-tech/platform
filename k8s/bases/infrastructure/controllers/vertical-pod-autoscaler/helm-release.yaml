@@ -65,4 +65,6 @@ spec:
           drop:
             - ALL
       podDisruptionBudget:
-        minAvailable: 1
+        # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
+        # deadlocks a node drain regardless of replica count.
+        maxUnavailable: 1

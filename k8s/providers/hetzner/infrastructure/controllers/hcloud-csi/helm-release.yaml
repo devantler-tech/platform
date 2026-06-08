@@ -42,7 +42,12 @@ spec:
       hcloudVolumeDefaultLocation: fsn1
       podDisruptionBudget:
         create: true
-        minAvailable: 1
+        # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 keeps the
+        # hosting node drainable at any replica count. This controller runs a
+        # single replica in prod (hcloud_csi_controller_replicas: "1"), so the
+        # chart-default minAvailable: 1 permitted zero voluntary evictions and
+        # made its node undrainable -- the exact #1880 incident class.
+        maxUnavailable: 1
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:

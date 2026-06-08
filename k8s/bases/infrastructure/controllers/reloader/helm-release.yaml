@@ -58,4 +58,8 @@ spec:
           group: com.stakater.platform
       podDisruptionBudget:
         enabled: true
-        minAvailable: 1
+        # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 keeps the
+        # node drainable at any replica count. reloader_replicas is "1" in prod,
+        # so minAvailable: 1 permitted zero voluntary evictions and made its
+        # node undrainable.
+        maxUnavailable: 1
