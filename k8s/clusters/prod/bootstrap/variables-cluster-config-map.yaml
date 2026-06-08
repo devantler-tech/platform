@@ -95,6 +95,14 @@ data:
   longhorn_csi_attacher_replicas: "2"
   longhorn_csi_provisioner_replicas: "2"
   longhorn_csi_resizer_replicas: "2"
+  # The longhorn-ui (longhorn-frontend) is the read/write web dashboard only —
+  # it is NOT in the storage data path. Volume provisioning, attach/detach,
+  # replica rebuilds, CSI snapshots, and Velero backups are all driven by
+  # longhorn-manager, the CSI sidecars, and the instance-managers, none of
+  # which depend on the UI. Scale it to 0 to reclaim its pod; Longhorn stays
+  # fully manageable via CRDs/kubectl and GitOps. Re-enable the dashboard at
+  # longhorn.${domain} by setting this back to "1".
+  longhorn_ui_replicas: "0"
   # --- Non-essential services scaled to 0 ---
   # Origin CA issuer requests 1 CPU (50% of worker allocatable) for a simple
   # cert controller. Disabled until we actually need Cloudflare Origin certs.
