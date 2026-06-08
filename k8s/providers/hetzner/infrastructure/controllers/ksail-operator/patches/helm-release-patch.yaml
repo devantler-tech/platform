@@ -1,0 +1,27 @@
+# Prod-only: enable the operator's native, app-driven OIDC against Dex.
+#
+# Kept out of the base because the operator does eager, fatal OIDC discovery at
+# startup and the issuer must be resolvable + TLS-trusted from inside the
+# cluster (see the base HelmRelease). On Hetzner, dex.${domain} resolves via
+# public DNS (Cloudflare) and serves a trusted cert, so discovery succeeds; on
+# local/CI the *.platform.lan host-file names are not in-cluster resolvable.
+#
+# Reuses the shared `public-client` confidential client (same as oauth2-proxy /
+# Vault / Headlamp) so no new SOPS secret is needed -- the redirect URI is
+# registered on that client in the dex HelmRelease. This merges into spec.values
+# (it does not replace the base values).
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: ksail-operator
+  namespace: ksail-operator
+spec:
+  values:
+    auth:
+      oidc:
+        enabled: true
+        issuerURL: https://dex.${domain}
+        clientID: public-client
+        clientSecret: ${dex_client_secret}
+        redirectURL: https://ksail.${domain}/api/v1/auth/callback
+        scopes: "openid email profile groups"

@@ -10,7 +10,9 @@ metadata:
     gethomepage.dev/group: Kubernetes
     gethomepage.dev/icon: flux-cd
     gethomepage.dev/href: https://flux.${domain}
-    gethomepage.dev/pod-selector: app.kubernetes.io/name=flux-operator
+    # Targets the standalone web UI pods, not the always-on operator, so the
+    # status dot reflects the UI's real (scale-to-zero) availability.
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=flux-operator-web
 spec:
   parentRefs:
     - name: platform
@@ -19,9 +21,13 @@ spec:
   hostnames:
     - flux.${domain}
   rules:
+    # Route through the KEDA HTTP interceptor so the flux-operator-web
+    # deployment can scale to zero and cold-start on demand
+    # (see ../../http-scaled-objects/flux-operator-web.yaml).
     - backendRefs:
-        - name: flux-operator
-          port: 9080
+        - name: keda-add-ons-http-interceptor-proxy
+          namespace: keda
+          port: 8080
       filters:
         - type: ResponseHeaderModifier
           responseHeaderModifier:
