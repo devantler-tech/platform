@@ -23,7 +23,7 @@ spec:
   chart:
     spec:
       chart: ksail-operator
-      version: 0.1.0
+      version: 7.36.0
       sourceRef:
         kind: HelmRepository
         name: ksail-operator
@@ -37,12 +37,12 @@ spec:
     # default "<release>-ksail-operator").
     fullnameOverride: ksail-operator
     operator:
-      # The chart defaults the image tag to appVersion (0.1.0), which is not a
-      # real image tag -- the operator ships in the main ksail image. Pin to a
-      # released tag (Renovate-trackable). Drop this once the chart appVersion
-      # tracks released ksail images.
+      # The chart defaults the image tag to appVersion (7.36.0, no "v"), but the
+      # released ksail image is tagged "v7.36.0" -- the no-"v" tag does not
+      # exist, so the default would ImagePullBackOff. Pin the "v"-prefixed tag
+      # explicitly (Renovate-trackable). Keep in sync with chart.spec.version.
       image:
-        tag: v7.35.0
+        tag: v7.36.0
       # dockerSocket stays disabled: it mounts the host /var/run/docker.sock,
       # which is privileged and does not exist on Talos nodes (containerd, no
       # Docker) -- enabling it would crash-loop the pod.

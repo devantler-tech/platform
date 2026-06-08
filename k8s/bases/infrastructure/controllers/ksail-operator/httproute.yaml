@@ -15,7 +15,7 @@ metadata:
     # would 404. Point at the upstream brand SVG (pinned), the same upstream-URL
     # pattern the Coroot / Cilium / OpenBao routes use. Homepage fetches icons
     # client-side, so the cluster egress NetworkPolicy doesn't block it.
-    gethomepage.dev/icon: https://raw.githubusercontent.com/devantler-tech/ksail/v7.35.0/docs/public/favicon.svg
+    gethomepage.dev/icon: https://raw.githubusercontent.com/devantler-tech/ksail/v7.36.0/docs/public/favicon.svg
     # Status dot: target the operator pod explicitly (the chart labels it
     # name=ksail-operator + component=operator).
     gethomepage.dev/pod-selector: app.kubernetes.io/name=ksail-operator,app.kubernetes.io/component=operator

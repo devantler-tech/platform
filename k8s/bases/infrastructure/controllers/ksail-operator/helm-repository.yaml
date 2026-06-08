@@ -7,7 +7,6 @@ metadata:
 spec:
   type: oci
   # The ksail-operator chart lives in the KSail repo (charts/ksail-operator) and
-  # is published as an OCI artifact to GHCR. URL mirrors the flux-operator
-  # pattern (oci://ghcr.io/<org>/charts + chart name). Confirm this matches the
-  # actual publish target once the chart-release pipeline lands.
+  # is published as an OCI artifact to GHCR, mirroring the flux-operator pattern
+  # (oci://ghcr.io/<org>/charts + chart name).
   url: oci://ghcr.io/devantler-tech/charts
