@@ -11,7 +11,7 @@ data:
   # Shared bucket for Velero and CNPG backups across all clusters.
   # Velero / CNPG namespace themselves with per-env prefixes — set in
   # each clusters/<env>/bootstrap/variables-cluster-config-map.yaml.
-  r2_bucket: devantler-platform-backups
+  r2_bucket: platform-backups
   cloudflare_zone: devantler.tech
   r2_prefix_velero: velero
   r2_prefix_cnpg: cnpg
