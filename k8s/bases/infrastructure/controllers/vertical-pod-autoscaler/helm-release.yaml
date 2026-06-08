@@ -29,6 +29,12 @@ spec:
   values:
     recommender:
       replicaCount: ${vpa_recommender_replicas:=1}
+      # HA: leader election runs replicas active/standby -- only one recommender
+      # is active at a time, standbys take over on failure. Without it, multiple
+      # recommenders produce racy recommendations. VPA 1.6.0 supports
+      # --leader-elect (extraArgs is a map -> --leader-elect=true).
+      extraArgs:
+        leader-elect: true
       podSecurityContext:
         runAsUser: 65534
         runAsGroup: 65534
@@ -42,6 +48,11 @@ spec:
     updater:
       enabled: true
       replicaCount: ${vpa_updater_replicas:=1}
+      # HA: leader election runs replicas active/standby -- only one updater is
+      # active at a time, standbys take over on failure. Without it, multiple
+      # updaters would double-evict pods. VPA 1.6.0 supports --leader-elect.
+      extraArgs:
+        leader-elect: true
       podSecurityContext:
         runAsUser: 65534
         runAsGroup: 65534
