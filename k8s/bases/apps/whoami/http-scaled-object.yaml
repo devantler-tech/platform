@@ -12,7 +12,9 @@ spec:
     service: whoami
     port: 80
   replicas:
-    min: 0
+    # Always-on HA: min 2 keeps two replicas serving at all times (survives a
+    # pod/node failure) rather than scaling to zero. whoami is stateless.
+    min: 2
     max: 2
   scaledownPeriod: 300
   scalingMetric:

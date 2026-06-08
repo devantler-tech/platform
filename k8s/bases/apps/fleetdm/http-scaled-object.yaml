@@ -12,10 +12,13 @@ spec:
     service: fleetdm-service
     port: 8080
   replicas:
-    min: 0
+    # Always-on HA: min 2 keeps the Fleet server replicated at all times
+    # (survives a pod/node failure) rather than scaling to zero. The app tier is
+    # stateless — state lives in MySQL/Redis.
+    min: 2
     max: 2
-  # Longer cooldown for FleetDM — enrolled devices check in periodically.
-  # 15 minutes of silence before scale-to-zero.
+  # Cooldown retained for any future scale-down; enrolled devices check in
+  # periodically.
   scaledownPeriod: 900
   scalingMetric:
     requestRate:

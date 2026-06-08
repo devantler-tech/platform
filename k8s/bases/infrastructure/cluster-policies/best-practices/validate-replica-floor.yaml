@@ -17,7 +17,10 @@
 #     for any new singleton / scale-to-zero / operator-managed workload;
 #   * Flagger primaries (*-primary) and the scaled-to-0 canary sources -- Flagger
 #     owns their replica count;
-#   * KEDA scale-to-zero targets -- a floor defeats scale-to-zero;
+#   * KEDA-managed (autoscaled) targets -- the floor governs statically-declared
+#     replicas, not KEDA-owned counts. whoami/fleetdm run always-on HA (min 2);
+#     hubble-ui/headlamp/actual-budget/longhorn-ui are single-pod by hard
+#     constraint (per-pod connection or OIDC state, SQLite-on-RWO, admin UI);
 #   * namespaces whose workloads genuinely can't run 3: velero (chart hardcodes
 #     replicas: 1, no leader election), flux controllers, coroot (observability)
 #     and testkube (operator-managed singletons), and openbao (HA needs a Raft
@@ -73,10 +76,11 @@ spec:
                 - observability
                 - openbao
                 - testkube
-          # KEDA scale-to-zero targets, Flagger canary primaries (*-primary) and
-          # the scaled-to-0 canary sources -- their replica count is owned by a
-          # controller, not declared statically (the Flagger primary runs the HA
-          # replicas).
+          # KEDA-managed (autoscaled) targets and Flagger canary primaries
+          # (*-primary) + scaled-to-0 sources -- their replica count is owned by
+          # a controller, not declared statically. whoami/fleetdm now run
+          # always-on HA (min 2); hubble-ui/headlamp/actual-budget/longhorn-ui
+          # stay single-pod (per-pod state / SQLite-on-RWO / admin UI).
           - resources:
               names:
                 - "?*-primary"

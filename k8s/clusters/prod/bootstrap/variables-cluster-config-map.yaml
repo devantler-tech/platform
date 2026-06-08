@@ -40,8 +40,9 @@ data:
   # whoami/fleetdm: min 0, max 2
   # actual-budget: parked at 0/0 (unused; SQLite on RWO PVC keeps max≤1 when re-enabled)
   headlamp_replicas: "1"
-  whoami_replicas: "1"
-  fleetdm_replicas: "1"
+  # whoami/fleetdm run always-on HA (HTTPScaledObject min 2), not scale-to-zero.
+  whoami_replicas: "2"
+  fleetdm_replicas: "2"
   # Standalone MySQL (no replication). The bitnami replication topology causes
   # VPA `InPlaceOrRecreate` evictions to drop DDL connections mid-migration on
   # initial install (3 mysql pods churning simultaneously). Standalone is
