@@ -31,3 +31,10 @@ patches:
       name: wedding-app
       namespace: wedding-app
     path: wedding-app/patches/kustomization-patch.yaml
+  # Pilot: user namespaces (hostUsers: false) on whoami — prod-only; see the
+  # patch file for the full rationale.
+  - target:
+      kind: HelmRelease
+      name: whoami
+      namespace: whoami
+    path: whoami/patches/helm-release-patch.yaml
