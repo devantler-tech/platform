@@ -1,0 +1,12 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: ksail-operator
+  namespace: ksail-operator
+spec:
+  type: oci
+  # The ksail-operator chart lives in the KSail repo (charts/ksail-operator) and
+  # is published as an OCI artifact to GHCR, mirroring the flux-operator pattern
+  # (oci://ghcr.io/<org>/charts + chart name).
+  url: oci://ghcr.io/devantler-tech/charts

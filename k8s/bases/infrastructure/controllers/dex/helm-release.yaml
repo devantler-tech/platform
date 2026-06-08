@@ -76,6 +76,7 @@ spec:
             - "https://headlamp.${domain}/oidc-callback"
             - "https://budget.${domain}/oidc/callback"
             - "https://vault.${domain}/ui/vault/auth/oidc/oidc/callback"
+            - "https://ksail.${domain}/api/v1/auth/callback"
           trustedPeers:
             - kubectl
         - name: kubectl
