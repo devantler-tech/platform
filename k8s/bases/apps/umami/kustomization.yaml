@@ -9,6 +9,8 @@ resources:
   - postgres-cluster.yaml
   - db-superuser-pushsecret.yaml
   - db-rotated-external-secret.yaml
+  - db-backup-external-secret.yaml
+  - db-scheduled-backup.yaml
   - helm-repository.yaml
   - helm-release.yaml
   # httproute.yaml removed — Flagger generates and owns Umami's HTTPRoute from
