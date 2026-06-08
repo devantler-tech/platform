@@ -7,26 +7,28 @@
 # Flux and the Kyverno admission layer never see (e.g. kubelet-managed static
 # pods, a compromised registry serving a tampered image).
 #
-# Scope: FIRST-PARTY images only (ghcr.io/devantler-tech/*). These are built,
-# pushed, and keyless-cosign-signed by the shared reusable workflow
-# devantler-tech/reusable-workflows/.github/workflows/publish-app.yaml (it runs
-# `cosign sign` on BOTH the manifests artifact and the container image). That
-# is the SAME signing identity the apps' Flux OCIRepository verify blocks
-# already pin, so this adds no new trust root. Currently covers the wedding-app
-# and ascoachingogvaner container images running in prod.
+# Scope: FIRST-PARTY images (ghcr.io/devantler-tech/*). All are keyless-cosign
+# signed, but by TWO different signing identities, so they need two rules:
+#   1. ghcr.io/devantler-tech/ksail — the ksail-operator image — is signed by
+#      ksail's OWN release pipeline (devantler-tech/ksail .github/workflows/
+#      cd.yaml; see that repo's GoReleaser `docker_signs` step).
+#   2. the app images (wedding-app, ascoachingogvaner, …) are signed by the
+#      shared reusable workflow reusable-workflows/.github/workflows/
+#      publish-app.yaml — the SAME identity their Flux OCIRepository verify
+#      blocks already pin.
+# Talos evaluates rules in order, first match wins, so the specific ksail rule
+# MUST precede the ghcr.io/devantler-tech/* catch-all.
 #
-# FAIL-OPEN by design: an image is verified only when it MATCHES a rule; an
-# image matching NO rule is pulled WITHOUT verification. So third-party chart
-# images (Cilium, Longhorn, Coroot, registry.k8s.io control-plane images, …)
-# are unaffected — this is intentionally NOT a deny-all-unsigned control, and
-# there is deliberately no broad `deny:` catch-all. Note the converse: an image
-# that DOES match this rule but fails verification is blocked (ImagePullBackOff),
-# so the glob is kept to first-party images whose signing pipeline is known.
+# FAIL-OPEN by design for everything else: an image matching NO rule is pulled
+# WITHOUT verification, so third-party chart images (Cilium, Longhorn, Coroot,
+# registry.k8s.io control-plane images, …) are unaffected — this is
+# intentionally NOT a deny-all-unsigned control. The converse: an image that
+# DOES match a rule but fails verification is blocked (ImagePullBackOff).
 #
 # A rule over a system registry (e.g. registry.k8s.io/*, the canonical Talos
 # example) would gate control-plane/etcd image pulls — high blast radius on
 # this cluster given the manual-talosctl recovery path — so it is deliberately
-# omitted for now and can be added later once the first-party rule is proven.
+# omitted for now and can be added later once the first-party rules are proven.
 #
 # This does NOT satisfy kubescape C-0237 (see
 # k8s/bases/infrastructure/security-exceptions/image-verification.yaml): that
@@ -38,6 +40,16 @@
 apiVersion: v1alpha1
 kind: ImageVerificationConfig
 rules:
+  # ksail-operator image — signed by ksail's OWN release pipeline (cd.yaml),
+  # a different keyless identity than publish-app.yaml. MUST precede the
+  # catch-all below (first-match-wins). Requires ksail >= the first release
+  # that ships the GoReleaser docker_signs cosign step (devantler-tech/ksail
+  # #5165) AND the ksail-operator HelmRelease pinned to that signed image tag.
+  - image: ghcr.io/devantler-tech/ksail*
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/ksail/\.github/workflows/cd\.yaml@refs/tags/v.+$
+  # First-party APP images signed by reusable-workflows/publish-app.yaml.
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com

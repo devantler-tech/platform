@@ -125,7 +125,17 @@ spec:
       # maxNodesTotal <= serverLimit (10 <= 10). See the autoscaler block.
       serverLimit: 10
       controlPlaneServerType: cx33
-      workerServerType: cx33
+      # Baseline workers on cx43 (8c/16G) rather than cx33 (4c/8G). These 3
+      # static workers carry the platform's full memory footprint plus the
+      # ~2 GB/node fixed per-node agent tax (Cilium, Longhorn, coroot/kubescape
+      # node-agents). On 8 GB nodes that tax + VPA's peak-sized (correct,
+      # OOM-safe) memory requests saturated node *requests* to ~99% while real
+      # usage sat ~50%, leaving no reschedule headroom and forcing ~2-3m
+      # autoscaler cold-boots on every reschedule (the page-timeout flap). 16 GB
+      # workers amortize the fixed tax over more capacity and let VPA apply its
+      # requests without eviction churn. Control planes stay cx33 (their load
+      # is steady and well within 8 GB).
+      workerServerType: cx43
       location: fsn1
       networkCidr: 10.0.0.0/16
       placementGroupStrategy: Spread
