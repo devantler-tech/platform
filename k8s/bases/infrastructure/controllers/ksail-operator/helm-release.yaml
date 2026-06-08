@@ -57,20 +57,15 @@ spec:
       # the API) so the Git repository stays the single source of truth. OIDC,
       # UI and API remain fully enabled -- only write actions are locked.
       readOnly: true
-    auth:
-      # Native, app-driven OIDC against Dex (Headlamp-style): the operator API
-      # owns the login/callback as a confidential client and establishes a
-      # session cookie. Reuses the shared `public-client` confidential client
-      # (same as oauth2-proxy / Vault / Headlamp) so no new SOPS secret is
-      # needed -- the redirect URI is registered on that client in the dex
-      # HelmRelease.
-      oidc:
-        enabled: true
-        issuerURL: https://dex.${domain}
-        clientID: public-client
-        clientSecret: ${dex_client_secret}
-        redirectURL: https://ksail.${domain}/api/v1/auth/callback
-        scopes: "openid email profile groups"
+    # Native OIDC is intentionally NOT enabled in the base -- it is layered on
+    # in the hetzner (prod) overlay (see ksail-operator/patches/). The operator
+    # performs *eager, fatal* OIDC discovery at startup: the issuer
+    # (https://dex.${domain}) must be resolvable AND TLS-trusted from inside the
+    # cluster, or the manager fails to start and the pod crash-loops. On
+    # local/CI the *.platform.lan names resolve only via the host's /etc/hosts
+    # (not in-cluster CoreDNS), so discovery would fail there. On prod,
+    # dex.platform.devantler.tech resolves via public DNS (netpol allows egress
+    # 443), so OIDC runs there. (auth.oidc.enabled defaults to false.)
     rbac:
       # Use the chart's least-privilege ClusterRole; clusterAdmin (a full
       # cluster-admin wildcard) stays off -- it is a privilege-escalation
