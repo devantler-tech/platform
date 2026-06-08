@@ -95,14 +95,14 @@ push), **never written to OpenBao out of band**.
 
 A **platform-managed** credential, not a tenant secret. Every registration dir
 ships a `ghcr-auth-externalsecret.yaml` that sources the shared org pull
-credential from OpenBao (`infrastructure/ghcr`) via the cluster-scoped `openbao`
+credential from OpenBao (`infrastructure/ghcr/auth`) via the cluster-scoped `openbao`
 **ClusterSecretStore** and materialises the `ghcr-auth` dockerconfigjson the
 `OCIRepository` and ServiceAccount consume. It is reconciled by flux-system (not
 your tenant SA) — which is why it may use the ClusterSecretStore where your own
 resources may not (the Kyverno policy carves out flux-system-applied resources).
 The value lives SOPS-encrypted as `ghcr_dockerconfigjson` in the shared
 `variables-base-secret.enc.yaml` (the same org token both clusters use); the
-`seed-ghcr` PushSecret pushes it to `infrastructure/ghcr` via the `openbao`
+`seed-ghcr` PushSecret pushes it to `infrastructure/ghcr/auth` via the `openbao`
 ClusterSecretStore.
 
 - The release and template-sync workflows mint a **GitHub App token** from the
@@ -135,7 +135,7 @@ SecretStore) and rename — with:
 | `serviceaccount.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
 | `rolebinding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
 | `networkpolicy.yaml` | Cilium policy: ingress from the Gateway on the app port; egress DNS (+ CNPG/metrics if needed) |
-| `ghcr-auth-externalsecret.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr`) producing the `ghcr-auth` pull secret |
+| `ghcr-auth-externalsecret.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret |
 | `secretstore.yaml` | *Only if the tenant needs app secrets* — namespaced `SecretStore` (`kind: SecretStore`, name `openbao`) authenticating via the tenant's Vault role (mirror `wedding-app/`) |
 | `sync.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + `Kustomization` (prune, `serviceAccountName: <tenant>`) |
 
