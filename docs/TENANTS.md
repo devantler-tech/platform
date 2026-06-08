@@ -64,27 +64,33 @@ tenant ships a SOPS-encrypted Secret.
 
 ### App secrets (DB creds, API keys, … — only for tenants that need them)
 
-- **Store the values in OpenBao** (KV v2, mount `secret`) under your tenant
-  prefix `apps/<tenant>/*`, out of band (OpenBao UI/CLI) or via a `PushSecret`.
-- **The platform provisions your namespaced `SecretStore`** (`kind: SecretStore`,
-  named `openbao`) in the registration dir — you do **not** create it. It
-  authenticates via a dedicated, tenant-scoped Vault role limited to
-  `secret/{data,metadata}/apps/<tenant>/*`, so it can never reach infra or
-  another tenant's secrets. A tenant gets a store + Vault role **only if it needs
-  app secrets** — a static site gets none.
-- **In `deploy/`, add only an `ExternalSecret`** that references that namespaced
-  store (`secretStoreRef: { name: openbao, kind: SecretStore }`), reads
-  `apps/<tenant>/*`, and materialises a native Secret. Never reference the shared
-  `ClusterSecretStore` — the Kyverno policy `restrict-tenant-secret-stores` blocks
-  tenant-applied resources from doing so. Your `edit` RoleBinding aggregates the
-  `external-secrets-tenant-edit` ClusterRole, so you may manage your own
-  `ExternalSecret`/`PushSecret`/`Password` generator resources.
-- **Platform-side (one-time per such tenant)**, in
-  [`vault-config/job.yaml`](../k8s/bases/infrastructure/vault-config/job.yaml):
-  add an `app-<tenant>` policy scoped to `secret/{data,metadata}/apps/<tenant>/*`
-  and a dedicated `auth/kubernetes/role/<tenant>` binding the tenant's
-  ServiceAccount to it (mirror `app-wedding-app` + the `wedding-app` role), then
-  drop a `secretstore.yaml` into the registration dir (mirror `wedding-app/`).
+A tenant gets a store + Vault role **only if it needs app secrets** — a static
+site gets none. Two halves — the tenant reads, the platform seeds. This is a
+GitOps repo: a value is only ever introduced **SOPS-encrypted** and pushed to
+OpenBao by a `PushSecret`, **never written out of band** (no OpenBao UI/CLI).
+
+- **Tenant (`deploy/`)** — add only an `ExternalSecret` that references the
+  platform-provided namespaced store (`secretStoreRef: { name: openbao, kind:
+  SecretStore }`), reads `apps/<tenant>/*`, and materialises a native Secret.
+  Never reference the shared `ClusterSecretStore` — the Kyverno policy
+  `restrict-tenant-secret-stores` blocks tenant-applied resources from doing so.
+  Your `edit` RoleBinding aggregates the `external-secrets-tenant-edit`
+  ClusterRole, so you may manage your own `ExternalSecret`/`PushSecret`/`Password`
+  generator resources.
+- **Platform (one-time per such tenant)**:
+  - **Provision the store + isolation** — in
+    [`vault-config/job.yaml`](../k8s/bases/infrastructure/vault-config/job.yaml)
+    add an `app-<tenant>` policy scoped to `secret/{data,metadata}/apps/<tenant>/*`
+    and a dedicated `auth/kubernetes/role/<tenant>` bound to the tenant SA (mirror
+    `app-wedding-app` + the `wedding-app` role); drop a `secretstore.yaml`
+    (`kind: SecretStore`, named `openbao`) into the registration dir (mirror
+    `wedding-app/`). The store can never reach infra or another tenant's path.
+  - **Seed the value (GitOps)** — SOPS-encrypt it as a key in
+    `variables-cluster-secret.enc.yaml` and add a `PushSecret` in
+    [`vault-seed/push-secrets.yaml`](../k8s/bases/infrastructure/vault-seed/push-secrets.yaml)
+    that pushes it to `apps/<tenant>/*` via the `openbao` ClusterSecretStore
+    (mirror `seed-wedding-app-admin-code`). Randomly-generatable values use a
+    `Password` generator + `push-generated-secrets.yaml` instead.
 
 ### The GHCR image-pull secret (`ghcr-auth`)
 
@@ -95,8 +101,10 @@ credential from OpenBao (`infrastructure/ghcr`) via the cluster-scoped `openbao`
 `OCIRepository` and ServiceAccount consume. It is reconciled by flux-system (not
 your tenant SA) — which is why it may use the ClusterSecretStore where your own
 resources may not (the Kyverno policy carves out flux-system-applied resources).
-Seed the value once into OpenBao at `infrastructure/ghcr` (the `seed-ghcr`
-PushSecret pushes it from the `variables-cluster` bootstrap secret).
+The value lives SOPS-encrypted as `ghcr_dockerconfigjson` in the shared
+`variables-base-secret.enc.yaml` (the same org token both clusters use); the
+`seed-ghcr` PushSecret pushes it to `infrastructure/ghcr` via the `openbao`
+ClusterSecretStore.
 
 - The release and template-sync workflows mint a **GitHub App token** from the
   org-level `APP_ID` variable and `APP_PRIVATE_KEY` secret — already available to
