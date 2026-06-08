@@ -4,7 +4,12 @@ metadata:
   name: hcloud-cloud-controller-manager
   namespace: kube-system
 spec:
-  minAvailable: 1
+  # maxUnavailable: 1 (not minAvailable: 1) keeps the node drainable at the prod
+  # single-replica floor (hcloud_ccm_replicas: "1"). minAvailable: 1 over a
+  # single ready replica permits zero voluntary evictions and makes the hosting
+  # node undrainable; at 2+ replicas maxUnavailable: 1 still bounds disruption to
+  # one pod at a time.
+  maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: hcloud-cloud-controller-manager
