@@ -1,4 +1,13 @@
-# TODO: Remove this auth-proxy component when Cilium supports native forward auth (https://github.com/cilium/cilium/issues/23797)
+# TODO: Delete this whole component once on Cilium >= 1.20 (stable) and replace the
+# oauth2-proxy reverse-proxy + Traefik host fan-out with the native Gateway API
+# ExternalAuth HTTPRoute filter (GEP-1494). This Traefik instance exists ONLY because
+# oauth2-proxy reverse-proxy mode has a single static upstream and can't host-fan-out;
+# the ExternalAuth filter moves auth onto each HTTPRoute and routes straight to the
+# backend, so this proxy becomes redundant. Filter shipped in Cilium 1.20
+# (cilium/cilium#45739); repo is on 1.19.4, which lacks it. Needs experimental-channel
+# Gateway API CRDs + a netpol/SPIRE ripple + an /oauth2/* bypass route.
+# Execute-ready plan: https://github.com/devantler-tech/platform/issues/1881
+# (supersedes the old cilium/cilium#23797 pointer)
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

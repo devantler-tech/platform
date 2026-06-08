@@ -3,6 +3,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/apps/
+components:
+  # Platform-wide HelmRelease drift detection (mode: enabled) — see
+  # bases/components/helmrelease-drift-detection.
+  - ../../../bases/components/helmrelease-drift-detection
 patches:
   - target:
       group: kustomize.toolkit.fluxcd.io
@@ -27,3 +31,10 @@ patches:
       name: wedding-app
       namespace: wedding-app
     path: wedding-app/patches/kustomization-patch.yaml
+  # Pilot: user namespaces (hostUsers: false) on whoami — prod-only; see the
+  # patch file for the full rationale.
+  - target:
+      kind: HelmRelease
+      name: whoami
+      namespace: whoami
+    path: whoami/patches/helm-release-patch.yaml

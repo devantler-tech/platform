@@ -1,0 +1,18 @@
+# Daily base backup of umami-db to R2 via the cluster's barmanObjectStore
+# (postgres-cluster.yaml). Combined with continuous WAL archiving (auto-enabled
+# by barmanObjectStore), this gives point-in-time recovery within the 30d
+# retention window. `immediate: true` seeds the first backup as soon as this is
+# applied so the cluster is not left backup-less waiting for the first 03:00 tick.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: umami-db-daily
+  namespace: umami
+spec:
+  # CNPG cron is 6-field (seconds first): 03:00 UTC daily.
+  schedule: "0 0 3 * * *"
+  immediate: true
+  backupOwnerReference: self
+  method: barmanObjectStore
+  cluster:
+    name: umami-db

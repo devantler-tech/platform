@@ -4,9 +4,11 @@ metadata:
   name: fleetdm
   namespace: fleetdm
 spec:
-  # minAvailable: 0 allows KEDA to scale the deployment to zero replicas
-  # without creating a permanently-violated PDB.
-  minAvailable: 0
+  # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880).
+  # fleetdm is KEDA scale-to-zero (0 or 1 replica), so maxUnavailable: 1 keeps the
+  # node drainable at every replica count — same guarantee the previous
+  # minAvailable: 0 gave, now consistent with the rest of the fleet.
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: fleet

@@ -72,12 +72,19 @@ spec:
                   # below; CPU limits only loosen (less throttling, no OOM).
                   controlledValues: RequestsAndLimits
                   minAllowed:
-                    # CPU floor lowered 50m->15m: live data showed 87 containers
-                    # pinned at the 50m floor using avg 4.4m — VPA was floored,
-                    # not the workloads. CPU is compressible; 15m covers observed
-                    # usage with margin and frees ~3 cores of reserved-unused
-                    # requests. Memory floor kept at 64Mi (memory runs ~89% hot).
-                    cpu: "15m"
+                    # CPU floor raised 15m->50m for cold-start headroom. 15m was
+                    # right-sized to STEADY-STATE usage (avg 4.4m), but with
+                    # RequestsAndLimits it also pinned the LIMIT low (e.g. wedding-app
+                    # at 15m req -> 60m limit, authored 4:1 ratio), which throttled
+                    # COLD START: Node/Next.js apps couldn't boot fast enough to pass
+                    # their liveness probe and crashlooped. Only FRESH starts were hit
+                    # — already-running pods, resized in place, kept serving — so it
+                    # surfaced only on a new ReplicaSet. 50m req -> ~200m limit restores
+                    # the headroom the old pods originally cold-started under. Costs
+                    # ~3 cores of (compressible) CPU requests vs 15m; VPA still
+                    # right-sizes above the floor for steady-state. Memory floor kept
+                    # at 64Mi (memory runs ~89% hot).
+                    cpu: "50m"
                     memory: "64Mi"
                   # Upper bound: stops a leaking/runaway workload from having
                   # its request pushed to an unschedulable size or silently
@@ -127,12 +134,19 @@ spec:
                   # below; CPU limits only loosen (less throttling, no OOM).
                   controlledValues: RequestsAndLimits
                   minAllowed:
-                    # CPU floor lowered 50m->15m: live data showed 87 containers
-                    # pinned at the 50m floor using avg 4.4m — VPA was floored,
-                    # not the workloads. CPU is compressible; 15m covers observed
-                    # usage with margin and frees ~3 cores of reserved-unused
-                    # requests. Memory floor kept at 64Mi (memory runs ~89% hot).
-                    cpu: "15m"
+                    # CPU floor raised 15m->50m for cold-start headroom. 15m was
+                    # right-sized to STEADY-STATE usage (avg 4.4m), but with
+                    # RequestsAndLimits it also pinned the LIMIT low (e.g. wedding-app
+                    # at 15m req -> 60m limit, authored 4:1 ratio), which throttled
+                    # COLD START: Node/Next.js apps couldn't boot fast enough to pass
+                    # their liveness probe and crashlooped. Only FRESH starts were hit
+                    # — already-running pods, resized in place, kept serving — so it
+                    # surfaced only on a new ReplicaSet. 50m req -> ~200m limit restores
+                    # the headroom the old pods originally cold-started under. Costs
+                    # ~3 cores of (compressible) CPU requests vs 15m; VPA still
+                    # right-sizes above the floor for steady-state. Memory floor kept
+                    # at 64Mi (memory runs ~89% hot).
+                    cpu: "50m"
                     memory: "64Mi"
                   # Upper bound: stops a leaking/runaway workload from having
                   # its request pushed to an unschedulable size or silently
@@ -176,12 +190,19 @@ spec:
                   # below; CPU limits only loosen (less throttling, no OOM).
                   controlledValues: RequestsAndLimits
                   minAllowed:
-                    # CPU floor lowered 50m->15m: live data showed 87 containers
-                    # pinned at the 50m floor using avg 4.4m — VPA was floored,
-                    # not the workloads. CPU is compressible; 15m covers observed
-                    # usage with margin and frees ~3 cores of reserved-unused
-                    # requests. Memory floor kept at 64Mi (memory runs ~89% hot).
-                    cpu: "15m"
+                    # CPU floor raised 15m->50m for cold-start headroom. 15m was
+                    # right-sized to STEADY-STATE usage (avg 4.4m), but with
+                    # RequestsAndLimits it also pinned the LIMIT low (e.g. wedding-app
+                    # at 15m req -> 60m limit, authored 4:1 ratio), which throttled
+                    # COLD START: Node/Next.js apps couldn't boot fast enough to pass
+                    # their liveness probe and crashlooped. Only FRESH starts were hit
+                    # — already-running pods, resized in place, kept serving — so it
+                    # surfaced only on a new ReplicaSet. 50m req -> ~200m limit restores
+                    # the headroom the old pods originally cold-started under. Costs
+                    # ~3 cores of (compressible) CPU requests vs 15m; VPA still
+                    # right-sizes above the floor for steady-state. Memory floor kept
+                    # at 64Mi (memory runs ~89% hot).
+                    cpu: "50m"
                     memory: "64Mi"
                   # Lower upper bound than Deployments/StatefulSets: a DaemonSet
                   # pod must schedule on EVERY node, including autoscale-cx23

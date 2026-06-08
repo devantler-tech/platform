@@ -5,6 +5,12 @@ resources:
   - ../../../bases/infrastructure/
   - cluster-issuers/
   - vault-seed/
+  # Prod-only FinOps: a Kyverno ClusterPolicy that biases pod scheduling toward
+  # the static baseline workers and away from the autoscaler nodes, so the
+  # cost-optimized `autoscale-cx*` pools stay idle and scale to zero. Lives in
+  # the hetzner overlay because autoscaling is Hetzner/prod-only; see the file
+  # header for the `ksail.io/autoscaled` node-label contract it depends on.
+  - cluster-policies/prefer-baseline-nodes.yaml
   # Prod-only: reconcile Coroot's node Custom Cloud Pricing to Hetzner rates
   # (Coroot otherwise prices non-AWS/GCP/Azure nodes at the GCP-C4 fallback,
   # ~16x the real bill). Lives in this `infrastructure` layer because it targets
@@ -16,6 +22,11 @@ resources:
   # are established first — see volume-snapshot-classes/longhorn.yaml. (hcloud
   # block storage has no snapshot support, so openbao stays on FSB.)
   - volume-snapshot-classes/
+components:
+  # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
+  # opencost HelmRelease in this layer. See
+  # bases/components/helmrelease-drift-detection.
+  - ../../../bases/components/helmrelease-drift-detection
 patches:
   - path: gateway-patch.yaml
     target:

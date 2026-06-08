@@ -53,6 +53,14 @@ spec:
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: umami
+    # CNPG -> Cloudflare R2 (S3) for barmanObjectStore WAL archiving + base
+    # backups (postgres-cluster.yaml). Mirrors the velero allow-velero policy.
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
     # Kube API (CNPG operator manages the cluster)
     - toEntities:
         - kube-apiserver

@@ -4,7 +4,12 @@ metadata:
   name: origin-ca-issuer
   namespace: cert-manager
 spec:
-  minAvailable: 1
+  # maxUnavailable: 1 (not minAvailable: 1) keeps the node drainable when the
+  # workload runs 0/1 replicas — origin_ca_issuer_replicas is "0" in prod (the
+  # service is disabled). minAvailable: 1 over <2 ready replicas permits zero
+  # voluntary evictions and makes every hosting node undrainable; at 2+ replicas
+  # maxUnavailable: 1 still bounds disruption to one pod at a time.
+  maxUnavailable: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: origin-ca-issuer

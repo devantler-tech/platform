@@ -67,14 +67,10 @@ jobs:
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@002029a874fbbc27db8033d743ca75a7b570267b # v7.27.2
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@c617c5278ce2681bf0f6d5ff3f67dda20549ca53 # v7.36.0
         with:
           distribution: Talos
           provider: Docker
-          # 7.26.0 adds `workload validate --skip-kinds` / spec.workload.validation.skipKinds,
-          # which ksail.yaml uses to skip the Coroot CR (its CRDs-catalog schema is stale).
-          # Manual pin (the curl KSAIL_VERSION pins below are the Renovate-tracked ones).
-          ksail-version: "7.26.0"
           init: "false"
           validate: "true"
           scan: "true"
@@ -197,7 +193,7 @@ jobs:
         # cluster-update fixes; renovate keeps this pin current.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.29.1"
+          KSAIL_VERSION: "7.41.0"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
