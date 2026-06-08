@@ -12,6 +12,19 @@ metadata:
     gethomepage.dev/description: Kubernetes cost allocation and FinOps.
     gethomepage.dev/group: Observability
     gethomepage.dev/icon: opencost.png
+    # Status dot: Homepage derives health from the readiness of pods matching
+    # `gethomepage.dev/pod-selector`. With no selector it defaults to
+    # `app.kubernetes.io/name=<route-name>`, i.e. `app.kubernetes.io/name=opencost`,
+    # which the OpenCost chart used to satisfy directly. But OpenCost is now a
+    # Flagger Canary (infrastructure/flagger/canary-opencost.yaml): the running
+    # pods belong to the generated `opencost-primary` Deployment, and Flagger's
+    # default --selector-labels (app,name,app.kubernetes.io/name) rewrites
+    # `app.kubernetes.io/name` to `opencost-primary` on it — so the default
+    # selector matches zero pods and the card renders offline even though OpenCost
+    # is healthy (it never scales to zero). Key on the stable
+    # `app.kubernetes.io/instance` label instead, which Flagger leaves intact on
+    # both the primary and canary pods (same fix as the Umami canary).
+    gethomepage.dev/pod-selector: app.kubernetes.io/instance=opencost
 spec:
   parentRefs:
     - name: platform
