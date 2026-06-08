@@ -1,11 +1,13 @@
 # OpenBao single-node → 3-node Raft HA migration
 
-> **Status: runbook / not yet executed.** This is the one HA item that is **not**
-> a GitOps auto-apply. OpenBao currently runs `standalone` mode with **file**
-> storage; flipping the HelmRelease to Raft without a data migration brings up
-> empty raft pods and **wipes every secret cluster-wide** (all ExternalSecrets,
-> PushSecrets, the CNPG/FleetDM DB-engine roles). Execute the steps below
-> deliberately; do not merge the values change ahead of the migration.
+> **Status: manifests flipped to Raft (in this PR).** The HelmRelease now runs
+> 3-node Integrated Storage (Raft); the `standalone` + file backend is gone.
+> This is a deliberately disruptive switch, taken now **because nothing critical
+> is stored yet** — the cluster fresh-inits an empty raft (no data to migrate)
+> and re-seeds from the vault-config / vault-seed Jobs. The fresh-init / unseal /
+> join flow and the network prerequisite are below. The data-migration paths are
+> kept for the **future**: once real secrets exist, changing the storage backend
+> again needs `bao operator migrate` or a snapshot restore, never a blind flip.
 
 ## Why this can't be a values flip
 

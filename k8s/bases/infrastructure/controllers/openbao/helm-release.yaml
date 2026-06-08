@@ -105,55 +105,66 @@ spec:
         # observability stack lands, promtail will ship the stream
         # off-PVC and the size question goes away.
         size: 1Gi
+      # HA via Integrated Storage (Raft). standalone and ha are mutually
+      # exclusive, so standalone MUST be disabled. The file -> raft cutover is a
+      # one-time, deliberately disruptive switch (the storage backend changes);
+      # see docs/dr/openbao-raft-ha-migration.md for the init/unseal/join flow
+      # and the network prerequisite. Safe here only because nothing critical is
+      # stored yet -- the cluster fresh-inits an empty raft via the vault-config
+      # Job, then re-seeds from vault-config/vault-seed.
       standalone:
+        enabled: false
+      ha:
         enabled: true
-        config: |
-          ui = true
+        replicas: ${openbao_replicas:=1}
+        raft:
+          enabled: true
+          # setNodeId sets BAO_RAFT_NODE_ID to the pod name (openbao-0/1/2).
+          setNodeId: true
+          config: |
+            ui = true
 
-          # mlock prevents secret material from being paged to swap, but
-          # requires the IPC_LOCK Linux capability. On clusters where
-          # IPC_LOCK is not granted (PSS 'restricted'), this would block
-          # the server from starting. Disable it; we rely on
-          # node-level swap-off and PSS 'baseline' on the namespace
-          # instead.
-          disable_mlock = true
+            # mlock prevents secret material from being paged to swap, but
+            # requires the IPC_LOCK Linux capability. On clusters where
+            # IPC_LOCK is not granted (PSS 'restricted'), this would block
+            # the server from starting. Disable it; we rely on
+            # node-level swap-off and PSS 'baseline' on the namespace
+            # instead.
+            disable_mlock = true
 
-          listener "tcp" {
-            address     = "0.0.0.0:8200"
-            tls_disable = 1
-          }
-
-          storage "file" {
-            path = "/openbao/data"
-          }
-
-          # Declarative file audit device on the auditStorage PV. OpenBao
-          # blocks runtime audit enables: `bao audit enable file …`
-          # returns "cannot enable audit device via API; use declarative,
-          # config-based audit device management instead", so the device
-          # MUST be declared here in HCL. The mount path /openbao/audit
-          # is the chart's auditStorage default. Every API request is
-          # written to /openbao/audit/audit.log as one JSON record per
-          # line; tail it from the openbao pod today, ship via promtail
-          # once the observability stack lands.
-          #
-          # HCL shape (per https://openbao.org/docs/configuration/audit):
-          #   audit "<arbitrary identifier>" {
-          #     type    = "<device>"
-          #     path    = "<api mount path>"   # what /sys/audit/<path>/ becomes
-          #     options = { ... backend-specific options ... }
-          #   }
-          # Both `type` and `path` are required at parse time. `type`
-          # selects the backend; `path` is what `bao audit list` reports
-          # and what API requests address. We use "file/" so the device
-          # is reachable at /sys/audit/file/.
-          audit "file" {
-            type    = "file"
-            path    = "file/"
-            options = {
-              file_path = "/openbao/audit/audit.log"
+            listener "tcp" {
+              address         = "0.0.0.0:8200"
+              # Raft peers gossip on the cluster port (8201). The openbao
+              # CiliumNetworkPolicy opens 8201 pod-to-pod (networkpolicy.yaml).
+              cluster_address = "0.0.0.0:8201"
+              tls_disable     = 1
             }
-          }
+
+            storage "raft" {
+              path = "/openbao/data"
+              # Auto-join: each follower discovers the cluster via the headless
+              # service (openbao-internal) and joins the elected leader, so no
+              # manual `bao operator raft join` is needed.
+              retry_join { leader_api_addr = "http://openbao-0.openbao-internal:8200" }
+              retry_join { leader_api_addr = "http://openbao-1.openbao-internal:8200" }
+              retry_join { leader_api_addr = "http://openbao-2.openbao-internal:8200" }
+            }
+
+            service_registration "kubernetes" {}
+
+            # Declarative file audit device on the auditStorage PV. OpenBao
+            # blocks runtime audit enables (`bao audit enable` returns "use
+            # declarative, config-based audit device management instead"), so the
+            # device MUST be declared in HCL. Each raft node writes its own
+            # /openbao/audit/audit.log -- monitor ALL openbao-audit-* PVCs, since
+            # the file backend fails closed when its volume fills.
+            audit "file" {
+              type    = "file"
+              path    = "file/"
+              options = {
+                file_path = "/openbao/audit/audit.log"
+              }
+            }
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname

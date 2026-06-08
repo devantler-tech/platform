@@ -6,6 +6,16 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
+    # Raft peering: the 3 openbao pods form the Integrated Storage cluster and
+    # gossip on the cluster port (8201). Allow openbao -> openbao on 8201.
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: openbao
+            k8s:io.kubernetes.pod.namespace: openbao
+      toPorts:
+        - ports:
+            - port: "8201"
+              protocol: TCP
     # Allow same-namespace clients (vault-config Jobs, UI),
     # cross-namespace clients (ESO from external-secrets namespace),
     # and Cilium Gateway envoy proxies for external ingress
