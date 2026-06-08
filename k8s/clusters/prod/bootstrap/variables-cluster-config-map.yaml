@@ -6,7 +6,6 @@ metadata:
   namespace: flux-system
 data:
   cluster_name: prod
-  domain_regex: platform\.devantler\.tech
   domain: platform.devantler.tech
   github_app_client_id: Iv23limfvbk93bAXZI6b
   issuer_group: cert-manager.io
@@ -61,9 +60,6 @@ data:
   actual_budget_replicas_min: "0"
   actual_budget_replicas_max: "1"
   hubble_ui_replicas: "1"
-  # Umami analytics: always-on (direct Gateway routing, not KEDA); a single
-  # instance backed by its own CloudNativePG database.
-  umami_replicas: "1"
   # Auth chain: 2 replicas for HA during VPA evictions (prevents 502s).
   dex_replicas: "2"
   oauth2_proxy_replicas: "2"
