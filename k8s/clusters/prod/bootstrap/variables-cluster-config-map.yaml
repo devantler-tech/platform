@@ -13,7 +13,6 @@ data:
   issuer_name: letsencrypt-prod
   # Per-env prefixes inside the shared R2 bucket.
   r2_prefix_velero: velero/prod
-  r2_prefix_cnpg: cnpg/prod
   # --- Critical controllers (2 replicas for HA during VPA evictions) ---
   # With VPA updateMode=InPlaceOrRecreate, single-replica services get 502s
   # during eviction. User-facing auth and admission webhooks need 2+ replicas.

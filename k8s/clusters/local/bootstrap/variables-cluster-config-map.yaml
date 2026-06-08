@@ -18,5 +18,4 @@ data:
   r2_region: us-east-1
   r2_bucket: platform-backups
   r2_prefix_velero: velero
-  r2_prefix_cnpg: cnpg
 
