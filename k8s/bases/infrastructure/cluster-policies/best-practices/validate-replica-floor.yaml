@@ -1,0 +1,123 @@
+# Flags Deployments and StatefulSets running fewer than 3 replicas, so the
+# drain-safe maxUnavailable: 1 PDBs (validate-pdb-drain-safe / #1882) actually
+# preserve availability: 3 replicas + topology spread (spread-pods) tolerates a
+# node drain AND a concurrent failure with zero downtime. 2 only survives the
+# drain; 1 is a single point of failure that the PDB can't protect.
+#
+# Audit, not Enforce: .spec.replicas is owned by KEDA (scale-to-zero), Flagger
+# (canary primaries) and leader-election operators -- mutating it would fight
+# those controllers and cause perpetual drift, and tripling every replica would
+# blow this cluster's memory budget at once. This surfaces under-replicated
+# workloads in Kyverno's PolicyReports for a human to raise (or exempt)
+# deliberately.
+#
+# Exemptions (a replica floor is *wrong*, not missing, for these):
+#   * the opt-out label platform.devantler.tech/replica-floor: exempt on the
+#     workload OR its pod template -- the durable, self-documenting escape hatch
+#     for any new singleton / scale-to-zero / operator-managed workload;
+#   * Flagger primaries (*-primary) and the scaled-to-0 canary sources -- Flagger
+#     owns their replica count;
+#   * KEDA scale-to-zero targets -- a floor defeats scale-to-zero;
+#   * single-purpose control-plane / operator namespaces (velero, cnpg-system,
+#     reloader, flagger-system, flux-system, observability, openbao, testkube,
+#     vertical-pod-autoscaler) and the leader-election singletons that share a
+#     namespace with HA workloads (hcloud CCM/CSI controller, snapshot-controller,
+#     external-dns, trust-manager, origin-ca-issuer, the kyverno background/
+#     reports/cleanup controllers) -- 1 active replica is correct by design.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: validate-replica-floor
+  annotations:
+    policies.kyverno.io/title: Validate Replica Floor
+    policies.kyverno.io/category: Best Practices, High Availability
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Deployment, StatefulSet
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Flags Deployments and StatefulSets running fewer than 3 replicas so their
+      drain-safe PDBs actually preserve availability. Workloads that are
+      intentionally singleton, scale-to-zero or controller-managed opt out with
+      the platform.devantler.tech/replica-floor: exempt label.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-three-replicas
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+      exclude:
+        any:
+          # Durable opt-out: label the workload itself.
+          - resources:
+              selector:
+                matchLabels:
+                  platform.devantler.tech/replica-floor: exempt
+          # Single-purpose control-plane / operator namespaces: every workload
+          # here is a leader-election singleton or operator-managed (1 active by
+          # design). vertical-pod-autoscaler is included -- its admission webhook
+          # runs 2 and that is acceptable HA for an internal controller.
+          - resources:
+              namespaces:
+                - velero
+                - cnpg-system
+                - reloader
+                - flagger-system
+                - flux-system
+                - observability
+                - openbao
+                - testkube
+                - vertical-pod-autoscaler
+          # KEDA scale-to-zero targets, Flagger canary primaries (*-primary) and
+          # the scaled-to-0 canary sources -- their replica count is owned by a
+          # controller, not declared statically.
+          - resources:
+              names:
+                - "?*-primary"
+                - actual-budget-actualbudget
+                - fleet
+                - headlamp
+                - whoami
+                - hubble-ui
+                - longhorn-ui
+                - homepage
+                - umami-umami
+          # Leader-election singletons that share a namespace with HA workloads
+          # we DO want flagged (kube-system, cert-manager, kyverno), so they are
+          # excluded by name rather than namespace.
+          - resources:
+              names:
+                - hcloud-cloud-controller-manager
+                - hcloud-csi-controller
+                - snapshot-controller
+                - external-dns
+                - trust-manager
+                - origin-ca-issuer
+                - kyverno-background-controller
+                - kyverno-reports-controller
+                - kyverno-cleanup-controller
+      preconditions:
+        all:
+          # Durable opt-out on the pod template (charts expose podLabels more
+          # widely than top-level workload labels).
+          - key: "{{ request.object.spec.template.metadata.labels.\"platform.devantler.tech/replica-floor\" || '' }}"
+            operator: NotEquals
+            value: exempt
+      validate:
+        message: >-
+          {{ request.object.kind }} '{{ request.object.metadata.name }}' runs
+          {{ request.object.spec.replicas || `1` }} replica(s); the platform HA
+          floor is 3 so its maxUnavailable: 1 PDB keeps it available through a
+          node drain (see #1882). If it is intentionally singleton, scale-to-zero
+          or controller-managed, add the label
+          'platform.devantler.tech/replica-floor: exempt'.
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.spec.replicas || `1` }}"
+                operator: LessThan
+                value: 3

@@ -12,6 +12,7 @@ resources:
   - best-practices/validate-host-restrictions.yaml
   - best-practices/validate-pdb-drain-safe.yaml
   - best-practices/validate-pod-security.yaml
+  - best-practices/validate-replica-floor.yaml
   - flux/enforce-flux-best-practices.yaml
   - flux/helm-release-enable-tests.yaml
   - flux/helm-release-install-crds.yaml
