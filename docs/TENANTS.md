@@ -65,32 +65,31 @@ tenant ships a SOPS-encrypted Secret.
 ### App secrets (DB creds, API keys, … — only for tenants that need them)
 
 A tenant gets a store + Vault role **only if it needs app secrets** — a static
-site gets none. Two halves — the tenant reads, the platform seeds. This is a
-GitOps repo: a value is only ever introduced **SOPS-encrypted** and pushed to
-OpenBao by a `PushSecret`, **never written out of band** (no OpenBao UI/CLI).
+site gets none. The **tenant owns its app secrets end-to-end**; the platform only
+provisions the store + isolation and never seeds a tenant's app values. A value is
+only ever introduced via a committed resource (a generator, or the tenant's own
+push), **never written to OpenBao out of band**.
 
-- **Tenant (`deploy/`)** — add only an `ExternalSecret` that references the
-  platform-provided namespaced store (`secretStoreRef: { name: openbao, kind:
-  SecretStore }`), reads `apps/<tenant>/*`, and materialises a native Secret.
-  Never reference the shared `ClusterSecretStore` — the Kyverno policy
-  `restrict-tenant-secret-stores` blocks tenant-applied resources from doing so.
-  Your `edit` RoleBinding aggregates the `external-secrets-tenant-edit`
-  ClusterRole, so you may manage your own `ExternalSecret`/`PushSecret`/`Password`
-  generator resources.
-- **Platform (one-time per such tenant)**:
-  - **Provision the store + isolation** — in
-    [`vault-config/job.yaml`](../k8s/bases/infrastructure/vault-config/job.yaml)
-    add an `app-<tenant>` policy scoped to `secret/{data,metadata}/apps/<tenant>/*`
-    and a dedicated `auth/kubernetes/role/<tenant>` bound to the tenant SA (mirror
-    `app-wedding-app` + the `wedding-app` role); drop a `secretstore.yaml`
-    (`kind: SecretStore`, named `openbao`) into the registration dir (mirror
-    `wedding-app/`). The store can never reach infra or another tenant's path.
-  - **Seed the value (GitOps)** — SOPS-encrypt it as a key in
-    `variables-cluster-secret.enc.yaml` and add a `PushSecret` in
-    [`vault-seed/push-secrets.yaml`](../k8s/bases/infrastructure/vault-seed/push-secrets.yaml)
-    that pushes it to `apps/<tenant>/*` via the `openbao` ClusterSecretStore
-    (mirror `seed-wedding-app-admin-code`). Randomly-generatable values use a
-    `Password` generator + `push-generated-secrets.yaml` instead.
+- **Tenant (`deploy/`)** — own your secret end-to-end. Your `edit` RoleBinding
+  aggregates `external-secrets-tenant-edit`, so you may create `Password`
+  generators, `PushSecret`s and `ExternalSecret`s in your namespace. They all
+  reference the platform-provided **namespaced** store (`secretStoreRef:
+  { name: openbao, kind: SecretStore }`) — never the shared `ClusterSecretStore`
+  (the `restrict-tenant-secret-stores` Kyverno policy blocks that). The store
+  authenticates via your tenant Vault role, scoped to `apps/<tenant>/*` (read **+
+  write**), so you both seed and read your own path. The standard pattern for a
+  generated value (an admin code, a token): a `Password` generator → a `PushSecret`
+  (`selector.generatorRef`, `refreshInterval: "0"`) that writes it once to
+  `apps/<tenant>/*` → an `ExternalSecret` that reads it back into the Secret your
+  app consumes. See `wedding-app`'s `deploy/admin-code-*.yaml`.
+- **Platform (one-time per such tenant)** — in
+  [`vault-config/job.yaml`](../k8s/bases/infrastructure/vault-config/job.yaml) add
+  an `app-<tenant>` policy scoped to `secret/{data,metadata}/apps/<tenant>/*` (read
+  **+ write**, so the tenant can seed) and a dedicated `auth/kubernetes/role/<tenant>`
+  bound to the tenant SA (mirror `app-wedding-app` + the `wedding-app` role); drop a
+  `secretstore.yaml` (`kind: SecretStore`, named `openbao`) into the registration
+  dir (mirror `wedding-app/`). The store can never reach infra or another tenant's
+  path, and the platform does **not** seed tenant app values.
 
 ### The GHCR image-pull secret (`ghcr-auth`)
 
