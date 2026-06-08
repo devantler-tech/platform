@@ -128,8 +128,9 @@ data:
             icon: unifi
             href: https://unifi.ui.com
             description: Central hub for managing on-prem UniFi network infrastructure.
-    # Analytics is populated dynamically from the Umami HTTPRoute's
-    # gethomepage.dev annotations (k8s/bases/apps/umami/httproute.yaml).
+    # Analytics is populated dynamically from the gethomepage.dev annotations on
+    # Umami's Flagger-generated HTTPRoute (k8s/bases/apps/umami/canary.yaml,
+    # spec.service.apex.annotations).
   bookmarks.yaml: |
     - Personal:
         - Personal Site:
