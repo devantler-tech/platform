@@ -1,0 +1,81 @@
+---
+# The Flux Status web UI, split out of the flux-operator release as a
+# standalone web-server-only deployment (web.serverOnly). This is the half of
+# the chart that carries no controller responsibilities, so — unlike the
+# always-on operator/reconciler — it is safe to scale to zero. It is fronted by
+# the KEDA HTTP add-on (see ../../http-scaled-objects/flux-operator-web.yaml),
+# so it idles down to 0 replicas and cold-starts on the next request to
+# flux.${domain}.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: flux-operator-web
+  namespace: flux-system
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  dependsOn:
+    # CRDs and the cluster-admin/aggregation RBAC are owned by the operator
+    # release (installCRDs is off here). Ordering the install AFTER the operator
+    # has turned its own web off also hands the flux-web-user/flux-web-admin
+    # ClusterRoles over to this release without a Helm ownership conflict.
+    - name: flux-operator
+  chart:
+    spec:
+      chart: flux-operator
+      version: 0.50.0
+      sourceRef:
+        kind: HelmRepository
+        name: flux-operator
+  interval: 10m0s
+  timeout: 10m
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  values:
+    # Distinct name so all label selectors (and the homepage pod-selector)
+    # separate the web pods from the operator pods.
+    nameOverride: flux-operator-web
+    fullnameOverride: flux-operator-web
+    # CRDs are installed and owned by the flux-operator release.
+    installCRDs: false
+    web:
+      enabled: true
+      # Run as a UI-only deployment with no reconciler (--web-server-only). This
+      # drops the operator's cluster-admin binding and the FluxInstance
+      # reconcile loop, leaving a stateless front end that is safe to scale to
+      # zero.
+      serverOnly: true
+      # The web UI is reached via the KEDA interceptor and guarded by the repo's
+      # CiliumNetworkPolicy (allow-flux), so skip the chart's permissive
+      # "allow 9080 from all namespaces" plain NetworkPolicy.
+      networkPolicy:
+        create: false
+      # Create the flux-web-user / flux-web-admin standard roles here (the
+      # operator release no longer does, since its web is disabled). The
+      # flux-web-admins ClusterRoleBinding binds devantler-tech:admins to these.
+      rbac:
+        createRoles: true
+      config:
+        baseURL: https://flux.${domain}
+        authentication:
+          type: OAuth2
+          oauth2:
+            provider: OIDC
+            clientID: flux-web
+            clientSecret: ${flux_web_client_secret}
+            issuerURL: https://dex.${domain}
+            scopes:
+              - openid
+              - profile
+              - email
+              - groups
+              - offline_access
+            impersonation:
+              username: "claims.email"
+              groups: "has(claims.groups) ? claims.groups : []"
