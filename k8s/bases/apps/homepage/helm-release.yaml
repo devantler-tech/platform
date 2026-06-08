@@ -32,11 +32,15 @@ spec:
               kind: Deployment
               name: homepage
             patch: |
-              # Flagger owns the canary deployment's replicas (it scales to zero
-              # between rollouts) — strip the chart's replicas so Flux does not
-              # fight it. See canary.yaml.
-              - op: remove
+              # Flagger copies the source Deployment's replicas onto the primary.
+              # Pin it to 3 for an HA primary (require-three-replicas) instead of
+              # removing it (which left the primary at the chart default of 1).
+              # Flux drift detection ignores /spec/replicas, so Flagger's
+              # between-rollout scale-to-zero of this source is not fought. See
+              # canary.yaml.
+              - op: replace
                 path: /spec/replicas
+                value: 3
               - op: add
                 path: /metadata/annotations/configmap.reloader.stakater.com~1reload
                 value: homepage
@@ -137,9 +141,9 @@ spec:
   # ---
   # https://github.com/M0NsTeRRR/helm-charts/blob/main/charts/homepage/values.yaml
   values:
-    # replicaCount intentionally omitted — Flagger manages canary replicas (the
-    # chart's replicas field is stripped by the postRenderer above). The primary
-    # therefore runs the chart default of 1 instead of 2.
+    # replicaCount intentionally omitted — the postRenderer above pins the
+    # source Deployment's replicas to 3, which Flagger copies onto the primary
+    # (so the primary runs 3 for HA).
     # Homepage is a single-threaded Next.js server: it idles near ~3m CPU but
     # bursts hard on every load — server-rendering the page, polling ~14
     # service statuses against kube-apiserver, and aggregating the cluster /
