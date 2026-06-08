@@ -51,9 +51,9 @@ spec:
     webhook:
       enabled: false
     controller:
-      # Leader-elected singleton; only active while a backup is taking CSI
-      # snapshots. One replica is sufficient.
-      replicaCount: 1
+      # Leader-elected; 3 replicas for HA (require-three-replicas policy) -- one
+      # active while a backup takes CSI snapshots, the rest warm standbys.
+      replicaCount: ${snapshot_controller_replicas:=1}
       resources:
         requests:
           cpu: 10m

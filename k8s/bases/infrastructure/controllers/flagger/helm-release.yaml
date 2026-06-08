@@ -41,6 +41,13 @@ spec:
     # shifts traffic by rewriting backendRef weights (Cilium honours them).
     meshProvider: gatewayapi:v1
 
+    # HA: Flagger elects a single leader to drive canaries; the other replicas
+    # are warm standbys. leaderElection MUST be enabled before replicas > 1, or
+    # every replica double-drives each canary. require-three-replicas policy.
+    leaderElection:
+      enabled: true
+    replicaCount: ${flagger_replicas:=1}
+
     # Reuse Coroot's bundled Prometheus (the metrics TSDB the coroot-operator
     # deploys, the same endpoint OpenCost queries). Coroot's eBPF node-agent
     # exports server-side HTTP metrics — container_http_inbound_requests_total
