@@ -6,9 +6,12 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Gateway ingress for flux-web UI
-    - fromEntities:
-        - ingress
+    # flux-operator-web UI: the cold-start path is Gateway -> KEDA interceptor
+    # -> flux-operator-web:9080, so the client reaching :9080 is the interceptor
+    # pod in the keda namespace, not the reserved "ingress" identity.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: keda
       toPorts:
         - ports:
             - port: "9080"

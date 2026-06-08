@@ -88,6 +88,13 @@ spec:
         - ports:
             - port: "8081"
               protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: flux-system
+      toPorts:
+        - ports:
+            - port: "9080"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:
