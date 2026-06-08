@@ -7,13 +7,25 @@
 # Flux and the Kyverno admission layer never see (e.g. kubelet-managed static
 # pods, a compromised registry serving a tampered image).
 #
-# Scope: FIRST-PARTY images only (ghcr.io/devantler-tech/*). These are built,
-# pushed, and keyless-cosign-signed by the shared reusable workflow
+# Scope: FIRST-PARTY APP images, enumerated PER-REPO (deliberately NOT a
+# ghcr.io/devantler-tech/* wildcard — see below). These are built, pushed, and
+# keyless-cosign-signed by the shared reusable workflow
 # devantler-tech/reusable-workflows/.github/workflows/publish-app.yaml (it runs
 # `cosign sign` on BOTH the manifests artifact and the container image). That
 # is the SAME signing identity the apps' Flux OCIRepository verify blocks
-# already pin, so this adds no new trust root. Currently covers the wedding-app
-# and ascoachingogvaner container images running in prod.
+# already pin, so this adds no new trust root. Currently the wedding-app and
+# ascoachingogvaner container images running in prod.
+#
+# Why per-repo and NOT a ghcr.io/devantler-tech/* wildcard: that wildcard also
+# matches ghcr.io/devantler-tech/ksail — the ksail-operator image — which
+# ksail's own release pipeline does NOT cosign-sign. Since a rule fails CLOSED
+# for a matching-but-unverifiable image (the converse note below), the wildcard
+# pinned the operator in ImagePullBackOff ("no valid signature found: bundle
+# tag not found"). Enumerating per app keeps the operator (and any other
+# unsigned first-party tooling image) on the fail-open path. New signed app
+# images must be added here explicitly; an unlisted first-party container image
+# falls through to fail-open at the node layer, but is still cosign-verified at
+# the Flux OCIRepository + Kyverno layers.
 #
 # FAIL-OPEN by design: an image is verified only when it MATCHES a rule; an
 # image matching NO rule is pulled WITHOUT verification. So third-party chart
@@ -38,7 +50,11 @@
 apiVersion: v1alpha1
 kind: ImageVerificationConfig
 rules:
-  - image: ghcr.io/devantler-tech/*
+  - image: ghcr.io/devantler-tech/wedding-app*
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-app\.yaml@.+$
+  - image: ghcr.io/devantler-tech/ascoachingogvaner*
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-app\.yaml@.+$
