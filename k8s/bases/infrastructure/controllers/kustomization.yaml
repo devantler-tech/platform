@@ -1,9 +1,15 @@
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# This aggregate is the controller set EVERY provider gets — adding a subdir
+# here ships it to all providers, with no per-provider allowlist to keep in sync.
+# Provider-/cluster-local controllers are intentionally NOT listed here; the
+# provider overlay that needs them references them directly:
+#   - cdi/ + kubevirt/ : VM stack, local/CI only (docker provider). No
+#       VirtualMachines/DataVolumes run on Hetzner and virt-handler crash-loops
+#       with zero VMs, so prod opts out by simply not referencing them.
 resources:
   - auth-proxy/
-  - cdi/
   - cert-manager/
   - cilium/
   - cloudnative-pg/
@@ -15,7 +21,6 @@ resources:
   - keda/
   - keda-http-add-on/
   - ksail-operator/
-  - kubevirt/
   - kubescape/
   - kyverno/
   - metrics-server/
