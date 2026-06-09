@@ -78,3 +78,35 @@ spec:
         memory: 64Mi
       limits:
         memory: 256Mi
+
+  # Keep the Deployment on a RollingUpdate strategy. The chart hardcodes
+  # `strategy.type: Recreate` on the flagger Deployment
+  # (charts/flagger/templates/deployment.yaml) with no values override. An
+  # earlier chart revision rendered RollingUpdate, so the live Deployment carries
+  # an API-defaulted `rollingUpdate{maxSurge,maxUnavailable}` block. Server-side
+  # apply does NOT prune that block when `type` flips to Recreate, so the merged
+  # object is rejected as invalid — `spec.strategy.rollingUpdate may not be
+  # specified when strategy type is 'Recreate'` — and every Helm upgrade fails
+  # and rolls back, stalling the flagger HelmRelease and wedging
+  # infrastructure-controllers (→ infrastructure → apps). Flagger runs leader
+  # election, so the brief pod overlap a rolling update allows is safe. The chart
+  # exposes no value for this, so patch the rendered Deployment back to
+  # RollingUpdate via a post-renderer; set the rollingUpdate params explicitly
+  # (the Kubernetes defaults) so helm-controller fully owns the field, the
+  # applied object matches the live object exactly, and drift detection (which
+  # does not ignore /spec/strategy) sees no diff.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: flagger
+            patch: |
+              - op: replace
+                path: /spec/strategy/type
+                value: RollingUpdate
+              - op: add
+                path: /spec/strategy/rollingUpdate
+                value:
+                  maxSurge: 25%
+                  maxUnavailable: 25%
