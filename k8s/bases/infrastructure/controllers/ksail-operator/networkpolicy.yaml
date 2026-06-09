@@ -1,0 +1,45 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-ksail-operator
+  namespace: ksail-operator
+spec:
+  endpointSelector: {}
+  ingress:
+    # Gateway ingress for the operator UI + REST API.
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # Intra-namespace (e.g. leader-election peers).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ksail-operator
+  egress:
+    # Intra-namespace.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ksail-operator
+    # Kube API (reconcile Cluster resources, leader election, serve the API).
+    - toEntities:
+        - kube-apiserver
+    # Dex OIDC discovery / token exchange (dex.${domain} via Cloudflare proxy).
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS resolution.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

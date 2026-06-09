@@ -273,6 +273,18 @@ spec:
               }
               POLICY
 
+              # Read the shared GHCR image-pull credential. Consumed by the
+              # platform-authored `ghcr-auth` ExternalSecrets in the tenant
+              # namespaces via the `external-secrets` ClusterSecretStore role, so
+              # tenants get their pull secret from OpenBao instead of a per-tenant
+              # SOPS file. Platform-side, not a tenant secret: those ExternalSecrets
+              # are reconciled by flux-system, never by a tenant ServiceAccount.
+              bao policy write infra-ghcr-readonly - <<'POLICY'
+              path "secret/data/infrastructure/ghcr/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
               bao policy write app-fleetdm-readonly - <<'POLICY'
               path "secret/data/apps/fleetdm/*" {
                 capabilities = ["read"]
@@ -300,6 +312,23 @@ spec:
               bao policy write app-wedding-readonly - <<'POLICY'
               path "secret/data/apps/wedding-app/*" {
                 capabilities = ["read"]
+              }
+              POLICY
+
+              # Tenant-scoped policy for wedding-app's OWN namespaced SecretStore
+              # (k8s/bases/apps/wedding-app/secretstore.yaml) and the ExternalSecret
+              # the tenant ships in its deploy/ artifact. Read + seed-write, confined
+              # to secret/{data,metadata}/apps/wedding-app/* so the tenant can both
+              # seed (generator/PushSecret) and read its own app secrets and can
+              # never reach infra or another tenant's path. Bound via the dedicated
+              # `wedding-app` Kubernetes auth role below — NOT the broad shared
+              # `external-secrets` role used by the ClusterSecretStore.
+              bao policy write app-wedding-app - <<'POLICY'
+              path "secret/data/apps/wedding-app/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/wedding-app/*" {
+                capabilities = ["create", "update", "read"]
               }
               POLICY
 
@@ -352,6 +381,9 @@ spec:
               path "secret/data/infrastructure/git/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/data/infrastructure/ghcr/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/data/apps/fleetdm/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -385,6 +417,9 @@ spec:
               path "secret/metadata/infrastructure/git/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/metadata/infrastructure/ghcr/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/metadata/apps/fleetdm/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -411,7 +446,7 @@ spec:
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,infra-oidc-readonly,vault-seed-write \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,infra-oidc-readonly,vault-seed-write \
                 ttl=1h
 
               # Dedicated role for the fleetdm VaultDynamicSecret generator.
@@ -432,6 +467,20 @@ spec:
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=umami \
                 policies=app-umami-db-readonly \
+                ttl=1h
+
+              # Dedicated tenant role for wedding-app. Authenticates the tenant's
+              # own `wedding-app` ServiceAccount (used by its namespaced
+              # SecretStore + deploy/ ExternalSecret) and carries ONLY the
+              # path-scoped `app-wedding-app` policy — never the broad
+              # `external-secrets` bundle — so the tenant is confined to
+              # secret/{data,metadata}/apps/wedding-app/*. This is what lets
+              # wedding-app source its app secrets from OpenBao via a namespaced
+              # store instead of SOPS, with per-tenant Vault isolation.
+              bao write auth/kubernetes/role/wedding-app \
+                bound_service_account_names=wedding-app \
+                bound_service_account_namespaces=wedding-app \
+                policies=app-wedding-app \
                 ttl=1h
 
               # Snapshot CronJob needs health check read
