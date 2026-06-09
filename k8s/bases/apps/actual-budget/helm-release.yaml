@@ -8,17 +8,10 @@ metadata:
 spec:
   interval: 2m
   timeout: 10m
-  install:
-    remediation:
-      retries: -1
-  upgrade:
-    remediation:
-      retries: -1
-      remediateLastFailure: true
   chart:
     spec:
       chart: actualbudget
-      version: 1.8.8
+      version: 1.8.9
       sourceRef:
         kind: HelmRepository
         name: actual-budget

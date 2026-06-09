@@ -18,20 +18,15 @@ spec:
   chart:
     spec:
       chart: longhorn
-      version: 1.11.2
+      version: 1.12.0
       sourceRef:
         kind: HelmRepository
         name: longhorn
   interval: 10m0s
   install:
     crds: CreateReplace
-    remediation:
-      retries: -1
   upgrade:
     crds: CreateReplace
-    remediation:
-      retries: -1
-      remediateLastFailure: true
   timeout: 10m
   # https://github.com/longhorn/charts/blob/master/charts/longhorn/values.yaml
   values:
