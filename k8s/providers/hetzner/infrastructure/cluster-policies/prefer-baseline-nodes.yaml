@@ -58,6 +58,22 @@ spec:
           - resources:
               kinds:
                 - Pod
+              # CREATE only. A node affinity is consulted solely by the scheduler
+              # at pod-creation time and is immutable thereafter, so there is
+              # nothing to mutate on UPDATE. Worse, mutating on UPDATE breaks
+              # in-place pod updates: the Kubernetes pod-update validation forbids
+              # changing `spec.affinity`, so adding it during any UPDATE of a pod
+              # that has no affinity yet (e.g. a controller patching a finalizer
+              # or annotation) gets the whole request rejected with "pod updates
+              # may not change fields other than ...". Without this restriction
+              # Kyverno registers the mutating webhook for CREATE *and* UPDATE; a
+              # stuck-terminating Job pod on a deleted node (orphaned
+              # batch.kubernetes.io/job-tracking finalizer) could not be cleaned
+              # up because every finalizer-removal patch tripped this. Scoping to
+              # CREATE keeps the scheduling bias intact and stops the webhook from
+              # touching updates.
+              operations:
+                - CREATE
       exclude:
         any:
           - resources:
