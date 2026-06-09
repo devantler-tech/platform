@@ -13,16 +13,21 @@ data:
   issuer_name: letsencrypt-prod
   # Per-env prefixes inside the shared R2 bucket.
   r2_prefix_velero: velero/prod
-  # --- Critical controllers (2 replicas for HA during VPA evictions) ---
-  # With VPA updateMode=InPlaceOrRecreate, single-replica services get 502s
-  # during eviction. User-facing auth and admission webhooks need 2+ replicas.
-  cert_manager_replicas: "2"
-  metrics_server_replicas: "2"
+  # --- Critical controllers (3 replicas for HA; require-three-replicas floor) ---
+  # With VPA updateMode=InPlaceOrRecreate, single-replica services get 502s during
+  # eviction. The replica-floor (#1898/#1900) wants 3 so a maxUnavailable: 1 PDB +
+  # topology spread survive a node drain AND a concurrent failure with zero
+  # downtime (2 only survives the drain). These run leader election or are
+  # stateless/admission webhooks, so the third replica is a cheap warm standby.
+  # cert_manager_replicas drives the controller, webhook AND cainjector; the keda
+  # vars drive the operator, admission webhooks, HTTP scaler and interceptor floor.
+  cert_manager_replicas: "3"
+  metrics_server_replicas: "3"
   vpa_admission_replicas: "3"
-  keda_operator_replicas: "2"
-  keda_webhooks_replicas: "2"
-  keda_scaler_replicas: "2"
-  keda_interceptor_min_replicas: "2"
+  keda_operator_replicas: "3"
+  keda_webhooks_replicas: "3"
+  keda_scaler_replicas: "3"
+  keda_interceptor_min_replicas: "3"
   # --- Leader-elected operators (3 replicas for HA; require-three-replicas) ---
   # One replica is active; the rest are warm standbys that take over on a node
   # failure/drain. velero stays 1 — its chart hardcodes replicas: 1 and it has
@@ -62,10 +67,12 @@ data:
   actual_budget_replicas_min: "0"
   actual_budget_replicas_max: "1"
   hubble_ui_replicas: "1"
-  # Auth chain: 2 replicas for HA during VPA evictions (prevents 502s).
-  dex_replicas: "2"
-  oauth2_proxy_replicas: "2"
-  auth_proxy_replicas: "2"
+  # Auth chain: 3 replicas for HA (require-three-replicas floor). User-facing auth
+  # must survive a node drain + a concurrent failure; also prevents 502s during VPA
+  # InPlaceOrRecreate evictions.
+  dex_replicas: "3"
+  oauth2_proxy_replicas: "3"
+  auth_proxy_replicas: "3"
   # --- Hetzner Cloud ---
   hetzner_lb_location: "fsn1"
   hetzner_lb_type: "lb11"
@@ -134,6 +141,9 @@ data:
   # runbook docs/dr/openbao-raft-ha-migration.md.
   openbao_replicas: "3"
   openbao_storage_size: 10Gi
-  # --- External Secrets Operator ---
-  external_secrets_replicas: "2"
+  # --- External Secrets Operator (3 replicas for HA; require-three-replicas) ---
+  # Drives the controller, webhook and cert-controller. Controller + cert-controller
+  # are leader-elected and the webhook is stateless, so the third replica is a warm
+  # standby that keeps the operator available through a node drain + failure.
+  external_secrets_replicas: "3"
 

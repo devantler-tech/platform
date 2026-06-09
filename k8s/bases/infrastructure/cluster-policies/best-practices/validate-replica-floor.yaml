@@ -85,6 +85,7 @@ spec:
                 - longhorn-ui
                 - homepage
                 - umami-umami
+                - opencost
           # Single-replica-only by design: external-dns (chart has no
           # replicaCount; >1 replica = duplicate Cloudflare writes + throttling),
           # origin-ca-issuer (disabled, 0 replicas) and flagger-loadtester
