@@ -20,10 +20,11 @@
 #   * KEDA scale-to-zero targets -- a floor defeats scale-to-zero;
 #   * single-purpose control-plane / operator namespaces (velero, cnpg-system,
 #     reloader, flagger-system, flux-system, observability, openbao, testkube,
-#     vertical-pod-autoscaler) and the leader-election singletons that share a
-#     namespace with HA workloads (hcloud CCM/CSI controller, snapshot-controller,
-#     external-dns, trust-manager, origin-ca-issuer, the kyverno background/
-#     reports/cleanup controllers) -- 1 active replica is correct by design.
+#     vertical-pod-autoscaler, external-secrets, keda, kubescape) and the
+#     leader-election singletons that share a namespace with HA workloads (hcloud
+#     CCM/CSI controller, snapshot-controller, external-dns, trust-manager,
+#     origin-ca-issuer, the kyverno background/reports/cleanup controllers) --
+#     1 active replica is correct by design.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -60,7 +61,13 @@ spec:
           # Single-purpose control-plane / operator namespaces: every workload
           # here is a leader-election singleton or operator-managed (1 active by
           # design). vertical-pod-autoscaler is included -- its admission webhook
-          # runs 2 and that is acceptable HA for an internal controller.
+          # runs 2 and that is acceptable HA for an internal controller. The same
+          # holds for external-secrets (controller + webhook + cert-controller),
+          # keda (operator, metrics-apiserver, admission-webhook and the HTTP
+          # add-on controller/interceptor/scaler) and kubescape (operator, storage,
+          # kubevuln, kubescape) -- dedicated operator namespaces whose every
+          # Deployment is a leader-election controller or webhook, none of which a
+          # 3-replica floor would make more available.
           - resources:
               namespaces:
                 - velero
@@ -72,9 +79,15 @@ spec:
                 - openbao
                 - testkube
                 - vertical-pod-autoscaler
+                - external-secrets
+                - keda
+                - kubescape
           # KEDA scale-to-zero targets, Flagger canary primaries (*-primary) and
           # the scaled-to-0 canary sources -- their replica count is owned by a
-          # controller, not declared statically.
+          # controller, not declared statically. The canary sources are matched by
+          # name here (the "?*-primary" glob only covers the primaries); Flagger
+          # scales each source Deployment to 0, so opencost belongs alongside the
+          # other onboarded apps (homepage, umami-umami).
           - resources:
               names:
                 - "?*-primary"
@@ -86,6 +99,7 @@ spec:
                 - longhorn-ui
                 - homepage
                 - umami-umami
+                - opencost
           # Leader-election singletons that share a namespace with HA workloads
           # we DO want flagged (kube-system, cert-manager, kyverno), so they are
           # excluded by name rather than namespace.
