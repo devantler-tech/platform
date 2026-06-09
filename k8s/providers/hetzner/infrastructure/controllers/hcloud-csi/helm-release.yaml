@@ -42,6 +42,13 @@ spec:
       hcloudVolumeDefaultLocation: fsn1
       podDisruptionBudget:
         create: true
+        # Stays minAvailable: 1: ksail installs the Hetzner CSI controller (chart
+        # default PDB) during bootstrap BEFORE Flux, so flipping to maxUnavailable
+        # conflicts at server-side apply ("minAvailable and maxUnavailable cannot
+        # be both set"). Drain-safety here comes from running >=2 replicas -- the
+        # HA PR bumps hcloud_csi_controller_replicas to 3, making minAvailable: 1
+        # drain-safe (it bounds disruption to 1 of 3). Exempt from
+        # validate-pdb-drain-safe.
         minAvailable: 1
       affinity:
         podAntiAffinity:

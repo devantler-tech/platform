@@ -39,6 +39,12 @@ spec:
     replicaCount: ${cert_manager_replicas:=2}
     podDisruptionBudget:
       enabled: true
+      # Stays minAvailable: 1 (NOT the maxUnavailable house pattern): ksail
+      # bootstrap-installs cert-manager (ksail.yaml certManager: Enabled) with
+      # its default minAvailable PDB BEFORE Flux, so flipping to maxUnavailable
+      # makes Flux's server-side apply conflict with ksail's field manager
+      # ("minAvailable and maxUnavailable cannot be both set"). Drain-safe at the
+      # 2-replica floor (cert_manager_replicas: "2"). Exempt from validate-pdb-drain-safe.
       minAvailable: 1
     strategy:
       type: RollingUpdate
@@ -64,6 +70,9 @@ spec:
         runAsNonRoot: true
       podDisruptionBudget:
         enabled: true
+        # Stays minAvailable: 1 -- ksail bootstrap-installs cert-manager before
+        # Flux; flipping to maxUnavailable conflicts at server-side apply.
+        # Drain-safe at the 2-replica floor. Exempt from validate-pdb-drain-safe.
         minAvailable: 1
       strategy:
         type: RollingUpdate
@@ -89,6 +98,9 @@ spec:
         runAsNonRoot: true
       podDisruptionBudget:
         enabled: true
+        # Stays minAvailable: 1 -- ksail bootstrap-installs cert-manager before
+        # Flux; flipping to maxUnavailable conflicts at server-side apply.
+        # Drain-safe at the 2-replica floor. Exempt from validate-pdb-drain-safe.
         minAvailable: 1
       strategy:
         type: RollingUpdate

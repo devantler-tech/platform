@@ -1,0 +1,86 @@
+# Flags PodDisruptionBudgets that set spec.minAvailable, steering the platform
+# to the drain-safe house pattern (spec.maxUnavailable: 1 -- see #1880/#1882).
+#
+# A minAvailable PDB over a workload running fewer ready replicas than the
+# minAvailable value permits ZERO voluntary evictions, which makes every node
+# hosting one of its pods undrainable -- deadlocking ksail node recycles, Talos
+# OS upgrades and autoscaler scale-down (the #1880 incident). maxUnavailable
+# never deadlocks a drain because the disruption controller evaluates it against
+# the live replica count, so a single pod can always be evicted.
+#
+# CloudNativePG-managed PDBs are excluded: the operator owns drain-safety for its
+# clusters (graceful primary switchover, and minAvailable scaled to instances-1
+# for replicas), so its multi-instance PDBs are legitimately drain-safe. Single-
+# instance CNPG clusters are made drain-safe at the source instead (instances>=2
+# for HA, or spec.enablePDB: false).
+#
+# Audit, not Enforce: denying minAvailable PDBs at admission would wedge
+# reconciliation for any chart/operator that ships one (cf. the
+# enforce-flux-best-practices gate). This surfaces deviations in Kyverno's
+# PolicyReports for a human to assess. After the chart-PDB sweep this policy
+# ships with, the cluster reports zero violations -- so any future violation is a
+# new chart or operator reintroducing the landmine.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: validate-pdb-drain-safe
+  annotations:
+    policies.kyverno.io/title: Validate Drain-Safe PodDisruptionBudgets
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: PodDisruptionBudget
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Flags PodDisruptionBudgets that set spec.minAvailable. The platform
+      standard is spec.maxUnavailable, which keeps nodes drainable at any
+      replica count; a minAvailable PDB over a low-replica workload can make its
+      node undrainable. CloudNativePG-managed PDBs are excluded.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-maxunavailable
+      match:
+        any:
+          - resources:
+              kinds:
+                - PodDisruptionBudget
+      exclude:
+        any:
+          # CloudNativePG owns drain-safety for its clusters via switchover and
+          # scales minAvailable to (instances - 1); don't flag operator-managed
+          # PDBs (labelled cnpg.io/cluster).
+          - resources:
+              selector:
+                matchExpressions:
+                  - key: cnpg.io/cluster
+                    operator: Exists
+          # ksail bootstrap-installs cert-manager, metrics-server and kyverno
+          # (ksail.yaml certManager/metricsServer/policyEngine) with their
+          # default minAvailable PDBs BEFORE Flux. Flipping those to
+          # maxUnavailable conflicts at server-side apply with ksail's field
+          # manager, so they intentionally stay minAvailable: 1 -- drain-safe at
+          # their 2-replica floors. Don't flag them.
+          - resources:
+              names:
+                - cert-manager
+                - cert-manager-webhook
+                - cert-manager-cainjector
+                - metrics-server
+                - kyverno-admission-controller
+                # hcloud-csi-controller is also ksail-installed (Hetzner CSI) and
+                # keeps minAvailable: 1; its drain-safety comes from the HA PR's
+                # replica bump to 3, not maxUnavailable.
+                - hcloud-csi-controller
+      validate:
+        message: >-
+          PodDisruptionBudget '{{ request.object.metadata.name }}' sets
+          spec.minAvailable. Use spec.maxUnavailable instead (e.g.
+          maxUnavailable: 1) so node drains are never deadlocked at low replica
+          counts -- see issues #1880 and #1882.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.minAvailable || '' }}"
+                operator: NotEquals
+                value: ""

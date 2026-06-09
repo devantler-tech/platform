@@ -33,7 +33,12 @@ spec:
       enabled: true
     podDisruptionBudget:
       enabled: true
-      minAvailable: 1
+      # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 keeps the node
+      # drainable at any replica count. trust_manager_replicas is "1" in prod,
+      # so minAvailable: 1 permitted zero voluntary evictions and made its node
+      # undrainable. (The chart's default minAvailable: 1 only renders when
+      # both keys are absent, so setting maxUnavailable alone suppresses it.)
+      maxUnavailable: 1
     replicaCount: ${trust_manager_replicas:=2}
     topologySpreadConstraints:
       - maxSkew: 1

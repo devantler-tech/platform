@@ -64,9 +64,11 @@ spec:
         rollOutPods: true
         podDisruptionBudget:
           enabled: true
-          minAvailable: 1
-          # Chart defaults set maxUnavailable: 1; PDB can't have both set.
-          maxUnavailable: null
+          # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
+          # deadlocks a node drain regardless of replica count. A PDB can't set
+          # both fields, so minAvailable is nulled.
+          minAvailable: null
+          maxUnavailable: 1
       ui:
         enabled: true
         # KEDA HTTP add-on scales hubble-ui between 0 and 1 based on traffic.
@@ -90,8 +92,11 @@ spec:
           memory: 128Mi
       podDisruptionBudget:
         enabled: true
-        minAvailable: 1
-        maxUnavailable: null
+        # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
+        # deadlocks a node drain regardless of replica count. A PDB can't set
+        # both fields, so minAvailable is nulled.
+        minAvailable: null
+        maxUnavailable: 1
       updateStrategy:
         type: RollingUpdate
         rollingUpdate:
