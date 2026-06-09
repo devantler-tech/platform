@@ -1,0 +1,32 @@
+---
+# Platform-wide Flux reliability defaults for every HelmRelease.
+#
+# WHY: the enforce-flux-best-practices Kyverno policy requires every HelmRelease
+# to set install/upgrade remediation (retries + remediateLastFailure). That block
+# is 100% identical across all ~37 HelmReleases, so it was copy-pasted into each
+# one. This Component defines it once and merges it into every HelmRelease, the
+# same way bases/components/helmrelease-drift-detection applies drift detection.
+#
+# Strategic-merge (not JSON6902) so it MERGES: it creates spec.install/upgrade
+# when absent and leaves sibling fields (install.crds, upgrade.crds/force) and
+# per-chart values untouched. Per-HR values would win on conflict, but these
+# values are uniform policy, so the merge is a no-op wherever a HR still sets it.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      group: helm.toolkit.fluxcd.io
+      kind: HelmRelease
+    patch: |
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: not-used
+      spec:
+        install:
+          remediation:
+            retries: -1
+        upgrade:
+          remediation:
+            retries: -1
+            remediateLastFailure: true

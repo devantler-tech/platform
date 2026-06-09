@@ -18,13 +18,6 @@ spec:
         name: flux-operator
   interval: 10m0s
   timeout: 10m
-  install:
-    remediation:
-      retries: -1
-  upgrade:
-    remediation:
-      retries: -1
-      remediateLastFailure: true
   values:
     web:
       # The Flux Status web UI now runs as the standalone `flux-operator-web`

@@ -23,13 +23,16 @@ data:
   keda_webhooks_replicas: "2"
   keda_scaler_replicas: "2"
   keda_interceptor_min_replicas: "2"
-  # --- Non-critical operators (1 replica — leader-elected) ---
-  # Brief blip during rolling upgrade does not affect data plane.
-  trust_manager_replicas: "1"
-  reloader_replicas: "1"
+  # --- Leader-elected operators (3 replicas for HA; require-three-replicas) ---
+  # One replica is active; the rest are warm standbys that take over on a node
+  # failure/drain. velero stays 1 — its chart hardcodes replicas: 1 and it has
+  # no leader election (multiple servers would double-run backups); cilium
+  # operator is 2 (chart-managed, leader-elected).
+  trust_manager_replicas: "3"
+  reloader_replicas: "3"
   cilium_replicas: "2"
   velero_replicas: "1"
-  cloudnative_pg_replicas: "1"
+  cloudnative_pg_replicas: "3"
   # KEDA-managed apps: HelmRelease replicas are the initial value only;
   # KEDA HTTPScaledObject overrides at runtime. Setting the initial to 1
   # saves memory until the first KEDA reconciliation.
@@ -69,9 +72,12 @@ data:
   hcloud_network: "prod-network"
   # --- Contact ---
   admin_email: "ned@devantler.tech"
-  # Leader-elected controllers: 1 replica is sufficient.
-  hcloud_ccm_replicas: "1"
-  hcloud_csi_controller_replicas: "1"
+  # Leader-elected controllers: 3 replicas for HA (require-three-replicas).
+  hcloud_ccm_replicas: "3"
+  hcloud_csi_controller_replicas: "3"
+  # external-snapshotter control plane (kube-system snapshot-controller);
+  # leader-elected, so extra replicas are warm standbys.
+  snapshot_controller_replicas: "3"
   # --- Longhorn distributed storage ---
   # All 3 static workers carry Longhorn disks (labeled with
   # node.longhorn.io/create-default-disk=true). Replica count matches the
@@ -115,10 +121,12 @@ data:
   # recommendations continuously.
   vpa_recommender_replicas: "1"
   vpa_updater_replicas: "1"
-  # --- Kyverno ---
-  kyverno_background_replicas: "1"
-  kyverno_reports_replicas: "1"
-  kyverno_cleanup_replicas: "1"
+  # --- Kyverno (3 replicas for HA; these controllers are leader-elected) ---
+  kyverno_background_replicas: "3"
+  kyverno_reports_replicas: "3"
+  kyverno_cleanup_replicas: "3"
+  # --- Flagger (3 replicas for HA; gated by leaderElection.enabled) ---
+  flagger_replicas: "3"
   # --- OpenBao secrets vault ---
   openbao_replicas: "1"
   openbao_storage_size: 10Gi

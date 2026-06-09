@@ -3,6 +3,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../../bases/infrastructure/controllers/
+  # Local/CI-only VM stack — kept out of the base aggregate (prod has no VMs).
+  # The KubeVirt CR is patched below.
+  - ../../../../bases/infrastructure/controllers/cdi/
+  - ../../../../bases/infrastructure/controllers/kubevirt/
   - coredns/
   - flux-instance/
   - minio/
@@ -12,6 +16,7 @@ components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
   # bases/components/helmrelease-drift-detection.
   - ../../../../bases/components/helmrelease-drift-detection
+  - ../../../../bases/components/helmrelease-flux-defaults
 # Each patch file self-identifies (apiVersion/kind/name/namespace), so a path is
 # enough — no redundant `target:` selector. Matches the path-only style used by
 # the hetzner overlays.

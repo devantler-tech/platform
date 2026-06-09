@@ -32,6 +32,7 @@ components:
   # opencost HelmRelease in this layer. See
   # bases/components/helmrelease-drift-detection.
   - ../../../bases/components/helmrelease-drift-detection
+  - ../../../bases/components/helmrelease-flux-defaults
 patches:
   # gateway-patch self-identifies (Gateway/platform/kube-system), so a path is
   # enough — no explicit target, matching the coroot patch below.

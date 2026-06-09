@@ -7,6 +7,7 @@ components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
   # bases/components/helmrelease-drift-detection.
   - ../../../bases/components/helmrelease-drift-detection
+  - ../../../bases/components/helmrelease-flux-defaults
 # Strategic-merge patch files self-identify (apiVersion/kind/name/namespace), so
 # they need only a path — no redundant `target:` selector. JSON6902 patches have
 # no embedded identity and keep an explicit target (see whoami below).
