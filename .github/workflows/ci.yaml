@@ -67,7 +67,7 @@ jobs:
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@c617c5278ce2681bf0f6d5ff3f67dda20549ca53 # v7.36.0
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@a25bc26937f84c432851e1b9d867b11e2e1cda8d # v7.51.1
         with:
           distribution: Talos
           provider: Docker
@@ -193,7 +193,7 @@ jobs:
         # cluster-update fixes; renovate keeps this pin current.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.51.0"
+          KSAIL_VERSION: "7.51.1"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -387,7 +387,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@8ce19528eda1ef50f3d028b685c53aebaed6ae62 # v5.4.1
+        uses: devantler-tech/actions/aggregate-job-checks@b31ec7baa4d7e9ca5b113f56cc928fe708872431 # v5.4.2
         with:
           job-results: >-
             ${{ needs.changes.result }}
