@@ -19,13 +19,8 @@ spec:
         name: cert-manager
   install:
     crds: CreateReplace
-    remediation:
-      retries: -1
   upgrade:
     crds: CreateReplace
-    remediation:
-      retries: -1
-      remediateLastFailure: true
   # https://github.com/cert-manager/cert-manager/blob/master/deploy/charts/cert-manager/values.yaml
   values:
     # Restricted PSS baseline: add runAsNonRoot to container SCs (chart leaves it unset, which fails validate-container-security).
