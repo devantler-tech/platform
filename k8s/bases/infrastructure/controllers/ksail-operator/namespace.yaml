@@ -1,0 +1,15 @@
+# PSA enforce label intentionally NOT set on the ksail-operator namespace.
+#
+# The ksail-operator chart ships its Deployment with no pod/container
+# securityContext at all. With an explicit pod-security.kubernetes.io/enforce
+# label, kube-apiserver's PSA validator would reject the pod before Kyverno's
+# add-security-context mutating webhook can fill in the restricted defaults
+# (same reason the dex namespace omits the label).
+#
+# The Kyverno validate-pod-security ClusterPolicy (Enforce mode) is already a
+# backstop -- it sees the mutated pod and enforces restricted at the webhook
+# layer.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ksail-operator

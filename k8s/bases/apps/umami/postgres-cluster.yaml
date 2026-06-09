@@ -14,7 +14,18 @@ metadata:
   name: umami-db
   namespace: umami
 spec:
-  instances: 1
+  # Run 3 instances (1 primary + 2 streaming replicas) for high availability.
+  # A single-instance Cluster makes CNPG create a `<cluster>-primary`
+  # PodDisruptionBudget with minAvailable=1 on the only pod, which BLOCKS every
+  # voluntary eviction — a node drain (Talos roll, autoscaler scale-down) hangs
+  # forever, and an involuntary node loss takes the database offline until the
+  # pod reschedules. With >=2 instances CNPG drains a node by promoting a replica
+  # (switchover) and sets the replica PDB to minAvailable=instances-1, so drains
+  # proceed one pod at a time and the database survives any single node going
+  # away. Three lands one instance on each of the 3 static Longhorn storage
+  # workers via CNPG's default (preferred) pod anti-affinity, keeping a
+  # primary+replica quorum even while one node is under maintenance.
+  instances: 3
   # Expose the postgres superuser so OpenBao's Database secrets engine has a
   # stable admin to rotate the `umami` application role's password (the engine
   # cannot rotate a role using that same role's credentials, so it needs a

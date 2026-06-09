@@ -59,23 +59,52 @@ See the template's `README.md` for the exact owned-vs-synced split.
 
 ## 3. Secrets
 
-Tenant app secrets come from **OpenBao** via **External Secrets** — not SOPS.
+Tenant secrets come from **OpenBao** via **External Secrets** — never SOPS. No
+tenant ships a SOPS-encrypted Secret.
 
-- **Store the values in OpenBao** (KV v2, mount `secret`) under your tenant
-  prefix `apps/<tenant>/*`, out of band (OpenBao UI/CLI).
-- **In `deploy/`**, add a **namespaced `SecretStore`** (`kind: SecretStore`) and
-  an `ExternalSecret` that reads `apps/<tenant>/*` and materialises a native
-  Secret. Tenants must use a *namespaced* store, never the shared
-  `ClusterSecretStore` — the Kyverno policy `restrict-tenant-secret-stores`
-  enforces this. The template ships ready-to-edit `secretstore.yaml` +
-  `externalsecret.yaml`.
-- **Platform-side (one-time per tenant)**, in
-  [`vault-config/job.yaml`](../k8s/bases/infrastructure/vault-config/job.yaml):
-  add an `app-<tenant>-readonly` policy scoped to `secret/data/apps/<tenant>/*`
-  (mirror the existing `app-wedding-readonly`) and a Kubernetes auth role binding
-  the tenant's ServiceAccount to it. The tenant's `edit` RoleBinding already
-  aggregates the `external-secrets-tenant-edit` ClusterRole, so it may manage its
-  own `SecretStore`/`ExternalSecret`.
+### App secrets (DB creds, API keys, … — only for tenants that need them)
+
+A tenant gets a store + Vault role **only if it needs app secrets** — a static
+site gets none. The **tenant owns its app secrets end-to-end**; the platform only
+provisions the store + isolation and never seeds a tenant's app values. A value is
+only ever introduced via a committed resource (a generator, or the tenant's own
+push), **never written to OpenBao out of band**.
+
+- **Tenant (`deploy/`)** — own your secret end-to-end. Your `edit` RoleBinding
+  aggregates `external-secrets-tenant-edit`, so you may create `Password`
+  generators, `PushSecret`s and `ExternalSecret`s in your namespace. They all
+  reference the platform-provided **namespaced** store (`secretStoreRef:
+  { name: openbao, kind: SecretStore }`) — never the shared `ClusterSecretStore`
+  (the `restrict-tenant-secret-stores` Kyverno policy blocks that). The store
+  authenticates via your tenant Vault role, scoped to `apps/<tenant>/*` (read **+
+  write**), so you both seed and read your own path. The standard pattern for a
+  generated value (an admin code, a token): a `Password` generator → a `PushSecret`
+  (`selector.generatorRef`, `refreshInterval: "0"`) that writes it once to
+  `apps/<tenant>/*` → an `ExternalSecret` that reads it back into the Secret your
+  app consumes. See `wedding-app`'s `deploy/admin-code-*.yaml`.
+- **Platform (one-time per such tenant)** — in
+  [`vault-config/job.yaml`](../k8s/bases/infrastructure/vault-config/job.yaml) add
+  an `app-<tenant>` policy scoped to `secret/{data,metadata}/apps/<tenant>/*` (read
+  **+ write**, so the tenant can seed) and a dedicated `auth/kubernetes/role/<tenant>`
+  bound to the tenant SA (mirror `app-wedding-app` + the `wedding-app` role); drop a
+  `secretstore.yaml` (`kind: SecretStore`, named `openbao`) into the registration
+  dir (mirror `wedding-app/`). The store can never reach infra or another tenant's
+  path, and the platform does **not** seed tenant app values.
+
+### The GHCR image-pull secret (`ghcr-auth`)
+
+A **platform-managed** credential, not a tenant secret. Every registration dir
+ships a `ghcr-auth-externalsecret.yaml` that sources the shared org pull
+credential from OpenBao (`infrastructure/ghcr/auth`) via the cluster-scoped `openbao`
+**ClusterSecretStore** and materialises the `ghcr-auth` dockerconfigjson the
+`OCIRepository` and ServiceAccount consume. It is reconciled by flux-system (not
+your tenant SA) — which is why it may use the ClusterSecretStore where your own
+resources may not (the Kyverno policy carves out flux-system-applied resources).
+The value lives SOPS-encrypted as `ghcr_dockerconfigjson` in the shared
+`variables-base-secret.enc.yaml` (the same org token both clusters use); the
+`seed-ghcr` PushSecret pushes it to `infrastructure/ghcr/auth` via the `openbao`
+ClusterSecretStore.
+
 - The release and template-sync workflows mint a **GitHub App token** from the
   org-level `APP_ID` variable and `APP_PRIVATE_KEY` secret — already available to
   every repo in the org, so no per-repo setup is needed.
@@ -95,7 +124,9 @@ artifacts produced by that trusted workflow are ever reconciled onto the cluster
 
 ## 5. Register the tenant on the platform
 
-Add `k8s/bases/apps/<tenant>/` (copy `ascoachingogvaner/` and rename), with:
+Add `k8s/bases/apps/<tenant>/` — copy `ascoachingogvaner/` (a static tenant with
+no app secrets) or `wedding-app/` (a tenant with app secrets + a namespaced
+SecretStore) and rename — with:
 
 | File | Purpose |
 |---|---|
@@ -104,7 +135,8 @@ Add `k8s/bases/apps/<tenant>/` (copy `ascoachingogvaner/` and rename), with:
 | `serviceaccount.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
 | `rolebinding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
 | `networkpolicy.yaml` | Cilium policy: ingress from the Gateway on the app port; egress DNS (+ CNPG/metrics if needed) |
-| `ghcr-auth-secret.enc.yaml` | SOPS-encrypted GHCR pull secret (`ghcr-auth`) |
+| `ghcr-auth-externalsecret.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret |
+| `secretstore.yaml` | *Only if the tenant needs app secrets* — namespaced `SecretStore` (`kind: SecretStore`, name `openbao`) authenticating via the tenant's Vault role (mirror `wedding-app/`) |
 | `sync.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + `Kustomization` (prune, `serviceAccountName: <tenant>`) |
 
 In `sync.yaml`, update the `name`/`namespace`/`url`
