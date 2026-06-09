@@ -12,39 +12,14 @@ components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
   # bases/components/helmrelease-drift-detection.
   - ../../../../bases/components/helmrelease-drift-detection
+# Each patch file self-identifies (apiVersion/kind/name/namespace), so a path is
+# enough — no redundant `target:` selector. Matches the path-only style used by
+# the hetzner overlays.
 patches:
-  - target:
-      kind: HelmRelease
-      name: cilium
-      namespace: kube-system
-    path: cilium/patches/helm-release-patch.yaml
-  - target:
-      kind: HelmRelease
-      name: metrics-server
-      namespace: kube-system
-    path: metrics-server/patches/helm-release-patch.yaml
-  - target:
-      kind: HelmRelease
-      name: flux-operator
-      namespace: flux-system
-    path: flux-operator/patches/helm-release-patch.yaml
-  - target:
-      kind: HelmRelease
-      name: flux-operator-web
-      namespace: flux-system
-    path: flux-operator/patches/helm-release-web-patch.yaml
-  - target:
-      kind: HelmRelease
-      name: kubescape
-      namespace: kubescape
-    path: kubescape/patches/helm-release-patch.yaml
-  - target:
-      kind: HelmRelease
-      name: tetragon
-      namespace: kube-system
-    path: tetragon/patches/helm-release-patch.yaml
-  - target:
-      kind: KubeVirt
-      name: kubevirt
-      namespace: kubevirt
-    path: kubevirt/patches/kubevirt-cr-patch.yaml
+  - path: cilium/patches/helm-release-patch.yaml
+  - path: metrics-server/patches/helm-release-patch.yaml
+  - path: flux-operator/patches/helm-release-patch.yaml
+  - path: flux-operator/patches/helm-release-web-patch.yaml
+  - path: kubescape/patches/helm-release-patch.yaml
+  - path: tetragon/patches/helm-release-patch.yaml
+  - path: kubevirt/patches/kubevirt-cr-patch.yaml

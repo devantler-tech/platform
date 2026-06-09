@@ -7,32 +7,22 @@ components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
   # bases/components/helmrelease-drift-detection.
   - ../../../bases/components/helmrelease-drift-detection
+# Strategic-merge patch files self-identify (apiVersion/kind/name/namespace), so
+# they need only a path — no redundant `target:` selector. JSON6902 patches have
+# no embedded identity and keep an explicit target (see whoami below).
 patches:
-  - target:
-      group: kustomize.toolkit.fluxcd.io
-      kind: Kustomization
-      name: ascoachingogvaner
-      namespace: ascoachingogvaner
-    path: ascoachingogvaner/patches/kustomization-patch.yaml
+  - path: ascoachingogvaner/patches/kustomization-patch.yaml
   # fleetdm disabled 2026-06-03 (see bases/apps/kustomization.yaml). Its
   # prod-only HelmRelease patch (timeout + MySQL primary service address +
   # hcloud storageClass) and the providers/hetzner/apps/fleetdm/ dir were
   # removed with the app: an unreferenced patch fragment is schema-validated
   # standalone by `ksail workload validate`, and a partial HelmRelease (no
   # spec.interval) fails. Restore the patch from git history if re-enabling.
-  - target:
-      kind: HelmRelease
-      name: headlamp
-      namespace: headlamp
-    path: headlamp/patches/helm-release-patch.yaml
-  - target:
-      group: kustomize.toolkit.fluxcd.io
-      kind: Kustomization
-      name: wedding-app
-      namespace: wedding-app
-    path: wedding-app/patches/kustomization-patch.yaml
+  - path: headlamp/patches/helm-release-patch.yaml
+  - path: wedding-app/patches/kustomization-patch.yaml
   # Pilot: user namespaces (hostUsers: false) on whoami — prod-only; see the
-  # patch file for the full rationale.
+  # patch file for the full rationale. JSON6902 patch (a list of ops) has no
+  # embedded identity, so it must keep an explicit target.
   - target:
       kind: HelmRelease
       name: whoami
