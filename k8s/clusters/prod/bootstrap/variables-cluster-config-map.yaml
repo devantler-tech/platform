@@ -18,7 +18,7 @@ data:
   # during eviction. User-facing auth and admission webhooks need 2+ replicas.
   cert_manager_replicas: "2"
   metrics_server_replicas: "2"
-  vpa_admission_replicas: "2"
+  vpa_admission_replicas: "3"
   keda_operator_replicas: "2"
   keda_webhooks_replicas: "2"
   keda_scaler_replicas: "2"
@@ -119,8 +119,10 @@ data:
   # VPA recommender computes resource recommendations; admission controller
   # applies them at pod start. Updater evicts pods to apply new resource
   # recommendations continuously.
-  vpa_recommender_replicas: "1"
-  vpa_updater_replicas: "1"
+  # 3 replicas for HA; recommender/updater are leader-elected (helm-release
+  # extraArgs leader-elect: true), so one is active and the rest warm standbys.
+  vpa_recommender_replicas: "3"
+  vpa_updater_replicas: "3"
   # --- Kyverno (3 replicas for HA; these controllers are leader-elected) ---
   kyverno_background_replicas: "3"
   kyverno_reports_replicas: "3"
