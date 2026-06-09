@@ -20,8 +20,8 @@
 #   * KEDA scale-to-zero targets -- a floor defeats scale-to-zero;
 #   * namespaces whose workloads genuinely can't run 3: velero (chart hardcodes
 #     replicas: 1, no leader election), flux controllers, coroot (observability)
-#     and testkube (operator-managed singletons), openbao (HA needs a Raft
-#     redesign) and the VPA stack (recommender/updater pending --leader-elect);
+#     and testkube (operator-managed singletons), and openbao (HA needs a Raft
+#     redesign, tracked separately);
 #   * single-replica-only controllers: external-dns (chart has no replicaCount;
 #     >1 = duplicate Cloudflare writes), origin-ca-issuer (disabled) and
 #     flagger-loadtester (ephemeral per-canary test helper).
@@ -64,9 +64,8 @@ spec:
                   platform.devantler.tech/replica-floor: exempt
           # Namespaces whose workloads genuinely can't run 3: velero (no leader
           # election, chart hardcodes replicas: 1), flux controllers, coroot
-          # (observability) and testkube (operator-managed singletons), openbao
-          # (HA needs a Raft redesign) and the VPA stack (recommender/updater
-          # pending --leader-elect verification).
+          # (observability) and testkube (operator-managed singletons), and
+          # openbao (HA needs a Raft redesign, tracked separately).
           - resources:
               namespaces:
                 - velero
@@ -74,7 +73,6 @@ spec:
                 - observability
                 - openbao
                 - testkube
-                - vertical-pod-autoscaler
           # KEDA scale-to-zero targets, Flagger canary primaries (*-primary) and
           # the scaled-to-0 canary sources -- their replica count is owned by a
           # controller, not declared statically (the Flagger primary runs the HA
@@ -90,6 +88,7 @@ spec:
                 - longhorn-ui
                 - homepage
                 - umami-umami
+                - opencost
           # Single-replica-only by design: external-dns (chart has no
           # replicaCount; >1 replica = duplicate Cloudflare writes + throttling),
           # origin-ca-issuer (disabled, 0 replicas) and flagger-loadtester

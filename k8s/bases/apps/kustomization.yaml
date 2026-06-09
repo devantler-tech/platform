@@ -1,17 +1,18 @@
+---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-- actual-budget/
-- ascoachingogvaner/
-# fleetdm disabled 2026-06-03 — not in use. The manifests under
-# bases/apps/fleetdm/ are retained; re-enable by uncommenting the line below.
-# The prod-only HelmRelease patch (providers/hetzner/apps/fleetdm/) was
-# removed with the app — restore it from git history if re-enabling. The
-# infra-layer plumbing (OpenBao policies/seeds, NetworkPolicies, Kubescape
-# security exceptions, prod config-map vars) is intentionally left idle.
-# - fleetdm/
-- headlamp/
-- homepage/
-- umami/
-- whoami/
-- wedding-app/
+  - actual-budget/
+  - ascoachingogvaner/
+  # fleetdm disabled 2026-06-03 — not in use. The manifests under
+  # bases/apps/fleetdm/ are retained; re-enable by uncommenting the line below.
+  # The prod-only HelmRelease patch (providers/hetzner/apps/fleetdm/) was
+  # removed with the app — restore it from git history if re-enabling. The
+  # infra-layer plumbing (OpenBao policies/seeds, NetworkPolicies, Kubescape
+  # security exceptions, prod config-map vars) is intentionally left idle.
+  # - fleetdm/
+  - headlamp/
+  - homepage/
+  - umami/
+  - whoami/
+  - wedding-app/
