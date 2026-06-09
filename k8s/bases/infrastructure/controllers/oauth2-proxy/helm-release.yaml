@@ -22,6 +22,14 @@ spec:
     deploymentAnnotations:
       configmap.reloader.stakater.com/reload: oauth2-proxy
     replicaCount: ${oauth2_proxy_replicas:=2}
+    serviceAccount:
+      # oauth2-proxy authenticates against Dex and proxies to in-cluster HTTP
+      # upstreams (auth-proxy) — it never calls the Kubernetes API, and its
+      # ServiceAccount has zero Role/ClusterRole bindings. Don't mount an API
+      # token it can't use: a mounted-but-unused token is pure attack surface
+      # (Kubescape C-0261/C-0034/C-0190). The chart applies this to both the SA
+      # and the pod template.
+      automountServiceAccountToken: false
     podDisruptionBudget:
       enabled: true
       # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never deadlocks
