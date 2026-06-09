@@ -27,23 +27,9 @@ spec:
       remediateLastFailure: true
   values:
     web:
-      config:
-        baseURL: https://flux.${domain}
-        authentication:
-          type: OAuth2
-          oauth2:
-            provider: OIDC
-            clientID: flux-web
-            clientSecret: ${flux_web_client_secret}
-            issuerURL: https://dex.${domain}
-            scopes:
-              - openid
-              - profile
-              - email
-              - groups
-              - offline_access
-            impersonation:
-              username: "claims.email"
-              groups: "has(claims.groups) ? claims.groups : []"
-      rbac:
-        createRoles: true
+      # The Flux Status web UI now runs as the standalone `flux-operator-web`
+      # release (web.serverOnly) so it can scale to zero via the KEDA HTTP
+      # add-on without taking the reconciler down with it. This release is the
+      # operator/reconciler only — it must stay running at all times, so it is
+      # deliberately NOT a scale-to-zero target. See helm-release-web.yaml.
+      enabled: false
