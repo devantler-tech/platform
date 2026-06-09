@@ -73,9 +73,11 @@ spec:
           maxUnavailable: 0
       podDisruptionBudget:
         enabled: true
-        # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
-        # deadlocks a node drain regardless of replica count.
-        maxUnavailable: 1
+        # Stays minAvailable: 1: ksail bootstrap-installs kyverno (ksail.yaml
+        # policyEngine: Kyverno) with its default minAvailable PDB before Flux,
+        # and the chart itself refuses to render both fields. Drain-safe at the
+        # 2-replica admission floor. Exempt from validate-pdb-drain-safe.
+        minAvailable: 1
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
