@@ -68,6 +68,10 @@ spec:
                 - cert-manager-cainjector
                 - metrics-server
                 - kyverno-admission-controller
+                # hcloud-csi-controller is also ksail-installed (Hetzner CSI) and
+                # keeps minAvailable: 1; its drain-safety comes from the HA PR's
+                # replica bump to 3, not maxUnavailable.
+                - hcloud-csi-controller
       validate:
         message: >-
           PodDisruptionBudget '{{ request.object.metadata.name }}' sets
