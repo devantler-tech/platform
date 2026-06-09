@@ -27,6 +27,13 @@ resources:
   # http.keda.sh CRD shipped by the keda-http-add-on HelmRelease is established
   # first. longhorn-system is Hetzner-only, so this can't live in bases/.
   - http-scaled-objects/
+  # Prod-only over-provisioning ("spare room"): low-priority `pause` pods that
+  # reserve ~one autoscaler node's worth of capacity, so the Cluster Autoscaler
+  # keeps a warm, near-empty Hetzner node ready and a traffic spike preempts
+  # them and schedules instantly instead of waiting for a new server to boot.
+  # Hetzner-only because the autoscaler is Hetzner/prod-only; see the dir's
+  # file headers for the priority/sizing/VPA-avoidance reasoning.
+  - overprovisioning/
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
   # opencost HelmRelease in this layer. See
