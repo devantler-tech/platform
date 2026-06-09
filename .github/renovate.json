@@ -109,6 +109,15 @@
       "enabled": false
     },
     {
+      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in ci.yaml/cd.yaml) and the ksail-operator OCI Helm chart (flux manager, helm-release.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a separate Dependabot PR. Both grouped deps resolve to the same upstream ksail version, and the devantler-tech 0-day minimumReleaseAge rule below still matches these first-party deps, so the grouped PR opens immediately.",
+      "matchPackageNames": [
+        "devantler-tech/ksail",
+        "ghcr.io/devantler-tech/charts/ksail-operator",
+        "ksail-operator"
+      ],
+      "groupName": "ksail"
+    },
+    {
       "description": "Security-critical controllers — labelled so security-driven bumps are visible in the PR feed. Automerge stays ON: CI (system-test on a real Talos+Docker cluster, kubescape NSA scan, gitleaks, zizmor, CodeQL) is the trust gate.",
       "matchManagers": [
         "helmv3",
