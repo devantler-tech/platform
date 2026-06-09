@@ -68,3 +68,37 @@ spec:
       # cluster-admin wildcard) stays off -- it is a privilege-escalation
       # opt-in, not a product feature.
       clusterAdmin: false
+
+  # Pin a numeric runAsUser so the kubelet can verify the container is non-root.
+  # The ksail image declares a NAMED user (`USER nonroot:nonroot`; that account
+  # is UID/GID 65532 in the image's /etc/passwd). The platform's
+  # add-security-context Kyverno policy injects `runAsNonRoot: true` on the pod
+  # and container, but no numeric runAsUser, and the chart ships no
+  # securityContext of its own. With runAsNonRoot set and only a *named* image
+  # user, the kubelet cannot prove the user is non-root -- "container has
+  # runAsNonRoot and image has non-numeric user (nonroot), cannot verify user is
+  # non-root" -- so the container never starts (CreateContainerConfigError). The
+  # chart exposes no securityContext value, so set the UID via a post-renderer.
+  # add-security-context uses +(...) add-anchors, so it layers
+  # runAsNonRoot/seccomp/drop-caps on top without clobbering this runAsUser.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: ksail-operator
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: ksail-operator
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      runAsUser: 65532
+                      runAsGroup: 65532
+                    containers:
+                      - name: operator
+                        securityContext:
+                          runAsUser: 65532
