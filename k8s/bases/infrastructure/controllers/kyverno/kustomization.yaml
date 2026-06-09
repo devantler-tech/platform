@@ -6,3 +6,4 @@ resources:
   - helm-release.yaml
   - helm-repository.yaml
   - networkpolicy.yaml
+  - background-controller-rbac.yaml
