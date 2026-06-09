@@ -1,0 +1,70 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: ksail-operator
+  namespace: ksail-operator
+  labels:
+    # The chart ships the `Cluster` CRD (clusters.ksail.io); let Flux manage it.
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m0s
+  timeout: 10m
+  install:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+  upgrade:
+    crds: CreateReplace
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+  chart:
+    spec:
+      chart: ksail-operator
+      version: 7.41.2
+      sourceRef:
+        kind: HelmRepository
+        name: ksail-operator
+  # https://github.com/devantler-tech/ksail/tree/main/charts/ksail-operator
+  #
+  # The operator reconciles `Cluster` resources (ksail.io/v1alpha1) and serves
+  # the embedded web UI + REST API on the same port (api.bindPort). All product
+  # features are enabled: operator, REST API, web UI and native OIDC auth.
+  values:
+    # Clean resource names (Service/Deployment "ksail-operator" instead of the
+    # default "<release>-ksail-operator").
+    fullnameOverride: ksail-operator
+    operator:
+      # Image tag comes from the chart default (v<appVersion>, per ksail #5168,
+      # first shipped in chart 7.41.2) -> ghcr.io/devantler-tech/ksail:v7.41.2,
+      # which is cosign-signed (ksail #5165) so prod Talos image verification
+      # (platform #1889) accepts it. chart.spec.version above drives the version.
+      # dockerSocket stays disabled: it mounts the host /var/run/docker.sock,
+      # which is privileged and does not exist on Talos nodes (containerd, no
+      # Docker) -- enabling it would crash-loop the pod.
+      dockerSocket:
+        enabled: false
+    api:
+      # REST API + embedded web UI (consumed same-origin by the SPA).
+      bindPort: 8080
+    ui:
+      # GitOps-enforced platform: the UI is read-only (enforced server-side via
+      # the API) so the Git repository stays the single source of truth. OIDC,
+      # UI and API remain fully enabled -- only write actions are locked.
+      readOnly: true
+    # Native OIDC is intentionally NOT enabled in the base -- it is layered on
+    # in the hetzner (prod) overlay (see ksail-operator/patches/). The operator
+    # performs *eager, fatal* OIDC discovery at startup: the issuer
+    # (https://dex.${domain}) must be resolvable AND TLS-trusted from inside the
+    # cluster, or the manager fails to start and the pod crash-loops. On
+    # local/CI the *.platform.lan names resolve only via the host's /etc/hosts
+    # (not in-cluster CoreDNS), so discovery would fail there. On prod,
+    # dex.platform.devantler.tech resolves via public DNS (netpol allows egress
+    # 443), so OIDC runs there. (auth.oidc.enabled defaults to false.)
+    rbac:
+      # Use the chart's least-privilege ClusterRole; clusterAdmin (a full
+      # cluster-admin wildcard) stays off -- it is a privilege-escalation
+      # opt-in, not a product feature.
+      clusterAdmin: false

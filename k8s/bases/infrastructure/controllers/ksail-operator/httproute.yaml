@@ -1,0 +1,38 @@
+# The operator serves the SPA and the REST API (including the OIDC login and
+# /api/v1/auth/callback) on one origin, so the route backends directly to the
+# operator Service -- no oauth2-proxy in front (the operator owns its own OIDC).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: ksail-operator
+  namespace: ksail-operator
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: KSail
+    gethomepage.dev/description: Declarative Kubernetes cluster management.
+    gethomepage.dev/group: Kubernetes
+    # KSail isn't in the dashboard-icons set Homepage resolves, so `ksail.png`
+    # would 404. Point at the upstream brand SVG (pinned), the same upstream-URL
+    # pattern the Coroot / Cilium / OpenBao routes use. Homepage fetches icons
+    # client-side, so the cluster egress NetworkPolicy doesn't block it.
+    gethomepage.dev/icon: https://raw.githubusercontent.com/devantler-tech/ksail/v7.36.0/docs/public/favicon.svg
+    # Status dot: target the operator pod explicitly (the chart labels it
+    # name=ksail-operator + component=operator).
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=ksail-operator,app.kubernetes.io/component=operator
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - ksail.${domain}
+  rules:
+    - backendRefs:
+        - name: ksail-operator
+          port: 8080
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload

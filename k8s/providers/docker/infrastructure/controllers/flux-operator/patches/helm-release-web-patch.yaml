@@ -2,13 +2,15 @@
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: flux-operator
+  name: flux-operator-web
   namespace: flux-system
 spec:
   values:
-    # The platform CA bundle is mounted so the operator trusts the local
-    # registry / sources over the self-signed platform CA. (The web UI's
-    # insecure-OIDC override moved to flux-operator-web's patch.)
+    web:
+      config:
+        # Local Dex is fronted by the self-signed platform CA; skip OIDC issuer
+        # TLS verification for the Docker/CI provider only.
+        insecure: true
     extraVolumes:
       - name: platform-ca
         configMap:
