@@ -32,6 +32,7 @@ components:
   # opencost HelmRelease in this layer. See
   # bases/components/helmrelease-drift-detection.
   - ../../../bases/components/helmrelease-drift-detection
+  - ../../../bases/components/helmrelease-flux-defaults
 patches:
   - path: gateway-patch.yaml
     target:

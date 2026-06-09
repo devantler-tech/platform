@@ -12,13 +12,8 @@ spec:
   timeout: 10m
   install:
     crds: CreateReplace
-    remediation:
-      retries: -1
   upgrade:
     crds: CreateReplace
-    remediation:
-      retries: -1
-      remediateLastFailure: true
   # https://github.com/coroot/helm-charts/tree/main/charts/coroot-operator
   #
   # The operator is the maintained install path (the all-in-one `coroot`
