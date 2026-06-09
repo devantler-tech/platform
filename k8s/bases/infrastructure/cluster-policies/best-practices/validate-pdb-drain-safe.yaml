@@ -55,6 +55,19 @@ spec:
                 matchExpressions:
                   - key: cnpg.io/cluster
                     operator: Exists
+          # ksail bootstrap-installs cert-manager, metrics-server and kyverno
+          # (ksail.yaml certManager/metricsServer/policyEngine) with their
+          # default minAvailable PDBs BEFORE Flux. Flipping those to
+          # maxUnavailable conflicts at server-side apply with ksail's field
+          # manager, so they intentionally stay minAvailable: 1 -- drain-safe at
+          # their 2-replica floors. Don't flag them.
+          - resources:
+              names:
+                - cert-manager
+                - cert-manager-webhook
+                - cert-manager-cainjector
+                - metrics-server
+                - kyverno-admission-controller
       validate:
         message: >-
           PodDisruptionBudget '{{ request.object.metadata.name }}' sets
