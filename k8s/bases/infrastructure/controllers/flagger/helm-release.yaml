@@ -81,22 +81,23 @@ spec:
       limits:
         memory: 256Mi
 
-  # Keep the Deployment on a RollingUpdate strategy. The chart hardcodes
-  # `strategy.type: Recreate` on the flagger Deployment
-  # (charts/flagger/templates/deployment.yaml) with no values override. An
-  # earlier chart revision rendered RollingUpdate, so the live Deployment carries
-  # an API-defaulted `rollingUpdate{maxSurge,maxUnavailable}` block. Server-side
-  # apply does NOT prune that block when `type` flips to Recreate, so the merged
-  # object is rejected as invalid — `spec.strategy.rollingUpdate may not be
-  # specified when strategy type is 'Recreate'` — and every Helm upgrade fails
-  # and rolls back, stalling the flagger HelmRelease and wedging
-  # infrastructure-controllers (→ infrastructure → apps). Flagger runs leader
-  # election, so the brief pod overlap a rolling update allows is safe. The chart
-  # exposes no value for this, so patch the rendered Deployment back to
-  # RollingUpdate via a post-renderer; set the rollingUpdate params explicitly
-  # (the Kubernetes defaults) so helm-controller fully owns the field, the
-  # applied object matches the live object exactly, and drift detection (which
-  # does not ignore /spec/strategy) sees no diff.
+  # Pin the Deployment's update strategy deterministically. The chart's
+  # `strategy.type: Recreate` only renders when leaderElection is DISABLED; with
+  # leaderElection enabled (above, for HA) the chart omits the strategy block
+  # entirely, so the Deployment falls back to the API default RollingUpdate with
+  # an API-defaulted `rollingUpdate{maxSurge,maxUnavailable}`. The rendered
+  # manifest then has no /spec/strategy while the live object does, which drift
+  # detection (which does not ignore /spec/strategy) would flag every reconcile.
+  # So set the whole block explicitly to the Kubernetes defaults: helm-controller
+  # owns the field, the applied object matches the live object, and drift sees no
+  # diff.
+  #
+  # Use `op: add` on the whole /spec/strategy object (not `op: replace` on
+  # /spec/strategy/type): since the chart now renders no strategy block,
+  # `replace` fails at install with "doc is missing path: /spec/strategy/type".
+  # `add` on /spec (which always exists) creates-or-replaces deterministically,
+  # and remains correct if a future chart/leaderElection change reintroduces a
+  # strategy block.
   postRenderers:
     - kustomize:
         patches:
@@ -104,11 +105,10 @@ spec:
               kind: Deployment
               name: flagger
             patch: |
-              - op: replace
-                path: /spec/strategy/type
-                value: RollingUpdate
               - op: add
-                path: /spec/strategy/rollingUpdate
+                path: /spec/strategy
                 value:
-                  maxSurge: 25%
-                  maxUnavailable: 25%
+                  type: RollingUpdate
+                  rollingUpdate:
+                    maxSurge: 25%
+                    maxUnavailable: 25%
