@@ -1,0 +1,32 @@
+# Extra permissions for Kyverno's background controller.
+#
+# Kyverno aggregates any ClusterRole carrying the
+# rbac.kyverno.io/aggregate-to-background-controller label into the background
+# controller's ClusterRole (kyverno:background-controller). By default that
+# controller can only write the resource kinds the bundled policies touch (e.g.
+# the default ServiceAccount for disable-default-sa-automount) and has NO write
+# access to Deployments.
+#
+# The propagate-reloader-to-flagger-primary ClusterPolicy (cluster-policies, the
+# next Flux layer) uses mutateExisting to patch annotations onto Flagger
+# "<name>-primary" Deployments. Kyverno checks this grant at policy admission and
+# rejects the policy without it, so the grant ships here -- one layer earlier
+# (infrastructure-controllers) than the policy (infrastructure) -- ensuring it is
+# live and aggregated before the policy is admitted.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:background-controller:mutate-deployments
+  labels:
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+rules:
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+      - patch
