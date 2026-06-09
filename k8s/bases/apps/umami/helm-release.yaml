@@ -30,6 +30,20 @@ spec:
               - op: replace
                 path: /spec/replicas
                 value: 3
+              # OpenBao rotates the umami DB password out of band (7-day static
+              # role), refreshed into the umami-db-rotated Secret. The app reads it
+              # into DATABASE_URL at startup, so a running pod keeps a stale
+              # password after a rotation and crashes with Prisma P1000 until
+              # restarted. Stakater Reloader restarts a workload when a Secret it
+              # is annotated for changes. The live workload is the Flagger primary
+              # (umami-umami-primary); Flagger does NOT carry this annotation onto
+              # the primary (it freezes/filters primary metadata at creation —
+              # fluxcd/flagger#1032), so the propagate-reloader-to-flagger-primary
+              # ClusterPolicy copies it across. The annotation here also keeps the
+              # canary source itself reloadable.
+              - op: add
+                path: /metadata/annotations/secret.reloader.stakater.com~1reload
+                value: umami-db-rotated
   # https://github.com/helmforgedev/charts/blob/main/charts/umami/values.yaml
   values:
     # replicaCount intentionally omitted — Flagger manages canary replicas
