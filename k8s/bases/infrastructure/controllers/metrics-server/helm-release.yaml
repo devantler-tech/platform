@@ -28,10 +28,12 @@ spec:
     replicas: ${metrics_server_replicas:=2}
     podDisruptionBudget:
       enabled: true
-      # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never deadlocks
-      # a node drain regardless of replica count (minAvailable: 1 would the
-      # moment metrics_server_replicas dropped to 1).
-      maxUnavailable: 1
+      # Stays minAvailable: 1: ksail bootstrap-installs metrics-server (ksail.yaml
+      # metricsServer: Enabled) with its default minAvailable PDB before Flux;
+      # flipping to maxUnavailable conflicts at server-side apply ("minAvailable
+      # and maxUnavailable cannot be both set"). Drain-safe at the 2-replica
+      # floor. Exempt from validate-pdb-drain-safe.
+      minAvailable: 1
     updateStrategy:
       type: RollingUpdate
       rollingUpdate:
