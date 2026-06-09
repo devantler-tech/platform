@@ -16,18 +16,20 @@ spec:
         kind: HelmRepository
         name: umami
   postRenderers:
-    # Flagger owns the canary (umami-umami) Deployment's replicas — it scales the
-    # deployment to zero between rollouts. Strip the chart's replicas field so
-    # Flux's reconcile does not fight Flagger's scaling (otherwise the pod flaps
-    # every interval). See k8s/bases/apps/umami/canary.yaml.
+    # Flagger copies the source (umami-umami) Deployment's replicas onto the
+    # primary. Pin it to 3 for an HA primary (require-three-replicas) instead of
+    # removing it (which left the primary at the chart default of 1). Flux drift
+    # detection ignores /spec/replicas, so Flagger's between-rollout
+    # scale-to-zero of this source is not fought. See k8s/bases/apps/umami/canary.yaml.
     - kustomize:
         patches:
           - target:
               kind: Deployment
               name: umami-umami
             patch: |
-              - op: remove
+              - op: replace
                 path: /spec/replicas
+                value: 3
               # OpenBao rotates the umami DB password out of band (7-day static
               # role), refreshed into the umami-db-rotated Secret. The app reads it
               # into DATABASE_URL at startup, so a running pod keeps a stale
