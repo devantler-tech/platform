@@ -13,13 +13,8 @@ spec:
   timeout: 10m
   install:
     crds: CreateReplace
-    remediation:
-      retries: -1
   upgrade:
     crds: CreateReplace
-    remediation:
-      retries: -1
-      remediateLastFailure: true
   chart:
     spec:
       chart: ksail-operator

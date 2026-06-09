@@ -12,6 +12,7 @@ components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
   # bases/components/helmrelease-drift-detection.
   - ../../../../bases/components/helmrelease-drift-detection
+  - ../../../../bases/components/helmrelease-flux-defaults
 patches:
   - target:
       kind: HelmRelease

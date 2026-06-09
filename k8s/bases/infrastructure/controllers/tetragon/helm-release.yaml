@@ -17,13 +17,6 @@ spec:
         name: cilium
   interval: 10m0s
   timeout: 10m
-  install:
-    remediation:
-      retries: -1
-  upgrade:
-    remediation:
-      retries: -1
-      remediateLastFailure: true
   # https://github.com/cilium/tetragon/blob/main/install/kubernetes/tetragon/values.yaml
   #
   # eBPF-based runtime security observability. Sibling to the Cilium

@@ -54,6 +54,7 @@ components:
   # Helm-rendered resources deleted/mutated out-of-band — the cause of the
   # silently-broken keda external-scaler and homepage Deployments.
   - ../../../../bases/components/helmrelease-drift-detection
+  - ../../../../bases/components/helmrelease-flux-defaults
 patches:
   - path: flux-operator/patches/helm-release-patch.yaml
   - path: openbao/patches/helm-release-patch.yaml
