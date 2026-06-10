@@ -6,3 +6,4 @@ resources:
   - cnpg-tenant-edit.yaml
   - external-secrets-tenant-edit.yaml
   - gateway-tenant-edit.yaml
+  - tenant-external-dns.yaml

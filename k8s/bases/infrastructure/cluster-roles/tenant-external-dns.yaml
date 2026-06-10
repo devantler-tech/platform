@@ -1,0 +1,43 @@
+# Read capabilities for a TENANT-OWNED external-dns instance (a tenant runs
+# its own external-dns Deployment in its namespace to manage a tenant-owned
+# DNS zone — e.g. ascoachingogvaner's simply.com domain). The gateway-httproute
+# source needs three reads a tenant's `edit` RoleBinding cannot provide:
+# HTTPRoutes (its own namespace), the shared Gateway (kube-system, to resolve
+# the LB address routes attach to), and Namespaces (cluster-wide informer for
+# listener allowedRoutes selectors).
+#
+# Two ClusterRoles so the grant surface stays minimal:
+#   - `tenant-external-dns` carries the namespaced rules and is bound via
+#     RoleBindings (tenant namespace → httproutes; kube-system → gateways),
+#     so neither resource is readable cluster-wide.
+#   - `tenant-external-dns-global` carries only the namespace read and is
+#     bound via a ClusterRoleBinding (namespaces are cluster-scoped).
+# Per-tenant bindings live in the tenant's registration dir
+# (k8s/bases/apps/<tenant>/external-dns-rbac.yaml).
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenant-external-dns
+rules:
+  - apiGroups: ["gateway.networking.k8s.io"]
+    resources:
+      - gateways
+      - httproutes
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenant-external-dns-global
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+    verbs:
+      - get
+      - list
+      - watch
