@@ -20,7 +20,13 @@ spec:
     - vault.${domain}
   rules:
     - backendRefs:
-        - name: openbao-ui
+        # openbao-active routes only to the unsealed Raft leader. The chart's
+        # openbao-ui Service selects every server pod, including sealed-but-Ready
+        # standbys (readinessProbe sealedcode=204), so the UI would round-robin
+        # onto a sealed node. Trade-off: with NO active node (all sealed, DR),
+        # the UI is unreachable — recovery is CLI-driven anyway
+        # (docs/dr/openbao-raft-ha-migration.md).
+        - name: openbao-active
           port: 8200
       filters:
         - type: ResponseHeaderModifier
