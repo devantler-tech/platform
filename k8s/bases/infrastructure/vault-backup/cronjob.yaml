@@ -30,8 +30,12 @@ spec:
             - name: snapshot
               image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
               env:
+                # openbao-active = unsealed Raft leader only. This job asserts
+                # "an unsealed active node exists" — against the plain `openbao`
+                # Service it round-robins across all pods and fails spuriously
+                # when it lands on a sealed-but-Ready standby.
                 - name: BAO_ADDR
-                  value: http://openbao.openbao.svc.cluster.local:8200
+                  value: http://openbao-active.openbao.svc.cluster.local:8200
               command:
                 - /bin/sh
                 - -ec
