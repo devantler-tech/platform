@@ -287,7 +287,10 @@ etcdctl --endpoints unix:///tmp/etcd.snapshot \
 # Kubernetes Secret YAML, the EncryptionConfiguration was lost.
 ```
 
-This check is also asserted by the CI restore drill (see [restore-drill.md](./restore-drill.md)).
+This check is deliberately **not** part of the CI restore drill — Talos
+verifies the encryption key at install time, so a CI assertion would add
+complexity for a structurally-enforced property (see
+[restore-drill.md](./restore-drill.md) for the full rationale).
 
 ---
 
