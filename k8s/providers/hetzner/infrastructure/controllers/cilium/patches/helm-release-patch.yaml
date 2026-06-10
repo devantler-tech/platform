@@ -16,9 +16,24 @@
 # pod traffic (never leaves the host) and pod->node-IP / pod->internet traffic
 # (destinations outside the pod CIDR) are unaffected and not dropped.
 #
-# allowRemoteNodeIdentities is left at its default (false): the Hetzner node
-# CIDR (10.0.0.0/16 — ksail.prod.yaml networkCidr) does not overlap the pod
-# CIDR (10.244.0.0/16), so no remote-node-identity exemption is required.
+# allowRemoteNodeIdentities is set true because this cluster runs in tunnel
+# (VXLAN) routing mode (routing-mode: tunnel). Cilium REQUIRES it whenever
+# tunneling is used — node-identity (IPCache) propagation is only eventually
+# consistent, so during the convergence window after a node joins/reboots
+# (constant here: the Hetzner autoscaler churns cattle workers) the source node
+# may not yet know a peer's identity. Left false, strict mode fails CLOSED on
+# that node-identity traffic too, dropping the cilium-agent SPIRE mutual-auth
+# handshake (TCP 4250) and cilium-health host probes (TCP 4240) to the
+# not-yet-propagated peer. That black-holes the mTLS the hetzner
+# require-mutual-auth policy demands, so every auth-gated cross-node pod flow
+# to/from a freshly churned node stalls (observed: KEDA http-add-on scaler
+# CrashLoopBackOff, Longhorn replica-rebuild storms, the umami provisioner and
+# coroot-heartbeat failing, cilium-health "2/9 reachable"). true exempts only
+# node-IDENTITY traffic from the strict drop (it may briefly ride unencrypted
+# during that window, then converges to WireGuard); pod-to-pod traffic across
+# the egress CIDR below stays fail-closed. The earlier "CIDRs don't overlap so
+# it isn't required" reasoning was wrong: the Cilium rule is "tunneling is used
+# OR (direct routing AND CIDR overlap)", so tunneling alone makes it mandatory.
 #
 # Uses the non-deprecated encryption.strictMode.egress.* keys (the top-level
 # encryption.strictMode.{enabled,cidr} keys are deprecated as of Cilium 1.19).
@@ -47,3 +62,8 @@ spec:
         egress:
           enabled: true
           cidr: 10.244.0.0/16
+          # Required in tunnel routing mode (see header): exempts node-identity
+          # traffic from the strict drop so the SPIRE mutual-auth handshake and
+          # cilium-health host probes survive the IPCache propagation window
+          # during node churn. Pod-to-pod across the CIDR above stays fail-closed.
+          allowRemoteNodeIdentities: true
