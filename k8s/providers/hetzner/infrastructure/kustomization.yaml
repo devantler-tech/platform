@@ -27,13 +27,15 @@ resources:
   # http.keda.sh CRD shipped by the keda-http-add-on HelmRelease is established
   # first. longhorn-system is Hetzner-only, so this can't live in bases/.
   - http-scaled-objects/
-  # Prod-only over-provisioning ("spare room"): low-priority `pause` pods that
-  # reserve ~one autoscaler node's worth of capacity, so the Cluster Autoscaler
-  # keeps a warm, near-empty Hetzner node ready and a traffic spike preempts
-  # them and schedules instantly instead of waiting for a new server to boot.
-  # Hetzner-only because the autoscaler is Hetzner/prod-only; see the dir's
-  # file headers for the priority/sizing/VPA-avoidance reasoning.
-  - overprovisioning/
+  # NOTE: the over-provisioning ("spare room") buffer intentionally does NOT
+  # live in this layer. Its pause pods are EXPECTED to sit Pending whenever the
+  # autoscaler is at maxNodesTotal, and this layer is reconciled with
+  # `wait: true` — health-gating on an expected-Pending ReplicaSet held
+  # `infrastructure` (and its `apps` dependent + every CI/CD deploy) red for
+  # hours. It is applied by the dedicated, non-health-gated
+  # `infrastructure-overprovisioning` Flux Kustomization instead — see
+  # k8s/clusters/prod/overprovisioning-flux-kustomization.yaml and
+  # ../infrastructure-overprovisioning/.
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
   # opencost HelmRelease in this layer. See

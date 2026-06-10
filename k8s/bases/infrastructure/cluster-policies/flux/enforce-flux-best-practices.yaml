@@ -35,15 +35,27 @@ spec:
               kinds:
                 - kustomize.toolkit.fluxcd.io/v1/Kustomization
       exclude:
-        # The bootstrap flux-system Kustomization is created and managed by
-        # `flux bootstrap` / ksail and not by GitOps from this repo, so we
-        # cannot set the recommended fields on it. Exclude it from the policy.
         any:
+          # The bootstrap flux-system Kustomization is created and managed by
+          # `flux bootstrap` / ksail and not by GitOps from this repo, so we
+          # cannot set the recommended fields on it. Exclude it from the policy.
           - resources:
               namespaces:
                 - flux-system
               names:
                 - flux-system
+          # The over-provisioning buffer Kustomization is the one sanctioned
+          # `wait: false` exception: its pause pods are EXPECTED to sit Pending
+          # whenever the Cluster Autoscaler is at maxNodesTotal, so health-
+          # gating it (kstatus reports the ReplicaSet as InProgress forever)
+          # would hold the whole deploy pipeline red — which is exactly what
+          # happened while it lived in the `wait: true` infrastructure layer.
+          # See k8s/clusters/prod/overprovisioning-flux-kustomization.yaml.
+          - resources:
+              namespaces:
+                - flux-system
+              names:
+                - infrastructure-overprovisioning
       validate:
         message: >-
           Flux Kustomization must set the recommended reliability fields:
