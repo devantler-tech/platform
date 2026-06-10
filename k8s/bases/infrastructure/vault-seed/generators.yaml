@@ -1,7 +1,8 @@
 # ESO Password generators for secrets that can be randomly generated.
-# Each generator defines the password spec; PushSecrets in
-# push-generated-secrets.yaml reference these via generatorRef to seed
-# OpenBao on first reconciliation.
+# Each generator defines the password spec; the `generated-*`
+# ExternalSecrets in push-generated-secrets.yaml run them exactly once
+# (refreshInterval "0") to materialize a durable cache Secret, which the
+# PushSecrets then mirror into OpenBao hourly.
 ---
 apiVersion: generators.external-secrets.io/v1alpha1
 kind: Password
