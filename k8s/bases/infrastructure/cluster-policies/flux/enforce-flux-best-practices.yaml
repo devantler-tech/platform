@@ -78,9 +78,12 @@ spec:
         any:
           - resources:
               kinds:
+                # v2 only: the v2beta1/v2beta2 APIs were removed from the
+                # cluster (Flux ≥ 2.6 serves only helm.toolkit.fluxcd.io/v2).
+                # Matching the dead versions makes Kyverno's GVK→GVR lookup
+                # fail on every admission review and background scan
+                # ("unable to convert GVK to GVR ... resource not found").
                 - helm.toolkit.fluxcd.io/v2/HelmRelease
-                - helm.toolkit.fluxcd.io/v2beta2/HelmRelease
-                - helm.toolkit.fluxcd.io/v2beta1/HelmRelease
       validate:
         message: >-
           Flux HelmRelease must set the recommended reliability fields:
