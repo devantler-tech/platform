@@ -9,7 +9,10 @@ metadata:
   name: seed-hcloud
   namespace: flux-system
 spec:
-  refreshInterval: "0"
+  # 1h, not "0" (push-once): re-pushing hourly from the durable SOPS source
+  # is what re-seeds the key automatically after OpenBao data loss — see
+  # k8s/bases/infrastructure/vault-seed/push-secrets.yaml.
+  refreshInterval: 1h
   secretStoreRefs:
     - name: openbao
       kind: ClusterSecretStore
