@@ -160,11 +160,22 @@ spec:
                   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
                   const H = (t) => ({ 'content-type': 'application/json', ...(t ? { authorization: 'Bearer ' + t } : {}) });
                   const asArray = (j) => Array.isArray(j) ? j : (j && Array.isArray(j.data) ? j.data : []);
+                  // Why each login attempt failed, for the retry-loop log line and the
+                  // final error. Distinguishing rejected credentials (401) from a broken
+                  // backend (500, e.g. Umami's DB password drifted -> Prisma P1000) from
+                  // network unreachability matters: during the 2026-06-09 incident every
+                  // run reported only 'could not authenticate after retries' while the
+                  // real failure was the app 500ing on a stale DB password.
+                  let lastLoginFailure = 'no attempt yet';
                   async function login(pw) {
                     try {
                       const r = await fetch(base + '/api/auth/login', { method: 'POST', headers: H(), body: JSON.stringify({ username: 'admin', password: pw }) });
-                      return r.ok ? (await r.json()).token : null;
-                    } catch { return null; }
+                      if (r.ok) return (await r.json()).token;
+                      lastLoginFailure = r.status === 401
+                        ? 'HTTP 401 (credentials rejected)'
+                        : 'HTTP ' + r.status + ' ' + (await r.text()).slice(0, 120);
+                      return null;
+                    } catch (e) { lastLoginFailure = 'network: ' + String((e && e.cause) || e).slice(0, 120); return null; }
                   }
                   async function ensureAuth() {
                     let token = await login(newPw);
@@ -255,9 +266,9 @@ spec:
                     let token = null;
                     for (let i = 0; i < 60 && !token; i++) {
                       token = await ensureAuth();
-                      if (!token) { console.log('waiting for umami to be ready...'); await sleep(5000); }
+                      if (!token) { console.log('waiting for umami to be ready... (last login failure: ' + lastLoginFailure + ')'); await sleep(5000); }
                     }
-                    if (!token) throw new Error('could not authenticate to umami after retries');
+                    if (!token) throw new Error('could not authenticate to umami after retries; last login failure: ' + lastLoginFailure);
                     for (const t of tenants) {
                       const teamId = await ensureTeam(token, t.team);
                       for (const s of (t.websites || [])) await ensureWebsite(token, s, teamId);
