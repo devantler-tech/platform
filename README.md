@@ -101,7 +101,8 @@ A high-level inventory of what Flux reconciles onto the cluster. The manifests l
 
 **Apps** ([`k8s/bases/apps/`](k8s/bases/apps))
 
-- Homepage (dashboard), Headlamp (Kubernetes UI), FleetDM (device management), Actual Budget (budgeting), `whoami` (debug)
+- Homepage (dashboard), Headlamp (Kubernetes UI), Umami (analytics), Actual Budget (budgeting), `whoami` (debug)
+- FleetDM (device management) is parked — disabled 2026-06-03; its manifests are retained for re-enabling (see [`k8s/bases/apps/kustomization.yaml`](k8s/bases/apps/kustomization.yaml))
 - **Tenants** — apps deployed from their own repositories (`ascoachingogvaner`, `wedding-app`); see [`docs/TENANTS.md`](docs/TENANTS.md)
 
 ## Structure
