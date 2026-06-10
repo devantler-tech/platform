@@ -1,0 +1,391 @@
+# DR — Rebuild Prod: the executable form of docs/dr/runbook.md Scenario 4
+# ("full cluster rebuild from zero"), runnable as one button press when the
+# production cluster is gone.
+#
+# What it does, in order:
+#   1. ksail cluster create  — fresh Hetzner servers, Talos, CCM, CSI
+#   2. workload push + reconcile — Flux converges the platform (fresh, empty
+#      OpenBao; SOPS-sourced secrets re-seed automatically)
+#   3. (restore=true) Velero resource restore from the newest Completed
+#      backup synced from R2
+#   4. (restore=true) OpenBao data recovery: fetch the newest raft snapshot
+#      from the R2 openbao-snapshots/ mirror onto the vault-snapshots PVC,
+#      restore the pre-incident openbao-unseal Secret from the Velero backup,
+#      reset the fresh vault (scale down + delete data PVCs), and let the
+#      vault-config Job's automated snapshot-restore path bring the old vault
+#      back (docs/dr/openbao.md scenario 2/3)
+#   5. Optionally refresh the KUBE_CONFIG / TALOS_CONFIG environment secrets
+#      (requires a DR_GH_ADMIN_TOKEN secret with environment-secrets write;
+#      without it the step prints the manual Scenario 9 instructions)
+#
+# Known limits (documented in the runbook):
+#   * Per-app PVC data (headlamp, actual-budget) is NOT rehydrated into
+#     already-running pods — Velero skips existing resources. Recover an app's
+#     data with the per-app reset dance (runbook Scenario 5).
+#   * CNPG databases (umami-db) recover from their own barman backups —
+#     see runbook Scenario 5 for the cnpg restore command.
+#   * DNS needs no manual step: external-dns (policy: sync) repoints the
+#     Cloudflare records at the new load balancer once HTTPRoutes are Ready.
+name: DR - Rebuild Prod
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type REBUILD-PROD to confirm a from-zero rebuild of the production cluster'
+        required: true
+        type: string
+      restore:
+        description: 'Restore data after the rebuild (Velero resources + OpenBao raft snapshot)'
+        required: false
+        type: boolean
+        default: true
+
+permissions: {}
+
+# Shared with ci.yaml's merge-queue deploy and cd.yaml's tag deploy so a DR
+# rebuild can never race a regular deploy against the prod cluster.
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+
+jobs:
+  rebuild:
+    name: 🚑 Rebuild prod from zero
+    runs-on: ubuntu-latest
+    environment: prod
+    permissions:
+      contents: read # checkout repository
+      packages: write # push OCI artifacts to GHCR
+    steps:
+      - name: 🛑 Verify confirmation phrase
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [ "${CONFIRM}" != "REBUILD-PROD" ]; then
+            echo "::error::Confirmation phrase mismatch — type REBUILD-PROD (exactly) to run this workflow."
+            exit 1
+          fi
+          echo "Confirmation accepted. Rebuilding the production cluster from zero."
+
+      - name: 📑 Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup KSail
+        # Same install path as ci.yaml's deploy-prod job; renovate keeps the
+        # pin current in both places.
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.54.0"
+        run: |
+          curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
+          tar -xzf /tmp/ksail.tar.gz -C /tmp
+          sudo install /tmp/ksail /usr/local/bin/ksail
+          ksail --version
+
+      - name: 🔐 Create SOPS Age key
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          mkdir -p ~/.config/sops/age
+          umask 077
+          echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
+          chmod 600 ~/.config/sops/age/keys.txt
+
+      - name: 🏗️ Create cluster
+        # From-zero provisioning: Hetzner servers, Talos boot, CCM, CSI. Writes
+        # a fresh kubeconfig (~/.kube/config, context admin@prod) and
+        # talosconfig (~/.talos/config) on this runner — every later step uses
+        # those, so this workflow does NOT depend on the (now stale)
+        # KUBE_CONFIG / TALOS_CONFIG environment secrets.
+        run: ksail --config ksail.prod.yaml cluster create
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+
+      - name: 📦 Push manifests to GHCR
+        run: ksail --config ksail.prod.yaml workload push
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+
+      - name: 🔁 Trigger Flux reconciliation
+        run: ksail --config ksail.prod.yaml workload reconcile
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+
+      - name: ⏳ Wait for Flux to settle
+        run: |
+          for k in bootstrap infrastructure-controllers infrastructure apps; do
+            echo "Waiting for Kustomization ${k}..."
+            kubectl -n flux-system wait "kustomization/${k}" \
+              --for=condition=Ready --timeout=20m
+          done
+          echo "✅ All Flux Kustomizations Ready — fresh platform converged."
+
+      - name: 💾 Velero resource restore (newest Completed backup)
+        if: ${{ inputs.restore }}
+        run: |
+          set -euo pipefail
+          echo "Waiting for the BackupStorageLocation to be Available (Velero syncs old backups from R2)..."
+          kubectl -n velero wait backupstoragelocation/default \
+            --for=jsonpath='{.status.phase}'=Available --timeout=15m
+
+          # Backup CRs are synced from the R2 bucket by Velero's backup-sync
+          # controller; give it a moment to populate after the BSL goes ready.
+          BACKUP=""
+          for i in $(seq 1 30); do
+            BACKUP=$(kubectl -n velero get backups -o json | jq -r \
+              '[.items[] | select(.status.phase=="Completed")] | sort_by(.metadata.creationTimestamp) | last | .metadata.name // empty')
+            [ -n "${BACKUP}" ] && break
+            echo "  ...no Completed backups synced yet (${i}/30)"
+            sleep 10
+          done
+          if [ -z "${BACKUP}" ]; then
+            echo "::error::No Completed Velero backup found in the BSL — cannot restore. The rebuilt (empty) platform is still up."
+            exit 1
+          fi
+          echo "Restoring from backup: ${BACKUP}"
+          echo "backup_name=${BACKUP}" >> "${GITHUB_ENV}"
+
+          kubectl -n velero create -f - <<EOF
+          apiVersion: velero.io/v1
+          kind: Restore
+          metadata:
+            name: dr-rebuild-${GITHUB_RUN_ID}
+            namespace: velero
+          spec:
+            backupName: ${BACKUP}
+            includedNamespaces:
+              - "*"
+            excludedNamespaces:
+              - kube-system
+              - velero
+          EOF
+          phase=""
+          for i in $(seq 1 180); do
+            phase=$(kubectl -n velero get restore "dr-rebuild-${GITHUB_RUN_ID}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+            case "${phase}" in
+              Completed) break ;;
+              Failed|PartiallyFailed) break ;;
+              *) sleep 10 ;;
+            esac
+          done
+          echo "Restore phase: ${phase:-<none>}"
+          # PartiallyFailed is expected here: most resources already exist on
+          # the freshly-converged cluster and are skipped/conflicted. The
+          # restore's job is to bring back resources Flux does NOT own (the
+          # old openbao-unseal comes back separately below).
+          if [ "${phase}" != "Completed" ] && [ "${phase}" != "PartiallyFailed" ]; then
+            kubectl -n velero describe restore "dr-rebuild-${GITHUB_RUN_ID}" || true
+            echo "::error::Velero restore did not finish (phase: ${phase:-<none>})."
+            exit 1
+          fi
+
+      - name: 🔐 Restore OpenBao from the R2 snapshot mirror
+        if: ${{ inputs.restore }}
+        run: |
+          set -euo pipefail
+
+          echo "::group::Fetch the newest raft snapshot from R2 onto the vault-snapshots PVC"
+          # The fresh vault has already re-seeded the R2 credentials from SOPS,
+          # so the vault-snapshot-r2 Secret (vault-backup/external-secret.yaml)
+          # is the in-cluster source — no credentials leave the cluster.
+          kubectl -n openbao wait externalsecret/vault-snapshot-r2 \
+            --for=condition=Ready --timeout=15m
+
+          R2_ENDPOINT=$(kubectl -n flux-system get configmap variables-cluster -o jsonpath='{.data.r2_endpoint}' 2>/dev/null || true)
+          [ -n "${R2_ENDPOINT}" ] || R2_ENDPOINT=$(kubectl -n flux-system get configmap variables-base -o jsonpath='{.data.r2_endpoint}')
+          R2_BUCKET=$(kubectl -n flux-system get configmap variables-cluster -o jsonpath='{.data.r2_bucket}' 2>/dev/null || true)
+          [ -n "${R2_BUCKET}" ] || R2_BUCKET=$(kubectl -n flux-system get configmap variables-base -o jsonpath='{.data.r2_bucket}')
+          kubectl -n openbao create configmap dr-r2-target \
+            --from-literal=endpoint="${R2_ENDPOINT}" \
+            --from-literal=bucket="${R2_BUCKET}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl -n openbao delete pod dr-snapshot-fetch --ignore-not-found
+          # Labelled app: vault-snapshot so the pod reuses the CronJob's
+          # CiliumNetworkPolicy (egress to R2/MinIO + DNS).
+          kubectl -n openbao apply -f - <<'POD'
+          apiVersion: v1
+          kind: Pod
+          metadata:
+            name: dr-snapshot-fetch
+            namespace: openbao
+            labels:
+              app: vault-snapshot
+          spec:
+            restartPolicy: Never
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 100
+              runAsGroup: 1000
+              fsGroup: 1000
+              seccompProfile:
+                type: RuntimeDefault
+            volumes:
+              - name: snapshots
+                persistentVolumeClaim:
+                  claimName: vault-snapshots
+              - name: r2-credentials
+                secret:
+                  secretName: vault-snapshot-r2
+              - name: mc-config
+                emptyDir: {}
+            containers:
+              - name: fetch
+                image: quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952
+                securityContext:
+                  runAsNonRoot: true
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop: ["ALL"]
+                  readOnlyRootFilesystem: true
+                env:
+                  - name: MC_CONFIG_DIR
+                    value: /tmp/.mc
+                  - name: R2_ENDPOINT
+                    valueFrom:
+                      configMapKeyRef:
+                        name: dr-r2-target
+                        key: endpoint
+                  - name: R2_BUCKET
+                    valueFrom:
+                      configMapKeyRef:
+                        name: dr-r2-target
+                        key: bucket
+                resources:
+                  requests:
+                    cpu: 10m
+                    memory: 32Mi
+                  limits:
+                    memory: 128Mi
+                volumeMounts:
+                  - name: snapshots
+                    mountPath: /snapshots
+                  - name: r2-credentials
+                    mountPath: /r2
+                    readOnly: true
+                  - name: mc-config
+                    mountPath: /tmp/.mc
+                command:
+                  - /bin/sh
+                  - -ec
+                  - |
+                    mc alias set backup "$R2_ENDPOINT" \
+                      "$(cat /r2/access_key_id)" "$(cat /r2/secret_access_key)"
+                    NEWEST=$(mc ls "backup/$R2_BUCKET/openbao-snapshots/" \
+                      | awk '{print $NF}' | grep '\.snap$' | sort | tail -n 1)
+                    if [ -z "$NEWEST" ]; then
+                      echo "ERROR: no snapshots found in openbao-snapshots/ — nothing to restore."
+                      exit 1
+                    fi
+                    echo "Fetching $NEWEST..."
+                    mc cp "backup/$R2_BUCKET/openbao-snapshots/$NEWEST" "/snapshots/$NEWEST"
+                    ls -l /snapshots/
+          POD
+          if ! kubectl -n openbao wait pod/dr-snapshot-fetch \
+              --for=jsonpath='{.status.phase}'=Succeeded --timeout=10m; then
+            kubectl -n openbao logs pod/dr-snapshot-fetch || true
+            echo "::error::Snapshot fetch from R2 failed."
+            exit 1
+          fi
+          kubectl -n openbao logs pod/dr-snapshot-fetch
+          kubectl -n openbao delete pod dr-snapshot-fetch --ignore-not-found
+          kubectl -n openbao delete configmap dr-r2-target --ignore-not-found
+          echo "::endgroup::"
+
+          echo "::group::Restore the pre-incident openbao-unseal Secret from the Velero backup"
+          # Suspend the HelmRelease first so drift detection cannot fight the
+          # scale-down below.
+          kubectl -n openbao patch helmrelease openbao --type merge -p '{"spec":{"suspend":true}}'
+          kubectl -n openbao scale statefulset openbao --replicas=0
+          kubectl -n openbao wait pod -l app.kubernetes.io/name=openbao \
+            --for=delete --timeout=5m || true
+          # The fresh vault's keys are useless; deleting them lets the Velero
+          # restore bring back the pair that matches the snapshot.
+          kubectl -n openbao delete secret openbao-unseal --ignore-not-found
+          kubectl -n velero create -f - <<EOF
+          apiVersion: velero.io/v1
+          kind: Restore
+          metadata:
+            name: dr-openbao-secrets-${GITHUB_RUN_ID}
+            namespace: velero
+          spec:
+            backupName: ${backup_name}
+            includedNamespaces:
+              - openbao
+            includedResources:
+              - secrets
+          EOF
+          phase=""
+          for i in $(seq 1 60); do
+            phase=$(kubectl -n velero get restore "dr-openbao-secrets-${GITHUB_RUN_ID}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+            case "${phase}" in
+              Completed|PartiallyFailed) break ;;
+              Failed) break ;;
+              *) sleep 5 ;;
+            esac
+          done
+          if ! kubectl -n openbao get secret openbao-unseal >/dev/null 2>&1; then
+            echo "::error::openbao-unseal was not restored (restore phase: ${phase:-<none>}) — aborting before touching the data PVCs."
+            exit 1
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Reset the fresh vault and trigger the automated snapshot restore"
+          # Empty data volumes + surviving keys + available snapshot = the
+          # vault-config Job's automated restore path (docs/dr/openbao.md).
+          kubectl -n openbao get pvc -o name | grep '/data-openbao-' \
+            | xargs -r kubectl -n openbao delete
+          kubectl -n openbao patch helmrelease openbao --type merge -p '{"spec":{"suspend":false}}'
+          # Force the (already-completed) vault-config Job to re-run: delete it
+          # and let the infrastructure Kustomization re-apply it.
+          kubectl -n openbao delete job vault-config --ignore-not-found
+          kubectl -n flux-system annotate kustomization infrastructure \
+            "reconcile.fluxcd.io/requestedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite
+          for i in $(seq 1 90); do
+            kubectl -n openbao get job vault-config >/dev/null 2>&1 && break
+            echo "  ...waiting for Flux to recreate the vault-config Job (${i}/90)"
+            sleep 10
+          done
+          kubectl -n openbao wait job/vault-config --for=condition=Complete --timeout=30m
+          echo "::endgroup::"
+
+          echo "::group::Force ExternalSecrets + PushSecrets to resync against the restored vault"
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          kubectl annotate externalsecrets --all -A "force-sync=${NOW}" --overwrite || true
+          kubectl annotate pushsecrets --all -A "force-sync=${NOW}" --overwrite || true
+          echo "::endgroup::"
+          echo "✅ OpenBao restored from the raft snapshot mirror."
+
+      - name: 🔑 Refresh CI deploy credentials (KUBE_CONFIG / TALOS_CONFIG)
+        env:
+          DR_GH_ADMIN_TOKEN: ${{ secrets.DR_GH_ADMIN_TOKEN }}
+        run: |
+          if [ -z "${DR_GH_ADMIN_TOKEN}" ]; then
+            echo "::warning::DR_GH_ADMIN_TOKEN is not configured — the prod environment's KUBE_CONFIG / TALOS_CONFIG secrets are now STALE. Refresh them manually per docs/dr/runbook.md Scenario 9, or the next deploy will fail its reachability preflight."
+            exit 0
+          fi
+          export GH_TOKEN="${DR_GH_ADMIN_TOKEN}"
+          gh secret set KUBE_CONFIG  --env prod --repo "${GITHUB_REPOSITORY}" < ~/.kube/config
+          gh secret set TALOS_CONFIG --env prod --repo "${GITHUB_REPOSITORY}" < ~/.talos/config
+          echo "✅ prod environment secrets refreshed from this rebuild's fresh configs."
+
+      - name: 📋 Post-rebuild summary
+        if: always()
+        run: |
+          set +e
+          IP=$(kubectl -n kube-system get svc cilium-gateway-platform -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
+          echo "## DR rebuild summary"
+          echo "- Load balancer IP: ${IP:-<pending>}"
+          echo "- DNS: external-dns (policy: sync) repoints the Cloudflare records automatically once HTTPRoutes are Ready — verify with: kubectl -n external-dns logs deploy/external-dns"
+          echo "- CNPG databases (umami-db): recover from barman/R2 per docs/dr/runbook.md Scenario 5 (kubectl cnpg restore)."
+          echo "- Per-app PVC data (headlamp, actual-budget): already-running pods keep their fresh volumes; use the per-app reset dance from runbook Scenario 5 if old data is needed."
+          kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o wide
+          kubectl get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded 2>/dev/null | head -30
