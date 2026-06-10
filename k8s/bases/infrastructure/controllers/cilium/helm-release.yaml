@@ -20,6 +20,19 @@ spec:
   timeout: 10m
   # https://github.com/cilium/cilium/blob/main/install/kubernetes/cilium/values.yaml
   values:
+    # Roll the agent DaemonSet whenever the cilium-config ConfigMap changes.
+    # Cilium agents read their config ONLY at startup; without this, a Helm
+    # values change updates the ConfigMap and nothing else — the fix is
+    # "live" in Git and in the CM while every agent keeps running the old
+    # config until its next unrelated restart. Bit hard on 2026-06-10:
+    # #1944 (encryption-strict-egress-allow-remote-node-identities, the
+    # cross-node black-hole fix) was merged 16h earlier and had taken effect
+    # on ZERO nodes (all agents predated the merge), so the bug it fixed was
+    # still dropping cross-node flows (KEDA scaler liveness kills, operator
+    # -> scaler i/o timeouts). Agent restarts are designed to be
+    # datapath-non-disruptive (eBPF state persists), and the DS rolls one
+    # node at a time per updateStrategy.
+    rollOutCiliumPods: true
     securityContext:
       capabilities:
         ciliumAgent:
@@ -74,6 +87,8 @@ spec:
           enabled: false
     operator:
       replicas: ${cilium_replicas:=2}
+      # Restart on cilium-config changes (same rationale as rollOutCiliumPods).
+      rollOutPods: true
       # memory 256Mi -> 128Mi: live prod usage is 36-77Mi across both
       # replicas (2026-06-03). 128Mi keeps the operator in Burstable QoS
       # (request > 0 -- the BestEffort escape that matters) with ~1.7x
@@ -115,6 +130,8 @@ spec:
         cpu: 200m
         memory: 512Mi
     envoy:
+      # Restart on config changes (same rationale as rollOutCiliumPods).
+      rollOutPods: true
       resources:
         requests:
           cpu: 50m
