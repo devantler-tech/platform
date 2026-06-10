@@ -1,4 +1,4 @@
-# DevantlerTech Platform ☸️⛴️
+# Devantler Tech Platform ☸️⛴️
 
 <img width="1789" height="653" alt="image" src="https://github.com/user-attachments/assets/f4a3fccf-4107-43eb-a9a7-7b0c4c3c4d23" />
 
