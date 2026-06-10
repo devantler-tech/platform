@@ -197,6 +197,14 @@
       "addLabels": [
         "kubernetes"
       ]
+    },
+    {
+      "description": "velero-plugin-for-aws is PINNED at v1.14.0 (k8s/bases/infrastructure/controllers/velero/helm-release.yaml): v1.14.1's AWS SDK update serializes the always-set-but-empty PutObject Tagging field as a literal empty x-amz-tagging header, which Cloudflare R2 rejects with 501 NotImplemented — every backup then fails at the final metadata upload. Exclude exactly v1.14.1 and keep automerge OFF for this image so the next release is only merged after a maintainer confirms it ships the upstream fix (velero-io/velero-plugin-for-aws#299 / #303); CI cannot catch this regression because the system-test cluster has no R2 backend. automerge:false placed last so it overrides the minor/patch automerge defaults above.",
+      "matchPackageNames": [
+        "velero/velero-plugin-for-aws"
+      ],
+      "allowedVersions": "!/^v?1\\.14\\.1$/",
+      "automerge": false
     }
   ],
   "ignorePaths": [
