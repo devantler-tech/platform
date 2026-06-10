@@ -44,6 +44,15 @@ spec:
       # Restrict Longhorn system-managed pods (instance-managers, etc.)
       # to storage nodes. Prevents ~100Mi overhead per non-storage node.
       systemManagedComponentsNodeSelector: "node.longhorn.io/create-default-disk:true"
+      # Rebuild degraded replicas of DETACHED volumes too. KEDA scale-to-zero
+      # apps (actual-budget, headlamp, ...) keep their volumes detached for
+      # days; when an autoscaled node holding a replica leaves, the volume
+      # stays degraded indefinitely because normal rebuilds only run while
+      # attached (observed 2026-06-10: actual-budget at 2/3 replicas,
+      # robustness unknown, plus nightly Velero CSI-snapshot DataUploads
+      # timing out against it). Longhorn briefly attaches the volume in
+      # maintenance mode, rebuilds, and detaches again.
+      offlineReplicaRebuilding: true
 
     persistence:
       # Longhorn is the default StorageClass (replaces hcloud for new PVCs).
