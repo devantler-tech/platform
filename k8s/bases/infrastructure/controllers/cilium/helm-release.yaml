@@ -142,10 +142,10 @@ spec:
           # over peak, while freeing ~64Mi of reserved-unused request on every
           # node (~256Mi across the workers, which sat at 98-99% memory requests).
           memory: 64Mi
-    # Transparent WireGuard encryption for all pod-to-pod and node-to-node
-    # traffic.  KubeSpan (Talos-layer WireGuard between nodes) is not
-    # enabled in this cluster, so without this setting inter-node pod
-    # traffic would transit the Hetzner private network in cleartext.
+    # Transparent WireGuard encryption for pod-to-pod traffic.  KubeSpan
+    # (Talos-layer WireGuard between nodes) is not enabled in this cluster,
+    # so without this setting inter-node pod traffic would transit the
+    # Hetzner private network in cleartext.
     # SPIRE mutual authentication below provides workload *identity*; this
     # block provides on-the-wire *encryption*. They are independent and
     # complementary.
@@ -157,7 +157,31 @@ spec:
     encryption:
       enabled: true
       type: wireguard
-      nodeEncryption: true
+      # nodeEncryption (host-to-host encryption, upstream beta) is OFF —
+      # it silently BLACK-HOLES host-to-remote-node traffic in this
+      # tunnel-routing topology. Diagnosed live 2026-06-10: node IPs sit in
+      # the ipcache with encryptkey=255, host egress to them is steered into
+      # the WireGuard datapath and never emerges (no 51871 datagrams on any
+      # NIC, no drop events) — EXCEPT control planes, which the chart's
+      # default node-encryption-opt-out-labels
+      # (node-role.kubernetes.io/control-plane) exempts, hence the telltale
+      # asymmetry: worker->CP host flows work, worker->worker are dead.
+      # That killed cilium-health (4240) and, critically, the SPIRE
+      # mesh-auth handshakes (4250) between all non-CP node pairs, so every
+      # auth-gated pod flow between worker-class nodes black-holed once its
+      # auth-cache entry expired (KEDA scaler liveness kills, ESO->OpenBao
+      # 503s/timeouts, OpenBao raft joins). Active since the 06-06 agent
+      # restart picked up #1804; #1944 addressed a different vector
+      # (strict-mode plaintext drops) and did not fix this.
+      #
+      # Security posture: pod-to-pod traffic (the actual workload data)
+      # stays WireGuard-encrypted and fail-closed via strictMode (hetzner
+      # patch). Host-to-host traffic is cluster control-plane chatter that
+      # is mTLS/TLS at the application layer anyway (SPIRE mesh-auth IS
+      # mTLS, kubelet/apiserver are TLS). Re-evaluate once upstream
+      # stabilizes node encryption under tunnel routing
+      # (cilium/cilium#37919 and the encryption-wireguard known limitations).
+      nodeEncryption: false
     authentication:
       enabled: true
       mutual:
