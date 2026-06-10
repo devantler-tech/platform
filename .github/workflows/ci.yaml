@@ -158,6 +158,23 @@ jobs:
             kubectl describe job -n "$ns" "$name" 2>&1 | tail -50
           done
           echo "::endgroup::"
+          echo "::group::OpenBao state"
+          # The vault seeding chain (ClusterSecretStore, PushSecrets,
+          # vault-config Job) all route through the openbao-active Service,
+          # whose endpoints depend on OpenBao's Kubernetes service
+          # registration labelling the active pod (openbao-active=true).
+          # When that chain wedges, the generic dumps above miss the three
+          # facts that identify the break: pod labels, Service endpoints,
+          # and the OpenBao server log (2026-06-10 post-mortems had none
+          # of them). Dump all three.
+          kubectl get pods -n openbao --show-labels
+          kubectl get svc -n openbao -o wide
+          kubectl get endpointslices -n openbao -o wide
+          for pod in $(kubectl get pods -n openbao -l app.kubernetes.io/name=openbao -o name); do
+            echo "--- $pod server log ---"
+            kubectl logs -n openbao "$pod" --tail=150 2>&1 | sed 's/^/  /'
+          done
+          echo "::endgroup::"
 
       - name: 🔥 Delete cluster
         if: always()
