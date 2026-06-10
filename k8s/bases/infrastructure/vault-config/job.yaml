@@ -127,6 +127,27 @@ spec:
               done
 
               if [ "$ANY_INITIALIZED" = "false" ]; then
+                # Data-loss guard: keys in openbao-unseal mean a cluster was
+                # initialized before. If on top of that NO pod reports an
+                # initialized barrier, the raft data is missing or unreadable —
+                # auto-initializing here would silently bring up an EMPTY vault
+                # and overwrite the previous unseal key + root token (exactly
+                # how the 2026-06-10 incident destroyed the whole KV store).
+                # Fail loudly instead and make the operator acknowledge the
+                # data loss explicitly before a fresh init is allowed.
+                if [ -f /openbao/unseal/unseal-key ]; then
+                  echo "ERROR: no pod reports an initialized vault, but the openbao-unseal"
+                  echo "Secret still holds keys from a previously initialized cluster."
+                  echo "Refusing to auto-initialize: that would create an empty vault and"
+                  echo "overwrite the old keys, making any surviving data unrecoverable."
+                  echo ""
+                  echo "Recover the data first (Velero restore / reattach the old data"
+                  echo "PVCs) and re-run this Job. If the data loss is confirmed and a"
+                  echo "fresh vault is intended, acknowledge it explicitly with:"
+                  echo "  kubectl delete secret openbao-unseal -n openbao"
+                  echo "and let the next Job run initialize from scratch."
+                  exit 1
+                fi
                 echo "No initialized pod found — running bao operator init on openbao-0..."
                 INIT_OUTPUT=$(BAO_ADDR="$(addr 0)" bao operator init -key-shares=1 -key-threshold=1)
 
