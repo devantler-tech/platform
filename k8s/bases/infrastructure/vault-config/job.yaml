@@ -2,6 +2,12 @@
 #
 # Init containers:
 #   1. vault-init  — waits for OpenBao, auto-initializes if needed, unseals
+#                    EVERY raft pod individually (per-pod headless DNS — the
+#                    round-robin `openbao` Service must never be used for
+#                    init/unseal: consecutive requests land on different pods,
+#                    which is exactly the "double-init split-brain" and
+#                    "unseal-before-join" risk pair called out in
+#                    docs/dr/openbao-raft-ha-migration.md)
 #   2. store-keys  — persists unseal key + root token in a K8s Secret
 #
 # Main container (vault-config):
@@ -74,9 +80,9 @@ spec:
         # --- 1. Auto-init + unseal ---
         - name: vault-init
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
-          env:
-            - name: BAO_ADDR
-              value: http://openbao.openbao.svc.cluster.local:8200
+          # No BAO_ADDR env: the script addresses each pod explicitly through
+          # the openbao-internal headless Service (publishNotReadyAddresses:
+          # true, so per-pod DNS resolves even before readiness).
           volumeMounts:
             - name: unseal-keys
               mountPath: /openbao/unseal
@@ -93,16 +99,36 @@ spec:
             - /bin/sh
             - -ec
             - |
-              echo "Waiting for OpenBao server..."
-              until bao status -format=json 2>/dev/null | grep -q '"initialized"'; do
-                echo "  ...server not reachable yet"
+              # `openbao_replicas` is replaced by Flux post-build substitution
+              # (same variable the HelmRelease uses); shell never sees it.
+              REPLICAS="${openbao_replicas:=1}"
+              LAST=$((REPLICAS - 1))
+
+              addr() { echo "http://openbao-$1.openbao-internal:8200"; }
+              pod_status() { BAO_ADDR="$(addr "$1")" bao status -format=json 2>/dev/null || true; }
+
+              echo "Waiting for openbao-0 to be reachable..."
+              until pod_status 0 | grep -q '"initialized"'; do
+                echo "  ...openbao-0 not reachable yet"
                 sleep 3
               done
-              echo "OpenBao server is reachable."
+              echo "openbao-0 is reachable."
 
-              if bao status -format=json 2>/dev/null | grep -q '"initialized": false'; then
-                echo "Vault is NOT initialized — running bao operator init..."
-                INIT_OUTPUT=$(bao operator init -key-shares=1 -key-threshold=1)
+              # Initialize EXACTLY ONCE, on openbao-0, and only when NO pod
+              # reports an existing cluster. A fresh openbao-0 can report
+              # initialized:false while peers already hold raft data (it
+              # retry_joins only once a leader is unsealed) — initializing it
+              # then would split-brain the cluster.
+              ANY_INITIALIZED=false
+              for i in $(seq 0 $LAST); do
+                if pod_status "$i" | grep -q '"initialized": true'; then
+                  ANY_INITIALIZED=true
+                fi
+              done
+
+              if [ "$ANY_INITIALIZED" = "false" ]; then
+                echo "No initialized pod found — running bao operator init on openbao-0..."
+                INIT_OUTPUT=$(BAO_ADDR="$(addr 0)" bao operator init -key-shares=1 -key-threshold=1)
 
                 UNSEAL_KEY=$(echo "$INIT_OUTPUT" | grep "Unseal Key 1:" | sed 's/.*: //')
                 ROOT_TOKEN=$(echo "$INIT_OUTPUT" | grep "Initial Root Token:" | sed 's/.*: //')
@@ -116,10 +142,7 @@ spec:
                 printf '%s' "$UNSEAL_KEY" > /shared/unseal-key
                 printf '%s' "$ROOT_TOKEN" > /shared/root-token
                 touch /shared/newly-initialized
-
-                echo "Unsealing vault..."
-                bao operator unseal "$UNSEAL_KEY"
-                echo "Vault initialized and unsealed."
+                echo "Vault initialized on openbao-0."
               else
                 echo "Vault is already initialized."
 
@@ -132,22 +155,59 @@ spec:
                   echo "Restore the Secret from Velero backup or delete it and re-initialize."
                   cat /openbao/unseal/unseal-key > /shared/unseal-key
                 fi
-
-                # Unseal if still sealed
-                if bao status -format=json 2>/dev/null | grep -q '"sealed": true'; then
-                  if [ -f /shared/unseal-key ]; then
-                    echo "Unsealing vault..."
-                    bao operator unseal "$(cat /shared/unseal-key)"
-                    echo "Vault unsealed."
-                  else
-                    echo "ERROR: vault is sealed but no unseal key available."
-                    echo "Restore the openbao-unseal Secret from Velero backup or re-initialize."
-                    exit 1
-                  fi
-                else
-                  echo "Vault is already unsealed."
-                fi
               fi
+
+              if [ ! -f /shared/unseal-key ]; then
+                echo "ERROR: vault is initialized but no unseal key is available."
+                echo "Restore the openbao-unseal Secret from Velero backup or re-initialize."
+                exit 1
+              fi
+              UNSEAL_KEY=$(cat /shared/unseal-key)
+
+              # Unseal EVERY pod individually. Followers join the raft cluster
+              # via retry_join only after a leader is unsealed, so loop until
+              # all pods are unsealed or attempts run out. A wrong-key unseal
+              # attempt fails harmlessly (logged) and never mutates state.
+              ATTEMPTS=36
+              while [ $ATTEMPTS -gt 0 ]; do
+                ALL_UNSEALED=true
+                for i in $(seq 0 $LAST); do
+                  STATUS=$(pod_status "$i")
+                  if echo "$STATUS" | grep -q '"sealed": false'; then
+                    continue
+                  fi
+                  ALL_UNSEALED=false
+                  if echo "$STATUS" | grep -q '"sealed": true'; then
+                    echo "Unsealing openbao-$i..."
+                    BAO_ADDR="$(addr "$i")" bao operator unseal "$UNSEAL_KEY" >/dev/null \
+                      || echo "WARNING: unseal of openbao-$i failed (not joined yet, or key mismatch)"
+                  else
+                    echo "openbao-$i not reachable yet"
+                  fi
+                done
+                if [ "$ALL_UNSEALED" = "true" ]; then
+                  echo "All $REPLICAS pod(s) unsealed."
+                  break
+                fi
+                ATTEMPTS=$((ATTEMPTS - 1))
+                sleep 5
+              done
+
+              # Job succeeds if at least one pod is unsealed (the active
+              # Service then has an endpoint); stragglers are logged above and
+              # re-tried on every reconcile re-run of this Job.
+              UNSEALED_ANY=false
+              for i in $(seq 0 $LAST); do
+                if pod_status "$i" | grep -q '"sealed": false'; then
+                  UNSEALED_ANY=true
+                fi
+              done
+              if [ "$UNSEALED_ANY" = "false" ]; then
+                echo "ERROR: no pod could be unsealed — the stored key may not match this cluster."
+                echo "See docs/dr/openbao-raft-ha-migration.md for recovery."
+                exit 1
+              fi
+              echo "Unseal phase complete."
         # --- 2. Persist credentials in K8s Secret (only on fresh init) ---
         - name: store-keys
           image: alpine/k8s:1.36.1@sha256:692239d739589247c4a791205ed9619c28ae85a21286e19a6211c04a62c56668
@@ -181,7 +241,10 @@ spec:
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
           env:
             - name: BAO_ADDR
-              value: http://openbao.openbao.svc.cluster.local:8200
+              # openbao-active = unsealed Raft leader only. Configuration
+              # writes must not round-robin onto sealed-but-Ready standbys
+              # (503 "Vault is sealed").
+              value: http://openbao-active.openbao.svc.cluster.local:8200
           volumeMounts:
             - name: shared
               mountPath: /shared
