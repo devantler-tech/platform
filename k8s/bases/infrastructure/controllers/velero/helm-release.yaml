@@ -35,7 +35,15 @@ spec:
       repository: velero/velero
     initContainers:
       - name: velero-plugin-for-aws
-        image: velero/velero-plugin-for-aws:v1.14.1
+        # PINNED at v1.14.0 — do NOT bump to v1.14.1. Its AWS SDK update
+        # serializes the always-set-but-empty PutObject Tagging field as a
+        # literal empty `x-amz-tagging` header, and Cloudflare R2 rejects any
+        # tagging header with `501 NotImplemented` — every backup then fails
+        # at the final metadata upload ("error putting object .../velero-backup.json").
+        # Upstream fix (skip the header when no tags are configured) is open
+        # but unreleased: velero-io/velero-plugin-for-aws#299 / #303.
+        # Safe to bump again once a release ships one of those PRs.
+        image: velero/velero-plugin-for-aws:v1.14.0
         imagePullPolicy: IfNotPresent
         volumeMounts:
           - mountPath: /target
