@@ -1,0 +1,16 @@
+# Dedicated volume for OpenBao raft snapshots (written by the
+# vault-snapshot CronJob, newest 14 retained). Uses the cluster's default
+# StorageClass. Snapshots on this PVC are the first-line restore source
+# after OpenBao data loss; Velero's daily namespace backup carries them
+# off-cluster alongside the openbao-unseal Secret they pair with.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vault-snapshots
+  namespace: openbao
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

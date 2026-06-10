@@ -432,6 +432,11 @@ spec:
               path "sys/health" {
                 capabilities = ["read"]
               }
+              # Raft snapshot export for the vault-snapshot CronJob
+              # (GET /v1/sys/storage/raft/snapshot).
+              path "sys/storage/raft/snapshot" {
+                capabilities = ["read"]
+              }
               POLICY
 
               bao policy write vault-admin - <<'POLICY'
