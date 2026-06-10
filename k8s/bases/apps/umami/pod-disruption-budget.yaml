@@ -1,0 +1,21 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: umami
+  namespace: umami
+spec:
+  # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880).
+  # Umami is a Flagger target like homepage: the selector keys on
+  # app.kubernetes.io/instance (NOT /name) because Flagger's default
+  # --selector-labels rewrites app.kubernetes.io/name to "umami-umami-primary"
+  # on the primary Deployment, while instance=umami stays intact on the running
+  # pods (see canary.yaml). The disruption controller sums the scales of every
+  # controller this selector matches (umami-umami-primary + the scaled-to-0
+  # canary Deployment), so maxUnavailable: 1 permits exactly one eviction at
+  # the steady state and stays 1-at-a-time during a rollout. The
+  # provision-tenants CronJob pods carry only app=umami-provision-tenants, so
+  # they are not caught by this selector.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: umami

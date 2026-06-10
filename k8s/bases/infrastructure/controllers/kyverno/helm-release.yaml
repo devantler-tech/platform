@@ -81,6 +81,13 @@ spec:
               app.kubernetes.io/instance: kyverno
     backgroundController:
       replicas: ${kyverno_background_replicas:=1}
+      # The chart auto-enables this controller's PDB whenever replicas > 1 and
+      # defaults it to minAvailable: 1 -- the exact shape validate-pdb-drain-safe
+      # flags. Pin the drain-safe house pattern (#1880/#1882) instead; the chart
+      # refuses to render both fields, so only maxUnavailable is set. At the
+      # local/CI default of 1 replica the chart renders no PDB at all.
+      podDisruptionBudget:
+        maxUnavailable: 1
       podSecurityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -126,12 +133,20 @@ spec:
                 - patch
     reportsController:
       replicas: ${kyverno_reports_replicas:=1}
+      # Same as backgroundController: override the chart's auto-enabled
+      # minAvailable: 1 PDB with the drain-safe maxUnavailable pattern.
+      podDisruptionBudget:
+        maxUnavailable: 1
       podSecurityContext:
         runAsNonRoot: true
         seccompProfile:
           type: RuntimeDefault
     cleanupController:
       replicas: ${kyverno_cleanup_replicas:=1}
+      # Same as backgroundController: override the chart's auto-enabled
+      # minAvailable: 1 PDB with the drain-safe maxUnavailable pattern.
+      podDisruptionBudget:
+        maxUnavailable: 1
       podSecurityContext:
         runAsNonRoot: true
         seccompProfile:

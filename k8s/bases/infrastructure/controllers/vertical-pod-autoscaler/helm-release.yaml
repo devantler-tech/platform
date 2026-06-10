@@ -38,6 +38,11 @@ spec:
         capabilities:
           drop:
             - ALL
+      podDisruptionBudget:
+        # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
+        # deadlocks a node drain regardless of replica count. Bounds evictions
+        # to one standby at a time so a leader stays available.
+        maxUnavailable: 1
     updater:
       enabled: true
       replicaCount: ${vpa_updater_replicas:=1}
@@ -56,6 +61,11 @@ spec:
         capabilities:
           drop:
             - ALL
+      podDisruptionBudget:
+        # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
+        # deadlocks a node drain regardless of replica count. Bounds evictions
+        # to one standby at a time so a leader stays available.
+        maxUnavailable: 1
     admissionController:
       replicaCount: ${vpa_admission_replicas:=2}
       podSecurityContext:

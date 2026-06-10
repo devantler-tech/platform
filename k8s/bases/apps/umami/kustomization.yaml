@@ -18,4 +18,5 @@ resources:
   # canary.yaml (Gateway API weighted canary).
   - canary.yaml
   - networkpolicy.yaml
+  - pod-disruption-budget.yaml
   - provision-cronjob.yaml
