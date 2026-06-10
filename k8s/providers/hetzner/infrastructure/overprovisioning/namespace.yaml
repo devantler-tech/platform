@@ -1,0 +1,17 @@
+# Dedicated namespace for the over-provisioning ("spare room") pause workload.
+#
+# Kept out of any app/infra namespace so the buffer is trivially observable
+# (`kubectl -n overprovisioning get pods`) and so a single ResourceQuota/cost
+# line attributes the warm-node spend to over-provisioning explicitly.
+#
+# PSA restricted at admission: the pause pods carry a fully specified
+# restricted securityContext (see replicaset.yaml), so they pass Pod Security
+# without leaning on the Kyverno add-security-context webhook — same posture as
+# flagger-system / reloader.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: overprovisioning
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
