@@ -1,6 +1,11 @@
-# Daily backup verification of OpenBao data. Vault data is persisted on a
-# PVC and backed up by Velero. This job logs vault health and seal status
-# for monitoring.
+# Daily OpenBao raft snapshot to the vault-snapshots PVC (newest 14 kept),
+# plus a health/seal-status check. Until 2026-06-10 this job ONLY did the
+# health check despite its name — when the vault was wiped that day there
+# was no snapshot to restore from. A raft snapshot pairs with the
+# openbao-unseal Secret: restore via
+#   bao operator raft snapshot restore <file>
+# then unseal with the key that was current when the snapshot was taken
+# (docs/dr/openbao-raft-ha-migration.md).
 # Authenticates via Kubernetes auth (vault-snapshot role).
 apiVersion: batch/v1
 kind: CronJob
@@ -26,16 +31,23 @@ spec:
             runAsUser: 100
             runAsGroup: 1000
             fsGroup: 1000
+          volumes:
+            - name: snapshots
+              persistentVolumeClaim:
+                claimName: vault-snapshots
           containers:
             - name: snapshot
               image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
               env:
-                # openbao-active = unsealed Raft leader only. This job asserts
-                # "an unsealed active node exists" — against the plain `openbao`
-                # Service it round-robins across all pods and fails spuriously
-                # when it lands on a sealed-but-Ready standby.
+                # openbao-active = unsealed Raft leader only. Snapshots must be
+                # taken from the leader — against the plain `openbao` Service
+                # this round-robins across all pods and fails spuriously when
+                # it lands on a sealed-but-Ready standby.
                 - name: BAO_ADDR
                   value: http://openbao-active.openbao.svc.cluster.local:8200
+              volumeMounts:
+                - name: snapshots
+                  mountPath: /snapshots
               command:
                 - /bin/sh
                 - -ec
@@ -52,10 +64,20 @@ spec:
                   STATUS=$(bao status -format=json)
                   echo "$STATUS"
 
-                  SEALED=$(echo "$STATUS" | grep -o '"sealed":[a-z]*' | cut -d: -f2)
-                  if [ "$SEALED" = "true" ]; then
+                  if echo "$STATUS" | grep -q '"sealed": true'; then
                     echo "ERROR: Vault is sealed!"
                     exit 1
                   fi
-
                   echo "Vault is unsealed and healthy."
+
+                  SNAP="/snapshots/openbao-$(date -u +%Y%m%d-%H%M%S).snap"
+                  echo "Saving raft snapshot to $SNAP..."
+                  bao operator raft snapshot save "$SNAP"
+                  ls -l "$SNAP"
+
+                  # Retention: keep the newest 14 snapshots
+                  ls -1t /snapshots/openbao-*.snap 2>/dev/null | tail -n +15 | while read -r OLD; do
+                    echo "Pruning $OLD"
+                    rm -f "$OLD"
+                  done
+                  echo "Snapshot complete."
