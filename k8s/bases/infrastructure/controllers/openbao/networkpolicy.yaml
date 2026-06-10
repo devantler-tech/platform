@@ -7,13 +7,21 @@ spec:
   endpointSelector: {}
   ingress:
     # Raft peering: the 3 openbao pods form the Integrated Storage cluster and
-    # gossip on the cluster port (8201). Allow openbao -> openbao on 8201.
+    # gossip on the cluster port (8201) — but the retry_join bootstrap
+    # challenge goes to the LEADER'S API PORT (8200, the leader_api_addr in
+    # the HCL), and standbys also forward client requests there. With only
+    # 8201 open, followers with empty data dirs could never join: every
+    # retry_join died with `dial tcp <leader>:8200: i/o timeout`, leaving
+    # openbao-1/2 sealed and uninitialized forever (observed live during the
+    # 2026-06-10 incident). Allow openbao -> openbao on BOTH ports.
     - fromEndpoints:
         - matchLabels:
             app.kubernetes.io/name: openbao
             k8s:io.kubernetes.pod.namespace: openbao
       toPorts:
         - ports:
+            - port: "8200"
+              protocol: TCP
             - port: "8201"
               protocol: TCP
     # Allow same-namespace clients (vault-config Jobs, UI),
@@ -42,6 +50,20 @@ spec:
             - port: "8200"
               protocol: TCP
   egress:
+    # Raft peering, mirror of the ingress rule above: the presence of ANY
+    # egress rule puts these pods in default-deny egress, so without an
+    # explicit openbao -> openbao allow the join/gossip SYN is dropped at
+    # the SOURCE pod even though ingress on the peer permits it.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: openbao
+            k8s:io.kubernetes.pod.namespace: openbao
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+            - port: "8201"
+              protocol: TCP
     # Kube API for Kubernetes auth token review
     - toEntities:
         - kube-apiserver
