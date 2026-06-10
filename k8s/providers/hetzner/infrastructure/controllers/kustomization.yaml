@@ -14,12 +14,18 @@ resources:
   - cilium/
   - coredns/
   - external-dns/
+  # Second external-dns instance for zones DNS-hosted at simply.com (one
+  # instance per provider) — drives tenant-owned domains like
+  # ascoachingogvaner.dk from the tenants' own HTTPRoute hostnames.
+  - external-dns-simply/
   - flux-instance/
   - hcloud-ccm/
   - hcloud-csi/
   - kubelet-serving-cert-approver/
   - longhorn/
   - origin-ca-issuer/
+  # cert-manager DNS01 solver for simply.com-hosted zones (ascoachingogvaner.dk).
+  - simply-dns-webhook/
   - snapshot-controller/
   # Hetzner-local Velero extras (the volume-policy ConfigMap). The base Velero
   # HelmRelease is included via ../../../../bases/...; this dir only adds the

@@ -1,0 +1,12 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Second external-dns instance, for zones DNS-hosted at simply.com (an
+# external-dns instance speaks exactly one provider, so multi-provider DNS
+# means one instance per provider — the upstream-recommended pattern). It
+# shares the `external-dns` namespace and HelmRepository with the Cloudflare
+# instance in ../external-dns/.
+resources:
+  - external-secret.yaml
+  - helm-release.yaml
+  - networkpolicy.yaml

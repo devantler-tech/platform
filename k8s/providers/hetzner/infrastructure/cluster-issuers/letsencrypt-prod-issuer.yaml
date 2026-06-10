@@ -9,8 +9,24 @@ spec:
     privateKeySecretRef:
       name: letsencrypt-prod-account-key
     solvers:
+      # Default solver — Cloudflare hosts ${domain}.
       - dns01:
           cloudflare:
             apiTokenSecretRef:
               name: cloudflare-api-token
               key: api-token
+      # Tenant-owned zones DNS-hosted at simply.com. cert-manager picks the
+      # most specific matching solver, so the dnsZones selector wins for
+      # these zones and everything else stays on Cloudflare. Solved by the
+      # simply-dns-webhook controller (see
+      # ../controllers/simply-dns-webhook/); the groupName/solverName pair is
+      # fixed by that chart's RBAC.
+      - selector:
+          dnsZones:
+            - ascoachingogvaner.dk
+        dns01:
+          webhook:
+            groupName: com.github.runnerm.cert-manager-simply-webhook
+            solverName: simply-dns-solver
+            config:
+              secretName: simply-credentials

@@ -5,14 +5,10 @@ metadata:
   namespace: ascoachingogvaner
 spec:
   patches:
-    - target:
-        kind: HTTPRoute
-        name: ascoachingogvaner
-      patch: |
-        - op: replace
-          path: /spec/hostnames
-          value:
-            - ascoachingogvaner.platform.devantler.tech
+    # NOTE: the hostname-replace patch that used to live here is gone — the
+    # tenant repo now owns its public hostnames (ascoachingogvaner.dk + the
+    # ascoachingogvaner.platform.devantler.tech subdomain) in its own
+    # HTTPRoute, since the domain is tenant-specific, not platform config.
     # Surface this tenant on the homepage dashboard. The HTTPRoute ships
     # from an external OCI artifact (ghcr.io/devantler-tech/ascoachingogvaner),
     # so the gethomepage.dev/* annotations have to be injected here rather
@@ -33,5 +29,5 @@ spec:
             gethomepage.dev/description: Personal/business static site.
             gethomepage.dev/group: Customer Sites
             gethomepage.dev/icon: mdi-account-tie
-            gethomepage.dev/href: https://ascoachingogvaner.platform.devantler.tech
+            gethomepage.dev/href: https://ascoachingogvaner.dk
             gethomepage.dev/pod-selector: app.kubernetes.io/name=ascoachingogvaner
