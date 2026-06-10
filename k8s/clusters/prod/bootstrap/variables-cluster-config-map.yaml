@@ -137,7 +137,9 @@ data:
   # --- Flagger (3 replicas for HA; gated by leaderElection.enabled) ---
   flagger_replicas: "3"
   # --- OpenBao secrets vault ---
-  openbao_replicas: "1"
+  # 3-node Raft HA (quorum minimum; tolerates 1 failure). See the cutover
+  # runbook docs/dr/openbao-raft-ha-migration.md.
+  openbao_replicas: "3"
   openbao_storage_size: 10Gi
   # --- External Secrets Operator (3 replicas for HA; require-three-replicas) ---
   # Drives the controller, webhook and cert-controller. Controller + cert-controller
