@@ -67,12 +67,13 @@ tenant ships a SOPS-encrypted Secret.
 A tenant gets a store + Vault role **only if it needs app secrets** — a purely
 static site with no integrations gets none. The **tenant owns its app secrets
 end-to-end**; the platform only provisions the store + isolation and never seeds
-a tenant's app values. A *generated* value is only ever introduced via a
-committed resource (a generator, or the tenant's own push), never written to
-OpenBao out of band; the one exception is an **externally-issued credential**
-(a third-party API key, e.g. ascoachingogvaner's simply.com DNS credentials at
-`apps/ascoachingogvaner/simply`), which the maintainer seeds into the tenant's
-path once — there is nowhere to generate it from.
+a tenant's app values. How a value gets *into* the tenant's path is the tenant's
+business: **paste it straight into OpenBao** (the usual flow for
+externally-issued credentials — e.g. ascoachingogvaner's simply.com DNS
+credentials at `apps/ascoachingogvaner/simply`), or seed it from a committed
+generator/`PushSecret`. The platform's contract is just two rules: nothing
+sensitive sits in git in plaintext (whatever is committed is secure at rest),
+and workloads consume the values **from OpenBao via `ExternalSecret`s**.
 
 - **Tenant (`deploy/`)** — own your secret end-to-end. Your `edit` RoleBinding
   aggregates `external-secrets-tenant-edit`, so you may create `Password`
