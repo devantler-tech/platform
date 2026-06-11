@@ -1,0 +1,118 @@
+# Dead-man's-switch for the nightly Velero backup — same pattern as the
+# coroot-heartbeat CronJob. Every morning (after the 02:17 UTC velero-daily-full
+# window) it checks the most recent Backup object and pings the external
+# heartbeat monitor (${backup_heartbeat_url}, e.g. a healthchecks.io check with
+# a 24h period) ONLY when that backup is Completed and younger than 26 hours.
+# A failed, stuck, or missing backup withholds the ping and the external
+# monitor alerts out-of-band — closing the gap where backups failed silently
+# for two weeks (R2 x-amz-tagging 501 regression, June 2026) because nothing
+# in-cluster watches Backup phases.
+#
+# The URL is injected by Flux substitution from the per-cluster SOPS secret;
+# unset (local/CI) it defaults to an invalid URL so the ping reaches nowhere
+# and the job still exits 0 — the alarm signal is the absence of pings,
+# observed externally, never the Job's own exit code.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: velero-backup-heartbeat
+  namespace: velero
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: velero-backup-heartbeat
+  namespace: velero
+rules:
+  - apiGroups: ["velero.io"]
+    resources: ["backups"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: velero-backup-heartbeat
+  namespace: velero
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: velero-backup-heartbeat
+subjects:
+  - kind: ServiceAccount
+    name: velero-backup-heartbeat
+    namespace: velero
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: velero-backup-heartbeat
+  namespace: velero
+spec:
+  # 07:00 UTC: ~4h40m after the velero-daily-full schedule (17 2 * * *) so even
+  # a slow full backup has finished. A backup still InProgress by then also
+  # withholds the ping — a backup that slow is itself worth the alert.
+  schedule: "0 7 * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 300
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            app: velero-backup-heartbeat
+        spec:
+          restartPolicy: Never
+          serviceAccountName: velero-backup-heartbeat
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: heartbeat
+              # Same pinned kubectl+jq+curl image the vault-config job uses.
+              image: alpine/k8s:1.36.1@sha256:692239d739589247c4a791205ed9619c28ae85a21286e19a6211c04a62c56668
+              env:
+                # Writable scratch for kubectl's discovery cache under a
+                # read-only root filesystem.
+                - name: HOME
+                  value: /tmp
+              command:
+                - /bin/sh
+                - -euc
+                - |
+                  kubectl get backups.velero.io -n velero -o json > /tmp/backups.json
+                  jq -r '.items | sort_by(.metadata.creationTimestamp) | last // empty
+                         | "latest backup: \(.metadata.name) phase=\(.status.phase // "Unknown") created=\(.metadata.creationTimestamp)"' \
+                    /tmp/backups.json
+                  if jq -e '.items | sort_by(.metadata.creationTimestamp) | last // empty
+                            | ((.status.phase // "") == "Completed")
+                              and ((now - (.metadata.creationTimestamp | fromdateiso8601)) < 93600)' \
+                       /tmp/backups.json >/dev/null; then
+                    echo "Latest backup Completed within 26h — pinging heartbeat monitor."
+                    curl -sf --max-time 10 "${backup_heartbeat_url:=https://example.invalid/no-heartbeat-configured}" || true
+                  else
+                    echo "Latest backup missing, stale (>26h) or not Completed — withholding heartbeat ping."
+                  fi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 64Mi
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
