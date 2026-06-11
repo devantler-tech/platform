@@ -7,42 +7,6 @@
 apiVersion: generators.external-secrets.io/v1alpha1
 kind: Password
 metadata:
-  name: dex-client-secret
-  namespace: openbao
-spec:
-  length: 32
-  digits: 8
-  symbols: 0
-  noUpper: false
-  allowRepeat: true
----
-apiVersion: generators.external-secrets.io/v1alpha1
-kind: Password
-metadata:
-  name: flux-web-client-secret
-  namespace: openbao
-spec:
-  length: 32
-  digits: 8
-  symbols: 0
-  noUpper: false
-  allowRepeat: true
----
-apiVersion: generators.external-secrets.io/v1alpha1
-kind: Password
-metadata:
-  name: oauth2-proxy-cookie-secret
-  namespace: openbao
-spec:
-  length: 32
-  digits: 8
-  symbols: 0
-  noUpper: false
-  allowRepeat: true
----
-apiVersion: generators.external-secrets.io/v1alpha1
-kind: Password
-metadata:
   name: fleetdm-mysql-root-password
   namespace: openbao
 spec:
