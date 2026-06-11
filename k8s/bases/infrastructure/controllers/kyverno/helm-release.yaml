@@ -138,9 +138,12 @@ spec:
                 - patch
     reportsController:
       replicas: ${kyverno_reports_replicas:=1}
-      # Same as backgroundController: override the chart's auto-enabled
-      # minAvailable: 1 PDB with the drain-safe maxUnavailable pattern
-      # (minAvailable: null is required -- see backgroundController).
+      # The chart auto-enables this PDB whenever replicas > 1, defaulting to
+      # minAvailable: 1. Flip it to the drain-safe house pattern
+      # (maxUnavailable: 1, #1880/#1882); minAvailable must be nulled because
+      # the chart refuses to render both fields. Unlike the admission
+      # controller's PDB, this one is not ksail-bootstrap-owned, so there is
+      # no server-side-apply conflict.
       podDisruptionBudget:
         minAvailable: null
         maxUnavailable: 1
@@ -150,9 +153,7 @@ spec:
           type: RuntimeDefault
     cleanupController:
       replicas: ${kyverno_cleanup_replicas:=1}
-      # Same as backgroundController: override the chart's auto-enabled
-      # minAvailable: 1 PDB with the drain-safe maxUnavailable pattern
-      # (minAvailable: null is required -- see backgroundController).
+      # Same drain-safe PDB flip as the reportsController above.
       podDisruptionBudget:
         minAvailable: null
         maxUnavailable: 1

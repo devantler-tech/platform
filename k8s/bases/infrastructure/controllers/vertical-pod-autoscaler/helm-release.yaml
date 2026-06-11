@@ -28,6 +28,11 @@ spec:
       # --leader-elect (extraArgs is a map -> --leader-elect=true).
       extraArgs:
         leader-elect: true
+      podDisruptionBudget:
+        # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
+        # deadlocks a node drain regardless of replica count, and at the
+        # prod 2-replica floor it keeps one recommender up through a drain.
+        maxUnavailable: 1
       podSecurityContext:
         runAsUser: 65534
         runAsGroup: 65534
@@ -38,11 +43,6 @@ spec:
         capabilities:
           drop:
             - ALL
-      podDisruptionBudget:
-        # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
-        # deadlocks a node drain regardless of replica count. Bounds evictions
-        # to one standby at a time so a leader stays available.
-        maxUnavailable: 1
     updater:
       enabled: true
       replicaCount: ${vpa_updater_replicas:=1}
@@ -51,6 +51,9 @@ spec:
       # updaters would double-evict pods. VPA 1.6.0 supports --leader-elect.
       extraArgs:
         leader-elect: true
+      podDisruptionBudget:
+        # Drain-safe PDB pattern (#1880/#1882) -- see the recommender block.
+        maxUnavailable: 1
       podSecurityContext:
         runAsUser: 65534
         runAsGroup: 65534
@@ -61,11 +64,6 @@ spec:
         capabilities:
           drop:
             - ALL
-      podDisruptionBudget:
-        # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
-        # deadlocks a node drain regardless of replica count. Bounds evictions
-        # to one standby at a time so a leader stays available.
-        maxUnavailable: 1
     admissionController:
       replicaCount: ${vpa_admission_replicas:=2}
       podSecurityContext:
