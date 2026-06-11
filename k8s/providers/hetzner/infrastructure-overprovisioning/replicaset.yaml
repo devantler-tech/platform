@@ -94,7 +94,9 @@ spec:
       containers:
         - name: pause
           # Upstream Kubernetes pause image — sleeps until signalled, no logic.
-          image: registry.k8s.io/pause:3.10
+          # Digest-pinned like every other raw pod image in the repo; Renovate's
+          # kubernetes manager keeps tag and digest updated together.
+          image: registry.k8s.io/pause:3.10@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
           resources:
             requests:
               cpu: "2"
