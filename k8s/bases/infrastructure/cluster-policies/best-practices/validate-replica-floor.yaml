@@ -62,14 +62,13 @@ spec:
                 matchLabels:
                   platform.devantler.tech/replica-floor: exempt
           # Namespaces whose workloads genuinely can't run 3: velero (no leader
-          # election, chart hardcodes replicas: 1), flux controllers, coroot
-          # (observability) and testkube (operator-managed singletons).
+          # election, chart hardcodes replicas: 1), flux controllers and coroot
+          # (observability).
           - resources:
               namespaces:
                 - velero
                 - flux-system
                 - observability
-                - testkube
           # KEDA scale-to-zero targets, Flagger canary primaries (*-primary) and
           # the scaled-to-0 canary sources -- their replica count is owned by a
           # controller, not declared statically (the Flagger primary runs the HA
