@@ -51,7 +51,10 @@ spec:
   # 07:00 UTC: ~4h40m after the velero-daily-full schedule (17 2 * * *) so even
   # a slow full backup has finished. A backup still InProgress by then also
   # withholds the ping — a backup that slow is itself worth the alert.
+  # timeZone pins that UTC contract explicitly instead of inheriting
+  # kube-controller-manager's local TZ.
   schedule: "0 7 * * *"
+  timeZone: Etc/UTC
   concurrencyPolicy: Forbid
   startingDeadlineSeconds: 300
   successfulJobsHistoryLimit: 1
