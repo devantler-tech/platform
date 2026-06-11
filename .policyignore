@@ -4,6 +4,7 @@
 *artifacthub-pkg.y*ml
 *kustomization.yaml
 *README.md
+_step-templates*
 argo*
 aws*
 best-practices-cel*
