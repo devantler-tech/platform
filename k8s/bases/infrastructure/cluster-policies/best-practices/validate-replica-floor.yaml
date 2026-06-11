@@ -19,8 +19,8 @@
 #     owns their replica count;
 #   * KEDA scale-to-zero targets -- a floor defeats scale-to-zero;
 #   * namespaces whose workloads genuinely can't run 3: velero (chart hardcodes
-#     replicas: 1, no leader election), flux controllers, coroot (observability)
-#     and testkube (operator-managed singletons);
+#     replicas: 1, no leader election), flux controllers and coroot
+#     (observability);
 #   * single-replica-only controllers: external-dns (chart has no replicaCount;
 #     >1 = duplicate Cloudflare writes), origin-ca-issuer (disabled) and
 #     flagger-loadtester (ephemeral per-canary test helper).
