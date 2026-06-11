@@ -16,20 +16,17 @@ spec:
         kind: HelmRepository
         name: umami
   postRenderers:
-    # Flagger copies the source (umami-umami) Deployment's replicas onto the
-    # primary. Pin it to 3 for an HA primary (require-three-replicas) instead of
-    # removing it (which left the primary at the chart default of 1). Flux drift
-    # detection ignores /spec/replicas, so Flagger's between-rollout
-    # scale-to-zero of this source is not fought. See k8s/bases/apps/umami/canary.yaml.
+    # Replicas are deliberately NOT pinned here: the KEDA ScaledObject
+    # (scaled-object.yaml) owns them through the Canary's autoscalerRef — the
+    # primary scales 2-3 on request rate and Flagger pauses the source's scaler
+    # at 0 between rollouts. Flux drift detection ignores /spec/replicas, so
+    # neither controller is fought. See k8s/bases/apps/umami/canary.yaml.
     - kustomize:
         patches:
           - target:
               kind: Deployment
               name: umami-umami
             patch: |
-              - op: replace
-                path: /spec/replicas
-                value: 3
               # OpenBao rotates the umami DB password out of band (7-day static
               # role), refreshed into the umami-db-rotated Secret. The app reads it
               # into DATABASE_URL at startup, so a running pod keeps a stale
@@ -46,8 +43,9 @@ spec:
                 value: umami-db-rotated
   # https://github.com/helmforgedev/charts/blob/main/charts/umami/values.yaml
   values:
-    # replicaCount intentionally omitted — Flagger manages canary replicas
-    # (see the postRenderer above).
+    # replicaCount intentionally omitted — replicas are owned by the KEDA
+    # ScaledObject (scaled-object.yaml) through the Canary's autoscalerRef;
+    # the primary scales 2-3 on request rate.
     serviceAccount:
       # Umami needs no Kubernetes API access.
       automountServiceAccountToken: false
