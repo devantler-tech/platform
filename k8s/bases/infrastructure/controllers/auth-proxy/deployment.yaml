@@ -4,6 +4,15 @@ kind: Deployment
 metadata:
   name: auth-proxy
   namespace: oauth2-proxy
+  annotations:
+    # Disable Coroot's latency SLO for this proxy (availability SLO stays).
+    # auth-proxy fans out to the KEDA-interceptor-fronted scale-to-zero UIs,
+    # so its inbound latency SLI is dominated by intentional cold-start holds
+    # (the interceptor parks the request until the target wakes — 10s+),
+    # which at ~600 requests/day makes the default 99%-under-500ms SLO a
+    # permanent false-critical. Warm-path health is still covered by the
+    # availability SLO here and by the per-app SLOs behind the proxy.
+    coroot.com/slo-latency-objective: 0%
 spec:
   replicas: ${auth_proxy_replicas:=2}
   strategy:

@@ -8,3 +8,4 @@ resources:
   - networkpolicy.yaml
   - velero-r2-credentials.yaml
   - node-agent-configmap.yaml
+  - backup-heartbeat-cronjob.yaml
