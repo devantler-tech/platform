@@ -7,7 +7,7 @@ spec:
   endpointSelector: {}
   ingress:
     # Intra-namespace: Coroot UI <-> bundled Prometheus <-> ClickHouse <->
-    # cluster-agent, plus the heartbeat CronJob probing Prometheus.
+    # cluster-agent.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: observability
@@ -62,7 +62,8 @@ spec:
     - toEntities:
         - host
         - remote-node
-    # Slack notifications + Coroot version checks (HTTPS egress).
+    # Slack notifications, Coroot version checks, and the cluster-heartbeat
+    # dead-man ping (HTTPS egress).
     - toEntities:
         - world
       toPorts:

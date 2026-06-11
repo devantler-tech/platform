@@ -1,5 +1,5 @@
 # Dead-man's-switch for the nightly Velero backup — same pattern as the
-# coroot-heartbeat CronJob. Every morning (after the 02:17 UTC velero-daily-full
+# cluster-heartbeat CronJob. Every morning (after the 02:17 UTC velero-daily-full
 # window) it checks the most recent Backup object and pings the external
 # heartbeat monitor (${backup_heartbeat_url}, e.g. a healthchecks.io check with
 # a 24h period) ONLY when that backup is Completed and younger than 26 hours.
