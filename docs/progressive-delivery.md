@@ -63,7 +63,8 @@ Promotion vs rollback is gated on:
   canary). Its old route's HSTS header is re-added via `service.headers`; the
   `gethomepage.dev/*` tile annotations are not reproducible on a Flagger route.
 - **homepage** — blue/green (it's the root dashboard behind oauth2-proxy). High
-  blast radius; the primary runs 1 replica (was 2) since Flagger owns replicas.
+  blast radius; replicas are owned by a KEDA `ScaledObject` via `autoscalerRef`
+  (primary scales 2-3 on Coroot request rate — see "KEDA apps" below).
 - **opencost** — blue/green infra workload. ⚠️ Headlamp's cost plugin uses the
   `opencost:http-ui` **named** port via the apiserver proxy; `portDiscovery` may
   not preserve that name — watch the Headlamp cost panel after rollout.
@@ -85,10 +86,11 @@ Promotion vs rollback is gated on:
    Flagger generates the route from the Canary's `gatewayRefs` + `hosts`. Re-add
    any response-header filters via `spec.service.headers`. Blue/green keeps the
    existing route untouched.
-3. **Let Flagger own replicas** — add a HelmRelease postRenderer that strips
-   `/spec/replicas` from the Deployment, otherwise Flux re-applies the chart's
-   replica count and fights Flagger's scale-to-zero of the canary (flapping). See
-   any onboarded app's `helm-release.yaml`.
+3. **Let Flagger (or its KEDA `autoscalerRef`) own replicas** — omit the
+   chart's `replicaCount` value and do not pin `/spec/replicas` in a
+   postRenderer, otherwise Flux re-applies the chart's replica count and fights
+   Flagger's scale-to-zero of the canary (flapping). See any onboarded app's
+   `helm-release.yaml`.
 4. **Add the `Canary`** — copy umami's (weighted) or homepage's (blue/green),
    referencing the two `MetricTemplate`s and a loadtester acceptance + load-test
    webhook on `<app>-canary`.
@@ -98,26 +100,34 @@ Promotion vs rollback is gated on:
 6. **Place the Canary** in the apps layer (app) or the `infrastructure` layer
    (infra component) — never in `infrastructure/controllers`.
 
-### KEDA apps (documented pattern — not currently used)
+### KEDA apps (used by homepage + umami)
 
 Flagger's KEDA integration is for **core `keda.sh ScaledObject`**, NOT the
 `http.keda.sh HTTPScaledObject` (HTTP add-on) this platform uses for scale-to-zero.
-To canary a plain-ScaledObject app, reference it from the Canary and let Flagger
-manage the `-primary` scaler:
+Homepage and Umami use it: each app's `scaled-object.yaml` scales 2-3 replicas
+on Coroot's inbound request-rate series — a metric auto-vpa does **not**
+control, so vertical (VPA, up to `maxAllowed`) and horizontal scaling never
+fight. The Canary references the ScaledObject and Flagger manages the
+`-primary` scaler:
 
 ```yaml
 spec:
   autoscalerRef:
     apiVersion: keda.sh/v1alpha1
     kind: ScaledObject
-    name: myapp-so
-    primaryScalerQueries:      # rewrite each trigger query for the primary
+    name: myapp-so          # Flagger clones it to myapp-so-primary and pauses
+    primaryScalerQueries:   # the source's scaler at 0 between rollouts.
       requests: sum(rate(container_http_inbound_requests_total{...primary...}[1m]))
 ```
 
+The trigger must be **named** (Flagger matches `primaryScalerQueries` by
+trigger name), and the source query must exclude `-primary-` pods — reuse the
+vowel-free hash regex described under "Measuring the canary".
+
 Onboarding a HTTP-add-on app (whoami/headlamp/…) this way means **replacing its
 `HTTPScaledObject` with a `ScaledObject`**, giving up HTTP cold-start
-scale-to-zero — a deliberate trade not taken here.
+scale-to-zero — a deliberate trade not taken for those apps. Homepage and Umami
+were never interceptor-fronted, so they gave nothing up.
 
 ## Measuring the canary
 

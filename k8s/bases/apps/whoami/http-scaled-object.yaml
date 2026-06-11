@@ -11,9 +11,12 @@ spec:
     name: whoami
     service: whoami
     port: 80
+  # 0..3: scale-to-zero up to the platform replica ceiling
+  # (validate-replica-ceiling). Vertical growth (auto-vpa) comes first; the
+  # extra replicas absorb what one max-sized pod cannot.
   replicas:
     min: 0
-    max: 2
+    max: 3
   scaledownPeriod: 300
   scalingMetric:
     requestRate:

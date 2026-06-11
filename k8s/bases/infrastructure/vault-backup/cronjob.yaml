@@ -27,12 +27,23 @@ metadata:
   namespace: openbao
 spec:
   schedule: "30 3 * * *"
+  # Pin the cron evaluation to UTC instead of inheriting kube-controller-manager's
+  # local TZ: the 03:30 slot is sequenced after the velero-daily-full backup
+  # window (02:17 UTC).
+  timeZone: Etc/UTC
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       backoffLimit: 3
+      # Backstop for a hung run: the bao auth/status/snapshot-save calls have no
+      # client-side timeout and can hang forever on a half-open connection, and
+      # the PVC can wedge attaching — with concurrencyPolicy: Forbid a run that
+      # never finishes would silently block every future daily snapshot. 30m is
+      # ~10x a slow run including the OnFailure retries; on expiry the Job fails
+      # and the next day's schedule gets a clean start.
+      activeDeadlineSeconds: 1800
       template:
         metadata:
           labels:

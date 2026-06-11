@@ -7,3 +7,4 @@ resources:
   - helm-repository.yaml
   - httproute.yaml
   - networkpolicy.yaml
+  - pod-disruption-budget.yaml

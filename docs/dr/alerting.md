@@ -83,11 +83,16 @@ stays quiet by design, exactly as the old Alertmanager did.
 ## Dead-man's-switch (off-cluster heartbeat)
 
 In-cluster alerting cannot tell you the cluster is down — it's down too. A tiny
-`coroot-heartbeat` CronJob (`coroot` namespace, every minute) covers that: it
-confirms the metrics pipeline is alive (Coroot's bundled Prometheus answers
-`/-/healthy`) and only then pings an **external** monitor. If the cluster, the
-scheduler, egress, or the pipeline dies, the pings stop and the monitor
-notifies Slack out-of-band.
+`cluster-heartbeat` CronJob (`observability` namespace, every 5 minutes) covers
+that: it pings an **external** monitor unconditionally. A successful ping
+proves the cluster as a whole is alive — a node, the scheduler, kubelet, the
+CNI, DNS and egress all worked. If the cluster dies, the pings stop and the
+monitor notifies Slack out-of-band.
+
+The ping is deliberately not gated on any component: component health (Coroot,
+Prometheus, …) is alerted on in-cluster by Coroot's notification integrations
+and checked by connecting to the cluster. This switch signals exactly one
+thing — "the cluster as a whole stopped".
 
 Recommended monitor: [healthchecks.io](https://healthchecks.io) (free,
 open-source, native Slack integration). Create a check with a ~5 min period and
@@ -114,7 +119,7 @@ present in the per-cluster `variables-cluster-secret.enc.yaml` (under
 - `alertmanager_webhook_url` — Slack incoming-webhook, reused by Coroot's
   webhook integration (prod-only).
 - `alertmanager_heartbeat_url` — external heartbeat monitor, reused by the
-  `coroot-heartbeat` CronJob.
+  `cluster-heartbeat` CronJob.
 
 | Env   | `alertmanager_webhook_url`        | `alertmanager_heartbeat_url`     |
 | ----- | --------------------------------- | -------------------------------- |

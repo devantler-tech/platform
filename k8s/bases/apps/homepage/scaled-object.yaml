@@ -1,0 +1,49 @@
+---
+# Request-rate horizontal scaling for Homepage, complementing auto-vpa: VPA owns
+# the VERTICAL axis (in-place CPU/memory resize up to maxAllowed, 3 CPU / 6Gi),
+# so the horizontal trigger is a metric VPA does not control — inbound HTTP
+# request rate from Coroot's eBPF node-agent, served by its bundled Prometheus
+# (the same series the Flagger MetricTemplates gate on). When right-sized pods
+# can no longer absorb the load, RPS-per-pod crosses the threshold and a replica
+# is added, up to the platform ceiling of 3 (validate-replica-ceiling).
+#
+# Flagger owns this ScaledObject's lifecycle (canary.yaml's autoscalerRef): it
+# clones it to `homepage-primary` targeting the primary Deployment (rewriting
+# the query via primaryScalerQueries) and pauses THIS one at 0 replicas outside
+# canary analysis — the source Deployment stays scaled to zero between
+# rollouts, exactly as before.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: homepage
+  namespace: homepage
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: homepage
+  # 2..3: two right-sized replicas survive a node drain (PDB maxUnavailable: 1);
+  # the third comes back under sustained load. 3 is the platform replica
+  # ceiling — past it, growth is VPA's job (bigger pods, not more of them).
+  minReplicaCount: 2
+  maxReplicaCount: 3
+  # If Prometheus is unreachable, fail HIGH to the old static HA count rather
+  # than freezing on the last scaling decision.
+  fallback:
+    failureThreshold: 3
+    replicas: 3
+  triggers:
+    # The trigger MUST be named — Flagger matches primaryScalerQueries by name.
+    - type: prometheus
+      name: http-requests-per-second
+      metadata:
+        serverAddress: http://coroot-prometheus.observability.svc.cluster.local:9090
+        # Per-pod target (AverageValue): the 3rd replica appears when sustained
+        # load exceeds 2 pods × 10 rps. Homepage is a single-threaded Next.js
+        # SSR app (~14 /api/* polls per dashboard refresh), so 10 rps/pod is
+        # real work, while a couple of open dashboard tabs stay on 2. Tune
+        # against live data in coroot-prometheus. The vowel-free hash regex
+        # excludes homepage-primary-* pods, same trick as the Flagger
+        # MetricTemplates (docs/progressive-delivery.md "Measuring the canary").
+        threshold: "10"
+        query: 'sum(rate(container_http_inbound_requests_total{container_id=~"/k8s/homepage/homepage-[bcdfghjklmnpqrstvwxz2-9]+-[a-z0-9]+/.*"}[2m]))'

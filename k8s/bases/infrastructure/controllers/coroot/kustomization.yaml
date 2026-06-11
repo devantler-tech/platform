@@ -12,4 +12,4 @@ resources:
   - helm-release.yaml
   - httproute.yaml
   - networkpolicy.yaml
-  - heartbeat-cronjob.yaml
+  - cluster-heartbeat-cronjob.yaml
