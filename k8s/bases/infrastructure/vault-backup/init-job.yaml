@@ -1,0 +1,87 @@
+# One-shot initial snapshot at deploy time. Two jobs in one:
+#
+#   1. A baseline raft snapshot exists immediately after every vault-backup
+#      change instead of waiting for the nightly 03:30 CronJob — after the
+#      2026-06-10 KV wipe the gap between "snapshots configured" and "first
+#      snapshot taken" was the whole exposure window.
+#   2. It is the vault-snapshots PVC's first consumer. On clusters whose
+#      default StorageClass uses volumeBindingMode: WaitForFirstConsumer
+#      (the Talos+Docker CI cluster), a consumer-less PVC stays Pending,
+#      kstatus reports it InProgress, and the wait-enabled `infrastructure`
+#      Kustomization health-gates on it forever. Prod (longhorn, Immediate)
+#      binds without this, but the base must work on both providers.
+#
+# Same retry pattern as the vault-config Job: the script fails until
+# vault-config has created the vault-snapshot auth role and unsealed the
+# vault, and OnFailure + backoffLimit keep retrying until then.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-snapshot-init
+  namespace: openbao
+  annotations:
+    # Jobs are immutable; let Flux delete-and-recreate on spec change.
+    kustomize.toolkit.fluxcd.io/force: enabled
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 30
+  activeDeadlineSeconds: 3600
+  template:
+    metadata:
+      labels:
+        app: vault-snapshot
+    spec:
+      serviceAccountName: vault-snapshot
+      restartPolicy: OnFailure
+      securityContext:
+        runAsUser: 100
+        runAsGroup: 1000
+        fsGroup: 1000
+      volumes:
+        - name: snapshots
+          persistentVolumeClaim:
+            claimName: vault-snapshots
+      containers:
+        - name: snapshot
+          image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
+          env:
+            # openbao-active = unsealed Raft leader only (same rationale as
+            # the CronJob in cronjob.yaml).
+            - name: BAO_ADDR
+              value: http://openbao-active.openbao.svc.cluster.local:8200
+          volumeMounts:
+            - name: snapshots
+              mountPath: /snapshots
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              # Authenticate via Kubernetes auth
+              JWT=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+              VAULT_TOKEN=$(bao write -field=token auth/kubernetes/login \
+                role=vault-snapshot \
+                jwt="$JWT")
+              export BAO_TOKEN="$VAULT_TOKEN"
+
+              echo "Checking OpenBao health..."
+              STATUS=$(bao status -format=json)
+              echo "$STATUS"
+
+              if echo "$STATUS" | grep -q '"sealed": true'; then
+                echo "ERROR: Vault is sealed!"
+                exit 1
+              fi
+              echo "Vault is unsealed and healthy."
+
+              # Skip if the nightly CronJob already produced a snapshot today —
+              # this job only guarantees a baseline exists.
+              if ls /snapshots/openbao-"$(date -u +%Y%m%d)"-*.snap >/dev/null 2>&1; then
+                echo "A snapshot from today already exists — nothing to do."
+                exit 0
+              fi
+
+              SNAP="/snapshots/openbao-$(date -u +%Y%m%d-%H%M%S).snap"
+              echo "Saving initial raft snapshot to $SNAP..."
+              bao operator raft snapshot save "$SNAP"
+              ls -l "$SNAP"
+              echo "Initial snapshot complete."
