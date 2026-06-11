@@ -91,11 +91,16 @@ jobs:
         run: |
           set -euo pipefail
 
+          # Resource names are fully qualified with the velero.io group
+          # throughout: CNPG also defines a `backups` resource, and kubectl
+          # resolves an unqualified `backup` to backups.postgresql.cnpg.io on
+          # this cluster — the drill's first run polled the wrong API group
+          # for its entire timeout while the actual Velero backup completed.
           dump_velero_state() {
             echo "::group::Velero state (drill failure)"
-            kubectl -n velero get backupstoragelocations,backups,restores -o wide || true
-            kubectl -n velero describe backup dr-drill || true
-            kubectl -n velero describe restore dr-drill || true
+            kubectl -n velero get backupstoragelocations.velero.io,backups.velero.io,restores.velero.io -o wide || true
+            kubectl -n velero describe backups.velero.io dr-drill || true
+            kubectl -n velero describe restores.velero.io dr-drill || true
             kubectl -n velero logs deploy/velero --tail=200 || true
             echo "::endgroup::"
           }
@@ -122,7 +127,7 @@ jobs:
           }
 
           echo "::group::Wait for BackupStorageLocation default to be Available"
-          kubectl -n velero wait backupstoragelocation/default \
+          kubectl -n velero wait backupstoragelocations.velero.io/default \
             --for=jsonpath='{.status.phase}'=Available --timeout=10m
           echo "::endgroup::"
 
@@ -146,7 +151,7 @@ jobs:
             storageLocation: default
             ttl: 1h0m0s
           EOF
-          wait_phase backup dr-drill 300
+          wait_phase backups.velero.io dr-drill 300
           echo "::endgroup::"
 
           echo "::group::Simulate data loss (delete the namespace)"
@@ -167,7 +172,7 @@ jobs:
           spec:
             backupName: dr-drill
           EOF
-          wait_phase restore dr-drill 300
+          wait_phase restores.velero.io dr-drill 300
           echo "::endgroup::"
 
           echo "::group::Verify restored marker"
