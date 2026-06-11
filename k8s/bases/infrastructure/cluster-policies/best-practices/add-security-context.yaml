@@ -31,6 +31,16 @@ spec:
           - resources:
               kinds:
                 - Pod
+              # CREATE only. Without this, Kyverno also mutates pod UPDATEs;
+              # pod spec is immutable, so for any pod created while the
+              # policy/webhook wasn't active yet (fresh-cluster bring-up
+              # ordering) EVERY later update — including OpenBao's
+              # service-registration label patches — is rejected with
+              # HTTP 422 "pod updates may not change fields other than
+              # image...". That froze openbao-active at zero endpoints and
+              # broke every system test from 2026-06-10 (#1990 probe output).
+              operations:
+                - CREATE
       exclude:
         any:
           - resources:
@@ -59,6 +69,9 @@ spec:
           - resources:
               kinds:
                 - Pod
+              # CREATE only — same immutability rationale as above.
+              operations:
+                - CREATE
       exclude:
         any:
           - resources:
