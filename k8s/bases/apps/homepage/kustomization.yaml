@@ -10,3 +10,4 @@ resources:
   - namespace.yaml
   - pod-disruption-budget.yaml
   - networkpolicy.yaml
+  - scaled-object.yaml

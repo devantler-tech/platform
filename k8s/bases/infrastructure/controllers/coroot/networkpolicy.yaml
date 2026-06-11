@@ -50,6 +50,16 @@ spec:
         - ports:
             - port: "9090"
               protocol: TCP
+    # KEDA's operator polls the bundled Prometheus for ScaledObject triggers
+    # (request-rate horizontal scaling of the Flagger-managed apps,
+    # homepage/umami — the complement to auto-vpa's vertical axis).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: keda
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
   egress:
     # Kube API for the cluster-agent's service discovery / kube-state inventory.
     - toEntities:

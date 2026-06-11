@@ -14,6 +14,7 @@ resources:
   - best-practices/validate-host-restrictions.yaml
   - best-practices/validate-pdb-drain-safe.yaml
   - best-practices/validate-pod-security.yaml
+  - best-practices/validate-replica-ceiling.yaml
   - best-practices/validate-replica-floor.yaml
   - best-practices/verify-image-signatures.yaml
   - flux/enforce-flux-best-practices.yaml
