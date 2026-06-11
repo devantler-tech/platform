@@ -19,7 +19,23 @@ spec:
     # Kube API for policy enforcement
     - toEntities:
         - kube-apiserver
-    # DNS resolution
+    # Image signature verification (verify-image-signatures ClusterPolicy):
+    # cosign signature manifests live on ghcr.io with blobs served from the
+    # GitHub CDN, and the Sigstore TUF trust root refreshes from its CDN.
+    # Rekor inclusion proofs normally verify offline via the bundled SET,
+    # but keep the log reachable for entries without a bundle.
+    - toFQDNs:
+        - matchName: "ghcr.io"
+        - matchName: "pkg-containers.githubusercontent.com"
+        - matchName: "tuf-repo-cdn.sigstore.dev"
+        - matchName: "rekor.sigstore.dev"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS resolution. rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
+    # allow-list above can be enforced; matchPattern "*" leaves resolution
+    # itself unrestricted (the FQDN list constrains where traffic may go).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -30,3 +46,6 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
