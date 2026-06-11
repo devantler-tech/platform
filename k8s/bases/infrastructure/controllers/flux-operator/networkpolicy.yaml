@@ -16,13 +16,6 @@ spec:
         - ports:
             - port: "9080"
               protocol: TCP
-    # Webhook notifications
-    - fromEntities:
-        - world
-      toPorts:
-        - ports:
-            - port: "80"
-              protocol: TCP
     # Intra-namespace (controller-to-controller communication)
     - fromEndpoints:
         - matchLabels:
