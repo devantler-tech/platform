@@ -4,9 +4,9 @@ description: |
 license: Apache-2.0
 metadata:
     github-path: skills/gitops-knowledge
-    github-ref: refs/tags/v0.0.3
+    github-ref: refs/tags/v0.0.4
     github-repo: https://github.com/fluxcd/agent-skills
-    github-tree-sha: 7edabe6723319a256d8aa31ad80a5969c3c521c4
+    github-tree-sha: 87c84bc20bf3a0356deb68be41334149eb9a4371
 name: gitops-knowledge
 ---
 # Flux CD Knowledge Base
@@ -321,46 +321,17 @@ kind: ResourceSet
 metadata:
   name: apps
   namespace: flux-system
-  annotations:
-    fluxcd.controlplane.io/reconcileEvery: "5m"
 spec:
-  dependsOn:
-    - apiVersion: fluxcd.controlplane.io/v1
-      kind: ResourceSet
-      name: infra
-      ready: true
   inputs:
     - tenant: "frontend"
-      tag: "latest"
       environment: "production"
     - tenant: "backend"
-      tag: "latest"
       environment: "production"
   resources:
     - apiVersion: v1
       kind: Namespace
       metadata:
         name: << inputs.tenant >>
-        labels:
-          toolkit.fluxcd.io/role: "tenant"
-    - apiVersion: v1
-      kind: ServiceAccount
-      metadata:
-        name: flux
-        namespace: << inputs.tenant >>
-    - apiVersion: rbac.authorization.k8s.io/v1
-      kind: RoleBinding
-      metadata:
-        name: flux
-        namespace: << inputs.tenant >>
-      roleRef:
-        apiGroup: rbac.authorization.k8s.io
-        kind: ClusterRole
-        name: admin
-      subjects:
-        - kind: ServiceAccount
-          name: flux
-          namespace: << inputs.tenant >>
     - apiVersion: source.toolkit.fluxcd.io/v1
       kind: OCIRepository
       metadata:
@@ -370,25 +341,25 @@ spec:
         interval: 5m
         url: "oci://ghcr.io/my-org/apps/<< inputs.tenant >>"
         ref:
-          tag: << inputs.tag >>
+          tag: latest
     - apiVersion: kustomize.toolkit.fluxcd.io/v1
       kind: Kustomization
       metadata:
         name: apps
         namespace: << inputs.tenant >>
       spec:
-        targetNamespace: << inputs.tenant >>
-        serviceAccountName: flux
         interval: 30m
-        retryInterval: 5m
         wait: true
-        timeout: 5m
+        prune: true
         sourceRef:
           kind: OCIRepository
           name: apps
         path: "./<< inputs.environment >>"
-        prune: true
 ```
+
+For the full multi-tenant pattern — per-tenant ServiceAccount + RoleBinding,
+`serviceAccountName` impersonation, `dependsOn`, and the `reconcileEvery` annotation —
+load `references/resourcesets.md`.
 
 ### 6. Image Automation
 
@@ -475,4 +446,5 @@ Load at most 1-2 reference files per question. Read schemas for field-level vali
 | Web UI, dashboard, SSO, OIDC, Dex, Keycloak, Entra ID, RBAC | `references/web-ui.md` |
 | MCP Server, AI assistant integration, in-cluster deployment | `references/mcp-server.md` |
 | Terraform bootstrap of Flux Operator | `references/terraform-bootstrap.md` |
+| Gitless GitOps, Flux OCI artifacts, `flux push artifact`, registry-based delivery | `references/gitless-gitops.md` |
 | Gitless image automation (ResourceSet + OCIArtifactTag) | `references/gitless-image-automation.md` |
