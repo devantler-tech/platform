@@ -7,7 +7,7 @@ spec:
   endpointSelector: {}
   ingress:
     # Intra-namespace: Coroot UI <-> bundled Prometheus <-> ClickHouse <->
-    # cluster-agent, plus the heartbeat CronJob probing Prometheus.
+    # cluster-agent.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: observability
@@ -50,6 +50,16 @@ spec:
         - ports:
             - port: "9090"
               protocol: TCP
+    # KEDA's operator polls the bundled Prometheus for ScaledObject triggers
+    # (request-rate horizontal scaling of the Flagger-managed apps,
+    # homepage/umami — the complement to auto-vpa's vertical axis).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: keda
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
   egress:
     # Kube API for the cluster-agent's service discovery / kube-state inventory.
     - toEntities:
@@ -65,8 +75,8 @@ spec:
     # External HTTPS, pinned by FQDN instead of world:443 so a compromised
     # pod cannot exfiltrate telemetry to arbitrary external services:
     # - hooks.slack.com — Coroot incident notifications (Slack webhook)
-    # - hc-ping.com     — the coroot-heartbeat CronJob's dead-man's-switch
-    #                     ping (${alertmanager_heartbeat_url})
+    # - hc-ping.com     — the cluster-heartbeat CronJob's dead-man ping
+    #                     (${alertmanager_heartbeat_url})
     # - coroot.com      — Coroot version checks / usage statistics
     - toFQDNs:
         - matchName: "hooks.slack.com"

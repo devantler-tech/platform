@@ -17,7 +17,7 @@ spec:
   dependsOn:
     - name: coroot-operator
       namespace: observability
-  interval: 2m
+  interval: 10m
   timeout: 10m
   install:
     crds: CreateReplace
