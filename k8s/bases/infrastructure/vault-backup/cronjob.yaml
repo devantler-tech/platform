@@ -15,8 +15,8 @@ metadata:
 spec:
   schedule: "30 3 * * *"
   # Pin the cron evaluation to UTC instead of inheriting kube-controller-manager's
-  # local TZ: the 03:30 slot is sequenced between the velero-daily-full backup
-  # (02:17 UTC) and the velero-backup-heartbeat check (07:00 UTC).
+  # local TZ: the 03:30 slot is sequenced after the velero-daily-full backup
+  # window (02:17 UTC).
   timeZone: Etc/UTC
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
