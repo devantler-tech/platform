@@ -53,14 +53,14 @@ spec:
           namespace: flagger-system
         thresholdRange:
           min: 99
-        interval: 1m
+        interval: 2m
       - name: latency-p99
         templateRef:
           name: coroot-request-duration
           namespace: flagger-system
         thresholdRange:
           max: 1000
-        interval: 1m
+        interval: 2m
     webhooks:
       - name: acceptance-test
         type: pre-rollout
