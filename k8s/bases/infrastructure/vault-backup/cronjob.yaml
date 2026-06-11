@@ -14,12 +14,23 @@ metadata:
   namespace: openbao
 spec:
   schedule: "30 3 * * *"
+  # Pin the cron evaluation to UTC instead of inheriting kube-controller-manager's
+  # local TZ: the 03:30 slot is sequenced after the velero-daily-full backup
+  # window (02:17 UTC).
+  timeZone: Etc/UTC
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       backoffLimit: 3
+      # Backstop for a hung run: the bao auth/status/snapshot-save calls have no
+      # client-side timeout and can hang forever on a half-open connection, and
+      # the PVC can wedge attaching — with concurrencyPolicy: Forbid a run that
+      # never finishes would silently block every future daily snapshot. 30m is
+      # ~10x a slow run including the OnFailure retries; on expiry the Job fails
+      # and the next day's schedule gets a clean start.
+      activeDeadlineSeconds: 1800
       template:
         metadata:
           labels:
@@ -27,10 +38,16 @@ spec:
         spec:
           serviceAccountName: vault-snapshot
           restartPolicy: OnFailure
+          # The full restricted-PSS context is set explicitly (not left to the
+          # add-security-context Kyverno mutation) so the pod stays hardened
+          # even when created before the webhook is active on fresh bring-up.
           securityContext:
             runAsUser: 100
             runAsGroup: 1000
             fsGroup: 1000
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
           volumes:
             - name: snapshots
               persistentVolumeClaim:
@@ -38,6 +55,15 @@ spec:
           containers:
             - name: snapshot
               image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: RuntimeDefault
               env:
                 # openbao-active = unsealed Raft leader only. Snapshots must be
                 # taken from the leader — against the plain `openbao` Service

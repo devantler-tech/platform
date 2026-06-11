@@ -63,3 +63,23 @@ spec:
                 labelSelector:
                   matchLabels:
                     app.kubernetes.io/part-of: flux
+      # source-controller polls external registries (ghcr.io OCI artifacts +
+      # Helm repo indexes) on every interval; with the default ndots:5 each
+      # lookup walks the four-entry search path first, producing thousands of
+      # guaranteed-NXDOMAIN queries per hour against CoreDNS (Coroot flags this
+      # as a DNS warning on the app). ndots:1 makes any dotted name resolve
+      # absolute-first; the search path remains a fallback, and Flux's own
+      # in-cluster URLs are already trailing-dot FQDNs
+      # (source-controller.flux-system.svc.cluster.local.), so nothing relies
+      # on search-path expansion.
+      - target:
+          kind: Deployment
+          name: source-controller
+          namespace: flux-system
+        patch: |
+          - op: add
+            path: /spec/template/spec/dnsConfig
+            value:
+              options:
+                - name: ndots
+                  value: "1"

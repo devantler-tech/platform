@@ -82,6 +82,108 @@ jobs:
           reconcile: "true"
           delete: "false"
 
+      - name: 💾 DR restore drill (Velero backup → delete → restore)
+        # Validates the full backup → data-loss → restore cycle against the
+        # in-cluster MinIO (the local R2 stand-in) on every k8s PR, so the
+        # Velero code path is regression-tested before changes reach prod.
+        # Reuses the cluster the System Test step just reconciled; adds ~2-3
+        # minutes. See docs/dr/restore-drill.md for design + manual run.
+        run: |
+          set -euo pipefail
+
+          # Resource names are fully qualified with the velero.io group
+          # throughout: CNPG also defines a `backups` resource, and kubectl
+          # resolves an unqualified `backup` to backups.postgresql.cnpg.io on
+          # this cluster — the drill's first run polled the wrong API group
+          # for its entire timeout while the actual Velero backup completed.
+          dump_velero_state() {
+            echo "::group::Velero state (drill failure)"
+            kubectl -n velero get backupstoragelocations.velero.io,backups.velero.io,restores.velero.io -o wide || true
+            kubectl -n velero describe backups.velero.io dr-drill || true
+            kubectl -n velero describe restores.velero.io dr-drill || true
+            kubectl -n velero logs deploy/velero --tail=200 || true
+            echo "::endgroup::"
+          }
+          trap dump_velero_state ERR
+
+          wait_phase() {
+            # wait_phase <kind> <name> <timeout-seconds> — poll a Velero CR
+            # until .status.phase is Completed; fail fast on a terminal
+            # failure phase instead of burning the whole timeout.
+            local kind="$1" name="$2" timeout="$3" phase=""
+            local deadline=$((SECONDS + timeout))
+            while [ "$SECONDS" -lt "$deadline" ]; do
+              phase=$(kubectl -n velero get "$kind" "$name" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+              case "$phase" in
+                Completed) echo "$kind/$name: Completed"; return 0 ;;
+                Failed|PartiallyFailed|FailedValidation)
+                  echo "::error::$kind/$name entered terminal phase $phase"
+                  return 1 ;;
+                *) sleep 5 ;;
+              esac
+            done
+            echo "::error::$kind/$name did not complete within ${timeout}s (last phase: ${phase:-<none>})"
+            return 1
+          }
+
+          echo "::group::Wait for BackupStorageLocation default to be Available"
+          kubectl -n velero wait backupstoragelocations.velero.io/default \
+            --for=jsonpath='{.status.phase}'=Available --timeout=10m
+          echo "::endgroup::"
+
+          echo "::group::Create marker namespace + ConfigMap"
+          kubectl create namespace dr-drill
+          kubectl -n dr-drill create configmap dr-marker \
+            --from-literal=run-id="${GITHUB_RUN_ID}" \
+            --from-literal=sha="${GITHUB_SHA}"
+          echo "::endgroup::"
+
+          echo "::group::Back up the marker namespace"
+          kubectl -n velero create -f - <<EOF
+          apiVersion: velero.io/v1
+          kind: Backup
+          metadata:
+            name: dr-drill
+            namespace: velero
+          spec:
+            includedNamespaces:
+              - dr-drill
+            storageLocation: default
+            ttl: 1h0m0s
+          EOF
+          wait_phase backups.velero.io dr-drill 300
+          echo "::endgroup::"
+
+          echo "::group::Simulate data loss (delete the namespace)"
+          kubectl delete namespace dr-drill --wait=true --timeout=2m
+          if kubectl get namespace dr-drill >/dev/null 2>&1; then
+            echo "::error::namespace dr-drill still exists after deletion"
+            exit 1
+          fi
+          echo "::endgroup::"
+
+          echo "::group::Restore from the backup"
+          kubectl -n velero create -f - <<EOF
+          apiVersion: velero.io/v1
+          kind: Restore
+          metadata:
+            name: dr-drill
+            namespace: velero
+          spec:
+            backupName: dr-drill
+          EOF
+          wait_phase restores.velero.io dr-drill 300
+          echo "::endgroup::"
+
+          echo "::group::Verify restored marker"
+          restored=$(kubectl -n dr-drill get configmap dr-marker -o jsonpath='{.data.run-id}')
+          if [ "${restored}" != "${GITHUB_RUN_ID}" ]; then
+            echo "::error::restored run-id '${restored}' does not match expected '${GITHUB_RUN_ID}'"
+            exit 1
+          fi
+          echo "✅ Restore drill passed: marker ConfigMap restored with matching run-id."
+          echo "::endgroup::"
+
       - name: 🩺 Diagnose Flux on failure
         if: failure()
         run: |
@@ -174,6 +276,27 @@ jobs:
             echo "--- $pod server log ---"
             kubectl logs -n openbao "$pod" --tail=150 2>&1 | sed 's/^/  /'
           done
+          # Label-patch probe: OpenBao's service registration updates pod
+          # labels with RFC 6902 `replace` ops and on the 2026-06-10 runs the
+          # apiserver rejected every update with a bare 422 (OpenBao does not
+          # log the response body), freezing the labels at their startup
+          # values so openbao-active never gained endpoints. Replay the same
+          # operation with kubectl, which prints the apiserver's full
+          # explanation of WHAT is invalid, plus a server-side dry-run apply
+          # of the unmodified pod to surface latent object-validation errors.
+          echo "--- label patch probe (single replace, current value) ---"
+          CUR=$(kubectl get pod openbao-0 -n openbao -o jsonpath='{.metadata.labels.openbao-active}')
+          kubectl patch pod openbao-0 -n openbao --type=json \
+            -p "[{\"op\":\"replace\",\"path\":\"/metadata/labels/openbao-active\",\"value\":\"$CUR\"}]" 2>&1 | sed 's/^/  /'
+          echo "--- label patch probe (batch replace, all openbao-* labels) ---"
+          kubectl get pod openbao-0 -n openbao -o json | jq -r '
+            .metadata.labels | to_entries
+            | map(select(.key | startswith("openbao-")))
+            | map({op: "replace", path: ("/metadata/labels/" + .key), value: .value})' \
+            | kubectl patch pod openbao-0 -n openbao --type=json --patch-file=/dev/stdin 2>&1 | sed 's/^/  /'
+          echo "--- pod self-validation (server-side dry-run re-apply) ---"
+          kubectl get pod openbao-0 -n openbao -o json \
+            | kubectl replace --dry-run=server -f - 2>&1 | tail -5 | sed 's/^/  /'
           echo "::endgroup::"
 
       - name: 🔥 Delete cluster

@@ -39,9 +39,11 @@ spec:
               protocol: TCP
     # Outbound HTTPS. oauth2-proxy no longer calls Dex or GitHub over the
     # internet (Dex is reached in-cluster above; GitHub is Dex's upstream
-    # connector), but keep general egress for resilience.
-    - toEntities:
-        - world
+    # connector). Keep the public Dex URL reachable as a resilience fallback,
+    # but pinned by FQDN instead of world:443 so a compromised pod cannot
+    # exfiltrate to arbitrary external services.
+    - toFQDNs:
+        - matchName: "dex.${domain}"
       toPorts:
         - ports:
             - port: "443"
@@ -49,7 +51,9 @@ spec:
     # Kube API
     - toEntities:
         - kube-apiserver
-    # DNS resolution
+    # DNS resolution. rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
+    # allow-list above can be enforced; matchPattern "*" leaves resolution
+    # itself unrestricted (the FQDN list constrains where traffic may go).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -60,3 +64,6 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

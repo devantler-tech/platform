@@ -25,9 +25,21 @@ spec:
     # Kube API for scanning
     - toEntities:
         - kube-apiserver
-    # Kubescape cloud backend
-    - toEntities:
-        - world
+    # External endpoints, pinned by FQDN instead of world:443 so a compromised
+    # pod cannot exfiltrate to arbitrary external services:
+    # - grype/toolbox-data.anchore.io — kubevuln's Grype vulnerability DB
+    # - api.armosec.io                — Kubescape backend (version/artifacts)
+    # - github.com + CDNs             — regolibrary / controls artifacts
+    # If scan components log download failures, extend this list with the
+    # missing host (failure mode is stale scan data, not an outage).
+    - toFQDNs:
+        - matchName: "grype.anchore.io"
+        - matchName: "toolbox-data.anchore.io"
+        - matchName: "api.armosec.io"
+        - matchName: "github.com"
+        - matchName: "api.github.com"
+        - matchName: "objects.githubusercontent.com"
+        - matchName: "raw.githubusercontent.com"
       toPorts:
         - ports:
             - port: "443"
@@ -36,7 +48,9 @@ spec:
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kubescape
-    # DNS resolution
+    # DNS resolution. rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
+    # allow-list above can be enforced; matchPattern "*" leaves resolution
+    # itself unrestricted (the FQDN list constrains where traffic may go).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -47,3 +61,6 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

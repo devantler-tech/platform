@@ -6,10 +6,11 @@
 # new version. The public path (httproute.yaml -> oauth2-proxy -> auth-proxy ->
 # homepage apex Service) is untouched and always resolves to the primary.
 #
-# ⚠️ High blast radius (platform front page) — watch the first rollout. The
-# HelmRelease postRenderer pins the source replicas to 3, so Flagger runs the
-# primary at 3 for HA. Latency threshold is generous because Homepage is a
-# single-threaded Next.js SSR app that bursts under load.
+# ⚠️ High blast radius (platform front page) — watch the first rollout.
+# Replicas are owned by the KEDA ScaledObject referenced below (autoscalerRef):
+# the primary scales 2-3 on request rate (see scaled-object.yaml). Latency
+# threshold is generous because Homepage is a single-threaded Next.js SSR app
+# that bursts under load.
 apiVersion: flagger.app/v1beta1
 kind: Canary
 metadata:
@@ -21,6 +22,17 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: homepage
+  # The KEDA ScaledObject (scaled-object.yaml) owns replica count on BOTH
+  # sides: Flagger clones it to homepage-primary — rewriting the Prometheus
+  # query below for primary pods (the source query's vowel-free hash regex
+  # cannot match "-primary-") — and pauses the source's scaler at 0 between
+  # rollouts. Replaces the old postRenderer replicas pin (see helm-release.yaml).
+  autoscalerRef:
+    apiVersion: keda.sh/v1alpha1
+    kind: ScaledObject
+    name: homepage
+    primaryScalerQueries:
+      http-requests-per-second: 'sum(rate(container_http_inbound_requests_total{container_id=~"/k8s/homepage/homepage-primary-[bcdfghjklmnpqrstvwxz2-9]+-[a-z0-9]+/.*"}[2m]))'
   progressDeadlineSeconds: 600
   service:
     port: 80
@@ -36,14 +48,14 @@ spec:
           namespace: flagger-system
         thresholdRange:
           min: 99
-        interval: 1m
+        interval: 2m
       - name: latency-p99
         templateRef:
           name: coroot-request-duration
           namespace: flagger-system
         thresholdRange:
           max: 2000
-        interval: 1m
+        interval: 2m
     webhooks:
       - name: acceptance-test
         type: pre-rollout

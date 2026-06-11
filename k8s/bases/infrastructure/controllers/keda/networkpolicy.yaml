@@ -105,6 +105,17 @@ spec:
         - ports:
             - port: "9080"
               protocol: TCP
+    # KEDA operator -> Coroot's bundled Prometheus, for ScaledObject prometheus
+    # triggers (request-rate horizontal scaling of the Flagger-managed apps,
+    # homepage/umami). Same endpoint Flagger and OpenCost query; Coroot's
+    # netpol allows this namespace in on :9090.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:

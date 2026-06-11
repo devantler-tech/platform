@@ -7,7 +7,7 @@ metadata:
     helm.toolkit.fluxcd.io/crds: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
-  interval: 5m
+  interval: 10m
   chart:
     spec:
       chart: velero

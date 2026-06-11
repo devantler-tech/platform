@@ -19,15 +19,18 @@
 #     owns their replica count;
 #   * KEDA scale-to-zero targets -- a floor defeats scale-to-zero;
 #   * namespaces whose workloads genuinely can't run 3: velero (chart hardcodes
-#     replicas: 1, no leader election), flux controllers, coroot (observability)
-#     and testkube (operator-managed singletons);
+#     replicas: 1, no leader election), flux controllers and coroot
+#     (observability);
 #   * single-replica-only controllers: external-dns (chart has no replicaCount;
 #     >1 = duplicate Cloudflare writes), origin-ca-issuer (disabled) and
-#     flagger-loadtester (ephemeral per-canary test helper).
+#     flagger-loadtester (ephemeral per-canary test helper);
+#   * cost-tuned warm standbys (2026-06-11): VPA recommender/updater and kyverno
+#     reports/cleanup -- leader-elected, off every serving path, prod runs 2
+#     replicas (active + warm standby) with a maxUnavailable: 1 PDB.
 #
-# The leader-election controllers that USED to be exempt (cloudnative-pg,
+# The other leader-election controllers that USED to be exempt (cloudnative-pg,
 # reloader, trust-manager, hcloud CCM/CSI, snapshot-controller, kyverno
-# background/reports/cleanup, flagger) now run 3 replicas for HA instead.
+# background, flagger) now run 3 replicas for HA instead.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -62,14 +65,13 @@ spec:
                 matchLabels:
                   platform.devantler.tech/replica-floor: exempt
           # Namespaces whose workloads genuinely can't run 3: velero (no leader
-          # election, chart hardcodes replicas: 1), flux controllers, coroot
-          # (observability) and testkube (operator-managed singletons).
+          # election, chart hardcodes replicas: 1), flux controllers and coroot
+          # (observability).
           - resources:
               namespaces:
                 - velero
                 - flux-system
                 - observability
-                - testkube
           # KEDA scale-to-zero targets, Flagger canary primaries (*-primary) and
           # the scaled-to-0 canary sources -- their replica count is owned by a
           # controller, not declared statically (the Flagger primary runs the HA
@@ -95,6 +97,17 @@ spec:
                 - external-dns
                 - origin-ca-issuer
                 - flagger-loadtester
+          # Cost-tuned warm standbys (2026-06-11): leader-elected controllers
+          # off every serving path run 2 replicas in prod (active + one warm
+          # standby) with a maxUnavailable: 1 PDB, which still rides out a
+          # node drain. A third standby bought no extra availability -- only
+          # ~1 pod of requests each on a request-saturated cluster.
+          - resources:
+              names:
+                - vertical-pod-autoscaler-vpa-recommender
+                - vertical-pod-autoscaler-vpa-updater
+                - kyverno-reports-controller
+                - kyverno-cleanup-controller
       preconditions:
         all:
           # Durable opt-out on the pod template (charts expose podLabels more
