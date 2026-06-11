@@ -1,6 +1,6 @@
 # Devantler Tech Platform ☸️⛴️
 
-<img width="1789" height="653" alt="image" src="https://github.com/user-attachments/assets/f4a3fccf-4107-43eb-a9a7-7b0c4c3c4d23" />
+<img width="1063" height="1106" alt="image" src="https://github.com/user-attachments/assets/3ab015f0-ab07-4c39-b861-c69517e0d222" />
 
 This repo contains the deployment artifacts for the DevantlerTech Platform. The platform is a Kubernetes cluster that is highly automated with the use of Flux GitOps, CI/CD with Automated Testing, and much more. Feel free to look around. You might find some inspiration 🙌🏻
 
@@ -101,7 +101,8 @@ A high-level inventory of what Flux reconciles onto the cluster. The manifests l
 
 **Apps** ([`k8s/bases/apps/`](k8s/bases/apps))
 
-- Homepage (dashboard), Headlamp (Kubernetes UI), FleetDM (device management), Actual Budget (budgeting), `whoami` (debug)
+- Homepage (dashboard), Headlamp (Kubernetes UI), Umami (analytics), Actual Budget (budgeting), `whoami` (debug)
+- FleetDM (device management) is parked — disabled 2026-06-03; its manifests are retained for re-enabling (see [`k8s/bases/apps/kustomization.yaml`](k8s/bases/apps/kustomization.yaml))
 - **Tenants** — apps deployed from their own repositories (`ascoachingogvaner`, `wedding-app`); see [`docs/TENANTS.md`](docs/TENANTS.md)
 
 ## Structure
