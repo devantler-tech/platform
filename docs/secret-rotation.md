@@ -4,6 +4,11 @@ Status: **proposal** (2026-05-27). Goal: automated rotation of platform secrets,
 preferring **OpenBao-native** mechanisms. This document is the design; each phase
 ships as its own reviewed PR.
 
+> **Note (2026-06-03):** the fleetdm app — the flagship for Phases 1–2 — is
+> currently **disabled** (`k8s/bases/apps/kustomization.yaml`); its OpenBao
+> plumbing is intentionally left idle for re-enabling. The fleetdm phases below
+> stay as written and apply when (or in the branch where) the app returns.
+
 ## Current state
 
 - **OpenBao = KV v2 + Kubernetes auth only** (configured by the `vault-config`
