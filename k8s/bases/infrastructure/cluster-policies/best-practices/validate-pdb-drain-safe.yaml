@@ -72,6 +72,21 @@ spec:
                 # keeps minAvailable: 1; its drain-safety comes from the HA PR's
                 # replica bump to 3, not maxUnavailable.
                 - hcloud-csi-controller
+          # Longhorn manages these PDBs itself: longhorn-manager creates a
+          # minAvailable: 1 PDB per instance-manager that still hosts replicas
+          # or engines (and deletes it once the node is safe to drain), plus
+          # PDBs for its csi-attacher/csi-provisioner deployments. The
+          # minAvailable shape IS the operator's eviction interlock — not a
+          # chart value anyone can flip — so flagging them is permanent Audit
+          # noise (15 objects on prod). They carry no labels or ownerReferences,
+          # so exclude by namespace + the operator's fixed names.
+          - resources:
+              namespaces:
+                - longhorn-system
+              names:
+                - instance-manager-?*
+                - csi-attacher
+                - csi-provisioner
       validate:
         message: >-
           PodDisruptionBudget '{{ request.object.metadata.name }}' sets
