@@ -90,6 +90,12 @@ spec:
         # always return a public email, and the real gate is now
         # allowed_groups -- so don't additionally gate on the email domain.
         email_domains = ["*"]
+        # Pin the session-cookie flags explicitly rather than relying on
+        # oauth2-proxy defaults: HTTPS-only, no JavaScript access, and Lax
+        # (Strict would break the IdP redirect back from Dex/GitHub).
+        cookie_secure = true
+        cookie_httponly = true
+        cookie_samesite = "lax"
         cookie_domains=[".${domain}"]
         whitelist_domains = ["${domain}", ".${domain}"]
         redirect_url = "https://oauth2-proxy.${domain}/oauth2/callback"
