@@ -18,16 +18,23 @@ spec:
             - port: "6443"
               protocol: TCP
   egress:
-    # ACME challenges / CA communication
-    - toEntities:
-        - world
+    # ACME / CA communication, pinned by FQDN instead of world:443 so a
+    # compromised pod cannot exfiltrate to arbitrary external services.
+    # Both ClusterIssuers use DNS-01 (letsencrypt-prod + origin CA via the
+    # Cloudflare API) — there is no HTTP-01 solver, so no port-80 egress.
+    - toFQDNs:
+        - matchName: "acme-v02.api.letsencrypt.org"
+        - matchName: "api.cloudflare.com"
       toPorts:
         - ports:
             - port: "443"
               protocol: TCP
-            - port: "80"
-              protocol: TCP
-            # DNS-01 challenge verification queries external nameservers
+    # DNS-01 challenge verification queries external nameservers directly
+    # (zone SOA/NS walking + TXT propagation checks), bypassing kube-dns.
+    - toEntities:
+        - world
+      toPorts:
+        - ports:
             - port: "53"
               protocol: UDP
             - port: "53"
@@ -35,7 +42,10 @@ spec:
     # Kube API for managing certificates
     - toEntities:
         - kube-apiserver
-    # DNS resolution
+    # DNS resolution. rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
+    # allow-list above can be enforced; matchPattern "*" leaves resolution
+    # itself unrestricted (cert-manager resolves arbitrary zone cuts and
+    # _acme-challenge names during DNS-01 self-checks).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -46,3 +56,6 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

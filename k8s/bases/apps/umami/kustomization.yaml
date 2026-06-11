@@ -17,5 +17,6 @@ resources:
   # httproute.yaml removed — Flagger generates and owns Umami's HTTPRoute from
   # canary.yaml (Gateway API weighted canary).
   - canary.yaml
+  - scaled-object.yaml
   - networkpolicy.yaml
   - provision-cronjob.yaml

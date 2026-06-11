@@ -68,14 +68,18 @@ spec:
     - toEntities:
         - kube-apiserver
     # OIDC provider (Dex) — accessed via HTTPS external URL for
-    # discovery and token exchange during user login
-    - toEntities:
-        - world
+    # discovery and token exchange during user login. Pinned by FQDN
+    # instead of world:443 so a compromised pod cannot exfiltrate to
+    # arbitrary external services.
+    - toFQDNs:
+        - matchName: "dex.${domain}"
       toPorts:
         - ports:
             - port: "443"
               protocol: TCP
-    # DNS resolution
+    # DNS resolution. rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
+    # allow-list above can be enforced; matchPattern "*" leaves resolution
+    # itself unrestricted (the FQDN list constrains where traffic may go).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -86,6 +90,9 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
     # FleetDM MySQL — the Database secrets engine connects to MySQL to
     # validate database/config/fleetdm-mysql and to rotate the 'fleet'
     # user's password (the mysql-database-plugin runs in-process inside

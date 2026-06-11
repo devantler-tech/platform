@@ -205,6 +205,16 @@
       ],
       "allowedVersions": "!/^v?1\\.14\\.1$/",
       "automerge": false
+    },
+    {
+      "description": "KubeVirt and CDI ship as VENDORED upstream operator manifests (k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml, .../cdi/cdi-operator.yaml) — thousands of lines of CRDs, RBAC and the operator Deployment vendored as one unit from each release's published asset. The kubernetes manager only sees the `image:` lines inside them, so a Renovate bump rewrites the operator image alone and silently skews it against the CRDs/RBAC vendored next to it; the system-test would still pass bring-up (operators tolerate startup skew) so automerge would land the skew unseen. Keep the update PR as the new-release signal but require a maintainer to re-vendor the full manifest from the matching release before merging. automerge:false placed last so it overrides the major/minor/patch automerge defaults above.",
+      "matchPackageNames": [
+        "quay.io/kubevirt/**"
+      ],
+      "automerge": false,
+      "addLabels": [
+        "vendored-manifest"
+      ]
     }
   ],
   "ignorePaths": [
