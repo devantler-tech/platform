@@ -83,10 +83,15 @@ spec:
       replicas: ${kyverno_background_replicas:=1}
       # The chart auto-enables this controller's PDB whenever replicas > 1 and
       # defaults it to minAvailable: 1 -- the exact shape validate-pdb-drain-safe
-      # flags. Pin the drain-safe house pattern (#1880/#1882) instead; the chart
-      # refuses to render both fields, so only maxUnavailable is set. At the
-      # local/CI default of 1 replica the chart renders no PDB at all.
+      # flags. Pin the drain-safe house pattern (#1880/#1882) instead. The
+      # explicit `minAvailable: null` is REQUIRED: Helm deep-merges these values
+      # onto the chart defaults, so setting only maxUnavailable leaves the
+      # default minAvailable: 1 in place and the chart's kyverno.pdb.spec helper
+      # hard-fails the whole upgrade ("Cannot set both .minAvailable and
+      # .maxUnavailable"); null deletes the default key at value coalescing.
+      # At the local/CI default of 1 replica the chart renders no PDB at all.
       podDisruptionBudget:
+        minAvailable: null
         maxUnavailable: 1
       podSecurityContext:
         runAsNonRoot: true
@@ -134,8 +139,10 @@ spec:
     reportsController:
       replicas: ${kyverno_reports_replicas:=1}
       # Same as backgroundController: override the chart's auto-enabled
-      # minAvailable: 1 PDB with the drain-safe maxUnavailable pattern.
+      # minAvailable: 1 PDB with the drain-safe maxUnavailable pattern
+      # (minAvailable: null is required -- see backgroundController).
       podDisruptionBudget:
+        minAvailable: null
         maxUnavailable: 1
       podSecurityContext:
         runAsNonRoot: true
@@ -144,8 +151,10 @@ spec:
     cleanupController:
       replicas: ${kyverno_cleanup_replicas:=1}
       # Same as backgroundController: override the chart's auto-enabled
-      # minAvailable: 1 PDB with the drain-safe maxUnavailable pattern.
+      # minAvailable: 1 PDB with the drain-safe maxUnavailable pattern
+      # (minAvailable: null is required -- see backgroundController).
       podDisruptionBudget:
+        minAvailable: null
         maxUnavailable: 1
       podSecurityContext:
         runAsNonRoot: true
