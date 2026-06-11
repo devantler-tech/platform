@@ -5,9 +5,9 @@ description: |
 license: Apache-2.0
 metadata:
     github-path: skills/gitops-repo-audit
-    github-ref: refs/tags/v0.0.3
+    github-ref: refs/tags/v0.0.4
     github-repo: https://github.com/fluxcd/agent-skills
-    github-tree-sha: 6a0bce48f3bda341fce4ad2c4c798b40b40b98c4
+    github-tree-sha: f1974c94903b38c0756041d9ee9bf84cdfb997f6
 name: gitops-repo-audit
 ---
 # GitOps Repository Auditor
