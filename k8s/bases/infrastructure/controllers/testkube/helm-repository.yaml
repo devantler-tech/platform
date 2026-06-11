@@ -1,7 +1,0 @@
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
-metadata:
-  name: testkube
-  namespace: testkube
-spec:
-  url: https://kubeshop.github.io/helm-charts
