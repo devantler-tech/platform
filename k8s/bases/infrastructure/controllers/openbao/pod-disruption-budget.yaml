@@ -1,0 +1,22 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: openbao
+  namespace: openbao
+spec:
+  # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue
+  # #1880): it never deadlocks a node drain regardless of replica count. On
+  # the 3-replica prod Raft cluster it additionally guarantees quorum (2 of
+  # 3 voters) through any voluntary disruption — previously nothing stopped
+  # two simultaneous evictions from breaking quorum and sealing the vault.
+  # Local/CI runs a single replica; maxUnavailable: 1 still permits that
+  # pod's eviction, so drains never block there either.
+  maxUnavailable: 1
+  selector:
+    # The openbao chart's server StatefulSet selector labels (vault-helm
+    # fork): scoped to component=server so the PDB never matches injector
+    # or CSI pods if those are ever enabled.
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      app.kubernetes.io/instance: openbao
+      component: server
