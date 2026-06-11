@@ -62,14 +62,23 @@ spec:
     - toEntities:
         - host
         - remote-node
-    # Slack notifications + Coroot version checks (HTTPS egress).
-    - toEntities:
-        - world
+    # External HTTPS, pinned by FQDN instead of world:443 so a compromised
+    # pod cannot exfiltrate telemetry to arbitrary external services:
+    # - hooks.slack.com — Coroot incident notifications (Slack webhook)
+    # - hc-ping.com     — the coroot-heartbeat CronJob's dead-man's-switch
+    #                     ping (${alertmanager_heartbeat_url})
+    # - coroot.com      — Coroot version checks / usage statistics
+    - toFQDNs:
+        - matchName: "hooks.slack.com"
+        - matchName: "hc-ping.com"
+        - matchName: "coroot.com"
       toPorts:
         - ports:
             - port: "443"
               protocol: TCP
-    # DNS resolution
+    # DNS resolution. rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
+    # allow-list above can be enforced; matchPattern "*" leaves resolution
+    # itself unrestricted (the FQDN list constrains where traffic may go).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -80,3 +89,6 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

@@ -54,9 +54,15 @@ spec:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: umami
     # CNPG -> Cloudflare R2 (S3) for barmanObjectStore WAL archiving + base
-    # backups (postgres-cluster.yaml). Mirrors the velero allow-velero policy.
-    - toEntities:
-        - world
+    # backups (postgres-cluster.yaml). Pinned by FQDN instead of world:443 so
+    # a compromised pod cannot exfiltrate to arbitrary external services; the
+    # R2 pattern matches any account host without committing the account id.
+    # The umami.is names keep Umami's version check / telemetry from logging
+    # connection errors.
+    - toFQDNs:
+        - matchPattern: "*.r2.cloudflarestorage.com"
+        - matchName: "api.umami.is"
+        - matchName: "telemetry.umami.is"
       toPorts:
         - ports:
             - port: "443"
@@ -64,7 +70,9 @@ spec:
     # Kube API (CNPG operator manages the cluster)
     - toEntities:
         - kube-apiserver
-    # DNS resolution
+    # DNS resolution. rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
+    # allow-list above can be enforced; matchPattern "*" leaves resolution
+    # itself unrestricted (the FQDN list constrains where traffic may go).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -75,3 +83,6 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

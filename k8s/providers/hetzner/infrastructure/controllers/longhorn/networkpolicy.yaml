@@ -45,14 +45,21 @@ spec:
     - toEntities:
         - host
         - remote-node
-    # Backup targets (S3-compatible)
-    - toEntities:
-        - world
+    # External HTTPS, pinned by FQDN instead of world:443 so a compromised
+    # pod cannot exfiltrate volume data to arbitrary external services:
+    # - *.r2.cloudflarestorage.com — S3-compatible backup target (none is
+    #   configured today; kept for when one is)
+    # - the upgrade responder      — Longhorn's chart-default version check
+    - toFQDNs:
+        - matchPattern: "*.r2.cloudflarestorage.com"
+        - matchName: "longhorn-upgrade-responder.rancher.io"
       toPorts:
         - ports:
             - port: "443"
               protocol: TCP
-    # DNS resolution
+    # DNS resolution. rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
+    # allow-list above can be enforced; matchPattern "*" leaves resolution
+    # itself unrestricted (the FQDN list constrains where traffic may go).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -63,3 +70,6 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
