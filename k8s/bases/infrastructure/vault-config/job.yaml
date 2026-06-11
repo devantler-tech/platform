@@ -60,10 +60,16 @@ spec:
     spec:
       serviceAccountName: vault-config
       restartPolicy: OnFailure
+      # The full restricted-PSS context is set explicitly (not left to the
+      # add-security-context Kyverno mutation) so the pod stays hardened
+      # even when created before the webhook is active on fresh bring-up.
       securityContext:
         runAsUser: 100
         runAsGroup: 1000
         fsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       volumes:
         - name: unseal-keys
           secret:
@@ -80,6 +86,15 @@ spec:
         # --- 1. Auto-init + unseal ---
         - name: vault-init
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
           # No BAO_ADDR env: the script addresses each pod explicitly through
           # the openbao-internal headless Service (publishNotReadyAddresses:
           # true, so per-pod DNS resolves even before readiness).
@@ -232,6 +247,15 @@ spec:
         # --- 2. Persist credentials in K8s Secret (only on fresh init) ---
         - name: store-keys
           image: alpine/k8s:1.36.1@sha256:692239d739589247c4a791205ed9619c28ae85a21286e19a6211c04a62c56668
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
           volumeMounts:
             - name: shared
               mountPath: /shared
@@ -260,6 +284,15 @@ spec:
       containers:
         - name: vault-config
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
           env:
             - name: BAO_ADDR
               # openbao-active = unsealed Raft leader only. Configuration

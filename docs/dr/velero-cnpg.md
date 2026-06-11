@@ -100,15 +100,20 @@ CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
 
 ## CloudNativePG
 
-- The operator was already installed; the platform adds a **reusable Barman
-  credentials Secret** (`cnpg-r2-credentials` in `cnpg-system`) that any
-  future `Cluster` resource references via `barmanObjectStore.s3Credentials`.
-- The recipe is documented inline in
-  `k8s/bases/infrastructure/controllers/cloudnative-pg/r2-credentials-secret.yaml`.
-- Per-cluster `Cluster` + `ScheduledBackup` resources are intentionally not
-  added speculatively. When the first stateful application lands, drop a
-  `Cluster` next to it that references this secret and the shared `${r2_*}`
-  variables.
+- CNPG backup credentials are projected **per-namespace** from OpenBao: each
+  CNPG `Cluster` gets an ExternalSecret next to it that reads the shared
+  `infrastructure/backup/r2` OpenBao path (the same key/secret Velero uses)
+  into a Secret in the Cluster's own namespace — CNPG's
+  `barmanObjectStore.s3Credentials` can only reference a Secret there. The
+  earlier reusable `cnpg-r2-credentials` Secret in `cnpg-system` was removed:
+  no `Cluster` could reference it across namespaces.
+- Live example: `umami-db` — `k8s/bases/apps/umami/db-backup-external-secret.yaml`
+  projects `umami-db-backup-r2`, which the `Cluster` in
+  `k8s/bases/apps/umami/postgres-cluster.yaml` references (with a
+  `ScheduledBackup` in `db-scheduled-backup.yaml`).
+- When the next CNPG-backed app lands, copy the umami ExternalSecret next to
+  its `Cluster` and point `barmanObjectStore.destinationPath` at a distinct
+  `s3://${r2_bucket}/cnpg/<app>` prefix.
 
 ## Local clusters: MinIO replaces R2
 

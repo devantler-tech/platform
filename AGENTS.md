@@ -26,7 +26,7 @@ k8s/                  # All Kubernetes manifests
   bases/              # Shared base resources (never modify directly from overlays)
     bootstrap/        # Flux post-build substitution variables (ConfigMap + SOPS secret)
     infrastructure/   # Organized by resource type: controllers/, certificates/, gateway/,
-                      #   cluster-policies/, external-secrets/, alerts/, vault-*/, etc.
+                      #   cluster-policies/, external-secrets/, vault-*/, etc.
     apps/             # Application deployments
   providers/          # Provider-specific overlays (docker, hetzner)
   clusters/           # Per-environment overlays (local, prod)
@@ -202,7 +202,7 @@ You **cannot** decrypt existing secrets without the proper Age keys. For local d
 
 ### Infrastructure File Structure Convention
 
-Resources under `k8s/bases/infrastructure/` are organized by **resource type**, not by the component that uses them — for example `certificates/`, `cluster-policies/`, `controllers/` (HelmRelease / HelmRepository and related resources, each in a subdirectory by component name), `gateway/` (Gateway and infrastructure-level HTTPRoute resources such as the HTTP→HTTPS redirect), `external-secrets/`, `alerts/`, and the `vault-*/` (OpenBao) directories.
+Resources under `k8s/bases/infrastructure/` are organized by **resource type**, not by the component that uses them — for example `certificates/`, `cluster-policies/`, `controllers/` (HelmRelease / HelmRepository and related resources, each in a subdirectory by component name), `gateway/` (Gateway and infrastructure-level HTTPRoute resources such as the HTTP→HTTPS redirect), `external-secrets/`, and the `vault-*/` (OpenBao) directories.
 
 Central gateway resources (the Cilium `Gateway` and its TLS `Certificate`) are deployed to `kube-system` (the Cilium namespace) rather than to a dedicated namespace.
 

@@ -271,6 +271,27 @@ jobs:
             echo "--- $pod server log ---"
             kubectl logs -n openbao "$pod" --tail=150 2>&1 | sed 's/^/  /'
           done
+          # Label-patch probe: OpenBao's service registration updates pod
+          # labels with RFC 6902 `replace` ops and on the 2026-06-10 runs the
+          # apiserver rejected every update with a bare 422 (OpenBao does not
+          # log the response body), freezing the labels at their startup
+          # values so openbao-active never gained endpoints. Replay the same
+          # operation with kubectl, which prints the apiserver's full
+          # explanation of WHAT is invalid, plus a server-side dry-run apply
+          # of the unmodified pod to surface latent object-validation errors.
+          echo "--- label patch probe (single replace, current value) ---"
+          CUR=$(kubectl get pod openbao-0 -n openbao -o jsonpath='{.metadata.labels.openbao-active}')
+          kubectl patch pod openbao-0 -n openbao --type=json \
+            -p "[{\"op\":\"replace\",\"path\":\"/metadata/labels/openbao-active\",\"value\":\"$CUR\"}]" 2>&1 | sed 's/^/  /'
+          echo "--- label patch probe (batch replace, all openbao-* labels) ---"
+          kubectl get pod openbao-0 -n openbao -o json | jq -r '
+            .metadata.labels | to_entries
+            | map(select(.key | startswith("openbao-")))
+            | map({op: "replace", path: ("/metadata/labels/" + .key), value: .value})' \
+            | kubectl patch pod openbao-0 -n openbao --type=json --patch-file=/dev/stdin 2>&1 | sed 's/^/  /'
+          echo "--- pod self-validation (server-side dry-run re-apply) ---"
+          kubectl get pod openbao-0 -n openbao -o json \
+            | kubectl replace --dry-run=server -f - 2>&1 | tail -5 | sed 's/^/  /'
           echo "::endgroup::"
 
       - name: 🔥 Delete cluster

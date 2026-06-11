@@ -5,8 +5,9 @@
 #   https://fluxcd.io/flux/components/kustomize/kustomizations/#recommended-settings
 #   https://fluxcd.io/flux/components/helm/helmreleases/
 #
-# Started in Audit mode — flip `validationFailureAction` to `Enforce` once a
-# clean cluster scan confirms nothing trips the policy.
+# Runs in Enforce mode — non-compliant resources are denied at admission (and
+# at Flux's server-side dry-run), so new Flux resources must declare all the
+# recommended fields up front.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
