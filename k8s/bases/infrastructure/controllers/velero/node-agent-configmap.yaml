@@ -1,0 +1,33 @@
+# Velero node-agent configuration (read via --node-agent-configmap, see
+# nodeAgent.extraArgs in helm-release.yaml).
+#
+# podResources sets EXPLICIT resources on the VGDP micro-service pods that
+# Velero spawns per volume (PodVolumeBackup/PodVolumeRestore/DataUpload/
+# DataDownload). Without it those pods declare no resources, so the
+# add-resource-defaults Kyverno policy (and the namespace LimitRange) stamp the
+# platform default of 128Mi memoryRequest into them. fs-backup pods are pinned
+# to the node of the pod whose volume they read, bypassing the scheduler — and
+# on workers whose requestable memory is ~100% allocated, kubelet admission
+# rejects them ("Node didn't have enough resource: memory"), cancelling that
+# volume's backup (12 of 99 volumes on the 2026-06-11 daily run).
+#
+# Requests are deliberately tiny: they are admission accounting only, and the
+# most saturated node has had ~12MiB of unrequested memory left. Limits match
+# the platform defaults the Kyverno policy would have stamped, so runtime
+# behaviour is unchanged — the pods just no longer need a 128Mi reservation to
+# be admitted. Velero requires request <= limit for any pair that is set.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: node-agent-config
+  namespace: velero
+data:
+  node-agent-config.json: |
+    {
+      "podResources": {
+        "cpuRequest": "5m",
+        "cpuLimit": "500m",
+        "memoryRequest": "8Mi",
+        "memoryLimit": "512Mi"
+      }
+    }
