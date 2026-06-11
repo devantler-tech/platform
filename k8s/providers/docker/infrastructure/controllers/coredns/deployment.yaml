@@ -101,7 +101,12 @@ spec:
       priorityClassName: system-cluster-critical
       restartPolicy: Always
       schedulerName: default-scheduler
-      securityContext: {}
+      # No runAsNonRoot: the upstream CoreDNS image runs as root, and the
+      # NET_BIND_SERVICE capability it needs to bind :53 is not effective
+      # for non-root users without ambient capabilities.
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       serviceAccount: coredns
       serviceAccountName: coredns
       terminationGracePeriodSeconds: 30
