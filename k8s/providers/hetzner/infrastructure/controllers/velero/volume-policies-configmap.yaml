@@ -30,6 +30,19 @@ data:
             - longhorn
         action:
           type: snapshot
+      # emptyDir pod volumes → skip. emptyDir never survives pod recreation, so
+      # backing it up has zero restore value — yet defaultVolumesToFsBackup was
+      # spawning a VGDP micro-pod for every agent scratch dir (kubescape
+      # node-agent clamav dirs, coroot-node-agent tmp, CNPG shm/scratch-data,
+      # openbao tmp/home, homepage config/logs). On memory-saturated nodes those
+      # micro-pods end up pod-phase Failed and each stuck PodVolumeBackup holds
+      # the nightly backup open until the 4h timeout (PartiallyFailed). Real
+      # data is unaffected: PVCs never match volumeTypes: emptyDir.
+      - conditions:
+          volumeTypes:
+            - emptyDir
+        action:
+          type: skip
       # No rule for hcloud or any other StorageClass: unmatched volumes fall
       # back to defaultVolumesToFsBackup: true → Kopia file-system backup. This
       # keeps openbao (hcloud, which has no CSI snapshot support) and any future
