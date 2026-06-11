@@ -133,14 +133,18 @@ jobs:
         run: |
           set -euo pipefail
           echo "Waiting for the BackupStorageLocation to be Available (Velero syncs old backups from R2)..."
-          kubectl -n velero wait backupstoragelocation/default \
+          # Velero resource names are fully qualified throughout: CNPG also
+          # defines a `backups` resource and kubectl resolves the unqualified
+          # name to backups.postgresql.cnpg.io on this cluster (the CI restore
+          # drill's first run failed exactly this way — see #1995).
+          kubectl -n velero wait backupstoragelocations.velero.io/default \
             --for=jsonpath='{.status.phase}'=Available --timeout=15m
 
           # Backup CRs are synced from the R2 bucket by Velero's backup-sync
           # controller; give it a moment to populate after the BSL goes ready.
           BACKUP=""
           for i in $(seq 1 30); do
-            BACKUP=$(kubectl -n velero get backups -o json | jq -r \
+            BACKUP=$(kubectl -n velero get backups.velero.io -o json | jq -r \
               '[.items[] | select(.status.phase=="Completed")] | sort_by(.metadata.creationTimestamp) | last | .metadata.name // empty')
             [ -n "${BACKUP}" ] && break
             echo "  ...no Completed backups synced yet (${i}/30)"
@@ -169,7 +173,7 @@ jobs:
           EOF
           phase=""
           for i in $(seq 1 180); do
-            phase=$(kubectl -n velero get restore "dr-rebuild-${GITHUB_RUN_ID}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+            phase=$(kubectl -n velero get restores.velero.io "dr-rebuild-${GITHUB_RUN_ID}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
             case "${phase}" in
               Completed) break ;;
               Failed|PartiallyFailed) break ;;
@@ -182,7 +186,7 @@ jobs:
           # restore's job is to bring back resources Flux does NOT own (the
           # old openbao-unseal comes back separately below).
           if [ "${phase}" != "Completed" ] && [ "${phase}" != "PartiallyFailed" ]; then
-            kubectl -n velero describe restore "dr-rebuild-${GITHUB_RUN_ID}" || true
+            kubectl -n velero describe restores.velero.io "dr-rebuild-${GITHUB_RUN_ID}" || true
             echo "::error::Velero restore did not finish (phase: ${phase:-<none>})."
             exit 1
           fi
@@ -325,7 +329,7 @@ jobs:
           EOF
           phase=""
           for i in $(seq 1 60); do
-            phase=$(kubectl -n velero get restore "dr-openbao-secrets-${GITHUB_RUN_ID}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+            phase=$(kubectl -n velero get restores.velero.io "dr-openbao-secrets-${GITHUB_RUN_ID}" -o jsonpath='{.status.phase}' 2>/dev/null || true)
             case "${phase}" in
               Completed|PartiallyFailed) break ;;
               Failed) break ;;
