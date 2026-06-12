@@ -2,10 +2,27 @@
 
 ## Overview
 
-OpenBao stores secrets in file-based storage. The Velero daily backup captures
-the openbao namespace PVCs and the `openbao-unseal` Secret (which contains the
-unseal key and root token). The `vault-config` Job auto-initializes OpenBao on
-fresh clusters and auto-unseals on restarts.
+OpenBao runs as a raft (Integrated Storage) cluster. Three artifacts make it
+recoverable:
+
+1. **Raft snapshots** — the `vault-snapshot` CronJob saves a
+   `bao operator raft snapshot` to the `vault-snapshots` PVC daily (newest 14
+   kept) and mirrors them to the S3 backup target under `openbao-snapshots/`
+   (Cloudflare R2 in prod, MinIO locally). The mirror exists because Velero's
+   file-system backup only captures volumes mounted by *running* pods —
+   nothing mounts this PVC outside the CronJob's brief run, so Velero alone
+   would never carry the snapshots off-cluster.
+2. **`openbao-unseal` Secret** — unseal key + root token, captured by Velero's
+   daily resource backup. A snapshot is only usable together with the keys
+   that were current when it was taken.
+3. **The `vault-config` Job** — auto-initializes OpenBao on fresh clusters,
+   auto-unseals on restarts, and **auto-restores**: when no pod reports an
+   initialized barrier but `openbao-unseal` still holds keys AND a snapshot
+   exists on the PVC, it temp-initializes, runs
+   `bao operator raft snapshot restore -force` with the newest snapshot, and
+   unseals with the stored key — no operator action. Only when no snapshot is
+   available does it abort and demand explicit data-loss acknowledgement
+   (the #1982 guard, unchanged).
 
 ## Recovery Scenarios
 
@@ -21,50 +38,62 @@ No manual action needed. Verify:
 kubectl exec -n openbao openbao-0 -- bao status
 ```
 
-### Scenario 2: PVC data corruption
+### Scenario 2: Raft data corruption or loss (Secret + snapshots intact)
 
-**Symptom**: OpenBao fails to start, storage errors in logs.
+**Symptom**: OpenBao fails to start with storage errors, or all pods report
+`initialized: false` while `openbao-unseal` still exists (the 2026-06-10
+incident shape).
 
-**Resolution**:
+**Resolution** — automated. Reset the data volumes and let the `vault-config`
+Job restore the newest snapshot:
 
 1. Scale down the StatefulSet:
    ```bash
    kubectl scale statefulset -n openbao openbao --replicas=0
    ```
-2. Delete the corrupted PVC:
+2. Delete the corrupted data PVCs (NOT `vault-snapshots`, and do NOT delete
+   the `openbao-unseal` Secret — both are the restore inputs):
    ```bash
-   kubectl delete pvc -n openbao data-openbao-0
+   kubectl delete pvc -n openbao data-openbao-0 data-openbao-1 data-openbao-2
    ```
-3. Scale back up:
-   ```bash
-   kubectl scale statefulset -n openbao openbao --replicas=1
-   ```
-4. Delete the stale `openbao-unseal` Secret (old keys are for the old storage):
-   ```bash
-   kubectl delete secret -n openbao openbao-unseal
-   ```
-5. Trigger Flux reconciliation (`ksail workload reconcile`) — the `vault-config`
-   Job re-runs, auto-initializes with fresh keys, and configures policies/roles.
-6. PushSecrets re-seed the vault from SOPS variables on next reconciliation.
+3. Trigger Flux reconciliation (`ksail workload reconcile`) — the StatefulSet
+   scales back up with empty volumes, and the `vault-config` Job detects
+   uninitialized-pods + surviving-keys + available-snapshot and restores
+   automatically (worst-case RPO: 24 h, the snapshot cadence).
+4. ExternalSecrets resume syncing; PushSecrets top up anything newer than the
+   snapshot on their next refresh.
 
-### Scenario 3: Full cluster rebuild (Velero restore)
+Only if **no snapshot exists** (PVC also lost and the R2 mirror is empty) does
+the Job abort with the data-loss guard; acknowledge the loss explicitly with
+`kubectl delete secret openbao-unseal -n openbao` and the next run
+re-initializes from scratch (Scenario 4 then re-seeds the KV).
 
-**Symptom**: Entire cluster is lost (DR scenario), Velero backup available.
+### Scenario 3: Full cluster rebuild (backups available)
 
-**Resolution**:
+**Symptom**: Entire cluster is lost (DR scenario); the R2 snapshot mirror
+and/or Velero backups are available.
 
-1. `ksail cluster create` — provisions infrastructure
-2. Deploy Velero and restore from backup — this restores:
-   - OpenBao PVC (vault data)
-   - `openbao-unseal` Secret (unseal key + root token)
-3. Flux deploys `infrastructure-controllers` → OpenBao starts
-4. The `postStart` hook reads the restored `openbao-unseal` Secret → auto-unseals
-5. `vault-config` Job runs → detects vault is already initialized → skips init →
-   converges policies/roles
-6. ExternalSecrets resume syncing from the restored vault data
+**Sequencing caveat**: on a rebuilt cluster Flux stands OpenBao up *before*
+any restore can run, so the `vault-config` Job auto-initializes a **fresh**
+vault first (no `openbao-unseal` exists yet → the guard does not trigger).
+Recovering the old data means deliberately resetting that fresh vault into
+the Scenario 2 shape:
 
-**Key point**: Velero backs up both the PVC (vault data) and the `openbao-unseal`
-Secret (unseal credentials). Both are needed for a complete restore.
+1. `ksail cluster create` + `workload push`/`reconcile` — the platform
+   converges with a fresh, empty vault (PushSecrets re-seed SOPS-sourced
+   values, so the cluster is functional but generated secrets are new).
+2. Restore the old `openbao-unseal` Secret (from the Velero backup) over the
+   fresh one, and copy the newest snapshot from the R2 `openbao-snapshots/`
+   mirror onto the `vault-snapshots` PVC.
+3. Scale OpenBao to 0, delete the fresh `data-openbao-*` PVCs, reconcile —
+   the `vault-config` Job now hits the automated restore path (Scenario 2)
+   and brings back the pre-incident vault.
+4. ExternalSecrets resume syncing from the restored data; consumers pick up
+   the old (matching) credentials.
+
+**Key point**: a snapshot and the `openbao-unseal` Secret must come from the
+same generation (same backup day) — keys from one era cannot unseal a
+snapshot from another.
 
 ### Scenario 4: Full cluster rebuild (no Velero backup)
 

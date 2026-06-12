@@ -6,12 +6,21 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Velero and CNPG backup/restore access
+    # Velero and CNPG backup/restore access, plus the OpenBao raft-snapshot
+    # mirror (vault-backup CronJob + init Job). Cilium drops a flow unless
+    # BOTH the client's egress AND the server's ingress allow it, so the
+    # egress rule in bases/infrastructure/vault-backup/networkpolicy.yaml is
+    # not sufficient on its own — its missing counterpart here crashlooped
+    # vault-snapshot-init's mirror container in CI (mc i/o timeout) and
+    # wedged the infrastructure health gate.
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: velero
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: cnpg-system
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: openbao
+            app: vault-snapshot
       toPorts:
         - ports:
             - port: "9000"
