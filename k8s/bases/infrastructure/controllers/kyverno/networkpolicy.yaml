@@ -23,9 +23,15 @@ spec:
     # ImageValidatingPolicies): cosign signature manifests live on ghcr.io
     # with blobs served from the GitHub CDN, and the Sigstore TUF trust root
     # refreshes from its CDN. Rekor inclusion proofs verify offline via the
-    # bundled SET; the log stays reachable as a fallback.
+    # bundled SET; the log stays reachable as a fallback. github.com is
+    # required because GHCR answers the OCI referrers API with a 303 redirect
+    # to https://github.com/-/v2/packages/... — with it blocked, the
+    # redirect-following referrers lookup dies (webhook deadline / "no
+    # signatures found") instead of falling back to the sha256-<digest> tag
+    # scheme, denying every first-party pod.
     - toFQDNs:
         - matchName: "ghcr.io"
+        - matchName: "github.com"
         - matchName: "pkg-containers.githubusercontent.com"
         - matchName: "tuf-repo-cdn.sigstore.dev"
         - matchName: "rekor.sigstore.dev"
