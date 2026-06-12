@@ -5,3 +5,16 @@ resources:
   - namespace.yaml
   - priority-class.yaml
   - replicaset.yaml
+  # cluster-proportional-autoscaler scales the buffer ReplicaSet with cluster
+  # size — controller, RBAC and target are co-located in this namespace and
+  # retired together when native CA capacity buffers replace the balloon
+  # pattern. See helm-release.yaml for the placement rationale.
+  - helm-repository.yaml
+  - helm-release.yaml
+  - networkpolicy.yaml
+components:
+  # Same platform-wide HelmRelease policy the provider overlays apply: drift
+  # detection + install/upgrade remediation defaults, merged into the CPA
+  # HelmRelease above at build time.
+  - ../../../bases/components/helmrelease-drift-detection
+  - ../../../bases/components/helmrelease-flux-defaults
