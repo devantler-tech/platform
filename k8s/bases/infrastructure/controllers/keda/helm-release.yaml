@@ -25,3 +25,14 @@ spec:
       replicaCount: ${keda_operator_replicas:=1}
     webhooks:
       replicaCount: ${keda_webhooks_replicas:=1}
+    # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never deadlocks a
+    # node drain regardless of replica count. The webhooks PDB matters most:
+    # keda-admission-webhooks validates every ScaledObject/TriggerAuthentication
+    # admission, and the operator drives all scale-from-zero decisions.
+    podDisruptionBudget:
+      operator:
+        maxUnavailable: 1
+      metricServer:
+        maxUnavailable: 1
+      webhooks:
+        maxUnavailable: 1

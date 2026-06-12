@@ -19,4 +19,5 @@ resources:
   - canary.yaml
   - scaled-object.yaml
   - networkpolicy.yaml
+  - pod-disruption-budget.yaml
   - provision-cronjob.yaml
