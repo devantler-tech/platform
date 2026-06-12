@@ -19,11 +19,11 @@ spec:
     # Kube API for policy enforcement
     - toEntities:
         - kube-apiserver
-    # Image signature verification (verify-image-signatures ClusterPolicy):
-    # cosign signature manifests live on ghcr.io with blobs served from the
-    # GitHub CDN, and the Sigstore TUF trust root refreshes from its CDN.
-    # Rekor inclusion proofs normally verify offline via the bundled SET,
-    # but keep the log reachable for entries without a bundle.
+    # Image signature verification (verify-image-signatures.yaml
+    # ImageValidatingPolicies): cosign signature manifests live on ghcr.io
+    # with blobs served from the GitHub CDN, and the Sigstore TUF trust root
+    # refreshes from its CDN. Rekor inclusion proofs verify offline via the
+    # bundled SET; the log stays reachable as a fallback.
     - toFQDNs:
         - matchName: "ghcr.io"
         - matchName: "pkg-containers.githubusercontent.com"
