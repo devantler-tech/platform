@@ -226,7 +226,7 @@ jobs:
         # artifact); the SBOM is attested to the registry in the next step.
         env:
           # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-          SYFT_VERSION: "1.45.0"
+          SYFT_VERSION: "1.45.1"
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: ghcr.io/devantler-tech/platform/manifests@${{ steps.cosign-sign.outputs.digest }}
