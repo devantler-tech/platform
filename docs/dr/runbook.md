@@ -130,6 +130,16 @@ ksail --config ksail.prod.yaml workload reconcile  # Flux pulls and applies
 flux get kustomizations -A
 # Re-run if any are NotReady; expect convergence in 10-15 minutes
 
+# 4b. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
+#     in R2 — the vault came up fresh): re-feed the user-fed secrets that
+#     SOPS deliberately does not seed (see the header of
+#     k8s/bases/infrastructure/vault-seed/push-secrets.yaml). Until then,
+#     cert-manager DNS01, external-dns, and fleetdm stay pending:
+kubectl -n openbao exec openbao-0 -- \
+  bao kv put secret/infrastructure/dns/cloudflare api_token=<cloudflare-token>
+kubectl -n openbao exec openbao-0 -- \
+  bao kv put secret/apps/fleetdm/license license-key=<fleet-license-jwt>
+
 # 5. DNS — normally NO manual step: external-dns (hetzner overlay,
 #    policy: sync, gateway-httproute source) repoints the Cloudflare
 #    records at the new load balancer automatically once the HTTPRoutes
@@ -268,20 +278,33 @@ find . -name '*.enc.yaml' -print0 | xargs -0 -n1 sops updatekeys --yes
 #    <your-bucket> bucket only). DO NOT revoke the old one
 #    yet -- there is a window where both must work.
 
-# 2. Update the encrypted secret in-place
+# 2. Update the encrypted secret in-place. The R2 keys are per-environment
+#    and live in the CLUSTER secret (variables-cluster), not the shared base.
 sops --set '["stringData"]["r2_access_key_id"] "<new-id>"' \
-  k8s/bases/bootstrap/variables-base-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
 sops --set '["stringData"]["r2_secret_access_key"] "<new-secret>"' \
-  k8s/bases/bootstrap/variables-base-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
+# (repeat for k8s/clusters/local/bootstrap/ if rotating the local creds)
 
-# 3. PR + merge. Flux propagates within one reconciliation cycle.
+# 3. PR + merge. Flux propagates within one reconciliation cycle, and the
+#    hourly seed-r2-credentials PushSecret refreshes infrastructure/backup/r2
+#    in OpenBao, from where the Velero/CNPG ExternalSecrets re-sync.
 
 # 4. Wait one Velero schedule + one CNPG WAL archive cycle to confirm
 #    the new credentials work end-to-end.
-kubectl -n velero get backups -w
+kubectl -n velero get backups.velero.io -w
 kubectl logs -n cnpg-system -l app.kubernetes.io/name=cloudnative-pg --tail=50
 
 # 5. Revoke the old token in Cloudflare.
+```
+
+The **Cloudflare API token** (DNS01 + external-dns) is user-fed, not in SOPS —
+rotate it with a single vault write; the consuming ExternalSecrets re-sync
+within their 1h refresh interval:
+
+```bash
+kubectl -n openbao exec openbao-0 -- \
+  bao kv put secret/infrastructure/dns/cloudflare api_token=<new-token>
 ```
 
 ---
