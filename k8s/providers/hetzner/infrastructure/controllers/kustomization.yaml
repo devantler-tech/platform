@@ -13,6 +13,11 @@ resources:
   # so the policy lives here, not in the base — see cilium/ for the rationale.
   - cilium/
   - coredns/
+  # Prod-only: Crossplane core for declarative GitHub management — external
+  # reconcilers must run on exactly one always-on cluster. The provider
+  # package + managed resources live in the dedicated `github` layer
+  # (../../github/), applied by its own Flux Kustomization.
+  - crossplane/
   - external-dns/
   - flux-instance/
   - hcloud-ccm/

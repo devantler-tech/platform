@@ -1,0 +1,39 @@
+# Prod-only: reconciles the devantler-tech GitHub org's declarative state
+# (providers/hetzner/github/ — Crossplane provider-upjet-github package,
+# credentials wiring, and the Repository/… managed resources) via its OWN
+# Flux Kustomization instead of the `infrastructure` layer.
+#
+# Why it cannot ride along in `infrastructure`: GitHub org state is orthogonal
+# to cluster workloads, but `infrastructure` reconciles with `wait: true` and
+# gates `apps` (and with it every merge-queue / tag deploy). A GitHub-side
+# stall — credentials not yet seeded in variables-cluster, a GitHub API
+# outage, a misconfigured managed resource — must only ever hold THIS
+# Kustomization red (same isolation reasoning as
+# overprovisioning-flux-kustomization.yaml, though this layer keeps
+# `wait: true`: steady-state, everything in it is expected to be Ready).
+#
+# Expected on a fresh install: the first reconcile fails with unknown-kind
+# errors until the Provider package installs and the activation policy
+# creates the github.upbound.io CRDs (~1-2 min), then converges on retry.
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: github
+  namespace: flux-system
+spec:
+  interval: 60m
+  timeout: 10m
+  retryInterval: 2m
+  path: providers/hetzner/github
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+  # After `infrastructure` so the Crossplane core HelmRelease (controllers
+  # layer), the openbao ClusterSecretStore and the vault-config policies it
+  # needs are all in place first.
+  dependsOn:
+    - name: infrastructure
+  wait: true
+  prune: true
+  force: true

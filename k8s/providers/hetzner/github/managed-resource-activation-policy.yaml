@@ -1,0 +1,16 @@
+# provider-upjet-github declares SafeStart, so its 77 ManagedResourceDefinitions
+# install Inactive; only the ones named here become CRDs (each active MRD costs
+# the apiserver ~3MiB). The chart's activate-everything default MRAP is disabled
+# via `provider.defaultActivations: []` in the crossplane HelmRelease. Extend
+# this list as more of the org's GitHub surface comes under management.
+apiVersion: apiextensions.crossplane.io/v1alpha1
+kind: ManagedResourceActivationPolicy
+metadata:
+  name: github
+spec:
+  activate:
+    - repositories.repo.github.upbound.io
+    - defaultbranches.repo.github.upbound.io
+    - branchprotections.repo.github.upbound.io
+    - repositoryrulesets.repo.github.upbound.io
+    - issuelabels.repo.github.upbound.io

@@ -1,0 +1,28 @@
+# Declarative GitHub management — the devantler-tech org's GitHub state
+# (repositories, rulesets, labels, …) as Crossplane managed resources,
+# reconciled by provider-upjet-github. See docs/github-management.md.
+#
+# This layer is applied by its OWN Flux Kustomization (`github`, see
+# k8s/clusters/prod/github-flux-kustomization.yaml), NOT by the health-gated
+# `infrastructure` layer: GitHub org state is orthogonal to cluster workloads,
+# and a stalled GitHub reconcile (e.g. credentials not yet seeded, GitHub API
+# outage) must never hold `infrastructure`/`apps` — and with them every
+# merge-queue / tag deploy — red.
+#
+# Layering follows the Flagger/Coroot convention (CRDs ship one layer earlier
+# than the CRs that use them): the Crossplane core HelmRelease lives in
+# ../infrastructure/controllers/crossplane/, this layer installs the provider
+# package and the managed resources. On a FRESH install the first reconcile of
+# this layer fails benignly (the ProviderConfig/Repository CRDs only exist
+# once the Provider package and the activation policy below have done their
+# work) and converges on the next retries.
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - provider.yaml
+  - managed-resource-activation-policy.yaml
+  - provider-config.yaml
+  - seed-github-app.yaml
+  - external-secret.yaml
+  - repositories/

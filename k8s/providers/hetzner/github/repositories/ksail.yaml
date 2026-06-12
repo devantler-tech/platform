@@ -1,0 +1,15 @@
+apiVersion: repo.github.upbound.io/v1alpha1
+kind: Repository
+metadata:
+  name: ksail
+  annotations:
+    # Binds this CR to the EXISTING devantler-tech/ksail repository
+    # (owner comes from the ProviderConfig credentials).
+    crossplane.io/external-name: ksail
+spec:
+  # Observe-only while adopting — see repositories/kustomization.yaml.
+  managementPolicies: ["Observe"]
+  deletionPolicy: Orphan
+  forProvider: {}
+  providerConfigRef:
+    name: default

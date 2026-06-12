@@ -1,0 +1,15 @@
+# Authenticates provider-upjet-github against the devantler-tech org as a
+# GitHub App (not a PAT: short-lived installation tokens, org-scoped, survives
+# personal-account changes). The referenced Secret is materialized by
+# external-secret.yaml from OpenBao.
+apiVersion: github.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: default
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: github-app-credentials
+      key: credentials
