@@ -23,10 +23,13 @@ spec:
   verify:
     provider: cosign
     matchOIDCIdentity:
-      # Keyless-signed by the .github repo's own cd.yaml workflow (the repo is
-      # literally named `.github`, hence the doubled `\.github` in the path).
+      # Keyless-signed by the shared publish-manifests reusable workflow that
+      # .github's cd.yaml calls. Signing runs INSIDE that reusable workflow, so
+      # the cosign OIDC subject is the reusable workflow's path (devantler-tech/
+      # reusable-workflows), NOT .github's own cd.yaml — same convention as the
+      # publish-app.yaml-signed app artifacts.
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/\.github/\.github/workflows/cd\.yaml@.+$'
+        subject: '^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-manifests\.yaml@.+$'
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
