@@ -197,6 +197,24 @@
       "addLabels": [
         "kubernetes"
       ]
+    },
+    {
+      "description": "velero-plugin-for-aws is PINNED at v1.14.0 (k8s/bases/infrastructure/controllers/velero/helm-release.yaml): v1.14.1's AWS SDK update serializes the always-set-but-empty PutObject Tagging field as a literal empty x-amz-tagging header, which Cloudflare R2 rejects with 501 NotImplemented — every backup then fails at the final metadata upload. Exclude exactly v1.14.1 and keep automerge OFF for this image so the next release is only merged after a maintainer confirms it ships the upstream fix (velero-io/velero-plugin-for-aws#299 / #303); CI cannot catch this regression because the system-test cluster has no R2 backend. automerge:false placed last so it overrides the minor/patch automerge defaults above.",
+      "matchPackageNames": [
+        "velero/velero-plugin-for-aws"
+      ],
+      "allowedVersions": "!/^v?1\\.14\\.1$/",
+      "automerge": false
+    },
+    {
+      "description": "KubeVirt and CDI ship as VENDORED upstream operator manifests (k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml, .../cdi/cdi-operator.yaml) — thousands of lines of CRDs, RBAC and the operator Deployment vendored as one unit from each release's published asset. The kubernetes manager only sees the `image:` lines inside them, so a Renovate bump rewrites the operator image alone and silently skews it against the CRDs/RBAC vendored next to it; the system-test would still pass bring-up (operators tolerate startup skew) so automerge would land the skew unseen. Keep the update PR as the new-release signal but require a maintainer to re-vendor the full manifest from the matching release before merging. automerge:false placed last so it overrides the major/minor/patch automerge defaults above.",
+      "matchPackageNames": [
+        "quay.io/kubevirt/**"
+      ],
+      "automerge": false,
+      "addLabels": [
+        "vendored-manifest"
+      ]
     }
   ],
   "ignorePaths": [

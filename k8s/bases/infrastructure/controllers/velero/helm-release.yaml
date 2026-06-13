@@ -7,7 +7,7 @@ metadata:
     helm.toolkit.fluxcd.io/crds: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
-  interval: 5m
+  interval: 10m
   chart:
     spec:
       chart: velero
@@ -115,6 +115,11 @@ spec:
         type: RollingUpdate
         rollingUpdate:
           maxUnavailable: 1
+      # Explicit (tiny) resources for the per-volume VGDP micro-service pods —
+      # see node-agent-configmap.yaml for why the Kyverno-stamped 128Mi default
+      # request gets them rejected on memory-saturated nodes.
+      extraArgs:
+        - --node-agent-configmap=node-agent-config
 
     # Daily backup of every namespace that has PVCs. 14-day retention
     # matches the 24h RPO target. Long-term retention is handled by R2

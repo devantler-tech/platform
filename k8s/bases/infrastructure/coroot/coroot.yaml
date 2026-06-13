@@ -29,7 +29,15 @@ spec:
   # as Admin, mirroring the old single-operator "everyone -> Grafana Admin".
   authAnonymousRole: Admin
 
-  metricsRefreshInterval: 15s
+  # Metric resolution. The operator default is 15s; 30s halves the bundled
+  # Prometheus ingest, the node-agent scrape volume, and Coroot's continuous
+  # query load on a memory-constrained cluster, while staying at the
+  # conventional Prometheus scrape interval. Coupled setting: the Flagger
+  # canary metric windows (canary*.yaml `metrics[].interval`) are sized to
+  # keep >=4 samples per rate() window (Prometheus best practice), so they
+  # must be >= 4x this value — currently 2m. Don't raise this without
+  # widening those windows.
+  metricsRefreshInterval: 30s
   cacheTTL: 30d
 
   # The Coroot app's own state (users, custom dashboards, UI-configured

@@ -7,7 +7,11 @@
 #                    init/unseal: consecutive requests land on different pods,
 #                    which is exactly the "double-init split-brain" and
 #                    "unseal-before-join" risk pair called out in
-#                    docs/dr/openbao-raft-ha-migration.md)
+#                    docs/dr/openbao-raft-ha-migration.md). When the raft data
+#                    is gone but the openbao-unseal Secret survived AND a raft
+#                    snapshot exists on the vault-snapshots PVC, it restores
+#                    the newest snapshot automatically instead of aborting
+#                    (docs/dr/openbao.md).
 #   2. store-keys  — persists unseal key + root token in a K8s Secret
 #
 # Main container (vault-config):
@@ -60,10 +64,16 @@ spec:
     spec:
       serviceAccountName: vault-config
       restartPolicy: OnFailure
+      # The full restricted-PSS context is set explicitly (not left to the
+      # add-security-context Kyverno mutation) so the pod stays hardened
+      # even when created before the webhook is active on fresh bring-up.
       securityContext:
         runAsUser: 100
         runAsGroup: 1000
         fsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       volumes:
         - name: unseal-keys
           secret:
@@ -76,10 +86,28 @@ spec:
           secret:
             secretName: vault-config-oidc
             optional: true
+        # Raft snapshots written by the vault-snapshot CronJob (vault-backup/),
+        # mounted read-only as the vault-init container's automated restore
+        # source. RWO is fine: the CronJob only holds the volume for seconds
+        # around 03:30 UTC, so attach conflicts with this Job are practically
+        # impossible.
+        - name: snapshots
+          persistentVolumeClaim:
+            claimName: vault-snapshots
+            readOnly: true
       initContainers:
         # --- 1. Auto-init + unseal ---
         - name: vault-init
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
           # No BAO_ADDR env: the script addresses each pod explicitly through
           # the openbao-internal headless Service (publishNotReadyAddresses:
           # true, so per-pod DNS resolves even before readiness).
@@ -89,6 +117,9 @@ spec:
               readOnly: true
             - name: shared
               mountPath: /shared
+            - name: snapshots
+              mountPath: /snapshots
+              readOnly: true
           resources:
             requests:
               cpu: 10m
@@ -127,22 +158,101 @@ spec:
               done
 
               if [ "$ANY_INITIALIZED" = "false" ]; then
-                echo "No initialized pod found — running bao operator init on openbao-0..."
-                INIT_OUTPUT=$(BAO_ADDR="$(addr 0)" bao operator init -key-shares=1 -key-threshold=1)
+                # Data-loss guard (#1982): keys in openbao-unseal mean a cluster
+                # was initialized before. If on top of that NO pod reports an
+                # initialized barrier, the raft data is missing or unreadable —
+                # auto-initializing here would silently bring up an EMPTY vault
+                # and overwrite the previous unseal key + root token (exactly
+                # how the 2026-06-10 incident destroyed the whole KV store).
+                # With a raft snapshot on the vault-snapshots PVC the data is
+                # recoverable WITHOUT operator action: temp-init, restore the
+                # newest snapshot, then unseal with the stored (pre-incident)
+                # key. Only when no snapshot exists does the guard still abort.
+                if [ -f /openbao/unseal/unseal-key ]; then
+                  NEWEST_SNAP=$(ls -1t /snapshots/openbao-*.snap 2>/dev/null | head -n 1 || true)
+                  if [ -z "$NEWEST_SNAP" ]; then
+                    echo "ERROR: no pod reports an initialized vault, but the openbao-unseal"
+                    echo "Secret still holds keys from a previously initialized cluster, and"
+                    echo "no raft snapshot is available on the vault-snapshots PVC."
+                    echo "Refusing to auto-initialize: that would create an empty vault and"
+                    echo "overwrite the old keys, making any surviving data unrecoverable."
+                    echo ""
+                    echo "Recover the data first (Velero restore / reattach the old data"
+                    echo "PVCs / copy a snapshot from the R2 openbao-snapshots/ mirror onto"
+                    echo "the vault-snapshots PVC) and re-run this Job. If the data loss is"
+                    echo "confirmed and a fresh vault is intended, acknowledge it explicitly:"
+                    echo "  kubectl delete secret openbao-unseal -n openbao"
+                    echo "and let the next Job run initialize from scratch."
+                    exit 1
+                  fi
 
-                UNSEAL_KEY=$(echo "$INIT_OUTPUT" | grep "Unseal Key 1:" | sed 's/.*: //')
-                ROOT_TOKEN=$(echo "$INIT_OUTPUT" | grep "Initial Root Token:" | sed 's/.*: //')
+                  echo "No initialized pod found, but openbao-unseal holds keys from a"
+                  echo "previous cluster AND a raft snapshot exists:"
+                  echo "  $NEWEST_SNAP"
+                  echo "Running the automated snapshot restore (docs/dr/openbao.md)."
 
-                if [ -z "$UNSEAL_KEY" ] || [ -z "$ROOT_TOKEN" ]; then
-                  echo "ERROR: failed to parse init output (unseal key or root token missing)."
-                  echo "Refusing to print raw output because it may contain secret material."
-                  exit 1
+                  # 1. Temp-init openbao-0. These credentials live only in this
+                  #    container's memory and stop mattering the moment the
+                  #    snapshot is restored (the snapshot's barrier replaces
+                  #    them). If the restore below fails, the raft holds an
+                  #    empty temp vault: delete the openbao data PVCs and let
+                  #    the pods + this Job re-run — the Secret and the snapshot
+                  #    are untouched, so the restore retries from scratch.
+                  INIT_OUTPUT=$(BAO_ADDR="$(addr 0)" bao operator init -key-shares=1 -key-threshold=1)
+                  TMP_UNSEAL=$(echo "$INIT_OUTPUT" | grep "Unseal Key 1:" | sed 's/.*: //')
+                  TMP_ROOT=$(echo "$INIT_OUTPUT" | grep "Initial Root Token:" | sed 's/.*: //')
+                  if [ -z "$TMP_UNSEAL" ] || [ -z "$TMP_ROOT" ]; then
+                    echo "ERROR: failed to parse temp init output (unseal key or root token missing)."
+                    echo "Refusing to print raw output because it may contain secret material."
+                    exit 1
+                  fi
+
+                  # 2. Unseal openbao-0 with the temp key and wait for a leader.
+                  BAO_ADDR="$(addr 0)" bao operator unseal "$TMP_UNSEAL" >/dev/null
+                  TRIES=24
+                  until pod_status 0 | grep -q '"ha_mode": "active"'; do
+                    TRIES=$((TRIES - 1))
+                    if [ "$TRIES" -le 0 ]; then
+                      echo "ERROR: openbao-0 never became the active node after temp init."
+                      exit 1
+                    fi
+                    sleep 5
+                  done
+
+                  # 3. Restore the snapshot. -force skips the cluster-ID match
+                  #    (the temp cluster's ID can never match the snapshot's).
+                  echo "Restoring $NEWEST_SNAP..."
+                  BAO_ADDR="$(addr 0)" BAO_TOKEN="$TMP_ROOT" \
+                    bao operator raft snapshot restore -force "$NEWEST_SNAP"
+
+                  # 4. The cluster's barrier is now the snapshot's, so the
+                  #    stored pre-incident keys apply again — fall through to
+                  #    the shared unseal loop with them. newly-initialized is
+                  #    deliberately NOT written: store-keys must not overwrite
+                  #    the openbao-unseal Secret that pairs with this snapshot.
+                  cat /openbao/unseal/unseal-key > /shared/unseal-key
+                  if [ -f /openbao/unseal/root-token ]; then
+                    cat /openbao/unseal/root-token > /shared/root-token
+                  fi
+                  echo "Snapshot restored; unsealing with the stored key."
+                else
+                  echo "No initialized pod found — running bao operator init on openbao-0..."
+                  INIT_OUTPUT=$(BAO_ADDR="$(addr 0)" bao operator init -key-shares=1 -key-threshold=1)
+
+                  UNSEAL_KEY=$(echo "$INIT_OUTPUT" | grep "Unseal Key 1:" | sed 's/.*: //')
+                  ROOT_TOKEN=$(echo "$INIT_OUTPUT" | grep "Initial Root Token:" | sed 's/.*: //')
+
+                  if [ -z "$UNSEAL_KEY" ] || [ -z "$ROOT_TOKEN" ]; then
+                    echo "ERROR: failed to parse init output (unseal key or root token missing)."
+                    echo "Refusing to print raw output because it may contain secret material."
+                    exit 1
+                  fi
+
+                  printf '%s' "$UNSEAL_KEY" > /shared/unseal-key
+                  printf '%s' "$ROOT_TOKEN" > /shared/root-token
+                  touch /shared/newly-initialized
+                  echo "Vault initialized on openbao-0."
                 fi
-
-                printf '%s' "$UNSEAL_KEY" > /shared/unseal-key
-                printf '%s' "$ROOT_TOKEN" > /shared/root-token
-                touch /shared/newly-initialized
-                echo "Vault initialized on openbao-0."
               else
                 echo "Vault is already initialized."
 
@@ -204,13 +314,25 @@ spec:
               done
               if [ "$UNSEALED_ANY" = "false" ]; then
                 echo "ERROR: no pod could be unsealed — the stored key may not match this cluster."
-                echo "See docs/dr/openbao-raft-ha-migration.md for recovery."
+                echo "After an automated snapshot restore this means the openbao-unseal Secret"
+                echo "and the snapshot are from different generations — restore the matching"
+                echo "pair (same backup day) and re-run. See docs/dr/openbao.md and"
+                echo "docs/dr/openbao-raft-ha-migration.md for recovery."
                 exit 1
               fi
               echo "Unseal phase complete."
         # --- 2. Persist credentials in K8s Secret (only on fresh init) ---
         - name: store-keys
           image: alpine/k8s:1.36.1@sha256:692239d739589247c4a791205ed9619c28ae85a21286e19a6211c04a62c56668
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
           volumeMounts:
             - name: shared
               mountPath: /shared
@@ -239,6 +361,15 @@ spec:
       containers:
         - name: vault-config
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
           env:
             - name: BAO_ADDR
               # openbao-active = unsealed Raft leader only. Configuration
@@ -437,6 +568,11 @@ spec:
 
               bao policy write vault-snapshot-readonly - <<'POLICY'
               path "sys/health" {
+                capabilities = ["read"]
+              }
+              # Raft snapshot export for the vault-snapshot CronJob
+              # (GET /v1/sys/storage/raft/snapshot).
+              path "sys/storage/raft/snapshot" {
                 capabilities = ["read"]
               }
               POLICY

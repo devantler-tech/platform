@@ -7,13 +7,21 @@ spec:
   endpointSelector: {}
   ingress:
     # Raft peering: the 3 openbao pods form the Integrated Storage cluster and
-    # gossip on the cluster port (8201). Allow openbao -> openbao on 8201.
+    # gossip on the cluster port (8201) — but the retry_join bootstrap
+    # challenge goes to the LEADER'S API PORT (8200, the leader_api_addr in
+    # the HCL), and standbys also forward client requests there. With only
+    # 8201 open, followers with empty data dirs could never join: every
+    # retry_join died with `dial tcp <leader>:8200: i/o timeout`, leaving
+    # openbao-1/2 sealed and uninitialized forever (observed live during the
+    # 2026-06-10 incident). Allow openbao -> openbao on BOTH ports.
     - fromEndpoints:
         - matchLabels:
             app.kubernetes.io/name: openbao
             k8s:io.kubernetes.pod.namespace: openbao
       toPorts:
         - ports:
+            - port: "8200"
+              protocol: TCP
             - port: "8201"
               protocol: TCP
     # Allow same-namespace clients (vault-config Jobs, UI),
@@ -42,18 +50,36 @@ spec:
             - port: "8200"
               protocol: TCP
   egress:
+    # Raft peering, mirror of the ingress rule above: the presence of ANY
+    # egress rule puts these pods in default-deny egress, so without an
+    # explicit openbao -> openbao allow the join/gossip SYN is dropped at
+    # the SOURCE pod even though ingress on the peer permits it.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: openbao
+            k8s:io.kubernetes.pod.namespace: openbao
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
+            - port: "8201"
+              protocol: TCP
     # Kube API for Kubernetes auth token review
     - toEntities:
         - kube-apiserver
     # OIDC provider (Dex) — accessed via HTTPS external URL for
-    # discovery and token exchange during user login
-    - toEntities:
-        - world
+    # discovery and token exchange during user login. Pinned by FQDN
+    # instead of world:443 so a compromised pod cannot exfiltrate to
+    # arbitrary external services.
+    - toFQDNs:
+        - matchName: "dex.${domain}"
       toPorts:
         - ports:
             - port: "443"
               protocol: TCP
-    # DNS resolution
+    # DNS resolution. rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
+    # allow-list above can be enforced; matchPattern "*" leaves resolution
+    # itself unrestricted (the FQDN list constrains where traffic may go).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -64,6 +90,9 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
     # FleetDM MySQL — the Database secrets engine connects to MySQL to
     # validate database/config/fleetdm-mysql and to rotate the 'fleet'
     # user's password (the mysql-database-plugin runs in-process inside

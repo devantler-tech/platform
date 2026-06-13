@@ -43,14 +43,32 @@ spec:
     # Kube API
     - toEntities:
         - kube-apiserver
-    # External services (agent downloads, update checks, license validation)
-    - toEntities:
-        - world
+    # External services, pinned by FQDN instead of world:443 so a compromised
+    # pod cannot exfiltrate to arbitrary external services:
+    # - *.fleetdm.com         — TUF agent updates (updates/tuf.fleetdm.com),
+    #                           usage analytics (fleetdm.com)
+    # - github.com + CDNs     — vulnerability feeds (fleetdm/nvd releases,
+    #                           OVAL/goval-dictionary mirrors)
+    # - learn.microsoft.com   — Mac Office release notes for vuln processing
+    # If the hourly fleet-vulnprocessing CronJob logs feed-download failures,
+    # extend this list with the missing host (failure mode is stale vuln
+    # data, not an outage).
+    - toFQDNs:
+        - matchName: "fleetdm.com"
+        - matchPattern: "*.fleetdm.com"
+        - matchName: "github.com"
+        - matchName: "api.github.com"
+        - matchName: "objects.githubusercontent.com"
+        - matchName: "raw.githubusercontent.com"
+        - matchName: "learn.microsoft.com"
       toPorts:
         - ports:
             - port: "443"
               protocol: TCP
-    # DNS resolution
+    # DNS resolution. rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
+    # allow-list above can be enforced; matchPattern "*" leaves resolution
+    # itself unrestricted (the FQDN list constrains where traffic may go —
+    # MySQL also reverse-resolves client IPs, which must keep working).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -61,3 +79,6 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

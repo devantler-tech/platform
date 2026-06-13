@@ -126,14 +126,23 @@ data:
   # VPA recommender computes resource recommendations; admission controller
   # applies them at pod start. Updater evicts pods to apply new resource
   # recommendations continuously.
-  # 3 replicas for HA; recommender/updater are leader-elected (helm-release
-  # extraArgs leader-elect: true), so one is active and the rest warm standbys.
-  vpa_recommender_replicas: "3"
-  vpa_updater_replicas: "3"
-  # --- Kyverno (3 replicas for HA; these controllers are leader-elected) ---
+  # 2 replicas: recommender/updater are leader-elected (helm-release
+  # extraArgs leader-elect: true) and sit on no serving path — a failover
+  # gap only delays the next recommendation/eviction cycle. Active + one
+  # warm standby with a maxUnavailable: 1 PDB (helm-release) still rides
+  # out a node drain; a third standby bought no availability, only ~1 pod
+  # of requests on a request-saturated cluster (cost trim, 2026-06-11).
+  vpa_recommender_replicas: "2"
+  vpa_updater_replicas: "2"
+  # --- Kyverno (leader-elected controllers) ---
+  # background stays 3: it executes the generate/mutate-existing rules the
+  # platform leans on (e.g. propagate-reloader-to-flagger-primary).
   kyverno_background_replicas: "3"
-  kyverno_reports_replicas: "3"
-  kyverno_cleanup_replicas: "3"
+  # reports/cleanup run 2 (active + warm standby, maxUnavailable: 1 PDB):
+  # report generation and cleanup are best-effort background work off every
+  # serving path — same cost trim as the VPA standbys above.
+  kyverno_reports_replicas: "2"
+  kyverno_cleanup_replicas: "2"
   # --- Flagger (3 replicas for HA; gated by leaderElection.enabled) ---
   flagger_replicas: "3"
   # --- OpenBao secrets vault ---

@@ -1,0 +1,20 @@
+# Dedicated volume for OpenBao raft snapshots (written by the
+# vault-snapshot CronJob, newest 14 retained). Uses the cluster's default
+# StorageClass. Snapshots on this PVC are the first-line restore source
+# after OpenBao data loss: the vault-config Job restores from the newest
+# one automatically when it finds an uninitialized cluster alongside a
+# surviving openbao-unseal Secret. Off-cluster durability comes from the
+# CronJob's mirror container (S3/R2), NOT from Velero — Velero's
+# file-system backup only captures volumes mounted by running pods, and
+# nothing mounts this PVC outside the CronJob's brief daily run.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vault-snapshots
+  namespace: openbao
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi

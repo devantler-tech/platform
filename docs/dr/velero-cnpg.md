@@ -24,8 +24,11 @@ contents, and Postgres data.
                        └──────────┘  └────────────────────┘
 ```
 
-Credentials are SOPS-encrypted in `variables-base-secret.enc.yaml` and
-substituted into both the Velero and CNPG secrets at Flux apply time.
+Credentials are SOPS-encrypted per environment in the cluster secret
+(`k8s/clusters/<env>/bootstrap/variables-cluster-secret.enc.yaml`), seeded
+into OpenBao at `infrastructure/backup/r2` by the `seed-r2-credentials`
+PushSecret, and materialised into the Velero and CNPG namespaces by
+ExternalSecrets.
 
 ## Velero
 
@@ -100,15 +103,20 @@ CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
 
 ## CloudNativePG
 
-- The operator was already installed; the platform adds a **reusable Barman
-  credentials Secret** (`cnpg-r2-credentials` in `cnpg-system`) that any
-  future `Cluster` resource references via `barmanObjectStore.s3Credentials`.
-- The recipe is documented inline in
-  `k8s/bases/infrastructure/controllers/cloudnative-pg/r2-credentials-secret.yaml`.
-- Per-cluster `Cluster` + `ScheduledBackup` resources are intentionally not
-  added speculatively. When the first stateful application lands, drop a
-  `Cluster` next to it that references this secret and the shared `${r2_*}`
-  variables.
+- CNPG backup credentials are projected **per-namespace** from OpenBao: each
+  CNPG `Cluster` gets an ExternalSecret next to it that reads the shared
+  `infrastructure/backup/r2` OpenBao path (the same key/secret Velero uses)
+  into a Secret in the Cluster's own namespace — CNPG's
+  `barmanObjectStore.s3Credentials` can only reference a Secret there. The
+  earlier reusable `cnpg-r2-credentials` Secret in `cnpg-system` was removed:
+  no `Cluster` could reference it across namespaces.
+- Live example: `umami-db` — `k8s/bases/apps/umami/db-backup-external-secret.yaml`
+  projects `umami-db-backup-r2`, which the `Cluster` in
+  `k8s/bases/apps/umami/postgres-cluster.yaml` references (with a
+  `ScheduledBackup` in `db-scheduled-backup.yaml`).
+- When the next CNPG-backed app lands, copy the umami ExternalSecret next to
+  its `Cluster` and point `barmanObjectStore.destinationPath` at a distinct
+  `s3://${r2_bucket}/cnpg/<app>` prefix.
 
 ## Local clusters: MinIO replaces R2
 
@@ -178,18 +186,20 @@ etc.) see [`runbook.md`](./runbook.md).
 
 ## Credential rotation
 
-Stored in `k8s/bases/bootstrap/variables-base-secret.enc.yaml`. Rotation
-flow:
+Stored per environment in
+`k8s/clusters/<env>/bootstrap/variables-cluster-secret.enc.yaml`. Rotation
+flow (see also runbook.md Scenario 7):
 
 ```bash
 # 1. Mint a new R2 token in Cloudflare; revoke the old one only after step 4.
 # 2. Update both keys in-place with sops:
 sops --set '["stringData"]["r2_access_key_id"] "<new-id>"' \
-  k8s/bases/bootstrap/variables-base-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
 sops --set '["stringData"]["r2_secret_access_key"] "<new-secret>"' \
-  k8s/bases/bootstrap/variables-base-secret.enc.yaml
-# 3. PR + merge -> Flux reconciles the new Secret -> Velero/CNPG pick it up
-#    on next run (Velero re-reads the credentials secret per backup).
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
+# 3. PR + merge -> Flux reconciles the new Secret -> the hourly
+#    seed-r2-credentials PushSecret refreshes OpenBao -> the Velero/CNPG
+#    ExternalSecrets re-sync within their refresh interval.
 # 4. Revoke the old token in Cloudflare.
 ```
 

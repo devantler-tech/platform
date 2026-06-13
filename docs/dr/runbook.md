@@ -20,7 +20,7 @@ these simultaneously and you cannot recover.
 | Artifact                                | Where it lives                       | Recovery if lost                     |
 | --------------------------------------- | ------------------------------------ | ------------------------------------ |
 | **SOPS Age private keys** (one per env) | Secure vault + offline backup        | Re-encrypt all `*.enc.yaml` (below)  |
-| **OpenBao unseal key + root token**     | `openbao-unseal` Secret (Velero-backed) + operator vault | Restore the `openbao-unseal` Secret + OpenBao PVC from the most recent Velero snapshot ([openbao.md](openbao.md) scenario 3); only if every copy is gone, re-initialize OpenBao and re-seed KV — existing encrypted data is then unrecoverable |
+| **OpenBao unseal key + root token**     | `openbao-unseal` Secret (Velero-backed) + operator vault | Restore the `openbao-unseal` Secret from the most recent Velero backup; the paired raft snapshot lives on the `vault-snapshots` PVC and in the R2 `openbao-snapshots/` mirror, and the `vault-config` Job restores it automatically ([openbao.md](openbao.md) scenarios 2-3); only if every copy is gone, re-initialize OpenBao and re-seed KV — existing encrypted data is then unrecoverable |
 | **Cloudflare R2 access keys**           | Secure vault                         | Mint new in Cloudflare; SOPS-update  |
 | **Hetzner Cloud API token**             | Secure vault                         | Mint new in Hetzner Cloud console    |
 | **Cloudflare API token**                | Secure vault                         | Mint new in Cloudflare dashboard     |
@@ -103,6 +103,16 @@ plane is a cattle resource that ksail can re-provision in &lt; 15 min.
 The "everything is gone" path. ~10 min of Hetzner provisioning + ~15 min of
 Flux reconciliation.
 
+> **One-button path:** run the **`DR - Rebuild Prod`** workflow
+> (`.github/workflows/dr-rebuild.yaml`, `workflow_dispatch`, confirmation
+> phrase `REBUILD-PROD`). It executes every step below from the CI runner —
+> cluster create, Flux convergence, the Velero resource restore, and the
+> OpenBao raft-snapshot recovery ([openbao.md](openbao.md) scenario 3) — and
+> needs none of the (stale-after-rebuild) `KUBE_CONFIG`/`TALOS_CONFIG`
+> secrets, because `ksail cluster create` writes fresh configs on the runner.
+> The manual procedure below is the fallback when GitHub Actions itself is
+> unavailable.
+
 ```bash
 # 1. Set credentials locally
 export HCLOUD_TOKEN=<hetzner-cloud-api-token>
@@ -120,10 +130,25 @@ ksail --config ksail.prod.yaml workload reconcile  # Flux pulls and applies
 flux get kustomizations -A
 # Re-run if any are NotReady; expect convergence in 10-15 minutes
 
-# 5. Point public DNS at the new Hetzner Cloud Load Balancer
+# 4b. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
+#     in R2 — the vault came up fresh): re-feed the user-fed secrets that
+#     SOPS deliberately does not seed (see the header of
+#     k8s/bases/infrastructure/vault-seed/push-secrets.yaml). Until then,
+#     cert-manager DNS01, external-dns, and fleetdm stay pending:
+kubectl -n openbao exec openbao-0 -- \
+  bao kv put secret/infrastructure/dns/cloudflare api_token=<cloudflare-token>
+kubectl -n openbao exec openbao-0 -- \
+  bao kv put secret/apps/fleetdm/license license-key=<fleet-license-jwt>
+
+# 5. DNS — normally NO manual step: external-dns (hetzner overlay,
+#    policy: sync, gateway-httproute source) repoints the Cloudflare
+#    records at the new load balancer automatically once the HTTPRoutes
+#    are Ready and its Cloudflare token has re-synced from the vault.
+#    Verify, and only intervene if external-dns itself is broken:
+kubectl -n external-dns logs deploy/external-dns | tail -20
 kubectl -n kube-system get svc cilium-gateway-platform \
   -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-# Update A/AAAA records for ${domain} and *.${domain} at your DNS provider.
+# Fallback only: update A/AAAA records for ${domain} at your DNS provider.
 
 # 6. Restore Velero backups (apps + PVCs)
 kubectl -n velero create -f - <<EOF
@@ -253,20 +278,33 @@ find . -name '*.enc.yaml' -print0 | xargs -0 -n1 sops updatekeys --yes
 #    <your-bucket> bucket only). DO NOT revoke the old one
 #    yet -- there is a window where both must work.
 
-# 2. Update the encrypted secret in-place
+# 2. Update the encrypted secret in-place. The R2 keys are per-environment
+#    and live in the CLUSTER secret (variables-cluster), not the shared base.
 sops --set '["stringData"]["r2_access_key_id"] "<new-id>"' \
-  k8s/bases/bootstrap/variables-base-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
 sops --set '["stringData"]["r2_secret_access_key"] "<new-secret>"' \
-  k8s/bases/bootstrap/variables-base-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
+# (repeat for k8s/clusters/local/bootstrap/ if rotating the local creds)
 
-# 3. PR + merge. Flux propagates within one reconciliation cycle.
+# 3. PR + merge. Flux propagates within one reconciliation cycle, and the
+#    hourly seed-r2-credentials PushSecret refreshes infrastructure/backup/r2
+#    in OpenBao, from where the Velero/CNPG ExternalSecrets re-sync.
 
 # 4. Wait one Velero schedule + one CNPG WAL archive cycle to confirm
 #    the new credentials work end-to-end.
-kubectl -n velero get backups -w
+kubectl -n velero get backups.velero.io -w
 kubectl logs -n cnpg-system -l app.kubernetes.io/name=cloudnative-pg --tail=50
 
 # 5. Revoke the old token in Cloudflare.
+```
+
+The **Cloudflare API token** (DNS01 + external-dns) is user-fed, not in SOPS —
+rotate it with a single vault write; the consuming ExternalSecrets re-sync
+within their 1h refresh interval:
+
+```bash
+kubectl -n openbao exec openbao-0 -- \
+  bao kv put secret/infrastructure/dns/cloudflare api_token=<new-token>
 ```
 
 ---
@@ -287,7 +325,10 @@ etcdctl --endpoints unix:///tmp/etcd.snapshot \
 # Kubernetes Secret YAML, the EncryptionConfiguration was lost.
 ```
 
-This check is also asserted by the CI restore drill (see [restore-drill.md](./restore-drill.md)).
+This check is deliberately **not** part of the CI restore drill — Talos
+verifies the encryption key at install time, so a CI assertion would add
+complexity for a structurally-enforced property (see
+[restore-drill.md](./restore-drill.md) for the full rationale).
 
 ---
 
@@ -355,6 +396,11 @@ ksail --config ksail.prod.yaml cluster update
 ---
 
 ## Scenario 9 — Refresh CI deploy credentials after a cluster rebuild
+
+> The `DR - Rebuild Prod` workflow refreshes both secrets automatically at the
+> end of a rebuild **if** a `DR_GH_ADMIN_TOKEN` secret (a fine-grained PAT
+> with environment-secrets write on this repo) is configured; without it the
+> workflow prints a warning and the manual procedure below applies.
 
 The prod deploy pipeline (`.github/workflows/cd.yaml` on a `v*` tag, and the
 merge-queue `deploy-prod` job in `ci.yaml`) authenticates to the cluster with

@@ -1,0 +1,18 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: actual-budget
+  namespace: actual-budget
+spec:
+  # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880).
+  # The community chart exposes no PDB value, so the PDB is declared here.
+  # actual-budget is a KEDA scale-to-zero app (0/1 replicas) on an RWO SQLite
+  # PVC; at 0 replicas the PDB is inert, and at 1 it still permits the eviction
+  # (maxUnavailable is evaluated against the live replica count), so drains are
+  # never deadlocked. Selector mirrors the labels already used by the
+  # topologySpreadConstraints patch in the HelmRelease.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actualbudget
+      app.kubernetes.io/instance: actual-budget

@@ -1,0 +1,175 @@
+# Admission-layer cosign verification of FIRST-PARTY images
+# (ghcr.io/devantler-tech/*) — the third verification layer, complementing:
+#   1. Flux OCI *manifest* verification (apps' sync.yaml verify.provider:
+#      cosign) — gates the GitOps artifacts, not container images.
+#   2. Talos ImageVerificationConfig (talos/cluster/image-verification.yaml)
+#      — gates the image bytes containerd pulls, with the SAME two signing
+#      identities as below. Keep both files in sync when identities change.
+# This layer rejects a Pod spec referencing an unsigned/tampered first-party
+# image at admission, before any node attempts a pull — and unlike the Talos
+# layer it also covers clusters whose nodes lack the verification patch.
+#
+# ImageValidatingPolicy, NOT ClusterPolicy verifyImages: both signing
+# pipelines run cosign v3, which attaches signatures in the new Sigstore
+# bundle format as OCI referrers (sha256-<digest> fallback tags on GHCR,
+# descriptor artifactType application/vnd.oci.empty.v1+json) and writes NO
+# legacy .sig tags. ClusterPolicy verifyImages cannot read that format with
+# either `type: Cosign` (legacy tags only) or `type: SigstoreBundle` (filters
+# referrer descriptors by a bundle artifactType cosign v3 does not set), so
+# it denies every matched pod with "no matching signatures found" — IVPOL is
+# the engine path with cosign v3 support (kyverno#14652). The bundled
+# transparency-log entry verifies offline against the public Sigstore TUF
+# root, so admission needs egress to ghcr.io + tuf-repo-cdn.sigstore.dev
+# only — no Rekor round-trip.
+#
+# Do NOT set spec.webhookConfiguration: a per-policy timeout switches Kyverno
+# to per-policy "finegrained" webhook registrations, which are broken for
+# multiple IVPOLs in v1.18.1 (one concatenated URL path; every admission then
+# fails with "policy not evaluated"). Both policies therefore share the
+# default 10s webhook timeout.
+#
+# FAIL-OPEN for everything else, exactly like the Talos config: images that
+# match no matchImageReferences rule are skipped, even when passed to the
+# verification functions, so third-party chart images (Cilium, Longhorn,
+# Coroot, …) are unaffected. This is intentionally NOT a deny-all-unsigned
+# control; kubescape C-0237 stays exempted
+# (security-exceptions/image-verification.yaml) because third-party images
+# remain unverified.
+#
+# Operational dependencies (both self-heal via controller retries if absent
+# during bring-up — the policies land in the `infrastructure` layer AFTER
+# the first-party controllers are admitted by `infrastructure-controllers`):
+#   - the `ghcr-auth` dockerconfigjson Secret in the kyverno namespace
+#     (external-secrets/external-secrets.yaml) — signature manifests of
+#     private images need authenticated GHCR reads
+#   - kyverno egress to ghcr.io + the Sigstore TUF CDN (networkpolicy.yaml)
+# Trade-off accepted by design: creating/restarting a FIRST-PARTY pod while
+# GHCR is unreachable (or verification exceeds the 10s webhook timeout) is
+# denied until the owning controller retries.
+#
+# ksail images (incl. ksail-operator) — signed by ksail's OWN release
+# pipeline, a different keyless identity than publish-app.yaml.
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: verify-ksail-images
+  annotations:
+    policies.kyverno.io/title: Verify ksail Image Signatures
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Requires keyless cosign signatures from the ksail release pipeline on
+      all ghcr.io/devantler-tech/ksail* container images at Pod admission.
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    admission:
+      enabled: true
+    # Background scans would re-fetch signatures from GHCR on every scan
+    # interval for pods that were already verified at admission.
+    background:
+      enabled: false
+  # Verify once, at Pod admission; no autogen rules for Deployments/CronJobs
+  # (spec.autogen unset): controller specs are applied by Flux and would add
+  # a registry dependency to every HelmRelease upgrade, while the Pod-level
+  # check already guarantees nothing unverified can run.
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+  matchImageReferences:
+    - glob: ghcr.io/devantler-tech/ksail*
+  credentials:
+    secrets: [ghcr-auth]
+  validationConfigurations:
+    required: true
+    # Images are referenced by tag (Renovate-managed); do not demand digest
+    # refs and do not rewrite pod specs to digests (digest mutation would
+    # fight Flux drift detection and Flagger).
+    verifyDigest: false
+    mutateDigest: false
+  attestors:
+    # Attestor names are CEL identifiers (referenced as attestors.<name> in
+    # the validation expression) — no hyphens.
+    - name: ksailcd
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/ksail/\.github/workflows/cd\.yaml@refs/tags/v.+$
+  validations:
+    # The filter mirrors matchImageReferences so only in-scope images reach
+    # verifyImageSignatures — unmatched images (third-party sidecars in the
+    # same pod) must not be required to carry a ksail signature.
+    - expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image, image.startsWith('ghcr.io/devantler-tech/ksail'))
+        .map(image, verifyImageSignatures(image, [attestors.ksailcd]))
+        .all(e, e > 0)
+      message: >-
+        ksail image is not signed by the ksail release pipeline
+        (keyless cosign, ksail cd.yaml tag identity)
+---
+# First-party APP images (wedding-app, ascoachingogvaner, …) — signed by the
+# shared reusable-workflows/publish-app.yaml identity, the same one their
+# Flux OCIRepository verify blocks pin. The match EXCLUDES ksail images:
+# a matched image is verified by this policy's attestor before the CEL
+# expression runs, so letting ksail images match here would fail them
+# against the wrong identity.
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: verify-app-images
+  annotations:
+    policies.kyverno.io/title: Verify First-Party App Image Signatures
+    policies.kyverno.io/category: Supply Chain Security
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Requires keyless cosign signatures from the devantler-tech publish-app
+      release pipeline on all non-ksail ghcr.io/devantler-tech/* container
+      images at Pod admission. Third-party images admit unverified.
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    admission:
+      enabled: true
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+  matchImageReferences:
+    # The expression variable for image references is `ref`.
+    - expression: >-
+        ref.startsWith('ghcr.io/devantler-tech/') &&
+        !ref.startsWith('ghcr.io/devantler-tech/ksail')
+  credentials:
+    secrets: [ghcr-auth]
+  validationConfigurations:
+    required: true
+    verifyDigest: false
+    mutateDigest: false
+  attestors:
+    - name: publishapp
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-app\.yaml@.+$
+  validations:
+    - expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image, image.startsWith('ghcr.io/devantler-tech/') && !image.startsWith('ghcr.io/devantler-tech/ksail'))
+        .map(image, verifyImageSignatures(image, [attestors.publishapp]))
+        .all(e, e > 0)
+      message: >-
+        first-party app image is not signed by the publish-app release
+        pipeline (keyless cosign, reusable-workflows publish-app.yaml
+        identity)

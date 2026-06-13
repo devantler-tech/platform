@@ -38,8 +38,10 @@
 # allocatable to guarantee it still fits a brand-new cx33 (otherwise the
 # autoscaler would jump to a pricier cx43). 2 CPU / 4Gi is also far too large to
 # squeeze onto the already-loaded baseline workers, so it reliably forces a new
-# node. Scale the buffer by raising replicas (one warm node per replica) or the
-# per-pod request — bounded by ksail.prod.yaml's maxNodesTotal: 10.
+# node. The buffer WIDTH (replica count ≈ warm-node count) is owned by the
+# cluster-proportional-autoscaler (helm-release.yaml in this directory) and
+# scales with cluster size; tune its config.linear curve there, or the per-pod
+# request here — bounded by ksail.prod.yaml's maxNodesTotal: 10.
 #
 # === FinOps trade-off ===
 # This intentionally runs counter to `prefer-baseline-nodes.yaml`, which keeps
@@ -57,8 +59,13 @@ metadata:
     app.kubernetes.io/component: cluster-buffer
     app.kubernetes.io/part-of: platform
 spec:
-  # One warm spare node. Raise to widen the buffer (N replicas ≈ N warm nodes).
-  replicas: 1
+  # spec.replicas is deliberately ABSENT: the cluster-proportional-autoscaler
+  # (helm-release.yaml in this directory) owns the replica count and scales it
+  # with cluster size (1 warm node up to 8 schedulable nodes, 2 from 9).
+  # Omitting the field keeps Flux's server-side apply from ever owning it, so
+  # CPA's writes stick instead of being reverted on each reconcile — the
+  # documented Flux pattern for HPA-managed workloads. The API server defaults
+  # a freshly created ReplicaSet to 1 replica until CPA's first sync.
   selector:
     matchLabels:
       app.kubernetes.io/name: overprovisioning
@@ -94,7 +101,9 @@ spec:
       containers:
         - name: pause
           # Upstream Kubernetes pause image — sleeps until signalled, no logic.
-          image: registry.k8s.io/pause:3.10
+          # Digest-pinned like every other raw pod image in the repo; Renovate's
+          # kubernetes manager keeps tag and digest updated together.
+          image: registry.k8s.io/pause:3.10@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
           resources:
             requests:
               cpu: "2"

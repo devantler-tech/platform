@@ -4,6 +4,15 @@ kind: Deployment
 metadata:
   name: auth-proxy
   namespace: oauth2-proxy
+  annotations:
+    # Disable Coroot's latency SLO for this proxy (availability SLO stays).
+    # auth-proxy fans out to the KEDA-interceptor-fronted scale-to-zero UIs,
+    # so its inbound latency SLI is dominated by intentional cold-start holds
+    # (the interceptor parks the request until the target wakes — 10s+),
+    # which at ~600 requests/day makes the default 99%-under-500ms SLO a
+    # permanent false-critical. Warm-path health is still covered by the
+    # availability SLO here and by the per-app SLOs behind the proxy.
+    coroot.com/slo-latency-objective: 0%
 spec:
   replicas: ${auth_proxy_replicas:=2}
   strategy:
@@ -38,7 +47,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: traefik
-          image: docker.io/library/traefik:v3.7@sha256:fcdef599e6259359833dd2e1d49f9e964f66825d69bd3dd468f51102ce013d03
+          image: docker.io/library/traefik:v3.7@sha256:d6858791f9e74df44ca4014166647c41cdc2abd3bf2a71b832ca4e1c6a91b257
           args:
             - --configFile=/etc/traefik/traefik.yaml
           ports:

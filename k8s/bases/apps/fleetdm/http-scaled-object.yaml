@@ -11,9 +11,13 @@ spec:
     name: fleet
     service: fleetdm-service
     port: 8080
+  # 0..3: scale-to-zero up to the platform replica ceiling
+  # (validate-replica-ceiling). Vertical growth (auto-vpa) comes first; the
+  # extra replicas absorb what one max-sized pod cannot. Fleet's web tier is
+  # stateless (state lives in MySQL/Redis), so 3 concurrent pods are safe.
   replicas:
     min: 0
-    max: 2
+    max: 3
   # Longer cooldown for FleetDM — enrolled devices check in periodically.
   # 15 minutes of silence before scale-to-zero.
   scaledownPeriod: 900

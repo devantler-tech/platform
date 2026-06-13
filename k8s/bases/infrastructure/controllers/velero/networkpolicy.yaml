@@ -9,9 +9,13 @@ spec:
     # Kube API for backup operations
     - toEntities:
         - kube-apiserver
-    # S3-compatible backup target
-    - toEntities:
-        - world
+    # S3-compatible backup target (Cloudflare R2 in prod; the pattern matches
+    # any R2 account host without committing the account id). Pinned by FQDN
+    # instead of world:443 so a compromised pod cannot exfiltrate backups to
+    # arbitrary external services. Local/CI uses the in-cluster MinIO rule
+    # below instead.
+    - toFQDNs:
+        - matchPattern: "*.r2.cloudflarestorage.com"
       toPorts:
         - ports:
             - port: "443"
@@ -24,7 +28,9 @@ spec:
         - ports:
             - port: "9000"
               protocol: TCP
-    # DNS resolution
+    # DNS resolution. rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
+    # allow-list above can be enforced; matchPattern "*" leaves resolution
+    # itself unrestricted (the FQDN list constrains where traffic may go).
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -35,3 +41,6 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

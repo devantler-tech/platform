@@ -3,9 +3,9 @@ description: 'Codifies devantler-tech engineering practices: agent-first develop
 license: Apache-2.0
 metadata:
     github-path: ways-of-working
-    github-ref: refs/tags/v1.0.0
+    github-ref: refs/tags/v1.1.0
     github-repo: https://github.com/devantler-tech/skills
-    github-tree-sha: 9a47a2db8c9bdf70402d1790fd3004af517cafe3
+    github-tree-sha: be7d95e52d933a19e9fbdba7d4989de0af8ad8cd
 name: ways-of-working
 ---
 # Ways of Working
@@ -32,6 +32,8 @@ Follow the [test-driven-development](https://github.com/obra/superpowers/tree/ma
 
 | Type | Tooling | When to run |
 |------|---------|-------------|
+| **Linting** | Linters and linting runners (e.g. `golangci-lint`, `eslint`, `MegaLinter`) | CI on every PR |
+| **Scanning** | Security & quality scanners (e.g. CodeQL, Trivy, SonarQube) | CI on every PR |
 | **Unit tests** | SDK test frameworks (e.g. `go test`, `xunit`, `jest`) | CI on every PR |
 | **Integration tests** | SDK test frameworks | CI on every PR |
 | **E2E / system tests** | GitHub Actions workflows that exercise the app/binary/service as an end user would | CI on every PR; move to `merge_group` if the suite becomes too heavy |
@@ -41,11 +43,12 @@ Follow the [test-driven-development](https://github.com/obra/superpowers/tree/ma
 
 For platform engineering work, [ksail](https://github.com/devantler-tech/ksail) provides the build → run → publish loop and [Testkube](https://testkube.io/) runs the actual test suites inside the cluster:
 
-| Type | App-repo equivalent | Tooling | What it does |
-|------|---------------------|---------|--------------|
-| **Linting / scanning** | Unit tests | Standard linters & scanners (e.g. kubeconform, kube-linter, Trivy) | Validate manifests statically — no cluster needed |
-| **Integration tests** | Integration tests | Ephemeral local cluster (`ksail cluster create`) + Testkube | Spin up a Docker cluster, deploy workloads, and run Testkube test suites against them |
-| **E2E / system tests** | E2E / system tests | Ephemeral or real cluster + Testkube | Deploy to a full environment (local or remote) and run end-to-end Testkube test suites |
+| Type | Tooling | What it does |
+|------|---------|--------------|
+| **Linting** | Manifest linters (e.g. kubeconform, kube-linter) | Validate manifests statically — no cluster needed |
+| **Scanning** | Security scanners (e.g. Trivy) | Scan manifests and images for vulnerabilities — no cluster needed |
+| **Integration tests** | Ephemeral local cluster (`ksail cluster create`) + Testkube | Spin up a Docker cluster, deploy workloads, and run Testkube test suites against them |
+| **E2E / system tests** | Ephemeral or real cluster + Testkube | Deploy to a full environment (local or remote) and run end-to-end Testkube test suites |
 
 Platform lifecycle commands:
 
@@ -57,11 +60,8 @@ Platform lifecycle commands:
 
 ## Code Quality Gates (CI)
 
-Every pull request **must** pass:
+Every pull request **must** pass all linting and scanning checks defined in the [Testing](#testing) section. For application / library repositories, additionally:
 
-- **Strict linting** — language-specific linters with zero-tolerance for warnings.
-- **Strict security scanning** — e.g. CodeQL, Trivy, zizmor.
-- **Strict code quality scanning** — e.g. SonarQube, MegaLinter.
 - **No code coverage regression** — coverage must not decrease compared to the base branch.
 - **No benchmark regression** — benchmark results must not regress compared to the base branch.
 
@@ -99,7 +99,7 @@ Each repository has two core workflow files — `ci.yaml` and `cd.yaml` — plus
 
 | Event | What runs |
 |-------|-----------|
-| `pull_request` | All tests (unit, integration, E2E, benchmarks), linting, security & quality scanning, coverage & benchmark regression checks. Move E2E to `merge_group` only if the suite becomes too heavy. |
+| `pull_request` | Linting, scanning, unit tests, integration tests, E2E tests, benchmarks, coverage & benchmark regression checks. Move E2E to `merge_group` only if the suite becomes too heavy. |
 | `merge_group` | CD to **dev** environment. |
 | `push` to `main` | **Publish** artifacts (packages, container images, etc.). |
 | Semver tag (`vX.X.X`) | CD to **prod** environment. |
@@ -108,7 +108,7 @@ Each repository has two core workflow files — `ci.yaml` and `cd.yaml` — plus
 
 | Event | What runs |
 |-------|-----------|
-| `pull_request` | Linting & scanning (kubeconform, kube-linter, Trivy, etc.) plus integration tests on an ephemeral local cluster (`ksail cluster create` + Testkube). Move integration tests to `merge_group` if the suite becomes too heavy. |
+| `pull_request` | Linting, scanning, integration tests on an ephemeral local cluster (`ksail cluster create` + Testkube). Move integration tests to `merge_group` if the suite becomes too heavy. |
 | `merge_group` | CD to **dev** — deploy to staging infrastructure (e.g. Hetzner). |
 | Semver tag (`vX.X.X`) | CD to **prod** — `ksail cluster update`, `ksail workload push`, `ksail workload reconcile`. |
 

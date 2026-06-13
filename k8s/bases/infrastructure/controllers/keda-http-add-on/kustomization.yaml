@@ -4,3 +4,4 @@ kind: Kustomization
 resources:
   - helm-release.yaml
   - reference-grant.yaml
+  - pod-disruption-budget.yaml

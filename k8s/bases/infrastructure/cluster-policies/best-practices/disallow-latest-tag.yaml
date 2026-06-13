@@ -1,0 +1,101 @@
+# Mutable image references defeat both verification layers (Talos
+# ImageVerificationConfig and verify-image-signatures verify whatever the
+# tag points at TODAY) and make rollbacks/incident forensics guesswork.
+# Requires every container image to carry a tag, and forbids the ':latest'
+# tag specifically. A tag+digest reference (img:1.2.3@sha256:…) passes both
+# rules — the digest is what actually pins it.
+#
+# Audit ONLY for now: third-party chart images can't be enumerated
+# statically, and an Enforce policy that trips on one would wedge its
+# HelmRelease mid-upgrade (the enforce-flux-best-practices failure mode).
+# Flip validationFailureAction to Enforce once prod PolicyReports
+# (`kubectl get polr -A | grep disallow-latest-tag`) show zero violations.
+#
+# Namespace exclusions mirror validate-pod-security: infrastructure
+# namespaces that run third-party system charts by design.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: disallow-latest-tag
+  annotations:
+    policies.kyverno.io/title: Disallow Latest Tag
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Requires container images to use an explicit tag and forbids the
+      mutable ':latest' tag, so what runs is reproducible and the
+      signature-verification layers gate immutable references.
+spec:
+  validationFailureAction: Audit
+  background: true
+  rules:
+    - name: require-image-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              operations:
+                - CREATE
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - flux-system
+                - longhorn-system
+                - local-path-storage
+                - kubescape
+                - kubevirt
+                - cdi
+                - observability
+                - velero
+      validate:
+        message: >-
+          An explicit image tag is required — a tagless reference silently
+          resolves to the mutable ':latest'.
+        pattern:
+          spec:
+            =(ephemeralContainers):
+              - image: "*:*"
+            =(initContainers):
+              - image: "*:*"
+            containers:
+              - image: "*:*"
+    - name: validate-image-tag
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              operations:
+                - CREATE
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - flux-system
+                - longhorn-system
+                - local-path-storage
+                - kubescape
+                - kubevirt
+                - cdi
+                - observability
+                - velero
+      validate:
+        message: >-
+          The mutable ':latest' tag is not allowed — pin a version tag so
+          rollbacks and signature verification reference immutable images.
+        pattern:
+          spec:
+            =(ephemeralContainers):
+              - image: "!*:latest"
+            =(initContainers):
+              - image: "!*:latest"
+            containers:
+              - image: "!*:latest"

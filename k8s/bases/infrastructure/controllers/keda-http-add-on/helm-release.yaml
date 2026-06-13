@@ -7,7 +7,7 @@ metadata:
     helm.toolkit.fluxcd.io/crds: enabled
     helm.toolkit.fluxcd.io/remediation: enabled
 spec:
-  interval: 2m
+  interval: 10m
   timeout: 10m
   dependsOn:
     - name: keda
@@ -32,7 +32,33 @@ spec:
       privileged: false
     scaler:
       replicas: ${keda_scaler_replicas:=1}
+      # Soft hostname spread: the scaler's queue pinger polls every interceptor
+      # admin endpoint and reports NOT_SERVING (liveness kill) while any one of
+      # them is unreachable, so losing a node that holds several replicas of
+      # either component degrades all scale-to-zero routing at once. The default
+      # scheduler skew tolerance (maxSkew 3) happily co-locates replicas — on
+      # prod it packed 2 of 3 interceptors onto a single short-lived autoscaler
+      # node. ScheduleAnyway keeps this a preference so single-node local/CI
+      # clusters still schedule.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keda-http-add-on
+              app.kubernetes.io/component: scaler
     interceptor:
       replicas:
         min: ${keda_interceptor_min_replicas:=1}
         max: 3
+      # Same rationale as the scaler above: the interceptor is on the request
+      # path of every scale-to-zero UI, so its replicas must not share a node.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keda-http-add-on
+              app.kubernetes.io/component: interceptor
