@@ -1,0 +1,16 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: snapshot-controller
+  namespace: kube-system
+spec:
+  # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880).
+  # The piraeus chart exposes no PDB value, so the PDB is declared here. The
+  # snapshot-controller is leader-elected (snapshot_controller_replicas: 3 in
+  # prod); keeping a leader available means Velero's nightly CSI snapshot
+  # backups don't hang if a drain lands mid-backup.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: snapshot-controller
+      app.kubernetes.io/instance: snapshot-controller

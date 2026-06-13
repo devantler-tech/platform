@@ -1,0 +1,51 @@
+---
+# Allow intra-cluster ICMP echo — prod only.
+#
+# Coroot's node-agent measures in-cluster network RTT by sending ICMP echo
+# requests between nodes and pods (from the host network namespace and from
+# inside pod network namespaces). The Kyverno-generated per-namespace
+# default-deny CiliumNetworkPolicies allow only the traffic each workload
+# explicitly whitelists, and no namespace whitelists ICMP — so every probe is
+# dropped (`policy-verdict:none ... Policy denied DROPPED (ICMPv4 EchoRequest)`
+# in Hubble, visible for openbao, keda, oauth2-proxy, external-secrets, ...).
+# The result is blind spots and phantom warnings in Coroot's Net reports
+# ("failed to connect to upstream services", "high in-cluster network
+# latency") for flows that are actually healthy.
+#
+# This policy is purely additive, following the require-mutual-auth pattern:
+# enableDefaultDeny: false means it only ADDS an allow for ICMP echo within
+# the cluster entity (pods, host, remote-node) and never flips any endpoint
+# into default-deny mode. Echo replies ride conntrack, so only the request
+# type needs allowing. World-sourced ICMP stays governed by the existing
+# policies (i.e. dropped wherever default-deny applies).
+#
+# Pod-to-pod echo also matches require-mutual-auth's ingress rule, so the
+# SPIRE handshake still gates the first packets per identity pair; probes
+# between already-authenticated pairs (the steady state) pass.
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: allow-intra-cluster-icmp
+spec:
+  endpointSelector: {}
+  enableDefaultDeny:
+    ingress: false
+    egress: false
+  ingress:
+    - fromEntities:
+        - cluster
+      icmps:
+        - fields:
+            - type: 8
+              family: IPv4
+            - type: 128
+              family: IPv6
+  egress:
+    - toEntities:
+        - cluster
+      icmps:
+        - fields:
+            - type: 8
+              family: IPv4
+            - type: 128
+              family: IPv6

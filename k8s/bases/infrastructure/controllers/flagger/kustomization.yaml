@@ -7,3 +7,4 @@ resources:
   - helm-release.yaml
   - loadtester-helm-release.yaml
   - networkpolicy.yaml
+  - pod-disruption-budget.yaml

@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - serviceaccount.yaml
   - pvc.yaml
+  - external-secret.yaml
   - init-job.yaml
   - cronjob.yaml
   - networkpolicy.yaml

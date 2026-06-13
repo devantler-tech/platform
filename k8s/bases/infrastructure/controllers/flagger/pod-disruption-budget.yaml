@@ -1,0 +1,17 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: flagger
+  namespace: flagger-system
+spec:
+  # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880).
+  # The chart's own podDisruptionBudget value only offers minAvailable (the
+  # shape validate-pdb-drain-safe flags), so the PDB is declared here instead.
+  # Flagger runs leader-elected (flagger_replicas: 3 in prod, warm standbys);
+  # bounding evictions to one pod at a time keeps a leader available while a
+  # canary analysis is in flight.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flagger
+      app.kubernetes.io/instance: flagger

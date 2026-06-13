@@ -1,0 +1,62 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: simply-dns-webhook
+  namespace: cert-manager
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 2m
+  timeout: 10m
+  chart:
+    spec:
+      chart: simply-dns-webhook
+      # 1.9.0 is the newest *published* chart: v1.10.0 is tagged upstream but
+      # its Pages index was never redeployed, so the 1.10.0 tgz 404s. Bump
+      # once it actually resolves.
+      version: 1.9.0
+      sourceRef:
+        kind: HelmRepository
+        name: simply-dns-webhook
+  # https://github.com/RunnerM/simply-dns-webhook/blob/master/deploy/simply-dns-webhook/values.yaml
+  values:
+    # Don't override groupName: the chart's challenge-management ClusterRole
+    # hardcodes this group, so a custom one breaks the solver's RBAC.
+    groupName: com.github.runnerm.cert-manager-simply-webhook
+    certManager:
+      namespace: cert-manager
+      serviceAccountName: cert-manager
+  postRenderers:
+    # The chart renders no securityContext at all (and offers no values knob),
+    # which fails the validate-container-security Kyverno baseline. The solver
+    # is a static Go binary serving HTTPS on :443, so it needs
+    # NET_BIND_SERVICE to bind a privileged port as non-root (the one
+    # capability the restricted profile permits adding).
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: simply-dns-webhook
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: simply-dns-webhook
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      runAsNonRoot: true
+                      runAsUser: 65532
+                      runAsGroup: 65532
+                      seccompProfile:
+                        type: RuntimeDefault
+                    containers:
+                      - name: simply-dns-webhook
+                        securityContext:
+                          privileged: false
+                          allowPrivilegeEscalation: false
+                          readOnlyRootFilesystem: true
+                          capabilities:
+                            drop: ["ALL"]
+                            add: ["NET_BIND_SERVICE"]

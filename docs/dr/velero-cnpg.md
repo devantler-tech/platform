@@ -24,8 +24,11 @@ contents, and Postgres data.
                        └──────────┘  └────────────────────┘
 ```
 
-Credentials are SOPS-encrypted in `variables-base-secret.enc.yaml` and
-substituted into both the Velero and CNPG secrets at Flux apply time.
+Credentials are SOPS-encrypted per environment in the cluster secret
+(`k8s/clusters/<env>/bootstrap/variables-cluster-secret.enc.yaml`), seeded
+into OpenBao at `infrastructure/backup/r2` by the `seed-r2-credentials`
+PushSecret, and materialised into the Velero and CNPG namespaces by
+ExternalSecrets.
 
 ## Velero
 
@@ -183,18 +186,20 @@ etc.) see [`runbook.md`](./runbook.md).
 
 ## Credential rotation
 
-Stored in `k8s/bases/bootstrap/variables-base-secret.enc.yaml`. Rotation
-flow:
+Stored per environment in
+`k8s/clusters/<env>/bootstrap/variables-cluster-secret.enc.yaml`. Rotation
+flow (see also runbook.md Scenario 7):
 
 ```bash
 # 1. Mint a new R2 token in Cloudflare; revoke the old one only after step 4.
 # 2. Update both keys in-place with sops:
 sops --set '["stringData"]["r2_access_key_id"] "<new-id>"' \
-  k8s/bases/bootstrap/variables-base-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
 sops --set '["stringData"]["r2_secret_access_key"] "<new-secret>"' \
-  k8s/bases/bootstrap/variables-base-secret.enc.yaml
-# 3. PR + merge -> Flux reconciles the new Secret -> Velero/CNPG pick it up
-#    on next run (Velero re-reads the credentials secret per backup).
+  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
+# 3. PR + merge -> Flux reconciles the new Secret -> the hourly
+#    seed-r2-credentials PushSecret refreshes OpenBao -> the Velero/CNPG
+#    ExternalSecrets re-sync within their refresh interval.
 # 4. Revoke the old token in Cloudflare.
 ```
 

@@ -5,8 +5,21 @@
 # openbao-unseal Secret: restore via
 #   bao operator raft snapshot restore <file>
 # then unseal with the key that was current when the snapshot was taken
-# (docs/dr/openbao-raft-ha-migration.md).
+# (docs/dr/openbao-raft-ha-migration.md). The vault-config Job performs
+# this restore automatically when it finds an uninitialized cluster, a
+# surviving openbao-unseal Secret AND a snapshot on the PVC (docs/dr/
+# openbao.md).
 # Authenticates via Kubernetes auth (vault-snapshot role).
+#
+# Pod layout: the snapshot runs as an initContainer and the off-cluster
+# mirror as the main container, so the upload only ever runs after a NEW
+# snapshot succeeded (containers in one pod run in parallel; init -> main
+# gives strict ordering). The mirror copies the PVC's snapshots to the
+# S3 backup target (Cloudflare R2 in prod, in-cluster MinIO locally) —
+# Velero's file-system backup CANNOT carry this PVC off-cluster, because
+# FSB only backs up volumes mounted by RUNNING pods and nothing mounts
+# this PVC outside the CronJob's own brief run. Without the mirror, a
+# full-cluster loss would also lose every raft snapshot.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -52,7 +65,16 @@ spec:
             - name: snapshots
               persistentVolumeClaim:
                 claimName: vault-snapshots
-          containers:
+            # R2 credentials synced by ESO (external-secret.yaml). Optional:
+            # on a fresh cluster the mirror container skips with a log line
+            # until the sync lands; the local snapshot is unaffected.
+            - name: r2-credentials
+              secret:
+                secretName: vault-snapshot-r2
+                optional: true
+            - name: mc-config
+              emptyDir: {}
+          initContainers:
             - name: snapshot
               image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
               securityContext:
@@ -107,3 +129,52 @@ spec:
                     rm -f "$OLD"
                   done
                   echo "Snapshot complete."
+          containers:
+            - name: mirror
+              image: quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952
+              securityContext:
+                runAsNonRoot: true
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+                readOnlyRootFilesystem: true
+              env:
+                - name: MC_CONFIG_DIR
+                  value: /tmp/.mc
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+              volumeMounts:
+                - name: snapshots
+                  mountPath: /snapshots
+                  readOnly: true
+                - name: r2-credentials
+                  mountPath: /r2
+                  readOnly: true
+                - name: mc-config
+                  mountPath: /tmp/.mc
+              command:
+                - /bin/sh
+                - -ec
+                - |
+                  if [ ! -f /r2/access_key_id ]; then
+                    echo "vault-snapshot-r2 Secret not synced yet — skipping the"
+                    echo "off-cluster mirror. The local PVC snapshot above still ran."
+                    exit 0
+                  fi
+                  mc alias set backup "${r2_endpoint}" \
+                    "$(cat /r2/access_key_id)" "$(cat /r2/secret_access_key)"
+                  # Copy-only mirror: NO --remove, so an empty/recreated PVC can
+                  # never wipe the off-cluster history. Remote retention is
+                  # pruned by age instead, and only after a successful upload in
+                  # the same run (this container only starts when the snapshot
+                  # initContainer succeeded), so the newest snapshot always
+                  # survives the prune.
+                  mc mirror --overwrite /snapshots/ "backup/${r2_bucket}/openbao-snapshots/"
+                  mc rm --recursive --force --older-than 14d \
+                    "backup/${r2_bucket}/openbao-snapshots/" || true
+                  echo "Mirrored snapshots:"
+                  mc ls "backup/${r2_bucket}/openbao-snapshots/"

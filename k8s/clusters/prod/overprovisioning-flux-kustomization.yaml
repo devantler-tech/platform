@@ -14,6 +14,9 @@
 #
 # `wait: false` means this Kustomization is Ready once the buffer manifests
 # APPLY cleanly — pod schedulability is explicitly not a health signal here.
+# The directory also carries the cluster-proportional-autoscaler HelmRelease
+# that scales the buffer's ReplicaSet with cluster size; the helm-controller
+# health-gates that release on its own, independent of this `wait: false`.
 # This is the one sanctioned exception to the `enforce-flux-best-practices`
 # Kyverno policy's `wait: true` rule; the policy excludes this Kustomization by
 # name (see bases/infrastructure/cluster-policies/flux/).

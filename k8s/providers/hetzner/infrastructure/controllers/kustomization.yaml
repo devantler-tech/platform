@@ -16,15 +16,22 @@ resources:
   # Prod-only: Crossplane core for declarative GitHub management — external
   # reconcilers must run on exactly one always-on cluster. The provider
   # package + managed resources live in the dedicated `github` layer
-  # (../../github/), applied by its own Flux Kustomization.
+  # (../../github/), applied by its own Flux Kustomization. (Crossplane core
+  # has no ExternalSecret dependency, so unlike external-dns it stays in this
+  # wait-gated controllers layer.)
   - crossplane/
-  - external-dns/
+  # NB: external-dns moved to ../external-dns/ (the `infrastructure` layer):
+  # its Cloudflare token now arrives via an OpenBao ExternalSecret, and the
+  # ClusterSecretStore only exists once `infrastructure` reconciles — in this
+  # wait-gated layer the missing Secret would deadlock the dependency chain.
   - flux-instance/
   - hcloud-ccm/
   - hcloud-csi/
   - kubelet-serving-cert-approver/
   - longhorn/
   - origin-ca-issuer/
+  # cert-manager DNS01 solver for simply.com-hosted zones (ascoachingogvaner.dk).
+  - simply-dns-webhook/
   - snapshot-controller/
   # Hetzner-local Velero extras (the volume-policy ConfigMap). The base Velero
   # HelmRelease is included via ../../../../bases/...; this dir only adds the

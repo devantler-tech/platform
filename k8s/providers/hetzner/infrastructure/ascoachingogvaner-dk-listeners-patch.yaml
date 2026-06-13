@@ -1,0 +1,34 @@
+# Serve the tenant-owned ascoachingogvaner.dk domain on the shared platform
+# Gateway. SNI picks the most specific listener, so these terminate TLS with
+# the domain's own certificate while every other hostname keeps hitting the
+# hostname-less `https` listener with the ${domain} wildcard cert. JSON patch
+# (not strategic merge) because Gateway is a CRD — a strategic-merge patch
+# would replace the whole listeners list instead of appending.
+- op: add
+  path: /spec/listeners/-
+  value:
+    name: https-ascoachingogvaner-dk
+    hostname: ascoachingogvaner.dk
+    port: 443
+    protocol: HTTPS
+    tls:
+      mode: Terminate
+      certificateRefs:
+        - name: ascoachingogvaner-dk-tls
+    allowedRoutes:
+      namespaces:
+        from: All
+- op: add
+  path: /spec/listeners/-
+  value:
+    name: https-www-ascoachingogvaner-dk
+    hostname: www.ascoachingogvaner.dk
+    port: 443
+    protocol: HTTPS
+    tls:
+      mode: Terminate
+      certificateRefs:
+        - name: ascoachingogvaner-dk-tls
+    allowedRoutes:
+      namespaces:
+        from: All

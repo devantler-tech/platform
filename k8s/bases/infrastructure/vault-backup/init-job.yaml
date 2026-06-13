@@ -14,6 +14,12 @@
 # Same retry pattern as the vault-config Job: the script fails until
 # vault-config has created the vault-snapshot auth role and unsealed the
 # vault, and OnFailure + backoffLimit keep retrying until then.
+#
+# Pod layout mirrors cronjob.yaml: snapshot as initContainer, off-cluster
+# mirror as the main container — the baseline snapshot reaches the S3
+# backup target immediately instead of waiting for the nightly mirror,
+# which matters because the deploy-time baseline is often the ONLY
+# snapshot during a change's first 24 hours.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -47,7 +53,16 @@ spec:
         - name: snapshots
           persistentVolumeClaim:
             claimName: vault-snapshots
-      containers:
+        # R2 credentials synced by ESO (external-secret.yaml). Optional: on a
+        # fresh cluster the mirror container skips with a log line until the
+        # sync lands; the local snapshot is unaffected.
+        - name: r2-credentials
+          secret:
+            secretName: vault-snapshot-r2
+            optional: true
+        - name: mc-config
+          emptyDir: {}
+      initContainers:
         - name: snapshot
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
           securityContext:
@@ -100,3 +115,50 @@ spec:
               bao operator raft snapshot save "$SNAP"
               ls -l "$SNAP"
               echo "Initial snapshot complete."
+      containers:
+        - name: mirror
+          image: quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          env:
+            - name: MC_CONFIG_DIR
+              value: /tmp/.mc
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: snapshots
+              mountPath: /snapshots
+              readOnly: true
+            - name: r2-credentials
+              mountPath: /r2
+              readOnly: true
+            - name: mc-config
+              mountPath: /tmp/.mc
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              if [ ! -f /r2/access_key_id ]; then
+                echo "vault-snapshot-r2 Secret not synced yet — skipping the"
+                echo "off-cluster mirror. The local PVC snapshot above still ran."
+                exit 0
+              fi
+              mc alias set backup "${r2_endpoint}" \
+                "$(cat /r2/access_key_id)" "$(cat /r2/secret_access_key)"
+              # Copy-only mirror (no --remove) + age-based prune, same
+              # rationale as cronjob.yaml: an empty/recreated PVC can never
+              # wipe the off-cluster history, and the prune only runs after a
+              # successful upload in the same pod.
+              mc mirror --overwrite /snapshots/ "backup/${r2_bucket}/openbao-snapshots/"
+              mc rm --recursive --force --older-than 14d \
+                "backup/${r2_bucket}/openbao-snapshots/" || true
+              echo "Mirrored snapshots:"
+              mc ls "backup/${r2_bucket}/openbao-snapshots/"
