@@ -27,29 +27,36 @@ provider (`provider-upjet-unifi`) — tracked in the monorepo issues.
 | Piece | Path |
 | --- | --- |
 | tofu-controller install (prod) | `k8s/providers/hetzner/infrastructure/controllers/tofu-controller/` |
-| Tenant (ns, SA/RBAC, netpol, GitRepository, Terraform CR, secrets) | `k8s/providers/hetzner/unifi/` |
+| Tenant (ns, SA/RBAC, netpol, GitRepository, Terraform CR, ExternalSecret) | `k8s/providers/hetzner/unifi/` |
+| OpenBao read policy (`infra-unifi-readonly`) | `k8s/bases/infrastructure/vault-config/job.yaml` |
 | Dedicated, isolated Flux Kustomization (prod) | `k8s/clusters/prod/unifi-flux-kustomization.yaml` |
 
 Prod-only: the controller API is only reachable from Hetzner. The reconcile runs
 in its own Flux Kustomization so a UniFi stall never blocks app deploys.
 
-## Gates (maintainer)
+The tenant repo is **public** and holds **no secrets** — the `GitRepository`
+needs no auth. The only sensitive value (the UniFi API key) lives in **OpenBao**
+and is pulled into the cluster by an `ExternalSecret` (the `openbao`
+ClusterSecretStore), exactly like external-dns's Cloudflare token.
 
-Until these are in place the `unifi` Flux Kustomization is **red by design**.
+## Gate (maintainer) — one secret
 
-1. **UniFi API key** — generate a Limited Admin, Local Access Only API key on the
-   controller (UniFi OS ≥ 9.0.108). Add to
-   `k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml` (SOPS):
-   - `unifi_api_url` — controller base URL, **without** the `/api` path
-   - `unifi_api_key` — the API key
-   - (`unifi_site` — optional, only for a non-default site)
-2. **Git read token** — the tenant repo is private. Add `unifi_git_token` (a
-   fine-grained PAT with **Contents: read** on `devantler-tech/unifi`) to the same
-   SOPS file. (A repo-scoped deploy key is the tighter alternative — switch the
-   `GitRepository` to `ssh://` + an identity/known_hosts secret.)
+Until it's seeded the `unifi` Flux Kustomization is **red by design**. Generate a
+**Limited Admin, Local Access Only** API key on the controller (UniFi OS ≥
+9.0.108) and put it in OpenBao:
 
-These are substituted into the tenant Secrets by the Kustomization's
-`postBuild.substituteFrom` — values are never committed in plaintext.
+```sh
+bao kv put secret/infrastructure/unifi/controller \
+  api_url=https://<controller> \
+  api_key=<api-key>
+```
+
+`api_url` is the controller base URL **without** the `/api` path. The
+`infra-unifi-readonly` policy authorises the read.
+
+> GitOps alternative: SOPS-encrypt the values in `variables-cluster` and add a
+> `PushSecret` under `providers/hetzner/infrastructure/vault-seed/` to seed
+> OpenBao declaratively instead of `bao kv put`.
 
 ## Observe-first adoption (do not skip)
 

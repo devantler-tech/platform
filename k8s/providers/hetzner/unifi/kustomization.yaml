@@ -6,7 +6,6 @@ resources:
   - serviceaccount.yaml
   - rbac.yaml
   - networkpolicy.yaml
-  - git-auth-secret.yaml
   - gitrepository.yaml
-  - credentials-secret.yaml
+  - credentials-external-secret.yaml
   - terraform.yaml

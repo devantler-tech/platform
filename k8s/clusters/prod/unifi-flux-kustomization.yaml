@@ -11,13 +11,14 @@
 # `wait: false` — Ready once the tenant manifests APPLY; the Terraform CR's own
 # status reports plan/apply/drift state, which is not an apps-blocking signal.
 #
-# dependsOn infrastructure-controllers: tofu-controller (which installs the
-# `Terraform` CRD) lives in that layer, so it must reconcile first.
-#
-# decryption + postBuild substitute the UniFi API + git credentials into the
-# tenant's Secrets from the SOPS-encrypted `variables-cluster` (GATES: add
-# `unifi_api_url`, `unifi_api_key`, `unifi_git_token` there — see the tenant
-# Secret manifests). Until seeded, this Kustomization is red by design.
+# dependsOn infrastructure: needs both the `Terraform` CRD (tofu-controller, in
+# infrastructure-controllers) AND the `openbao` ClusterSecretStore that the
+# tenant's ExternalSecret reads (an infrastructure-layer resource). The
+# infrastructure layer dependsOn infrastructure-controllers, so depending on it
+# covers both. No SOPS/postBuild needed — the only secret (the UniFi API key)
+# comes from OpenBao via ExternalSecret; nothing in this path is encrypted or
+# templated. GATE: seed `secret/infrastructure/unifi/controller` in OpenBao
+# (see credentials-external-secret.yaml); until then the Terraform CR waits.
 #
 # Prod-only: the UniFi controller API is only reachable from Hetzner, so this
 # file is wired into clusters/prod only.
@@ -36,22 +37,7 @@ spec:
     kind: OCIRepository
     name: flux-system
   dependsOn:
-    - name: infrastructure-controllers
-  decryption:
-    provider: sops
-    secretRef:
-      name: sops-age
-  postBuild:
-    substituteFrom:
-      # Later entries override earlier ones (base defaults first, cluster last).
-      # variables-base Secret is omitted (seed-only) — mirrors the
-      # infrastructure-controllers Kustomization.
-      - kind: ConfigMap
-        name: variables-base
-      - kind: ConfigMap
-        name: variables-cluster
-      - kind: Secret
-        name: variables-cluster
+    - name: infrastructure
   # Apply-only (see header). A pending plan / unreachable controller must not
   # turn this red in a way that blocks other layers.
   wait: false
