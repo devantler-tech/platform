@@ -7,6 +7,10 @@ resources:
   # `infrastructure` layer (its pause pods are expected-Pending at the
   # autoscaler ceiling and must not hold deploys red) — see the file header.
   - overprovisioning-flux-kustomization.yaml
+  # Prod-only: reconciles the `unifi` tenant (UniFi network as OpenTofu via
+  # tofu-controller) in its own isolated Kustomization so a UniFi stall never
+  # blocks app deploys — see the file header.
+  - unifi-flux-kustomization.yaml
 
 # Template inputs for this cluster. cluster-meta drives the replacements
 # below; it is annotated local-config and never applied to the cluster.

@@ -1,0 +1,34 @@
+apiVersion: infra.contrib.fluxcd.io/v1alpha2
+kind: Terraform
+metadata:
+  name: unifi
+  namespace: unifi
+spec:
+  interval: 15m
+  path: ./
+  # Observe-first: an empty approvePlan = PLAN ONLY, never auto-applies. Review
+  # the plan (`kubectl -n unifi describe terraform unifi`), import existing
+  # objects in the repo until the plan is a no-op, then approve a specific plan
+  # by setting approvePlan to its id (e.g. "plan-main-<sha>"). Only switch to
+  # "auto" once steady-state drift-reconcile is trusted.
+  approvePlan: ""
+  # Deleting this CR must NEVER tear down the live network.
+  destroyResourcesOnDeletion: false
+  serviceAccountName: tf-runner
+  sourceRef:
+    kind: GitRepository
+    name: unifi
+  # UniFi API credentials → OpenTofu variables (unifi_api_url, unifi_api_key).
+  varsFrom:
+    - kind: Secret
+      name: unifi-credentials
+  # Restricted-PSS-compliant runner. NB (live-validate): the upstream tf-runner
+  # image may default to a root user; if it cannot satisfy restricted PSS, the
+  # platform Kyverno mutate policies should supply the container securityContext
+  # — otherwise relax this namespace to `baseline`. Confirm on the cluster.
+  runnerPodTemplate:
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault

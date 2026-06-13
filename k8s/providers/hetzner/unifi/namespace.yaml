@@ -1,0 +1,10 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: unifi
+  labels:
+    # tf-runner pods execute OpenTofu here. Restricted PSS is enforced; the
+    # Terraform CR sets a compliant runner securityContext (see terraform.yaml).
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
