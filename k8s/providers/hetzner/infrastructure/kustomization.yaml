@@ -3,6 +3,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
+  - certificates/
   - cluster-issuers/
   # external-dns lives in this `infrastructure` layer (not
   # `infrastructure/controllers/`) because its Cloudflare token is a user-fed
@@ -54,6 +55,14 @@ patches:
   # gateway-patch self-identifies (Gateway/platform/kube-system), so a path is
   # enough — no explicit target, matching the coroot patch below.
   - path: gateway-patch.yaml
+  # JSON6902 patches don't self-identify, so this one needs an explicit
+  # target. Adds HTTPS listeners for the tenant-owned ascoachingogvaner.dk
+  # domain — see the file header.
+  - path: ascoachingogvaner-dk-listeners-patch.yaml
+    target:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: platform
   # Prod-only Coroot tuning: hcloud-backed persistent storage + Slack webhook
   # wiring. The CR it patches comes from ../../../bases/infrastructure/coroot/
   # (the `infrastructure` layer); the strategic-merge patch matches on the

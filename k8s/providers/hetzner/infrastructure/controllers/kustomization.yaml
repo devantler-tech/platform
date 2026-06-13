@@ -23,6 +23,8 @@ resources:
   - kubelet-serving-cert-approver/
   - longhorn/
   - origin-ca-issuer/
+  # cert-manager DNS01 solver for simply.com-hosted zones (ascoachingogvaner.dk).
+  - simply-dns-webhook/
   - snapshot-controller/
   # Hetzner-local Velero extras (the volume-policy ConfigMap). The base Velero
   # HelmRelease is included via ../../../../bases/...; this dir only adds the
