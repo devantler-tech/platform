@@ -1,0 +1,15 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: unifi
+  namespace: unifi
+spec:
+  interval: 5m
+  url: https://github.com/devantler-tech/unifi
+  ref:
+    branch: main
+  # devantler-tech/unifi is private — basic-auth over HTTPS with a read-only
+  # token (see git-auth-secret.yaml). A repo-scoped deploy key is the tighter
+  # alternative (switch url to ssh:// + add an identity/known_hosts secret).
+  secretRef:
+    name: unifi-git-auth

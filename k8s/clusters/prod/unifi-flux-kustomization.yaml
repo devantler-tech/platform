@@ -1,0 +1,59 @@
+# Reconciles the `unifi` tenant — see providers/hetzner/unifi/ — via its OWN
+# Flux Kustomization rather than the `apps` layer.
+#
+# Why isolated: the tenant's `Terraform` CR reconciles an EXTERNAL system (the
+# UniFi controller API). If the controller is unreachable or a plan is pending
+# manual approval, that resource is not Ready. Folding it into the wait-gated
+# `apps` layer would couple every app deploy to UniFi readiness; a dedicated
+# Kustomization keeps a UniFi stall from ever blocking app rollouts (same
+# rationale as overprovisioning-flux-kustomization.yaml).
+#
+# `wait: false` — Ready once the tenant manifests APPLY; the Terraform CR's own
+# status reports plan/apply/drift state, which is not an apps-blocking signal.
+#
+# dependsOn infrastructure-controllers: tofu-controller (which installs the
+# `Terraform` CRD) lives in that layer, so it must reconcile first.
+#
+# decryption + postBuild substitute the UniFi API + git credentials into the
+# tenant's Secrets from the SOPS-encrypted `variables-cluster` (GATES: add
+# `unifi_api_url`, `unifi_api_key`, `unifi_git_token` there — see the tenant
+# Secret manifests). Until seeded, this Kustomization is red by design.
+#
+# Prod-only: the UniFi controller API is only reachable from Hetzner, so this
+# file is wired into clusters/prod only.
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: unifi
+  namespace: flux-system
+spec:
+  interval: 60m
+  timeout: 5m
+  retryInterval: 2m
+  path: providers/hetzner/unifi
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+  dependsOn:
+    - name: infrastructure-controllers
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age
+  postBuild:
+    substituteFrom:
+      # Later entries override earlier ones (base defaults first, cluster last).
+      # variables-base Secret is omitted (seed-only) — mirrors the
+      # infrastructure-controllers Kustomization.
+      - kind: ConfigMap
+        name: variables-base
+      - kind: ConfigMap
+        name: variables-cluster
+      - kind: Secret
+        name: variables-cluster
+  # Apply-only (see header). A pending plan / unreachable controller must not
+  # turn this red in a way that blocks other layers.
+  wait: false
+  prune: true
+  force: true
