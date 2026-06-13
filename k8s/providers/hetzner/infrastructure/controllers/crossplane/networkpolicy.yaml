@@ -1,0 +1,50 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-crossplane
+  namespace: crossplane-system
+spec:
+  # Namespace-wide: covers the Crossplane core pod (package manager pulls
+  # provider OCI packages itself, in-pod — unlike runtime images, which the
+  # kubelet pulls at node level) AND the provider pods Crossplane creates here
+  # (provider-upjet-github talks to the GitHub API).
+  endpointSelector: {}
+  egress:
+    # Kube API for watching/updating managed resources and leader election.
+    - toEntities:
+        - kube-apiserver
+    # Pinned by FQDN rather than world:443 so a compromised pod cannot reach
+    # arbitrary external services:
+    #   ghcr.io + pkg-containers.githubusercontent.com — provider package
+    #     pulls by the core package manager (ghcr blob fetches redirect to
+    #     pkg-containers.githubusercontent.com).
+    #   api.github.com — the GitHub REST/GraphQL API used by
+    #     provider-upjet-github to reconcile org/repo state.
+    - toFQDNs:
+        - matchName: "ghcr.io"
+        - matchName: "pkg-containers.githubusercontent.com"
+        - matchName: "api.github.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS resolution. rules.dns activates Cilium's L7 DNS proxy so the
+    # toFQDNs rule above can be enforced; the visibility list is restricted
+    # to the names these pods actually need to resolve, closing off DNS
+    # tunneling exfil (same pattern as external-dns).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchName: "ghcr.io"
+              - matchName: "pkg-containers.githubusercontent.com"
+              - matchName: "api.github.com"
+              - matchPattern: "*.cluster.local"

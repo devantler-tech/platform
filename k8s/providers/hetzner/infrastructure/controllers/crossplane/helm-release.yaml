@@ -1,0 +1,49 @@
+# Crossplane core — the control plane for managing EXTERNAL resources (GitHub
+# org/repo state, see ../../../github/) as Kubernetes custom resources. Prod-only:
+# external-state reconcilers must run on exactly one always-on cluster, or two
+# clusters would race to converge the same GitHub org (same reasoning as
+# external-dns living in this overlay).
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: crossplane
+  namespace: crossplane-system
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  timeout: 10m
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  chart:
+    spec:
+      chart: crossplane
+      version: 2.3.2
+      sourceRef:
+        kind: HelmRepository
+        name: crossplane
+  # https://github.com/crossplane/crossplane/blob/main/cluster/charts/crossplane/values.yaml
+  values:
+    provider:
+      # Providers in this cluster declare SafeStart, so their ManagedResource-
+      # Definitions install Inactive. An empty list here stops the chart from
+      # creating the "default" activate-everything MRAP — each MRD costs the
+      # apiserver ~3MiB once active, and provider-upjet-github alone ships 77.
+      # The MRDs we actually use are activated by an explicit
+      # ManagedResourceActivationPolicy in providers/hetzner/github/.
+      defaultActivations: []
+    resourcesCrossplane:
+      requests:
+        cpu: 25m
+        memory: 256Mi
+      limits:
+        memory: 512Mi
+    resourcesRBACManager:
+      requests:
+        cpu: 10m
+        memory: 64Mi
+      limits:
+        memory: 128Mi

@@ -1,0 +1,59 @@
+# The .github tenant's source + sync — the same delivery pattern as every other
+# tenant (cosign-verified OCI artifact → namespace-scoped Kustomization), but the
+# artifact carries Crossplane managed resources (the org's desired GitHub state)
+# instead of a workload. The desired state lives in devantler-tech/.github under
+# deploy/ and is published as a signed artifact by that repo's cd.yaml on v* tags.
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: github-config
+  namespace: github-config
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  interval: 1m
+  ref:
+    semver: ">=1.0.0"
+  # .github is an invalid OCI path component (leading dot), so the artifact is
+  # published under the `github-config` name — see devantler-tech/.github cd.yaml.
+  url: oci://ghcr.io/devantler-tech/github-config/manifests
+  secretRef:
+    name: ghcr-auth
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      # Keyless-signed by the shared publish-manifests reusable workflow that
+      # .github's cd.yaml calls. Signing runs INSIDE that reusable workflow, so
+      # the cosign OIDC subject is the reusable workflow's path (devantler-tech/
+      # reusable-workflows), NOT .github's own cd.yaml — same convention as the
+      # publish-app.yaml-signed app artifacts.
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-manifests\.yaml@.+$'
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: github-config
+  namespace: github-config
+  labels:
+    app.kubernetes.io/managed-by: ksail
+  annotations:
+    ksail.devantler.tech/reconcile-exclude: "true"
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  path: .
+  prune: true
+  wait: true
+  force: true
+  # Runs as the tenant SA: the GitHub managed resources are applied with only
+  # the namespace-scoped authority in rbac.yaml. No dependsOn the `github` Flux
+  # Kustomization (which applies THIS object) — that would deadlock; instead it
+  # retries benignly until the Provider has established the namespaced CRDs.
+  serviceAccountName: github-config
+  sourceRef:
+    kind: OCIRepository
+    name: github-config
+  targetNamespace: github-config

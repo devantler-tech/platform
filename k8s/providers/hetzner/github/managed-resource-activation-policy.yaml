@@ -1,0 +1,23 @@
+# provider-upjet-github declares SafeStart, so its ManagedResourceDefinitions
+# install Inactive; only the ones named here become CRDs (each active MRD costs
+# the apiserver ~3MiB, and the provider ships ~78). The chart's
+# activate-everything default MRAP is disabled via
+# `provider.defaultActivations: []` in the crossplane HelmRelease.
+#
+# We activate the NAMESPACED (Crossplane v2, `*.github.m.upbound.io`) variants
+# only — namespaced managed resources can be applied by a namespace-scoped
+# tenant ServiceAccount with a plain Role (no cluster RBAC), which is what makes
+# the .github tenant a genuinely isolated tenant. Extend this list as more of
+# the org's GitHub surface comes under management (org rulesets, Actions
+# secrets, …) — see docs/github-management.md.
+apiVersion: apiextensions.crossplane.io/v1alpha1
+kind: ManagedResourceActivationPolicy
+metadata:
+  name: github
+spec:
+  activate:
+    - repositories.repo.github.m.upbound.io
+    - defaultbranches.repo.github.m.upbound.io
+    - branchprotections.repo.github.m.upbound.io
+    - repositoryrulesets.repo.github.m.upbound.io
+    - issuelabels.repo.github.m.upbound.io

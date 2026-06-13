@@ -198,7 +198,7 @@ You **cannot** decrypt existing secrets without the proper Age keys. For local d
 - **Small, focused changes** — one concern per PR.
 - **Never commit plaintext secrets** — all secrets must be SOPS-encrypted with the `.enc.yaml` suffix.
 - **Base files are immutable** — use Kustomize `patches:` in overlays; never edit `k8s/bases/` directly from a provider or cluster overlay.
-- **Flux dependency order** — `bootstrap` → `infrastructure-controllers` → `infrastructure` → `apps`.
+- **Flux dependency order** — `bootstrap` → `infrastructure-controllers` → `infrastructure` → `apps`. Two prod-only side layers hang off `infrastructure` without gating `apps`: `infrastructure-overprovisioning` (apply-only autoscaler buffer) and `github` (declarative GitHub org management via Crossplane — see [`docs/github-management.md`](docs/github-management.md)).
 
 ### Infrastructure File Structure Convention
 
