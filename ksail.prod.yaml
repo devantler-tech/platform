@@ -30,12 +30,17 @@ spec:
     # (autoscaler nodes are compute-only). CAX/ARM is cheaper but needs an ARM
     # Talos image — not applicable to this x86 cluster.
     #
-    # expander: LeastWaste — selects the node group leaving the least idle
-    # CPU/memory, i.e. the cheapest adequate type in this linearly-priced
-    # family. "Price" would be the direct cost optimizer, but the Hetzner
+    # expander: LeastNodes — on scale-up, picks the pool that meets the pending
+    # pods with the FEWEST total new nodes, i.e. it prefers the largest adequate
+    # type (cx53 > cx43 > cx33), consolidating a burst onto fewer, bigger
+    # servers. Trade-off vs LeastWaste: coarser granularity — a small spike can
+    # boot a whole large node and leave more idle headroom. KSail's expander is
+    # a SINGLE enum (Price|LeastWaste|LeastNodes|Random), so it can't also carry
+    # a LeastWaste secondary tiebreaker the way upstream cluster-autoscaler's
+    # comma-separated --expander chain (e.g. least-nodes,least-waste) can.
+    # "Price" would be the direct cost optimizer, but the Hetzner
     # cluster-autoscaler provider does not implement the pricing API, so KSail
-    # rejects Price+Hetzner (and the autoscaler would crash on startup);
-    # LeastWaste is the supported cost-targeting choice.
+    # rejects Price+Hetzner (and the autoscaler would crash on startup).
     #
     # maxNodesTotal is the HARD CEILING ON TOTAL CLUSTER NODES, INCLUDING the
     # static baseline. 10 = the Hetzner account cap: 6 static (3 control-planes
@@ -54,7 +59,7 @@ spec:
     autoscaler:
       node:
         enabled: true
-        expander: LeastWaste
+        expander: LeastNodes
         maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
         pools:
