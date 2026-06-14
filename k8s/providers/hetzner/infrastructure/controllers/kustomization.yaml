@@ -23,6 +23,8 @@ resources:
   - kubelet-serving-cert-approver/
   - longhorn/
   - origin-ca-issuer/
+  # cert-manager DNS01 solver for simply.com-hosted zones (ascoachingogvaner.dk).
+  - simply-dns-webhook/
   - snapshot-controller/
   # GitOps OpenTofu/Terraform reconciler (Flux). Installs the `Terraform`
   # (infra.contrib.fluxcd.io) CRD + controller used by the `unifi` tenant to

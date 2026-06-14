@@ -532,6 +532,34 @@ spec:
               }
               POLICY
 
+              # Read-only view of ascoachingogvaner's app path for the shared
+              # ClusterSecretStore bundle: the cert-manager simply.com DNS01
+              # solver consumes the tenant-owned simply.com API credentials
+              # (apps/ascoachingogvaner/simply) to issue the tenant's
+              # certificate on the shared Gateway.
+              bao policy write app-ascoachingogvaner-readonly - <<'POLICY'
+              path "secret/data/apps/ascoachingogvaner/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              # Tenant-scoped policy for ascoachingogvaner's OWN namespaced
+              # SecretStore (k8s/bases/apps/ascoachingogvaner/secretstore.yaml)
+              # and the ExternalSecrets the tenant ships in its deploy/ artifact
+              # (today: the simply.com credentials for its tenant-owned
+              # external-dns). Read + seed-write, confined to
+              # secret/{data,metadata}/apps/ascoachingogvaner/* — mirrors
+              # app-wedding-app. Bound via the dedicated `ascoachingogvaner`
+              # Kubernetes auth role below.
+              bao policy write app-ascoachingogvaner - <<'POLICY'
+              path "secret/data/apps/ascoachingogvaner/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/ascoachingogvaner/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              POLICY
+
               bao policy write infra-oidc-readonly - <<'POLICY'
               path "secret/data/infrastructure/oidc/*" {
                 capabilities = ["read"]
@@ -654,7 +682,7 @@ spec:
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,infra-oidc-readonly,infra-unifi-readonly,vault-seed-write \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,infra-unifi-readonly,vault-seed-write \
                 ttl=1h
 
               # Dedicated role for the fleetdm VaultDynamicSecret generator.
@@ -689,6 +717,18 @@ spec:
                 bound_service_account_names=wedding-app \
                 bound_service_account_namespaces=wedding-app \
                 policies=app-wedding-app \
+                ttl=1h
+
+              # Dedicated tenant role for ascoachingogvaner — same shape as
+              # wedding-app above. Authenticates the tenant's own
+              # `ascoachingogvaner` ServiceAccount (used by its namespaced
+              # SecretStore + deploy/ ExternalSecret) and carries ONLY the
+              # path-scoped `app-ascoachingogvaner` policy, confining the
+              # tenant to secret/{data,metadata}/apps/ascoachingogvaner/*.
+              bao write auth/kubernetes/role/ascoachingogvaner \
+                bound_service_account_names=ascoachingogvaner \
+                bound_service_account_namespaces=ascoachingogvaner \
+                policies=app-ascoachingogvaner \
                 ttl=1h
 
               # Snapshot CronJob needs health check read

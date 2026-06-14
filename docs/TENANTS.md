@@ -64,11 +64,16 @@ tenant ships a SOPS-encrypted Secret.
 
 ### App secrets (DB creds, API keys, … — only for tenants that need them)
 
-A tenant gets a store + Vault role **only if it needs app secrets** — a static
-site gets none. The **tenant owns its app secrets end-to-end**; the platform only
-provisions the store + isolation and never seeds a tenant's app values. A value is
-only ever introduced via a committed resource (a generator, or the tenant's own
-push), **never written to OpenBao out of band**.
+A tenant gets a store + Vault role **only if it needs app secrets** — a purely
+static site with no integrations gets none. The **tenant owns its app secrets
+end-to-end**; the platform only provisions the store + isolation and never seeds
+a tenant's app values. How a value gets *into* the tenant's path is the tenant's
+business: **paste it straight into OpenBao** (the usual flow for
+externally-issued credentials — e.g. ascoachingogvaner's simply.com DNS
+credentials at `apps/ascoachingogvaner/simply`), or seed it from a committed
+generator/`PushSecret`. The platform's contract is just two rules: nothing
+sensitive sits in git in plaintext (whatever is committed is secure at rest),
+and workloads consume the values **from OpenBao via `ExternalSecret`s**.
 
 - **Tenant (`deploy/`)** — own your secret end-to-end. Your `edit` RoleBinding
   aggregates `external-secrets-tenant-edit`, so you may create `Password`
@@ -124,9 +129,10 @@ artifacts produced by that trusted workflow are ever reconciled onto the cluster
 
 ## 5. Register the tenant on the platform
 
-Add `k8s/bases/apps/<tenant>/` — copy `ascoachingogvaner/` (a static tenant with
-no app secrets) or `wedding-app/` (a tenant with app secrets + a namespaced
-SecretStore) and rename — with:
+Add `k8s/bases/apps/<tenant>/` — copy `wedding-app/` (a tenant with app secrets
++ a namespaced SecretStore) or `ascoachingogvaner/` (a static tenant that also
+runs a **tenant-owned external-dns** for its custom domain, with the extra
+`external-dns-*` grants below) and rename — with:
 
 | File | Purpose |
 |---|---|
@@ -137,6 +143,8 @@ SecretStore) and rename — with:
 | `networkpolicy.yaml` | Cilium policy: ingress from the Gateway on the app port; egress DNS (+ CNPG/metrics if needed) |
 | `ghcr-auth-externalsecret.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret |
 | `secretstore.yaml` | *Only if the tenant needs app secrets* — namespaced `SecretStore` (`kind: SecretStore`, name `openbao`) authenticating via the tenant's Vault role (mirror `wedding-app/`) |
+| `external-dns-rbac.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — binds the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
+| `external-dns-networkpolicy.yaml` | *Same condition* — egress for the external-dns pods: kube-apiserver + the DNS provider's API, FQDN-pinned |
 | `sync.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + `Kustomization` (prune, `serviceAccountName: <tenant>`) |
 
 In `sync.yaml`, update the `name`/`namespace`/`url`

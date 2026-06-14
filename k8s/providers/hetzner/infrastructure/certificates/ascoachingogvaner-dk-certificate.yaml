@@ -1,0 +1,18 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: ascoachingogvaner-dk
+  namespace: kube-system
+spec:
+  secretName: ascoachingogvaner-dk-tls
+  dnsNames:
+    - ascoachingogvaner.dk
+    - www.ascoachingogvaner.dk
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    # Hardcoded (not ${issuer_name}): this zone is DNS-hosted at simply.com,
+    # so only the letsencrypt-prod issuer (with its simply.com DNS01 solver —
+    # see ../cluster-issuers/) can validate it; the Cloudflare Origin CA
+    # alternative doesn't apply to non-Cloudflare zones.
+    name: letsencrypt-prod
