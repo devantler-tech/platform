@@ -68,4 +68,9 @@ patches:
   # (the `infrastructure` layer); the strategic-merge patch matches on the
   # embedded coroot.com/v1 Coroot/coroot identity, so no explicit target.
   - path: coroot/patches/coroot-patch.yaml
+  # Prod-only: migrate the OpenBao raft-snapshot PVC from the default longhorn
+  # StorageClass to hcloud so node-mobile snapshot Jobs can attach it reliably
+  # (see the file header). Self-identifies via PersistentVolumeClaim/openbao/
+  # vault-snapshots, so no explicit target is needed.
+  - path: vault-snapshots-hcloud-patch.yaml
 
