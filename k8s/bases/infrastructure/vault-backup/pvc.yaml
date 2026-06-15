@@ -1,20 +1,48 @@
-# Dedicated volume for OpenBao raft snapshots (written by the
-# vault-snapshot CronJob, newest 14 retained). Uses the cluster's default
-# StorageClass. Snapshots on this PVC are the first-line restore source
-# after OpenBao data loss: the vault-config Job restores from the newest
-# one automatically when it finds an uninitialized cluster alongside a
-# surviving openbao-unseal Secret. Off-cluster durability comes from the
-# CronJob's mirror container (S3/R2), NOT from Velero — Velero's
-# file-system backup only captures volumes mounted by running pods, and
-# nothing mounts this PVC outside the CronJob's brief daily run.
+# Dedicated volume for OpenBao raft snapshots (written by the vault-snapshot
+# CronJob + vault-snapshot-init Job, newest 14 retained). Snapshots on this
+# PVC are the first-line restore source after OpenBao data loss: the
+# vault-config Job restores from the newest one automatically when it finds an
+# uninitialized cluster alongside a surviving openbao-unseal Secret.
+#
+# StorageClass is hcloud (Hetzner Cloud Volumes), NOT the default longhorn:
+# this PVC is mounted only by short-lived, node-mobile pods (the vault-config
+# Job, the vault-snapshot-init Job, and the daily vault-snapshot CronJob) that
+# the scheduler places on whatever node has room — frequently an autoscaled
+# compute node that holds none of the volume's replicas. A Longhorn RWO volume
+# then has to start an engine on that node and attach across the network to its
+# replicas; on autoscaled nodes that repeatedly timed out
+# ("FailedAttachVolume ... code = DeadlineExceeded"), leaving the vault-config
+# Job Pending until its 1h activeDeadlineSeconds, failing the `infrastructure`
+# Kustomization health check, and wedging the whole infrastructure -> apps
+# dependency chain. hcloud volumes attach via the Hetzner API to any node in
+# the location (every prod node is in fsn1), so the attach no longer depends on
+# cross-node Longhorn connectivity — the same reason openbao's own data/audit
+# PVCs and spire-server already use hcloud (#1818).
+#
+# Off-cluster durability still comes from the CronJob/init-job S3/R2 mirror, so
+# discarding the old Longhorn volume on migration is safe: the snapshot history
+# lives in R2 and vault-snapshot-init takes a fresh baseline immediately.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: vault-snapshots
   namespace: openbao
+  annotations:
+    # storageClassName (and a storage bump) are immutable on a bound PVC, so
+    # Flux cannot patch the longhorn -> hcloud migration in place. Let Flux
+    # delete-and-recreate the PVC instead — the same mechanism the vault-config
+    # and vault-snapshot-init Jobs already use, and safe here because the old
+    # volume's data is disposable (durable copy is in R2; see comment above).
+    kustomize.toolkit.fluxcd.io/force: enabled
 spec:
   accessModes:
     - ReadWriteOnce
+  # Hetzner Cloud Volumes attach reliably via the API to any node in the
+  # location, unlike a Longhorn RWO volume mounted by node-mobile Jobs.
+  storageClassName: hcloud
   resources:
     requests:
-      storage: 5Gi
+      # Hetzner Cloud Volumes have a 10Gi minimum (openbao's own data/audit
+      # PVCs round up to it too); raft snapshots are a few MB each, so this is
+      # comfortably oversized.
+      storage: 10Gi
