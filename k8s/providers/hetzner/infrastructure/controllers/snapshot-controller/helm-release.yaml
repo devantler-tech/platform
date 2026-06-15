@@ -46,7 +46,7 @@ spec:
     webhook:
       enabled: false
     controller:
-      # Leader-elected; 3 replicas for HA (require-three-replicas policy) -- one
+      # Leader-elected; 2 replicas for HA (the require-replica-floor minimum) -- one
       # active while a backup takes CSI snapshots, the rest warm standbys.
       replicaCount: ${snapshot_controller_replicas:=1}
       resources:
