@@ -1,0 +1,15 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# cert-manager DNS01 webhook solver for zones DNS-hosted at simply.com —
+# lets letsencrypt-prod issue certificates for tenant-owned simply.com
+# domains (ascoachingogvaner.dk) the same way Cloudflare DNS01 serves
+# ${domain}. Installed into the cert-manager namespace because the chart's
+# RBAC bindings hardcode it (and the solver reads its credentials Secret
+# from cert-manager's --cluster-resource-namespace, which is the release
+# namespace of cert-manager itself).
+resources:
+  - external-secret.yaml
+  - helm-release.yaml
+  - helm-repository.yaml
+  - networkpolicy.yaml

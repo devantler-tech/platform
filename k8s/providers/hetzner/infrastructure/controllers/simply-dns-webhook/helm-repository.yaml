@@ -1,0 +1,7 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: simply-dns-webhook
+  namespace: cert-manager
+spec:
+  url: https://runnerm.github.io/simply-dns-webhook/

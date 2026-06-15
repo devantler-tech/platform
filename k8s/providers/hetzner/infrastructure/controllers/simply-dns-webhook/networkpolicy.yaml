@@ -1,0 +1,25 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-simply-dns-webhook
+  namespace: cert-manager
+spec:
+  # The solver is an aggregated API server: cert-manager reaches it *through*
+  # the kube-apiserver, so ingress arrives from the apiserver/host entities on
+  # the solver's HTTPS port (443) — the namespace-wide allow-cert-manager
+  # policy only admits 10250/6443 for cert-manager's own webhook. Egress
+  # (api.simply.com over world:443, kube-apiserver, DNS) is already covered by
+  # allow-cert-manager, whose endpointSelector spans the namespace.
+  endpointSelector:
+    matchLabels:
+      app: simply-dns-webhook
+      release: simply-dns-webhook
+  ingress:
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
