@@ -30,12 +30,20 @@ spec:
     # (autoscaler nodes are compute-only). CAX/ARM is cheaper but needs an ARM
     # Talos image — not applicable to this x86 cluster.
     #
-    # expander: LeastWaste — selects the node group leaving the least idle
-    # CPU/memory, i.e. the cheapest adequate type in this linearly-priced
-    # family. "Price" would be the direct cost optimizer, but the Hetzner
+    # expander: [LeastNodes, LeastWaste] — an ordered priority chain (upstream
+    # cluster-autoscaler --expander=least-nodes,least-waste). LeastNodes runs
+    # FIRST: on scale-up it keeps the node groups that meet the pending pods
+    # with the FEWEST total new nodes (preferring the largest adequate type,
+    # cx53 > cx43 > cx33, to consolidate a burst onto fewer, bigger servers).
+    # LeastWaste is the tiebreaker: among the groups LeastNodes leaves tied,
+    # pick the one with the least idle CPU/memory.
+    # NB this list form requires KSail's expander-list support ("feat: support a
+    # priority list of expanders"); the scalar-only releases up to v7.57.0
+    # reject a list, so the pinned KSAIL_VERSION (ci.yaml/cd.yaml) must be bumped
+    # to a release that ships it before this validates / deploys.
+    # "Price" would be the direct cost optimizer, but the Hetzner
     # cluster-autoscaler provider does not implement the pricing API, so KSail
-    # rejects Price+Hetzner (and the autoscaler would crash on startup);
-    # LeastWaste is the supported cost-targeting choice.
+    # rejects Price+Hetzner (and the autoscaler would crash on startup).
     #
     # maxNodesTotal is the HARD CEILING ON TOTAL CLUSTER NODES, INCLUDING the
     # static baseline. 10 = the Hetzner account cap: 6 static (3 control-planes
@@ -54,7 +62,7 @@ spec:
     autoscaler:
       node:
         enabled: true
-        expander: LeastWaste
+        expander: [LeastNodes, LeastWaste]
         maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
         pools:
@@ -135,7 +143,7 @@ spec:
       # workers amortize the fixed tax over more capacity and let VPA apply its
       # requests without eviction churn. Control planes stay cx33 (their load
       # is steady and well within 8 GB).
-      workerServerType: cx33 # waiting for ksail upstream fixes before bumping baseline to cx43
+      workerServerType: cx43
       location: fsn1
       networkCidr: 10.0.0.0/16
       placementGroupStrategy: Spread
