@@ -20,7 +20,9 @@
 #   * KEDA scale-to-zero targets -- a floor defeats scale-to-zero;
 #   * namespaces whose workloads genuinely can't run 3: velero (chart hardcodes
 #     replicas: 1, no leader election), flux controllers and coroot
-#     (observability);
+#     (observability), and kubescape (the operator + kubescape/kubevuln/storage/
+#     gateway scanner control-plane are all single-replica by design, off every
+#     serving path; the node-agent is a DaemonSet the floor never matches);
 #   * single-replica-only controllers: external-dns (chart has no replicaCount;
 #     >1 = duplicate Cloudflare writes), origin-ca-issuer (disabled) and
 #     flagger-loadtester (ephemeral per-canary test helper);
@@ -66,12 +68,14 @@ spec:
                   platform.devantler.tech/replica-floor: exempt
           # Namespaces whose workloads genuinely can't run 3: velero (no leader
           # election, chart hardcodes replicas: 1), flux controllers and coroot
-          # (observability).
+          # (observability), and kubescape (operator + scanner control-plane are
+          # single-replica by design; node-agent is a DaemonSet).
           - resources:
               namespaces:
                 - velero
                 - flux-system
                 - observability
+                - kubescape
           # KEDA scale-to-zero targets, Flagger canary primaries (*-primary) and
           # the scaled-to-0 canary sources -- their replica count is owned by a
           # controller, not declared statically (the Flagger primary runs the HA
