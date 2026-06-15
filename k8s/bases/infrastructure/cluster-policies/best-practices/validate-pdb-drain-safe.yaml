@@ -70,7 +70,7 @@ spec:
                 - kyverno-admission-controller
                 # hcloud-csi-controller is also ksail-installed (Hetzner CSI) and
                 # keeps minAvailable: 1; its drain-safety comes from the HA PR's
-                # replica bump to 3, not maxUnavailable.
+                # replica bump to 2, not maxUnavailable.
                 - hcloud-csi-controller
           # Longhorn manages these PDBs itself: longhorn-manager creates a
           # minAvailable: 1 PDB per instance-manager that still hosts replicas

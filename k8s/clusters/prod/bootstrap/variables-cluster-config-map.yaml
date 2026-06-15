@@ -13,31 +13,31 @@ data:
   issuer_name: letsencrypt-prod
   # Per-env prefixes inside the shared R2 bucket.
   r2_prefix_velero: velero/prod
-  # --- Critical controllers (3 replicas for HA; above the require-replica-floor minimum) ---
+  # --- Critical controllers (2 replicas for HA; the require-replica-floor minimum) ---
   # With VPA updateMode=InPlaceOrRecreate, single-replica services get 502s during
-  # eviction. The replica-floor (#1898/#1900) wants 3 so a maxUnavailable: 1 PDB +
-  # topology spread survive a node drain AND a concurrent failure with zero
-  # downtime (2 only survives the drain). These run leader election or are
-  # stateless/admission webhooks, so the third replica is a cheap warm standby.
+  # eviction. The replica-floor (#1898/#1900) wants 2 so a maxUnavailable: 1 PDB +
+  # topology spread keep one pod serving through a node drain. These run leader
+  # election or are stateless/admission webhooks, so the second replica is a cheap
+  # warm standby (3-replica HA, to also survive a concurrent failure, is opt-in).
   # cert_manager_replicas drives the controller, webhook AND cainjector; the keda
   # vars drive the operator, admission webhooks, HTTP scaler and interceptor floor.
-  cert_manager_replicas: "3"
-  metrics_server_replicas: "3"
-  vpa_admission_replicas: "3"
-  keda_operator_replicas: "3"
-  keda_webhooks_replicas: "3"
-  keda_scaler_replicas: "3"
-  keda_interceptor_min_replicas: "3"
-  # --- Leader-elected operators (3 replicas for HA; above the require-replica-floor minimum) ---
-  # One replica is active; the rest are warm standbys that take over on a node
+  cert_manager_replicas: "2"
+  metrics_server_replicas: "2"
+  vpa_admission_replicas: "2"
+  keda_operator_replicas: "2"
+  keda_webhooks_replicas: "2"
+  keda_scaler_replicas: "2"
+  keda_interceptor_min_replicas: "2"
+  # --- Leader-elected operators (2 replicas for HA; the require-replica-floor minimum) ---
+  # One replica is active; the other is a warm standby that takes over on a node
   # failure/drain. velero stays 1 — its chart hardcodes replicas: 1 and it has
   # no leader election (multiple servers would double-run backups); cilium
   # operator is 2 (chart-managed, leader-elected).
-  trust_manager_replicas: "3"
-  reloader_replicas: "3"
+  trust_manager_replicas: "2"
+  reloader_replicas: "2"
   cilium_replicas: "2"
   velero_replicas: "1"
-  cloudnative_pg_replicas: "3"
+  cloudnative_pg_replicas: "2"
   # KEDA-managed apps: HelmRelease replicas are the initial value only;
   # KEDA HTTPScaledObject overrides at runtime. Setting the initial to 1
   # saves memory until the first KEDA reconciliation.
@@ -67,24 +67,24 @@ data:
   actual_budget_replicas_min: "0"
   actual_budget_replicas_max: "1"
   hubble_ui_replicas: "1"
-  # Auth chain: 3 replicas for HA (above the require-replica-floor minimum). User-facing auth
-  # must survive a node drain + a concurrent failure; also prevents 502s during VPA
-  # InPlaceOrRecreate evictions.
-  dex_replicas: "3"
-  oauth2_proxy_replicas: "3"
-  auth_proxy_replicas: "3"
+  # Auth chain: 2 replicas for HA (the require-replica-floor minimum). User-facing
+  # auth survives a node drain; also prevents 502s during VPA InPlaceOrRecreate
+  # evictions.
+  dex_replicas: "2"
+  oauth2_proxy_replicas: "2"
+  auth_proxy_replicas: "2"
   # --- Hetzner Cloud ---
   hetzner_lb_location: "fsn1"
   hetzner_lb_type: "lb11"
   hcloud_network: "prod-network"
   # --- Contact ---
   admin_email: "ned@devantler.tech"
-  # Leader-elected controllers: 3 replicas for HA (above the require-replica-floor minimum).
-  hcloud_ccm_replicas: "3"
-  hcloud_csi_controller_replicas: "3"
+  # Leader-elected controllers: 2 replicas for HA (the require-replica-floor minimum).
+  hcloud_ccm_replicas: "2"
+  hcloud_csi_controller_replicas: "2"
   # external-snapshotter control plane (kube-system snapshot-controller);
   # leader-elected, so extra replicas are warm standbys.
-  snapshot_controller_replicas: "3"
+  snapshot_controller_replicas: "2"
   # --- Longhorn distributed storage ---
   # All 3 static workers carry Longhorn disks (labeled with
   # node.longhorn.io/create-default-disk=true). Replica count matches the
@@ -130,29 +130,30 @@ data:
   # extraArgs leader-elect: true) and sit on no serving path — a failover
   # gap only delays the next recommendation/eviction cycle. Active + one
   # warm standby with a maxUnavailable: 1 PDB (helm-release) still rides
-  # out a node drain; a third standby bought no availability, only ~1 pod
-  # of requests on a request-saturated cluster (cost trim, 2026-06-11).
+  # out a node drain.
   vpa_recommender_replicas: "2"
   vpa_updater_replicas: "2"
   # --- Kyverno (leader-elected controllers) ---
-  # background stays 3: it executes the generate/mutate-existing rules the
-  # platform leans on (e.g. propagate-reloader-to-flagger-primary).
-  kyverno_background_replicas: "3"
+  # background runs 2 (active + warm standby): it executes the generate/mutate-
+  # existing rules the platform leans on (e.g. propagate-reloader-to-flagger-
+  # primary), so keep a standby for it even though it is off every serving path.
+  kyverno_background_replicas: "2"
   # reports/cleanup run 2 (active + warm standby, maxUnavailable: 1 PDB):
   # report generation and cleanup are best-effort background work off every
-  # serving path — same cost trim as the VPA standbys above.
+  # serving path.
   kyverno_reports_replicas: "2"
   kyverno_cleanup_replicas: "2"
-  # --- Flagger (3 replicas for HA; gated by leaderElection.enabled) ---
-  flagger_replicas: "3"
+  # --- Flagger (2 replicas for HA; gated by leaderElection.enabled) ---
+  flagger_replicas: "2"
   # --- OpenBao secrets vault ---
-  # 3-node Raft HA (quorum minimum; tolerates 1 failure). See the cutover
-  # runbook docs/dr/openbao-raft-ha-migration.md.
+  # 3-node Raft HA (quorum minimum; tolerates 1 failure). Stays 3 regardless of
+  # the require-replica-floor minimum — Raft needs an odd member count, and 2
+  # tolerates zero failures. See the cutover runbook
+  # docs/dr/openbao-raft-ha-migration.md.
   openbao_replicas: "3"
   openbao_storage_size: 10Gi
-  # --- External Secrets Operator (3 replicas for HA; above the require-replica-floor minimum) ---
+  # --- External Secrets Operator (2 replicas for HA; the require-replica-floor minimum) ---
   # Drives the controller, webhook and cert-controller. Controller + cert-controller
-  # are leader-elected and the webhook is stateless, so the third replica is a warm
-  # standby that keeps the operator available through a node drain + failure.
-  external_secrets_replicas: "3"
-
+  # are leader-elected and the webhook is stateless, so the second replica is a warm
+  # standby that keeps the operator available through a node drain.
+  external_secrets_replicas: "2"
