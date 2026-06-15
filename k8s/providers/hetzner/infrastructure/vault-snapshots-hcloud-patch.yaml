@@ -1,0 +1,37 @@
+# Prod-only: pin the OpenBao raft-snapshot PVC to the hcloud StorageClass.
+#
+# The vault-config Job, vault-snapshot-init Job and daily vault-snapshot
+# CronJob all mount this RWO volume, and the scheduler places those short-lived
+# pods on whatever node has room — frequently an autoscaled compute node that
+# holds none of the volume's replicas. On the default longhorn StorageClass
+# that forces a cross-node engine attach which repeatedly timed out
+# ("FailedAttachVolume ... code = DeadlineExceeded"), leaving the vault-config
+# pod Pending until its 1h activeDeadlineSeconds, failing the `infrastructure`
+# Kustomization health check and wedging the whole infrastructure -> apps chain.
+# hcloud volumes attach via the Hetzner API to any node in the location (all
+# prod nodes are in fsn1), so the attach no longer depends on cross-node
+# Longhorn connectivity — the same reason openbao's own data/audit PVCs and
+# spire-server already use hcloud (#1818). Off-cluster durability is unchanged
+# (the CronJob/init-job R2 mirror), so discarding the old Longhorn volume on
+# migration is safe.
+#
+# Lives in the hetzner overlay (not the base) because the hcloud StorageClass
+# only exists on this provider — the Talos+Docker base/local cluster keeps the
+# default StorageClass. storageClassName and a storage bump are immutable on a
+# bound PVC, so the force annotation lets Flux delete-and-recreate it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vault-snapshots
+  namespace: openbao
+  annotations:
+    kustomize.toolkit.fluxcd.io/force: enabled
+spec:
+  # Hetzner Cloud Volumes attach reliably via the API to any node in the
+  # location, unlike a Longhorn RWO volume mounted by node-mobile Jobs.
+  storageClassName: hcloud
+  resources:
+    requests:
+      # Hetzner Cloud Volumes have a 10Gi minimum (openbao's own data/audit
+      # PVCs round up to it too); raft snapshots are a few MB each.
+      storage: 10Gi
