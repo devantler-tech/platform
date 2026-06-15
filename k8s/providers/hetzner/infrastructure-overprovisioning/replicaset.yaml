@@ -25,7 +25,7 @@
 # can't durably override it with our own updateMode: "Off" VPA (Kyverno reverts
 # it). A bare ReplicaSet is matched by NONE of those three kinds, so no VPA is
 # generated and the reservation stays fixed. It also sidesteps
-# `validate-replica-floor` (Deployment/StatefulSet only) — a 3-replica floor is
+# `validate-replica-floor` (Deployment/StatefulSet only) — a replica floor is
 # meaningless for a capacity buffer whose replica count is a tuning knob, not an
 # availability guarantee. The pod-level PSS enforce policy still applies (and we
 # comply below).

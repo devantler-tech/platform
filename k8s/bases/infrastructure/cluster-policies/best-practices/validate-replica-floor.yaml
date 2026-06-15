@@ -1,13 +1,15 @@
-# Flags Deployments and StatefulSets running fewer than 3 replicas, so the
+# Flags Deployments and StatefulSets running fewer than 2 replicas, so the
 # drain-safe maxUnavailable: 1 PDBs (validate-pdb-drain-safe / #1882) actually
-# preserve availability: 3 replicas + topology spread (spread-pods) tolerates a
-# node drain AND a concurrent failure with zero downtime. 2 only survives the
-# drain; 1 is a single point of failure that the PDB can't protect.
+# preserve availability: 2 replicas + topology spread (spread-pods) keep one pod
+# serving through a node drain. 1 is a single point of failure that the PDB
+# can't protect. 2 is the deliberate cost/availability floor here -- it rides out
+# a node drain (not a concurrent second failure); stronger 3-replica HA is opt-in
+# per workload via the cluster config, not mandated by this floor.
 #
 # Audit, not Enforce: .spec.replicas is owned by KEDA (scale-to-zero), Flagger
 # (canary primaries) and leader-election operators -- mutating it would fight
-# those controllers and cause perpetual drift, and tripling every replica would
-# blow this cluster's memory budget at once. This surfaces under-replicated
+# those controllers and cause perpetual drift, and doubling every singleton would
+# strain this cluster's memory budget at once. This surfaces single-replica
 # workloads in Kyverno's PolicyReports for a human to raise (or exempt)
 # deliberately.
 #
@@ -18,7 +20,7 @@
 #   * Flagger primaries (*-primary) and the scaled-to-0 canary sources -- Flagger
 #     owns their replica count;
 #   * KEDA scale-to-zero targets -- a floor defeats scale-to-zero;
-#   * namespaces whose workloads genuinely can't run 3: velero (chart hardcodes
+#   * namespaces whose workloads genuinely can't run 2: velero (chart hardcodes
 #     replicas: 1, no leader election), flux controllers and coroot
 #     (observability), and kubescape (the operator + kubescape/kubevuln/storage/
 #     gateway scanner control-plane are all single-replica by design, off every
@@ -26,13 +28,14 @@
 #   * single-replica-only controllers: external-dns (chart has no replicaCount;
 #     >1 = duplicate Cloudflare writes), origin-ca-issuer (disabled) and
 #     flagger-loadtester (ephemeral per-canary test helper);
-#   * cost-tuned warm standbys (2026-06-11): VPA recommender/updater and kyverno
-#     reports/cleanup -- leader-elected, off every serving path, prod runs 2
-#     replicas (active + warm standby) with a maxUnavailable: 1 PDB.
+#   * lean leader-election controllers: VPA recommender/updater and kyverno
+#     reports/cleanup -- off every serving path, so they default to a single
+#     replica (a SPOF here only delays reconciliation/reporting, never user
+#     traffic); prod gives them a warm standby, but the floor must not force it.
 #
 # The other leader-election controllers that USED to be exempt (cloudnative-pg,
 # reloader, trust-manager, hcloud CCM/CSI, snapshot-controller, kyverno
-# background, flagger) now run 3 replicas for HA instead.
+# background, flagger) opt in to 2+ replicas for HA instead of opting out.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -44,7 +47,7 @@ metadata:
     policies.kyverno.io/subject: Deployment, StatefulSet
     policies.kyverno.io/minversion: 1.6.0
     policies.kyverno.io/description: >-
-      Flags Deployments and StatefulSets running fewer than 3 replicas so their
+      Flags Deployments and StatefulSets running fewer than 2 replicas so their
       drain-safe PDBs actually preserve availability. Workloads that are
       intentionally singleton, scale-to-zero or controller-managed opt out with
       the platform.devantler.tech/replica-floor: exempt label.
@@ -52,7 +55,7 @@ spec:
   validationFailureAction: Audit
   background: true
   rules:
-    - name: require-three-replicas
+    - name: require-replica-floor
       match:
         any:
           - resources:
@@ -66,7 +69,7 @@ spec:
               selector:
                 matchLabels:
                   platform.devantler.tech/replica-floor: exempt
-          # Namespaces whose workloads genuinely can't run 3: velero (no leader
+          # Namespaces whose workloads genuinely can't run 2: velero (no leader
           # election, chart hardcodes replicas: 1), flux controllers and coroot
           # (observability), and kubescape (operator + scanner control-plane are
           # single-replica by design; node-agent is a DaemonSet).
@@ -101,11 +104,11 @@ spec:
                 - external-dns
                 - origin-ca-issuer
                 - flagger-loadtester
-          # Cost-tuned warm standbys (2026-06-11): leader-elected controllers
-          # off every serving path run 2 replicas in prod (active + one warm
-          # standby) with a maxUnavailable: 1 PDB, which still rides out a
-          # node drain. A third standby bought no extra availability -- only
-          # ~1 pod of requests each on a request-saturated cluster.
+          # Lean leader-election controllers off every serving path: exempt so
+          # the resource-lean single-replica default is allowed (a SPOF here only
+          # delays reconciliation/reporting, never user traffic). Prod bumps them
+          # to 2 (active + warm standby) via cluster config, but the floor must
+          # not force it everywhere.
           - resources:
               names:
                 - vertical-pod-autoscaler-vpa-recommender
@@ -123,7 +126,7 @@ spec:
         message: >-
           {{ request.object.kind }} '{{ request.object.metadata.name }}' runs
           {{ request.object.spec.replicas || `1` }} replica(s); the platform HA
-          floor is 3 so its maxUnavailable: 1 PDB keeps it available through a
+          floor is 2 so its maxUnavailable: 1 PDB keeps it available through a
           node drain (see #1882). If it is intentionally singleton, scale-to-zero
           or controller-managed, add the label
           'platform.devantler.tech/replica-floor: exempt'.
@@ -132,4 +135,4 @@ spec:
             all:
               - key: "{{ request.object.spec.replicas || `1` }}"
                 operator: LessThan
-                value: 3
+                value: 2

@@ -38,7 +38,7 @@ spec:
 
     # HA: Flagger elects a single leader to drive canaries; the other replicas
     # are warm standbys. leaderElection MUST be enabled before replicas > 1, or
-    # every replica double-drives each canary. require-three-replicas policy.
+    # every replica double-drives each canary. require-replica-floor policy.
     leaderElection:
       enabled: true
     replicaCount: ${flagger_replicas:=1}
