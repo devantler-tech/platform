@@ -143,7 +143,7 @@ spec:
       # workers amortize the fixed tax over more capacity and let VPA apply its
       # requests without eviction churn. Control planes stay cx33 (their load
       # is steady and well within 8 GB).
-      workerServerType: cx33 # waiting for ksail upstream fixes before bumping baseline to cx43
+      workerServerType: cx43
       location: fsn1
       networkCidr: 10.0.0.0/16
       placementGroupStrategy: Spread
