@@ -22,18 +22,21 @@ Cluster Autoscaler (dynamic workers, managed by KSail)
 ├── Pool: autoscale-cx43 → 0-4 × CX43 (8 vCPU, 16 GB)
 ├── Pool: autoscale-cx53 → 0-4 × CX53 (16 vCPU, 32 GB)
 ├── maxNodesTotal: 10 (total cluster nodes incl. baseline: 6 static + 4 autoscaler)
-└── Expander: LeastWaste
+└── Expander: [LeastNodes, LeastWaste] (priority chain)
 ```
 
 - **Horizontal scaling** — autoscaler adds workers when pods are Pending due
   to insufficient resources, and removes underutilized workers after a
   configurable cooldown.
 - **Vertical scaling** — multiple node pools with different server types.
-  The `LeastWaste` expander picks the pool left with the least idle CPU and
-  memory after scheduling the pending pod — the cheapest adequate type in a
-  linearly-priced family. (`Price` is **not supported on Hetzner**: the
-  cluster-autoscaler hcloud provider implements no pricing API, so KSail
-  rejects it and the autoscaler crashes on startup.) See
+  The expander is an ordered priority chain, `[LeastNodes, LeastWaste]`
+  (upstream `--expander=least-nodes,least-waste`). `LeastNodes` runs first and
+  keeps the pools that satisfy the pending pods with the fewest total new nodes
+  — preferring the largest adequate type so a burst consolidates onto fewer,
+  bigger servers; `LeastWaste` then breaks any tie by least idle CPU/memory.
+  (`Price` is **not supported on Hetzner**: the cluster-autoscaler hcloud
+  provider implements no pricing API, so KSail rejects it and the autoscaler
+  crashes on startup.) See
   [cluster-autoscaler FAQ](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/FAQ.md).
 - **KSail integration** — KSail installs the Cluster Autoscaler Helm chart,
   generates the worker config secret (`cluster-autoscaler-config`), and
@@ -68,7 +71,7 @@ spec:
     autoscaler:
       node:
         enabled: true
-        expander: LeastWaste
+        expander: [LeastNodes, LeastWaste]
         maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
         pools:
@@ -97,7 +100,7 @@ spec:
 | Field | Default | Description |
 |-------|---------|-------------|
 | `enabled` | `false` | Enable/disable node autoscaling |
-| `expander` | `LeastWaste` | Node selection strategy: `LeastWaste`, `LeastNodes`, `Random` (`Price` is unsupported on Hetzner — no pricing API) |
+| `expander` | `LeastWaste` | Node selection strategy: `LeastWaste`, `LeastNodes`, `Random` (`Price` is unsupported on Hetzner — no pricing API). Accepts a single value or an ordered priority chain, e.g. `[LeastNodes, LeastWaste]` (requires KSail expander-list support; scalar-only up to v7.57.0) |
 | `maxNodesTotal` | `0` (unlimited) | Hard ceiling on total cluster nodes, including the static baseline (see [ksail#5017](https://github.com/devantler-tech/ksail/issues/5017)) |
 | `scaleDownUnneededTime` | `10m` | Time before an underutilized node is eligible for removal |
 | `pools[].name` | — | DNS-1123 pool identifier |
@@ -123,9 +126,14 @@ spec:
   autoscaler validation becomes `maxNodesTotal ≤ serverLimit` (`10 ≤ 10`);
   until it ships, the old validation (`CP + workers + min(maxNodesTotal, Σ
   pool.max)`) rejects this config, so the KSail change must land first.
-- **Expander** — `LeastWaste` (current) picks the node group left with the
-  least idle capacity after scheduling — the cheapest adequate type in a
-  linearly-priced family. (`Price` is unsupported on Hetzner.)
+- **Expander** — `[LeastNodes, LeastWaste]` (current) is an ordered priority
+  chain. `LeastNodes` runs first and keeps the pools that scale up with the
+  fewest total new nodes (preferring the largest adequate type to keep the node
+  count down); `LeastWaste` then breaks any remaining tie by least idle
+  CPU/memory. The list form needs KSail expander-list support — releases up to
+  v7.57.0 are scalar-only and reject a list, so the pinned `KSAIL_VERSION` must
+  be bumped to a release that ships it first. (`Price` is unsupported on
+  Hetzner.)
 - **Scale-down** — underutilized nodes are removed after 10 minutes.
 
 ### Adding more pools
