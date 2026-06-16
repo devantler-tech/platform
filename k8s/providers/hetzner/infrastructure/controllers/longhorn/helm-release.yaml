@@ -35,6 +35,21 @@ spec:
       # Match the number of workers so every volume is replicated across
       # all available nodes.
       defaultReplicaCount: ${longhorn_replica_count:=3}
+      # Redistribute replicas onto fresh nodes as the worker pool changes.
+      # With auto-balance disabled (the Longhorn default), a worker roll — the
+      # cx33→cx43 server-type migration, a Talos version bump, or autoscaler
+      # churn — deletes each replaced node's replicas without ever rebuilding
+      # them onto the replacement node. With only a handful of storage nodes
+      # a one-at-a-time roll then walks every replica of an RWO volume onto
+      # already-removed nodes before any rebuild catches up, and the volume
+      # goes `faulted` (data loss). Observed 2026-06-16: umami-db, wedding-db
+      # and kubescape storage all faulted during a full worker roll.
+      # best-effort keeps replicas spread evenly across the live nodes
+      # (matching defaultReplicaCount above), so each step of a rolling
+      # replacement rebuilds redundancy onto the new node and always leaves a
+      # healthy replica behind. (Use least-effort if rebuild churn on frequent
+      # autoscaler scale-ups becomes a concern.)
+      replicaAutoBalance: best-effort
       # Reclaim space from deleted volumes automatically.
       autoDeletePodWhenVolumeDetachedUnexpectedly: true
       # Only create default disks on nodes explicitly labeled for storage.
