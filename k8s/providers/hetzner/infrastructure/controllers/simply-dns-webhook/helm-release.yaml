@@ -14,7 +14,7 @@ spec:
       # 1.9.0 is the newest *published* chart: v1.10.0 is tagged upstream but
       # its Pages index was never redeployed, so the 1.10.0 tgz 404s. Bump
       # once it actually resolves.
-      version: 1.9.0
+      version: 1.10.0
       sourceRef:
         kind: HelmRepository
         name: simply-dns-webhook
