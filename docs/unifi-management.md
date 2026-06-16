@@ -28,7 +28,8 @@ provider (`provider-upjet-unifi`) — tracked in the monorepo issues.
 | --- | --- |
 | tofu-controller install (prod) | `k8s/providers/hetzner/infrastructure/controllers/tofu-controller/` |
 | Tenant (ns, SA/RBAC, netpol, GitRepository, Terraform CR, ExternalSecret) | `k8s/providers/hetzner/apps/unifi/` |
-| OpenBao read policy (`infra-unifi-readonly`) | `k8s/bases/infrastructure/vault-config/job.yaml` |
+| OpenBao read + seed-write policies (`infra-unifi-readonly`, `vault-seed-write`) | `k8s/bases/infrastructure/vault-config/job.yaml` |
+| Declarative seed (PushSecret + SOPS placeholder) | `k8s/providers/hetzner/infrastructure/vault-seed/seed-unifi.yaml` + `clusters/prod/bootstrap/variables-cluster-secret.enc.yaml` |
 | Registered in the apps overlay | `k8s/providers/hetzner/apps/kustomization.yaml` |
 
 It is a **regular tenant in the apps layer**, reconciled by the shared `apps`
@@ -41,28 +42,36 @@ ExternalSecret would hold the apps layer NotReady). With the observe-first empty
 config, the plan is a no-op, so once the secret exists the Terraform CR is Ready.
 
 The tenant repo is **public** and holds **no secrets** — the `GitRepository`
-needs no auth. The only sensitive value (the UniFi API key) lives in **OpenBao**
-and is pulled into the cluster by an `ExternalSecret` (the `openbao`
-ClusterSecretStore), exactly like external-dns's Cloudflare token.
+needs no auth. The only sensitive value (the UniFi API key) is seeded into
+**OpenBao** declaratively (GitOps) and pulled into the cluster by an
+`ExternalSecret` (the `openbao` ClusterSecretStore).
 
-## Gate (maintainer) — one secret
+## Credentials flow (GitOps) + the one gate
 
-Until it's seeded the `unifi` Flux Kustomization is **red by design**. Generate a
-**Limited Admin, Local Access Only** API key on the controller (UniFi OS ≥
-9.0.108) and put it in OpenBao:
-
-```sh
-bao kv put secret/infrastructure/unifi/controller \
-  api_url=https://<controller> \
-  api_key=<api-key>
+```
+variables-cluster-secret.enc.yaml (SOPS)   ← maintainer sets the value here
+   │  seed-unifi PushSecret (vault-seed/)
+   ▼
+OpenBao  secret/infrastructure/unifi/controller  {api_url, api_key}
+   │  ExternalSecret (infra-unifi-readonly policy)
+   ▼
+unifi-credentials Secret → Terraform CR (varsFrom)
 ```
 
-`api_url` is the controller base URL **without** the `/api` path. The
-`infra-unifi-readonly` policy authorises the read.
+The repo ships **placeholders** (`unifi_api_url=https://unifi.example.invalid`,
+`unifi_api_key=PLACEHOLDER…`) so the chain is healthy on merge. **Gate:** set the
+real key by editing the SOPS file and committing:
 
-> GitOps alternative: SOPS-encrypt the values in `variables-cluster` and add a
-> `PushSecret` under `providers/hetzner/infrastructure/vault-seed/` to seed
-> OpenBao declaratively instead of `bao kv put`.
+```sh
+sops k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
+# set unifi_api_url (controller base URL, WITHOUT the /api path) and
+# unifi_api_key (Limited Admin, Local Access Only; UniFi OS >= 9.0.108)
+```
+
+The `seed-unifi` PushSecret re-pushes hourly, so the new value reaches OpenBao
+and the `ExternalSecret` re-syncs automatically — no `bao kv put`, no out-of-band
+writes. With the observe-first empty config the plan is a no-op even on the
+placeholder, so the apps layer stays green throughout.
 
 ## Observe-first adoption (do not skip)
 
