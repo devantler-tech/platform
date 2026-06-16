@@ -8,8 +8,15 @@ kind: Kustomization
 # RBAC bindings hardcode it (and the solver reads its credentials Secret
 # from cert-manager's --cluster-resource-namespace, which is the release
 # namespace of cert-manager itself).
+#
+# The solver's `simply-credentials` ExternalSecret intentionally lives one layer
+# later, in the `infrastructure` layer next to the ClusterIssuer that consumes it
+# (../../cluster-issuers/simply-credentials-external-secret.yaml), so the OpenBao
+# policy granting access to it (written by vault-config in that layer) exists
+# before the ExternalSecret is health-gated. Keeping it here would deadlock
+# infrastructure-controllers ↔ infrastructure. The webhook Deployment reads the
+# Secret only at DNS01-solve time, so it needs no credential to become Ready.
 resources:
-  - external-secret.yaml
   - helm-release.yaml
   - helm-repository.yaml
   - networkpolicy.yaml
