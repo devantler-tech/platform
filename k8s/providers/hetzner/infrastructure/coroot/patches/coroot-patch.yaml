@@ -14,6 +14,22 @@ spec:
   storage:
     className: hcloud
     size: 2Gi
+  # Coroot's own pod is bursty (trace/log ingestion) and auto-vpa governs it.
+  # With no explicit resources it gets the default ~4:1 limit:request, so the
+  # VPA-set ~1Gi request lands a ~4.1Gi limit -- which a node-churn ingestion
+  # spike blew through, OOMKilling coroot-coroot-0 twice on 2026-06-16. Pin an
+  # explicit block (same pattern as clickhouse below): the request stays ~1Gi
+  # (no extra reservation on this memory-tight cluster) but the limit rises to
+  # 6Gi (the VPA's existing maxAllowed), giving ~50% more burst headroom before
+  # the OOM kill. auto-vpa runs controlledValues:RequestsAndLimits, so it
+  # preserves this 6:1 ratio when it sets the request from live usage.
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 6Gi
   prometheus:
     # 14d metrics retention (matches the old kube-prometheus-stack posture).
     retention: 14d

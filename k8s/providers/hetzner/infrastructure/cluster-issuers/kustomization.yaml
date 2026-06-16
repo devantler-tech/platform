@@ -6,3 +6,9 @@ resources:
   - cloudflare-api-token-external-secret.yaml
   - cloudflare-origin-ca-trust-bundle.yaml
   - letsencrypt-prod-issuer.yaml
+  # NOTE: there is no simply.com DNS01 solver credential here anymore. The
+  # ascoachingogvaner.dk zone is now served by a TENANT-owned namespaced Issuer
+  # (in the ascoachingogvaner deploy/) that reads the tenant's own
+  # simply-credentials Secret — so a missing/slow tenant seed can only affect the
+  # isolated tenant Kustomization, never this wait:true infrastructure layer. The
+  # shared letsencrypt-prod ClusterIssuer above keeps only its Cloudflare solver.

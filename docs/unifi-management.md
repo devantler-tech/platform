@@ -27,12 +27,18 @@ provider (`provider-upjet-unifi`) — tracked in the monorepo issues.
 | Piece | Path |
 | --- | --- |
 | tofu-controller install (prod) | `k8s/providers/hetzner/infrastructure/controllers/tofu-controller/` |
-| Tenant (ns, SA/RBAC, netpol, GitRepository, Terraform CR, ExternalSecret) | `k8s/providers/hetzner/unifi/` |
+| Tenant (ns, SA/RBAC, netpol, GitRepository, Terraform CR, ExternalSecret) | `k8s/providers/hetzner/apps/unifi/` |
 | OpenBao read policy (`infra-unifi-readonly`) | `k8s/bases/infrastructure/vault-config/job.yaml` |
-| Dedicated, isolated Flux Kustomization (prod) | `k8s/clusters/prod/unifi-flux-kustomization.yaml` |
+| Registered in the apps overlay | `k8s/providers/hetzner/apps/kustomization.yaml` |
 
-Prod-only: the controller API is only reachable from Hetzner. The reconcile runs
-in its own Flux Kustomization so a UniFi stall never blocks app deploys.
+It is a **regular tenant in the apps layer**, reconciled by the shared `apps`
+Flux Kustomization like wedding-app/ascoachingogvaner. It lives in the **hetzner
+apps overlay** (not `bases/apps/`) because it is prod-only: both tofu-controller
+and the controller API it reaches are Hetzner-only, so the Terraform CRD is absent
+on local/CI clusters. Because the apps layer is `wait: true`, **seed the OpenBao
+secret before merging** so the tenant is healthy on first apply (an unseeded
+ExternalSecret would hold the apps layer NotReady). With the observe-first empty
+config, the plan is a no-op, so once the secret exists the Terraform CR is Ready.
 
 The tenant repo is **public** and holds **no secrets** — the `GitRepository`
 needs no auth. The only sensitive value (the UniFi API key) lives in **OpenBao**
