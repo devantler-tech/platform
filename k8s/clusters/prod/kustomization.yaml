@@ -7,10 +7,6 @@ resources:
   # `infrastructure` layer (its pause pods are expected-Pending at the
   # autoscaler ceiling and must not hold deploys red) — see the file header.
   - overprovisioning-flux-kustomization.yaml
-  # Prod-only: declarative GitHub org management (Crossplane managed
-  # resources), isolated in its own Flux Kustomization so a GitHub-side stall
-  # never holds the infrastructure→apps deploy chain red — see the file header.
-  - github-flux-kustomization.yaml
 
 # Template inputs for this cluster. cluster-meta drives the replacements
 # below; it is annotated local-config and never applied to the cluster.

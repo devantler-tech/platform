@@ -1,10 +1,15 @@
 # PushSecret for the GitHub App credentials used by provider-upjet-github.
 # Same durable-seed pattern as seed-hcloud: re-pushing hourly from the SOPS
-# source (variables-cluster) is what re-seeds the keys automatically after
-# OpenBao data loss. Lives in THIS layer (not infrastructure/vault-seed/) so
-# that, until the maintainer adds the github_app_* keys to the prod
-# variables-cluster secret, the resulting InProgress stall holds only the
-# isolated `github` Flux Kustomization red — never `infrastructure`.
+# source (variables-cluster) re-seeds the keys automatically after OpenBao data
+# loss.
+#
+# Lives with the github-config app (the apps layer), NOT in
+# infrastructure/vault-seed/, on purpose: until the maintainer adds the
+# github_app_* keys to the prod variables-cluster secret this PushSecret stalls,
+# and the apps layer is the leaf of the Flux dependency chain — so the stall can
+# never hold `infrastructure` (and through it every deploy) red. A vault-seed
+# placement would block the chain. Seed the keys before/with rollout to avoid
+# even a transient red apps layer.
 ---
 apiVersion: external-secrets.io/v1alpha1
 kind: PushSecret

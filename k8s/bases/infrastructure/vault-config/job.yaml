@@ -481,10 +481,10 @@ spec:
 
               # Read the GitHub App credential for provider-upjet-github
               # (declarative GitHub management). Consumed by the
-              # github-app-credentials ExternalSecret in crossplane-system via
-              # the `external-secrets` ClusterSecretStore role; seeded from
-              # variables-cluster by the seed-github-app PushSecret (see
-              # k8s/providers/hetzner/github/).
+              # github-app-credentials ExternalSecret in the github-config
+              # namespace via the `external-secrets` ClusterSecretStore role;
+              # seeded from variables-cluster by the seed-github-app PushSecret
+              # (see k8s/bases/apps/github-config/).
               bao policy write infra-github-readonly - <<'POLICY'
               path "secret/data/infrastructure/github/*" {
                 capabilities = ["read"]

@@ -1,15 +1,15 @@
-# Least-privilege RBAC for the .github tenant's ServiceAccount.
+# Least-privilege RBAC for the github-config app's ServiceAccount.
 #
-# Deliberately NOT the stock tenant pattern (a RoleBinding to the built-in
-# `edit` ClusterRole) and deliberately NOT aggregated into `edit`: GitHub
-# managed resources let their holder manipulate the org's real repositories, so
-# that authority must be confined to THIS tenant — never inherited by every
-# tenant that has an `edit` binding. Instead, a dedicated namespaced Role grants
-# the SA full verbs over the namespaced provider-upjet-github managed-resource
-# API groups, and only within the github-config namespace. Because the managed
-# resources are namespaced (Crossplane v2 `*.github.m.upbound.io`), a plain
-# Role + RoleBinding suffices — no ClusterRole/ClusterRoleBinding, no cluster
-# RBAC. Widen apiGroups here only as new GitHub MR groups are activated in the
+# Deliberately NOT the stock app pattern (a RoleBinding to the built-in `edit`
+# ClusterRole) and deliberately NOT aggregated into `edit`: GitHub managed
+# resources let their holder manipulate the org's real repositories, so that
+# authority must be confined to THIS app — never inherited by every tenant that
+# has an `edit` binding. Instead, a dedicated namespaced Role grants the SA full
+# verbs over the namespaced provider-upjet-github managed-resource API groups,
+# and only within the github-config namespace. Because the managed resources are
+# namespaced (Crossplane v2 `*.github.m.upbound.io`), a plain Role + RoleBinding
+# suffices — no ClusterRole/ClusterRoleBinding, no cluster RBAC. Widen apiGroups
+# here only as new GitHub MR groups are activated in the
 # ManagedResourceActivationPolicy.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

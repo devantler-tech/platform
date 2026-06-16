@@ -4,7 +4,9 @@
 # the github-config namespace, it is referenced by the namespaced Repository/…
 # managed resources in their own namespace, so no cluster-scoped config is
 # needed. The credentials Secret is local (same namespace), materialized by
-# external-secret.yaml from OpenBao.
+# external-secret.yaml from OpenBao. The github.m.upbound.io CRD is installed by
+# the provider package in the infrastructure layer (one tier earlier), so this
+# applies once that has reconciled.
 apiVersion: github.m.upbound.io/v1beta1
 kind: ProviderConfig
 metadata:

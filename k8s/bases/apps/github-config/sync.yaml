@@ -1,8 +1,9 @@
-# The .github tenant's source + sync — the same delivery pattern as every other
-# tenant (cosign-verified OCI artifact → namespace-scoped Kustomization), but the
-# artifact carries Crossplane managed resources (the org's desired GitHub state)
-# instead of a workload. The desired state lives in devantler-tech/.github under
-# deploy/ and is published as a signed artifact by that repo's cd.yaml on v* tags.
+# The github-config app's source + sync — the same delivery pattern as every
+# other app/tenant (cosign-verified OCI artifact → namespace-scoped
+# Kustomization), but the artifact carries Crossplane managed resources (the
+# org's desired GitHub state) instead of a workload. The desired state lives in
+# devantler-tech/.github under deploy/ and is published as a signed artifact by
+# that repo's cd.yaml on v* tags.
 ---
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
@@ -48,10 +49,11 @@ spec:
   prune: true
   wait: true
   force: true
-  # Runs as the tenant SA: the GitHub managed resources are applied with only
-  # the namespace-scoped authority in rbac.yaml. No dependsOn the `github` Flux
-  # Kustomization (which applies THIS object) — that would deadlock; instead it
-  # retries benignly until the Provider has established the namespaced CRDs.
+  # Runs as the app SA: the GitHub managed resources are applied with only the
+  # namespace-scoped authority in rbac.yaml. This Kustomization is itself applied
+  # by the `apps` Flux Kustomization; it must NOT dependsOn it (deadlock) — it
+  # retries benignly until the provider (infrastructure layer) has established
+  # the namespaced CRDs.
   serviceAccountName: github-config
   sourceRef:
     kind: OCIRepository

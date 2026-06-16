@@ -9,37 +9,45 @@ GitHub to it — including reverting out-of-band UI edits.
 
 The desired state does **not** live in this repo. It lives in
 [`devantler-tech/.github`](https://github.com/devantler-tech/.github) under
-`deploy/`, which is onboarded here as a **tenant**: the platform pulls its
-cosign-signed OCI artifact and applies it, exactly like an application tenant —
-only the artifact carries managed resources instead of a workload.
+`deploy/`, onboarded here as a **normal app** (`github-config`) using the same
+pattern as every other tenant (cosign-verified OCI artifact → namespace-scoped
+`Kustomization`) — only the artifact carries managed resources instead of a
+workload. There is **no** bespoke Flux Kustomization for GitHub; it rides the
+existing `apps` layer.
 
-## Why a tenant, and why namespaced
+## Why an app, and why namespaced
 
 GitHub's managed resources ship in two flavours: cluster-scoped
 (`repo.github.upbound.io`) and **namespaced** (`repo.github.m.upbound.io`,
 Crossplane v2). We use the **namespaced** variants. That choice is what lets
-`.github` be a *genuinely isolated* tenant: a namespaced managed resource can be
-applied by a namespace-scoped `ServiceAccount` with a plain `Role` — no
-`ClusterRoleBinding`, no cluster RBAC. The tenant's authority to touch GitHub is
+`github-config` be a *genuinely isolated* app: a namespaced managed resource can
+be applied by a namespace-scoped `ServiceAccount` with a plain `Role` — no
+`ClusterRoleBinding`, no cluster RBAC. The app's authority to touch GitHub is
 confined to its own namespace and is **not** aggregated into the built-in `edit`
 ClusterRole, so no other tenant inherits it.
 
 ## Architecture
 
+Three tiers, each in its conventional place — controller in `controllers/`, its
+CRs one tier later in `infrastructure/`, the workload in `apps/`:
+
 | Piece | Where | Notes |
 |---|---|---|
-| Crossplane core | `k8s/providers/hetzner/infrastructure/controllers/crossplane/` | HelmRelease; prod-only (external reconcilers must run on exactly one always-on cluster). `provider.defaultActivations: []` keeps unused provider CRDs inactive. |
-| Engine | `k8s/providers/hetzner/github/` (`provider.yaml`, `managed-resource-activation-policy.yaml`, `seed-github-app.yaml`) | The provider package + runtime; activates only the **namespaced** MRDs we use; seeds the GitHub App credential into OpenBao. |
-| Tenant wiring | `k8s/providers/hetzner/github/` (`namespace.yaml`, `serviceaccount.yaml`, `rbac.yaml`, `ghcr-auth-externalsecret.yaml`, `external-secret.yaml`, `provider-config.yaml`, `sync.yaml`) | The `github-config` namespace, its least-privilege SA + Role, the GitHub App + ghcr credentials, the namespaced `ProviderConfig`, and the OCIRepository + Kustomization that pull and apply `.github`'s artifact as the tenant SA. |
-| Desired state | [`devantler-tech/.github`](https://github.com/devantler-tech/.github) `deploy/` | The actual `Repository`/ruleset/label managed resources. Published as a cosign-signed OCI artifact to `ghcr.io/devantler-tech/github-config/manifests` on `v*` tags. |
-| Flux wiring | `k8s/clusters/prod/github-flux-kustomization.yaml` | Dedicated `github` Flux Kustomization, `dependsOn: infrastructure`. Isolated so a GitHub-side stall never holds `infrastructure`/`apps` red. |
-| Credentials | OpenBao `infrastructure/github/app` | GitHub App (`app_id`, `installation_id`, `pem`), seeded from the SOPS `variables-cluster` secret by a PushSecret, materialized into `github-config/github-app-credentials` by an ExternalSecret that renders the provider's JSON credential format. |
+| Crossplane core | `k8s/providers/hetzner/infrastructure/controllers/crossplane/` | HelmRelease; prod-only. `provider.defaultActivations: []` keeps unused provider CRDs inactive. Installs the pkg.crossplane.io CRDs. |
+| Provider + activation policy | `k8s/providers/hetzner/infrastructure/crossplane/` | The `Provider` package + `DeploymentRuntimeConfig` + `ManagedResourceActivationPolicy` (namespaced MRDs only). One tier after the controller (needs its CRDs), like Coroot/Flagger CRs. Establishes the namespaced github CRDs. |
+| The `github-config` app | `k8s/bases/apps/github-config/` | Standard app onboarding: namespace, SA, least-privilege `Role`, GitHub App + ghcr credential `ExternalSecret`s, the credential seed `PushSecret`, the namespaced `ProviderConfig`, and the cosign-verified `OCIRepository` + `Kustomization`. Applied by the existing `apps` Flux Kustomization. Prod-only in practice (the docker provider deploys no apps). |
+| Desired state | [`devantler-tech/.github`](https://github.com/devantler-tech/.github) `deploy/` | The actual `Repository`/ruleset/label managed resources. Published as a cosign-signed OCI artifact to `ghcr.io/devantler-tech/github-config/manifests` on `v*` tags by the shared `publish-manifests` reusable workflow. |
+| Credentials | OpenBao `infrastructure/github/app` | GitHub App (`app_id`, `installation_id`, `pem`), seeded from the SOPS `variables-cluster` secret by the app's `PushSecret`, materialized into `github-config/github-app-credentials` by an `ExternalSecret` that renders the provider's JSON credential format. |
 
-> Why the tenant wiring lives in the `github` layer (not `k8s/bases/apps/`):
-> it is prod-only and coupled to the Crossplane provider, and we want it
-> isolated from the `apps` deploy chain. It is still a tenant *in substance* —
-> dedicated namespace, isolated least-privilege SA, cosign-verified OCI delivery
-> from its own repo, own pruning Kustomization.
+Ordering is the normal chain: `apps` `dependsOn` `infrastructure`, so by the
+time the app reconciles, the provider (infrastructure tier) has installed the
+namespaced github CRDs the `ProviderConfig` and managed resources need. On a
+fresh install the app's `Kustomization` retries benignly until those CRDs exist.
+
+The credential seed `PushSecret` lives **with the app** (apps layer), not in
+`infrastructure/vault-seed/`: until the GitHub App keys are in `variables-cluster`
+it stalls, and the apps layer is the leaf of the dependency chain — so a stall
+can never hold `infrastructure` (and through it every deploy) red.
 
 ## Credential setup (one-time, maintainer)
 
@@ -51,11 +59,11 @@ ClusterRole, so no other tenant inherits it.
 2. Add three keys to the **prod** `variables-cluster` SOPS secret
    (`k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml`):
    `github_app_id`, `github_app_installation_id`, and `github_app_pem`
-   (the private key, as a normal multiline PEM block).
+   (the private key, as a normal multiline PEM block). Do this *before* the
+   first rollout so the seed `PushSecret` doesn't sit red.
 3. Merge. The PushSecret seeds OpenBao, the ExternalSecret renders the provider
-   credential into `github-config`, and the `github` Flux Kustomization turns
-   Ready once `.github` has published its first `v*` artifact. Until then that
-   Kustomization sits red — expected, and isolated.
+   credential into `github-config`, and the app reconciles once `.github` has
+   published its first `v*` artifact.
 
 ## Adopting an existing repository (Observe-first)
 
@@ -85,9 +93,10 @@ reconcile, then batch the rest.
 ## Adding more GitHub resource kinds
 
 1. Activate the namespaced MRD in
-   `k8s/providers/hetzner/github/managed-resource-activation-policy.yaml`
+   `k8s/providers/hetzner/infrastructure/crossplane/managed-resource-activation-policy.yaml`
    (plural.group form, e.g. `repositoryrulesets.repo.github.m.upbound.io`); add
-   its API group to the tenant `Role` in `rbac.yaml` if it is a new group.
+   its API group to the app `Role` in `k8s/bases/apps/github-config/rbac.yaml`
+   if it is a new group.
 2. Add the managed resources in `.github`'s `deploy/` — same Observe-first flow
    where an external object already exists. Each active MRD costs the apiserver
    ~3 MiB; activate only what is used.
@@ -99,8 +108,8 @@ reconcile, then batch the rest.
   a real GitHub repository.
 - **Observe-first adoption** — a new managed resource for an existing object
   always starts `managementPolicies: ["Observe"]` (read-only).
-- **Least privilege** — the tenant SA's authority is a namespaced `Role` over
-  the GitHub MR API groups only, never aggregated into `edit`.
+- **Least privilege** — the app SA's authority is a namespaced `Role` over the
+  GitHub MR API groups only, never aggregated into `edit`.
 - The GitHub App credential is org-scoped and short-lived per request; the
   provider pod's egress is FQDN-pinned to `api.github.com` by the
   `crossplane-system` CiliumNetworkPolicy.

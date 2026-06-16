@@ -1,7 +1,12 @@
 # provider-upjet-github — Upjet-generated Crossplane provider wrapping the
-# integrations/github Terraform provider. ghcr.io is the project's publish
-# registry (xpkg.crossplane.io merely proxies it) and is already the trust
-# root for every first-party image in this cluster.
+# integrations/github Terraform provider. Lives in the `infrastructure` layer
+# (not `infrastructure/controllers/`) because the Provider/DeploymentRuntimeConfig
+# are pkg.crossplane.io CRs that need the Crossplane CRDs the core HelmRelease in
+# controllers/crossplane/ installs first — the same controller-then-CR ordering
+# as Coroot and Flagger. Installing this provider also establishes the namespaced
+# github CRDs the github-config app (k8s/bases/apps/github-config/) consumes.
+# ghcr.io is the project's publish registry (xpkg.crossplane.io merely proxies
+# it) and is already the trust root for every first-party image in this cluster.
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:

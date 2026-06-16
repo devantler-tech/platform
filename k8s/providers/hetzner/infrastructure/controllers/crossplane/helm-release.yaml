@@ -33,7 +33,8 @@ spec:
       # creating the "default" activate-everything MRAP — each MRD costs the
       # apiserver ~3MiB once active, and provider-upjet-github alone ships 77.
       # The MRDs we actually use are activated by an explicit
-      # ManagedResourceActivationPolicy in providers/hetzner/github/.
+      # ManagedResourceActivationPolicy in
+      # providers/hetzner/infrastructure/crossplane/.
       defaultActivations: []
     resourcesCrossplane:
       requests:
