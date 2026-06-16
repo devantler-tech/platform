@@ -39,3 +39,28 @@ spec:
               protocol: UDP
             - port: "53"
               protocol: TCP
+---
+# The CloudNativePG operator *initiates* the CNPG-I gRPC call to the plugin's
+# :9090 (the ingress allowed above), so under the same default-deny baseline it
+# also needs a matching *egress* allow to reach the plugin — the rule on
+# allow-plugin-barman-cloud only opens the plugin's receiving side. Without this
+# the operator's dial to the barman-cloud Service is dropped at egress and times
+# out, and every Cluster that enables the plugin reports ContinuousArchiving=False
+# / Ready=False ("wal archive plugin is not available: barman-cloud.cloudnative-pg.io").
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-cnpg-to-plugin-barman-cloud
+  namespace: cnpg-system
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: cloudnative-pg
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: plugin-barman-cloud
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
