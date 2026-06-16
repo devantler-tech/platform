@@ -2,12 +2,14 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - external-dns-networkpolicy.yaml
+  # external-dns-rbac stays platform-side: it grants the tenant's external-dns
+  # SA privileged cross-namespace reads (the kube-system Gateway, cluster-wide
+  # namespaces) that a tenant's `edit` role cannot self-grant. The matching
+  # CiliumNetworkPolicies (networkpolicy.yaml, external-dns-networkpolicy.yaml)
+  # and the namespaced SecretStore now live in the tenant repo's deploy/.
   - external-dns-rbac.yaml
   - ghcr-auth-externalsecret.yaml
   - namespace.yaml
   - rolebinding.yaml
-  - secretstore.yaml
   - serviceaccount.yaml
   - sync.yaml
-  - networkpolicy.yaml
