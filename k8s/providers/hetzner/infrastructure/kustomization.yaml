@@ -45,7 +45,20 @@ resources:
   # every CI/CD deploy) red for ~30h on 2026-06-09/10 — the native buffer creates
   # no real pods, so nothing sits Pending and it rides along here like any other
   # resource. Hetzner/prod-only (the autoscaler pools are Hetzner).
-  - overprovisioning/
+  #
+  # TEMPORARILY DISABLED (2026-06-16): the CapacityBuffer CRD
+  # (autoscaling.x-k8s.io/v1beta1) is installed by KSail only from a release that
+  # contains ksail#5277, but the pinned KSAIL_VERSION (7.58.3, ci.yaml/cd.yaml)
+  # predates it (5277 merged after the 7.58.3 release). So the CapacityBuffer CR
+  # fails server-side apply ("no matches for kind CapacityBuffer in version
+  # autoscaling.x-k8s.io/v1beta1"), which wedged the whole `infrastructure`
+  # Kustomization (and its `apps` dependent) — exactly the deploy-ordering gate
+  # that ksail.prod.yaml warns about. Re-enable this line once a KSail release
+  # with #5277 ships AND KSAIL_VERSION is bumped + deployed (so the CRD +
+  # controller exist before this CR reconciles). No over-provisioning headroom
+  # until then, which is acceptable — the old balloon-pod buffer was already
+  # removed in #2087.
+  # - overprovisioning/
   #
   # NOTE: tenant-owned custom-domain TLS (the ascoachingogvaner.dk Certificate +
   # its simply.com DNS01 solver credential) is NOT a platform resource at all —
