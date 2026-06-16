@@ -57,18 +57,6 @@ spec:
                 - flux-system
               names:
                 - infrastructure-overprovisioning
-          # The tenant custom-domain TLS Kustomization is the other sanctioned
-          # `wait: false` exception: the simply-credentials ExternalSecret stays
-          # InProgress until the maintainer seeds the tenant credential in
-          # OpenBao, and the ascoachingogvaner-dk Certificate stays InProgress
-          # until ACME DNS01 issuance completes — health-gating either held the
-          # infrastructure → apps pipeline red for hours (2026-06-16). See
-          # k8s/clusters/prod/tenant-domains-flux-kustomization.yaml.
-          - resources:
-              namespaces:
-                - flux-system
-              names:
-                - infrastructure-tenant-domains
       validate:
         message: >-
           Flux Kustomization must set the recommended reliability fields:

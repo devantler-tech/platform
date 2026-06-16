@@ -45,19 +45,16 @@ resources:
   # k8s/clusters/prod/overprovisioning-flux-kustomization.yaml and
   # ../infrastructure-overprovisioning/.
   #
-  # NOTE: tenant-owned custom-domain TLS (the ascoachingogvaner.dk Certificate
-  # and its simply.com DNS01 solver ExternalSecret) likewise does NOT live in
-  # this layer. Both are EXPECTED to sit InProgress for extended periods — the
-  # ExternalSecret until the maintainer seeds apps/ascoachingogvaner/simply in
-  # OpenBao, the Certificate until ACME DNS01 issuance completes — so under
-  # `wait: true` they health-gated and wedged infrastructure → apps cluster-wide
-  # (2026-06-16). They are applied by the dedicated, non-health-gated
-  # `infrastructure-tenant-domains` Flux Kustomization instead — see
-  # k8s/clusters/prod/tenant-domains-flux-kustomization.yaml and
-  # ../infrastructure-tenant-domains/. The letsencrypt-prod ClusterIssuer
-  # (cluster-issuers/) and the Gateway HTTPS listener patch
-  # (ascoachingogvaner-dk-listeners-patch.yaml, below) stay HERE — both reach
-  # Ready without the credential or certificate present.
+  # NOTE: tenant-owned custom-domain TLS (the ascoachingogvaner.dk Certificate +
+  # its simply.com DNS01 solver credential) is NOT a platform resource at all —
+  # it lives in the tenant's own deploy/ (a namespaced cert-manager Issuer +
+  # Certificate + ReferenceGrant), delivered by the tenant Flux Kustomization.
+  # That credential/issuance is EXPECTED to sit InProgress until the maintainer
+  # seeds apps/ascoachingogvaner/simply in OpenBao; keeping it in the tenant means
+  # only the (isolated) tenant Kustomization is affected, never this `wait: true`
+  # layer. The platform keeps only the shared Gateway HTTPS listener patch
+  # (ascoachingogvaner-dk-listeners-patch.yaml, below), which references the
+  # tenant Secret cross-namespace and stays Ready (Gateway Programmed) regardless.
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
   # opencost HelmRelease in this layer. See
