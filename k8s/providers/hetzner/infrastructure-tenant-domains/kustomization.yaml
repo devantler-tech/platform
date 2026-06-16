@@ -1,0 +1,14 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Tenant-owned custom-domain TLS, delivered OUTSIDE the health-gated
+# `infrastructure` layer by the `infrastructure-tenant-domains` Flux
+# Kustomization (wait: false, dependsOn: infrastructure) so externally-gated
+# credential sync + ACME issuance can't hold the platform's
+# infrastructure → apps pipeline red. See
+# k8s/clusters/prod/tenant-domains-flux-kustomization.yaml for the full
+# rationale. The consuming letsencrypt-prod ClusterIssuer and the Gateway
+# listener patch stay in ../infrastructure/ (both reach Ready without these).
+resources:
+  - simply-credentials-external-secret.yaml
+  - ascoachingogvaner-dk-certificate.yaml

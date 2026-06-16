@@ -1,0 +1,69 @@
+# Applies tenant-owned custom-domain TLS — the ascoachingogvaner.dk Certificate
+# and its simply.com DNS01 solver credential (see
+# providers/hetzner/infrastructure-tenant-domains/) — via its OWN Flux
+# Kustomization instead of the `infrastructure` layer.
+#
+# Why it cannot ride along in `infrastructure`: that layer reconciles with
+# `wait: true`, which health-checks EVERY applied resource (Flux has no
+# per-resource opt-out). Two of these resources are EXPECTED to sit not-Ready
+# for extended, externally-gated periods:
+#   * the `simply-credentials` ExternalSecret stays InProgress ("secret does not
+#     exist") until the maintainer seeds the tenant credential at
+#     apps/ascoachingogvaner/simply in OpenBao — a manual, out-of-band step; the
+#     value is not in GitOps; and
+#   * the `ascoachingogvaner-dk` Certificate stays InProgress until cert-manager
+#     completes an ACME DNS01 order over the public internet (DNS propagation +
+#     Let's Encrypt polling), which itself depends on that same credential.
+# kstatus reports both as InProgress meanwhile, so health-gating them held
+# `infrastructure` (and its `apps` dependent + every CI/CD deploy) red for hours
+# on 2026-06-16 — the same failure mode the over-provisioning buffer hit on
+# 2026-06-09/10 (see overprovisioning-flux-kustomization.yaml).
+#
+# `wait: false` means this Kustomization is Ready once its manifests APPLY
+# cleanly; credential sync and certificate issuance are explicitly NOT health
+# signals here. The `letsencrypt-prod` ClusterIssuer and the Gateway listener
+# patch stay in `infrastructure` — both reach Ready without the credential or
+# certificate present (the issuer only validates its ACME account; the Gateway
+# stays Programmed with the tenant listeners individually unresolved until the
+# cert Secret exists), so neither belongs in this lane.
+#
+# dependsOn `infrastructure` so the OpenBao policy granting the external-secrets
+# role read access to apps/ascoachingogvaner/* (the vault-config Job), the
+# `openbao` ClusterSecretStore, and the `letsencrypt-prod` ClusterIssuer all
+# exist before the ExternalSecret and Certificate here first reconcile — the same
+# ordering the credential relied on when it lived inline in `infrastructure`, so
+# there is still no 403 deadlock. Moving lanes only removes the health-gate.
+#
+# This is a sanctioned exception to the `enforce-flux-best-practices` Kyverno
+# policy's `wait: true` rule; the policy excludes this Kustomization by name (see
+# bases/infrastructure/cluster-policies/flux/).
+#
+# Prod-only: these zones are DNS-hosted at simply.com and exist only on Hetzner,
+# so this file is wired into clusters/prod only (no docker/local counterpart).
+# The path is still provider-templated by the cluster overlay's `replacements`,
+# a no-op for prod (hetzner → hetzner).
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infrastructure-tenant-domains
+  namespace: flux-system
+spec:
+  interval: 60m
+  # Apply-only (no health checking), so a short timeout is plenty.
+  timeout: 5m
+  retryInterval: 2m
+  path: providers/hetzner/infrastructure-tenant-domains
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+  # After `infrastructure` so the vault-config OpenBao policy, the openbao
+  # ClusterSecretStore and the letsencrypt-prod ClusterIssuer exist before the
+  # ExternalSecret + Certificate here first reconcile. No circular dependency:
+  # `infrastructure` no longer contains these resources.
+  dependsOn:
+    - name: infrastructure
+  # Deliberately NOT `wait: true` — see the file header.
+  wait: false
+  prune: true
+  force: true

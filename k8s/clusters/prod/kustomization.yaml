@@ -7,6 +7,11 @@ resources:
   # `infrastructure` layer (its pause pods are expected-Pending at the
   # autoscaler ceiling and must not hold deploys red) — see the file header.
   - overprovisioning-flux-kustomization.yaml
+  # Prod-only: applies tenant-owned custom-domain TLS (ascoachingogvaner.dk cert
+  # + its simply.com DNS01 solver credential) outside the health-gated
+  # `infrastructure` layer — externally-gated credential sync + ACME issuance
+  # must not hold deploys red — see the file header.
+  - tenant-domains-flux-kustomization.yaml
 
 # Template inputs for this cluster. cluster-meta drives the replacements
 # below; it is annotated local-config and never applied to the cluster.

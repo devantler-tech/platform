@@ -3,7 +3,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
-  - certificates/
   - cluster-issuers/
   # external-dns lives in this `infrastructure` layer (not
   # `infrastructure/controllers/`) because its Cloudflare token is a user-fed
@@ -45,6 +44,20 @@ resources:
   # `infrastructure-overprovisioning` Flux Kustomization instead — see
   # k8s/clusters/prod/overprovisioning-flux-kustomization.yaml and
   # ../infrastructure-overprovisioning/.
+  #
+  # NOTE: tenant-owned custom-domain TLS (the ascoachingogvaner.dk Certificate
+  # and its simply.com DNS01 solver ExternalSecret) likewise does NOT live in
+  # this layer. Both are EXPECTED to sit InProgress for extended periods — the
+  # ExternalSecret until the maintainer seeds apps/ascoachingogvaner/simply in
+  # OpenBao, the Certificate until ACME DNS01 issuance completes — so under
+  # `wait: true` they health-gated and wedged infrastructure → apps cluster-wide
+  # (2026-06-16). They are applied by the dedicated, non-health-gated
+  # `infrastructure-tenant-domains` Flux Kustomization instead — see
+  # k8s/clusters/prod/tenant-domains-flux-kustomization.yaml and
+  # ../infrastructure-tenant-domains/. The letsencrypt-prod ClusterIssuer
+  # (cluster-issuers/) and the Gateway HTTPS listener patch
+  # (ascoachingogvaner-dk-listeners-patch.yaml, below) stay HERE — both reach
+  # Ready without the credential or certificate present.
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
   # opencost HelmRelease in this layer. See

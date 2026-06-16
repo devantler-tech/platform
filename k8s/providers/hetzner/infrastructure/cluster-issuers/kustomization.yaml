@@ -6,4 +6,10 @@ resources:
   - cloudflare-api-token-external-secret.yaml
   - cloudflare-origin-ca-trust-bundle.yaml
   - letsencrypt-prod-issuer.yaml
-  - simply-credentials-external-secret.yaml
+  # NOTE: the letsencrypt-prod issuer's simply.com DNS01 solver credential
+  # (simply-credentials ExternalSecret) is NOT applied here. It is delivered by
+  # the non-health-gated `infrastructure-tenant-domains` Flux Kustomization so a
+  # missing/slow tenant seed can't wedge the wait:true infrastructure layer —
+  # see ../../infrastructure-tenant-domains/ and
+  # k8s/clusters/prod/tenant-domains-flux-kustomization.yaml. The issuer reaches
+  # Ready without the credential present (it only validates its ACME account).
