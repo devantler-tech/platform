@@ -1,22 +1,14 @@
 machine:
   install:
+    # security=apparmor is baked into the Talos Image Factory schematic by KSail
+    # (>= the release carrying devantler-tech/ksail#5297): KSail reads this
+    # machine.install.extraKernelArgs, folds it into the schematic's
+    # customization.extraKernelArgs alongside the configured extensions, and then
+    # clears this (deprecated) field from the rendered config. The arg therefore
+    # rides the UKI's baked-in kernel cmdline, so install.grubUseUKICmdline must
+    # stay at its Talos >=1.12 default (true) — do NOT set it false here, or GRUB
+    # would build the cmdline host-side WITHOUT the UKI's security=apparmor.
+    # (This replaces the grubUseUKICmdline:false stopgap from #2099, which was only
+    # needed while the pre-#5297 KSail left extraKernelArgs in the rendered config.)
     extraKernelArgs:
       - security=apparmor
-    # MUST stay false while extraKernelArgs is set above.
-    #
-    # Talos >= 1.13.4 rejects a machine config that sets BOTH
-    # install.extraKernelArgs and install.grubUseUKICmdline=true:
-    #   "install.extraKernelArgs and install.grubUseUKICmdline can't be used together"
-    # and grubUseUKICmdline defaults to TRUE here — KSail generates this cluster's
-    # config with the Talos >=1.12 version contract, and that contract's default
-    # for grubUseUKICmdline is true (gated at >1.11). Without this explicit
-    # override the freshly-generated config carries extraKernelArgs + the
-    # defaulted grubUseUKICmdline:true, so the v1.13.4 installer fails validation
-    # mid-upgrade and `ksail cluster update` aborts on the first node.
-    #
-    # grubUseUKICmdline controls whether the legacy GRUB bootloader reuses the
-    # UKI's baked-in kernel cmdline instead of building one on the host. This
-    # cluster boots GRUB on Hetzner (no SecureBoot/UKI), so the cmdline MUST be
-    # built host-side to carry security=apparmor — which is exactly what
-    # grubUseUKICmdline:false selects.
-    grubUseUKICmdline: false
