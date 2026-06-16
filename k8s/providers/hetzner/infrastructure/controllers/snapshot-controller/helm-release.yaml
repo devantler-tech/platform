@@ -15,7 +15,7 @@ spec:
       # appVersion v8.5.0 — the external-snapshotter version Longhorn 1.11
       # targets. Installs the snapshot.storage.k8s.io CRDs + the cluster
       # snapshot-controller. Renovate tracks the chart version.
-      version: 5.0.4
+      version: 5.1.0
       sourceRef:
         kind: HelmRepository
         name: piraeus
