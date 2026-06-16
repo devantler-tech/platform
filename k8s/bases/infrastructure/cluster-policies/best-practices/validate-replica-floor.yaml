@@ -115,6 +115,39 @@ spec:
                 - vertical-pod-autoscaler-vpa-updater
                 - kyverno-reports-controller
                 - kyverno-cleanup-controller
+          # Triaged 2026-06-16 (interactive prod sweep): controller-managed or
+          # single-by-design controllers a floor of 3 is *wrong* for, and that
+          # this memory-saturated cluster can't absorb tripling. Each is a SPOF
+          # only for its own idempotent, retried control loop -- never a
+          # request-serving path:
+          #   * Longhorn-owned: longhorn-driver-deployer, csi-snapshotter
+          #     (longhorn-manager / the chart owns their replica count).
+          #   * single-controller operators (leader election makes >1 a hot
+          #     standby at best, all off the serving path): cluster-autoscaler,
+          #     ksail-operator, tetragon-operator,
+          #     keda-add-ons-http-controller-manager.
+          #   * single-by-design adapters/approvers: keda-operator-metrics-
+          #     apiserver (KEDA's standard 1-replica metrics adapter) and
+          #     kubelet-serving-cert-approver (off every serving path).
+          #   * spire-server: HA needs a shared external datastore, not just
+          #     replicas (its StatefulSet uses the built-in datastore) -- a
+          #     deliberate single-node posture; revisit for HA separately.
+          # Left flagged ON PURPOSE (real signal, not exempted): flagger -- the
+          # comment above intends 3 for HA but it runs flagger_replicas:=1, a
+          # genuine HA gap to close by raising that var when memory allows; and
+          # the cert-manager simply-dns-webhook, part of the in-flight tenant-TLS
+          # rework.
+          - resources:
+              names:
+                - cluster-autoscaler-hetzner-cluster-autoscaler
+                - ksail-operator
+                - tetragon-operator
+                - keda-add-ons-http-controller-manager
+                - keda-operator-metrics-apiserver
+                - kubelet-serving-cert-approver
+                - longhorn-driver-deployer
+                - csi-snapshotter
+                - spire-server
       preconditions:
         all:
           # Durable opt-out on the pod template (charts expose podLabels more
