@@ -57,6 +57,14 @@ spec:
         expander: LeastWaste
         maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
+        # Native over-provisioning: install the CapacityBuffer CRD + controller
+        # so the platform's CapacityBuffer (k8s/providers/hetzner/infrastructure/
+        # overprovisioning/) reserves warm scale-up headroom as virtual,
+        # pod-less chunks — the native replacement for the old balloon-pod
+        # ReplicaSet. Ignored unless the node autoscaler is installed (it is,
+        # above). Requires a KSail release that ships ksail#5277 (post-v7.58.3);
+        # the CI/CD KSAIL_VERSION pin (renovate-managed) must reach it first.
+        capacityBuffers: true
         pools:
           - name: autoscale-cx33
             serverType: cx33
