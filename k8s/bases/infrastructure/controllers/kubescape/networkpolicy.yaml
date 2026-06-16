@@ -40,6 +40,37 @@ spec:
         - matchName: "api.github.com"
         - matchName: "objects.githubusercontent.com"
         - matchName: "raw.githubusercontent.com"
+        # Config scan: the Regolibrary controls/frameworks bundle is a GitHub
+        # release asset. github.com (above) 302-redirects the download to this
+        # release-asset CDN; without it the fetch times out and EVERY config
+        # scan fails ("open .../allcontrols.json: no such file or directory"),
+        # so the cluster has no posture/compliance scanning at all.
+        - matchName: "release-assets.githubusercontent.com"
+        # Vuln scan: kubevuln builds an SBOM per workload image, so it pulls
+        # manifests + layer blobs from every registry the cluster runs images
+        # from (docker.io, quay.io, ghcr.io, registry.k8s.io, reg.kyverno.io).
+        # Without these every image fails with "creating SBOM, skipping scan:
+        # ... i/o timeout" and vulnerabilityScan reports nothing. Each registry
+        # serves blobs from its own CDN, so the API host alone is not enough.
+        # ghcr.io (GitHub Container Registry) — blobs on the GitHub package CDN:
+        - matchName: "ghcr.io"
+        - matchName: "pkg-containers.githubusercontent.com"
+        # docker.io — registry v2 + token endpoints; blobs on the Cloudflare CDN:
+        - matchName: "index.docker.io"
+        - matchName: "registry-1.docker.io"
+        - matchName: "auth.docker.io"
+        - matchName: "production.cloudflare.docker.com"
+        # quay.io — registry + its documented blob CDN hosts:
+        - matchName: "quay.io"
+        - matchName: "cdn01.quay.io"
+        - matchName: "cdn02.quay.io"
+        - matchName: "cdn03.quay.io"
+        # registry.k8s.io — redirects blob pulls to its Google Artifact Registry
+        # backing store (*.pkg.dev); add the S3 mirror host if logs show one:
+        - matchName: "registry.k8s.io"
+        - matchPattern: "*.pkg.dev"
+        # reg.kyverno.io — Kyverno's image registry:
+        - matchName: "reg.kyverno.io"
       toPorts:
         - ports:
             - port: "443"
