@@ -11,6 +11,7 @@ resources:
   - db-superuser-pushsecret.yaml
   - db-rotated-external-secret.yaml
   - db-backup-external-secret.yaml
+  - db-object-store.yaml
   - db-scheduled-backup.yaml
   - helm-repository.yaml
   - helm-release.yaml
