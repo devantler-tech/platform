@@ -1,0 +1,84 @@
+# Keep Longhorn replicas off the ephemeral cluster-autoscaler nodes.
+#
+# Why: ksail.prod.yaml provisions the `autoscale-cx*` pools as compute-only
+# burst capacity that scales back to zero — but KSail boots them from the SAME
+# Talos worker config as the static baseline workers, so they inherit
+# `node.longhorn.io/create-default-disk=true` (talos/workers/node-labels.yaml)
+# and Longhorn treats them as storage nodes. When the autoscaler scales such a
+# node down, every replica it held is destroyed; a volume whose replicas all
+# sat on now-removed autoscaler nodes goes `faulted` — data loss, not just
+# degraded. Observed 2026-06-16: wedding-db (0/3 instances), umami-db, the
+# kubescape storage PVC and the openbao vault-snapshots volume all faulted
+# after the `autoscale-cx33-*` nodes holding their replicas were scaled down.
+# `replicaAutoBalance: best-effort` (longhorn/helm-release.yaml) keeps replicas
+# spread across the *live* nodes but cannot help once a volume's only replicas
+# leave together on a scale-down — the autoscaler nodes must not host replicas
+# in the first place.
+#
+# The intent in ksail.prod.yaml is explicit: "the static workers are the
+# guaranteed baseline and the only Longhorn storage nodes (autoscaler nodes are
+# compute-only)". This policy enforces that intent. The proper long-term fix is
+# for KSail to stamp a distinguishing label on its autoscaler pools (the
+# `ksail.io/autoscaled=true` label prefer-baseline-nodes is also waiting on);
+# until that lands the node-name prefix (`autoscale-*` vs `prod-worker-*`,
+# guaranteed by KSail's pool naming) is the only discriminator between an
+# ephemeral autoscaler node and a static baseline worker.
+#
+# Mechanism: set `spec.allowScheduling: false` on the Longhorn Node CR of every
+# `autoscale-*` node, so Longhorn never places a new replica there. Existing
+# replicas drain back onto the three static workers via best-effort
+# auto-balance, leaving every RWO volume with its full 3-way redundancy on
+# stable nodes (defaultReplicaCount: 3 == 3 static workers). Baseline workers
+# (`prod-worker-*`) and control planes never match, so their scheduling is
+# unchanged.
+#
+# Admission-time mutate on CREATE + UPDATE: a new autoscaler node's Longhorn
+# Node CR is patched the moment Longhorn creates it, and any later spec write
+# re-asserts the setting. allowScheduling is a mutable Longhorn field, so —
+# unlike the immutable Pod `spec.affinity` that forces prefer-baseline-nodes to
+# CREATE-only — mutating on UPDATE is safe and idempotent here. Longhorn Node
+# CRs that already exist when this policy first lands are not retroactively
+# patched (that would need a mutateExisting rule plus extra background-controller
+# RBAC on longhorn.io/nodes); they are reconciled once operationally and then
+# recycle into policy-covered nodes.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-longhorn-to-baseline-nodes
+  annotations:
+    policies.kyverno.io/title: Restrict Longhorn To Baseline Nodes
+    policies.kyverno.io/category: Best Practices, High Availability
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Node
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Sets allowScheduling: false on the Longhorn Node CR of every ephemeral
+      cluster-autoscaler node (name prefix autoscale-) so Longhorn keeps replicas
+      on the static baseline workers only. Prevents the data-loss volume faulting
+      that occurs when the autoscaler scales a replica-holding node down.
+spec:
+  # Admission-time mutate only (no mutateExisting target), so background scanning
+  # has nothing to do.
+  background: false
+  rules:
+    - name: disable-longhorn-scheduling-on-autoscaler-nodes
+      match:
+        any:
+          - resources:
+              kinds:
+                - longhorn.io/v1beta2/Node
+              operations:
+                - CREATE
+                - UPDATE
+      preconditions:
+        all:
+          # KSail names every autoscaler-pool node `autoscale-<pool>-<hash>`;
+          # static baseline workers are `prod-worker-N`. Only the former are
+          # ephemeral, so only they are excluded from Longhorn storage.
+          - key: "{{ starts_with(request.object.metadata.name, 'autoscale-') }}"
+            operator: Equals
+            value: true
+      mutate:
+        patchStrategicMerge:
+          spec:
+            allowScheduling: false
