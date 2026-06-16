@@ -120,6 +120,16 @@ spec:
       # request gets them rejected on memory-saturated nodes.
       extraArgs:
         - --node-agent-configmap=node-agent-config
+        # Memory-saturated cluster: the data-mover exposer pods that move
+        # Longhorn CSI snapshots to R2 cannot all be scheduled within the
+        # default 30m prepare window, so a chunk of each daily run's DataUploads
+        # fail with "timeout on preparing data upload" (node never assigned) —
+        # 4 of 7 on 2026-06-16, and every daily backup PartiallyFailed since
+        # 06-10. The volume snapshots themselves complete; only the data-mover
+        # prepare step starves. Widen the window so queued DataUploads wait for
+        # a node slot to free as earlier ones finish, instead of timing out.
+        # Off-peak daily backup (02:17), so a longer prepare window is free.
+        - --data-mover-prepare-timeout=2h
 
     # Daily backup of every namespace that has PVCs. 14-day retention
     # matches the 24h RPO target. Long-term retention is handled by R2
