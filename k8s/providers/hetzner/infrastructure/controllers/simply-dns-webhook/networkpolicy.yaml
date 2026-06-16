@@ -7,9 +7,7 @@ spec:
   # The solver is an aggregated API server: cert-manager reaches it *through*
   # the kube-apiserver, so ingress arrives from the apiserver/host entities on
   # the solver's HTTPS port (443) — the namespace-wide allow-cert-manager
-  # policy only admits 10250/6443 for cert-manager's own webhook. Egress
-  # (api.simply.com over world:443, kube-apiserver, DNS) is already covered by
-  # allow-cert-manager, whose endpointSelector spans the namespace.
+  # policy only admits 10250/6443 for cert-manager's own webhook.
   endpointSelector:
     matchLabels:
       app: simply-dns-webhook
@@ -19,6 +17,23 @@ spec:
         - kube-apiserver
         - remote-node
         - host
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+  egress:
+    # The Simply.com DNS API, for creating/removing the _acme-challenge TXT
+    # records during DNS-01. allow-cert-manager FQDN-pins only its *own*
+    # ClusterIssuers' APIs (Let's Encrypt + Cloudflare) — it does NOT allow
+    # api.simply.com — so the Simply solver's provider API must be allow-listed
+    # here. Without it the egress is default-denied: the API call fails and the
+    # solver (simply-com-client) nil-dereferences the absent HTTP response and
+    # crashes instead of presenting the challenge, so the certificate never
+    # issues. Kube-API and DNS egress are already covered namespace-wide by
+    # allow-cert-manager, whose kube-dns rule (matchPattern "*") also provides
+    # the L7 DNS visibility this toFQDNs rule relies on for enforcement.
+    - toFQDNs:
+        - matchName: "api.simply.com"
       toPorts:
         - ports:
             - port: "443"
