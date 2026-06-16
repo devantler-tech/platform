@@ -1,0 +1,21 @@
+# Dedicated namespace for the over-provisioning ("spare room") buffer.
+#
+# Holds the native Cluster Autoscaler CapacityBuffer (capacity-buffer.yaml) and
+# the PodTemplate that declares one buffer chunk's shape (pod-template.yaml).
+# Kept out of any app/infra namespace so the buffer is trivially observable
+# (`kubectl -n overprovisioning get capacitybuffers,podtemplates`) and so a
+# single cost line attributes the warm-node spend to over-provisioning.
+#
+# Unlike the previous balloon-pod ReplicaSet, the native buffer never creates a
+# real pod in this namespace — the autoscaler simulates the chunks as virtual
+# (pod-less) demand in memory. The PSA `restricted` label is therefore inert (no
+# pod is ever admitted here) but kept for namespace-posture consistency with the
+# rest of the platform; the PodTemplate's pod spec is restricted-compliant
+# regardless, so the posture holds if anything ever does instantiate it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: overprovisioning
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
