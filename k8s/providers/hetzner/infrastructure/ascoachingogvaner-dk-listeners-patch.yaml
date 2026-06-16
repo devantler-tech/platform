@@ -4,6 +4,13 @@
 # hostname-less `https` listener with the ${domain} wildcard cert. JSON patch
 # (not strategic merge) because Gateway is a CRD — a strategic-merge patch
 # would replace the whole listeners list instead of appending.
+#
+# The certificateRefs point CROSS-NAMESPACE at the tenant-owned Secret
+# (ascoachingogvaner/ascoachingogvaner-dk-tls): the certificate and its DNS01
+# solver credential live entirely in the tenant's deploy/ (a namespaced Issuer +
+# Certificate), and the tenant ships a ReferenceGrant authorising this Gateway to
+# read that Secret. Until the cert issues the listener simply stays
+# ResolvedRefs=False (Gateway still Programmed) — it never gates reconciliation.
 - op: add
   path: /spec/listeners/-
   value:
@@ -14,7 +21,10 @@
     tls:
       mode: Terminate
       certificateRefs:
-        - name: ascoachingogvaner-dk-tls
+        - kind: Secret
+          group: ""
+          namespace: ascoachingogvaner
+          name: ascoachingogvaner-dk-tls
     allowedRoutes:
       namespaces:
         from: All
@@ -28,7 +38,10 @@
     tls:
       mode: Terminate
       certificateRefs:
-        - name: ascoachingogvaner-dk-tls
+        - kind: Secret
+          group: ""
+          namespace: ascoachingogvaner
+          name: ascoachingogvaner-dk-tls
     allowedRoutes:
       namespaces:
         from: All
