@@ -35,19 +35,21 @@ CRs one tier later in `infrastructure/`, the workload in `apps/`:
 |---|---|---|
 | Crossplane core | `k8s/providers/hetzner/infrastructure/controllers/crossplane/` | HelmRelease; prod-only. `provider.defaultActivations: []` keeps unused provider CRDs inactive. Installs the pkg.crossplane.io CRDs. |
 | Provider + activation policy | `k8s/providers/hetzner/infrastructure/crossplane/` | The `Provider` package + `DeploymentRuntimeConfig` + `ManagedResourceActivationPolicy` (namespaced MRDs only). One tier after the controller (needs its CRDs), like Coroot/Flagger CRs. Establishes the namespaced github CRDs. |
-| The `github-config` app | `k8s/bases/apps/github-config/` | Standard app onboarding: namespace, SA, least-privilege `Role`, GitHub App + ghcr credential `ExternalSecret`s, the credential seed `PushSecret`, the namespaced `ProviderConfig`, and the cosign-verified `OCIRepository` + `Kustomization`. Applied by the existing `apps` Flux Kustomization. Prod-only in practice (the docker provider deploys no apps). |
+| The `github-config` app | `k8s/bases/apps/github-config/` | Standard app onboarding: namespace, SA, least-privilege `Role`, GitHub App + ghcr credential `ExternalSecret`s, the namespaced `ProviderConfig`, and the cosign-verified `OCIRepository` + `Kustomization`. Applied by the existing `apps` Flux Kustomization. Prod-only in practice (the docker provider deploys no apps). |
 | Desired state | [`devantler-tech/.github`](https://github.com/devantler-tech/.github) `deploy/` | The actual `Repository`/ruleset/label managed resources. Published as a cosign-signed OCI artifact to `ghcr.io/devantler-tech/github-config/manifests` on `v*` tags by the shared `publish-manifests` reusable workflow. |
-| Credentials | OpenBao `infrastructure/github/app` | GitHub App (`app_id`, `installation_id`, `pem`), seeded from the SOPS `variables-cluster` secret by the app's `PushSecret`, materialized into `github-config/github-app-credentials` by an `ExternalSecret` that renders the provider's JSON credential format. |
+| Credentials | OpenBao `secret/infrastructure/github/app` | GitHub App (`app_id`, `installation_id`, `pem`). **Placeholders are seeded declaratively (only-if-absent) by the vault-config bootstrap Job** — no SOPS; the maintainer overwrites them in place via the OpenBao UI/CLI (see below). The `github-app-credentials` `ExternalSecret` reads them and renders the provider's JSON credential format. |
 
 Ordering is the normal chain: `apps` `dependsOn` `infrastructure`, so by the
 time the app reconciles, the provider (infrastructure tier) has installed the
 namespaced github CRDs the `ProviderConfig` and managed resources need. On a
 fresh install the app's `Kustomization` retries benignly until those CRDs exist.
 
-The credential seed `PushSecret` lives **with the app** (apps layer), not in
-`infrastructure/vault-seed/`: until the GitHub App keys are in `variables-cluster`
-it stalls, and the apps layer is the leaf of the dependency chain — so a stall
-can never hold `infrastructure` (and through it every deploy) red.
+The GitHub App credentials are **not** SOPS-managed. The vault-config bootstrap
+Job seeds **placeholder** values into OpenBao (`secret/infrastructure/github/app`)
+**only when the secret is absent**, and the maintainer overwrites them in place
+(below). A later Job re-run never clobbers the real values (the seed is guarded
+by an existence check), and OpenBao is backed up (Raft snapshots → R2 via
+Velero), so the manually-set values are durable without a GitOps source of truth.
 
 ## Credential setup (one-time, maintainer)
 
@@ -56,14 +58,18 @@ can never hold `infrastructure` (and through it every deploy) red.
    (read/write), Contents (read)* and *Organization: Administration
    (read/write)* to start — widen as more resource kinds come under
    management. Install it on **all repositories** of the org. No webhook.
-2. Add three keys to the **prod** `variables-cluster` SOPS secret
-   (`k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml`):
-   `github_app_id`, `github_app_installation_id`, and `github_app_pem`
-   (the private key, as a normal multiline PEM block). Do this *before* the
-   first rollout so the seed `PushSecret` doesn't sit red.
-3. Merge. The PushSecret seeds OpenBao, the ExternalSecret renders the provider
-   credential into `github-config`, and the app reconciles once `.github` has
-   published its first `v*` artifact.
+2. **Overwrite the placeholders in OpenBao** with the App's real values — the
+   keys already exist (seeded by the vault-config Job), so just set them, e.g.:
+   ```sh
+   bao kv put -mount=secret infrastructure/github/app \
+     app_id="<app id>" installation_id="<installation id>" pem=@app.private-key.pem
+   ```
+   (or via the OpenBao UI). No SOPS, no re-encryption.
+3. The `ExternalSecret` refreshes (≤1h) and renders the provider credential into
+   `github-config`; the app reconciles once `.github` has published its first
+   `v*` artifact. Until the real values are set, the placeholders materialize a
+   (non-working) credential and the provider's auth simply fails — isolated to
+   the leaf `apps` layer, blocking nothing else.
 
 ## Adopting an existing repository (Observe-first)
 

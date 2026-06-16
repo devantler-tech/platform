@@ -419,6 +419,25 @@ spec:
                 echo "KV v2 already enabled at secret/."
               fi
 
+              # --- 1b. Seed placeholder GitHub App credentials (only if absent) ---
+              # provider-upjet-github (the github-config app) authenticates as a
+              # GitHub App; its credentials live at secret/infrastructure/github/app
+              # and are read by the github-app-credentials ExternalSecret. We seed
+              # PLACEHOLDERS here declaratively (no SOPS) ONLY when the secret is
+              # absent, so the maintainer can overwrite them in place via the
+              # OpenBao UI/CLI and a later Job re-run won't clobber the real values.
+              # OpenBao is backed up (Raft snapshots → R2 via Velero), so these
+              # manually-set values are durable — no GitOps re-seed is needed.
+              if ! bao kv get -mount=secret infrastructure/github/app >/dev/null 2>&1; then
+                echo "Seeding placeholder GitHub App credentials at secret/infrastructure/github/app..."
+                bao kv put -mount=secret infrastructure/github/app \
+                  app_id="REPLACE_WITH_GITHUB_APP_ID" \
+                  installation_id="REPLACE_WITH_GITHUB_APP_INSTALLATION_ID" \
+                  pem="REPLACE_WITH_GITHUB_APP_PRIVATE_KEY_PEM"
+              else
+                echo "GitHub App credentials already present at secret/infrastructure/github/app (leaving as-is)."
+              fi
+
               # --- 2. Enable Kubernetes auth ---
               if ! bao auth list -format=json | grep -q '"kubernetes/"'; then
                 echo "Enabling Kubernetes auth method..."
@@ -623,9 +642,6 @@ spec:
               path "secret/data/infrastructure/ghcr/*" {
                 capabilities = ["create", "update", "read"]
               }
-              path "secret/data/infrastructure/github/*" {
-                capabilities = ["create", "update", "read"]
-              }
               path "secret/data/apps/fleetdm/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -660,9 +676,6 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/infrastructure/ghcr/*" {
-                capabilities = ["create", "update", "read"]
-              }
-              path "secret/metadata/infrastructure/github/*" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/fleetdm/*" {

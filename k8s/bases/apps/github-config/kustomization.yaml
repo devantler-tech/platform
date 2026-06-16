@@ -8,5 +8,4 @@ resources:
   - ghcr-auth-externalsecret.yaml
   - external-secret.yaml
   - provider-config.yaml
-  - seed-github-app.yaml
   - sync.yaml
