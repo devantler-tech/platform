@@ -8,6 +8,7 @@ resources:
   # own CiliumNetworkPolicy (networkpolicy.yaml) and namespaced SecretStore now
   # live in the tenant repo's deploy/.
   - db-backup-external-secret.yaml
+  - db-object-store.yaml
   - ghcr-auth-externalsecret.yaml
   - namespace.yaml
   - rolebinding.yaml
