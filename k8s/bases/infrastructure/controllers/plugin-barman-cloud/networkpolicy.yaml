@@ -1,0 +1,41 @@
+---
+# cnpg-system runs under a default-deny baseline (see add-default-deny), so the
+# plugin needs an explicit allow. The plugin Deployment serves the CNPG-I gRPC
+# API on :9090, which the CloudNativePG operator calls; it reads ObjectStore CRs
+# and backup Secrets from the API server. The actual object-store I/O (WAL push,
+# base backups, restore) runs in the barman-cloud sidecar injected into each
+# PostgreSQL instance pod, so R2 egress is governed by the consuming app's own
+# policy (e.g. apps/umami/networkpolicy.yaml), not this one.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-plugin-barman-cloud
+  namespace: cnpg-system
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: plugin-barman-cloud
+  ingress:
+    # CNPG-I gRPC from the CloudNativePG operator (same namespace).
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: cloudnative-pg
+      toPorts:
+        - ports:
+            - port: "9090"
+              protocol: TCP
+  egress:
+    # Kube API: read ObjectStore CRs + backup Secrets, drive Backup objects.
+    - toEntities:
+        - kube-apiserver
+    # DNS resolution.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
