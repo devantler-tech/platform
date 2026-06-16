@@ -45,18 +45,6 @@ spec:
                 - flux-system
               names:
                 - flux-system
-          # The over-provisioning buffer Kustomization is the one sanctioned
-          # `wait: false` exception: its pause pods are EXPECTED to sit Pending
-          # whenever the Cluster Autoscaler is at maxNodesTotal, so health-
-          # gating it (kstatus reports the ReplicaSet as InProgress forever)
-          # would hold the whole deploy pipeline red — which is exactly what
-          # happened while it lived in the `wait: true` infrastructure layer.
-          # See k8s/clusters/prod/overprovisioning-flux-kustomization.yaml.
-          - resources:
-              namespaces:
-                - flux-system
-              names:
-                - infrastructure-overprovisioning
       validate:
         message: >-
           Flux Kustomization must set the recommended reliability fields:

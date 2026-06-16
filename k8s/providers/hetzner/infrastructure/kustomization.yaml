@@ -35,15 +35,17 @@ resources:
   # http.keda.sh CRD shipped by the keda-http-add-on HelmRelease is established
   # first. longhorn-system is Hetzner-only, so this can't live in bases/.
   - http-scaled-objects/
-  # NOTE: the over-provisioning ("spare room") buffer intentionally does NOT
-  # live in this layer. Its pause pods are EXPECTED to sit Pending whenever the
-  # autoscaler is at maxNodesTotal, and this layer is reconciled with
-  # `wait: true` — health-gating on an expected-Pending ReplicaSet held
-  # `infrastructure` (and its `apps` dependent + every CI/CD deploy) red for
-  # hours. It is applied by the dedicated, non-health-gated
-  # `infrastructure-overprovisioning` Flux Kustomization instead — see
-  # k8s/clusters/prod/overprovisioning-flux-kustomization.yaml and
-  # ../infrastructure-overprovisioning/.
+  # Prod-only over-provisioning ("spare room") buffer: the native Cluster
+  # Autoscaler CapacityBuffer + its PodTemplate. KSail installs the CRD +
+  # controller when ksail.prod.yaml's autoscaler.node.capacityBuffers: true is
+  # set; this reserves one warm spare node as VIRTUAL (pod-less) headroom.
+  # Unlike the old balloon-pod ReplicaSet (+ its cluster-proportional-autoscaler)
+  # — which had to live OUTSIDE this health-gated `wait: true` layer because its
+  # pause pods sat Pending and held `infrastructure` (+ its `apps` dependent +
+  # every CI/CD deploy) red for ~30h on 2026-06-09/10 — the native buffer creates
+  # no real pods, so nothing sits Pending and it rides along here like any other
+  # resource. Hetzner/prod-only (the autoscaler pools are Hetzner).
+  - overprovisioning/
   #
   # NOTE: tenant-owned custom-domain TLS (the ascoachingogvaner.dk Certificate +
   # its simply.com DNS01 solver credential) is NOT a platform resource at all —

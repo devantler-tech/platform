@@ -1,8 +1,0 @@
----
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
-metadata:
-  name: cluster-proportional-autoscaler
-  namespace: overprovisioning
-spec:
-  url: https://kubernetes-sigs.github.io/cluster-proportional-autoscaler

@@ -1,0 +1,45 @@
+# Native Cluster Autoscaler over-provisioning ("spare room") buffer — the
+# pod-less replacement for the old low-priority balloon-pod ReplicaSet.
+#
+# How it works:
+#   * ksail.prod.yaml sets autoscaler.node.capacityBuffers: true, so KSail
+#     installs the CapacityBuffer CRD (capacitybuffers.autoscaling.x-k8s.io) and
+#     turns on the autoscaler's capacity-buffer controller + pod-injection flags.
+#   * This CapacityBuffer asks the controller to keep `replicas` chunks of spare
+#     capacity warm, each shaped like the referenced PodTemplate
+#     (pod-template.yaml: 2 CPU / 4Gi).
+#   * The controller injects that demand as VIRTUAL (pod-less) pods into the
+#     autoscaler's scheduling simulation. Because a chunk does not fit on the
+#     busy baseline workers, the autoscaler provisions one cost-optimized
+#     autoscale-cx* node to hold it — a warm, near-empty server. When a real pod
+#     needs the room it schedules onto that warm node instantly, and the
+#     autoscaler boots a replacement in the background to refill the buffer.
+#
+# Net steady state is unchanged from the balloon pattern (baseline workers + one
+# warm spare node, always ready) — but with NO real pause pods, so nothing ever
+# sits Pending. That is why this lives in the health-gated `infrastructure`
+# layer (wait: true) like any other resource, instead of the dedicated
+# wait:false Flux Kustomization the balloon ReplicaSet required (an
+# expected-Pending ReplicaSet reported InProgress forever under kstatus and held
+# the deploy pipeline red for ~30h on 2026-06-09/10). The CapacityBuffer exposes
+# no Pending-pod / Reconciling / Stalled signal for kstatus to hang on.
+#
+# spec.provisioningStrategy is left implicit; it defaults server-side to
+# `buffer.x-k8s.io/active-capacity` (actively scale the cluster up to hold the
+# buffer), which is exactly the behaviour we want.
+apiVersion: autoscaling.x-k8s.io/v1beta1
+kind: CapacityBuffer
+metadata:
+  name: overprovisioning
+  namespace: overprovisioning
+  labels:
+    app.kubernetes.io/name: overprovisioning
+    app.kubernetes.io/component: cluster-buffer
+    app.kubernetes.io/part-of: platform
+spec:
+  # One warm spare node. Raise to widen the buffer (N chunks ~= N warm nodes),
+  # bounded by ksail.prod.yaml's maxNodesTotal: 10.
+  replicas: 1
+  # Shape of one chunk — see pod-template.yaml (same namespace).
+  podTemplateRef:
+    name: overprovisioning
