@@ -24,6 +24,19 @@ spec:
       continuousScan: enable
       vulnerabilityScan: enable
       runtimeDetection: enable
+      # Run posture/config scanning OFFLINE (air-gapped). This cluster has no
+      # ARMO SaaS account, but the chart defaults to submit-mode: the scanner
+      # POSTs each posture report to report.armo.cloud and treats the submit as
+      # a terminal step. With no account that submit fails ("400 missing account
+      # id"), which ABORTS the scan before results are written — so NO
+      # config-scan CRs (workloadconfigurationscansummaries /
+      # configurationscansummaries) ever persist and the cluster compliance
+      # score stays 0. Offline mode skips the cloud submit and persists results
+      # straight to the in-cluster storage component (storage:true,
+      # keepLocal:true are already set), restoring posture scanning + findings.
+      # Vulnerability scanning (kubevuln) is unaffected — it never gated on the
+      # cloud submit.
+      kubescapeOffline: enable
     hostScanner:
       enabled: true
     nodeAgent:
