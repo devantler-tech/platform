@@ -1,164 +1,99 @@
 # Ingress firewall rules for control-plane nodes.
 # Requires NetworkDefaultActionConfig (ingress: block) from cluster/.
 #
-# Policy summary:
-#   - apid (50000) and Kubernetes API (6443): open to all (external management)
-#   - kubelet (10250), trustd (50001): cluster-internal only
-#   - etcd (2379-2380): cluster-internal only (Hetzner assigns IPs dynamically)
-#   - Cilium VXLAN (8472), WireGuard (51871), health (4240), Hubble peer (4244), mutual-auth (4250): cluster-internal only
-#   - NodePort range (30000-32767): cluster-internal (Hetzner Cloud LB)
-#   - Node exporter (9100): cluster-internal (Prometheus scraping)
+# Rules are CONSOLIDATED by ingress subnet — one NetworkRuleConfig per
+# protocol + subnet-set, listing all its ports — instead of one rule per port.
+# This keeps the rendered nftables ruleset small on purpose: Talos's
+# NfTablesChainController programs these through a bare, un-tuned netlink conn
+# (google/nftables v0.3.0), and a large rule count makes conn.Flush() fail with
+# "netlink receive: recvmsg: no buffer space available" (ENOBUFS). When that
+# happens the controller loops forever and the node hangs in STAGE "Booting" —
+# apid/etcd/kubelet never start. Control-plane nodes carry the most rules
+# (6443 + etcd 2379-2380 + trustd 50001 on top of the worker set), so they hit
+# the threshold first: this bricked prod-control-plane-1 during the Talos
+# v1.13.4 in-place upgrade (workers, with fewer rules, upgraded fine). The bug
+# is latent on 1.13.3 too — 1.13.4 only tips it over via higher early-boot
+# memory pressure. See google/nftables#103 and #235; the real upstream fix is
+# Talos tuning the conn (SetReadBuffer / NoENOBUFS).
+#
+# Effective access is IDENTICAL to the previous per-port form — only the rule
+# COUNT changes (12 -> 4). Port map (unchanged):
+#   world (ext. mgmt):        apid 50000, kube-api 6443
+#   node CIDR + pod CIDR:     kubelet 10250, hubble-peer 4244, node-exporter 9100
+#   node CIDR only (tcp):     etcd 2379-2380, cilium-health 4240,
+#                             cilium-mutual-auth 4250, trustd 50001,
+#                             NodePort 30000-32767
+#   node CIDR only (udp):     cilium-vxlan 8472, cilium-wireguard 51871
 #
 # Cluster network CIDR: 10.0.0.0/16 (from ksail.prod.yaml networkCidr)
-#
+# Pod CIDR: 10.244.0.0/16
 # Reference: https://docs.siderolabs.com/talos/v1.12/networking/ingress-firewall
 ---
+# World-reachable management endpoints: Kubernetes API (6443) + apid (50000).
 apiVersion: v1alpha1
 kind: NetworkRuleConfig
-name: apid-ingress
+name: control-plane-public-ingress
 portSelector:
   ports:
+    - 6443
     - 50000
   protocol: tcp
 ingress:
   - subnet: 0.0.0.0/0
   - subnet: ::/0
 ---
+# Cluster-internal TCP reachable from the node CIDR AND the pod CIDR.
+# The node CIDR covers cross-node scrapes (Cilium masquerades pod->node-IP to
+# the source node IP); same-node scrapes are NOT masqueraded, so kubelet /
+# node-exporter see the raw pod IP and the pod CIDR must be allowed too.
+#   kubelet 10250, hubble-peer 4244, node-exporter 9100
 apiVersion: v1alpha1
 kind: NetworkRuleConfig
-name: kubernetes-api-ingress
+name: control-plane-internal-nodepod-ingress
 portSelector:
   ports:
-    - 6443
-  protocol: tcp
-ingress:
-  - subnet: 0.0.0.0/0
-  - subnet: ::/0
----
-apiVersion: v1alpha1
-kind: NetworkRuleConfig
-name: kubelet-ingress
-portSelector:
-  ports:
+    - 4244
+    - 9100
     - 10250
   protocol: tcp
 ingress:
-  # Node CIDR covers cross-node scrapes: Cilium masquerades pod->node-IP
-  # traffic to the source node IP. Same-node scrapes (a pod hitting its own
-  # node's kubelet) are NOT masqueraded, so the kubelet sees the raw pod IP
-  # and the pod CIDR must be allowed too.
   - subnet: 10.0.0.0/16
   - subnet: 10.244.0.0/16
 ---
+# Cluster-internal TCP reachable from the node CIDR only.
+#   etcd 2379-2380, cilium-health 4240, cilium-mutual-auth 4250,
+#   trustd 50001, NodePort range 30000-32767
+# cilium-mutual-auth 4250: cilium-agent agent-to-agent mTLS handshake for flows
+# the require-mutual-auth CiliumClusterwideNetworkPolicy marks
+# authentication.mode: required; the source is the peer node's host-network
+# cilium-agent, i.e. the node CIDR. Without it the cross-node handshake times
+# out and Cilium black-holes the authenticated flow cluster-wide.
 apiVersion: v1alpha1
 kind: NetworkRuleConfig
-name: trustd-ingress
+name: control-plane-internal-node-ingress
 portSelector:
   ports:
+    - 2379-2380
+    - 4240
+    - 4250
+    - 30000-32767
     - 50001
   protocol: tcp
 ingress:
   - subnet: 10.0.0.0/16
 ---
+# Cluster-internal UDP reachable from the node CIDR only.
+#   Cilium VXLAN 8472, Cilium WireGuard 51871
+# WireGuard transparent encryption (encryption.type: wireguard) tunnels
+# VXLAN-encapsulated pod traffic between nodes through cilium_wg0; the default
+# block would otherwise drop inter-node WireGuard and break pod-to-pod traffic.
 apiVersion: v1alpha1
 kind: NetworkRuleConfig
-name: etcd-ingress
-portSelector:
-  ports:
-    - 2379-2380
-  protocol: tcp
-ingress:
-  - subnet: 10.0.0.0/16
----
-apiVersion: v1alpha1
-kind: NetworkRuleConfig
-name: cni-vxlan-ingress
+name: control-plane-internal-udp-ingress
 portSelector:
   ports:
     - 8472
-  protocol: udp
-ingress:
-  - subnet: 10.0.0.0/16
----
-# Cilium WireGuard transparent encryption (encryption.type: wireguard).
-# Tunnels VXLAN-encapsulated pod traffic between nodes through cilium_wg0.
-# Default port is UDP 51871; Talos's NetworkDefaultActionConfig: block
-# would otherwise drop inter-node WireGuard packets and break pod-to-pod
-# traffic the moment encryption is enabled.
-apiVersion: v1alpha1
-kind: NetworkRuleConfig
-name: cilium-wireguard-ingress
-portSelector:
-  ports:
     - 51871
   protocol: udp
 ingress:
   - subnet: 10.0.0.0/16
----
-apiVersion: v1alpha1
-kind: NetworkRuleConfig
-name: cilium-health-ingress
-portSelector:
-  ports:
-    - 4240
-  protocol: tcp
-ingress:
-  - subnet: 10.0.0.0/16
----
-apiVersion: v1alpha1
-kind: NetworkRuleConfig
-name: hubble-peer-ingress
-portSelector:
-  ports:
-    - 4244
-  protocol: tcp
-ingress:
-  - subnet: 10.0.0.0/16
-  - subnet: 10.244.0.0/16
----
-# Cilium SPIRE mutual authentication (authentication.mutual.spire.enabled in
-# the cilium HelmRelease). cilium-agents perform the agent-to-agent mTLS
-# handshake on TCP 4250 (the mesh-auth listener) for every pod-to-pod flow
-# the hetzner require-mutual-auth CiliumClusterwideNetworkPolicy marks
-# `authentication.mode: required`. The source is the peer node's
-# host-network cilium-agent, so the traffic arrives from the node CIDR.
-# NetworkDefaultActionConfig: block drops inbound 4250 unless allowed here;
-# without this rule the cross-node handshake times out
-# (`dial tcp 10.0.1.x:4250: i/o timeout`) and Cilium black-holes the
-# authenticated flow cluster-wide (control-plane endpoints such as
-# cilium-operator and any pod scheduled here are equally affected).
-apiVersion: v1alpha1
-kind: NetworkRuleConfig
-name: cilium-mutual-auth-ingress
-portSelector:
-  ports:
-    - 4250
-  protocol: tcp
-ingress:
-  - subnet: 10.0.0.0/16
----
-apiVersion: v1alpha1
-kind: NetworkRuleConfig
-name: nodeport-ingress
-portSelector:
-  ports:
-    - 30000-32767
-  protocol: tcp
-ingress:
-  - subnet: 10.0.0.0/16
----
-apiVersion: v1alpha1
-kind: NetworkRuleConfig
-name: node-exporter-ingress
-portSelector:
-  ports:
-    - 9100
-  protocol: tcp
-ingress:
-  # Node CIDR covers cross-node scrapes: Cilium masquerades pod->node-IP
-  # traffic to the source node IP. Same-node scrapes (the Prometheus pod
-  # hitting the hostNetwork node-exporter on its own node) are NOT
-  # masqueraded, so node-exporter sees the raw pod IP and the pod CIDR must
-  # be allowed too.
-  - subnet: 10.0.0.0/16
-  - subnet: 10.244.0.0/16
