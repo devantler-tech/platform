@@ -20,6 +20,15 @@ spec:
         name: simply-dns-webhook
   # https://github.com/RunnerM/simply-dns-webhook/blob/master/deploy/simply-dns-webhook/values.yaml
   values:
+    # Run 2 replicas (HA) so the drain-safe PDB (pod-disruption-budget.yaml)
+    # keeps the DNS01 solver available through a node drain, and to satisfy the
+    # validate-replica-floor policy (it was the one workload still flagged). The
+    # solver is a stateless Go webhook — cert-manager calls it via its Service
+    # during ACME DNS01 challenges — so extra replicas just load-balance, no
+    # coordination needed. Hardcoded (not the ${..._replicas} cluster-config
+    # pattern) because this controller is hetzner/prod-only with no other
+    # environment to tune it for.
+    replicaCount: 2
     # Don't override groupName: the chart's challenge-management ClusterRole
     # hardcodes this group, so a custom one breaks the solver's RBAC.
     groupName: com.github.runnerm.cert-manager-simply-webhook
