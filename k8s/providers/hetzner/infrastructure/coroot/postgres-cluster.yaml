@@ -1,0 +1,73 @@
+# CloudNativePG-managed PostgreSQL backing a HIGH-AVAILABILITY Coroot server.
+#
+# WHY THIS EXISTS: the coroot-operator runs the Coroot server as a StatefulSet
+# whose default store is embedded SQLite on the pod's own PVC — which cannot be
+# shared across pods, so the server is a hard singleton at replicas: 1. The CRD
+# exposes spec.replicas, but the operator's own validation (controller/coroot.go)
+# silently FALLS BACK to 1 replica whenever replicas > 1 and spec.postgres is
+# unset ("Coroot requires Postgres to run multiple replicas"). Pointing the
+# server at an external Postgres is therefore the ONLY supported way to run more
+# than one Coroot server pod — so this Cluster is what makes coroot-coroot HA.
+# spec.postgres + spec.replicas: 2 + the spread affinity live in
+# patches/coroot-patch.yaml (this same hetzner overlay).
+#
+# PROD-ONLY (lives in the hetzner overlay, not the shared base): the base Coroot
+# CR stays single-replica SQLite for local/CI, which have no CloudNativePG
+# operator and no hcloud/longhorn storage — exactly how umami-db, the
+# wedding-app DB and the rest of the CNPG estate are split. CNPG is the
+# platform's standard Postgres operator (infrastructure/controllers/cloudnative-pg).
+#
+# CREDENTIALS: CNPG generates and OWNS the `coroot` role's password, publishing
+# it (with the connection coordinates) in the auto-created `coroot-db-app`
+# Secret (keys: username/password/dbname/host/port/uri). The Coroot server reads
+# it via spec.postgres.passwordSecret -> coroot-db-app/password. Unlike umami,
+# Coroot's password is NOT rotated by OpenBao: Coroot is the sole consumer and
+# CNPG is the single source of truth, so there is no separate rotated Secret to
+# enforce and none of umami's promotion-time clobber risk (cnpg#2029) applies —
+# whatever CNPG writes to coroot-db-app is exactly what Coroot consumes.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: coroot-db
+  namespace: observability
+spec:
+  # Run 3 instances (1 primary + 2 streaming replicas) for high availability —
+  # the SAME rationale as umami-db: a single-instance Cluster makes CNPG create a
+  # `<cluster>-primary` PDB with minAvailable=1 on the only pod, which BLOCKS
+  # every voluntary eviction, so a node drain (Talos roll, autoscaler
+  # scale-down) hangs forever and an involuntary node loss takes the DB — and
+  # thus the whole HA Coroot server — offline until it reschedules. With >=2
+  # instances CNPG drains a node by promoting a replica (switchover) and sets the
+  # replica PDB to minAvailable=instances-1, so drains proceed one pod at a time
+  # and Postgres survives any single node going away. Three lands one instance on
+  # each of the 3 static Longhorn storage workers via CNPG's default (preferred)
+  # pod anti-affinity, keeping a primary+replica quorum even under maintenance.
+  instances: 3
+  storage:
+    size: 2Gi
+    storageClass: longhorn
+  bootstrap:
+    initdb:
+      database: coroot
+      owner: coroot
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  # Off-cluster DB backup to Cloudflare R2 (continuous WAL archiving + base
+  # backups, so PITR is possible) via the Barman Cloud Plugin — the supported
+  # replacement for the in-tree spec.backup.barmanObjectStore (deprecated in CNPG
+  # 1.26, removed in 1.30). The R2 destination, the `coroot-db-backup-r2`
+  # credentials (db-backup-external-secret.yaml, OpenBao infrastructure/backup/r2
+  # — the SAME creds Velero/umami use) and retention live in the ObjectStore CR
+  # (db-object-store.yaml); the daily base backup is driven by
+  # db-scheduled-backup.yaml. Egress to R2 is opened in networkpolicy.yaml (the
+  # plugin injects a barman-cloud sidecar into these instance pods).
+  # isWALArchiver routes WAL archiving through the plugin.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: coroot-db
