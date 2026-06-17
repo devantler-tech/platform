@@ -28,6 +28,13 @@ data:
   keda_webhooks_replicas: "2"
   keda_scaler_replicas: "2"
   keda_interceptor_min_replicas: "2"
+  # keda_metrics_server_replicas drives the KEDA metrics-apiserver (aggregated
+  # external.metrics.k8s.io API server — stateless, no leader election);
+  # keda_http_operator_replicas drives the http-add-on controller-manager
+  # (leader-elected, active/standby). Both were single-replica and flagged by
+  # Coroot as "single instance - not resilient to node failure".
+  keda_metrics_server_replicas: "2"
+  keda_http_operator_replicas: "2"
   # --- Leader-elected operators (2 replicas for HA; the require-replica-floor minimum) ---
   # One replica is active; the other is a warm standby that takes over on a node
   # failure/drain. velero stays 1 — its chart hardcodes replicas: 1 and it has
