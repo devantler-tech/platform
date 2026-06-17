@@ -22,6 +22,13 @@ spec:
     sources:
       - gateway-httproute
     policy: sync
+    # TXT-registry ownership is what makes this single writer safe to reschedule:
+    # every managed record gets a paired "_externaldns." TXT carrying this
+    # txtOwnerId, so a pod that restarts on another node (node failure / drain)
+    # recognises the records it already owns and reconciles idempotently instead
+    # of re-creating or fighting them. This ownership fence is also why a second
+    # ACTIVE replica is unsafe (see priorityClassName note) — two instances would
+    # share one owner id and issue duplicate Cloudflare writes.
     registry: txt
     txtOwnerId: "${domain}"
     txtPrefix: "_externaldns."
@@ -36,6 +43,36 @@ spec:
           secretKeyRef:
             name: external-dns-cloudflare
             key: api-token
+    # Node-failure resilience for a DELIBERATELY single-replica writer.
+    #
+    # external-dns has NO leader election at the pinned app version (chart 1.21.1
+    # = external-dns v0.21.0). The "support multiple replicas with leader
+    # election" proposal (docs/proposal/001-leader-election.md) is status
+    # `not-planned` and the `--enable-leader-election` flag does not exist in the
+    # controller binary — the only concurrency control is `--once` (run-once).
+    # So running >1 ACTIVE replica is unsafe: every replica would write to
+    # Cloudflare under the same txtOwnerId, causing duplicate API calls,
+    # rate-limit churn, and records fighting each other. The validate-replica-floor
+    # policy exempts external-dns by name for exactly this reason.
+    #
+    # Therefore we do NOT run 2 always-active replicas. We instead minimise the
+    # node-failure blast radius of the single writer:
+    #   * priorityClassName: system-cluster-critical — external-dns programs the
+    #     cluster's public DNS (its peer infrastructure CoreDNS and the hcloud-csi
+    #     controller use the same class), so on a node loss the scheduler places
+    #     the replacement pod ahead of normal workloads, shrinking the window in
+    #     which DNS records drift from desired state.
+    #   * a drain-safe PDB (pod-disruption-budget.yaml, maxUnavailable: 1) so a
+    #     node drain cycles the single pod cleanly instead of being a surprise.
+    #   * TXT-registry ownership (above) so the rescheduled pod reclaims its
+    #     records idempotently.
+    #
+    # UPGRADE PATH to true active/standby HA: once external-dns ships leader
+    # election (the `--enable-leader-election` flag, currently `not-planned`),
+    # switch to replicas: 2 with leader election enabled (only the leader writes),
+    # a topologySpreadConstraints across nodes, and drop this single-replica note.
+    # Track the upstream proposal before bumping the replica count.
+    priorityClassName: system-cluster-critical
     deploymentStrategy:
       type: Recreate
     serviceMonitor:
