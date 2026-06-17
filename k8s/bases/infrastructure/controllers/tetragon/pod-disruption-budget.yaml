@@ -1,0 +1,21 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: tetragon-operator
+  namespace: kube-system
+spec:
+  # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 keeps the node
+  # drainable at any replica count, unlike minAvailable: 1 which deadlocks a
+  # drain when only 1 replica is ready. The tetragon chart ships no PDB knob, so
+  # this is a standalone manifest. Pairs with tetragonOperator.replicas: 2 +
+  # failoverLease.enabled: true in helm-release.yaml: the operator is then
+  # leader-elected, so the second replica is a warm standby that keeps the
+  # CRD/controller reconcilers available while a node drains. The selector scopes
+  # to the operator pods only (app.kubernetes.io/name: tetragon-operator) -- NOT
+  # the per-node tetragon agent DaemonSet (app.kubernetes.io/name: tetragon),
+  # which is node-pinned and must not be covered by this PDB.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tetragon-operator
+      app.kubernetes.io/instance: tetragon
