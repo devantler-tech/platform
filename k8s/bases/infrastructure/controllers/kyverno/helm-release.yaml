@@ -19,6 +19,52 @@ spec:
         name: kyverno
   # https://github.com/kyverno/kyverno/blob/main/charts/kyverno/values.yaml
   values:
+    # --- reports-controller memory growth (Coroot "memory leak") --------------
+    # The reports-controller's memory scales with the number of (Cluster)PolicyReports
+    # it holds and aggregates. The slow, unbounded growth Coroot flags is the
+    # background scanner emitting one report per live resource for EVERY resource
+    # in the cluster -- because the chart ships `--skipResourceFilters=true`
+    # (features.backgroundScan.skipResourceFilters), so background scan IGNORES
+    # config.resourceFilters and reports on everything, including extremely
+    # high-churn ephemeral objects (leader-election Leases renewing every few
+    # seconds across cilium/flux/kyverno/cert-manager/KEDA/flagger/cnpg/operators,
+    # plus the controller's own report kinds). See kyverno/kyverno#13335 / #11746.
+    #
+    # Fix (root cause, not a limit bump): make background scan HONOR the resource
+    # filters, then exclude the highest-churn kinds. This is safe for enforcement
+    # because skipResourceFilters only affects BACKGROUND SCAN reporting --
+    # ADMISSION-time validation (pod-security, etc.) is unaffected, and we do NOT
+    # filter Pod/Deployment/etc., so those still get background-scan reports.
+    #
+    # NOT a static memory limit: auto-vpa.yaml runs a VPA over this Deployment
+    # (controlledValues: RequestsAndLimits, InPlaceOrRecreate, maxAllowed 6Gi),
+    # so a hard limit here would fight VPA. Cutting report volume is the correct
+    # lever; if growth persists, raise the VPA maxAllowed, don't pin a limit.
+    features:
+      backgroundScan:
+        # Honor config.resourceFilters during background scans (chart default is
+        # true = filters skipped = report-per-resource for everything). With this
+        # false, the chart's default filters (Event, ReplicaSet, Node,
+        # EphemeralReport, kube-system/public/node-lease, ...) plus the additions
+        # below actually suppress background-scan reports for those kinds.
+        skipResourceFilters: false
+    config:
+      # Additive (chart `concat`s this onto its ~80-entry default resourceFilters
+      # -- nothing default is lost, and it stays correct across chart upgrades).
+      # Exclude high-churn kinds that have ZERO matching policy in this repo, so
+      # nothing is lost by skipping them in background scan:
+      resourceFiltersInclude:
+        # Leader-election leases churn every few seconds cluster-wide -- the
+        # dominant driver of the slow report growth.
+        - "[Lease,*,*]"
+        # The reports-controller's own output/intermediate report kinds: stop it
+        # background-scanning (and re-reacting to) the reports it writes.
+        - "[PolicyReport,*,*]"
+        - "[ClusterPolicyReport,*,*]"
+        - "[AdmissionReport,*,*]"
+        - "[ClusterAdmissionReport,*,*]"
+        - "[BackgroundScanReport,*,*]"
+        - "[ClusterBackgroundScanReport,*,*]"
     # Restricted PSS baseline: kyverno's mutation policies exclude the kyverno namespace,
     # so we must set pod-level seccompProfile + runAsNonRoot via chart values.
     admissionController:
