@@ -48,19 +48,58 @@ spec:
   # Bundled Prometheus = the metrics TSDB. Kept as a real Prometheus (we do
   # NOT set storeMetricsInClickhouse) precisely so OpenCost can still query it
   # at http://coroot-prometheus.observability.svc.cluster.local:9090.
+  # SINGLE INSTANCE BY DESIGN: the operator's `spec.prometheus` exposes no
+  # `replicas` field (verified against coroot.com/v1), so the bundled Prometheus
+  # has no HA mode here. It recovers by rescheduling onto a healthy node with
+  # its (durable, hcloud-backed) PVC; the gap is the in-flight scrape window
+  # during reschedule. Running redundant metrics ingestion would mean an
+  # external/federated Prometheus, which is a separate architectural decision.
   prometheus:
     retention: 7d
     storage:
       size: 10Gi
 
-  # ClickHouse stores logs, traces and continuous profiles. A single
-  # shard/replica (+ one keeper for replication metadata) is plenty for a
-  # homelab and keeps the footprint small on a memory-constrained cluster.
+  # ClickHouse stores logs, traces and continuous profiles. Run it with
+  # redundancy so a single node loss doesn't take the telemetry store down or
+  # lose data (Coroot's own risk view flagged every component as "single
+  # instance / all instances on one node"):
+  #   - shards: 1 — one shard is enough data volume for this cluster; we want
+  #     replication, not horizontal partitioning, so the shard count stays 1.
+  #   - replicas: 2 — two replicas *within* the shard, so the data is mirrored
+  #     and survives losing the node hosting either replica (ReplicatedMergeTree
+  #     via Keeper). This is the replica/shard field the operator exposes
+  #     (`spec.clickhouse.replicas`).
+  #   - keeper.replicas: 3 — ClickHouse Keeper is a Raft cluster; it needs an
+  #     ODD quorum to tolerate a failure. 1 keeper is a SPOF and 2 is INVALID
+  #     (no majority on a split), so the minimum fault-tolerant size is 3
+  #     (tolerates 1 keeper down). Field: `spec.clickhouse.keeper.replicas`.
+  # Hard pod anti-affinity (one replica per node) makes the redundancy real —
+  # without it the operator can schedule both ClickHouse replicas, or a keeper
+  # majority, onto one node and a single node loss still takes quorum/data with
+  # it. All nodes are in one Hetzner zone (fsn1), so the spread key is the node
+  # hostname. The operator exposes only `affinity` (no topologySpreadConstraints
+  # field), so anti-affinity is the available placement knob.
   clickhouse:
     shards: 1
-    replicas: 1
+    replicas: 2
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/part-of: coroot
+                app.kubernetes.io/component: clickhouse
+            topologyKey: kubernetes.io/hostname
     keeper:
-      replicas: 1
+      replicas: 3
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/part-of: coroot
+                  app.kubernetes.io/component: clickhouse-keeper
+              topologyKey: kubernetes.io/hostname
     storage:
       size: 10Gi
   logsTTL: 3d
@@ -78,4 +117,22 @@ spec:
 
   # cluster-agent is left at its default (enabled) — it provides the
   # kube-state-metrics-equivalent cluster inventory, replacing the standalone
-  # kube-state-metrics from the prometheus stack.
+  # kube-state-metrics from the prometheus stack. SINGLE INSTANCE BY DESIGN:
+  # `spec.clusterAgent` exposes no `replicas` field (verified against
+  # coroot.com/v1) — it is a cluster-wide singleton collector (like
+  # kube-state-metrics, which also runs one replica), so a second copy would
+  # only duplicate the same scrape. It recovers by rescheduling onto a healthy
+  # node; the gap is the reschedule window, during which the node-agents (one
+  # per node, already tolerations-spread above) keep collecting per-node
+  # telemetry.
+  #
+  # The Coroot server StatefulSet (coroot-coroot) is also left SINGLE INSTANCE.
+  # `spec.replicas` does exist, but the CRD documents it as requiring
+  # `spec.postgres` ("Store configuration in a Postgres DB instead of SQLite
+  # (required if replicas > 1)") — the default SQLite store cannot back more
+  # than one replica. CloudNativePG IS available in-cluster, so multi-replica
+  # is achievable, but it is a separate change (provision a CNPG Cluster +
+  # credentials, point `spec.postgres` at it, migrate state) with its own
+  # storage/backup story — out of scope for this redundancy pass and tracked as
+  # a follow-up. Until then the server recovers by rescheduling onto a healthy
+  # node with its durable PVC.
