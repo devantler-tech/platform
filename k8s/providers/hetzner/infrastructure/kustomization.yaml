@@ -46,19 +46,17 @@ resources:
   # no real pods, so nothing sits Pending and it rides along here like any other
   # resource. Hetzner/prod-only (the autoscaler pools are Hetzner).
   #
-  # TEMPORARILY DISABLED (2026-06-16): the CapacityBuffer CRD
-  # (autoscaling.x-k8s.io/v1beta1) is installed by KSail only from a release that
-  # contains ksail#5277, but the pinned KSAIL_VERSION (7.58.3, ci.yaml/cd.yaml)
-  # predates it (5277 merged after the 7.58.3 release). So the CapacityBuffer CR
-  # fails server-side apply ("no matches for kind CapacityBuffer in version
-  # autoscaling.x-k8s.io/v1beta1"), which wedged the whole `infrastructure`
-  # Kustomization (and its `apps` dependent) — exactly the deploy-ordering gate
-  # that ksail.prod.yaml warns about. Re-enable this line once a KSail release
-  # with #5277 ships AND KSAIL_VERSION is bumped + deployed (so the CRD +
-  # controller exist before this CR reconciles). No over-provisioning headroom
-  # until then, which is acceptable — the old balloon-pod buffer was already
-  # removed in #2087.
-  # - overprovisioning/
+  # The CapacityBuffer CRD (autoscaling.x-k8s.io/v1beta1) + controller are
+  # installed by KSail only from a release that ships ksail#5277, first released
+  # in v7.59.0. The pinned KSAIL_VERSION is now 7.59.1 (ci.yaml/cd.yaml, bumped in
+  # #2097), so the gate is satisfied. Deploy ordering keeps the first apply safe:
+  # `ksail cluster update` (installs the CRD + controller) runs before `ksail
+  # workload reconcile` (applies this CR) in both cd.yaml and the ci.yaml
+  # merge-queue deploy, so the CRD always exists before Flux reconciles the
+  # CapacityBuffer — no "no matches for kind CapacityBuffer" wedge. (It was
+  # TEMPORARILY DISABLED 2026-06-16..#2097 while the pin still read 7.58.3, which
+  # predated #5277; the old balloon-pod buffer was already removed in #2087.)
+  - overprovisioning/
   #
   # NOTE: tenant-owned custom-domain TLS (the ascoachingogvaner.dk Certificate +
   # its simply.com DNS01 solver credential) is NOT a platform resource at all —
