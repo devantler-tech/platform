@@ -20,3 +20,4 @@ resources:
   - helm-release.yaml
   - helm-repository.yaml
   - networkpolicy.yaml
+  - pod-disruption-budget.yaml
