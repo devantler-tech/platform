@@ -29,6 +29,13 @@ spec:
     # pod cannot exfiltrate to arbitrary external services:
     # - grype/toolbox-data.anchore.io — kubevuln's Grype vulnerability DB
     # - api.armosec.io                — Kubescape backend (version/artifacts)
+    # - report.armo.cloud            — posture/scan report ingestion. The
+    #   scanner POSTs each postureReport here as the final step of a config
+    #   scan; with this host missing the submit times out and the WHOLE scan
+    #   errors out ("failed to submit scan results … report.armo.cloud …
+    #   i/o timeout"), so NO config-scan results persist to the in-cluster
+    #   storage API and the cluster has a 0/blank compliance score. Same
+    #   trust domain as the already-allowed api.armosec.io.
     # - github.com + CDNs             — regolibrary / controls artifacts
     # If scan components log download failures, extend this list with the
     # missing host (failure mode is stale scan data, not an outage).
@@ -36,6 +43,7 @@ spec:
         - matchName: "grype.anchore.io"
         - matchName: "toolbox-data.anchore.io"
         - matchName: "api.armosec.io"
+        - matchName: "report.armo.cloud"
         - matchName: "github.com"
         - matchName: "api.github.com"
         - matchName: "objects.githubusercontent.com"
