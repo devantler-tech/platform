@@ -28,7 +28,15 @@ spec:
     # External endpoints, pinned by FQDN instead of world:443 so a compromised
     # pod cannot exfiltrate to arbitrary external services:
     # - grype/toolbox-data.anchore.io — kubevuln's Grype vulnerability DB
-    # - api.armosec.io                — Kubescape backend (version/artifacts)
+    # - api.armosec.io                — Kubescape backend (version check only;
+    #   vestigial under offline mode, kept harmless — its failure mode is a
+    #   skipped version check, not an outage).
+    #   NOTE: report.armo.cloud (ARMO posture-report ingestion) is deliberately
+    #   NOT allowed — the operator runs OFFLINE (capabilities.kubescapeOffline:
+    #   enable, see helm-release.yaml), so config-scan results persist to the
+    #   in-cluster storage component instead of being POSTed to ARMO. There is
+    #   no ARMO account, so the submit only ever 400'd "missing account id" and
+    #   aborted the scan; offline mode removes that dependency entirely.
     # - github.com + CDNs             — regolibrary / controls artifacts
     # If scan components log download failures, extend this list with the
     # missing host (failure mode is stale scan data, not an outage).
@@ -40,6 +48,41 @@ spec:
         - matchName: "api.github.com"
         - matchName: "objects.githubusercontent.com"
         - matchName: "raw.githubusercontent.com"
+        # Config scan: the Regolibrary controls/frameworks bundle is a GitHub
+        # release asset. github.com (above) 302-redirects the download to this
+        # release-asset CDN; without it the fetch times out and EVERY config
+        # scan fails ("open .../allcontrols.json: no such file or directory"),
+        # so the cluster has no posture/compliance scanning at all.
+        - matchName: "release-assets.githubusercontent.com"
+        # Vuln scan: kubevuln builds an SBOM per workload image, so it pulls
+        # manifests + layer blobs from every registry the cluster runs images
+        # from (docker.io, quay.io, ghcr.io, registry.k8s.io, reg.kyverno.io).
+        # Without these every image fails with "creating SBOM, skipping scan:
+        # ... i/o timeout" and vulnerabilityScan reports nothing. Each registry
+        # serves blobs from its own CDN, so the API host alone is not enough.
+        # ghcr.io (GitHub Container Registry) — blobs on the GitHub package CDN:
+        - matchName: "ghcr.io"
+        - matchName: "pkg-containers.githubusercontent.com"
+        # docker.io — registry v2 + token endpoints; blobs on the Cloudflare CDN:
+        - matchName: "index.docker.io"
+        - matchName: "registry-1.docker.io"
+        - matchName: "auth.docker.io"
+        - matchName: "production.cloudflare.docker.com"
+        # quay.io — registry + its documented blob CDN hosts:
+        - matchName: "quay.io"
+        - matchName: "cdn01.quay.io"
+        - matchName: "cdn02.quay.io"
+        - matchName: "cdn03.quay.io"
+        # registry.k8s.io — redirects blob pulls to its Google Artifact Registry
+        # backing store (*.pkg.dev) and, for EU clients, to its prod S3 mirror
+        # buckets — kubevuln logged i/o timeouts pulling e.g. vpa-recommender from
+        # prod-registry-k8s-io-eu-central-1.s3.dualstack.eu-central-1.amazonaws.com.
+        # The pattern is scoped to the registry's own prod buckets (not all of S3):
+        - matchName: "registry.k8s.io"
+        - matchPattern: "*.pkg.dev"
+        - matchPattern: "prod-registry-k8s-io-*.s3.dualstack.*.amazonaws.com"
+        # reg.kyverno.io — Kyverno's image registry:
+        - matchName: "reg.kyverno.io"
       toPorts:
         - ports:
             - port: "443"

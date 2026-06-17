@@ -3,7 +3,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
-  - certificates/
   - cluster-issuers/
   # Crossplane provider-upjet-github package + activation policy. Lives in this
   # `infrastructure` layer (not `infrastructure/controllers/`) because these are
@@ -43,15 +42,39 @@ resources:
   # http.keda.sh CRD shipped by the keda-http-add-on HelmRelease is established
   # first. longhorn-system is Hetzner-only, so this can't live in bases/.
   - http-scaled-objects/
-  # NOTE: the over-provisioning ("spare room") buffer intentionally does NOT
-  # live in this layer. Its pause pods are EXPECTED to sit Pending whenever the
-  # autoscaler is at maxNodesTotal, and this layer is reconciled with
-  # `wait: true` — health-gating on an expected-Pending ReplicaSet held
-  # `infrastructure` (and its `apps` dependent + every CI/CD deploy) red for
-  # hours. It is applied by the dedicated, non-health-gated
-  # `infrastructure-overprovisioning` Flux Kustomization instead — see
-  # k8s/clusters/prod/overprovisioning-flux-kustomization.yaml and
-  # ../infrastructure-overprovisioning/.
+  # Prod-only over-provisioning ("spare room") buffer: the native Cluster
+  # Autoscaler CapacityBuffer + its PodTemplate. KSail installs the CRD +
+  # controller when ksail.prod.yaml's autoscaler.node.capacityBuffers: true is
+  # set; this reserves one warm spare node as VIRTUAL (pod-less) headroom.
+  # Unlike the old balloon-pod ReplicaSet (+ its cluster-proportional-autoscaler)
+  # — which had to live OUTSIDE this health-gated `wait: true` layer because its
+  # pause pods sat Pending and held `infrastructure` (+ its `apps` dependent +
+  # every CI/CD deploy) red for ~30h on 2026-06-09/10 — the native buffer creates
+  # no real pods, so nothing sits Pending and it rides along here like any other
+  # resource. Hetzner/prod-only (the autoscaler pools are Hetzner).
+  #
+  # The CapacityBuffer CRD (autoscaling.x-k8s.io/v1beta1) + controller are
+  # installed by KSail only from a release that ships ksail#5277, first released
+  # in v7.59.0. The pinned KSAIL_VERSION is now 7.59.1 (ci.yaml/cd.yaml, bumped in
+  # #2097), so the gate is satisfied. Deploy ordering keeps the first apply safe:
+  # `ksail cluster update` (installs the CRD + controller) runs before `ksail
+  # workload reconcile` (applies this CR) in both cd.yaml and the ci.yaml
+  # merge-queue deploy, so the CRD always exists before Flux reconciles the
+  # CapacityBuffer — no "no matches for kind CapacityBuffer" wedge. (It was
+  # TEMPORARILY DISABLED 2026-06-16..#2097 while the pin still read 7.58.3, which
+  # predated #5277; the old balloon-pod buffer was already removed in #2087.)
+  - overprovisioning/
+  #
+  # NOTE: tenant-owned custom-domain TLS (the ascoachingogvaner.dk Certificate +
+  # its simply.com DNS01 solver credential) is NOT a platform resource at all —
+  # it lives in the tenant's own deploy/ (a namespaced cert-manager Issuer +
+  # Certificate + ReferenceGrant), delivered by the tenant Flux Kustomization.
+  # That credential/issuance is EXPECTED to sit InProgress until the maintainer
+  # seeds apps/ascoachingogvaner/simply in OpenBao; keeping it in the tenant means
+  # only the (isolated) tenant Kustomization is affected, never this `wait: true`
+  # layer. The platform keeps only the shared Gateway HTTPS listener patch
+  # (ascoachingogvaner-dk-listeners-patch.yaml, below), which references the
+  # tenant Secret cross-namespace and stays Ready (Gateway Programmed) regardless.
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
   # opencost HelmRelease in this layer. See

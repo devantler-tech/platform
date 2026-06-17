@@ -109,7 +109,7 @@ spec:
                     secretKeyRef:
                       name: umami-admin
                       key: password
-                # One-time BOOTSTRAP password for the AS Coaching og Vaner customer's
+                # One-time BOOTSTRAP password for the AS - Coaching, vaner og ro customer's
                 # read-only login, OpenBao-generated (apps/umami/ascoachingogvaner) and
                 # referenced by the member's `passwordEnv` in TENANTS below. Used only
                 # at account creation; the customer changes it on first login and owns
@@ -143,7 +143,7 @@ spec:
                       {
                         "team": "ascoachingogvaner",
                         "websites": [
-                          { "id": "5e76b00b-67e5-4aef-b4df-17fca43e9a33", "name": "AS Coaching og Vaner", "domain": "ascoachingogvaner.platform.devantler.tech" }
+                          { "id": "5e76b00b-67e5-4aef-b4df-17fca43e9a33", "name": "AS - Coaching, vaner og ro", "domain": "ascoachingogvaner.dk" }
                         ],
                         "members": [
                           { "username": "ascoachingogvaner", "passwordEnv": "ASCOACHINGOGVANER_PASSWORD", "accountRole": "view-only", "teamRole": "team-view-only" }
@@ -207,10 +207,23 @@ spec:
                     // is what crashed every run, leaving Umami with no websites.)
                     const w = g.ok ? await g.json() : null;
                     if (w && w.id) {
-                      if (w.teamId === teamId) { console.log('website ok:', s.domain); return; }
-                      const t = await fetch(base + '/api/websites/' + s.id + '/transfer', { method: 'POST', headers: H(token), body: JSON.stringify({ teamId }) });
-                      if (!t.ok) throw new Error('transfer website ' + s.domain + ' failed: ' + t.status + ' ' + (await t.text()));
-                      console.log('website moved to team:', s.domain);
+                      // Move a pre-existing personal site into its team.
+                      if (w.teamId !== teamId) {
+                        const t = await fetch(base + '/api/websites/' + s.id + '/transfer', { method: 'POST', headers: H(token), body: JSON.stringify({ teamId }) });
+                        if (!t.ok) throw new Error('transfer website ' + s.domain + ' failed: ' + t.status + ' ' + (await t.text()));
+                        console.log('website moved to team:', s.domain);
+                      }
+                      // Reconcile name/domain so TENANTS stays the source of truth for an
+                      // existing site too (Umami updates via POST to the website id) — e.g. a
+                      // domain migration applies on the next tick instead of a hand-edit in
+                      // the Umami UI. Guarded so a steady-state tick stays a no-op.
+                      if (w.name !== s.name || w.domain !== s.domain) {
+                        const u = await fetch(base + '/api/websites/' + s.id, { method: 'POST', headers: H(token), body: JSON.stringify({ name: s.name, domain: s.domain }) });
+                        if (!u.ok) throw new Error('update website ' + s.domain + ' failed: ' + u.status + ' ' + (await u.text()));
+                        console.log('website updated:', s.domain);
+                      } else {
+                        console.log('website ok:', s.domain);
+                      }
                       return;
                     }
                     const c = await fetch(base + '/api/websites', { method: 'POST', headers: H(token), body: JSON.stringify({ id: s.id, name: s.name, domain: s.domain, teamId }) });

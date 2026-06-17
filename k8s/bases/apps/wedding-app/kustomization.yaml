@@ -2,11 +2,16 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
+  # db-backup-external-secret stays platform-side: it projects the SHARED R2
+  # backup credential from the infra OpenBao path via the ClusterSecretStore
+  # (flux-system-applied), which a tenant SecretStore cannot reach. The tenant's
+  # own CiliumNetworkPolicy (networkpolicy.yaml) and namespaced SecretStore now
+  # live in the tenant repo's deploy/.
+  - db-backup-external-secret.yaml
+  - db-object-store.yaml
   - ghcr-auth-externalsecret.yaml
   - namespace.yaml
   - rolebinding.yaml
-  - secretstore.yaml
   - serviceaccount.yaml
   - sops-age-secret.enc.yaml
   - sync.yaml
-  - networkpolicy.yaml

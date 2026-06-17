@@ -1,0 +1,50 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: plugin-barman-cloud
+  namespace: cnpg-system
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  # CNPG-I Barman Cloud Plugin — the supported replacement for the in-tree
+  # spec.backup.barmanObjectStore, which CNPG deprecated in 1.26 and removes in
+  # 1.30.0. Clusters opt in via spec.plugins + an ObjectStore CR
+  # (barmancloud.cnpg.io) instead of an inline backup block; see apps/umami and
+  # apps/wedding-app for the migrated consumers.
+  #
+  # The chart ships the ObjectStore CRD and its own cert-manager Issuer +
+  # server/client Certificates for the mTLS channel between the plugin and the
+  # operator, so it must come up after cert-manager and the CNPG operator (both
+  # in this controller set). Reuses the shared `cloudnative-pg` HelmRepository.
+  dependsOn:
+    - name: cert-manager
+      namespace: cert-manager
+    - name: cloudnative-pg
+      namespace: cnpg-system
+  interval: 10m
+  timeout: 10m
+  chart:
+    spec:
+      chart: plugin-barman-cloud
+      version: 0.7.0
+      sourceRef:
+        kind: HelmRepository
+        name: cloudnative-pg
+  # Chart defaults install into the release namespace (cnpg-system) with a single
+  # replica; raise replicaCount once the operator↔plugin path is verified if HA
+  # is wanted (the operator retries, so a brief plugin restart only delays
+  # backups, it does not drop the database).
+  values:
+    # Intentionally single-replica: this chart (0.7.0) exposes no leaderElection
+    # knob, so >1 replica would run two uncoordinated backup controllers. It is a
+    # controller off every request-serving path — a node drain only briefly
+    # interrupts backup reconciliation (the CNPG operator retries), never user
+    # traffic — so the require-replica-floor (#1882) HA floor of 2 is *wrong*
+    # here, exactly like the other single-by-design controllers it exempts
+    # (csi-snapshotter, longhorn-driver-deployer, …). Opt out with the policy's
+    # durable, self-documenting pod-template label rather than leaving a standing
+    # PolicyReport violation.
+    podLabels:
+      platform.devantler.tech/replica-floor: exempt

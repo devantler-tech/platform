@@ -51,6 +51,24 @@ spec:
           - resources:
               kinds:
                 - Deployment
+      exclude:
+        any:
+          # A Flagger PRIMARY is never a canary SOURCE: it inherits the reloader
+          # annotation (this rule copies it onto the primary), so it would
+          # re-match and target a non-existent "<name>-primary-primary",
+          # erroring in PolicyReports (observed: umami-umami-primary).
+          - resources:
+              names:
+                - "?*-primary"
+          # Apps that use Reloader directly with no Flagger canary, so no
+          # "<name>-primary" target exists -- the mutate-existing target fails to
+          # resolve and errors ("deployments.apps headlamp-primary not found")
+          # instead of the intended harmless no-op the header comment describes.
+          # (fleetdm/fleet carries no reloader annotation today; add it here if
+          # that changes.)
+          - resources:
+              names:
+                - headlamp
       preconditions:
         all:
           - key: "{{ request.object.metadata.annotations.\"secret.reloader.stakater.com/reload\" || '' }}"

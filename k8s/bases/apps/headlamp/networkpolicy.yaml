@@ -23,6 +23,11 @@ spec:
     # from GitHub releases (helm-release.yaml). Pinned by FQDN instead of
     # world:443 so a compromised pod cannot exfiltrate to arbitrary
     # external services.
+    # github.com 302-redirects a release-asset download
+    # (github.com/<org>/<repo>/releases/download/...) to this release-asset
+    # CDN; without it every plugin archive fetch times out, the
+    # headlamp-plugin sidecar crashloops and the dashboard ships with no
+    # plugins. Same gap the kubescape policy already had to close.
     - toFQDNs:
         - matchName: "dex.${domain}"
         - matchName: "artifacthub.io"
@@ -30,6 +35,7 @@ spec:
         - matchName: "api.github.com"
         - matchName: "objects.githubusercontent.com"
         - matchName: "raw.githubusercontent.com"
+        - matchName: "release-assets.githubusercontent.com"
       toPorts:
         - ports:
             - port: "443"

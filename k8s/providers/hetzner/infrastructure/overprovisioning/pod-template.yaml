@@ -1,0 +1,85 @@
+# Shape of ONE over-provisioning buffer chunk, referenced by capacity-buffer.yaml
+# via spec.podTemplateRef. The native Cluster Autoscaler capacity-buffer
+# controller — enabled by ksail.prod.yaml's
+# spec.cluster.autoscaler.node.capacityBuffers: true — reads this template and
+# injects VIRTUAL, pod-less placeholder pods of this shape into the autoscaler's
+# in-memory scheduling simulation, reserving scale-up headroom without ever
+# creating a real pod. KSail installs the CapacityBuffer CRD and controller;
+# this PodTemplate + the CapacityBuffer are the workload definition we own.
+#
+# === Sizing (TUNE ME) ===
+# 2 CPU / 4Gi per chunk x replicas: 1 (see capacity-buffer.yaml) == one warm
+# spare node. The smallest overflow pool is cx33 (4 vCPU / 8 GB; see
+# ksail.prod.yaml). A fresh cx33 must also run the per-node kube-system
+# DaemonSets (cilium, spire-agent, tetragon, hcloud-csi node, ...), which take
+# ~0.3 CPU / ~1.5 GB, so the chunk is deliberately set BELOW raw allocatable to
+# guarantee it still fits a brand-new cx33 (otherwise the autoscaler would jump
+# to a pricier cx43). 2 CPU / 4Gi is also far too large to squeeze onto the
+# already-loaded baseline workers, so it reliably forces a new autoscaler node.
+# Widen the buffer by raising capacity-buffer.yaml's replicas (one warm node per
+# chunk) or this per-chunk request -- bounded by ksail.prod.yaml's
+# maxNodesTotal: 10.
+#
+# The pod spec is never instantiated (the buffer pods are virtual), so the
+# securityContext / automountServiceAccountToken hardening below is
+# belt-and-suspenders for posture consistency, not a runtime requirement. The
+# soft nodeAffinity keeps the simulated demand biased onto the cheap autoscaler
+# pools once KSail stamps the `ksail.io/autoscaled` node label.
+apiVersion: v1
+kind: PodTemplate
+metadata:
+  name: overprovisioning
+  namespace: overprovisioning
+  labels:
+    app.kubernetes.io/name: overprovisioning
+    app.kubernetes.io/component: cluster-buffer
+    app.kubernetes.io/part-of: platform
+template:
+  metadata:
+    labels:
+      app.kubernetes.io/name: overprovisioning
+      app.kubernetes.io/component: cluster-buffer
+      app.kubernetes.io/part-of: platform
+  spec:
+    # Nothing to talk to and nothing to authenticate as.
+    automountServiceAccountToken: false
+    # Filler workload — no graceful drain needed.
+    terminationGracePeriodSeconds: 0
+    # SOFT (preferred): once KSail stamps the `ksail.io/autoscaled` node label,
+    # bias the simulated buffer demand onto the cheap autoscaler pools rather
+    # than the static baseline workers.
+    affinity:
+      nodeAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+                - key: ksail.io/autoscaled
+                  operator: Exists
+    containers:
+      - name: pause
+        # Upstream Kubernetes pause image. Digest-pinned like every other raw
+        # pod image in the repo; Renovate's kubernetes manager keeps tag and
+        # digest updated together. Never actually pulled (the chunk is virtual);
+        # it only declares a valid, realistic chunk shape.
+        image: registry.k8s.io/pause:3.10@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+        resources:
+          requests:
+            cpu: "2"
+            memory: 4Gi
+          limits:
+            cpu: "2"
+            memory: 4Gi
+        # PSS restricted-compliant, matching the old pause pod's posture.
+        securityContext:
+          allowPrivilegeEscalation: false
+          privileged: false
+          runAsNonRoot: true
+          runAsUser: 65534
+          runAsGroup: 65534
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault

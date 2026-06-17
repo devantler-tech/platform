@@ -23,6 +23,23 @@ spec:
     crds: CreateReplace
   # https://github.com/cert-manager/cert-manager/blob/master/deploy/charts/cert-manager/values.yaml
   values:
+    # DNS-01 self-check resolvers. Before asking the CA to validate, cert-manager
+    # must itself observe the ACME `_acme-challenge` TXT record. By default it
+    # resolves through the in-cluster chain (CoreDNS -> the node's upstream
+    # resolver), which on this cluster does NOT observe freshly-created TXT
+    # records in tenant zones: a www.ascoachingogvaner.dk challenge record that
+    # was already live on all authoritative nameservers (ns1/2/3.simply.com) AND
+    # on every public resolver (1.1.1.1/8.8.8.8/9.9.9.9) still failed
+    # cert-manager's self check ("DNS record ... not yet propagated")
+    # indefinitely, blocking ascoachingogvaner.dk issuance (apex took ~3h; www
+    # never completed). The zone's 3600s SOA negative-cache (minimum) TTL makes
+    # the in-cluster path pathologically slow/stale. Query public recursive
+    # resolvers directly instead (reachable via the allow-cert-manager world:53
+    # egress). This is cert-manager's documented remedy for unreliable
+    # in-cluster self-check DNS; it affects only the self check, never the
+    # authoritative CA-side validation, and is fully reversible.
+    dns01RecursiveNameservers: "1.1.1.1:53,8.8.8.8:53,9.9.9.9:53"
+    dns01RecursiveNameserversOnly: true
     # Restricted PSS baseline: add runAsNonRoot to container SCs (chart leaves it unset, which fails validate-container-security).
     containerSecurityContext:
       allowPrivilegeEscalation: false

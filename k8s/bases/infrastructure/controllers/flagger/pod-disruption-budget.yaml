@@ -7,9 +7,9 @@ spec:
   # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880).
   # The chart's own podDisruptionBudget value only offers minAvailable (the
   # shape validate-pdb-drain-safe flags), so the PDB is declared here instead.
-  # Flagger runs leader-elected (flagger_replicas: 3 in prod, warm standbys);
-  # bounding evictions to one pod at a time keeps a leader available while a
-  # canary analysis is in flight.
+  # Flagger runs leader-elected (flagger_replicas: 2 in prod, one leader + a warm
+  # standby); bounding evictions to one pod at a time keeps a leader available
+  # while a canary analysis is in flight.
   maxUnavailable: 1
   selector:
     matchLabels:

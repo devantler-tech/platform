@@ -14,7 +14,12 @@ There are two halves to onboarding, in two repos:
    via [template-sync](https://github.com/AndreasAugustin/actions-template-sync).
 2. **The platform registration** — a small directory in *this* repo under
    `k8s/bases/apps/<tenant>/` that grants the tenant a namespace, identity, RBAC,
-   network policy, and the Flux resources that pull its artifact.
+   and the Flux resources that pull its artifact. The tenant's own
+   `CiliumNetworkPolicy` allow-lists and its namespaced `SecretStore` live in the
+   **tenant repo's `deploy/`** — the platform provides only the default-deny
+   network floor and the Vault role those resources authenticate against, and
+   grants the tenant `edit` aggregates (`cilium-tenant-edit`,
+   `external-secrets-tenant-edit`) so its ServiceAccount may manage them.
 
 Use an existing tenant —
 [`k8s/bases/apps/ascoachingogvaner/`](../k8s/bases/apps/ascoachingogvaner) — as
@@ -91,10 +96,12 @@ and workloads consume the values **from OpenBao via `ExternalSecret`s**.
   [`vault-config/job.yaml`](../k8s/bases/infrastructure/vault-config/job.yaml) add
   an `app-<tenant>` policy scoped to `secret/{data,metadata}/apps/<tenant>/*` (read
   **+ write**, so the tenant can seed) and a dedicated `auth/kubernetes/role/<tenant>`
-  bound to the tenant SA (mirror `app-wedding-app` + the `wedding-app` role); drop a
-  `secretstore.yaml` (`kind: SecretStore`, named `openbao`) into the registration
-  dir (mirror `wedding-app/`). The store can never reach infra or another tenant's
-  path, and the platform does **not** seed tenant app values.
+  bound to the tenant SA (mirror `app-wedding-app` + the `wedding-app` role). The
+  tenant ships its own namespaced `secretstore.yaml` (`kind: SecretStore`, named
+  `openbao`) in its `deploy/` — its `edit` RoleBinding aggregates
+  `external-secrets-tenant-edit`, so it owns the store too. The store can never
+  reach infra or another tenant's path, and the platform does **not** seed tenant
+  app values.
 
 ### The GHCR image-pull secret (`ghcr-auth`)
 
@@ -129,10 +136,10 @@ artifacts produced by that trusted workflow are ever reconciled onto the cluster
 
 ## 5. Register the tenant on the platform
 
-Add `k8s/bases/apps/<tenant>/` — copy `wedding-app/` (a tenant with app secrets
-+ a namespaced SecretStore) or `ascoachingogvaner/` (a static tenant that also
-runs a **tenant-owned external-dns** for its custom domain, with the extra
-`external-dns-*` grants below) and rename — with:
+Add `k8s/bases/apps/<tenant>/` — copy `wedding-app/` (a tenant with app secrets)
+or `ascoachingogvaner/` (a static tenant that also runs a **tenant-owned
+external-dns** for its custom domain, with the extra `external-dns-rbac.yaml`
+grant below) and rename — with:
 
 | File | Purpose |
 |---|---|
@@ -140,12 +147,18 @@ runs a **tenant-owned external-dns** for its custom domain, with the extra
 | `namespace.yaml` | Namespace, `pod-security.kubernetes.io/enforce: restricted` |
 | `serviceaccount.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
 | `rolebinding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
-| `networkpolicy.yaml` | Cilium policy: ingress from the Gateway on the app port; egress DNS (+ CNPG/metrics if needed) |
 | `ghcr-auth-externalsecret.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret |
-| `secretstore.yaml` | *Only if the tenant needs app secrets* — namespaced `SecretStore` (`kind: SecretStore`, name `openbao`) authenticating via the tenant's Vault role (mirror `wedding-app/`) |
 | `external-dns-rbac.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — binds the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
-| `external-dns-networkpolicy.yaml` | *Same condition* — egress for the external-dns pods: kube-apiserver + the DNS provider's API, FQDN-pinned |
 | `sync.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + `Kustomization` (prune, `serviceAccountName: <tenant>`) |
+
+> **Tenant-owned (in the tenant repo's `deploy/`, not here):** the
+> `CiliumNetworkPolicy` allow-lists (`networkpolicy.yaml`, and
+> `external-dns-networkpolicy.yaml` for an external-dns tenant) and — for a tenant
+> with app secrets — the namespaced `secretstore.yaml`. The tenant's `edit`
+> RoleBinding aggregates `cilium-tenant-edit` and `external-secrets-tenant-edit`,
+> so its ServiceAccount applies them from its own artifact; the platform keeps
+> only the default-deny floor, the `external-dns-rbac.yaml` cross-namespace
+> grants, and the Vault role/policy.
 
 In `sync.yaml`, update the `name`/`namespace`/`url`
 (`oci://ghcr.io/devantler-tech/<tenant>/manifests`) and keep the `verify` block

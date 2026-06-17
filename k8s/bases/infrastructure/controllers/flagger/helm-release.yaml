@@ -37,11 +37,19 @@ spec:
     meshProvider: gatewayapi:v1
 
     # HA: Flagger elects a single leader to drive canaries; the other replicas
-    # are warm standbys. leaderElection MUST be enabled before replicas > 1, or
-    # every replica double-drives each canary. require-replica-floor policy.
+    # are warm standbys. leaderElection.enabled MUST stay true before replicas >
+    # 1, or every replica double-drives each canary. require-replica-floor policy.
+    #
+    # The replica count MUST be set as leaderElection.replicaCount: this chart has
+    # NO top-level `replicaCount` (its values.yaml exposes the count only under
+    # leaderElection), so a top-level replicaCount is silently dropped by Helm and
+    # the Deployment renders replicas: 1. That is why flagger ran a single replica
+    # in prod despite flagger_replicas being "2" -- the HA gap require-replica-floor
+    # (#1882) kept flagging. Wiring flagger_replicas to leaderElection.replicaCount
+    # makes the value actually take effect.
     leaderElection:
       enabled: true
-    replicaCount: ${flagger_replicas:=1}
+      replicaCount: ${flagger_replicas:=1}
 
     # Reuse Coroot's bundled Prometheus (the metrics TSDB the coroot-operator
     # deploys, the same endpoint OpenCost queries). Coroot's eBPF node-agent
