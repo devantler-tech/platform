@@ -5,7 +5,5 @@ resources:
   - namespace.yaml
   - serviceaccount.yaml
   - rbac.yaml
-  - ghcr-auth-externalsecret.yaml
-  - external-secret.yaml
-  - provider-config.yaml
+  - secretstore.yaml
   - sync.yaml

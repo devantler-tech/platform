@@ -704,7 +704,7 @@ spec:
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,infra-github-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,vault-seed-write \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,vault-seed-write \
                 ttl=1h
 
               # Dedicated role for the fleetdm VaultDynamicSecret generator.
@@ -725,6 +725,19 @@ spec:
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=umami \
                 policies=app-umami-db-readonly \
+                ttl=1h
+
+              # Dedicated tenant role for github-config. Authenticates the app's
+              # own `github-config` ServiceAccount (used by its namespaced
+              # SecretStore, k8s/bases/apps/github-config/secretstore.yaml) and
+              # carries ONLY `infra-github-readonly` (read on
+              # secret/data/infrastructure/github/*) — never the broad
+              # `external-secrets` bundle — so the tenant can read the GitHub App
+              # credential and nothing else.
+              bao write auth/kubernetes/role/github-config \
+                bound_service_account_names=github-config \
+                bound_service_account_namespaces=github-config \
+                policies=infra-github-readonly \
                 ttl=1h
 
               # Dedicated tenant role for wedding-app. Authenticates the tenant's

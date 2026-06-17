@@ -35,9 +35,9 @@ CRs one tier later in `infrastructure/`, the workload in `apps/`:
 |---|---|---|
 | Crossplane core | `k8s/providers/hetzner/infrastructure/controllers/crossplane/` | HelmRelease; prod-only. `provider.defaultActivations: []` keeps unused provider CRDs inactive. Installs the pkg.crossplane.io CRDs. |
 | Provider + activation policy | `k8s/providers/hetzner/infrastructure/crossplane/` | The `Provider` package + `DeploymentRuntimeConfig` + `ManagedResourceActivationPolicy` (namespaced MRDs only). One tier after the controller (needs its CRDs), like Coroot/Flagger CRs. Establishes the namespaced github CRDs. |
-| The `github-config` app | `k8s/bases/apps/github-config/` | Standard app onboarding: namespace, SA, least-privilege `Role`, GitHub App + ghcr credential `ExternalSecret`s, the namespaced `ProviderConfig`, and the cosign-verified `OCIRepository` + `Kustomization`. Applied by the existing `apps` Flux Kustomization. Prod-only in practice (the docker provider deploys no apps). |
-| Desired state | [`devantler-tech/.github`](https://github.com/devantler-tech/.github) `deploy/` | The actual `Repository`/ruleset/label managed resources. Published as a cosign-signed OCI artifact to `ghcr.io/devantler-tech/github-config/manifests` on `v*` tags by the shared `publish-manifests` reusable workflow. |
-| Credentials | OpenBao `secret/infrastructure/github/app` | GitHub App (`app_id`, `installation_id`, `pem`). **Placeholders are seeded declaratively (only-if-absent) by the vault-config bootstrap Job** — no SOPS; the maintainer overwrites them in place via the OpenBao UI/CLI (see below). The `github-app-credentials` `ExternalSecret` reads them and renders the provider's JSON credential format. |
+| The `github-config` app (platform scaffolding) | `k8s/bases/apps/github-config/` | namespace, SA, least-privilege `Role`, the namespaced `SecretStore`, and the cosign-verified `OCIRepository` + `Kustomization`. Applied by the existing `apps` Flux Kustomization. Prod-only in practice (the docker provider deploys no apps). The package is **public**, so the OCIRepository pulls anonymously — no ghcr pull credential. |
+| Desired state (tenant-owned) | [`devantler-tech/.github`](https://github.com/devantler-tech/.github) `deploy/` | The `Repository`/ruleset/label managed resources, **plus the tenant-specific `github-app-credentials` `ExternalSecret` and the namespaced `ProviderConfig`** (applied by the app's own SA). Published as a cosign-signed OCI artifact to `ghcr.io/devantler-tech/github-config/manifests` on `v*` tags by the shared `publish-manifests` reusable workflow. |
+| Credentials | OpenBao `secret/infrastructure/github/app` | GitHub App (`app_id`, `installation_id`, `pem`). **Placeholders are seeded declaratively (only-if-absent) by the vault-config bootstrap Job** — no SOPS; the maintainer overwrites them in place via the OpenBao UI/CLI (see below). The tenant's `ExternalSecret` reads them via the **namespaced `SecretStore`** (auth role `github-config`, scoped to `infrastructure/github/*` only — never the broad cluster store) and renders the provider's JSON credential format. |
 
 Ordering is the normal chain: `apps` `dependsOn` `infrastructure`, so by the
 time the app reconciles, the provider (infrastructure tier) has installed the
@@ -114,8 +114,14 @@ reconcile, then batch the rest.
   a real GitHub repository.
 - **Observe-first adoption** — a new managed resource for an existing object
   always starts `managementPolicies: ["Observe"]` (read-only).
-- **Least privilege** — the app SA's authority is a namespaced `Role` over the
-  GitHub MR API groups only, never aggregated into `edit`.
+- **Least privilege (RBAC)** — the app SA's authority is a namespaced `Role`
+  over the GitHub MR groups + its own `ProviderConfig`/`ExternalSecret` only,
+  never aggregated into `edit`.
+- **Least privilege (secrets)** — the tenant reads OpenBao through a
+  **namespaced `SecretStore`** backed by a dedicated `github-config` Vault role
+  scoped to `infrastructure/github/*` only; it never touches the shared
+  cluster-scoped `openbao` ClusterSecretStore (the `restrict-tenant-secret-stores`
+  Kyverno policy enforces this for tenant-applied ExternalSecrets).
 - The GitHub App credential is org-scoped and short-lived per request; the
   provider pod's egress is FQDN-pinned to `api.github.com` by the
   `crossplane-system` CiliumNetworkPolicy.

@@ -18,9 +18,9 @@ spec:
     semver: ">=1.0.0"
   # .github is an invalid OCI path component (leading dot), so the artifact is
   # published under the `github-config` name — see devantler-tech/.github cd.yaml.
+  # No secretRef: the package is public (non-secret org config), so it is pulled
+  # anonymously — the tenant needs no GHCR pull credential.
   url: oci://ghcr.io/devantler-tech/github-config/manifests
-  secretRef:
-    name: ghcr-auth
   verify:
     provider: cosign
     matchOIDCIdentity:
