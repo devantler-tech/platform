@@ -1,9 +1,18 @@
 name: CD
 
 on:
+  # Release-tag deploys: semantic-release tags a version on every fix/feat/perf
+  # merge, which publishes + signs the manifests and reconciles Flux.
   push:
     tags:
       - 'v*'
+  # Manual deploy of the current default branch — the recovery/escape hatch for
+  # when the tag-driven path can't ship a known-good main: e.g. a CD-pipeline
+  # fix lands as a non-releasing commit (ci:/chore: cut no semantic-release tag,
+  # so the change sits in main undeployed), or an incident froze release deploys.
+  # Still gated by the `prod` environment approval and the shared prod-deploy
+  # concurrency group below; checks out and ships main HEAD.
+  workflow_dispatch: {}
 
 permissions: {}
 
