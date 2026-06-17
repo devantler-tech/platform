@@ -1,0 +1,25 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: opencost
+  namespace: opencost
+spec:
+  # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 keeps the node
+  # drainable at any replica count, and with the 2-replica HA floor it keeps one
+  # OpenCost pod serving the cost API/UI through a node drain/failure (this is
+  # what clears Coroot's "single instance — not resilient to node failure" flag;
+  # 2 replicas without a PDB are still both evictable at once).
+  #
+  # OpenCost is a Flagger target like homepage/umami: the selector keys on
+  # app.kubernetes.io/instance (NOT /name) because Flagger's default
+  # --selector-labels rewrites app.kubernetes.io/name to "opencost-primary" on
+  # the primary Deployment, while instance=opencost stays intact on the running
+  # pods (see infrastructure/flagger/canary-opencost.yaml). The disruption
+  # controller sums the scales of every controller this selector matches
+  # (opencost-primary + the scaled-to-0 canary source Deployment), so
+  # maxUnavailable: 1 permits exactly one eviction at the steady state and stays
+  # 1-at-a-time during a rollout.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: opencost
