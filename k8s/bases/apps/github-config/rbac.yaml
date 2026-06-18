@@ -26,6 +26,7 @@ metadata:
 rules:
   - apiGroups:
       - repo.github.m.upbound.io
+      - team.github.m.upbound.io
       - actions.github.m.upbound.io
       - enterprise.github.m.upbound.io
       - github.m.upbound.io
