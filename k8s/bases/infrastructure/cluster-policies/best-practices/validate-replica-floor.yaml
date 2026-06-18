@@ -166,6 +166,19 @@ spec:
                 - longhorn-driver-deployer
                 - csi-snapshotter
                 - spire-server
+          # plugin-barman-cloud (cnpg-system): the CNPG-I backup plugin hardcodes
+          # --leader-elect and opens its operator-facing gRPC on :9090 only on the
+          # active leader -- exactly what its tcp-socket :9090 readiness probe
+          # checks. A 2nd replica can never go ready (it blocks acquiring the
+          # lease), which sticks the Deployment at 1/2 and loops the HelmRelease
+          # upgrade health gate, so it is pinned to a single replica (see
+          # controllers/plugin-barman-cloud/helm-release.yaml) and the chart
+          # exposes no pod-label value to carry the exempt opt-out. A node failure
+          # only reschedules the one replica; CNPG retries the gRPC across the gap.
+          # Same leader-only-:9090 shape as Flux source-controller.
+          - resources:
+              names:
+                - plugin-barman-cloud
       preconditions:
         all:
           # Durable opt-out on the pod template (charts expose podLabels more
