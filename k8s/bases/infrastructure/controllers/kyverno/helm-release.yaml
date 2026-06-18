@@ -139,6 +139,18 @@ spec:
       podDisruptionBudget:
         minAvailable: null
         maxUnavailable: 1
+      # Coroot flagged the 2-replica background controller as co-located on a
+      # single node (not resilient to node failure). Soft spread (same idiom as
+      # admissionController above) lands the replicas on different nodes when
+      # possible; ScheduleAnyway never blocks scheduling.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: background-controller
+              app.kubernetes.io/instance: kyverno
       podSecurityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -193,6 +205,17 @@ spec:
       podDisruptionBudget:
         minAvailable: null
         maxUnavailable: 1
+      # Coroot flagged the 2-replica reports controller as co-located on a
+      # single node. Soft spread (admissionController idiom) prefers a second
+      # node; ScheduleAnyway never blocks scheduling.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: reports-controller
+              app.kubernetes.io/instance: kyverno
       podSecurityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -203,6 +226,17 @@ spec:
       podDisruptionBudget:
         minAvailable: null
         maxUnavailable: 1
+      # Coroot flagged the 2-replica cleanup controller as co-located on a
+      # single node. Soft spread (admissionController idiom) prefers a second
+      # node; ScheduleAnyway never blocks scheduling.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/component: cleanup-controller
+              app.kubernetes.io/instance: kyverno
       podSecurityContext:
         runAsNonRoot: true
         seccompProfile:
