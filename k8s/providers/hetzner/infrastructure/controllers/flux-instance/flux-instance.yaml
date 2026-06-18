@@ -85,19 +85,31 @@ spec:
                 labelSelector:
                   matchLabels:
                     app.kubernetes.io/part-of: flux
-      # source-controller polls external registries (ghcr.io OCI artifacts +
-      # Helm repo indexes) on every interval; with the default ndots:5 each
-      # lookup walks the four-entry search path first, producing thousands of
-      # guaranteed-NXDOMAIN queries per hour against CoreDNS (Coroot flags this
-      # as a DNS warning on the app). ndots:1 makes any dotted name resolve
-      # absolute-first; the search path remains a fallback, and Flux's own
-      # in-cluster URLs are already trailing-dot FQDNs
-      # (source-controller.flux-system.svc.cluster.local.), so nothing relies
-      # on search-path expansion.
+      # The Flux controllers poll external endpoints on every interval —
+      # source-controller fetches ghcr.io OCI artifacts + Helm repo indexes,
+      # kustomize-controller and helm-controller pull OCI artifacts/charts from
+      # external registries, and notification-controller posts to external
+      # webhook receivers. With the default ndots:5 each external (dotted) name
+      # is tried against the four-entry cluster search path FIRST, producing
+      # thousands of guaranteed-NXDOMAIN queries per hour against CoreDNS
+      # (Coroot flags this as a DNS warning on these apps). ndots:1 makes any
+      # dotted name resolve absolute-first; the search path remains a fallback.
+      # This is safe for in-cluster controller-to-controller traffic because
+      # Flux addresses its own services by trailing-dot absolute FQDN
+      # (source-controller advertises itself via
+      # --storage-adv-addr=source-controller.flux-system.svc.cluster.local.),
+      # which bypasses search-path expansion at any ndots value — so nothing
+      # relies on it.
+      #
+      # Applied to the whole controller set via the shared
+      # app.kubernetes.io/part-of=flux label (same selector as the topology
+      # spread above) rather than per-controller, so every current and future
+      # Flux controller inherits it. The image-reflector/image-automation
+      # controllers are not installed (see header), so this covers the four
+      # listed components.
       - target:
           kind: Deployment
-          name: source-controller
-          namespace: flux-system
+          labelSelector: app.kubernetes.io/part-of=flux
         patch: |
           - op: add
             path: /spec/template/spec/dnsConfig
