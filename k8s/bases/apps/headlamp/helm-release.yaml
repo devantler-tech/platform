@@ -145,9 +145,12 @@ spec:
             source: https://artifacthub.io/packages/headlamp/kubescape-headlamp-plugin/headlamp_kubescape
             version: 0.11.2
           # Crossplane dashboard. Surfaces the Flux-managed Crossview app
-          # (apps/crossview) inside Headlamp via its "Open Crossview" action. Do
-          # NOT use the plugin's Install/Update/Uninstall buttons — those run a
-          # cluster-admin Helm Job; Crossview is managed declaratively by Flux.
+          # (apps/crossview) inside Headlamp via its "Open Crossview" action,
+          # which opens Crossview through a Headlamp-managed port-forward to the
+          # crossview-service pod. This is the ONLY entry point: Crossview has no
+          # standalone public route (no homepage tile, no crossview.${domain}).
+          # Do NOT use the plugin's Install/Update/Uninstall buttons — those run
+          # a cluster-admin Helm Job; Crossview is managed declaratively by Flux.
           - name: crossview-headlamp
             source: https://artifacthub.io/packages/headlamp/crossview-headlamp/crossview-headlamp
             version: 0.1.4

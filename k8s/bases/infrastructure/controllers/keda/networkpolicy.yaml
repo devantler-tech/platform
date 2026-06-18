@@ -97,14 +97,6 @@ spec:
         - ports:
             - port: "8000"
               protocol: TCP
-    # flux-operator-web UI (the standalone web-server-only release on :9080).
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: flux-system
-      toPorts:
-        - ports:
-            - port: "9080"
-              protocol: TCP
     # KEDA operator -> Coroot's bundled Prometheus, for ScaledObject prometheus
     # triggers (request-rate horizontal scaling of the Flagger-managed apps,
     # homepage/umami). Same endpoint Flagger and OpenCost query; Coroot's

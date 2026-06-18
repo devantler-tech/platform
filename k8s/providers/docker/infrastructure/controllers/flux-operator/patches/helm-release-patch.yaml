@@ -7,8 +7,7 @@ metadata:
 spec:
   values:
     # The platform CA bundle is mounted so the operator trusts the local
-    # registry / sources over the self-signed platform CA. (The web UI's
-    # insecure-OIDC override moved to flux-operator-web's patch.)
+    # registry / sources over the self-signed platform CA.
     extraVolumes:
       - name: platform-ca
         configMap:
