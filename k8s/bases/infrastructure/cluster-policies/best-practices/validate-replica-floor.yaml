@@ -71,14 +71,25 @@ spec:
                   platform.devantler.tech/replica-floor: exempt
           # Namespaces whose workloads genuinely can't run 2: velero (no leader
           # election, chart hardcodes replicas: 1), flux controllers and coroot
-          # (observability), and kubescape (operator + scanner control-plane are
-          # single-replica by design; node-agent is a DaemonSet).
+          # (observability), kubescape (operator + scanner control-plane are
+          # single-replica by design; node-agent is a DaemonSet), and
+          # crossplane-system. The latter holds only Crossplane control-plane
+          # components -- core, rbac-manager and the provider pods (e.g.
+          # provider-upjet-github) -- all controller-managed external-state
+          # reconcilers that run a single replica by design (see
+          # controllers/crossplane/helm-release.yaml: "must run on exactly one
+          # always-on cluster", the same external-single-writer reasoning as
+          # external-dns). Exempt by NAMESPACE, not name, because Crossplane names
+          # each provider Deployment after its ProviderRevision hash
+          # (provider-upjet-github-<hash>), so a name match silently stops matching
+          # on every provider upgrade.
           - resources:
               namespaces:
                 - velero
                 - flux-system
                 - observability
                 - kubescape
+                - crossplane-system
           # KEDA scale-to-zero targets, Flagger canary primaries (*-primary) and
           # the scaled-to-0 canary sources -- their replica count is owned by a
           # controller, not declared statically (the Flagger primary runs the HA
@@ -104,20 +115,6 @@ spec:
                 - external-dns
                 - origin-ca-issuer
                 - flagger-loadtester
-          # Crossplane core + RBAC manager: external-state reconcilers that
-          # converge GitHub org/repo state (see providers/hetzner/.../github/).
-          # controllers/crossplane/helm-release.yaml keeps them single-instance
-          # by design -- the same external-single-writer reasoning as external-dns
-          # above ("external-state reconcilers must run on exactly one always-on
-          # cluster"). Off every request-serving path: a node failure only delays
-          # GitHub-state reconciliation, which is eventually consistent, and
-          # single-replica is also deliberately memory-lean on this cluster.
-          # Promote to 2 leader-elected replicas (like ksail-/tetragon-operator)
-          # if HA is ever wanted, but the floor must not force it.
-          - resources:
-              names:
-                - crossplane
-                - crossplane-rbac-manager
           # Lean leader-election controllers off every serving path: exempt so
           # the resource-lean single-replica default is allowed (a SPOF here only
           # delays reconciliation/reporting, never user traffic). Prod bumps them
