@@ -21,3 +21,7 @@ spec:
     - branchprotections.repo.github.m.upbound.io
     - repositoryrulesets.repo.github.m.upbound.io
     - issuelabels.repo.github.m.upbound.io
+    # Org-level rulesets (the ~19 UI-managed org rules that gate every repo) —
+    # adopted Observe-first in devantler-tech/.github deploy/. The tenant Role
+    # already covers the enterprise.github.m.upbound.io group.
+    - organizationrulesets.enterprise.github.m.upbound.io
