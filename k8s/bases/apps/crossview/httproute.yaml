@@ -1,0 +1,39 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: crossview
+  namespace: crossview
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Crossplane
+    gethomepage.dev/description: Crossplane resource dashboard (Crossview).
+    gethomepage.dev/group: Kubernetes
+    gethomepage.dev/icon: crossplane
+    gethomepage.dev/href: https://crossview.${domain}
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=crossview
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - crossview.${domain}
+  rules:
+    # Front with oauth2-proxy (Dex SSO) like the other infra dashboards
+    # (homepage/coroot/opencost/longhorn) — Crossview exposes infrastructure
+    # state, so it must never be reachable unauthenticated on the public domain.
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://crossview.${domain}/
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80
