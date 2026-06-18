@@ -46,6 +46,26 @@ spec:
     # replicaCount intentionally omitted — replicas are owned by the KEDA
     # ScaledObject (scaled-object.yaml) through the Canary's autoscalerRef;
     # the primary scales 2-3 on request rate.
+    # Spread the replicas across nodes so a single node failure cannot take down
+    # the whole web tier (Coroot flagged umami-umami-primary as "all instances on
+    # one node — not resilient to node failure": KEDA runs the primary at 2-3
+    # replicas — scaled-object.yaml — but nothing pulled them apart). Set on the
+    # SOURCE pod template here because Flagger builds umami-umami-primary by
+    # COPYING this template, so the constraint propagates to the primary that
+    # actually serves traffic. ScheduleAnyway (not DoNotSchedule) keeps scheduling
+    # best-effort: on a small/cordoned cluster a replica still lands rather than
+    # going Pending. The labelSelector keys on app.kubernetes.io/instance=umami —
+    # NOT app.kubernetes.io/name — because Flagger's default --selector-labels
+    # rewrites app.kubernetes.io/name to "umami-umami-primary" on the primary
+    # while leaving instance=umami intact on the pods (same reason the PDB and the
+    # Homepage pod-selector key on instance — see canary.yaml / pod-disruption-budget.yaml).
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/instance: umami
     serviceAccount:
       # Umami needs no Kubernetes API access.
       automountServiceAccountToken: false

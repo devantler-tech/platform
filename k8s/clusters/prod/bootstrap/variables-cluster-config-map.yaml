@@ -28,6 +28,13 @@ data:
   keda_webhooks_replicas: "2"
   keda_scaler_replicas: "2"
   keda_interceptor_min_replicas: "2"
+  # keda_metrics_server_replicas drives the KEDA metrics-apiserver (aggregated
+  # external.metrics.k8s.io API server — stateless, no leader election);
+  # keda_http_operator_replicas drives the http-add-on controller-manager
+  # (leader-elected, active/standby). Both were single-replica and flagged by
+  # Coroot as "single instance - not resilient to node failure".
+  keda_metrics_server_replicas: "2"
+  keda_http_operator_replicas: "2"
   # --- Leader-elected operators (2 replicas for HA; the require-replica-floor minimum) ---
   # One replica is active; the other is a warm standby that takes over on a node
   # failure/drain. velero stays 1 — its chart hardcodes replicas: 1 and it has
@@ -43,6 +50,13 @@ data:
   # backup controller. WAL archive/restore I/O runs in per-instance sidecars, not
   # here; this is the operator-facing gRPC controller.
   plugin_barman_cloud_replicas: "2"
+  # ksail-operator: chart default operator.leaderElection: true (renders
+  # --leader-elect + a Lease), so the 2nd replica is a warm standby.
+  ksail_operator_replicas: "2"
+  # tetragon-operator: leader election is gated behind failoverLease.enabled
+  # (set true in the helm-release), so these two MUST stay aligned -- 2 replicas
+  # without the lease would run two active operators.
+  tetragon_operator_replicas: "2"
   # KEDA-managed apps: HelmRelease replicas are the initial value only;
   # KEDA HTTPScaledObject overrides at runtime. Setting the initial to 1
   # saves memory until the first KEDA reconciliation.

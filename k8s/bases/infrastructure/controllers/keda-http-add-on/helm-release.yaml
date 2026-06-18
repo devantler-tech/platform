@@ -30,6 +30,26 @@ spec:
     securityContext:
       runAsGroup: 1000
       privileged: false
+    operator:
+      # The http-add-on operator (Deployment keda-add-ons-http-controller-manager)
+      # reconciles HTTPScaledObjects. It runs controller-runtime leader election
+      # (the rendered Deployment passes `--leader-elect` and the chart grants
+      # coordination.k8s.io/leases RBAC), so 2 replicas are active/standby: only
+      # the leader reconciles, the second is a warm standby that takes over on a
+      # node failure/drain. Coroot flagged the single replica as "single instance
+      # - not resilient to node failure".
+      replicas: ${keda_http_operator_replicas:=1}
+      # Soft hostname spread so the standby lands on a different node than the
+      # leader (chart default is no spread). ScheduleAnyway keeps it a preference
+      # so single-node local/CI clusters still schedule.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/instance: keda-http-add-on
+              app.kubernetes.io/component: operator
     scaler:
       replicas: ${keda_scaler_replicas:=1}
       # Soft hostname spread: the scaler's queue pinger polls every interceptor

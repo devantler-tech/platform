@@ -32,6 +32,17 @@ spec:
     # default "<release>-ksail-operator").
     fullnameOverride: ksail-operator
     operator:
+      # Run HA matching the rest of the operator tier (Coroot flagged the sole
+      # replica "single instance - not resilient to node failure"). The chart
+      # ships operator.leaderElection: true by default, which renders
+      # `--leader-elect` on the manager container and a leader-election Lease, so
+      # 2 replicas = one active reconciler + a warm standby that takes over on a
+      # node drain/failure -- not double-reconciliation. Drain safety comes from
+      # the standalone maxUnavailable: 1 PDB (pod-disruption-budget.yaml) plus the
+      # topologySpreadConstraints injected via the post-renderer below (the chart
+      # exposes neither a PDB nor a topologySpread value). leaderElection stays on
+      # (chart default) -- do not disable it while replicas > 1.
+      replicas: ${ksail_operator_replicas:=2}
       # Image tag comes from the chart default (v<appVersion>, per ksail #5168,
       # first shipped in chart 7.41.2) -> ghcr.io/devantler-tech/ksail:v7.41.2,
       # which is cosign-signed (ksail #5165) so prod Talos image verification
@@ -93,6 +104,20 @@ spec:
                     securityContext:
                       runAsUser: 65532
                       runAsGroup: 65532
+                    # Spread the 2 HA replicas across nodes so a single node
+                    # failure cannot take out both. ScheduleAnyway (soft) so a
+                    # single-node local/CI cluster still schedules both pods --
+                    # matching the velero/reloader spread posture. The chart has
+                    # no topologySpread value, so it is injected here.
+                    topologySpreadConstraints:
+                      - maxSkew: 1
+                        topologyKey: kubernetes.io/hostname
+                        whenUnsatisfiable: ScheduleAnyway
+                        labelSelector:
+                          matchLabels:
+                            app.kubernetes.io/name: ksail-operator
+                            app.kubernetes.io/instance: ksail-operator
+                            app.kubernetes.io/component: operator
                     containers:
                       - name: operator
                         securityContext:

@@ -1,0 +1,20 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ksail-operator
+  namespace: ksail-operator
+spec:
+  # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 keeps the node
+  # drainable at any replica count, unlike minAvailable: 1 which deadlocks a
+  # drain when only 1 replica is ready. The ksail-operator chart ships no PDB
+  # knob, so this is a standalone manifest (same approach as snapshot-controller
+  # / simply-dns-webhook). Pairs with operator.replicas: 2 in helm-release.yaml:
+  # the operator is leader-elected (operator.leaderElection: true), so the second
+  # replica is a warm standby that keeps reconciliation available while a node
+  # drains.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ksail-operator
+      app.kubernetes.io/instance: ksail-operator
+      app.kubernetes.io/component: operator

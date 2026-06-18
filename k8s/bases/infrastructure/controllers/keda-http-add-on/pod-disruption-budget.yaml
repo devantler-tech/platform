@@ -15,3 +15,22 @@ spec:
     matchLabels:
       app.kubernetes.io/component: scaler
       app.kubernetes.io/instance: keda-http-add-on
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: keda-add-ons-http-controller-manager
+  namespace: keda
+spec:
+  # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880).
+  # The chart ships a PDB for the interceptor (interceptor.pdb, enabled by
+  # default) but exposes no PDB knob for the operator/controller-manager, which
+  # is leader-elected (active/standby) and reconciles every HTTPScaledObject.
+  # Without a PDB a node drain could evict both replicas at once and stall HTTP
+  # app reconciliation. Selector mirrors the controller-manager Deployment's
+  # stable labels (component + instance).
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: operator
+      app.kubernetes.io/instance: keda-http-add-on
