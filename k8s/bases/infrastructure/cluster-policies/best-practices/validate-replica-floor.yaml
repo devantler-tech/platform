@@ -104,6 +104,20 @@ spec:
                 - external-dns
                 - origin-ca-issuer
                 - flagger-loadtester
+          # Crossplane core + RBAC manager: external-state reconcilers that
+          # converge GitHub org/repo state (see providers/hetzner/.../github/).
+          # controllers/crossplane/helm-release.yaml keeps them single-instance
+          # by design -- the same external-single-writer reasoning as external-dns
+          # above ("external-state reconcilers must run on exactly one always-on
+          # cluster"). Off every request-serving path: a node failure only delays
+          # GitHub-state reconciliation, which is eventually consistent, and
+          # single-replica is also deliberately memory-lean on this cluster.
+          # Promote to 2 leader-elected replicas (like ksail-/tetragon-operator)
+          # if HA is ever wanted, but the floor must not force it.
+          - resources:
+              names:
+                - crossplane
+                - crossplane-rbac-manager
           # Lean leader-election controllers off every serving path: exempt so
           # the resource-lean single-replica default is allowed (a SPOF here only
           # delays reconciliation/reporting, never user traffic). Prod bumps them
