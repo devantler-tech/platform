@@ -4,7 +4,7 @@ license: Apache-2.0
 metadata:
     github-path: ways-of-working
     github-ref: refs/tags/v1.1.0
-    github-repo: https://github.com/devantler-tech/skills
+    github-repo: https://github.com/devantler-tech/agent-skills
     github-tree-sha: be7d95e52d933a19e9fbdba7d4989de0af8ad8cd
 name: ways-of-working
 ---
