@@ -45,6 +45,13 @@ data:
   cilium_replicas: "2"
   velero_replicas: "1"
   cloudnative_pg_replicas: "2"
+  # ksail-operator: chart default operator.leaderElection: true (renders
+  # --leader-elect + a Lease), so the 2nd replica is a warm standby.
+  ksail_operator_replicas: "2"
+  # tetragon-operator: leader election is gated behind failoverLease.enabled
+  # (set true in the helm-release), so these two MUST stay aligned -- 2 replicas
+  # without the lease would run two active operators.
+  tetragon_operator_replicas: "2"
   # KEDA-managed apps: HelmRelease replicas are the initial value only;
   # KEDA HTTPScaledObject overrides at runtime. Setting the initial to 1
   # saves memory until the first KEDA reconciliation.
