@@ -44,8 +44,26 @@ spec:
   # pod anti-affinity, keeping a primary+replica quorum even under maintenance.
   instances: 3
   storage:
-    size: 2Gi
+    # Bumped 2Gi -> 10Gi (2026-06-19). The 2Gi volumes filled with WAL during a
+    # Talos node roll: the primary retained WAL for the rolled replicas'
+    # replication slots while base data was only ~32Mi (pg_wal alone reached
+    # 1.4Gi), tripping CNPG's low-disk guard. Postgres then refused to start on
+    # all three instances ("Not enough disk space"), so the coroot-db Cluster
+    # never went Ready and the `infrastructure` Kustomization's health check
+    # timed out — wedging infrastructure -> apps platform-wide. 10Gi gives WAL
+    # ample headroom; the longhorn StorageClass has allowVolumeExpansion=true, so
+    # CNPG (1.29) resizes the existing PVCs in place — no recreation needed.
+    size: 10Gi
     storageClass: longhorn
+  postgresql:
+    parameters:
+      # Bound replication-slot WAL retention so a replica that is down during a
+      # node roll (Talos upgrade / autoscaler churn) can no longer retain WAL
+      # without limit and re-fill the data volume — the root cause of the wedge
+      # above. Beyond this, CNPG invalidates the lagging slot and re-syncs that
+      # replica from a base backup (cheap: the DB is ~32Mi). Set well above
+      # normal WAL for this low-write metadata DB, yet well below the 10Gi volume.
+      max_slot_wal_keep_size: "3GB"
   bootstrap:
     initdb:
       database: coroot
