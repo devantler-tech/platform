@@ -81,6 +81,12 @@ data:
   actual_budget_replicas_min: "0"
   actual_budget_replicas_max: "1"
   hubble_ui_replicas: "1"
+  # OpenCost (FinOps cost API/UI): 2 replicas for node-failure resilience
+  # (Coroot flagged opencost-primary as a single instance). It is a Flagger
+  # canary WITHOUT a KEDA autoscalerRef, so Flagger sizes opencost-primary from
+  # this pinned chart replica count (not from a ScaledObject); paired with a
+  # drain-safe PDB + topology spread in the opencost base.
+  opencost_replicas: "2"
   # Auth chain: 2 replicas for HA (the require-replica-floor minimum). User-facing
   # auth survives a node drain; also prevents 502s during VPA InPlaceOrRecreate
   # evictions.
