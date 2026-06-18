@@ -34,6 +34,24 @@ spec:
     database:
       persistence:
         enabled: false
+    # The chart's bundled Postgres refuses to initialize without
+    # POSTGRES_PASSWORD, and the app signs sessions with SESSION_SECRET. Both
+    # default to empty strings in the chart, so the chart omitted the env vars
+    # entirely — leaving Postgres in CrashLoopBackOff ("superuser password is
+    # not specified"), the app stuck in Init, and the HelmRelease install
+    # hanging (which froze the whole `apps` Kustomization). Source both from a
+    # SOPS-encrypted Secret (secret.enc.yaml) via secretKeyRef so no plaintext
+    # credential is committed to this public repo. The Postgres is ephemeral
+    # (persistence disabled), so these are disposable coordination values.
+    secrets:
+      dbPassword:
+        secretKeyRef:
+          name: crossview-credentials
+          key: db-password
+      sessionSecret:
+        secretKeyRef:
+          name: crossview-credentials
+          key: session-secret
     config:
       server:
         cors:
