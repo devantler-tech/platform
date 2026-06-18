@@ -1,0 +1,31 @@
+# Drain-safe PodDisruptionBudget for the HA Coroot SERVER StatefulSet
+# (coroot-coroot). The coroot-operator builds this StatefulSet at runtime and
+# does NOT ship a PDB of its own (verified in controller/coroot.go), so without
+# this a node drain could evict the only surviving server pod once it scales to
+# replicas: 2. maxUnavailable: 1 is the platform-wide drain-safe pattern
+# (#1880/#1882) and is what validate-pdb-drain-safe steers every workload to: it
+# is evaluated against the live replica count, so it always permits exactly one
+# eviction (never deadlocking a Talos roll / autoscaler scale-down) while keeping
+# one Coroot server pod serving throughout. This is the operator-managed-workload
+# analogue of the PDBs CNPG creates for its own clusters.
+#
+# SELECTOR: the operator labels every Coroot server pod with the Kubernetes
+# common labels (controller/controller.go Labels(cr, "coroot")):
+#   app.kubernetes.io/managed-by: coroot-operator
+#   app.kubernetes.io/part-of:    <cr.Name>   (= coroot)
+#   app.kubernetes.io/component:  coroot
+# Keying on part-of + component + managed-by uniquely matches the server pods
+# (the bundled prometheus/clickhouse/cluster-agent/node-agent carry the same
+# part-of/managed-by but a DIFFERENT component, so they are not caught here).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: coroot-coroot
+  namespace: observability
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/managed-by: coroot-operator
+      app.kubernetes.io/part-of: coroot
+      app.kubernetes.io/component: coroot

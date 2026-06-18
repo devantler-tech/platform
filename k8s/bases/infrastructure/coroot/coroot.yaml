@@ -48,12 +48,16 @@ spec:
   # Bundled Prometheus = the metrics TSDB. Kept as a real Prometheus (we do
   # NOT set storeMetricsInClickhouse) precisely so OpenCost can still query it
   # at http://coroot-prometheus.observability.svc.cluster.local:9090.
-  # SINGLE INSTANCE BY DESIGN: the operator's `spec.prometheus` exposes no
-  # `replicas` field (verified against coroot.com/v1), so the bundled Prometheus
-  # has no HA mode here. It recovers by rescheduling onto a healthy node with
-  # its (durable, hcloud-backed) PVC; the gap is the in-flight scrape window
-  # during reschedule. Running redundant metrics ingestion would mean an
-  # external/federated Prometheus, which is a separate architectural decision.
+  #
+  # SINGLE-INSTANCE BY DESIGN: the Coroot CRD's `prometheus` block exposes only
+  # affinity/image/nodeSelector/outOfOrderTimeWindow/podAnnotations/resources/
+  # retention/storage/tolerations — there is NO replicas/HA field (verified
+  # against the coroot-operator v1.9.5 CRD). The bundled Prometheus is a
+  # single-writer local-TSDB instance by design (HA Prometheus needs two
+  # independent scrapers + dedup at query time, which the operator does not
+  # model), so it is an operator-fixed singleton, not something we can scale.
+  # Durability instead of HA: its PVC is hcloud-backed (hetzner overlay) and
+  # Velero backs the observability namespace up daily.
   prometheus:
     retention: 7d
     storage:
@@ -117,22 +121,14 @@ spec:
 
   # cluster-agent is left at its default (enabled) — it provides the
   # kube-state-metrics-equivalent cluster inventory, replacing the standalone
-  # kube-state-metrics from the prometheus stack. SINGLE INSTANCE BY DESIGN:
-  # `spec.clusterAgent` exposes no `replicas` field (verified against
-  # coroot.com/v1) — it is a cluster-wide singleton collector (like
-  # kube-state-metrics, which also runs one replica), so a second copy would
-  # only duplicate the same scrape. It recovers by rescheduling onto a healthy
-  # node; the gap is the reschedule window, during which the node-agents (one
-  # per node, already tolerations-spread above) keep collecting per-node
-  # telemetry.
+  # kube-state-metrics from the prometheus stack.
   #
-  # The Coroot server StatefulSet (coroot-coroot) is also left SINGLE INSTANCE.
-  # `spec.replicas` does exist, but the CRD documents it as requiring
-  # `spec.postgres` ("Store configuration in a Postgres DB instead of SQLite
-  # (required if replicas > 1)") — the default SQLite store cannot back more
-  # than one replica. CloudNativePG IS available in-cluster, so multi-replica
-  # is achievable, but it is a separate change (provision a CNPG Cluster +
-  # credentials, point `spec.postgres` at it, migrate state) with its own
-  # storage/backup story — out of scope for this redundancy pass and tracked as
-  # a follow-up. Until then the server recovers by rescheduling onto a healthy
-  # node with its durable PVC.
+  # SINGLE-INSTANCE BY DESIGN: the Coroot CRD's `clusterAgent` block exposes only
+  # affinity/env/image/kubeStateMetrics/nodeSelector/podAnnotations/resources/
+  # tolerations — there is NO replicas/HA field (verified against the
+  # coroot-operator v1.9.5 CRD). It is a singleton collector (one cluster-wide
+  # inventory snapshot pushed to the Coroot server); a second instance would just
+  # duplicate that push. So, like the bundled Prometheus, it is an operator-fixed
+  # singleton, not something we can scale. A brief gap only delays inventory
+  # refresh, not user-facing telemetry. The genuinely scalable pieces are the
+  # server (replicas: 2, hetzner overlay), ClickHouse (2) and Keeper (3).
