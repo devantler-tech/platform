@@ -38,54 +38,58 @@ spec:
           - op: add
             path: /spec/template/spec/containers/0/args/-
             value: --requeue-dependency=5s
-      # Run the four Flux controllers active/standby (HA) for node-failure
-      # resilience. Each controller binary already runs with
-      # --enable-leader-election and holds a coordination.k8s.io Lease, so it is
-      # safe to run more than one replica: exactly one pod is the active leader
-      # and the other is a warm standby that acquires the Lease and resumes
-      # reconciliation within the lease TTL when the leader's node fails. The
-      # upstream Deployments ship replicas: 1, which is why Coroot flags each
-      # controller as "single instance - not resilient to node failure"; bumping
-      # to 2 clears that for kustomize-/helm-/notification-controller. Patched by
-      # label (all carry app.kubernetes.io/part-of=flux); source-controller is
-      # then pinned BACK to 1 by the override patch immediately below — it is the
-      # one controller for which a warm standby does NOT work (see that comment
-      # for the readiness-probe reason). Paired with the topologySpread below so
-      # the two replicas land on different nodes — otherwise both could sit on
-      # the node that fails. flux-operator itself is left single-replica: its
-      # chart does not expose replicas/leaderElection (0.50.0), so it relies on
-      # reschedule, not hot standby; see flux-operator/helm-release.yaml.
-      - target:
-          kind: Deployment
-          labelSelector: app.kubernetes.io/part-of=flux
-        patch: |
-          - op: replace
-            path: /spec/replicas
-            value: 2
-      # source-controller is the ONE Flux controller that cannot run the warm
-      # standby above — pin it back to a single replica. Unlike the other three,
-      # its readiness probe targets the artifact file server on :9090, and that
-      # server is a leader-election runnable: it only starts on the active leader
-      # (the standby blocks in "attempting to acquire leader lease"). So the
-      # standby pod's readiness probe gets connection-refused forever, the
-      # Deployment is stuck at 1/2, the FluxInstance reports
+      # Run kustomize-/helm-/notification-controller active/standby (HA) for
+      # node-failure resilience: each binary runs --enable-leader-election and
+      # holds a coordination.k8s.io Lease, so a 2nd replica is a warm standby (one
+      # active leader, one standby that takes the Lease within its TTL when the
+      # leader's node fails). Upstream ships replicas: 1, which is why Coroot flags
+      # each as "single instance - not resilient to node failure"; bumping these
+      # three to 2 clears that.
+      #
+      # PATCH BY NAME, and DELIBERATELY DO NOT patch source-controller.
+      # source-controller is the one controller that cannot run a ready warm
+      # standby: its readiness probe targets the artifact file server on :9090, a
+      # leader-election runnable that only starts on the active leader, so the
+      # standby blocks in "attempting to acquire leader lease", never opens :9090,
+      # and stays 0/1 — wedging the Deployment at 1/2, the FluxInstance at
       # "source-controller status: InProgress", and the infrastructure-controllers
-      # Kustomization health-check times out after 25m — which freezes ALL GitOps
-      # delivery (infrastructure + apps stop reconciling). The other three
-      # controllers expose /readyz on the always-on health-probe port, so their
-      # standbys reach 2/2 fine. source-controller keeps its node-failure
-      # resilience via reschedule + storage, the same way flux-operator does;
-      # Coroot will still flag it single-instance, which is inherent and accepted.
-      # This override MUST stay after the replicas:2 patch so it wins for
-      # source-controller while topologySpread + ndots still apply to it.
+      # health-check into a 25m timeout that FREEZES all GitOps delivery.
+      # An earlier attempt used a label-selector replicas:2 over all
+      # part-of=flux controllers + a name-targeted replicas:1 override for
+      # source-controller. That did NOT work: raw `kustomize build` honours patch
+      # order and yields 1, but flux-operator resolves the overlapping label- and
+      # name-targeted patches the other way, so source-controller stayed at 2
+      # (verified live via a forced FluxInstance reconcile). The robust fix is to
+      # match each HA controller BY NAME and leave source-controller matched by no
+      # replicas patch at all, so it keeps the base manifest's single replica with
+      # zero ambiguity. (topologySpread + ndots below still target the whole
+      # part-of=flux set by label — those don't conflict and are safe at 1
+      # replica.) flux-operator itself stays single-replica: its chart exposes no
+      # replicas/leaderElection (0.50.0), so it relies on reschedule.
       - target:
           kind: Deployment
-          name: source-controller
+          name: kustomize-controller
           namespace: flux-system
         patch: |
           - op: replace
             path: /spec/replicas
-            value: 1
+            value: 2
+      - target:
+          kind: Deployment
+          name: helm-controller
+          namespace: flux-system
+        patch: |
+          - op: replace
+            path: /spec/replicas
+            value: 2
+      - target:
+          kind: Deployment
+          name: notification-controller
+          namespace: flux-system
+        patch: |
+          - op: replace
+            path: /spec/replicas
+            value: 2
       # Spread the four Flux controllers across worker nodes. They all carry
       # app.kubernetes.io/part-of=flux, so a per-controller topology spread
       # keyed on that label distributes the set (skew <= 1) — and, combined with
