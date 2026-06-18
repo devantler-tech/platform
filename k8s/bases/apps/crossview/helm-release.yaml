@@ -39,10 +39,14 @@ spec:
     # default to empty strings in the chart, so the chart omitted the env vars
     # entirely — leaving Postgres in CrashLoopBackOff ("superuser password is
     # not specified"), the app stuck in Init, and the HelmRelease install
-    # hanging (which froze the whole `apps` Kustomization). Source both from a
-    # SOPS-encrypted Secret (secret.enc.yaml) via secretKeyRef so no plaintext
-    # credential is committed to this public repo. The Postgres is ephemeral
-    # (persistence disabled), so these are disposable coordination values.
+    # hanging (which froze the whole `apps` Kustomization). Source both from the
+    # crossview-credentials Secret (external-secret.yaml) via secretKeyRef. That
+    # Secret is materialized from OpenBao by External Secrets — the values are
+    # generated once and seeded into OpenBao by the ESO Password generators +
+    # PushSecrets in infrastructure/vault-seed (apps/crossview/db,
+    # apps/crossview/app), exactly like umami's app secret — so nothing is
+    # committed to this public repo. Stable values keep Postgres data readable
+    # and login sessions valid across chart upgrades / pod restarts.
     secrets:
       dbPassword:
         secretKeyRef:
