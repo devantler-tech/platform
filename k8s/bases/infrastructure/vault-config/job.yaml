@@ -563,6 +563,16 @@ spec:
               }
               POLICY
 
+              # crossview reads its bundled-Postgres password + app session
+              # secret from OpenBao via the shared `external-secrets`
+              # ClusterSecretStore role (apps/crossview/{db,app}); the values are
+              # generated and seeded by infrastructure/vault-seed.
+              bao policy write app-crossview-readonly - <<'POLICY'
+              path "secret/data/apps/crossview/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
               # Read-only view of ascoachingogvaner's app path for the shared
               # ClusterSecretStore bundle: the cert-manager simply.com DNS01
               # solver consumes the tenant-owned simply.com API credentials
@@ -651,6 +661,9 @@ spec:
               path "secret/data/apps/umami/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/data/apps/crossview/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/data/flux/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -687,6 +700,9 @@ spec:
               path "secret/metadata/apps/umami/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/metadata/apps/crossview/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/metadata/flux/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -704,7 +720,7 @@ spec:
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,vault-seed-write \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-crossview-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,vault-seed-write \
                 ttl=1h
 
               # Dedicated role for the fleetdm VaultDynamicSecret generator.
