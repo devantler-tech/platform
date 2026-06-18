@@ -13,6 +13,14 @@ kind: Cluster
 metadata:
   name: umami-db
   namespace: umami
+  annotations:
+    # Never let Flux delete+recreate this database: the apps Flux Kustomization
+    # runs force: true + prune: true, and the longhorn PVCs are reclaimPolicy=
+    # Delete, so a force-recreate would wipe the data (the failure that hit
+    # coroot-db on 2026-06-18). Flux can still update it; immutable changes must
+    # be made by an operator with a backup/restore plan.
+    kustomize.toolkit.fluxcd.io/force: disabled
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   # Run 3 instances (1 primary + 2 streaming replicas) for high availability.
   # A single-instance Cluster makes CNPG create a `<cluster>-primary`

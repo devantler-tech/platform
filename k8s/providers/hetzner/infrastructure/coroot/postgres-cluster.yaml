@@ -30,6 +30,17 @@ kind: Cluster
 metadata:
   name: coroot-db
   namespace: observability
+  annotations:
+    # Never let Flux delete+recreate this database. The infrastructure Flux
+    # Kustomization runs force: true + prune: true, so an immutable-field change
+    # or a live/Git drift on this Cluster would otherwise make kustomize-
+    # controller recreate it — and with the longhorn PVCs on reclaimPolicy=
+    # Delete that wipes the data via a fresh initdb (this happened 2026-06-18).
+    # force: disabled makes Flux surface the apply error for an operator to
+    # resolve deliberately (with a backup/restore plan) instead of recreating;
+    # prune: disabled stops GC if the Cluster is ever dropped from a kustomization.
+    kustomize.toolkit.fluxcd.io/force: disabled
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   # Run 3 instances (1 primary + 2 streaming replicas) for high availability —
   # the SAME rationale as umami-db: a single-instance Cluster makes CNPG create a
