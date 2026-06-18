@@ -42,7 +42,7 @@ jobs:
         # cluster-update fixes; renovate keeps this pin current.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.58.3"
+          KSAIL_VERSION: "7.64.0"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -121,12 +121,13 @@ jobs:
           echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig (last kubectl error: ${last_err}). KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
           exit 1
 
-      - name: 🔄 Update cluster
-        run: ksail --config ksail.prod.yaml cluster update
-        env:
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-
+      # Publish the GitOps manifests (push → sign → attest → reconcile) BEFORE
+      # syncing Talos machine config (the "🔄 Update cluster" step now runs last).
+      # Manifest delivery never touches the nodes, so it must not be gated on
+      # every control-plane node being reachable: when one node's Talos API was
+      # down, `ksail cluster update` ran first, hard-failed the job, and froze
+      # ALL app/config delivery to an otherwise-healthy cluster (the apiserver
+      # and Flux were fine on the two surviving control-plane nodes).
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.prod.yaml workload push
         env:
@@ -143,7 +144,7 @@ jobs:
         # custom regex manager in .github/renovate.json.
         env:
           # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
-          COSIGN_VERSION: "3.0.6"
+          COSIGN_VERSION: "3.1.1"
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: 'v${{ env.COSIGN_VERSION }}'
@@ -319,3 +320,16 @@ jobs:
           echo "::group::Recent events (warnings)"
           kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -50
           echo "::endgroup::"
+
+      - name: 🔄 Update cluster (Talos machine config)
+        # Runs LAST, after manifest delivery, so an unreachable control-plane
+        # node cannot block GitOps delivery (see the Push step's comment). Talos
+        # config sync still runs on every deploy and a genuine node-reachability
+        # problem still fails the deploy (red) — it just no longer takes the
+        # app/config pipeline down with it. Automatically skipped if an earlier
+        # delivery step already failed (no point syncing nodes for a broken
+        # release).
+        run: ksail --config ksail.prod.yaml cluster update
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}

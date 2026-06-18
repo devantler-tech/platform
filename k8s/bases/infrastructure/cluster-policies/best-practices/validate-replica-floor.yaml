@@ -71,14 +71,25 @@ spec:
                   platform.devantler.tech/replica-floor: exempt
           # Namespaces whose workloads genuinely can't run 2: velero (no leader
           # election, chart hardcodes replicas: 1), flux controllers and coroot
-          # (observability), and kubescape (operator + scanner control-plane are
-          # single-replica by design; node-agent is a DaemonSet).
+          # (observability), kubescape (operator + scanner control-plane are
+          # single-replica by design; node-agent is a DaemonSet), and
+          # crossplane-system. The latter holds only Crossplane control-plane
+          # components -- core, rbac-manager and the provider pods (e.g.
+          # provider-upjet-github) -- all controller-managed external-state
+          # reconcilers that run a single replica by design (see
+          # controllers/crossplane/helm-release.yaml: "must run on exactly one
+          # always-on cluster", the same external-single-writer reasoning as
+          # external-dns). Exempt by NAMESPACE, not name, because Crossplane names
+          # each provider Deployment after its ProviderRevision hash
+          # (provider-upjet-github-<hash>), so a name match silently stops matching
+          # on every provider upgrade.
           - resources:
               namespaces:
                 - velero
                 - flux-system
                 - observability
                 - kubescape
+                - crossplane-system
           # KEDA scale-to-zero targets, Flagger canary primaries (*-primary) and
           # the scaled-to-0 canary sources -- their replica count is owned by a
           # controller, not declared statically (the Flagger primary runs the HA
@@ -124,30 +135,47 @@ spec:
           #     (longhorn-manager / the chart owns their replica count).
           #   * single-controller operators (leader election makes >1 a hot
           #     standby at best, all off the serving path): cluster-autoscaler,
-          #     ksail-operator, tetragon-operator,
           #     keda-add-ons-http-controller-manager.
+          #     (ksail-operator + tetragon-operator were promoted OUT of this
+          #     exemption -- they now run HA: 2 leader-elected replicas + a
+          #     drain-safe maxUnavailable: 1 PDB + topology spread, so they meet
+          #     the floor like the rest of the operator tier. Coroot had flagged
+          #     them "single instance - not resilient to node failure".)
           #   * single-by-design adapters/approvers: keda-operator-metrics-
-          #     apiserver (KEDA's standard 1-replica metrics adapter) and
-          #     kubelet-serving-cert-approver (off every serving path).
+          #     apiserver (KEDA's standard 1-replica metrics adapter).
+          #     (kubelet-serving-cert-approver was also promoted OUT -- switched
+          #     to upstream's ha-install.yaml: 2 replicas, --enable-leader-election
+          #     + leases RBAC + required hostname anti-affinity + a drain-safe PDB.)
           #   * spire-server: HA needs a shared external datastore, not just
           #     replicas (its StatefulSet uses the built-in datastore) -- a
           #     deliberate single-node posture; revisit for HA separately.
-          # Left flagged ON PURPOSE (real signal, not exempted): flagger -- the
-          # comment above intends 3 for HA but it runs flagger_replicas:=1, a
-          # genuine HA gap to close by raising that var when memory allows; and
-          # the cert-manager simply-dns-webhook, part of the in-flight tenant-TLS
-          # rework.
+          # Left flagged ON PURPOSE (real signal, not exempted): the cert-manager
+          # simply-dns-webhook, part of the in-flight tenant-TLS rework. (flagger
+          # was previously flagged here too: flagger_replicas was set but wired to
+          # the chart's non-existent top-level replicaCount, so it silently ran 1;
+          # fixed by wiring it to leaderElection.replicaCount, so flagger now meets
+          # the floor and is no longer a real signal.)
           - resources:
               names:
                 - cluster-autoscaler-hetzner-cluster-autoscaler
-                - ksail-operator
-                - tetragon-operator
                 - keda-add-ons-http-controller-manager
                 - keda-operator-metrics-apiserver
-                - kubelet-serving-cert-approver
                 - longhorn-driver-deployer
                 - csi-snapshotter
                 - spire-server
+          # plugin-barman-cloud (cnpg-system): the CNPG-I backup plugin hardcodes
+          # --leader-elect and opens its operator-facing gRPC on :9090 only on the
+          # active leader -- exactly what its tcp-socket :9090 readiness probe
+          # checks. A 2nd replica can never go ready (it blocks acquiring the
+          # lease), which sticks the Deployment at 1/2 and loops the HelmRelease
+          # upgrade health gate, so it is pinned to a single replica (see
+          # controllers/plugin-barman-cloud/helm-release.yaml) and the chart
+          # exposes no pod-label value to carry the exempt opt-out. A node failure
+          # only reschedules the one replica; CNPG retries the gRPC across the gap.
+          # Same leader-only-:9090 shape as Flux source-controller.
+          - resources:
+              names:
+                - plugin-barman-cloud
       preconditions:
         all:
           # Durable opt-out on the pod template (charts expose podLabels more

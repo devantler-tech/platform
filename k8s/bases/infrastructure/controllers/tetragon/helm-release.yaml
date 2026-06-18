@@ -92,6 +92,26 @@ spec:
         serviceMonitor:
           enabled: false
     tetragonOperator:
+      # Run the operator HA matching the rest of the operator tier (Coroot
+      # flagged the sole replica "single instance - not resilient to node
+      # failure"). The operator manages the TracingPolicy/PodInfo CRDs and is off
+      # every serving path, so the second replica is a warm standby for node
+      # drains/failures, not extra capacity.
+      #
+      # IMPORTANT: the operator does NOT leader-elect by default -- the chart
+      # only sets `leader-election: "true"` when failoverLease.enabled is true
+      # ("Tetragon operator running in HA mode requires the use of ResourceLock
+      # for Leader Election", which also adds the coordination.k8s.io/leases
+      # RBAC). Running replicas: 2 WITHOUT this would give two active operators
+      # (duplicate CRD reconcilers), so the two MUST move together.
+      replicas: ${tetragon_operator_replicas:=2}
+      failoverLease:
+        enabled: true
+      # The chart already ships a hostname podAntiAffinity (preferred) for the
+      # operator pods, so the 2 replicas spread across nodes without an extra
+      # topologySpread. Drain safety is added via the standalone
+      # pod-disruption-budget.yaml (maxUnavailable: 1) in this directory -- the
+      # chart exposes no PDB value.
       # Operator metrics (:2113); operator already ships resource requests
       # and a non-root securityContext by default.
       prometheus:

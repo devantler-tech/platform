@@ -5,6 +5,53 @@ metadata:
   name: coroot
   namespace: observability
 spec:
+  # --- High availability (prod-only) -----------------------------------------
+  # Run TWO Coroot server pods so the UI / ingestion API rides out a node drain
+  # (Talos roll, autoscaler scale-down) or a single node loss — coroot-coroot was
+  # the last single-replica SPOF in the stack after ClickHouse (2) + Keeper (3)
+  # went HA. The operator (controller/coroot.go) only honours replicas > 1 when
+  # spec.postgres is set — it silently falls back to 1 replica otherwise, because
+  # the default embedded-SQLite store on each pod's PVC can't be shared — so HA
+  # REQUIRES the external Postgres below. The drain-safe maxUnavailable:1 PDB and
+  # the cross-node spread that keep the two pods genuinely available live in
+  # pod-disruption-budget.yaml and spec.affinity (below).
+  replicas: 2
+  # External Postgres datastore = the precondition for replicas > 1. Points at
+  # the CloudNativePG cluster in postgres-cluster.yaml; CNPG owns the `coroot`
+  # role's password and publishes it (with host/port/dbname) in the
+  # auto-generated coroot-db-app Secret, which the operator consumes via
+  # passwordSecret -> PG_PASSWORD + PG_CONNECTION_STRING (controller/postgres.go).
+  # host is the CNPG -rw (read-write/primary) Service so writes always reach the
+  # current primary across switchovers. sslmode: require matches the platform's
+  # established CNPG connection posture (vault-config connects to umami-db the
+  # same way) — encrypt in-cluster without pinning CNPG's self-signed CA.
+  postgres:
+    host: coroot-db-rw.observability.svc.cluster.local
+    port: 5432
+    user: coroot
+    database: coroot
+    passwordSecret:
+      name: coroot-db-app
+      key: password
+    params:
+      sslmode: require
+  # Spread the two server pods across nodes. The operator passes spec.affinity
+  # straight through to the server pod template (controller/coroot.go) and adds
+  # no anti-affinity of its own, so without this both replicas could land on one
+  # node and a single node loss would take Coroot down despite replicas: 2.
+  # Preferred (not required) so scheduling still succeeds if only one eligible
+  # node is available — the platform house pattern (spread-pods).
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/managed-by: coroot-operator
+                app.kubernetes.io/part-of: coroot
+                app.kubernetes.io/component: coroot
   # Persist on Hetzner Cloud block storage. The base uses the default storage
   # class (fine for ephemeral local/CI), but in prod a VPA eviction, node
   # drain, or autoscaler scale-down would otherwise wipe all telemetry. hcloud

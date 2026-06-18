@@ -18,12 +18,50 @@ spec:
         name: kubescape
   # https://github.com/kubescape/helm-charts/blob/main/charts/kubescape-operator/values.yaml
   values:
+    # HA: the kubescape-operator chart is single-replica by design — Coroot
+    # flags operator/kubescape/kubevuln/storage as "single instance - not
+    # resilient to node failure", but the chart provides NO safe way to run
+    # them HA, so they are deliberately left at one replica (chart v1.40.2):
+    #
+    #   * operator, kubescape (scanner), storage — the Deployment templates
+    #     HARDCODE `replicas: 1` with no value to override it, and the chart
+    #     ships NO leader-election anywhere. Two operators/scanners would
+    #     double-trigger every scan (cf. the velero/VPA/flagger HA comments in
+    #     this tree: we only scale components that leader-elect). Making these
+    #     HA would require forking the chart — out of scope and unsafe.
+    #   * storage is additionally a singleton by ARCHITECTURE: it is an
+    #     aggregated APIServer backed by a ReadWriteOnce PVC
+    #     (kubescape-storage, persistence.size.backingStorage below) with a
+    #     `Recreate` rollout — a single-writer store, not a stateless replica
+    #     set. A second replica would fail to multi-attach the RWO volume.
+    #   * kubevuln is the ONLY component exposing `kubevuln.replicaCount`, but
+    #     its Deployment ships `strategy: type: Recreate` and mounts RWO PVCs
+    #     when grypeDb/tmpDir persistence is enabled — i.e. the chart itself
+    #     forbids concurrent replicas. With no leader election, two kubevuln
+    #     pods would duplicate every image scan. So it stays at 1 too.
+    #
+    # Upstream's guidance for larger clusters is to raise RESOURCES, not add
+    # replicas (helm-charts README). Revisit if the chart adds leader election
+    # / multi-replica support for any of these components.
     clusterName: ${cluster_name}
     capabilities:
       configurationScan: enable
       continuousScan: enable
       vulnerabilityScan: enable
       runtimeDetection: enable
+      # Run posture/config scanning OFFLINE (air-gapped). This cluster has no
+      # ARMO SaaS account, but the chart defaults to submit-mode: the scanner
+      # POSTs each posture report to report.armo.cloud and treats the submit as
+      # a terminal step. With no account that submit fails ("400 missing account
+      # id"), which ABORTS the scan before results are written — so NO
+      # config-scan CRs (workloadconfigurationscansummaries /
+      # configurationscansummaries) ever persist and the cluster compliance
+      # score stays 0. Offline mode skips the cloud submit and persists results
+      # straight to the in-cluster storage component (storage:true,
+      # keepLocal:true are already set), restoring posture scanning + findings.
+      # Vulnerability scanning (kubevuln) is unaffected — it never gated on the
+      # cloud submit.
+      kubescapeOffline: enable
     hostScanner:
       enabled: true
     nodeAgent:

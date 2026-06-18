@@ -1,0 +1,44 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-crossview
+  namespace: crossview
+spec:
+  endpointSelector: {}
+  ingress:
+    # Authenticated traffic from oauth2-proxy/auth-proxy
+    # (gateway -> oauth2-proxy -> auth-proxy -> crossview app on 3001).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "3001"
+              protocol: TCP
+    # Intra-namespace: app <-> bundled Postgres (and any Helm-test pods).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: crossview
+  egress:
+    # Kube API — Crossview reads Crossplane CRDs, claims, composites, managed
+    # resources, and providers.
+    - toEntities:
+        - kube-apiserver
+    # Intra-namespace: app -> bundled Postgres (5432).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: crossview
+    # DNS resolution (engages Cilium's L7 DNS proxy).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

@@ -84,18 +84,41 @@ spec:
       uploaderType: kopia
       features: ""
 
-    # Run Velero itself with HA primitives matching the rest of the
-    # operator tier (PR #2b). Server is leader-elected so 2 replicas =
-    # instant failover, not extra capacity.
+    # Velero runs a SINGLE replica — this is correct, not a gap, and is why
+    # Coroot's "single instance - not resilient to node failure" flag is a
+    # known false-positive for this workload (the velero namespace is also
+    # exempt from the require-replica-floor Kyverno policy for the same reason).
     #
-    # Intentionally no PodDisruptionBudget: velero uses leader election,
-    # so pod-level PDB adds no availability; with replicaCount=1 on prod
-    # (`velero_replicas=1`), a PDB with `minAvailable: 1` creates a
-    # classic deadlock where a rolling upgrade cannot evict the sole
-    # pod. `Recreate` strategy is a better fit: brief blip during an
-    # upgrade is acceptable for a backup controller and avoids requiring
-    # a surge pod that the CX23 prod nodes cannot host.
-    replicaCount: ${velero_replicas:=2}
+    # The Velero *server* has NO leader election and does NOT support running
+    # multiple active replicas: two servers would both run the controller loops
+    # and double-run / compete on the same backups & schedules. Upstream still
+    # treats the server as single-instance (vmware-tanzu/velero#2694). At the
+    # version this HelmRelease pins (chart 12.0.2 → Velero v1.18.1), the chart's
+    # deployment.yaml additionally HARDCODES `replicas: 1` and never reads
+    # `.Values.replicaCount`, so the count cannot be raised from values anyway —
+    # `helm template --set replicaCount=2` still renders `replicas: 1`. (An
+    # earlier comment here claimed the server was leader-elected; that was
+    # incorrect — corrected to match the accurate rationale already in
+    # k8s/clusters/prod/bootstrap/variables-cluster-config-map.yaml and the
+    # validate-replica-floor policy.)
+    #
+    # Resilience to node failure therefore comes from FAST RESCHEDULE, not a warm
+    # standby: on a node loss the Deployment's sole pod is recreated on a healthy
+    # node, and Velero resumes its controller loops from API/object-store state
+    # (in-flight backups are retried; nothing is lost). No PriorityClass is added
+    # — no other controller in this infrastructure tier uses one, so a lone
+    # velero-only PriorityClass would be inconsistent for marginal benefit.
+    #
+    # Upgrade path: if a future Velero release adds server leader election (and
+    # the chart exposes a real `replicaCount`), this can become true HA — scale
+    # to ${velero_replicas} with a `maxUnavailable: 1` PDB and keep the spread
+    # below. Until then `velero_replicas` stays 1 everywhere (the default here and
+    # the prod override) and the value is effectively cosmetic given the hardcode.
+    replicaCount: ${velero_replicas:=1}
+    # Harmless at 1 replica (single pod trivially satisfies maxSkew); retained so
+    # that if the chart ever honours replicaCount and the server gains leader
+    # election, scaling up already spreads pods across nodes (kept per the
+    # upgrade-path note above).
     topologySpreadConstraints:
       - maxSkew: 1
         topologyKey: kubernetes.io/hostname
@@ -104,6 +127,11 @@ spec:
           matchLabels:
             app.kubernetes.io/name: velero
             app.kubernetes.io/instance: velero
+    # `Recreate` matches the chart default and is the right fit for a single
+    # backup controller: a brief blip during an upgrade is acceptable and it
+    # avoids needing a surge pod the CX23 prod nodes cannot host. (No PDB: with a
+    # single replica a `minAvailable: 1` PDB would deadlock pod eviction during a
+    # node drain.)
     strategy:
       type: Recreate
 

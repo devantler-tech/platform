@@ -67,7 +67,7 @@ jobs:
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@e9d295dbc161d38b8079bcd4fe113f74829b83ab # v7.59.0
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@ac3518f1e47d1e3ce38dfdf200dd58716e075c54 # v7.61.0
         with:
           distribution: Talos
           provider: Docker
@@ -333,7 +333,7 @@ jobs:
         # cluster-update fixes; renovate keeps this pin current.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.58.3"
+          KSAIL_VERSION: "7.64.0"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -433,7 +433,7 @@ jobs:
       - name: ⚙️ Install cosign
         env:
           # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
-          COSIGN_VERSION: "3.0.6"
+          COSIGN_VERSION: "3.1.1"
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
           cosign-release: 'v${{ env.COSIGN_VERSION }}'

@@ -28,7 +28,15 @@ spec:
     # External endpoints, pinned by FQDN instead of world:443 so a compromised
     # pod cannot exfiltrate to arbitrary external services:
     # - grype/toolbox-data.anchore.io — kubevuln's Grype vulnerability DB
-    # - api.armosec.io                — Kubescape backend (version/artifacts)
+    # - api.armosec.io                — Kubescape backend (version check only;
+    #   vestigial under offline mode, kept harmless — its failure mode is a
+    #   skipped version check, not an outage).
+    #   NOTE: report.armo.cloud (ARMO posture-report ingestion) is deliberately
+    #   NOT allowed — the operator runs OFFLINE (capabilities.kubescapeOffline:
+    #   enable, see helm-release.yaml), so config-scan results persist to the
+    #   in-cluster storage component instead of being POSTed to ARMO. There is
+    #   no ARMO account, so the submit only ever 400'd "missing account id" and
+    #   aborted the scan; offline mode removes that dependency entirely.
     # - github.com + CDNs             — regolibrary / controls artifacts
     # If scan components log download failures, extend this list with the
     # missing host (failure mode is stale scan data, not an outage).
@@ -66,9 +74,13 @@ spec:
         - matchName: "cdn02.quay.io"
         - matchName: "cdn03.quay.io"
         # registry.k8s.io — redirects blob pulls to its Google Artifact Registry
-        # backing store (*.pkg.dev); add the S3 mirror host if logs show one:
+        # backing store (*.pkg.dev) and, for EU clients, to its prod S3 mirror
+        # buckets — kubevuln logged i/o timeouts pulling e.g. vpa-recommender from
+        # prod-registry-k8s-io-eu-central-1.s3.dualstack.eu-central-1.amazonaws.com.
+        # The pattern is scoped to the registry's own prod buckets (not all of S3):
         - matchName: "registry.k8s.io"
         - matchPattern: "*.pkg.dev"
+        - matchPattern: "prod-registry-k8s-io-*.s3.dualstack.*.amazonaws.com"
         # reg.kyverno.io — Kyverno's image registry:
         - matchName: "reg.kyverno.io"
       toPorts:

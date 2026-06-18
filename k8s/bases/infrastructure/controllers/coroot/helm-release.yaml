@@ -22,6 +22,21 @@ spec:
   # Prometheus (metrics TSDB), ClickHouse (logs/traces/profiles), the eBPF
   # node-agent (per-node telemetry) and the cluster-agent (kube-state-metrics
   # equivalent). Coroot Community Edition — fully self-hosted.
+  #
+  # SINGLE-REPLICA BY DESIGN (no HA knob upstream): the operator itself stays at
+  # the chart default of 1 replica. The coroot-operator binary does NOT enable
+  # controller-runtime leader election (main.go leaves ctrl.Options.LeaderElection
+  # unset → false, with no flag/env to turn it on), and the chart exposes no
+  # replicaCount/replicas value, so a second replica would be a SECOND active
+  # reconciler racing the first over the same Coroot CR (conflicting writes), not
+  # a warm standby — strictly worse than one. It is also off every serving path:
+  # a brief operator outage only delays reconciliation of the CR, never user
+  # traffic or telemetry ingestion (the server/Prometheus/ClickHouse/node-agent
+  # keep running). It is covered by the observability exemption in
+  # validate-replica-floor. Revisit only if upstream adds leader election + a
+  # replica value. The data-plane HA that DOES matter is on the Coroot CR:
+  # ClickHouse (2) + Keeper (3) and the server (replicas: 2 via the hetzner
+  # coroot-patch's external Postgres).
   chart:
     spec:
       chart: coroot-operator

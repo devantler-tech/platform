@@ -48,19 +48,62 @@ spec:
   # Bundled Prometheus = the metrics TSDB. Kept as a real Prometheus (we do
   # NOT set storeMetricsInClickhouse) precisely so OpenCost can still query it
   # at http://coroot-prometheus.observability.svc.cluster.local:9090.
+  #
+  # SINGLE-INSTANCE BY DESIGN: the Coroot CRD's `prometheus` block exposes only
+  # affinity/image/nodeSelector/outOfOrderTimeWindow/podAnnotations/resources/
+  # retention/storage/tolerations — there is NO replicas/HA field (verified
+  # against the coroot-operator v1.9.5 CRD). The bundled Prometheus is a
+  # single-writer local-TSDB instance by design (HA Prometheus needs two
+  # independent scrapers + dedup at query time, which the operator does not
+  # model), so it is an operator-fixed singleton, not something we can scale.
+  # Durability instead of HA: its PVC is hcloud-backed (hetzner overlay) and
+  # Velero backs the observability namespace up daily.
   prometheus:
     retention: 7d
     storage:
       size: 10Gi
 
-  # ClickHouse stores logs, traces and continuous profiles. A single
-  # shard/replica (+ one keeper for replication metadata) is plenty for a
-  # homelab and keeps the footprint small on a memory-constrained cluster.
+  # ClickHouse stores logs, traces and continuous profiles. Run it with
+  # redundancy so a single node loss doesn't take the telemetry store down or
+  # lose data (Coroot's own risk view flagged every component as "single
+  # instance / all instances on one node"):
+  #   - shards: 1 — one shard is enough data volume for this cluster; we want
+  #     replication, not horizontal partitioning, so the shard count stays 1.
+  #   - replicas: 2 — two replicas *within* the shard, so the data is mirrored
+  #     and survives losing the node hosting either replica (ReplicatedMergeTree
+  #     via Keeper). This is the replica/shard field the operator exposes
+  #     (`spec.clickhouse.replicas`).
+  #   - keeper.replicas: 3 — ClickHouse Keeper is a Raft cluster; it needs an
+  #     ODD quorum to tolerate a failure. 1 keeper is a SPOF and 2 is INVALID
+  #     (no majority on a split), so the minimum fault-tolerant size is 3
+  #     (tolerates 1 keeper down). Field: `spec.clickhouse.keeper.replicas`.
+  # Hard pod anti-affinity (one replica per node) makes the redundancy real —
+  # without it the operator can schedule both ClickHouse replicas, or a keeper
+  # majority, onto one node and a single node loss still takes quorum/data with
+  # it. All nodes are in one Hetzner zone (fsn1), so the spread key is the node
+  # hostname. The operator exposes only `affinity` (no topologySpreadConstraints
+  # field), so anti-affinity is the available placement knob.
   clickhouse:
     shards: 1
-    replicas: 1
+    replicas: 2
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/part-of: coroot
+                app.kubernetes.io/component: clickhouse
+            topologyKey: kubernetes.io/hostname
     keeper:
-      replicas: 1
+      replicas: 3
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/part-of: coroot
+                  app.kubernetes.io/component: clickhouse-keeper
+              topologyKey: kubernetes.io/hostname
     storage:
       size: 10Gi
   logsTTL: 3d
@@ -79,3 +122,13 @@ spec:
   # cluster-agent is left at its default (enabled) — it provides the
   # kube-state-metrics-equivalent cluster inventory, replacing the standalone
   # kube-state-metrics from the prometheus stack.
+  #
+  # SINGLE-INSTANCE BY DESIGN: the Coroot CRD's `clusterAgent` block exposes only
+  # affinity/env/image/kubeStateMetrics/nodeSelector/podAnnotations/resources/
+  # tolerations — there is NO replicas/HA field (verified against the
+  # coroot-operator v1.9.5 CRD). It is a singleton collector (one cluster-wide
+  # inventory snapshot pushed to the Coroot server); a second instance would just
+  # duplicate that push. So, like the bundled Prometheus, it is an operator-fixed
+  # singleton, not something we can scale. A brief gap only delays inventory
+  # refresh, not user-facing telemetry. The genuinely scalable pieces are the
+  # server (replicas: 2, hetzner overlay), ClickHouse (2) and Keeper (3).

@@ -1,0 +1,68 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: plugin-barman-cloud
+  namespace: cnpg-system
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  # CNPG-I Barman Cloud Plugin — the supported replacement for the in-tree
+  # spec.backup.barmanObjectStore, which CNPG deprecated in 1.26 and removes in
+  # 1.30.0. Clusters opt in via spec.plugins + an ObjectStore CR
+  # (barmancloud.cnpg.io) instead of an inline backup block; see apps/umami and
+  # apps/wedding-app for the migrated consumers.
+  #
+  # The chart ships the ObjectStore CRD and its own cert-manager Issuer +
+  # server/client Certificates for the mTLS channel between the plugin and the
+  # operator, so it must come up after cert-manager and the CNPG operator (both
+  # in this controller set). Reuses the shared `cloudnative-pg` HelmRepository.
+  dependsOn:
+    - name: cert-manager
+      namespace: cert-manager
+    - name: cloudnative-pg
+      namespace: cnpg-system
+  interval: 10m
+  timeout: 10m
+  chart:
+    spec:
+      chart: plugin-barman-cloud
+      version: 0.7.0
+      sourceRef:
+        kind: HelmRepository
+        name: cloudnative-pg
+  # Single replica — this chart CANNOT run a ready warm standby. It hardcodes
+  # `--leader-elect` ON, and the operator-facing gRPC listener on :9090 (which
+  # the readiness probe checks via tcp-socket :9090) is a leader-election
+  # runnable: it only starts on the active leader. A 2nd replica blocks in
+  # "Attempting to acquire leader lease..." and never opens :9090, so its
+  # readiness probe is refused forever — the Deployment sticks at 1/2 and
+  # helm-controller's upgrade health gate times out
+  # ("Deployment/.../plugin-barman-cloud status: 'InProgress'"), then rolls back,
+  # in a loop. (Same shape as Flux source-controller's leader-only :9090 file
+  # server — see controllers/flux-instance.) A warm standby is therefore
+  # impossible here; node-failure resilience comes from rescheduling the single
+  # replica, and CNPG retries the plugin gRPC across that brief gap. The chart
+  # exposes no pod-label value, so single-replica is exempted from the
+  # require-replica-floor (#1882) floor via the policy's exempt list (see
+  # cluster-policies/best-practices/validate-replica-floor.yaml), not a label.
+  # The maxUnavailable: 1 PDB keeps the node drainable at one replica.
+  values:
+    # 1 replica: the standby can never become ready (leader-gated :9090), so 2
+    # only breaks the HelmRelease. The override stays available for the day the
+    # upstream chart supports non-leader readiness (or leader-only Service
+    # routing); until then 1 is the only working value. Chart values:
+    # https://github.com/cloudnative-pg/plugin-barman-cloud/blob/main/charts/plugin-barman-cloud/values.yaml
+    replicaCount: ${plugin_barman_cloud_replicas:=1}
+    # Spread the replicas across nodes so a single node loss can't take both.
+    # ScheduleAnyway (soft): never block scheduling the standby if the cluster is
+    # momentarily short a distinct node — availability over strict placement.
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: plugin-barman-cloud
+            app.kubernetes.io/instance: plugin-barman-cloud

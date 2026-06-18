@@ -24,13 +24,13 @@ spec:
   chart:
     spec:
       chart: opencost
-      version: 2.5.22
+      version: 2.5.23
       sourceRef:
         kind: HelmRepository
         name: opencost
   postRenderers:
-    # Zero-downtime, gate-clean rollout. The chart default (maxUnavailable: 1 on
-    # a single replica) kills the old pod the instant the new one is created;
+    # Zero-downtime, gate-clean rollout. The chart's default RollingUpdate
+    # (maxUnavailable: 1) kills an old pod the instant the new one is created;
     # kubelet then fires one last readiness probe ~1s after Cilium tears down
     # the dead pod's route, emitting `Unhealthy: …:9003/healthz: connect: no
     # route to host`. That one-shot teardown warning trips the merge-queue
@@ -61,22 +61,33 @@ spec:
                     maxUnavailable: 0
                 template:
                   spec:
+                    # Spread the replicas across nodes so a single node failure
+                    # never takes the whole cost API/UI down (Coroot flags
+                    # opencost-primary as "single instance — not resilient to
+                    # node failure"). Flagger copies this pod template verbatim
+                    # onto opencost-primary, so the constraint lands on the live
+                    # (primary) Deployment. ScheduleAnyway (soft): a 2-node
+                    # window must never block the pod from scheduling.
+                    #
+                    # Select on app.kubernetes.io/instance ONLY (like the PDB):
+                    # Flagger's default --selector-labels rewrites
+                    # app.kubernetes.io/name to "opencost-primary" on the primary
+                    # pods, so a selector pinning name=opencost would fail to
+                    # match the primary's own replicas and the spread would no-op.
+                    # instance=opencost stays intact on both source and primary.
+                    topologySpreadConstraints:
+                      - maxSkew: 1
+                        topologyKey: kubernetes.io/hostname
+                        whenUnsatisfiable: ScheduleAnyway
+                        labelSelector:
+                          matchLabels:
+                            app.kubernetes.io/instance: opencost
                     containers:
                       - name: opencost
                         lifecycle:
                           preStop:
                             sleep:
                               seconds: 15
-          # Flagger owns the canary (opencost) Deployment's replicas — it scales
-          # the deployment to zero between rollouts. Strip the chart's replicas
-          # field so Flux does not fight Flagger's scaling. See
-          # infrastructure/flagger/canary-opencost.yaml.
-          - target:
-              kind: Deployment
-              name: opencost
-            patch: |
-              - op: remove
-                path: /spec/replicas
   # https://github.com/opencost/opencost-helm-chart/blob/main/charts/opencost/values.yaml
   #
   # Lightweight FinOps cost allocation. Points at Coroot's bundled Prometheus
@@ -141,8 +152,24 @@ spec:
           internetNetworkEgress: 0.001164
 
       exporter:
-        # replicas omitted — Flagger manages the canary deployment's replicas
-        # (stripped by the postRenderer above).
+        # Run 2 replicas for node-failure resilience (Coroot flagged
+        # opencost-primary as a single instance). OpenCost is a stateless cost
+        # allocator: its source of truth is Coroot's external Prometheus
+        # (prometheus.external below) and the customPricing ConfigMap — each
+        # replica independently queries Prometheus and holds only re-derivable
+        # in-memory aggregation, with no leader election, local ETL writer or
+        # sticky UI state, so >=2 behind the Service is safe.
+        #
+        # This is a Flagger canary WITHOUT an autoscalerRef (unlike homepage /
+        # umami, whose replicas come from KEDA). With no autoscaler, Flagger
+        # sizes opencost-primary from the canary target's spec.replicas, so the
+        # HA replica count must be pinned HERE on the chart (it is what Flagger
+        # reads). Flagger then scales the canary *source* to 0 between rollouts;
+        # the platform-wide drift-detection component ignores Deployment
+        # /spec/replicas (k8s/bases/components/helmrelease-drift-detection), so
+        # Flux never fights that scale-to-0. Pair with the drain-safe PDB
+        # (maxUnavailable: 1) + topologySpreadConstraints (postRenderer above).
+        replicas: ${opencost_replicas:=2}
         resources:
           requests:
             cpu: 10m

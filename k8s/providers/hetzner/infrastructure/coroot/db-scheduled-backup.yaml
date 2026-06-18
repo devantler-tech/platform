@@ -1,0 +1,22 @@
+# Daily base backup of coroot-db to R2 via the Barman Cloud Plugin (the
+# cluster's spec.plugins + db-object-store.yaml). Combined with continuous WAL
+# archiving (routed through the plugin's isWALArchiver), this gives point-in-time
+# recovery within the 30d retention window. `immediate: true` seeds the first
+# backup as soon as this is applied so the cluster is not left backup-less
+# waiting for the first 03:00 tick. Mirrors umami's db-scheduled-backup.yaml.
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: coroot-db-daily
+  namespace: observability
+spec:
+  # CNPG cron is 6-field (seconds first): 03:30 UTC daily — offset 30m from
+  # umami-db-daily (03:00) so the two base backups don't contend for R2 egress.
+  schedule: "0 30 3 * * *"
+  immediate: true
+  backupOwnerReference: self
+  method: plugin
+  pluginConfiguration:
+    name: barman-cloud.cloudnative-pg.io
+  cluster:
+    name: coroot-db

@@ -4,6 +4,10 @@ kind: Kustomization
 resources:
   - actual-budget/
   - ascoachingogvaner/
+  # Crossplane resource dashboard (Crossview). Prod-only in practice: it reads
+  # Crossplane CRDs, and Crossplane runs only on the Hetzner provider. The
+  # docker provider deploys no apps, so it is naturally excluded from local.
+  - crossview/
   # fleetdm disabled 2026-06-03 — not in use. The manifests under
   # bases/apps/fleetdm/ are retained; re-enable by uncommenting the line below.
   # The prod-only HelmRelease patch (providers/hetzner/apps/fleetdm/) was
@@ -11,6 +15,11 @@ resources:
   # infra-layer plumbing (OpenBao policies/seeds, NetworkPolicies, Kubescape
   # security exceptions, prod config-map vars) is intentionally left idle.
   # - fleetdm/
+  # Declarative GitHub org management: the devantler-tech/.github repo's deploy/
+  # artifact (Crossplane managed resources) onboarded as a normal app/tenant.
+  # Prod-only in practice (its Crossplane provider is Hetzner-only); the docker
+  # provider deploys no apps, so it is naturally excluded from local clusters.
+  - github-config/
   - headlamp/
   - homepage/
   - umami/

@@ -68,6 +68,17 @@ spec:
         enabled: true
         replicas: ${cilium_replicas:=2}
         rollOutPods: true
+        # Coroot flagged the 2-replica Hubble Relay as co-located on a single
+        # node (not resilient to node failure). Soft spread prefers separate
+        # nodes; ScheduleAnyway never blocks scheduling. The chart's relay
+        # Deployment selects on k8s-app: hubble-relay.
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                k8s-app: hubble-relay
         podDisruptionBudget:
           enabled: true
           # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never

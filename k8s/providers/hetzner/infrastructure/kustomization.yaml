@@ -4,6 +4,13 @@ kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
   - cluster-issuers/
+  # Crossplane provider-upjet-github package + activation policy. Lives in this
+  # `infrastructure` layer (not `infrastructure/controllers/`) because these are
+  # pkg.crossplane.io CRs that need the Crossplane CRDs the core HelmRelease in
+  # controllers/crossplane/ installs first — same controller-then-CR ordering as
+  # Coroot/Flagger. Establishes the namespaced github CRDs the github-config app
+  # (bases/apps/github-config/) consumes. Prod-only (Crossplane is Hetzner-only).
+  - crossplane/
   # external-dns lives in this `infrastructure` layer (not
   # `infrastructure/controllers/`) because its Cloudflare token is a user-fed
   # OpenBao secret materialised by an ExternalSecret, and the openbao
@@ -24,6 +31,18 @@ resources:
   # ~16x the real bill). Lives in this `infrastructure` layer because it targets
   # the `platform` project the coroot-patch below adds to the Coroot CR.
   - coroot/custom-cloud-pricing-cronjob.yaml
+  # Prod-only: the CloudNativePG datastore + backup wiring that lets the Coroot
+  # SERVER run HA (replicas: 2 — set in the coroot-patch below). The operator
+  # only honours replicas > 1 when spec.postgres is set, so this Postgres is the
+  # precondition for a non-singleton Coroot server. CNPG/hcloud are prod-only, so
+  # (like umami-db) these live in this overlay, not the shared base. The
+  # drain-safe PDB for the operator-built server StatefulSet ships here too.
+  - coroot/postgres-cluster.yaml
+  - coroot/db-backup-external-secret.yaml
+  - coroot/db-object-store.yaml
+  - coroot/db-scheduled-backup.yaml
+  - coroot/networkpolicy.yaml
+  - coroot/pod-disruption-budget.yaml
   # Longhorn CSI VolumeSnapshotClass for Velero CSI backups. Kept in this
   # `infrastructure` layer (not `infrastructure/controllers/`) so the
   # snapshot.storage.k8s.io CRDs shipped by the snapshot-controller HelmRelease
@@ -45,6 +64,17 @@ resources:
   # every CI/CD deploy) red for ~30h on 2026-06-09/10 — the native buffer creates
   # no real pods, so nothing sits Pending and it rides along here like any other
   # resource. Hetzner/prod-only (the autoscaler pools are Hetzner).
+  #
+  # The CapacityBuffer CRD (autoscaling.x-k8s.io/v1beta1) + controller are
+  # installed by KSail only from a release that ships ksail#5277, first released
+  # in v7.59.0. The pinned KSAIL_VERSION is now 7.59.1 (ci.yaml/cd.yaml, bumped in
+  # #2097), so the gate is satisfied. Deploy ordering keeps the first apply safe:
+  # `ksail cluster update` (installs the CRD + controller) runs before `ksail
+  # workload reconcile` (applies this CR) in both cd.yaml and the ci.yaml
+  # merge-queue deploy, so the CRD always exists before Flux reconciles the
+  # CapacityBuffer — no "no matches for kind CapacityBuffer" wedge. (It was
+  # TEMPORARILY DISABLED 2026-06-16..#2097 while the pin still read 7.58.3, which
+  # predated #5277; the old balloon-pod buffer was already removed in #2087.)
   - overprovisioning/
   #
   # NOTE: tenant-owned custom-domain TLS (the ascoachingogvaner.dk Certificate +
