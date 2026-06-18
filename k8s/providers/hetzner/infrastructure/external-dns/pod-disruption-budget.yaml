@@ -1,0 +1,20 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: external-dns
+  namespace: external-dns
+spec:
+  # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880):
+  # it never deadlocks a node drain regardless of replica count. external-dns is
+  # a DELIBERATELY single-replica writer (no leader election at the pinned app
+  # version v0.21.0 — see helm-release.yaml; a 2nd ACTIVE replica would issue
+  # duplicate Cloudflare writes under one txtOwnerId), so this PDB does not add
+  # standby redundancy. Its job is to let a node drain evict and reschedule the
+  # single pod cleanly (the high priorityClassName makes that reschedule fast)
+  # rather than the drain stalling on an un-budgeted pod. Convert to a true HA
+  # budget once external-dns ships leader election and this runs replicas: 2.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: external-dns
+      app.kubernetes.io/instance: external-dns
