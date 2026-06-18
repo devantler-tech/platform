@@ -32,25 +32,29 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: cloudnative-pg
-  # HA with leader election — verified the operator↔plugin path. The plugin
-  # Deployment runs the CNPG-I controller with `--leader-elect` hardcoded ON in
-  # the chart (templates/deployment.yaml) and ships the matching leader-election
-  # RBAC (templates/additional-rbac/leader_election.yaml: a Role/RoleBinding for
-  # coordination.k8s.io leases), so a second replica is a *lease-coordinated warm
-  # standby*, not a second uncoordinated backup controller — exactly the cnpg
-  # operator's pattern in this same namespace. replicaCount: 2 + a maxUnavailable:
-  # 1 PDB (pod-disruption-budget.yaml) + hostname topology spread keep one replica
-  # serving the operator's gRPC through a node failure/drain, clearing the Coroot
-  # "single instance — not resilient to node failure" finding and meeting the
-  # require-replica-floor (#1882) floor of 2 (so the prior replica-floor: exempt
-  # opt-out is removed). The Deployment uses the Recreate strategy (the operator
-  # does not yet support RollingUpdate, per the chart) — that only serialises a
-  # rollout; node-failure resilience comes from the standby on the surviving node.
+  # Single replica — this chart CANNOT run a ready warm standby. It hardcodes
+  # `--leader-elect` ON, and the operator-facing gRPC listener on :9090 (which
+  # the readiness probe checks via tcp-socket :9090) is a leader-election
+  # runnable: it only starts on the active leader. A 2nd replica blocks in
+  # "Attempting to acquire leader lease..." and never opens :9090, so its
+  # readiness probe is refused forever — the Deployment sticks at 1/2 and
+  # helm-controller's upgrade health gate times out
+  # ("Deployment/.../plugin-barman-cloud status: 'InProgress'"), then rolls back,
+  # in a loop. (Same shape as Flux source-controller's leader-only :9090 file
+  # server — see controllers/flux-instance.) A warm standby is therefore
+  # impossible here; node-failure resilience comes from rescheduling the single
+  # replica, and CNPG retries the plugin gRPC across that brief gap. The chart
+  # exposes no pod-label value, so single-replica is exempted from the
+  # require-replica-floor (#1882) floor via the policy's exempt list (see
+  # cluster-policies/best-practices/validate-replica-floor.yaml), not a label.
+  # The maxUnavailable: 1 PDB keeps the node drainable at one replica.
   values:
-    # 2 replicas for HA (active + warm standby); prod tunes via cluster config,
-    # default 2 to satisfy the floor in every environment. See the chart values:
+    # 1 replica: the standby can never become ready (leader-gated :9090), so 2
+    # only breaks the HelmRelease. The override stays available for the day the
+    # upstream chart supports non-leader readiness (or leader-only Service
+    # routing); until then 1 is the only working value. Chart values:
     # https://github.com/cloudnative-pg/plugin-barman-cloud/blob/main/charts/plugin-barman-cloud/values.yaml
-    replicaCount: ${plugin_barman_cloud_replicas:=2}
+    replicaCount: ${plugin_barman_cloud_replicas:=1}
     # Spread the replicas across nodes so a single node loss can't take both.
     # ScheduleAnyway (soft): never block scheduling the standby if the cluster is
     # momentarily short a distinct node — availability over strict placement.
