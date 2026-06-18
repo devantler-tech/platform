@@ -32,19 +32,33 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: cloudnative-pg
-  # Chart defaults install into the release namespace (cnpg-system) with a single
-  # replica; raise replicaCount once the operator↔plugin path is verified if HA
-  # is wanted (the operator retries, so a brief plugin restart only delays
-  # backups, it does not drop the database).
+  # HA with leader election — verified the operator↔plugin path. The plugin
+  # Deployment runs the CNPG-I controller with `--leader-elect` hardcoded ON in
+  # the chart (templates/deployment.yaml) and ships the matching leader-election
+  # RBAC (templates/additional-rbac/leader_election.yaml: a Role/RoleBinding for
+  # coordination.k8s.io leases), so a second replica is a *lease-coordinated warm
+  # standby*, not a second uncoordinated backup controller — exactly the cnpg
+  # operator's pattern in this same namespace. replicaCount: 2 + a maxUnavailable:
+  # 1 PDB (pod-disruption-budget.yaml) + hostname topology spread keep one replica
+  # serving the operator's gRPC through a node failure/drain, clearing the Coroot
+  # "single instance — not resilient to node failure" finding and meeting the
+  # require-replica-floor (#1882) floor of 2 (so the prior replica-floor: exempt
+  # opt-out is removed). The Deployment uses the Recreate strategy (the operator
+  # does not yet support RollingUpdate, per the chart) — that only serialises a
+  # rollout; node-failure resilience comes from the standby on the surviving node.
   values:
-    # Intentionally single-replica: this chart (0.7.0) exposes no leaderElection
-    # knob, so >1 replica would run two uncoordinated backup controllers. It is a
-    # controller off every request-serving path — a node drain only briefly
-    # interrupts backup reconciliation (the CNPG operator retries), never user
-    # traffic — so the require-replica-floor (#1882) HA floor of 2 is *wrong*
-    # here, exactly like the other single-by-design controllers it exempts
-    # (csi-snapshotter, longhorn-driver-deployer, …). Opt out with the policy's
-    # durable, self-documenting pod-template label rather than leaving a standing
-    # PolicyReport violation.
-    podLabels:
-      platform.devantler.tech/replica-floor: exempt
+    # 2 replicas for HA (active + warm standby); prod tunes via cluster config,
+    # default 2 to satisfy the floor in every environment. See the chart values:
+    # https://github.com/cloudnative-pg/plugin-barman-cloud/blob/main/charts/plugin-barman-cloud/values.yaml
+    replicaCount: ${plugin_barman_cloud_replicas:=2}
+    # Spread the replicas across nodes so a single node loss can't take both.
+    # ScheduleAnyway (soft): never block scheduling the standby if the cluster is
+    # momentarily short a distinct node — availability over strict placement.
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: plugin-barman-cloud
+            app.kubernetes.io/instance: plugin-barman-cloud

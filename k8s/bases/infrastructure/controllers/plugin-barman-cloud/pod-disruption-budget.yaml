@@ -1,0 +1,17 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: plugin-barman-cloud
+  namespace: cnpg-system
+spec:
+  # maxUnavailable: 1 (not minAvailable: 1) keeps the node drainable at the prod
+  # single-replica floor (plugin_barman_cloud_replicas: "1"). minAvailable: 1 over
+  # a single ready replica permits zero voluntary evictions and makes the hosting
+  # node undrainable; at 2+ replicas maxUnavailable: 1 still bounds disruption to
+  # one pod at a time. Mirrors the cnpg operator's PDB in this namespace and the
+  # drain-safe house pattern (validate-pdb-drain-safe / #1882).
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: plugin-barman-cloud
+      app.kubernetes.io/instance: plugin-barman-cloud

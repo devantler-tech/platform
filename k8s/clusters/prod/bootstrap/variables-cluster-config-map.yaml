@@ -45,6 +45,11 @@ data:
   cilium_replicas: "2"
   velero_replicas: "1"
   cloudnative_pg_replicas: "2"
+  # CNPG-I barman-cloud plugin: the CNPG-I controller runs `--leader-elect`
+  # (hardcoded by the chart), so the standby is lease-coordinated, not a second
+  # backup controller. WAL archive/restore I/O runs in per-instance sidecars, not
+  # here; this is the operator-facing gRPC controller.
+  plugin_barman_cloud_replicas: "2"
   # ksail-operator: chart default operator.leaderElection: true (renders
   # --leader-elect + a Lease), so the 2nd replica is a warm standby.
   ksail_operator_replicas: "2"
