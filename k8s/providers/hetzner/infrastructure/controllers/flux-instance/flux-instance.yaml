@@ -46,9 +46,11 @@ spec:
       # reconciliation within the lease TTL when the leader's node fails. The
       # upstream Deployments ship replicas: 1, which is why Coroot flags each
       # controller as "single instance - not resilient to node failure"; bumping
-      # to 2 clears that. Patched by label so the one rule covers
-      # source-/kustomize-/helm-/notification-controller (all carry
-      # app.kubernetes.io/part-of=flux). Paired with the topologySpread below so
+      # to 2 clears that for kustomize-/helm-/notification-controller. Patched by
+      # label (all carry app.kubernetes.io/part-of=flux); source-controller is
+      # then pinned BACK to 1 by the override patch immediately below — it is the
+      # one controller for which a warm standby does NOT work (see that comment
+      # for the readiness-probe reason). Paired with the topologySpread below so
       # the two replicas land on different nodes — otherwise both could sit on
       # the node that fails. flux-operator itself is left single-replica: its
       # chart does not expose replicas/leaderElection (0.50.0), so it relies on
@@ -60,6 +62,30 @@ spec:
           - op: replace
             path: /spec/replicas
             value: 2
+      # source-controller is the ONE Flux controller that cannot run the warm
+      # standby above — pin it back to a single replica. Unlike the other three,
+      # its readiness probe targets the artifact file server on :9090, and that
+      # server is a leader-election runnable: it only starts on the active leader
+      # (the standby blocks in "attempting to acquire leader lease"). So the
+      # standby pod's readiness probe gets connection-refused forever, the
+      # Deployment is stuck at 1/2, the FluxInstance reports
+      # "source-controller status: InProgress", and the infrastructure-controllers
+      # Kustomization health-check times out after 25m — which freezes ALL GitOps
+      # delivery (infrastructure + apps stop reconciling). The other three
+      # controllers expose /readyz on the always-on health-probe port, so their
+      # standbys reach 2/2 fine. source-controller keeps its node-failure
+      # resilience via reschedule + storage, the same way flux-operator does;
+      # Coroot will still flag it single-instance, which is inherent and accepted.
+      # This override MUST stay after the replicas:2 patch so it wins for
+      # source-controller while topologySpread + ndots still apply to it.
+      - target:
+          kind: Deployment
+          name: source-controller
+          namespace: flux-system
+        patch: |
+          - op: replace
+            path: /spec/replicas
+            value: 1
       # Spread the four Flux controllers across worker nodes. They all carry
       # app.kubernetes.io/part-of=flux, so a per-controller topology spread
       # keyed on that label distributes the set (skew <= 1) — and, combined with
