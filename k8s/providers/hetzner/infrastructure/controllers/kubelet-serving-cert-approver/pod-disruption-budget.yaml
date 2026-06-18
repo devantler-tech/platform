@@ -1,0 +1,18 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kubelet-serving-cert-approver
+  namespace: kubelet-serving-cert-approver
+spec:
+  # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 keeps the node
+  # drainable at any replica count, unlike minAvailable: 1 which deadlocks a
+  # drain when only 1 replica is ready. The upstream ha-install.yaml ships no
+  # PDB, so it is declared here. Pairs with the HA base (replicas: 2 +
+  # --enable-leader-election in kustomization.yaml): the approver is then
+  # leader-elected, so the second replica is a warm standby that keeps kubelet
+  # serving-cert CSR approval available while a node drains.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kubelet-serving-cert-approver
+      app.kubernetes.io/instance: kubelet-serving-cert-approver

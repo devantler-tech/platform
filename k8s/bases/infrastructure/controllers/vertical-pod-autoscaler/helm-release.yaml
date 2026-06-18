@@ -80,3 +80,54 @@ spec:
         # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
         # deadlocks a node drain regardless of replica count.
         maxUnavailable: 1
+  # Coroot flagged the 2-replica admission controller and updater as co-located
+  # on a single node (not resilient to node failure). The FairwindsOps vpa chart
+  # (v4.11.0) exposes NO topologySpreadConstraints / affinity values for these
+  # components, so the soft spread is injected with a post-render Kustomize patch
+  # on each Deployment (same mechanism flagger uses above). maxSkew: 1 +
+  # ScheduleAnyway prefers separate nodes without ever blocking scheduling. The
+  # recommender is left untouched here (not flagged by Coroot). Selectors come
+  # from the chart's Deployment .spec.selector.matchLabels.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: vertical-pod-autoscaler-vpa-admission-controller
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: vertical-pod-autoscaler-vpa-admission-controller
+              spec:
+                template:
+                  spec:
+                    topologySpreadConstraints:
+                      - maxSkew: 1
+                        topologyKey: kubernetes.io/hostname
+                        whenUnsatisfiable: ScheduleAnyway
+                        labelSelector:
+                          matchLabels:
+                            app.kubernetes.io/component: admission-controller
+                            app.kubernetes.io/name: vpa
+                            app.kubernetes.io/instance: vertical-pod-autoscaler
+          - target:
+              kind: Deployment
+              name: vertical-pod-autoscaler-vpa-updater
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: vertical-pod-autoscaler-vpa-updater
+              spec:
+                template:
+                  spec:
+                    topologySpreadConstraints:
+                      - maxSkew: 1
+                        topologyKey: kubernetes.io/hostname
+                        whenUnsatisfiable: ScheduleAnyway
+                        labelSelector:
+                          matchLabels:
+                            app.kubernetes.io/component: updater
+                            app.kubernetes.io/name: vpa
+                            app.kubernetes.io/instance: vertical-pod-autoscaler
