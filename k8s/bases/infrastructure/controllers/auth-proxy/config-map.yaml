@@ -42,6 +42,12 @@ data:
           rule: "Host(`longhorn.${domain}`)"
           entryPoints: ["web"]
           service: longhorn
+        # Hetzner-only (Crossplane dashboard): inert on local/CI where no
+        # HTTPRoute sends crossview.${domain} to oauth2-proxy.
+        crossview:
+          rule: "Host(`crossview.${domain}`)"
+          entryPoints: ["web"]
+          service: crossview
       services:
         homepage:
           loadBalancer:
@@ -68,3 +74,7 @@ data:
           loadBalancer:
             servers:
               - url: "http://keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local:8080"
+        crossview:
+          loadBalancer:
+            servers:
+              - url: "http://crossview-service.crossview.svc.cluster.local:80"

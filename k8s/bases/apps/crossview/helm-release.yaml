@@ -1,0 +1,42 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: crossview
+  namespace: crossview
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  timeout: 10m
+  chart:
+    spec:
+      chart: crossview
+      # 4.5.0-rc.1 is the latest published tag but a release candidate; pin the
+      # latest stable.
+      version: 4.4.0
+      sourceRef:
+        kind: HelmRepository
+        name: crossview
+  # https://github.com/crossplane-contrib/crossview/blob/main/helm/crossview/values.yaml
+  values:
+    global:
+      namespace: crossview
+      # The namespace is managed declaratively (namespace.yaml) so it carries the
+      # Pod Security Standards labels; don't let the chart create it.
+      createNamespace: false
+    app:
+      replicas: ${crossview_replicas:=1}
+    # The chart bundles a Postgres for session/user state. Run it ephemeral (no
+    # PVC) instead of provisioning a Longhorn volume: Crossview is an
+    # SSO-fronted, read-only dashboard, so losing session/user rows on a pod
+    # restart is acceptable — and it avoids the autoscaler-node Longhorn
+    # data-loss footgun that bites stateful prod volumes.
+    database:
+      persistence:
+        enabled: false
+    config:
+      server:
+        cors:
+          # Post-SSO-login redirect target — must be the public URL, or users
+          # bounce to localhost after authenticating.
+          origin: https://crossview.${domain}
