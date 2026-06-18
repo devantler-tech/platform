@@ -28,50 +28,44 @@ provider (`provider-upjet-unifi`) — tracked in the monorepo issues.
 | --- | --- |
 | tofu-controller install (prod) | `k8s/providers/hetzner/infrastructure/controllers/tofu-controller/` |
 | Tenant (ns, SA/RBAC, netpol, GitRepository, Terraform CR, ExternalSecret) | `k8s/providers/hetzner/apps/unifi/` |
-| OpenBao read + seed-write policies (`infra-unifi-readonly`, `vault-seed-write`) | `k8s/bases/infrastructure/vault-config/job.yaml` |
-| Declarative seed (PushSecret + SOPS placeholder) | `k8s/providers/hetzner/infrastructure/vault-seed/seed-unifi.yaml` + `clusters/prod/bootstrap/variables-cluster-secret.enc.yaml` |
+| OpenBao read policy (`infra-unifi-readonly`) + placeholder seeding (Job) | `k8s/bases/infrastructure/vault-config/job.yaml` |
 | Registered in the apps overlay | `k8s/providers/hetzner/apps/kustomization.yaml` |
 
 It is a **regular tenant in the apps layer**, reconciled by the shared `apps`
 Flux Kustomization like wedding-app/ascoachingogvaner. It lives in the **hetzner
 apps overlay** (not `bases/apps/`) because it is prod-only: both tofu-controller
 and the controller API it reaches are Hetzner-only, so the Terraform CRD is absent
-on local/CI clusters. Because the apps layer is `wait: true`, **seed the OpenBao
-secret before merging** so the tenant is healthy on first apply (an unseeded
-ExternalSecret would hold the apps layer NotReady). With the observe-first empty
-config, the plan is a no-op, so once the secret exists the Terraform CR is Ready.
+on local/CI clusters. The apps layer is `wait: true`, but the credential chain is
+healthy on first apply without any manual step: the vault-config Job (infrastructure
+layer, reconciles before apps) seeds a **placeholder** at
+`secret/infrastructure/unifi/controller`, so the `ExternalSecret` syncs and — with
+the observe-first empty config (a no-op plan even on the placeholder) — the
+Terraform CR goes Ready. The apps layer stays green throughout.
 
-The tenant repo is **public** and holds **no secrets** — the `GitRepository`
-needs no auth. The only sensitive value (the UniFi API key) is seeded into
-**OpenBao** declaratively (GitOps) and pulled into the cluster by an
-`ExternalSecret` (the `openbao` ClusterSecretStore).
+The tenant repo is **public** and holds **no secrets** — the `GitRepository` needs
+no auth. The only sensitive value (the UniFi API key) lives in **OpenBao** and is
+pulled into the cluster by an `ExternalSecret` (the `openbao` ClusterSecretStore).
 
-## Credentials flow (GitOps) + the one gate
+## Credentials flow + the one gate
 
 ```
-variables-cluster-secret.enc.yaml (SOPS)   ← maintainer sets the value here
-   │  seed-unifi PushSecret (vault-seed/)
-   ▼
+vault-config Job  ── seeds PLACEHOLDER (only if absent) ──▶
 OpenBao  secret/infrastructure/unifi/controller  {api_url, api_key}
    │  ExternalSecret (infra-unifi-readonly policy)
    ▼
 unifi-credentials Secret → Terraform CR (varsFrom)
 ```
 
-The repo ships **placeholders** (`unifi_api_url=https://unifi.example.invalid`,
-`unifi_api_key=PLACEHOLDER…`) so the chain is healthy on merge. **Gate:** set the
-real key by editing the SOPS file and committing:
+Seeding follows the same pattern as the provider-upjet-github App credentials: the
+Job writes `api_url=https://REPLACE_WITH_UNIFI_CONTROLLER_URL`,
+`api_key=REPLACE_WITH_UNIFI_API_KEY` **only when the path is absent**, so a later
+Job re-run never clobbers the real value. No SOPS, no PushSecret.
 
-```sh
-sops k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
-# set unifi_api_url (controller base URL, WITHOUT the /api path) and
-# unifi_api_key (Limited Admin, Local Access Only; UniFi OS >= 9.0.108)
-```
-
-The `seed-unifi` PushSecret re-pushes hourly, so the new value reaches OpenBao
-and the `ExternalSecret` re-syncs automatically — no `bao kv put`, no out-of-band
-writes. With the observe-first empty config the plan is a no-op even on the
-placeholder, so the apps layer stays green throughout.
+**Gate:** overwrite the placeholder in place via the **OpenBao UI** (or CLI) —
+`secret/infrastructure/unifi/controller`, set `api_url` (controller base URL,
+**without** the `/api` path) and `api_key` (Limited Admin, Local Access Only; UniFi
+OS ≥ 9.0.108). The `ExternalSecret` re-syncs automatically (1h refresh). OpenBao is
+backed up (Raft snapshots → R2 via Velero), so the manually-set value is durable.
 
 ## Observe-first adoption (do not skip)
 

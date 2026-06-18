@@ -438,6 +438,25 @@ spec:
                 echo "GitHub App credentials already present at secret/infrastructure/github/app (leaving as-is)."
               fi
 
+              # --- 1c. Seed placeholder UniFi controller credentials (only if absent) ---
+              # The `unifi` tenant's Terraform CR (tofu-controller) reads the UniFi
+              # API credentials from secret/infrastructure/unifi/controller via the
+              # unifi-credentials ExternalSecret. We seed PLACEHOLDERS here
+              # declaratively (no SOPS) ONLY when the secret is absent, so the
+              # maintainer can overwrite them in place via the OpenBao UI/CLI and a
+              # later Job re-run won't clobber the real values. OpenBao is backed up
+              # (Raft snapshots → R2 via Velero), so these manually-set values are
+              # durable — no GitOps re-seed is needed. api_url omits the /api path;
+              # api_key is a Limited-Admin Local-Access-Only key (UniFi OS >= 9.0.108).
+              if ! bao kv get -mount=secret infrastructure/unifi/controller >/dev/null 2>&1; then
+                echo "Seeding placeholder UniFi credentials at secret/infrastructure/unifi/controller..."
+                bao kv put -mount=secret infrastructure/unifi/controller \
+                  api_url="https://REPLACE_WITH_UNIFI_CONTROLLER_URL" \
+                  api_key="REPLACE_WITH_UNIFI_API_KEY"
+              else
+                echo "UniFi credentials already present at secret/infrastructure/unifi/controller (leaving as-is)."
+              fi
+
               # --- 2. Enable Kubernetes auth ---
               if ! bao auth list -format=json | grep -q '"kubernetes/"'; then
                 echo "Enabling Kubernetes auth method..."
@@ -643,9 +662,6 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/infrastructure/oidc/*" {
-                capabilities = ["create", "update", "read"]
-              }
-              path "secret/data/infrastructure/unifi/*" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/infrastructure/git/*" {
