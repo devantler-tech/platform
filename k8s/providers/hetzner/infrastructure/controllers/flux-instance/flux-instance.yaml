@@ -38,18 +38,40 @@ spec:
           - op: add
             path: /spec/template/spec/containers/0/args/-
             value: --requeue-dependency=5s
-      # Spread the four Flux controllers across worker nodes. They are
-      # single-replica Deployments that all carry app.kubernetes.io/part-of=flux,
-      # so a per-controller topology spread keyed on that label distributes the
-      # set (skew <= 1) instead of letting the scheduler stack them on one node.
+      # Run the four Flux controllers active/standby (HA) for node-failure
+      # resilience. Each controller binary already runs with
+      # --enable-leader-election and holds a coordination.k8s.io Lease, so it is
+      # safe to run more than one replica: exactly one pod is the active leader
+      # and the other is a warm standby that acquires the Lease and resumes
+      # reconciliation within the lease TTL when the leader's node fails. The
+      # upstream Deployments ship replicas: 1, which is why Coroot flags each
+      # controller as "single instance - not resilient to node failure"; bumping
+      # to 2 clears that. Patched by label so the one rule covers
+      # source-/kustomize-/helm-/notification-controller (all carry
+      # app.kubernetes.io/part-of=flux). Paired with the topologySpread below so
+      # the two replicas land on different nodes — otherwise both could sit on
+      # the node that fails. flux-operator itself is left single-replica: its
+      # chart does not expose replicas/leaderElection (0.50.0), so it relies on
+      # reschedule, not hot standby; see flux-operator/helm-release.yaml.
+      - target:
+          kind: Deployment
+          labelSelector: app.kubernetes.io/part-of=flux
+        patch: |
+          - op: replace
+            path: /spec/replicas
+            value: 2
+      # Spread the four Flux controllers across worker nodes. They all carry
+      # app.kubernetes.io/part-of=flux, so a per-controller topology spread
+      # keyed on that label distributes the set (skew <= 1) — and, combined with
+      # the replicas: 2 patch above, keeps each controller's active and standby
+      # pods on different nodes instead of letting the scheduler stack them.
       # On 2026-05-28 kustomize-controller landed on prod-worker-2 when that
       # node's Cilium ClusterIP datapath degraded after an OOMKill; it then
       # crash-looped on "dial tcp 10.96.0.1:443: i/o timeout" and GitOps
       # reconciliation stalled — so the fix for the underlying OOM could not be
       # applied (a deadlock GitOps cannot self-heal from). Keeping the
       # controllers spread means a single bad worker cannot decapitate
-      # reconciliation. Soft (ScheduleAnyway) so it never blocks scheduling on
-      # the capacity-constrained 3-worker cluster.
+      # reconciliation. Soft (ScheduleAnyway) so it never blocks scheduling.
       - target:
           kind: Deployment
           labelSelector: app.kubernetes.io/part-of=flux
