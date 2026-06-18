@@ -124,11 +124,17 @@ spec:
           #     (longhorn-manager / the chart owns their replica count).
           #   * single-controller operators (leader election makes >1 a hot
           #     standby at best, all off the serving path): cluster-autoscaler,
-          #     ksail-operator, tetragon-operator,
           #     keda-add-ons-http-controller-manager.
+          #     (ksail-operator + tetragon-operator were promoted OUT of this
+          #     exemption -- they now run HA: 2 leader-elected replicas + a
+          #     drain-safe maxUnavailable: 1 PDB + topology spread, so they meet
+          #     the floor like the rest of the operator tier. Coroot had flagged
+          #     them "single instance - not resilient to node failure".)
           #   * single-by-design adapters/approvers: keda-operator-metrics-
-          #     apiserver (KEDA's standard 1-replica metrics adapter) and
-          #     kubelet-serving-cert-approver (off every serving path).
+          #     apiserver (KEDA's standard 1-replica metrics adapter).
+          #     (kubelet-serving-cert-approver was also promoted OUT -- switched
+          #     to upstream's ha-install.yaml: 2 replicas, --enable-leader-election
+          #     + leases RBAC + required hostname anti-affinity + a drain-safe PDB.)
           #   * spire-server: HA needs a shared external datastore, not just
           #     replicas (its StatefulSet uses the built-in datastore) -- a
           #     deliberate single-node posture; revisit for HA separately.
@@ -141,11 +147,8 @@ spec:
           - resources:
               names:
                 - cluster-autoscaler-hetzner-cluster-autoscaler
-                - ksail-operator
-                - tetragon-operator
                 - keda-add-ons-http-controller-manager
                 - keda-operator-metrics-apiserver
-                - kubelet-serving-cert-approver
                 - longhorn-driver-deployer
                 - csi-snapshotter
                 - spire-server

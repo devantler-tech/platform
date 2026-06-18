@@ -49,6 +49,18 @@ spec:
       # Leader-elected; 2 replicas for HA (the require-replica-floor minimum) -- one
       # active while a backup takes CSI snapshots, the rest warm standbys.
       replicaCount: ${snapshot_controller_replicas:=1}
+      # Coroot flagged the 2-replica snapshot-controller as co-located on a
+      # single node (not resilient to node failure). Soft spread prefers
+      # separate nodes; ScheduleAnyway never blocks scheduling. Selector matches
+      # the pod-disruption-budget patch in the hetzner overlay.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: snapshot-controller
+              app.kubernetes.io/instance: snapshot-controller
       resources:
         requests:
           cpu: 10m

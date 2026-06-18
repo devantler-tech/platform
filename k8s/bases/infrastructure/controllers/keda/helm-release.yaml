@@ -23,6 +23,17 @@ spec:
       install: true
     operator:
       replicaCount: ${keda_operator_replicas:=1}
+    metricsServer:
+      # The metrics-apiserver is a Kubernetes aggregated API server
+      # (group external.metrics.k8s.io, served behind an APIService) — stateless
+      # and load-balanced by the aggregation layer, so it does NOT use leader
+      # election: the operator drives scaling decisions, the metrics server only
+      # serves metric reads. The chart documents that extra replicas don't add
+      # throughput but DO reduce downtime through a node failure/drain
+      # (https://keda.sh/docs/latest/operate/cluster/#high-availability), so a
+      # second replica is a warm standby. Coroot flagged the single replica as
+      # "single instance - not resilient to node failure".
+      replicaCount: ${keda_metrics_server_replicas:=1}
     webhooks:
       replicaCount: ${keda_webhooks_replicas:=1}
     # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never deadlocks a
@@ -36,3 +47,15 @@ spec:
         maxUnavailable: 1
       webhooks:
         maxUnavailable: 1
+    # Soft hostname spread so a second metrics-apiserver replica lands on a
+    # different node (the chart defaults to no spread, which packs both onto one
+    # node and defeats the HA intent). ScheduleAnyway keeps it a preference so
+    # single-node local/CI clusters still schedule.
+    topologySpreadConstraints:
+      metricsServer:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: keda-operator-metrics-apiserver

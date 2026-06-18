@@ -4,6 +4,13 @@ kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
   - cluster-issuers/
+  # Crossplane provider-upjet-github package + activation policy. Lives in this
+  # `infrastructure` layer (not `infrastructure/controllers/`) because these are
+  # pkg.crossplane.io CRs that need the Crossplane CRDs the core HelmRelease in
+  # controllers/crossplane/ installs first — same controller-then-CR ordering as
+  # Coroot/Flagger. Establishes the namespaced github CRDs the github-config app
+  # (bases/apps/github-config/) consumes. Prod-only (Crossplane is Hetzner-only).
+  - crossplane/
   # external-dns lives in this `infrastructure` layer (not
   # `infrastructure/controllers/`) because its Cloudflare token is a user-fed
   # OpenBao secret materialised by an ExternalSecret, and the openbao

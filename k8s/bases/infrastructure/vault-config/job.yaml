@@ -419,6 +419,25 @@ spec:
                 echo "KV v2 already enabled at secret/."
               fi
 
+              # --- 1b. Seed placeholder GitHub App credentials (only if absent) ---
+              # provider-upjet-github (the github-config app) authenticates as a
+              # GitHub App; its credentials live at secret/infrastructure/github/app
+              # and are read by the github-app-credentials ExternalSecret. We seed
+              # PLACEHOLDERS here declaratively (no SOPS) ONLY when the secret is
+              # absent, so the maintainer can overwrite them in place via the
+              # OpenBao UI/CLI and a later Job re-run won't clobber the real values.
+              # OpenBao is backed up (Raft snapshots → R2 via Velero), so these
+              # manually-set values are durable — no GitOps re-seed is needed.
+              if ! bao kv get -mount=secret infrastructure/github/app >/dev/null 2>&1; then
+                echo "Seeding placeholder GitHub App credentials at secret/infrastructure/github/app..."
+                bao kv put -mount=secret infrastructure/github/app \
+                  app_id="REPLACE_WITH_GITHUB_APP_ID" \
+                  installation_id="REPLACE_WITH_GITHUB_APP_INSTALLATION_ID" \
+                  pem="REPLACE_WITH_GITHUB_APP_PRIVATE_KEY_PEM"
+              else
+                echo "GitHub App credentials already present at secret/infrastructure/github/app (leaving as-is)."
+              fi
+
               # --- 2. Enable Kubernetes auth ---
               if ! bao auth list -format=json | grep -q '"kubernetes/"'; then
                 echo "Enabling Kubernetes auth method..."
@@ -475,6 +494,18 @@ spec:
               # are reconciled by flux-system, never by a tenant ServiceAccount.
               bao policy write infra-ghcr-readonly - <<'POLICY'
               path "secret/data/infrastructure/ghcr/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              # Read the GitHub App credential for provider-upjet-github
+              # (declarative GitHub management). Consumed by the
+              # github-app-credentials ExternalSecret in the github-config
+              # namespace via the `external-secrets` ClusterSecretStore role;
+              # seeded from variables-cluster by the seed-github-app PushSecret
+              # (see k8s/bases/apps/github-config/).
+              bao policy write infra-github-readonly - <<'POLICY'
+              path "secret/data/infrastructure/github/*" {
                 capabilities = ["read"]
               }
               POLICY
@@ -694,6 +725,19 @@ spec:
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=umami \
                 policies=app-umami-db-readonly \
+                ttl=1h
+
+              # Dedicated tenant role for github-config. Authenticates the app's
+              # own `github-config` ServiceAccount (used by its namespaced
+              # SecretStore, k8s/bases/apps/github-config/secretstore.yaml) and
+              # carries ONLY `infra-github-readonly` (read on
+              # secret/data/infrastructure/github/*) — never the broad
+              # `external-secrets` bundle — so the tenant can read the GitHub App
+              # credential and nothing else.
+              bao write auth/kubernetes/role/github-config \
+                bound_service_account_names=github-config \
+                bound_service_account_namespaces=github-config \
+                policies=infra-github-readonly \
                 ttl=1h
 
               # Dedicated tenant role for wedding-app. Authenticates the tenant's
