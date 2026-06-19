@@ -19,6 +19,13 @@ spec:
         kind: Cluster
         metadata:
           name: wedding-db
+          annotations:
+            # Never let Flux delete+recreate this database (force-recreate +
+            # reclaimPolicy=Delete PVCs = data loss, the failure that hit
+            # coroot-db on 2026-06-18). Flux can still update it; immutable
+            # changes need a manual backup/restore by an operator.
+            kustomize.toolkit.fluxcd.io/force: disabled
+            kustomize.toolkit.fluxcd.io/prune: disabled
         spec:
           storage:
             storageClass: longhorn
