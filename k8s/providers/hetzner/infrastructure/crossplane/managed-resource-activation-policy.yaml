@@ -25,3 +25,9 @@ spec:
     # adopted Observe-first in devantler-tech/.github deploy/. The tenant Role
     # already covers the enterprise.github.m.upbound.io group.
     - organizationrulesets.enterprise.github.m.upbound.io
+    # Team management — the maintainers team + its membership and team->repo
+    # access (declared in devantler-tech/.github deploy/teams/). Lets a team be
+    # the canonical CODEOWNERS owner across the suite.
+    - teams.team.github.m.upbound.io
+    - teammemberships.team.github.m.upbound.io
+    - teamrepositories.team.github.m.upbound.io
