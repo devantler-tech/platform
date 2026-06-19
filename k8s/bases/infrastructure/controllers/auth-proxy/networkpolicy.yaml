@@ -62,6 +62,18 @@ spec:
         - ports:
             - port: "8000"
               protocol: TCP
+    # Crossview upstream (Crossplane resource dashboard). The crossview-service
+    # (port 80) forwards to the crossview pod on container port 3001, and Cilium
+    # enforces egress on that backend pod port. Like the other dashboards it
+    # exposes infrastructure state, so it is only reachable post-SSO via
+    # auth-proxy. Inert on local/CI where the crossview namespace is absent.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: crossview
+      toPorts:
+        - ports:
+            - port: "3001"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:
