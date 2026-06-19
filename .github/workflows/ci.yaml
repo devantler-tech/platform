@@ -67,7 +67,7 @@ jobs:
           remove_folders: "/usr/share/swift /usr/share/miniconda /usr/share/az* /usr/local/lib/node_modules /usr/local/share/chromium /usr/local/share/powershell /usr/local/julia /usr/local/aws-cli /usr/local/aws-sam-cli /usr/share/gradle"
 
       - name: 🧪 System Test
-        uses: devantler-tech/ksail/.github/actions/ksail-cluster@ac3518f1e47d1e3ce38dfdf200dd58716e075c54 # v7.61.0
+        uses: devantler-tech/ksail/.github/actions/ksail-cluster@2961d7c1fea92dd2885037af82b818076afffb93 # v7.65.0
         with:
           distribution: Talos
           provider: Docker
