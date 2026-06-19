@@ -67,9 +67,22 @@ kubectl -n <ns> rollout restart deployment/<name>
 
 ## Scenario 2 — Planned rolling Talos / Kubernetes upgrade
 
-Bump the Talos ISO ID in `ksail.prod.yaml` (or the Kubernetes version
-in the ksail config) and re-run `ksail cluster update`. ksail cordons and
-replaces nodes one at a time; PDBs hold the line.
+Talos OS and Kubernetes upgrades are driven by the **version pins**, not by the
+ISO. Bump `spec.cluster.talos.version` (Renovate bumps it together with the
+matching `machine.install.image` installer tag in
+[`talos/cluster/install-image.yaml`](../../talos/cluster/install-image.yaml))
+and/or `spec.cluster.kubernetesVersion`, then re-run `ksail cluster update`.
+KSail performs an **in-place rolling upgrade** — one node at a time, workers
+first, rebooting each node into the new installer image (Kubernetes upgrades
+roll the static control-plane pods and kubelets); PDBs and `maxUnavailable: 0`
+keep workloads available across the reboots.
+
+The Hetzner `iso` field is **not** an upgrade lever: a change to it is applied
+in-place and only affects **newly provisioned** nodes (autoscaler scale-ups and
+full rebuilds boot from it). Bump it so new nodes come up on the new version,
+but a stale `iso` does not block the in-place upgrade of the existing nodes.
+(This runbook previously said to bump the ISO to roll nodes — that was never how
+`ksail cluster update` upgrades existing nodes.)
 
 ```bash
 # Pre-flight: confirm every multi-replica workload has a PDB
@@ -78,13 +91,30 @@ kubectl get pdb -A
 # Pre-flight: confirm RollingUpdate strategy uses maxUnavailable: 0
 kubectl get deploy -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}\t{.spec.strategy.rollingUpdate.maxUnavailable}{"\n"}{end}'
 
-# Apply the upgrade
+# Apply the upgrade (in-place rolling Talos OS + Kubernetes upgrade)
 ksail --config ksail.prod.yaml cluster update
 ```
 
 If anything reports `maxUnavailable` other than `0`, that workload was
 either added without an HA configuration or has a chart limitation — fix
 before upgrading.
+
+> **If a rolling upgrade is interrupted** (a node fails to rejoin), the cluster
+> is left mixed — some nodes upgraded, some not. KSail releases **before** the fix
+> in [devantler-tech/ksail#5359](https://github.com/devantler-tech/ksail/pull/5359)
+> read the cluster's current version from a single node, so the next `cluster
+> update` mis-reads the cluster as already upgraded and silently skips the
+> laggards (the deploy stays green while the stragglers never move). Recover by
+> upgrading each stuck node directly, one at a time, preserving etcd quorum:
+>
+> ```bash
+> # <schematic-id>:<version> is the installer image from talos/cluster/install-image.yaml
+> talosctl --nodes <node-ip> upgrade \
+>   --image factory.talos.dev/installer/<schematic-id>:<version>
+> ```
+>
+> Once the platform tracks a KSail release containing the fix, `cluster update`
+> resumes interrupted upgrades on its own.
 
 ---
 
