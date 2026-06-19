@@ -19,6 +19,21 @@ metadata:
   name: coroot
   namespace: observability
 spec:
+  # Restart the Coroot server when its Postgres credential rotates. The server
+  # reads the coroot-db password from the CNPG-managed `coroot-db-app` Secret via
+  # a `secretKeyRef` env var (PG_PASSWORD) — env vars are resolved once at pod
+  # start and never refreshed. CNPG regenerates that Secret whenever the coroot-db
+  # cluster is (re)created (e.g. during node-churn recovery), so a long-running
+  # server keeps presenting the OLD password and falls into a "password
+  # authentication failed for user coroot" loop until it is manually restarted
+  # (observed 2026-06-19, observability blind for hours). Reloader (deployed
+  # cluster-wide, `--reload-strategy=annotations`) watches the named Secret and
+  # rolls the server's pods on change; the annotation goes on the pod template via
+  # podAnnotations, matching the platform's existing convention (auth-proxy,
+  # oauth2-proxy, coredns).
+  podAnnotations:
+    secret.reloader.stakater.com/reload: coroot-db-app
+
   # COMPONENT IMAGE PINS. The operator does NOT bake a fixed tag into its
   # components: when an image is left unset it lists `ghcr.io/coroot/<component>`
   # on every reconcile and picks the highest semver tag (falling back to
