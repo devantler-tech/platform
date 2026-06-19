@@ -78,6 +78,18 @@
       "depNameTemplate": "kubernetes/kubernetes",
       "versioningTemplate": "semver",
       "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the pinned Coroot CE component images (server, node-agent, cluster-agent) in the Coroot CR. The coroot-operator's `Coroot` CRD nests each image reference under `image.name` (an ImageSpec object), NOT a bare `image:` string, so Renovate's built-in `kubernetes` manager does not detect it — and when the field is left unset the operator auto-resolves the highest semver tag from ghcr on every reconcile (floating, untrackable; the source of the stale base-image CVEs in platform#2149). This regex manager captures each `name: ghcr.io/coroot/<component>:<tag>` and tracks it via the docker datasource so the pins get the normal Renovate bump PRs (minor/patch automerge per the rules below).",
+      "managerFilePatterns": [
+        "/^k8s/bases/infrastructure/coroot/coroot\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "name:\\s*(?<depName>ghcr\\.io/coroot/[a-z-]+):(?<currentValue>\\S+)"
+      ],
+      "datasourceTemplate": "docker",
+      "versioningTemplate": "semver"
     }
   ],
   "minor": {
