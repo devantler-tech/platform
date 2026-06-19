@@ -30,14 +30,19 @@ spec:
   # auto-resolution (it early-returns on a non-empty `image.name`). NB the
   # ImageSpec has only a `name` field (full ref incl. tag) — there is NO separate
   # `tag`/`repository` subfield, and a bare string under `image:` is silently
-  # ignored; the value MUST be `image.name`. The three pins below are kept
+  # ignored; the value MUST be `image.name`. CRITICAL: Coroot publishes its
+  # container tags as BARE semver (`1.22.2`), NOT the `v`-prefixed GitHub
+  # *release* tag (`v1.22.2`); a `v`-prefixed ref 404s on ghcr → ErrImagePull →
+  # the operator's StatefulSet/DaemonSet rollout wedges and stalls the
+  # infrastructure Kustomization health check. Always pin the bare tag. The
+  # three pins below are kept
   # Renovate-trackable by a dedicated regex customManager in
   # `.github/renovate.json` (the built-in kubernetes manager only reads a bare
   # `image:` string, not this `image.name` mapping). There is no spec.version
   # field; the operator HelmRelease itself also stays Flux/Renovate-pinned.
   communityEdition:
     image:
-      name: ghcr.io/coroot/coroot:v1.22.2
+      name: ghcr.io/coroot/coroot:1.22.2
 
   # CE has no native OIDC/SSO (Enterprise only), so the UI is fronted by the
   # existing oauth2-proxy (Dex) via httproute.yaml — exactly how Prometheus /
@@ -133,7 +138,7 @@ spec:
   nodeAgent:
     # Pinned (see the COMPONENT IMAGE PINS note at the top of spec).
     image:
-      name: ghcr.io/coroot/coroot-node-agent:v1.33.3
+      name: ghcr.io/coroot/coroot-node-agent:1.33.3
     priorityClassName: platform-critical
     tolerations:
       - operator: Exists
@@ -155,4 +160,4 @@ spec:
   # COMPONENT IMAGE PINS note at the top of spec).
   clusterAgent:
     image:
-      name: ghcr.io/coroot/coroot-cluster-agent:v1.7.1
+      name: ghcr.io/coroot/coroot-cluster-agent:1.7.1
