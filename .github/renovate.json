@@ -90,6 +90,17 @@
       ],
       "datasourceTemplate": "docker",
       "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the bundled Postgres image tag pinned for the Crossview app's chart-bundled database (k8s/bases/apps/crossview/helm-release.yaml). The crossview chart defaults database.image.tag to `latest`; pinning it lives in the Flux HelmRelease's inline spec.values, which the built-in flux manager (chart version only) and the kubernetes/helm-values managers (values.yaml files only) never see — so a custom manager is the only way to keep the pin current. Matches the `# renovate:` comment and the tag line that follows it, resolving from the docker datasource (Docker Hub library/postgres).",
+      "managerFilePatterns": [
+        "/^k8s/bases/apps/crossview/helm-release\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+tag:\\s*\"(?<currentValue>[^\"]+)\""
+      ],
+      "versioningTemplate": "docker"
     }
   ],
   "minor": {
