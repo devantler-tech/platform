@@ -33,6 +33,11 @@ resources:
   # cert-manager DNS01 solver for simply.com-hosted zones (ascoachingogvaner.dk).
   - simply-dns-webhook/
   - snapshot-controller/
+  # GitOps OpenTofu/Terraform reconciler (Flux). Installs the `Terraform`
+  # (infra.contrib.fluxcd.io) CRD + controller used by the `unifi` tenant to
+  # reconcile the UniFi network from devantler-tech/unifi. Prod-only: the
+  # UniFi controller API is only reached from Hetzner.
+  - tofu-controller/
   # Hetzner-local Velero extras (the volume-policy ConfigMap). The base Velero
   # HelmRelease is included via ../../../../bases/...; this dir only adds the
   # prod-only ConfigMap, and the patch below rewires the HelmRelease.

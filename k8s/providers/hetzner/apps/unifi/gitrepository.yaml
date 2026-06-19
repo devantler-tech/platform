@@ -1,0 +1,12 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: unifi
+  namespace: unifi
+spec:
+  interval: 5m
+  # devantler-tech/unifi is public — no auth needed. It holds NO secrets; the
+  # UniFi API credentials come from OpenBao (see credentials-external-secret.yaml).
+  url: https://github.com/devantler-tech/unifi
+  ref:
+    branch: main

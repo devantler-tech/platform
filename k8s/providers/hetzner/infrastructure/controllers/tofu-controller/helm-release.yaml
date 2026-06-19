@@ -1,0 +1,41 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: tofu-controller
+  namespace: flux-system
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  timeout: 10m
+  releaseName: tofu-controller
+  chart:
+    spec:
+      chart: tofu-controller
+      version: 0.16.4
+      sourceRef:
+        kind: HelmRepository
+        name: tofu-controller
+  install:
+    # The chart ships the `Terraform` (infra.contrib.fluxcd.io) CRD; let Flux
+    # own its lifecycle so upgrades pick up schema changes.
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  # Runs in flux-system alongside the other Flux controllers. Runner pods are
+  # spawned per-Terraform-CR in the target namespace (here: `unifi`), which must
+  # provide a `tf-runner` ServiceAccount + RBAC and a NetworkPolicy allowing the
+  # controller<->runner gRPC on :30000 (see providers/hetzner/unifi/).
+  # https://github.com/flux-iac/tofu-controller
+  values:
+    # Reconcile drift continuously; the per-Terraform-CR `approvePlan` governs
+    # whether a detected drift is auto-applied or held for manual approval.
+    runner:
+      grpc:
+        port: 30000
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
