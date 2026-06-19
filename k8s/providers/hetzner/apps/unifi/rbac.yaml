@@ -1,7 +1,8 @@
 ---
-# The runner persists OpenTofu state as a Secret in this namespace (the
-# controller's default Kubernetes backend) and reads the vars Secret, so the
-# tf-runner SA needs namespaced Secret access. Scoped to this namespace only.
+# The runner uses the controller's default Kubernetes backend, which persists
+# OpenTofu state as a Secret AND locks it with a coordination.k8s.io Lease
+# (`lock-tfstate-default-unifi`). It also reads the vars Secret. So the tf-runner
+# SA needs namespaced Secret + Lease access. Scoped to this namespace only.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -10,6 +11,9 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
