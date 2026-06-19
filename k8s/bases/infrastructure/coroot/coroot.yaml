@@ -19,9 +19,30 @@ metadata:
   name: coroot
   namespace: observability
 spec:
-  # NB: the Coroot app version is managed by the operator (pin via
-  # spec.communityEdition.image if ever needed) — there is no spec.version
-  # field. The operator HelmRelease itself stays Flux/Renovate-pinned.
+  # COMPONENT IMAGE PINS. The operator does NOT bake a fixed tag into its
+  # components: when an image is left unset it lists `ghcr.io/coroot/<component>`
+  # on every reconcile and picks the highest semver tag (falling back to
+  # `:latest` only if that listing fails), so the running coroot / node-agent /
+  # cluster-agent versions FLOAT — non-deterministic and impossible to track for
+  # CVEs, which is exactly how stale reachable base-image CVEs accrued (platform
+  # #2149: coroot images flagged on `:latest`). Pinning each component's `.name`
+  # to an explicit `registry/component:tag` ref short-circuits the operator's
+  # auto-resolution (it early-returns on a non-empty `image.name`). NB the
+  # ImageSpec has only a `name` field (full ref incl. tag) — there is NO separate
+  # `tag`/`repository` subfield, and a bare string under `image:` is silently
+  # ignored; the value MUST be `image.name`. CRITICAL: Coroot publishes its
+  # container tags as BARE semver (`1.22.2`), NOT the `v`-prefixed GitHub
+  # *release* tag (`v1.22.2`); a `v`-prefixed ref 404s on ghcr → ErrImagePull →
+  # the operator's StatefulSet/DaemonSet rollout wedges and stalls the
+  # infrastructure Kustomization health check. Always pin the bare tag. The
+  # three pins below are kept
+  # Renovate-trackable by a dedicated regex customManager in
+  # `.github/renovate.json` (the built-in kubernetes manager only reads a bare
+  # `image:` string, not this `image.name` mapping). There is no spec.version
+  # field; the operator HelmRelease itself also stays Flux/Renovate-pinned.
+  communityEdition:
+    image:
+      name: ghcr.io/coroot/coroot:1.22.2
 
   # CE has no native OIDC/SSO (Enterprise only), so the UI is fronted by the
   # existing oauth2-proxy (Dex) via httproute.yaml — exactly how Prometheus /
@@ -115,6 +136,9 @@ spec:
   # (the operator only exposes priorityClassName on the node-agent, not on the
   # bundled Prometheus/ClickHouse).
   nodeAgent:
+    # Pinned (see the COMPONENT IMAGE PINS note at the top of spec).
+    image:
+      name: ghcr.io/coroot/coroot-node-agent:1.33.3
     priorityClassName: platform-critical
     tolerations:
       - operator: Exists
@@ -132,3 +156,8 @@ spec:
   # singleton, not something we can scale. A brief gap only delays inventory
   # refresh, not user-facing telemetry. The genuinely scalable pieces are the
   # server (replicas: 2, hetzner overlay), ClickHouse (2) and Keeper (3).
+  # It stays at its default (enabled); only the image is pinned here (see the
+  # COMPONENT IMAGE PINS note at the top of spec).
+  clusterAgent:
+    image:
+      name: ghcr.io/coroot/coroot-cluster-agent:1.7.1
