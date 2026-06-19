@@ -402,8 +402,8 @@ ksail --config ksail.prod.yaml cluster update
 > with environment-secrets write on this repo) is configured; without it the
 > workflow prints a warning and the manual procedure below applies.
 
-The prod deploy pipeline (`.github/workflows/cd.yaml` on a `v*` tag, and the
-merge-queue `deploy-prod` job in `ci.yaml`) authenticates to the cluster with
+The prod deploy pipeline (the merge-queue `deploy-prod` job in `ci.yaml`, and
+the manual `.github/workflows/cd.yaml`) authenticates to the cluster with
 two GitHub `prod` environment secrets:
 
 | Secret         | Restored to       | Used by                                            |

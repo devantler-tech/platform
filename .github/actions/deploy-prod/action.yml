@@ -1,0 +1,341 @@
+name: Deploy to Production
+description: >-
+  Deploy the platform's GitOps manifests to the production Talos + Hetzner
+  cluster with KSail: push the OCI artifact to GHCR, cosign-sign it, attest an
+  SBOM + SLSA provenance, trigger Flux reconciliation, and finally sync Talos
+  machine config. Shared by the merge-queue deploy (ci.yaml) and the manual
+  deploy (cd.yaml) so the two paths can never drift. The repository must
+  already be checked out. Composite actions cannot read `secrets`, so every
+  secret is passed in as an input.
+
+inputs:
+  sops-age-key:
+    description: SOPS Age private key (secrets.SOPS_AGE_KEY) for decrypting SOPS-encrypted manifests.
+    required: true
+  kube-config:
+    description: kubeconfig for the prod cluster (secrets.KUBE_CONFIG); must contain the admin@prod context.
+    required: true
+  talos-config:
+    description: talosconfig for the prod cluster (secrets.TALOS_CONFIG) used by `ksail cluster update`.
+    required: true
+  ghcr-token:
+    description: GHCR PAT with write:packages (secrets.GHCR_TOKEN) for OCI push/pull and cosign auth.
+    required: true
+  hcloud-token:
+    description: Hetzner Cloud API token (secrets.HCLOUD_TOKEN) used by the KSail Hetzner provider and CCM/CSI.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: ⚙️ Setup KSail
+      # Install the KSail CLI from the release tarball via curl. We use curl
+      # rather than brew/setup-ksail-cli because the v7.20.0 release shipped
+      # only desktop artifacts (linux CLI missing, 404 on the tarball).
+      # v7.25.0 ships complete linux artifacts again and carries the
+      # cluster-update fixes; renovate keeps this pin current.
+      shell: bash
+      env:
+        # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+        KSAIL_VERSION: "7.65.0"
+      run: |
+        curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
+        tar -xzf /tmp/ksail.tar.gz -C /tmp
+        sudo install /tmp/ksail /usr/local/bin/ksail
+        ksail --version
+
+    - name: 🔐 Create SOPS Age key
+      shell: bash
+      env:
+        SOPS_AGE_KEY: ${{ inputs.sops-age-key }}
+      run: |
+        mkdir -p ~/.config/sops/age
+        umask 077
+        echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
+        chmod 600 ~/.config/sops/age/keys.txt
+
+    - name: 🔑 Restore kubeconfig
+      # ksail cluster update needs a valid kubeconfig to detect the current
+      # cluster state. Without it, the component detector returns defaults and
+      # triggers spurious changes that all fail. The KUBE_CONFIG secret must be
+      # kept up-to-date from the homelab after any cluster recreation.
+      # See devantler-tech/ksail#4369 for the upstream design context.
+      shell: bash
+      env:
+        KUBE_CONFIG: ${{ inputs.kube-config }}
+      run: |
+        mkdir -p ~/.kube
+        umask 077
+        printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+        chmod 600 ~/.kube/config
+
+    - name: 🔑 Restore talosconfig
+      # ksail cluster update talks to the Talos API to sync machine config.
+      # Without the talosconfig it uses stale/derived certs and fails with
+      # "x509: certificate signed by unknown authority (talos)". The
+      # TALOS_CONFIG secret must be kept up-to-date from the homelab after any
+      # cluster recreation, same as KUBE_CONFIG.
+      shell: bash
+      env:
+        TALOS_CONFIG: ${{ inputs.talos-config }}
+      run: |
+        mkdir -p ~/.talos
+        umask 077
+        printf '%s' "${TALOS_CONFIG}" > ~/.talos/config
+        chmod 600 ~/.talos/config
+
+    - name: 🩺 Verify prod cluster is reachable
+      # Fail fast if the restored kubeconfig can't reach the prod API server.
+      # When the cluster is unreachable — most commonly because KUBE_CONFIG /
+      # TALOS_CONFIG are stale after a cluster rebuild — `ksail cluster update`
+      # otherwise only warns, falls back to a "nothing is installed" baseline,
+      # proposes a full reinstall, and then fails mid-apply against the live
+      # nodes (a confusing, potentially destructive failure mode). Catch it
+      # here with an actionable message instead.
+      # Upstream: devantler-tech/ksail#4868 (fail fast) and #4869 (baseline).
+      # Refresh procedure: docs/dr/runbook.md → "Refresh CI deploy credentials".
+      # Pin --context to admin@prod (ksail.prod.yaml's connection.context) so
+      # the check targets the same cluster `ksail cluster update` will use,
+      # regardless of the restored kubeconfig's current-context.
+      shell: bash
+      run: |
+        # A missing admin@prod context means a malformed/incomplete kubeconfig,
+        # not an unreachable cluster — surface that case distinctly.
+        if ! kubectl config get-contexts -o name | grep -qx 'admin@prod'; then
+          echo "::error::Restored kubeconfig has no 'admin@prod' context (ksail.prod.yaml's connection.context). KUBE_CONFIG looks malformed or incomplete — refresh it. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
+          exit 1
+        fi
+        last_err=""
+        for attempt in 1 2 3; do
+          # Capture kubectl's own stderr so the failure message is accurate.
+          if out=$(kubectl --context admin@prod get --raw='/readyz' --request-timeout=30s 2>&1); then
+            echo "✅ Prod API server reachable."
+            exit 0
+          fi
+          last_err="$out"
+          echo "Attempt ${attempt}/3: prod API server (context admin@prod) not reachable: ${out}"
+          sleep 10
+        done
+        last_err=$(printf '%s' "$last_err" | tr '\n' ' ')
+        echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig (last kubectl error: ${last_err}). KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
+        exit 1
+
+    # Publish the GitOps manifests (push → sign → attest → reconcile) BEFORE
+    # syncing Talos machine config (the "🔄 Update cluster" step runs LAST).
+    # Manifest delivery never touches the nodes, so it must not be gated on
+    # every control-plane node being reachable: when one node's Talos API was
+    # down, `ksail cluster update` ran first, hard-failed the job, and froze
+    # ALL app/config delivery to an otherwise-healthy cluster (the apiserver
+    # and Flux were fine on the two surviving control-plane nodes).
+    - name: 📦 Push manifests to GHCR
+      shell: bash
+      env:
+        GITHUB_ACTOR: ${{ github.actor }}
+        GHCR_TOKEN: ${{ inputs.ghcr-token }}
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ksail --config ksail.prod.yaml workload push
+
+    - name: ⚙️ Install cosign
+      # sigstore/cosign-installer is the official installer action — it
+      # downloads cosign for the requested release and verifies its own
+      # Sigstore signature against Fulcio + Rekor (keyless), so there is
+      # no per-version SHA256 to track in this repo. Bump cosign by
+      # editing COSIGN_VERSION below; Renovate proposes the bump via the
+      # custom regex manager in .github/renovate.json.
+      env:
+        # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
+        COSIGN_VERSION: "3.1.1"
+      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      with:
+        cosign-release: 'v${{ env.COSIGN_VERSION }}'
+
+    - name: 🔐 Configure GHCR auth (cosign + buildx + syft)
+      # Pre-create ~/.docker/config.json instead of `cosign login` /
+      # `docker login` so neither emits the "credentials stored
+      # unencrypted in '/home/runner/.docker/config.json'" warning every
+      # run. The on-disk format is byte-identical to what those CLI
+      # commands would have written (base64 of "actor:token") -- the
+      # warning is cosmetic noise on an ephemeral runner that's destroyed
+      # after the job. Writing the auth here once also lets cosign, docker
+      # buildx imagetools, and syft (via anchore/sbom-action) all resolve
+      # GHCR credentials through the standard OCI keychain, which reads
+      # this same file.
+      shell: bash
+      env:
+        GITHUB_ACTOR: ${{ github.actor }}
+        GHCR_TOKEN: ${{ inputs.ghcr-token }}
+      run: |
+        set -euo pipefail
+        umask 077
+        mkdir -p ~/.docker
+        # Build the auth blob in a command substitution so it never
+        # reaches stdout.
+        AUTH=$(printf '%s:%s' "${GITHUB_ACTOR}" "${GHCR_TOKEN}" | base64 -w0)
+        # Register the derived value as a workflow mask so any future
+        # accidental log output (e.g. from a `set -x` added during
+        # debugging) is redacted -- GitHub's automatic secret masking
+        # only matches the raw GHCR_TOKEN literal, not the base64 of
+        # "actor:token" derived from it.
+        echo "::add-mask::${AUTH}"
+        # jq is preinstalled on ubuntu-latest; --arg avoids any shell
+        # quoting issue if the token ever contains a JSON-special char.
+        jq -n --arg auth "${AUTH}" \
+          '{auths: {"ghcr.io": {auth: $auth}}}' \
+          > ~/.docker/config.json
+        chmod 600 ~/.docker/config.json
+
+    - name: 🖋️ Sign OCI manifest with cosign (keyless)
+      # Signs the platform OCI artifact published by `ksail workload push`
+      # using Sigstore keyless signing: Fulcio mints a short-lived cert
+      # bound to this run's GitHub Actions OIDC identity and Rekor records
+      # the signature in its append-only transparency log. There is no
+      # private key on disk. The identity is the CALLING workflow, not this
+      # action — `…/.github/workflows/ci.yaml@…` for merge-queue deploys and
+      # `…/.github/workflows/cd.yaml@…` for manual deploys — so a Flux-side
+      # verifier's matchOIDCIdentity must allow BOTH (policy is a follow-up).
+      id: cosign-sign
+      shell: bash
+      env:
+        # COSIGN_EXPERIMENTAL was retired in cosign 2.x; keyless is now
+        # the default when --key is omitted. GHCR credentials come from
+        # ~/.docker/config.json populated by the "Configure GHCR auth"
+        # step above; cosign reads them through the OCI keychain.
+        COSIGN_YES: "true"
+      run: |
+        set -euo pipefail
+        REF_TAG="ghcr.io/devantler-tech/platform/manifests:latest"
+        # Resolve the tag → digest BEFORE signing so that (a) cosign signs
+        # exactly the bytes we resolved -- no tag→digest TOCTOU if a
+        # concurrent deploy mutates the tag between this resolve and the
+        # sign call, (b) cosign stops warning about tag-based references
+        # and we stay forward-compatible with the cosign roadmap that
+        # removes tag-based signing entirely, and (c) cosign skips its
+        # own internal tag→digest lookup -- one fewer registry round-trip.
+        # docker buildx imagetools is preinstalled on ubuntu-latest; the
+        # cosign-native equivalent (`cosign manifest digest`) was removed
+        # in cosign v3.0.
+        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')
+        REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"
+        cosign sign --yes --recursive "${REF}"
+        echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
+        echo "ref=${REF_TAG}" >> "${GITHUB_OUTPUT}"
+
+    - name: 📋 Generate SBOM (CycloneDX)
+      # anchore/sbom-action is the official installer wrapper for syft —
+      # it manages syft's binary integrity itself, so no per-version
+      # SHA256 to track here either. Bump syft by editing SYFT_VERSION
+      # below; Renovate proposes the bump via the custom regex manager.
+      # Output is CycloneDX JSON, a format actions/attest accepts via sbom-path.
+      # `upload-artifact: false` matches today's behaviour (no workflow
+      # artifact); the SBOM is attested to the registry in the next step.
+      env:
+        # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
+        SYFT_VERSION: "1.45.1"
+      uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+      with:
+        image: ghcr.io/devantler-tech/platform/manifests@${{ steps.cosign-sign.outputs.digest }}
+        format: cyclonedx-json
+        output-file: sbom.cdx.json
+        syft-version: 'v${{ env.SYFT_VERSION }}'
+        upload-artifact: false
+
+    - name: 🪪 Attest SBOM (Sigstore via cosign keyless)
+      # Records the SBOM as a Sigstore in-toto attestation against the
+      # OCI manifest's digest. The attestation is uploaded to GHCR and
+      # its index recorded in Rekor. actions/attest-sbom v4 is now just a
+      # deprecated wrapper around actions/attest, so call attest directly
+      # and let its sbom-path input auto-select the SBOM predicate type.
+      #
+      # create-storage-record: false opts out of GitHub's artifact-metadata
+      # storage record — a GHCR "linked artifacts" discoverability index, not a
+      # supply-chain control. It cannot succeed here: the manifest is pushed by
+      # oras/ksail + cosign, not a GitHub-native artifact flow, so the
+      # artifact-metadata service has no registered artifact to attach to and
+      # warns "no artifacts found" on every deploy. #1787 mis-read this as a
+      # missing artifact-metadata:write grant; the grant shipped (v1.34.5) and
+      # the warning persisted, because per actions/attest-build-provenance#781
+      # the permission is necessary-but-not-sufficient. The cosign signature,
+      # SBOM attestation, SLSA provenance, and Rekor entry are all unaffected.
+      uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
+      with:
+        subject-digest: ${{ steps.cosign-sign.outputs.digest }}
+        subject-name: ghcr.io/devantler-tech/platform/manifests
+        sbom-path: sbom.cdx.json
+        push-to-registry: true
+        create-storage-record: false
+
+    - name: 🪪 Attest build provenance (SLSA L3)
+      # Generates a SLSA provenance v1.0 statement and attests it against
+      # the same digest. Provenance captures the workflow file,
+      # invocation parameters, GitHub runner, source repo + SHA, etc.
+      # Combined with the cosign signature above and the SBOM
+      # attestation, this completes the supply-chain transparency
+      # bundle for the platform OCI artifact.
+      # create-storage-record: false for the same reason as the SBOM step above.
+      uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+      with:
+        subject-digest: ${{ steps.cosign-sign.outputs.digest }}
+        subject-name: ghcr.io/devantler-tech/platform/manifests
+        push-to-registry: true
+        create-storage-record: false
+
+    - name: 🔁 Trigger Flux reconciliation
+      id: reconcile
+      shell: bash
+      env:
+        GITHUB_ACTOR: ${{ github.actor }}
+        GHCR_TOKEN: ${{ inputs.ghcr-token }}
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ksail --config ksail.prod.yaml workload reconcile
+
+    - name: 🩺 Diagnose Flux on failure
+      if: failure() && steps.reconcile.outcome == 'failure'
+      shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: |
+        set +e
+        echo "::group::Flux Kustomizations"
+        kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o wide
+        echo "::endgroup::"
+        echo "::group::Flux HelmReleases"
+        kubectl get helmreleases.helm.toolkit.fluxcd.io -A -o wide
+        echo "::endgroup::"
+        echo "::group::Flux OCIRepositories"
+        kubectl get ocirepositories.source.toolkit.fluxcd.io -A -o wide
+        echo "::endgroup::"
+        echo "::group::Failing Kustomizations describe"
+        for k in infrastructure-controllers infrastructure apps; do
+          echo "--- $k ---"
+          kubectl describe kustomizations.kustomize.toolkit.fluxcd.io "$k" -n flux-system 2>&1 | tail -60
+        done
+        echo "::endgroup::"
+        echo "::group::Flux controller pods"
+        kubectl get pods -n flux-system -o wide
+        echo "::endgroup::"
+        echo "::group::kustomize-controller logs"
+        kubectl logs -n flux-system -l app=kustomize-controller --tail=200
+        echo "::endgroup::"
+        echo "::group::helm-controller logs"
+        kubectl logs -n flux-system -l app=helm-controller --tail=200
+        echo "::endgroup::"
+        echo "::group::source-controller logs"
+        kubectl logs -n flux-system -l app=source-controller --tail=100
+        echo "::endgroup::"
+        echo "::group::Recent events (warnings)"
+        kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -50
+        echo "::endgroup::"
+
+    - name: 🔄 Update cluster (Talos machine config)
+      # Runs LAST, after manifest delivery, so an unreachable control-plane
+      # node cannot block GitOps delivery (see the Push step's comment). Talos
+      # config sync still runs on every deploy and a genuine node-reachability
+      # problem still fails the deploy (red) — it just no longer takes the
+      # app/config pipeline down with it. Automatically skipped if an earlier
+      # delivery step already failed (no point syncing nodes for a broken
+      # release).
+      shell: bash
+      env:
+        GHCR_TOKEN: ${{ inputs.ghcr-token }}
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ksail --config ksail.prod.yaml cluster update

@@ -175,7 +175,7 @@ by `cd.yaml` will (after Phase 2.1) be signed with cosign **keyless**
 signing — Fulcio mints a short-lived certificate bound to the GitHub
 Actions OIDC identity of this workflow, the signature is recorded in
 Rekor, and the certificate's `Subject Alternative Name` is the workflow
-URI (e.g. `https://github.com/devantler-tech/platform/.github/workflows/cd.yaml@refs/tags/v1.2.3`).
+URI (e.g. `https://github.com/devantler-tech/platform/.github/workflows/cd.yaml@refs/heads/main`).
 
 **Implication:** there is no private key on disk. The root of trust is the
 combination of:

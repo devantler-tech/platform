@@ -134,8 +134,8 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 
 **How it works:**
 
-1. Push a `v*` tag to trigger the `CD - Deploy` workflow (`cd.yaml`).
-2. The workflow uses `ksail --config ksail.prod.yaml` to target the committed prod config.
+1. Merging a PR through the merge queue runs the `deploy-prod` job in `ci.yaml` (the normal path). A direct push to `main` bypasses the queue, so deploy it manually by running the `CD` workflow (`cd.yaml`, `workflow_dispatch`). Both run the same `ksail` steps below.
+2. The `deploy-prod` composite action (shared by both paths) uses `ksail --config ksail.prod.yaml` to target the committed prod config.
 3. `ksail.prod.yaml` has `kustomizationFile: clusters/prod`, so KSail/Flux use `k8s/clusters/prod/kustomization.yaml` as the entry point — no root `k8s/kustomization.yaml` or file rewriting is needed.
 4. `ksail --config ksail.prod.yaml cluster create` (first run) or `cluster update` (subsequent runs) provisions / reconciles the Hetzner servers, Talos, CCM, and CSI.
 5. `ksail --config ksail.prod.yaml workload push` packages manifests and pushes them to GHCR.
@@ -155,8 +155,9 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 
 ## CI/CD Pipelines
 
-- **`ci.yaml`** — runs on `pull_request` (local Talos + Docker system test) and `merge_group` (deploys prod via the Hetzner provider). Concurrency is shared with `cd.yaml` so a tag deploy and a merge-queue deploy can never run against the prod cluster at the same time.
-- **`cd.yaml`** — runs on `v*` tags. Deploys to the production Hetzner cluster using `ksail --config ksail.prod.yaml`.
+- **`ci.yaml`** — runs on `pull_request` (local Talos + Docker system test) and `merge_group` (deploys prod via the Hetzner provider). Concurrency is shared with `cd.yaml` so a manual deploy and a merge-queue deploy can never run against the prod cluster at the same time.
+- **`cd.yaml`** — runs on `workflow_dispatch` (manual). Deploys to the production Hetzner cluster using `ksail --config ksail.prod.yaml`. Covers direct pushes to `main`, which bypass the merge queue and so are not deployed by `ci.yaml`.
+- **`.github/actions/deploy-prod`** — the composite action both deploy paths call (push → cosign-sign → attest SBOM + SLSA provenance → Flux reconcile → Talos `cluster update`), so the merge-queue and manual deploys can never drift. Secrets are passed as inputs because composite actions cannot read `secrets`.
 
 **Required GitHub Secrets:**
 
