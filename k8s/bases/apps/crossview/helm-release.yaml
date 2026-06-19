@@ -32,6 +32,15 @@ spec:
     # restart is acceptable — and it avoids the autoscaler-node Longhorn
     # data-loss footgun that bites stateful prod volumes.
     database:
+      # Pin the chart's bundled Postgres image. The crossview chart defaults
+      # database.image.tag to `latest` (a disallow-latest-tag policy violation,
+      # and a reliability footgun: a pod restart can silently pull a new Postgres
+      # major). Pin to the current stable — what `latest` resolves to today — and
+      # let Renovate keep it current via the customManager scoped to this file in
+      # .github/renovate.json. (Same image drives the chart's wait-for-db init.)
+      image:
+        # renovate: datasource=docker depName=postgres
+        tag: "18.4"
       persistence:
         enabled: false
     # The chart's bundled Postgres refuses to initialize without
