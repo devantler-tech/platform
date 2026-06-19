@@ -310,7 +310,7 @@ jobs:
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     environment: prod
-    # Shared with the CD tag-deploy workflow (cd.yaml) so a tag deploy and a
+    # Shared with the CD workflow (cd.yaml) so a manual deploy and a
     # merge-queue deploy can never run against the prod cluster at once.
     concurrency:
       group: prod-deploy
@@ -319,205 +319,24 @@ jobs:
       contents: read # checkout repository
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
+      attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           persist-credentials: false
 
-      - name: ⚙️ Setup KSail
-        # Install the KSail CLI from the release tarball via curl. We use curl
-        # rather than brew/setup-ksail-cli because the v7.20.0 release shipped
-        # only desktop artifacts (linux CLI missing, 404 on the tarball).
-        # v7.25.0 ships complete linux artifacts again and carries the
-        # cluster-update fixes; renovate keeps this pin current.
-        env:
-          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.65.0"
-        run: |
-          curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
-          tar -xzf /tmp/ksail.tar.gz -C /tmp
-          sudo install /tmp/ksail /usr/local/bin/ksail
-          ksail --version
-
-      - name: 🔐 Create SOPS Age key
-        env:
-          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-        run: |
-          mkdir -p ~/.config/sops/age
-          umask 077
-          echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
-          chmod 600 ~/.config/sops/age/keys.txt
-
-      - name: 🔑 Restore kubeconfig
-        # ksail cluster update needs a valid kubeconfig to detect the current
-        # cluster state. Without it, the component detector returns defaults and
-        # triggers spurious changes that all fail. The KUBE_CONFIG secret must be
-        # kept up-to-date from the homelab after any cluster recreation.
-        # See devantler-tech/ksail#4369 for the upstream design context.
-        env:
-          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
-        run: |
-          mkdir -p ~/.kube
-          umask 077
-          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
-          chmod 600 ~/.kube/config
-
-      - name: 🔑 Restore talosconfig
-        env:
-          TALOS_CONFIG: ${{ secrets.TALOS_CONFIG }}
-        run: |
-          mkdir -p ~/.talos
-          umask 077
-          printf '%s' "${TALOS_CONFIG}" > ~/.talos/config
-          chmod 600 ~/.talos/config
-
-      - name: 🩺 Verify prod cluster is reachable
-        # Fail fast if the restored kubeconfig can't reach the prod API server.
-        # When the cluster is unreachable — most commonly because KUBE_CONFIG /
-        # TALOS_CONFIG are stale after a cluster rebuild — `ksail cluster update`
-        # otherwise only warns, falls back to a "nothing is installed" baseline,
-        # proposes a full reinstall, and then fails mid-apply against the live
-        # nodes (a confusing, potentially destructive failure mode). Catch it
-        # here with an actionable message instead.
-        # Upstream: devantler-tech/ksail#4868 (fail fast) and #4869 (baseline).
-        # Refresh procedure: docs/dr/runbook.md → "Refresh CI deploy credentials".
-        # Pin --context to admin@prod (ksail.prod.yaml's connection.context) so
-        # the check targets the same cluster `ksail cluster update` will use,
-        # regardless of the restored kubeconfig's current-context.
-        run: |
-          # A missing admin@prod context means a malformed/incomplete kubeconfig,
-          # not an unreachable cluster — surface that case distinctly.
-          if ! kubectl config get-contexts -o name | grep -qx 'admin@prod'; then
-            echo "::error::Restored kubeconfig has no 'admin@prod' context (ksail.prod.yaml's connection.context). KUBE_CONFIG looks malformed or incomplete — refresh it. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
-            exit 1
-          fi
-          last_err=""
-          for attempt in 1 2 3; do
-            # Capture kubectl's own stderr so the failure message is accurate.
-            if out=$(kubectl --context admin@prod get --raw='/readyz' --request-timeout=30s 2>&1); then
-              echo "✅ Prod API server reachable."
-              exit 0
-            fi
-            last_err="$out"
-            echo "Attempt ${attempt}/3: prod API server (context admin@prod) not reachable: ${out}"
-            sleep 10
-          done
-          last_err=$(printf '%s' "$last_err" | tr '\n' ' ')
-          echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig (last kubectl error: ${last_err}). KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
-          exit 1
-
-      - name: 🔄 Update cluster
-        run: ksail --config ksail.prod.yaml cluster update
-        env:
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-
-      - name: 📦 Push manifests to GHCR
-        run: ksail --config ksail.prod.yaml workload push
-        env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-
-      # ----- Supply-chain signing (mirrors cd.yaml's deploy job) -----
-      # The merge queue publishes the SAME ghcr.io/.../manifests:latest artifact
-      # that tag deploys (cd.yaml) do. Without signing here, whether prod's
-      # artifact is signed depends on which path last deployed it — and merges
-      # happen far more often than tags. These three steps are a faithful copy of
-      # cd.yaml's signing block; keep them in sync. SBOM (syft) + SLSA provenance
-      # attestation are intentionally NOT mirrored yet: the cosign signature is the
-      # integrity property a Flux-side verifier checks, and attestation parity is a
-      # follow-up (ideally by extracting cd.yaml's block into a shared composite
-      # action so the two paths can never drift again).
-      - name: ⚙️ Install cosign
-        env:
-          # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
-          COSIGN_VERSION: "3.1.1"
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: 🚀 Deploy to Production
+        # Shared with cd.yaml's manual deploy via this composite action so the
+        # merge-queue and manual paths can never drift. Secrets are passed as
+        # inputs because composite actions cannot read `secrets` directly.
+        uses: ./.github/actions/deploy-prod
         with:
-          cosign-release: 'v${{ env.COSIGN_VERSION }}'
-
-      - name: 🔐 Configure GHCR auth (cosign)
-        # Pre-create ~/.docker/config.json so cosign + buildx imagetools resolve
-        # GHCR creds via the OCI keychain (no `cosign login`/`docker login`
-        # "credentials stored unencrypted" warning). Byte-identical to cd.yaml.
-        env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-        run: |
-          set -euo pipefail
-          umask 077
-          mkdir -p ~/.docker
-          AUTH=$(printf '%s:%s' "${GITHUB_ACTOR}" "${GHCR_TOKEN}" | base64 -w0)
-          echo "::add-mask::${AUTH}"
-          jq -n --arg auth "${AUTH}" \
-            '{auths: {"ghcr.io": {auth: $auth}}}' \
-            > ~/.docker/config.json
-          chmod 600 ~/.docker/config.json
-
-      - name: 🖋️ Sign OCI manifest with cosign (keyless)
-        # Resolve tag → digest, then sign by digest: no tag→digest TOCTOU under a
-        # concurrent deploy, and forward-compatible with cosign v3 (which removed
-        # tag-based signing). Fulcio binds the signature to THIS workflow's OIDC
-        # identity (…/.github/workflows/ci.yaml@…), so a Flux-side verifier's
-        # matchOIDCIdentity must allow both ci.yaml and cd.yaml identities.
-        id: cosign-sign
-        env:
-          COSIGN_YES: "true"
-        run: |
-          set -euo pipefail
-          REF_TAG="ghcr.io/devantler-tech/platform/manifests:latest"
-          DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')
-          REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"
-          cosign sign --yes --recursive "${REF}"
-          echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
-          echo "ref=${REF_TAG}" >> "${GITHUB_OUTPUT}"
-
-      - name: 🔁 Trigger Flux reconciliation
-        id: reconcile
-        run: ksail --config ksail.prod.yaml workload reconcile
-        env:
-          GITHUB_ACTOR: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-
-      - name: 🩺 Diagnose Flux on failure
-        if: failure() && steps.reconcile.outcome == 'failure'
-        env:
-          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-        run: |
-          set +e
-          echo "::group::Flux Kustomizations"
-          kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o wide
-          echo "::endgroup::"
-          echo "::group::Flux HelmReleases"
-          kubectl get helmreleases.helm.toolkit.fluxcd.io -A -o wide
-          echo "::endgroup::"
-          echo "::group::Flux OCIRepositories"
-          kubectl get ocirepositories.source.toolkit.fluxcd.io -A -o wide
-          echo "::endgroup::"
-          echo "::group::Failing Kustomizations describe"
-          for k in infrastructure-controllers infrastructure apps; do
-            echo "--- $k ---"
-            kubectl describe kustomizations.kustomize.toolkit.fluxcd.io "$k" -n flux-system 2>&1 | tail -60
-          done
-          echo "::endgroup::"
-          echo "::group::Flux controller pods"
-          kubectl get pods -n flux-system -o wide
-          echo "::endgroup::"
-          echo "::group::kustomize-controller logs"
-          kubectl logs -n flux-system -l app=kustomize-controller --tail=200
-          echo "::endgroup::"
-          echo "::group::helm-controller logs"
-          kubectl logs -n flux-system -l app=helm-controller --tail=200
-          echo "::endgroup::"
-          echo "::group::source-controller logs"
-          kubectl logs -n flux-system -l app=source-controller --tail=100
-          echo "::endgroup::"
-          echo "::group::Recent events (warnings)"
-          kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -50
-          echo "::endgroup::"
+          sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
+          kube-config: ${{ secrets.KUBE_CONFIG }}
+          talos-config: ${{ secrets.TALOS_CONFIG }}
+          ghcr-token: ${{ secrets.GHCR_TOKEN }}
+          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
 
   ci-required-checks:
     name: CI - Required Checks
