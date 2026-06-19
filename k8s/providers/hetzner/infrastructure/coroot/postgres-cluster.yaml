@@ -75,6 +75,17 @@ spec:
       # replica from a base backup (cheap: the DB is ~32Mi). Set well above
       # normal WAL for this low-write metadata DB, yet well below the 10Gi volume.
       max_slot_wal_keep_size: "3GB"
+    # Quorum-based SYNCHRONOUS replication — the SAME rationale as umami-db: it
+    # guarantees the promoted standby holds every committed transaction, so an
+    # unclean primary loss during a longhorn instance-manager restart / node roll
+    # can no longer fork the timeline and strand the old primary on a pg_rewind
+    # "could not find common ancestor" loop (observed cluster-wide 2026-06-19).
+    # `dataDurability: preferred` relaxes to async if BOTH standbys are down, so
+    # the HA Coroot server's metadata DB stays writable rather than blocking.
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
   bootstrap:
     initdb:
       database: coroot

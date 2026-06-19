@@ -43,6 +43,30 @@ spec:
   storage:
     size: 5Gi
     storageClass: longhorn
+  # Quorum-based SYNCHRONOUS replication so a failover can never strand the old
+  # primary. Background: on 2026-06-19 the longhorn instance-manager on a storage
+  # worker was replaced; the CNPG primaries pinned to that node lost their RWO
+  # volume and CNPG failed over (failoverDelay defaults to 0 = immediate). Under
+  # the default ASYNC replication the promoted standby can be behind the dead
+  # primary, so the old primary came back on a diverged timeline and CNPG's
+  # automatic pg_rewind rejoin failed for hours with "could not find common
+  # ancestor of the source and target cluster's timelines" — umami-db and
+  # wedding-db both sat at 2/3 and wedged the apps / wedding-app Flux health
+  # checks until an operator deleted the stranded PVC to force a re-bootstrap.
+  # With `number: 1` every commit is acknowledged only once at least one standby
+  # has the WAL, so whichever standby is promoted already holds every committed
+  # transaction — the timeline never forks behind the old primary and the rejoin
+  # self-heals with no manual step. `dataDurability: preferred` keeps the DB
+  # WRITABLE if BOTH standbys are ever unavailable (it transparently relaxes to
+  # async for that window) instead of blocking commits the way `required` would,
+  # so this hardens durability with no write-availability regression — a good fit
+  # for this low-write metadata DB where the extra in-cluster commit round-trip is
+  # negligible.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
   bootstrap:
     initdb:
       database: umami
