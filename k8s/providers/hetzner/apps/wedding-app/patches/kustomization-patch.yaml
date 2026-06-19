@@ -29,6 +29,22 @@ spec:
         spec:
           storage:
             storageClass: longhorn
+          # Quorum-based SYNCHRONOUS replication, same rationale as umami-db: a
+          # longhorn instance-manager restart that kills the primary must not be
+          # able to fork the timeline and strand the old primary on a pg_rewind
+          # "could not find common ancestor" loop (which wedged wedding-db at 2/3
+          # and failed the wedding-app health check on 2026-06-19, requiring a
+          # manual PVC re-bootstrap). Like storageClass above this is a
+          # platform-storage concern (it mitigates longhorn/instance-manager
+          # churn), so it is patched here rather than hardcoded in the
+          # environment-agnostic wedding-app source artifact. `dataDurability:
+          # preferred` relaxes to async if BOTH standbys are unavailable, so the
+          # DB stays writable instead of blocking commits.
+          postgresql:
+            synchronous:
+              method: any
+              number: 1
+              dataDurability: preferred
     - target:
         kind: HTTPRoute
         name: wedding-app
