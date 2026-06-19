@@ -218,7 +218,6 @@ runs:
         REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"
         cosign sign --yes --recursive "${REF}"
         echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
-        echo "ref=${REF_TAG}" >> "${GITHUB_OUTPUT}"
 
     - name: 📋 Generate SBOM (CycloneDX)
       # anchore/sbom-action is the official installer wrapper for syft —
