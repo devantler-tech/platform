@@ -176,6 +176,21 @@ spec:
           - resources:
               names:
                 - plugin-barman-cloud
+          # crossview (apps/crossview): a deliberately non-HA, SSO-fronted,
+          # read-only Crossplane resource dashboard. Its bundled Postgres
+          # (crossview-postgres) runs with persistence DISABLED -- a single
+          # ephemeral session/user store whose loss on restart the chart values
+          # explicitly accept -- so it genuinely cannot run 2, and the upstream
+          # crossview chart exposes no pod-label value to carry the exempt
+          # opt-out (same constraint as plugin-barman-cloud). The frontend shares
+          # that single ephemeral store, so a 2nd app replica adds no real HA
+          # while the DB stays a SPOF. Exempt both by name (both names stable;
+          # no ProviderRevision-style hash suffix). Promote to HA later only if
+          # the bundled Postgres is moved to a replicated store (e.g. CNPG).
+          - resources:
+              names:
+                - crossview
+                - crossview-postgres
       preconditions:
         all:
           # Durable opt-out on the pod template (charts expose podLabels more
