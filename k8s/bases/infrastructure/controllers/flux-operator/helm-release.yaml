@@ -20,9 +20,9 @@ spec:
   timeout: 10m
   values:
     web:
-      # The Flux Status web UI now runs as the standalone `flux-operator-web`
-      # release (web.serverOnly) so it can scale to zero via the KEDA HTTP
-      # add-on without taking the reconciler down with it. This release is the
-      # operator/reconciler only — it must stay running at all times, so it is
-      # deliberately NOT a scale-to-zero target. See helm-release-web.yaml.
+      # The Flux Operator's bundled Status web UI is disabled: Flux is surfaced
+      # in-cluster through Headlamp's `headlamp_flux` plugin (see
+      # bases/apps/headlamp), so a standalone Flux dashboard is redundant. This
+      # release is the operator/reconciler only and must stay running at all
+      # times.
       enabled: false

@@ -24,7 +24,6 @@ patches:
   - path: cilium/patches/helm-release-patch.yaml
   - path: metrics-server/patches/helm-release-patch.yaml
   - path: flux-operator/patches/helm-release-patch.yaml
-  - path: flux-operator/patches/helm-release-web-patch.yaml
   - path: kubescape/patches/helm-release-patch.yaml
   - path: tetragon/patches/helm-release-patch.yaml
   - path: kubevirt/patches/kubevirt-cr-patch.yaml

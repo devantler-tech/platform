@@ -11,9 +11,6 @@ spec:
       namespace: homepage
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
-      namespace: flux-system
-    - group: gateway.networking.k8s.io
-      kind: HTTPRoute
       namespace: kube-system
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
@@ -27,12 +24,6 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: longhorn-system
-    # Hetzner-only: the Crossview dashboard HTTPRoute (crossview ns) backends to
-    # the oauth2-proxy Service for SSO. Inert on local/CI where crossview has no
-    # HTTPRoute.
-    - group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      namespace: crossview
   to:
     - group: ""
       kind: Service

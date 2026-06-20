@@ -6,11 +6,15 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Authenticated traffic from oauth2-proxy/auth-proxy
-    # (gateway -> oauth2-proxy -> auth-proxy -> crossview app on 3001).
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+    # Crossview has no public route; it is reached only through Headlamp's
+    # crossview-headlamp plugin, which opens it via a Headlamp-managed
+    # port-forward to this pod's :3001. That final hop is dialed by the kubelet
+    # on the pod's node, so it arrives with the "host" identity (not a pod
+    # identity) and is exempt from the SPIRE mutual-auth requirement — host has
+    # no SVID, so authentication.mode must NOT be set here.
+    - fromEntities:
+        - host
+        - remote-node
       toPorts:
         - ports:
             - port: "3001"

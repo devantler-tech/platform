@@ -80,11 +80,6 @@ spec:
           public: true
           redirectURIs:
             - "http://localhost:8000"
-        - name: Flux Web
-          id: flux-web
-          secret: ${flux_web_client_secret}
-          redirectURIs:
-            - "https://flux.${domain}/oauth2/callback"
       connectors:
         - type: github
           id: github
