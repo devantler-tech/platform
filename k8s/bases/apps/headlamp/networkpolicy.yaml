@@ -28,6 +28,11 @@ spec:
     # CDN; without it every plugin archive fetch times out, the
     # headlamp-plugin sidecar crashloops and the dashboard ships with no
     # plugins. Same gap the kubescape policy already had to close.
+    # registry.npmjs.org: the headlamp-plugin sidecar bootstraps each plugin
+    # with `npx @headlamp-k8s/pluginctl ...`, which downloads pluginctl (and its
+    # deps) from the npm registry. Missing it -> npm ETIMEDOUT -> the sidecar
+    # crashloops on every (re)start; regression from the world:443 -> FQDN
+    # lockdown (#2019).
     - toFQDNs:
         - matchName: "dex.${domain}"
         - matchName: "artifacthub.io"
@@ -36,6 +41,7 @@ spec:
         - matchName: "objects.githubusercontent.com"
         - matchName: "raw.githubusercontent.com"
         - matchName: "release-assets.githubusercontent.com"
+        - matchName: "registry.npmjs.org"
       toPorts:
         - ports:
             - port: "443"
