@@ -68,6 +68,10 @@ spec:
     config:
       server:
         cors:
-          # Post-SSO-login redirect target — must be the public URL, or users
-          # bounce to localhost after authenticating.
+          # The public URL Crossview is served at (crossview.${domain}, behind
+          # oauth2-proxy SSO — see httproute.yaml). It is the post-SSO-login
+          # redirect target (must be the public URL, or users bounce to localhost
+          # after authenticating) AND the URL the Headlamp crossview-headlamp
+          # plugin embeds in its "Open Crossview" iframe (resolved from the
+          # crossview-ingress Ingress).
           origin: https://crossview.${domain}
