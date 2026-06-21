@@ -127,13 +127,17 @@ spec:
       #     server-side calls from the Crossview pod, which cannot resolve
       #     dex.${domain} on the local/docker cluster and should not hairpin the
       #     LoadBalancer in prod.
-      # Crossview's SSO service (services/sso_service.go) tries OIDC discovery
-      # FIRST and only falls back to these explicit URLs when discovery fails — so
-      # `issuer` is intentionally left at the chart's bogus localhost default:
-      # the discovery GET to http://localhost:8080/... is refused instantly
-      # in-cluster, discovery fails closed, and the split URLs below are used
-      # verbatim on every cluster. (Crossview validates the user via the userinfo
-      # endpoint, not the id_token, so no JWKS/issuer match is required.)
+      # WORKAROUND (upstream gap): Crossview's SSO code (services/sso_service.go)
+      # runs OIDC discovery whenever `issuer` is non-empty and lets a successful
+      # discovery OVERRIDE the explicit endpoints below — and the chart's configmap
+      # forces a non-empty issuer (it `default`s an unset value to a localhost URL).
+      # There is no skip-discovery / explicit-endpoint-precedence knob, so to keep
+      # the split we rely on the chart's localhost default being unreachable
+      # in-cluster: the discovery GET is refused instantly, discovery fails closed,
+      # and the split URLs below are used verbatim on every cluster. Revisit if the
+      # chart gains a discovery toggle or if discovery ever becomes fatal (it would
+      # crash-loop the pod). Crossview validates the user via the userinfo endpoint,
+      # not the id_token, so no JWKS/issuer match is required.
       #
       # SECURITY NOTE: removing oauth2-proxy drops its allowed_groups gate
       # (devantler-tech:platform team). Crossview does not gate on OIDC groups, so
@@ -149,4 +153,3 @@ spec:
           tokenURL: http://dex.dex.svc.cluster.local:5556/token
           userInfoURL: http://dex.dex.svc.cluster.local:5556/userinfo
           callbackURL: https://crossview.${domain}/api/auth/oidc/callback
-          scope: openid profile email
