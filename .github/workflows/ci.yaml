@@ -61,11 +61,11 @@ jobs:
       - name: ⚙️ Setup KSail
         # Install the KSail CLI from the release tarball via curl, mirroring
         # .github/actions/deploy-prod. Pinned to 7.65.0 (deliberately NOT
-        # renovate-bumped): 7.66.x has a non-deterministic race in
-        # `ksail workload validate`'s in-process parallel Helm rendering that
-        # corrupts the rendered output and fails with varying YAML parse errors
-        # on a different kustomization each run; the scan relies on the same
-        # determinism (--no-render). 7.65.0 validates/scans deterministically.
+        # renovate-bumped): 7.66.x parallelised the in-process Helm render and
+        # made it racy, so `ksail workload validate` corrupts its output and
+        # fails with varying YAML parse errors on a different kustomization each
+        # run, and `ksail workload scan`'s compliance score swings run-to-run.
+        # 7.65.0 renders serially and both validate and scan are deterministic.
         # Drop the pin once a ksail release fixes the race
         # (https://github.com/devantler-tech/ksail/issues/5371).
         shell: bash
@@ -90,12 +90,13 @@ jobs:
         # FAILS if a change drops the posture below the threshold, so new
         # findings must be fixed (or justified) before merge.
         #
-        # --no-render is REQUIRED for a stable gate. The default (kustomize+Helm
-        # render) is non-deterministic — repeated runs on an identical tree swing
-        # the score (observed 83.9% ↔ 92.7%, C-0054 4↔34) because the parallel
-        # render intermittently drops resources. --no-render scans the raw
-        # manifests we author and is deterministic (94.20% every run). The render
-        # race is filed as https://github.com/devantler-tech/ksail/issues/5371.
+        # Determinism comes from the ksail 7.65.0 pin in "Setup KSail" above:
+        # 7.66.x parallelised the in-process Helm render and made it racy, so the
+        # score swings run-to-run (observed 83.9% ↔ 92.7%) — see
+        # https://github.com/devantler-tech/ksail/issues/5371. On 7.65.0 the render
+        # is serial and the scan is deterministic (94.20% every run). (7.66.x adds
+        # a --no-render flag to dodge its own race, but that flag doesn't exist in
+        # 7.65.0 and isn't needed once the version is pinned.)
         #
         # The threshold is the deterministic floor (94), not 100. The residual
         # findings are either runtime-enforced (Kyverno securityContext/limits,
@@ -105,7 +106,7 @@ jobs:
         # ClusterSecurityException CRs yet (https://github.com/devantler-tech/ksail/issues/5369),
         # so reaching --compliance-threshold 100 is blocked on that. Until then,
         # ratchet this number up as genuine gaps are fixed; never lower it.
-        run: ksail workload scan --no-render --framework nsa --compliance-threshold 94
+        run: ksail workload scan --framework nsa --compliance-threshold 94
 
   deploy-prod:
     name: 🚀 Deploy to Prod
