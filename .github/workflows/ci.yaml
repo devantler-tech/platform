@@ -88,7 +88,7 @@ jobs:
         # render) is non-deterministic — repeated runs on an identical tree swing
         # the score (observed 83.9% ↔ 92.7%, C-0054 4↔34) because the parallel
         # render intermittently drops resources. --no-render scans the raw
-        # manifests we author and is deterministic (94.43% every run). The render
+        # manifests we author and is deterministic (94.20% every run). The render
         # race is filed as https://github.com/devantler-tech/ksail/issues/5371.
         #
         # The threshold is the deterministic floor (94), not 100. The residual

@@ -53,15 +53,9 @@ spec:
             readOnlyRootFilesystem: true
           env:
             - name: MINIO_ROOT_USER
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: root-user
+              value: minio
             - name: MINIO_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: root-password
+              value: minio-local-development-only
           ports:
             - name: api
               containerPort: 9000
@@ -141,16 +135,6 @@ spec:
           env:
             - name: MC_CONFIG_DIR
               value: /tmp/.mc
-            - name: MINIO_ROOT_USER
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: root-user
-            - name: MINIO_ROOT_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: minio-credentials
-                  key: root-password
           resources:
             requests:
               cpu: 10m
@@ -167,7 +151,7 @@ spec:
             - |
               set -e
               until mc alias set local http://minio.minio.svc.cluster.local:9000 \
-                    "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
+                    minio minio-local-development-only; do
                 sleep 2
               done
               mc mb --ignore-existing local/platform-backups
