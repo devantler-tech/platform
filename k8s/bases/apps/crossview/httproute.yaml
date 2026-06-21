@@ -38,12 +38,18 @@ spec:
             set:
               - name: Strict-Transport-Security
                 value: max-age=63072000; includeSubDomains; preload
+              # Allow ONLY Headlamp to frame Crossview: the crossview-headlamp
+              # plugin embeds https://crossview.${domain} in an iframe served from
+              # https://headlamp.${domain}. A scoped frame-ancestors both enables
+              # that embed and blocks clickjacking from any other origin, and as
+              # CSP it overrides X-Frame-Options in modern browsers. This `set`
+              # replaces any CSP Crossview returns; it returns none today (revisit
+              # if that changes).
+              - name: Content-Security-Policy
+                value: "frame-ancestors 'self' https://headlamp.${domain}"
             remove:
-              # Crossview is embedded cross-origin in the Headlamp plugin's iframe
-              # (headlamp.${domain} framing crossview.${domain}). Strip any
-              # X-Frame-Options the app or oauth2-proxy emit so the frame is not
-              # blocked. Crossview sets no CSP frame-ancestors today; if that ever
-              # changes, add a `set` CSP frame-ancestors allowing https://*.${domain}.
+              # Belt-and-braces for older browsers that honor X-Frame-Options over
+              # CSP: strip any DENY/SAMEORIGIN the app or oauth2-proxy emit.
               - X-Frame-Options
       backendRefs:
         - name: oauth2-proxy
