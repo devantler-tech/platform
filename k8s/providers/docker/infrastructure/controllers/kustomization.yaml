@@ -1,17 +1,66 @@
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# The local (Docker) cluster is a THIN, manual test-bed: a small Talos cluster
+# for trying a component out before promoting it to prod — NOT a full prod
+# stand-in (there is no CI system test against it anymore). It therefore ships
+# only the CORE controllers needed for a working, reachable cluster with
+# prod-like admission, secrets/SSO, and a database operator. Everything else is
+# opt-in: uncomment the controller you want (and its patch, if any) below, then
+# `ksail workload push && ksail workload reconcile`.
+#
+# Unlike the hetzner/prod overlay — which tracks the full base controller
+# aggregate (`../../../../bases/infrastructure/controllers/`) automatically —
+# this lists core controllers explicitly so a local bring-up stays small/fast.
+# Adding a base controller to the aggregate therefore does NOT ship it here;
+# add it to the opt-in block (or the core list) on purpose.
 resources:
-  - ../../../../bases/infrastructure/controllers/
-  # Local/CI-only VM stack — kept out of the base aggregate (prod has no VMs).
-  # The KubeVirt CR is patched below.
-  - ../../../../bases/infrastructure/controllers/cdi/
-  - ../../../../bases/infrastructure/controllers/kubevirt/
+  # --- Core: cluster foundation -------------------------------------------
+  - ../../../../bases/infrastructure/controllers/cilium/ # CNI + Gateway API
+  - ../../../../bases/infrastructure/controllers/cert-manager/
+  - ../../../../bases/infrastructure/controllers/trust-manager/ # CA trust bundles (cluster-issuers)
+  - ../../../../bases/infrastructure/controllers/metrics-server/
+  - ../../../../bases/infrastructure/controllers/kyverno/ # policy engine (prod-like admission)
+  - ../../../../bases/infrastructure/controllers/vertical-pod-autoscaler/ # VPA CRD — the core auto-vpa ClusterPolicy generates VerticalPodAutoscalers
+  - ../../../../bases/infrastructure/controllers/flux-operator/
+  # --- Core: secrets + SSO ------------------------------------------------
+  - ../../../../bases/infrastructure/controllers/openbao/
+  - ../../../../bases/infrastructure/controllers/external-secrets/
+  - ../../../../bases/infrastructure/controllers/dex/
+  - ../../../../bases/infrastructure/controllers/oauth2-proxy/
+  - ../../../../bases/infrastructure/controllers/auth-proxy/
+  # --- Core: data ---------------------------------------------------------
+  - ../../../../bases/infrastructure/controllers/cloudnative-pg/
+  # --- Core: docker-provider-local ----------------------------------------
   - coredns/
   - flux-instance/
-  - minio/
   - local-path-storage-namespace.yaml
   - local-path-storage-networkpolicy.yaml
+  #
+  # --- Opt-in controllers (uncomment what you want to try locally) --------
+  # Pair each with its `infrastructure`-layer resources in ../kustomization.yaml
+  # where noted, and re-add any patch listed in the opt-in `patches:` block below.
+  #
+  # Observability:
+  #   - ../../../../bases/infrastructure/controllers/coroot/      # also infrastructure/coroot/ + opencost/
+  # Progressive delivery:
+  #   - ../../../../bases/infrastructure/controllers/flagger/     # also infrastructure/flagger/
+  # Autoscaling (KEDA request-rate ScaledObjects, e.g. homepage/umami):
+  #   - ../../../../bases/infrastructure/controllers/keda/
+  # Runtime security (add the matching patch below):
+  #   - ../../../../bases/infrastructure/controllers/kubescape/   # also infrastructure/security-exceptions/
+  #   - ../../../../bases/infrastructure/controllers/tetragon/    # also infrastructure/tracing-policies/
+  # Backup (Velero + the local R2 stand-in; enables infrastructure/vault-backup/):
+  #   - ../../../../bases/infrastructure/controllers/velero/
+  #   - minio/
+  # CloudNativePG cloud backups (Barman plugin):
+  #   - ../../../../bases/infrastructure/controllers/plugin-barman-cloud/
+  # VM stack (local/CI-only; add the kubevirt CR patch below):
+  #   - ../../../../bases/infrastructure/controllers/cdi/
+  #   - ../../../../bases/infrastructure/controllers/kubevirt/
+  # Utilities:
+  #   - ../../../../bases/infrastructure/controllers/reloader/
+  #   - ../../../../bases/infrastructure/controllers/ksail-operator/
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
   # bases/components/helmrelease-drift-detection.
@@ -24,6 +73,7 @@ patches:
   - path: cilium/patches/helm-release-patch.yaml
   - path: metrics-server/patches/helm-release-patch.yaml
   - path: flux-operator/patches/helm-release-patch.yaml
-  - path: kubescape/patches/helm-release-patch.yaml
-  - path: tetragon/patches/helm-release-patch.yaml
-  - path: kubevirt/patches/kubevirt-cr-patch.yaml
+  # Opt-in patches — uncomment alongside the matching controller above:
+  #   - path: kubescape/patches/helm-release-patch.yaml
+  #   - path: tetragon/patches/helm-release-patch.yaml
+  #   - path: kubevirt/patches/kubevirt-cr-patch.yaml

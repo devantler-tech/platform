@@ -1,12 +1,54 @@
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# Thin local test-bed — the `infrastructure`-layer counterparts of the CORE
+# controllers in controllers/kustomization.yaml ONLY. Opt-in extras are listed
+# (commented) below; enable them together with their controller. Unlike the
+# hetzner/prod overlay, this does NOT pull the full `bases/infrastructure/`
+# aggregate, so a local bring-up stays small/fast.
 resources:
-  - ../../../bases/infrastructure/
+  - ../../../bases/infrastructure/certificates/ # Gateway TLS Certificate (kube-system)
+  - ../../../bases/infrastructure/cluster-policies/ # Kyverno policies (prod-like admission)
+  - ../../../bases/infrastructure/cluster-role-bindings/ # OIDC read-only binding
+  - ../../../bases/infrastructure/cluster-roles/ # tenant/OIDC aggregated roles
+  - ../../../bases/infrastructure/cluster-secret-stores/ # ESO ↔ OpenBao
+  - ../../../bases/infrastructure/external-secrets/ # ExternalSecrets (velero one is pruned below)
+  - ../../../bases/infrastructure/gateway/ # central Gateway + HTTP→HTTPS redirect
+  - ../../../bases/infrastructure/vault-config/ # OpenBao configuration Job
+  - ../../../bases/infrastructure/vault-seed/ # OpenBao secret seeding
   - cluster-issuers/
+  #
+  # --- Opt-in (enable together with the matching controller) --------------
+  # Observability (needs controllers/coroot):
+  #   - ../../../bases/infrastructure/coroot/
+  #   - ../../../bases/infrastructure/opencost/
+  # Progressive delivery (needs controllers/flagger):
+  #   - ../../../bases/infrastructure/flagger/
+  # Runtime security:
+  #   - ../../../bases/infrastructure/security-exceptions/  # Kubescape exceptions — needs controllers/kubescape
+  #   - ../../../bases/infrastructure/tracing-policies/     # Tetragon TracingPolicy — needs controllers/tetragon
+  # OpenBao raft-snapshot backups (needs controllers/velero + minio):
+  #   - ../../../bases/infrastructure/vault-backup/
 components:
-  # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
-  # opencost HelmRelease in this layer. See
+  # Platform-wide HelmRelease drift detection (mode: enabled). No-op until an
+  # opt-in HelmRelease (e.g. coroot/opencost) is enabled above. See
   # bases/components/helmrelease-drift-detection.
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
+patches:
+  # The shared external-secrets base ships the velero-r2-credentials
+  # ExternalSecret in the `velero` namespace, which only exists once Velero is
+  # opted in. Prune it here so the core `infrastructure` Kustomization applies
+  # cleanly (the kyverno ghcr-auth ExternalSecret in the same base is kept).
+  # When enabling Velero above, drop this delete-patch so the credential returns.
+  - target:
+      kind: ExternalSecret
+      name: velero-r2-credentials
+      namespace: velero
+    patch: |
+      $patch: delete
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: velero-r2-credentials
+        namespace: velero

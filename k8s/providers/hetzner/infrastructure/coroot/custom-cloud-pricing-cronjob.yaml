@@ -81,6 +81,10 @@ spec:
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
+                # Non-root identity at the container level (kubescape C-0013).
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
                 capabilities:
                   drop:
                     - ALL
@@ -89,6 +93,9 @@ spec:
                   cpu: 10m
                   memory: 32Mi
                 limits:
+                  # CPU limit set for kubescape C-0270; generous so the
+                  # short-lived curl never throttles.
+                  cpu: 100m
                   memory: 64Mi
               env:
                 # Coroot CX33-derived per-unit rates (USD/hour). Keep in lockstep

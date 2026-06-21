@@ -125,6 +125,9 @@ spec:
               cpu: 10m
               memory: 32Mi
             limits:
+              # CPU limit for kubescape C-0270; generous so OpenBao init/config
+              # work never throttles.
+              cpu: 200m
               memory: 64Mi
           command:
             - /bin/sh
@@ -342,6 +345,9 @@ spec:
               cpu: 10m
               memory: 64Mi
             limits:
+              # CPU limit for kubescape C-0270; generous so the kubectl step
+              # never throttles.
+              cpu: 250m
               memory: 256Mi
           command:
             - /bin/sh
@@ -388,6 +394,9 @@ spec:
               cpu: 10m
               memory: 32Mi
             limits:
+              # CPU limit for kubescape C-0270; generous so OpenBao init/config
+              # work never throttles.
+              cpu: 200m
               memory: 64Mi
           command:
             - /bin/sh

@@ -10,6 +10,7 @@ resources:
   - external-dns-rbac.yaml
   - ghcr-auth-externalsecret.yaml
   - namespace.yaml
+  - default-deny-networkpolicy.yaml
   - rolebinding.yaml
   - serviceaccount.yaml
   - sync.yaml

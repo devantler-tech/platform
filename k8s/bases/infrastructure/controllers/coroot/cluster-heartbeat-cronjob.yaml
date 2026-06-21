@@ -49,6 +49,9 @@ spec:
             app: cluster-heartbeat
         spec:
           restartPolicy: Never
+          # curl-only heartbeat; it never calls the Kubernetes API, so no
+          # ServiceAccount token is mounted (kubescape C-0034).
+          automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532
@@ -67,6 +70,10 @@ spec:
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
+                # Non-root identity at the container level (kubescape C-0013).
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
                 capabilities:
                   drop:
                     - ALL
@@ -75,4 +82,7 @@ spec:
                   cpu: 5m
                   memory: 16Mi
                 limits:
+                  # CPU limit set for kubescape C-0270; generous (10x request) so
+                  # the short-lived curl never throttles.
+                  cpu: 50m
                   memory: 32Mi

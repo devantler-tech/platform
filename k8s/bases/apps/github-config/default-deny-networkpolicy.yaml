@@ -1,0 +1,17 @@
+# Default-deny NetworkPolicy mirroring the runtime Kyverno-generated
+# CiliumNetworkPolicy (cluster-policies/best-practices/add-default-deny.yaml),
+# so the static Kubescape scan sees this namespace as network-restricted
+# (C-0054). It is behaviourally redundant with the runtime default-deny this
+# namespace already runs under: the per-workload allow CiliumNetworkPolicies
+# still apply (Cilium evaluates NetworkPolicy and CiliumNetworkPolicy allows
+# additively), so this adds no new restriction at runtime.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: github-config
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

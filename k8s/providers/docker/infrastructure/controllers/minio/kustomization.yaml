@@ -5,3 +5,4 @@ resources:
   - namespace.yaml
   - deployment.yaml
   - networkpolicy.yaml
+  - default-deny-networkpolicy.yaml

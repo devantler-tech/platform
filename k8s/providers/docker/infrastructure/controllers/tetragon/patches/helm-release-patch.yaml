@@ -5,11 +5,14 @@ metadata:
   name: tetragon
   namespace: kube-system
 spec:
+  # Required by the HelmRelease v2 schema so ksail can validate this opt-in
+  # patch standalone; matches the base interval, so it's a no-op once merged in.
+  interval: 10m0s
   # eBPF tracing support on Docker-provider Talos nodes is unverified (cf.
-  # kubescape disabling its eBPF runtime detection locally). Don't block
-  # the kustomize-controller health window on the agent DaemonSet becoming
-  # Ready -- the manifests still apply, so CI exercises them, but a slow or
-  # degraded agent on the nested Docker kernel won't fail the HelmRelease.
+  # kubescape disabling its eBPF runtime detection locally). Don't block the
+  # kustomize-controller health window on the agent DaemonSet becoming Ready --
+  # the manifests still apply, but a slow or degraded agent on the nested Docker
+  # kernel won't fail the HelmRelease.
   install:
     disableWait: true
   upgrade:

@@ -1,0 +1,15 @@
+# Default-deny NetworkPolicy mirroring the runtime Kyverno-generated
+# CiliumNetworkPolicy (cluster-policies/best-practices/add-default-deny.yaml),
+# so the static Kubescape scan sees this namespace as network-restricted
+# (C-0054). The overprovisioning buffer pods need no network, so a plain
+# default-deny is sufficient and adds no new restriction at runtime.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: overprovisioning
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

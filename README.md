@@ -38,7 +38,7 @@ ksail workload push
 ksail workload reconcile
 ```
 
-Ports 80 and 443 are automatically mapped to localhost via `extraPortMappings` in `ksail.yaml`. By default the local cluster runs only the platform infrastructure; apps are opt-in — to enable one, replace `resources: []` in `k8s/providers/docker/apps/kustomization.yaml` with the entries you want (its comments include a copy-paste template), then re-run `ksail workload push && ksail workload reconcile`. Reach the deployed services at their `*.platform.lan` hostnames (the `hosts` file maps these to `127.0.0.1`).
+Ports 80 and 443 are automatically mapped to localhost via `extraPortMappings` in `ksail.yaml`. The local cluster is a **thin manual test-bed** — a small Talos cluster for trying a component out before promoting it to prod. By default it runs only the **core infrastructure** (CNI + Gateway, DNS, TLS, Flux, Kyverno + policies, VPA, OpenBao + External Secrets, the Dex SSO stack, and CloudNativePG). Heavier infrastructure (observability, autoscaling, backup, runtime security, the VM stack, …) and all apps are opt-in — uncomment the entries you want in the docker provider overlays (`k8s/providers/docker/infrastructure/controllers/kustomization.yaml`, `…/infrastructure/kustomization.yaml`) and the apps overlay (`k8s/providers/docker/apps/kustomization.yaml`), each of which carries a copy-paste template, then re-run `ksail workload push && ksail workload reconcile`. Reach the deployed services at their `*.platform.lan` hostnames (the `hosts` file maps these to `127.0.0.1`).
 
 To tear down:
 
@@ -67,9 +67,9 @@ This is faster than a full cluster test and catches YAML errors, missing fields,
 
 ### Local
 
-Local development cluster running on Docker via KSail. Uses Talos with the Docker provider.
+Local development cluster running on Docker via KSail. Uses Talos with the Docker provider. A small, thin manual test-bed (see [Usage](#usage)) — bring up a component, try it, then promote it to prod.
 
-- 1 control-plane node + 3 worker nodes (Docker containers)
+- 1 control-plane node + 1 worker node (Docker containers)
 - Config: [`ksail.yaml`](ksail.yaml)
 
 ### Production
@@ -81,7 +81,7 @@ Cloud cluster running on Hetzner Cloud via KSail's native Hetzner provider. Depl
 
 ## Platform components
 
-A high-level inventory of what Flux reconciles onto the cluster. The manifests live under [`k8s/bases/infrastructure/`](k8s/bases/infrastructure) and [`k8s/bases/apps/`](k8s/bases/apps), with provider-specific pieces (Hetzner CCM/CSI, Longhorn, external-dns, …) under [`k8s/providers/`](k8s/providers). The exact set is overlay-dependent: local/CI (docker) deploys the full base set, while the Hetzner/prod overlay opts out of a few controllers to save resources (noted inline below).
+A high-level inventory of what Flux reconciles onto the cluster. The manifests live under [`k8s/bases/infrastructure/`](k8s/bases/infrastructure) and [`k8s/bases/apps/`](k8s/bases/apps), with provider-specific pieces (Hetzner CCM/CSI, Longhorn, external-dns, …) under [`k8s/providers/`](k8s/providers). The exact set is overlay-dependent: the Hetzner/prod overlay deploys the full base set described below, while the local (docker) overlay is a thin manual test-bed that ships only the core controllers by default and makes the rest opt-in.
 
 **Infrastructure**
 

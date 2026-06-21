@@ -27,6 +27,9 @@ spec:
       labels:
         app.kubernetes.io/name: minio
     spec:
+      # minio is a pure S3 server and never calls the Kubernetes API, so it has
+      # no use for a mounted ServiceAccount token (kubescape C-0034).
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -111,6 +114,9 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
+      # The bucket-creation Job runs the mc client only; it never calls the
+      # Kubernetes API, so it needs no ServiceAccount token (kubescape C-0034).
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
