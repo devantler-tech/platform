@@ -103,7 +103,7 @@ spec:
         # upstream_timeout — max time to await upstream response headers
         # (default 30s). Kept generous (90s) so a slow first render from one of
         # the heavy dashboards behind auth-proxy (Coroot, OpenCost, Hubble,
-        # Longhorn, Crossview) doesn't surface as a 504. Kept under Cloudflare's
+        # Longhorn) doesn't surface as a 504. Kept under Cloudflare's
         # ~100s edge timeout so oauth2-proxy answers first.
         upstream_timeout = "90s"
         # Button-less flow: with skip_provider_button + Dex skipApprovalScreen

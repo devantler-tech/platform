@@ -6,16 +6,15 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Authenticated traffic from oauth2-proxy/auth-proxy: gateway -> oauth2-proxy
-    # (Dex SSO) -> auth-proxy (Traefik host fan-out) -> crossview app on 3001.
-    # This is the public route (crossview.${domain}, httproute.yaml) that also
-    # backs the Headlamp crossview-headlamp plugin's "Open Crossview" iframe.
-    # auth-proxy runs in the oauth2-proxy namespace, so this one selector covers
-    # both hops. In prod the cluster-wide require-mutual-auth policy additionally
-    # requires a SPIRE handshake on this pod-to-pod ingress (both ends have SVIDs).
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+    # Public route traffic from the Cilium Gateway (crossview.${domain},
+    # httproute.yaml), which also backs the Headlamp crossview-headlamp plugin's
+    # "Open Crossview" iframe. There is no oauth2-proxy hop anymore — the gateway
+    # dials the crossview pod directly, arriving with the reserved `ingress`
+    # identity (Cilium's L7 proxy). Like the gateway -> oauth2-proxy hop, this is
+    # NOT a SPIRE workload, so the cluster-wide require-mutual-auth policy does not
+    # apply and authentication.mode must NOT be set here.
+    - fromEntities:
+        - ingress
       toPorts:
         - ports:
             - port: "3001"
@@ -24,7 +23,8 @@ spec:
     # the Headlamp DESKTOP app: that final hop is dialed by the kubelet on the
     # pod's node, so it arrives with the "host" identity (no SVID) and is exempt
     # from the SPIRE mutual-auth requirement — authentication.mode must NOT be set
-    # here.
+    # here. (Desktop port-forward reaches Crossview's own /login; without a Dex
+    # session it cannot read cluster data, same as web.)
     - fromEntities:
         - host
         - remote-node
@@ -41,6 +41,18 @@ spec:
     # resources, and providers.
     - toEntities:
         - kube-apiserver
+    # Dex OIDC server-side calls: the authorization-code -> token exchange and the
+    # userinfo lookup (config.sso.oidc tokenURL / userInfoURL in helm-release.yaml)
+    # go to the IN-CLUSTER Dex Service on :5556, which the pod can always resolve —
+    # unlike the public dex.${domain} URL, which the browser (not this pod) hits
+    # for the authorization redirect. Mirrors the oauth2-proxy egress.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: dex
+      toPorts:
+        - ports:
+            - port: "5556"
+              protocol: TCP
     # Intra-namespace: app -> bundled Postgres (5432).
     - toEndpoints:
         - matchLabels:
