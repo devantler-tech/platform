@@ -65,9 +65,8 @@ spec:
         secretKeyRef:
           name: crossview-credentials
           key: session-secret
-    config:
-      server:
-        cors:
-          # Post-SSO-login redirect target — must be the public URL, or users
-          # bounce to localhost after authenticating.
-          origin: https://crossview.${domain}
+    # No cors.origin override: Crossview has no public route — it is opened only
+    # through the Headlamp crossview-headlamp plugin's port-forward (see
+    # apps/headlamp/helm-release.yaml), so the browser loads it same-origin on
+    # localhost and the chart's CORS_ORIGIN default is fine. The public URL this
+    # previously pinned died with the crossview.${domain} route (removed in #2156).
