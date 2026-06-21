@@ -18,7 +18,7 @@ spec:
         name: whoami
   # https://github.com/cowboysysop/charts/blob/master/charts/whoami/values.yaml
   values:
-    replicaCount: ${whoami_replicas:=2}
+    replicaCount: ${whoami_replicas:=1}
     pdb:
       create: true
       # Drain-safe (#1880/#1882): maxUnavailable: 1 lets the pod be evicted

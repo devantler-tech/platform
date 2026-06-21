@@ -73,7 +73,7 @@ Promotion vs rollback is gated on:
 
 | Workload | Reason |
 | --- | --- |
-| whoami, headlamp, actual-budget, fleetdm (parked), hubble-ui | KEDA **HTTP add-on** (scale-to-zero). whoami keeps scale-to-zero by choice; headlamp = single-pod in-memory OIDC; actual-budget = single-writer file DB — none can run concurrent canary pods. fleetdm is disabled since 2026-06-03. |
+| whoami, headlamp, actual-budget, fleetdm (parked), hubble-ui | Single-replica by design (always-on; auto-vpa right-sizes them). headlamp = single-pod in-memory OIDC; actual-budget = single-writer file DB; hubble-ui/whoami = single-replica UIs — none can run concurrent canary pods. fleetdm is disabled since 2026-06-03. |
 | openbao | StatefulSet — Flagger only manages Deployments / DaemonSets. |
 | coroot UI, hubble-ui | Operator-reconciled Deployments — the operator fights Flagger for ownership. |
 | dex, oauth2-proxy, flux-operator | Critical SSO / GitOps — too risky to canary. |
@@ -102,8 +102,7 @@ Promotion vs rollback is gated on:
 
 ### KEDA apps (used by homepage + umami)
 
-Flagger's KEDA integration is for **core `keda.sh ScaledObject`**, NOT the
-`http.keda.sh HTTPScaledObject` (HTTP add-on) this platform uses for scale-to-zero.
+Flagger's KEDA integration uses the **core `keda.sh ScaledObject`**.
 Homepage and Umami use it: each app's `scaled-object.yaml` scales 2-3 replicas
 on Coroot's inbound request-rate series — a metric auto-vpa does **not**
 control, so vertical (VPA, up to `maxAllowed`) and horizontal scaling never
@@ -123,11 +122,6 @@ spec:
 The trigger must be **named** (Flagger matches `primaryScalerQueries` by
 trigger name), and the source query must exclude `-primary-` pods — reuse the
 vowel-free hash regex described under "Measuring the canary".
-
-Onboarding a HTTP-add-on app (whoami/headlamp/…) this way means **replacing its
-`HTTPScaledObject` with a `ScaledObject`**, giving up HTTP cold-start
-scale-to-zero — a deliberate trade not taken for those apps. Homepage and Umami
-were never interceptor-fronted, so they gave nothing up.
 
 ## Measuring the canary
 
