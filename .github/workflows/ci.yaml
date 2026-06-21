@@ -69,6 +69,15 @@ jobs:
       - name: 🧪 System Test
         uses: devantler-tech/ksail/.github/actions/ksail-cluster@2961d7c1fea92dd2885037af82b818076afffb93 # v7.65.0
         with:
+          # Pin the ksail BINARY to match the action ref above. Without this the
+          # action installs `latest`, which is currently 7.66.0 -- and 7.66.0 has
+          # a non-deterministic race in `ksail workload validate`'s in-process
+          # parallel Helm rendering that corrupts the rendered output at a random
+          # point, failing with varying YAML parse errors ("mapping values are
+          # not allowed in this context", "could not find expected ':'") on a
+          # different kustomization each run. 7.65.0 validates deterministically
+          # (97/97). Drop this pin once a ksail release fixes the race.
+          ksail-version: "7.65.0"
           distribution: Talos
           provider: Docker
           init: "false"
