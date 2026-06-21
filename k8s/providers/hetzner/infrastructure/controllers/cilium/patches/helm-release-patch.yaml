@@ -47,9 +47,10 @@
 # PROD/HETZNER ONLY: encryption is disabled in the docker overlay (local has
 # no node-to-node wire), so strict mode would only drop local pod traffic for
 # no gain. It therefore lives in this hetzner patch, not the base.
-# ⚠️  Fail-closed + prod-only ⇒ the docker CI System Test does NOT exercise
-#     this. Validate on the first prod reconcile (pod-to-pod connectivity +
-#     cilium-agent logs) and be ready to revert if legitimate traffic drops.
+# ⚠️  Fail-closed + prod-only ⇒ the local docker cluster does NOT exercise
+#     this (and CI no longer boots a cluster). Validate on the first prod
+#     reconcile (pod-to-pod connectivity + cilium-agent logs) and be ready to
+#     revert if legitimate traffic drops.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:

@@ -27,6 +27,9 @@ spec:
       labels:
         app.kubernetes.io/name: minio
     spec:
+      # minio is a pure S3 server and never calls the Kubernetes API, so it has
+      # no use for a mounted ServiceAccount token (kubescape C-0034).
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -50,9 +53,15 @@ spec:
             readOnlyRootFilesystem: true
           env:
             - name: MINIO_ROOT_USER
-              value: minio
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-user
             - name: MINIO_ROOT_PASSWORD
-              value: minio-local-development-only
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-password
           ports:
             - name: api
               containerPort: 9000
@@ -111,6 +120,9 @@ spec:
   template:
     spec:
       restartPolicy: OnFailure
+      # The bucket-creation Job runs the mc client only; it never calls the
+      # Kubernetes API, so it needs no ServiceAccount token (kubescape C-0034).
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -129,6 +141,16 @@ spec:
           env:
             - name: MC_CONFIG_DIR
               value: /tmp/.mc
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-user
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-credentials
+                  key: root-password
           resources:
             requests:
               cpu: 10m
@@ -145,7 +167,7 @@ spec:
             - |
               set -e
               until mc alias set local http://minio.minio.svc.cluster.local:9000 \
-                    minio minio-local-development-only; do
+                    "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
                 sleep 2
               done
               mc mb --ignore-existing local/platform-backups

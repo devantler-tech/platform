@@ -33,7 +33,7 @@ kind: Kustomization
 #   wedding-app, ascoachingogvaner — prod-only tenants (need GHCR, CNPG, longhorn)
 #   umami                          — CNPG-backed Postgres pinned to longhorn
 #                                    storage (prod-only)
-#   fleetdm                        — heavy app (MySQL + Redis + migration) that
-#                                    consistently times out in Docker CI; its
-#                                    Docker config would differ from prod anyway
+#   fleetdm                        — heavy app (MySQL + Redis + migration) kept
+#                                    out of the thin local set; its Docker config
+#                                    would differ from prod anyway
 resources: []

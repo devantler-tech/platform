@@ -105,8 +105,9 @@ unlike *dynamic* roles, which mint ephemeral users the app would have to re-fetc
   short refreshInterval + a long `rotation_period`. Acceptable for fleetdm.
 - **Risk**: a misconfigured connection/role rotates `fleet` to a value the
   `Secret` doesn't reflect → fleet API loses DB access. **Mitigation**: validate
-  the full chain on the local Talos+Docker cluster (CI system test exercises DB
-  engine + ESO + fleet bring-up) before any prod tag.
+  the full chain manually on the local cluster (opt fleetdm + its DB into the
+  local overlay, then exercise DB engine + ESO + fleet bring-up) before any prod
+  tag — CI no longer boots a cluster, so this check is manual.
 - **Rollback**: point the `mysql` ExternalSecret back at KV
   (`apps/fleetdm/mysql`), then manually reset the `fleet` password to the KV
   value (`ALTER USER`). The DB engine mount can stay (unused) or be disabled.
@@ -116,8 +117,9 @@ unlike *dynamic* roles, which mint ephemeral users the app would have to re-fetc
 
 - `kubectl kustomize k8s/clusters/local/` and `kubectl kustomize k8s/clusters/prod/`
   both build; `ksail workload validate` and `ksail --config ksail.prod.yaml workload validate`.
-- CI's full local-cluster system test must bring fleetdm up healthy with creds
-  sourced from `database/static-creds/fleet`.
+- Manually, with fleetdm opted into the local overlay: fleetdm comes up healthy
+  with creds sourced from `database/static-creds/fleet`. (CI validates manifests
+  statically only — it no longer runs a cluster.)
 
 ### Phase 2 — fleetdm Redis
 

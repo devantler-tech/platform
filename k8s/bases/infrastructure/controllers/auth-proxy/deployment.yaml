@@ -31,6 +31,10 @@ spec:
         configmap.reloader.stakater.com/reload: auth-proxy-config
     spec:
       terminationGracePeriodSeconds: 30
+      # Traefik runs with the static file provider (--configFile), not the
+      # Kubernetes provider, so it never calls the Kubernetes API and needs no
+      # ServiceAccount token (kubescape C-0034).
+      automountServiceAccountToken: false
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname

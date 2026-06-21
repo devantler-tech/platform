@@ -20,7 +20,12 @@ spec:
     metricsServer: Enabled
     policyEngine: Kyverno
     controlPlanes: 1
-    workers: 3
+    # A small single-worker cluster: this is a thin manual test-bed for trying a
+    # component out before promoting it to prod, not a prod-fidelity stand-in.
+    # The core component set has no hard pod anti-affinity, so one worker is
+    # enough. Raise this if you opt in a component you want to see spread across
+    # nodes (e.g. multi-instance CNPG, Velero node-spread).
+    workers: 1
     talos:
       extraPortMappings:
         - containerPort: 80

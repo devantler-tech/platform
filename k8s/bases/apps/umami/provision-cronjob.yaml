@@ -100,6 +100,9 @@ spec:
                   cpu: 25m
                   memory: 64Mi
                 limits:
+                  # CPU limit for kubescape C-0270; generous so the provisioning
+                  # job never throttles.
+                  cpu: 250m
                   memory: 128Mi
               env:
                 - name: UMAMI_BASE

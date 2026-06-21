@@ -11,6 +11,7 @@ resources:
   - db-object-store.yaml
   - ghcr-auth-externalsecret.yaml
   - namespace.yaml
+  - default-deny-networkpolicy.yaml
   - rolebinding.yaml
   - serviceaccount.yaml
   - sops-age-secret.enc.yaml

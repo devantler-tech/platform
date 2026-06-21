@@ -1,15 +1,15 @@
 # Extends the KSail-bootstrapped FluxInstance to lower the dependency
-# requeue interval for faster reconciliation in Docker (local/CI) clusters.
+# requeue interval for faster reconciliation on the local Docker cluster.
 #
-# No spec.cluster.size profile is set: this overlay's primary consumer is the
-# CI system test on a 4-vCPU GitHub-hosted runner, where the 'medium' profile
-# (--concurrent=10 on kustomize- and helm-controller) made bootstrap install
-# ~25 HelmReleases at once and starved etcd/the apiserver — leader-election
-# leases timed out and reconciliation collapsed ("etcdserver: request timed
-# out"). The default profile keeps Flux's stock concurrency (4) and resource
-# limits, and renders manifests that differ from the KSail-bootstrapped
-# instance only in the kustomize-controller patch below, so helm-controller
-# and source-controller are not restarted mid-bootstrap.
+# No spec.cluster.size profile is set: on a small (often single-node) local
+# cluster the 'medium' profile (--concurrent=10 on kustomize- and
+# helm-controller) starves etcd/the apiserver while the core HelmReleases
+# install at once — leader-election leases time out and reconciliation
+# collapses ("etcdserver: request timed out"). The default profile keeps Flux's
+# stock concurrency (4) and resource limits, and renders manifests that differ
+# from the KSail-bootstrapped instance only in the kustomize-controller patch
+# below, so helm-controller and source-controller are not restarted
+# mid-bootstrap.
 ---
 apiVersion: fluxcd.controlplane.io/v1
 kind: FluxInstance

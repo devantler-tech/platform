@@ -74,6 +74,14 @@ spec:
                 - ALL
             seccompProfile:
               type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              # kubescape C-0270/C-0271; generous for the raft snapshot step.
+              cpu: 250m
+              memory: 256Mi
           env:
             # openbao-active = unsealed Raft leader only (same rationale as
             # the CronJob in cronjob.yaml).
@@ -132,6 +140,8 @@ spec:
               cpu: 10m
               memory: 32Mi
             limits:
+              # CPU limit for kubescape C-0270; generous for the mc mirror.
+              cpu: 250m
               memory: 128Mi
           volumeMounts:
             - name: snapshots

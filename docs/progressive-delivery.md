@@ -58,7 +58,8 @@ Promotion vs rollback is gated on:
 ### Onboarded apps & status
 
 - **umami** — weighted Gateway API canary. ⚠️ **Prod-only** (excluded from the
-  docker/CI overlay, so it is **not** exercised by the system test) and stateful
+  docker overlay — Flagger and canaries are opt-in locally, and CI validates
+  manifests statically rather than running them) and stateful
   (one shared CloudNativePG DB; do not land a schema-changing upgrade as a
   canary). Its old route's HSTS header is re-added via `service.headers`; the
   `gethomepage.dev/*` tile annotations are not reproducible on a Flagger route.

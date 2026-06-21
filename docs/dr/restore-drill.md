@@ -1,16 +1,26 @@
-# DR restore drill (CI)
+# DR restore drill
 
-`.github/workflows/ci.yaml` runs restore-drill steps inside the
-`system-test` job on every PR that touches `k8s/**` or the cluster
-configs. The drill validates the full backup → data-loss → restore cycle
-end-to-end on the local Talos+Docker cluster the job just reconciled, so
-the Velero code path is regression-tested **before** changes reach
-`prod`. (Reusing the system-test cluster instead of creating a second
-one keeps the added wall-clock to ~2-3 minutes.)
+> **No longer runs in CI.** CI no longer boots a cluster — the local Docker
+> cluster is a thin manual test-bed, not a prod stand-in — so this drill is now
+> a **manual** procedure. Run it locally (after opting Velero + MinIO into the
+> local overlay), and as the periodic prod drill in
+> [`runbook.md`](./runbook.md). The copy-paste version is in [Local manual
+> run](#local-manual-run) below; the steps here explain what it exercises.
+
+The drill validates the full backup → data-loss → restore cycle end-to-end
+against **MinIO** (the local R2 stand-in), so the Velero code path can be
+checked **before** changes reach `prod`.
+
+> **Opt-in prerequisite (local):** Velero and MinIO are not in the thin core
+> set. Enable them first: in
+> `k8s/providers/docker/infrastructure/controllers/kustomization.yaml`
+> uncomment `velero/` + `minio/`, and in `…/infrastructure/kustomization.yaml`
+> uncomment `vault-backup/` and drop the `velero-r2-credentials` delete-patch.
+> Then `ksail workload push && ksail workload reconcile`.
 
 ## What it does
 
-1. Reuse the cluster the `system-test` job created and reconciled.
+1. Bring up a local cluster with Velero + MinIO opted in (above).
 2. Wait for `BackupStorageLocation/default` to report `Available`
    (Velero validates against **MinIO**, the local R2 stand-in).
 3. Create a marker `Namespace`/`ConfigMap` carrying the GitHub
@@ -21,13 +31,14 @@ one keeps the added wall-clock to ~2-3 minutes.)
    namespace`).
 6. Assert the marker namespace does **not** exist after deletion.
 7. Create a `Restore` CR from the backup and wait for `Completed`.
-8. Assert the marker `ConfigMap` is back and `data.run-id` matches the
-   current `GITHUB_RUN_ID`.
-9. The job tears down the cluster (`if: always()`) as usual.
+8. Assert the marker `ConfigMap` is back and its `data` matches what you
+   wrote before the simulated loss.
+9. Tear the cluster down (`ksail cluster delete`) when finished.
 
-> Velero CRs are created with `kubectl` rather than the `velero` CLI so
-> the drill needs no extra tool install and can never drift from the
-> deployed Velero version.
+> The Velero CRs can be created with `kubectl` rather than the `velero` CLI so
+> the drill needs no extra tool install and can never drift from the deployed
+> Velero version (the in-CI variant used this; the manual run below uses the
+> `velero` CLI for brevity).
 
 > **Why namespace deletion instead of full cluster rebuild?** MinIO runs
 > in-cluster with ephemeral storage, so destroying the cluster would also
@@ -40,10 +51,10 @@ one keeps the added wall-clock to ~2-3 minutes.)
 The drill itself is bounded: 10 min for the `BackupStorageLocation` to
 go `Available`, then 5 min each for the backup and the restore to reach
 `Completed` (terminal failure phases abort immediately). In practice the
-whole sequence takes ~2-3 minutes on top of the system test. The **4 h
+whole sequence takes ~2-3 minutes once the cluster is up. The **4 h
 RTO** in [`runbook.md`](./runbook.md) is the operator promise for the
-manual prod path; CI keeps that promise honest by failing fast if the
-local round trip explodes.
+manual prod path; running this drill periodically keeps that promise honest by
+surfacing a broken local round trip early.
 
 ## What this catches
 
@@ -82,6 +93,7 @@ the encryption is silently disabled, add a `talosctl etcd snapshot` +
 ## Local manual run
 
 ```bash
+# First opt Velero + MinIO into the local overlay (see the prerequisite above).
 ksail cluster create
 ksail workload push && ksail workload reconcile
 
