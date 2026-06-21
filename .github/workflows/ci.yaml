@@ -59,23 +59,29 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        # Install the KSail CLI from the release tarball via curl, mirroring
-        # .github/actions/deploy-prod. Pinned to 7.65.0 (deliberately NOT
-        # renovate-bumped): 7.66.x parallelised the in-process Helm render and
-        # made it racy, so `ksail workload validate` corrupts its output and
-        # fails with varying YAML parse errors on a different kustomization each
-        # run, and `ksail workload scan`'s compliance score swings run-to-run.
-        # 7.65.0 renders serially and both validate and scan are deterministic.
-        # Drop the pin once a ksail release fixes the race
-        # (https://github.com/devantler-tech/ksail/issues/5371).
+        # Two pinned ksail binaries — no single release does both jobs
+        # deterministically (https://github.com/devantler-tech/ksail/issues/5371):
+        #   • validate → ksail 7.65.0: 7.66.x parallelised the in-process Helm
+        #     render and made `ksail workload validate` racy (varying YAML parse
+        #     errors on a different kustomization each run); 7.65.0 renders
+        #     serially and validates deterministically.
+        #   • scan → ksail 7.66.4 with --no-render (the flag landed in 7.66.x):
+        #     the *rendered* scan score depends on how many upstream Helm charts
+        #     get fetched (87% in CI vs 94% offline) and on chart-version bumps;
+        #     --no-render scans only the raw authored manifests, so it is
+        #     deterministic and environment-independent (94.20%).
+        # Collapse to one binary once a ksail release fixes the render race.
         shell: bash
-        env:
-          KSAIL_VERSION: "7.65.0"
         run: |
-          curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
-          tar -xzf /tmp/ksail.tar.gz -C /tmp
-          sudo install /tmp/ksail /usr/local/bin/ksail
-          ksail --version
+          install_ksail() {  # <version> <dest>
+            curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v$1/ksail_$1_linux_amd64.tar.gz" -o "/tmp/ksail-$1.tgz"
+            mkdir -p "/tmp/ksail-$1"
+            tar -xzf "/tmp/ksail-$1.tgz" -C "/tmp/ksail-$1"
+            sudo install "/tmp/ksail-$1/ksail" "$2"
+          }
+          install_ksail 7.65.0 /usr/local/bin/ksail        # validate (deterministic build)
+          install_ksail 7.66.4 /usr/local/bin/ksail-scan   # scan --no-render
+          ksail --version && ksail-scan --version
 
       - name: ✅ Validate manifests (local + prod overlays)
         # Schema-aware kubeconform validation with Flux variable substitution,
@@ -90,13 +96,12 @@ jobs:
         # FAILS if a change drops the posture below the threshold, so new
         # findings must be fixed (or justified) before merge.
         #
-        # Determinism comes from the ksail 7.65.0 pin in "Setup KSail" above:
-        # 7.66.x parallelised the in-process Helm render and made it racy, so the
-        # score swings run-to-run (observed 83.9% ↔ 92.7%) — see
-        # https://github.com/devantler-tech/ksail/issues/5371. On 7.65.0 the render
-        # is serial and the scan is deterministic (94.20% every run). (7.66.x adds
-        # a --no-render flag to dodge its own race, but that flag doesn't exist in
-        # 7.65.0 and isn't needed once the version is pinned.)
+        # Runs on the 7.66.4 `ksail-scan` binary with --no-render (see "Setup
+        # KSail" above for the two-binary rationale). --no-render scans the raw
+        # authored manifests and is deterministic + environment-independent
+        # (94.20% every run); the default rendered scan is not (87% in CI vs 94%
+        # offline, plus the 7.66.x render race,
+        # https://github.com/devantler-tech/ksail/issues/5371).
         #
         # The threshold is the deterministic floor (94), not 100. The residual
         # findings are either runtime-enforced (Kyverno securityContext/limits,
@@ -106,7 +111,7 @@ jobs:
         # ClusterSecurityException CRs yet (https://github.com/devantler-tech/ksail/issues/5369),
         # so reaching --compliance-threshold 100 is blocked on that. Until then,
         # ratchet this number up as genuine gaps are fixed; never lower it.
-        run: ksail workload scan --framework nsa --compliance-threshold 94
+        run: ksail-scan workload scan --no-render --framework nsa --compliance-threshold 94
 
   deploy-prod:
     name: 🚀 Deploy to Prod
