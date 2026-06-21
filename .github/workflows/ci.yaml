@@ -60,11 +60,17 @@ jobs:
 
       - name: ⚙️ Setup KSail
         # Install the KSail CLI from the release tarball via curl, mirroring
-        # .github/actions/deploy-prod. renovate keeps the pin current.
+        # .github/actions/deploy-prod. Pinned to 7.65.0 (deliberately NOT
+        # renovate-bumped): 7.66.x has a non-deterministic race in
+        # `ksail workload validate`'s in-process parallel Helm rendering that
+        # corrupts the rendered output and fails with varying YAML parse errors
+        # on a different kustomization each run; the scan relies on the same
+        # determinism (--no-render). 7.65.0 validates/scans deterministically.
+        # Drop the pin once a ksail release fixes the race
+        # (https://github.com/devantler-tech/ksail/issues/5371).
         shell: bash
         env:
-          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.66.0"
+          KSAIL_VERSION: "7.65.0"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp

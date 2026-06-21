@@ -7,3 +7,5 @@ resources:
   - helm-release.yaml
   - external-secret.yaml
   - networkpolicy.yaml
+  - httproute.yaml
+  - ingress.yaml

@@ -13,14 +13,6 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
-    # KEDA HTTP interceptor forwards traffic from gateway
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: keda
-      toPorts:
-        - ports:
-            - port: "8080"
-              protocol: TCP
     # Intra-namespace (fleet → mysql, fleet → redis)
     - fromEndpoints:
         - matchLabels:

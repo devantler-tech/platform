@@ -52,6 +52,20 @@ patches:
                   # platform-owned namespaces; its sizing is VPA-owned, not
                   # quota-bounded. The LimitRange (rule 1) still applies.
                   - observability
+                  # Longhorn storage data plane. longhorn-manager creates the
+                  # instance-manager pods WITHOUT a memory limit by design: during
+                  # a volume rebuild they burst well past the generic LimitRange
+                  # default (memory 512Mi), get OOMKilled, and longhorn-manager
+                  # then deletes+recreates the IM pod -- which faults EVERY replica
+                  # engine on that node (DetachedUnexpectedly), cascading into
+                  # CNPG primary failover and Postgres timeline divergence
+                  # cluster-wide (observed 2026-06-20). It is excluded from BOTH
+                  # rules: rule 1 drops the OOM-inducing limit, and this rule
+                  # (ResourceQuota) must drop too -- otherwise pods that no longer
+                  # receive the LimitRange-supplied requests get rejected by the
+                  # requests.memory quota. Longhorn sizing is operator-/VPA-owned
+                  # (manager, csi, ui carry VPAs), not quota-bounded.
+                  - longhorn-system
       - op: add
         path: /spec/rules/0/generate/generateExisting
         value: true
@@ -79,6 +93,11 @@ patches:
                   - kube-public
                   - kube-node-lease
                   - flux-system
+                  # See rule 0: Longhorn instance-managers must run without the
+                  # default memory limit -- an OOM during a rebuild recreates the
+                  # IM pod and faults every volume on the node, taking the storage
+                  # data plane (and every CNPG database on it) down.
+                  - longhorn-system
       - op: add
         path: /spec/rules/1/generate/generateExisting
         value: true

@@ -1,0 +1,57 @@
+# SSO-fronted route for Crossview at crossview.${domain}. Its primary purpose is
+# to give the Headlamp crossview-headlamp plugin a browser-reachable URL to embed
+# in its "Open Crossview" iframe: the plugin reads the crossview-ingress Ingress
+# (ingress.yaml), resolves https://crossview.${domain}, and frames it. Direct
+# navigation to the host works too — always behind oauth2-proxy/Dex SSO, since
+# Crossview exposes infrastructure state and must never be reachable
+# unauthenticated. No homepage tile by design: Crossview is surfaced through
+# Headlamp, not the homepage (the consolidation intent of #2156).
+#
+# Prod/hetzner only in practice: this lives in bases/apps/crossview, but apps are
+# opt-in on the local docker overlay, so the route renders only where Crossview
+# is actually deployed.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: crossview
+  namespace: crossview
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - crossview.${domain}
+  rules:
+    # Front with oauth2-proxy (Dex SSO) like the other infra dashboards
+    # (homepage/coroot/opencost/longhorn). oauth2-proxy's static upstream is the
+    # auth-proxy Traefik instance, which host-fans-out crossview.${domain} to
+    # crossview-service:80 (see controllers/auth-proxy/config-map.yaml).
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://crossview.${domain}/
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+              # Allow ONLY Headlamp to frame Crossview: the crossview-headlamp
+              # plugin embeds https://crossview.${domain} in an iframe served from
+              # https://headlamp.${domain}. A scoped frame-ancestors both enables
+              # that embed and blocks clickjacking from any other origin, and as
+              # CSP it overrides X-Frame-Options in modern browsers. This `set`
+              # replaces any CSP Crossview returns; it returns none today (revisit
+              # if that changes).
+              - name: Content-Security-Policy
+                value: "frame-ancestors 'self' https://headlamp.${domain}"
+            remove:
+              # Belt-and-braces for older browsers that honor X-Frame-Options over
+              # CSP: strip any DENY/SAMEORIGIN the app or oauth2-proxy emit.
+              - X-Frame-Options
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80

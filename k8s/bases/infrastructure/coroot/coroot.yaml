@@ -151,6 +151,27 @@ spec:
   # (the operator only exposes priorityClassName on the node-agent, not on the
   # bundled Prometheus/ClickHouse).
   nodeAgent:
+    # Disable the ICMP latency pinger. It measures node/pod RTT by sending ICMP
+    # echo probes and reading kernel RX timestamps via SO_TIMESTAMPING
+    # (SOF_TIMESTAMPING_RX_SOFTWARE) — but Cilium's eBPF datapath here (VXLAN
+    # tunnel + WireGuard + eBPF host-routing, i.e. enable-host-legacy-routing
+    # off) delivers the echo replies through a fast path that bypasses the kernel
+    # netif-receive hook that stamps software RX timestamps. So every probe logs
+    # `failed to get RX timestamp: no timestamp found` (pinger.go) — ~40-70x per
+    # node per 30m on ALL nodes — and Coroot's own log-error detector then raises
+    # recurring "new error in the logs" Slack alerts on it. This is a known,
+    # unfixed upstream issue (coroot/coroot-node-agent#90, open since 2024; the
+    # pinned 1.33.3 is the latest release and does not address it) and is not
+    # fixable without degrading the datapath (reverting to host legacy routing).
+    # The pinger's only output is the supplementary ICMP RTT line in Coroot's Net
+    # view; ALL eBPF-derived signal (L7 latency, TCP connect latency / retransmits
+    # / failures, connectivity SLOs) is independent of it and unaffected.
+    # Disabling it also retires the bespoke allow-intra-cluster-icmp
+    # CiliumClusterwideNetworkPolicy in the hetzner overlay (the pinger was its
+    # sole consumer).
+    env:
+      - name: DISABLE_PINGER
+        value: "true"
     # Pinned (see the COMPONENT IMAGE PINS note at the top of spec).
     image:
       name: ghcr.io/coroot/coroot-node-agent:1.33.3

@@ -45,9 +45,8 @@ resources:
   #   - ../../../../bases/infrastructure/controllers/coroot/      # also infrastructure/coroot/ + opencost/
   # Progressive delivery:
   #   - ../../../../bases/infrastructure/controllers/flagger/     # also infrastructure/flagger/
-  # Autoscaling (HTTP scale-to-zero):
+  # Autoscaling (KEDA request-rate ScaledObjects, e.g. homepage/umami):
   #   - ../../../../bases/infrastructure/controllers/keda/
-  #   - ../../../../bases/infrastructure/controllers/keda-http-add-on/  # also infrastructure/http-scaled-objects/
   # Runtime security (add the matching patch below):
   #   - ../../../../bases/infrastructure/controllers/kubescape/   # also infrastructure/security-exceptions/
   #   - ../../../../bases/infrastructure/controllers/tetragon/    # also infrastructure/tracing-policies/

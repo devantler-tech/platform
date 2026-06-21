@@ -24,8 +24,6 @@ resources:
   #   - ../../../bases/infrastructure/opencost/
   # Progressive delivery (needs controllers/flagger):
   #   - ../../../bases/infrastructure/flagger/
-  # HTTP scale-to-zero (needs controllers/keda + keda-http-add-on):
-  #   - ../../../bases/infrastructure/http-scaled-objects/
   # Runtime security:
   #   - ../../../bases/infrastructure/security-exceptions/  # Kubescape exceptions — needs controllers/kubescape
   #   - ../../../bases/infrastructure/tracing-policies/     # Tetragon TracingPolicy — needs controllers/tetragon

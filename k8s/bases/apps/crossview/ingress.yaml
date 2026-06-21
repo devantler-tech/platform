@@ -1,0 +1,33 @@
+# crossview-ingress exists ONLY so the Headlamp crossview-headlamp plugin's
+# "Open Crossview" action can resolve a browser-reachable URL. The plugin's
+# resolver (resolveCrossviewUrl) looks this Ingress up by exact name and embeds
+# https://<spec.rules[0].host> in an iframe. Without it the resolver falls through
+# to a Headlamp-managed port-forward that returns http://localhost:<port> — which
+# only works in the Headlamp DESKTOP app (in the in-cluster web UI that loopback
+# is the backend pod's, unreachable from the browser), the cause of the
+# "Open Crossview: Error: Unreachable" failure.
+#
+# This Ingress does NOT route traffic. The platform is Gateway-API-only — Cilium's
+# Ingress controller is disabled and no other Ingress controller runs — and the
+# real SSO-fronted routing is the HTTPRoute in httproute.yaml. ingressClassName is
+# a non-existent class so nothing ever claims, provisions, or serves it (and it
+# stays inert even if a default IngressClass is added later). The backend below is
+# filler to keep the object schema-complete; the plugin reads only the host.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: crossview-ingress
+  namespace: crossview
+spec:
+  ingressClassName: none
+  rules:
+    - host: crossview.${domain}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: crossview-service
+                port:
+                  number: 80

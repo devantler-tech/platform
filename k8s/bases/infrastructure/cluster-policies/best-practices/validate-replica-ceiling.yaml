@@ -9,8 +9,8 @@
 # A PodDisruptionBudget CANNOT express this: a PDB has only minAvailable /
 # maxUnavailable and gates voluntary EVICTIONS — it never caps how many pods a
 # controller creates. The ceiling therefore lives on workload spec.replicas and
-# on the autoscaler ceilings (HPA maxReplicas, ScaledObject maxReplicaCount,
-# HTTPScaledObject replicas.max), which is exactly what this policy audits.
+# on the autoscaler ceilings (HPA maxReplicas, ScaledObject maxReplicaCount),
+# which is exactly what this policy audits.
 #
 # Audit, not Enforce — same rationale as validate-replica-floor: replica counts
 # are owned by KEDA, Flagger and the HPA controller at runtime, and an
@@ -25,7 +25,7 @@ metadata:
     policies.kyverno.io/title: Validate Replica Ceiling
     policies.kyverno.io/category: Best Practices, Autoscaling
     policies.kyverno.io/severity: medium
-    policies.kyverno.io/subject: Deployment, StatefulSet, ReplicaSet, HorizontalPodAutoscaler, ScaledObject, HTTPScaledObject
+    policies.kyverno.io/subject: Deployment, StatefulSet, ReplicaSet, HorizontalPodAutoscaler, ScaledObject
     policies.kyverno.io/minversion: 1.6.0
     policies.kyverno.io/description: >-
       Flags workloads declaring more than 3 replicas and autoscalers whose
@@ -98,7 +98,7 @@ spec:
                 operator: GreaterThan
                 value: 3
     # KEDA defaults maxReplicaCount to 100 when unset, so an unset ceiling is
-    # itself a violation — both rules below default the missing field to 100.
+    # itself a violation — the rule below defaults the missing field to 100.
     - name: cap-scaledobject-max-replicas
       match:
         any:
@@ -121,30 +121,5 @@ spec:
           conditions:
             all:
               - key: "{{ request.object.spec.maxReplicaCount || `100` }}"
-                operator: GreaterThan
-                value: 3
-    - name: cap-httpscaledobject-max-replicas
-      match:
-        any:
-          - resources:
-              kinds:
-                - HTTPScaledObject
-      exclude:
-        any:
-          - resources:
-              selector:
-                matchLabels:
-                  platform.devantler.tech/replica-ceiling: exempt
-      validate:
-        message: >-
-          HTTPScaledObject '{{ request.object.metadata.name }}' allows scaling
-          to {{ request.object.spec.replicas.max || `100` }} replicas (the
-          add-on defaults to 100 when replicas.max is unset); the platform
-          ceiling is 3 pods per workload (scale vertically first — see
-          auto-vpa).
-        deny:
-          conditions:
-            all:
-              - key: "{{ request.object.spec.replicas.max || `100` }}"
                 operator: GreaterThan
                 value: 3

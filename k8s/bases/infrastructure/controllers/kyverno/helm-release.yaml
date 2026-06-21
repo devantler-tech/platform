@@ -36,10 +36,12 @@ spec:
     # ADMISSION-time validation (pod-security, etc.) is unaffected, and we do NOT
     # filter Pod/Deployment/etc., so those still get background-scan reports.
     #
-    # NOT a static memory limit: auto-vpa.yaml runs a VPA over this Deployment
-    # (controlledValues: RequestsAndLimits, InPlaceOrRecreate, maxAllowed 6Gi),
-    # so a hard limit here would fight VPA. Cutting report volume is the correct
-    # lever; if growth persists, raise the VPA maxAllowed, don't pin a limit.
+    # For the reports/background controllers, cut report VOLUME (the root-cause
+    # lever for the slow growth here) rather than bumping a limit. NB: Kyverno
+    # controllers are NOT VPA-managed -- Kyverno excludes its own namespace from
+    # auto-vpa to avoid an eviction deadlock -- so the admission controller is
+    # given an explicit limit below (see the admissionController.resources block
+    # and the OOM incident it documents); the chart default proved too low.
     features:
       backgroundScan:
         # Honor config.resourceFilters during background scans (chart default is
@@ -69,6 +71,24 @@ spec:
     # so we must set pod-level seccompProfile + runAsNonRoot via chart values.
     admissionController:
       replicas: ${kyverno_admission_replicas:=2}
+      # Explicit static sizing -- NOT VPA-managed. Kyverno's own admission and
+      # generate policies exclude the kyverno namespace (to avoid an eviction
+      # deadlock during a Kyverno outage), so auto-vpa.yaml never creates a VPA
+      # for these Deployments (verified: zero VPAs in ns/kyverno). That left the
+      # admission controller on the chart-default limits.memory: 384Mi, which
+      # OOMKilled (exit 137) under image-verification + policy-evaluation load.
+      # Because the verify-image-signatures webhooks are failurePolicy: Fail,
+      # the dead admission controller then rejected every Pod/Deployment/Job
+      # CREATE cluster-wide (e.g. ksail-operator FailedCreate -> stuck
+      # HelmRelease upgrade) until it recovered. Pin a generous explicit limit
+      # -- still far under auto-vpa's 6Gi maxAllowed ceiling -- so this pod has
+      # real headroom and a single sizing authority.
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 1Gi
       podSecurityContext:
         runAsNonRoot: true
         seccompProfile:

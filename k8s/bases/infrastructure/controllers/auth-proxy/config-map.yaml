@@ -42,6 +42,12 @@ data:
           rule: "Host(`longhorn.${domain}`)"
           entryPoints: ["web"]
           service: longhorn
+        # Hetzner-only (Crossplane dashboard): inert on local/CI where no
+        # HTTPRoute sends crossview.${domain} to oauth2-proxy.
+        crossview:
+          rule: "Host(`crossview.${domain}`)"
+          entryPoints: ["web"]
+          service: crossview
       services:
         homepage:
           loadBalancer:
@@ -50,7 +56,7 @@ data:
         hubble-ui:
           loadBalancer:
             servers:
-              - url: "http://keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local:8080"
+              - url: "http://hubble-ui.kube-system.svc.cluster.local:80"
         coroot:
           loadBalancer:
             servers:
@@ -59,12 +65,13 @@ data:
           loadBalancer:
             servers:
               - url: "http://opencost.opencost.svc.cluster.local:9090"
-        # Longhorn UI is KEDA HTTP scale-to-zero (like hubble-ui above), so this
-        # forwards to the KEDA interceptor rather than longhorn-frontend
-        # directly. The interceptor matches the Host (longhorn.${domain}, see
-        # the longhorn-ui HTTPScaledObject), scales longhorn-ui 0->1, then
-        # proxies to longhorn-frontend. Hetzner-only and inert on local.
+        # Longhorn UI (longhorn-frontend Service :80 -> longhorn-ui pod :8000).
+        # Hetzner-only and inert on local (longhorn-system has no pods there).
         longhorn:
           loadBalancer:
             servers:
-              - url: "http://keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local:8080"
+              - url: "http://longhorn-frontend.longhorn-system.svc.cluster.local:80"
+        crossview:
+          loadBalancer:
+            servers:
+              - url: "http://crossview-service.crossview.svc.cluster.local:80"
