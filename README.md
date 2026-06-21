@@ -67,9 +67,9 @@ This is faster than a full cluster test and catches YAML errors, missing fields,
 
 ### Local
 
-Local development cluster running on Docker via KSail. Uses Talos with the Docker provider.
+Local development cluster running on Docker via KSail. Uses Talos with the Docker provider. A small, thin manual test-bed (see [Usage](#usage)) — bring up a component, try it, then promote it to prod.
 
-- 1 control-plane node + 3 worker nodes (Docker containers)
+- 1 control-plane node + 1 worker node (Docker containers)
 - Config: [`ksail.yaml`](ksail.yaml)
 
 ### Production
