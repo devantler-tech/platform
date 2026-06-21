@@ -29,6 +29,8 @@ resources:
   #   - ../../../bases/infrastructure/tracing-policies/     # Tetragon TracingPolicy — needs controllers/tetragon
   # OpenBao raft-snapshot backups (needs controllers/velero + minio):
   #   - ../../../bases/infrastructure/vault-backup/
+  # KRO archetype RGDs — Tenant (#1932) / WebApp (#1933) (needs controllers/kro):
+  #   - ../../../bases/infrastructure/archetypes/
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled). No-op until an
   # opt-in HelmRelease (e.g. coroot/opencost) is enabled above. See

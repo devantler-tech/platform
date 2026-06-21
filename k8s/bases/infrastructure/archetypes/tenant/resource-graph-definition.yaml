@@ -1,0 +1,281 @@
+# Tenant archetype (#1932) — the KRO ResourceGraphDefinition that expands a
+# small typed `Tenant` declaration into the full platform-side control-plane
+# skeleton every tenant otherwise hand-copies (namespace, Flux-impersonated SA +
+# RoleBinding, cosign-verified OCIRepository, impersonating Kustomization,
+# ghcr-auth ExternalSecret, default-deny NetworkPolicy), with optional
+# external-dns RBAC and SOPS decryption behind `includeWhen` toggles.
+#
+# Onboarding a tenant becomes a ~5-line `Tenant` CR instead of a ~7-file copy:
+#
+#   apiVersion: kro.run/v1alpha1
+#   kind: Tenant
+#   metadata: { name: ascoachingogvaner }
+#   spec:
+#     name: ascoachingogvaner
+#     externalDns: true
+#
+# The OCIRepository URL (oci://ghcr.io/devantler-tech/<name>/manifests) and the
+# cosign OIDC subject (the shared publish-app reusable workflow) are platform
+# invariants — every tenant publishes through the same pipeline — so they are
+# templated/fixed here rather than re-declared per tenant. Add an override field
+# only if a future tenant diverges from the convention.
+#
+# Lands in the `infrastructure` layer (which `dependsOn` infrastructure-controllers
+# where the KRO controller installs the RGD CRD) — a CR of an RGD-defined kind
+# cannot share a Flux Kustomization with the controller that installs its CRD.
+# Pre-1.0 KRO (v1alpha1): keep render-diffable; the `Tenant` instances arrive in
+# the local-first pilot (step 3 of #1932), not here.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: tenant.kro.run
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: Tenant
+    spec:
+      # Tenant name — used verbatim as the namespace, ServiceAccount,
+      # OCIRepository/Kustomization name, and ghcr-auth target. Required.
+      name: string
+      # The tenant runs its own external-dns instance (e.g. ascoachingogvaner's
+      # simply.com zone) and needs the privileged cross-namespace reads granted
+      # by the tenant-external-dns ClusterRoles.
+      externalDns: boolean | default=false
+      # The tenant's Flux Kustomization decrypts SOPS-encrypted manifests from
+      # its artifact (e.g. wedding-app). Requires a `sops-age` Secret in the
+      # tenant namespace, applied separately — secret material is NEVER inlined
+      # into a Tenant spec.
+      sops: boolean | default=false
+  resources:
+    # --- Core skeleton (always rendered) ---------------------------------
+    - id: namespace
+      template:
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: ${schema.spec.name}
+          labels:
+            app.kubernetes.io/managed-by: ksail
+            pod-security.kubernetes.io/enforce: restricted
+            pod-security.kubernetes.io/enforce-version: latest
+    - id: serviceAccount
+      template:
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${namespace.metadata.name}
+          labels:
+            app.kubernetes.io/managed-by: ksail
+        automountServiceAccountToken: false
+        imagePullSecrets:
+          - name: ghcr-auth
+    - id: roleBinding
+      template:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${namespace.metadata.name}
+          labels:
+            app.kubernetes.io/managed-by: ksail
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: edit
+        subjects:
+          - kind: ServiceAccount
+            name: ${serviceAccount.metadata.name}
+            namespace: ${namespace.metadata.name}
+    # GHCR image-pull secret, sourced from OpenBao (not a SOPS Secret) via the
+    # shared cluster-scoped `openbao` ClusterSecretStore reading the platform
+    # path infrastructure/ghcr/auth. Reconciled platform-side (flux-system), so
+    # the `restrict-tenant-secret-stores` Kyverno policy carve-out applies.
+    # Produces the `ghcr-auth` dockerconfigjson the OCIRepository (secretRef) and
+    # ServiceAccount (imagePullSecrets) consume.
+    - id: ghcrAuth
+      template:
+        apiVersion: external-secrets.io/v1
+        kind: ExternalSecret
+        metadata:
+          name: ghcr-auth
+          namespace: ${namespace.metadata.name}
+          labels:
+            app.kubernetes.io/managed-by: ksail
+        spec:
+          refreshInterval: 1h
+          secretStoreRef:
+            name: openbao
+            kind: ClusterSecretStore
+          target:
+            name: ghcr-auth
+            creationPolicy: Owner
+            template:
+              engineVersion: v2
+              type: kubernetes.io/dockerconfigjson
+              data:
+                .dockerconfigjson: "{{ .dockerconfigjson }}"
+          data:
+            - secretKey: dockerconfigjson
+              remoteRef:
+                key: infrastructure/ghcr/auth
+                property: dockerconfigjson
+    # Default-deny NetworkPolicy mirroring the runtime Kyverno-generated
+    # CiliumNetworkPolicy, so the static Kubescape scan sees the namespace as
+    # network-restricted (C-0054). Behaviourally redundant with the runtime
+    # default-deny (per-workload allow CiliumNetworkPolicies still apply
+    # additively), so it adds no new restriction at runtime.
+    - id: defaultDeny
+      template:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        metadata:
+          name: default-deny
+          namespace: ${namespace.metadata.name}
+        spec:
+          podSelector: {}
+          policyTypes:
+            - Ingress
+            - Egress
+    - id: ociRepository
+      template:
+        apiVersion: source.toolkit.fluxcd.io/v1
+        kind: OCIRepository
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${namespace.metadata.name}
+          labels:
+            app.kubernetes.io/managed-by: ksail
+        spec:
+          interval: 1m
+          ref:
+            semver: ">=1.0.0"
+          url: oci://ghcr.io/devantler-tech/${schema.spec.name}/manifests
+          secretRef:
+            name: ghcr-auth
+          verify:
+            provider: cosign
+            matchOIDCIdentity:
+              - issuer: '^https://token\.actions\.githubusercontent\.com$'
+                subject: '^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-app\.yaml@.+$'
+    # --- Flux Kustomization (one of two variants by `sops`) ---------------
+    # The impersonating Kustomization that reconciles the tenant's own artifact
+    # under its namespaced `edit` SA. Two variants because the SOPS `decryption`
+    # block is a field of the Kustomization spec (not a separable resource) and
+    # must be present ONLY for SOPS tenants — a `decryption.secretRef: sops-age`
+    # on a tenant with no `sops-age` Secret would wedge reconciliation.
+    - id: kustomization
+      includeWhen:
+        - ${!schema.spec.sops}
+      template:
+        apiVersion: kustomize.toolkit.fluxcd.io/v1
+        kind: Kustomization
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${namespace.metadata.name}
+          labels:
+            app.kubernetes.io/managed-by: ksail
+          annotations:
+            ksail.devantler.tech/reconcile-exclude: "true"
+        spec:
+          interval: 1m
+          timeout: 5m
+          retryInterval: 2m
+          path: .
+          prune: true
+          wait: true
+          force: true
+          serviceAccountName: ${serviceAccount.metadata.name}
+          sourceRef:
+            kind: OCIRepository
+            name: ${ociRepository.metadata.name}
+          targetNamespace: ${namespace.metadata.name}
+    - id: kustomizationSops
+      includeWhen:
+        - ${schema.spec.sops}
+      template:
+        apiVersion: kustomize.toolkit.fluxcd.io/v1
+        kind: Kustomization
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${namespace.metadata.name}
+          labels:
+            app.kubernetes.io/managed-by: ksail
+          annotations:
+            ksail.devantler.tech/reconcile-exclude: "true"
+        spec:
+          interval: 1m
+          timeout: 5m
+          retryInterval: 2m
+          path: .
+          prune: true
+          wait: true
+          force: true
+          serviceAccountName: ${serviceAccount.metadata.name}
+          sourceRef:
+            kind: OCIRepository
+            name: ${ociRepository.metadata.name}
+          targetNamespace: ${namespace.metadata.name}
+          decryption:
+            provider: sops
+            secretRef:
+              name: sops-age
+    # --- external-dns RBAC (only when the tenant runs external-dns) -------
+    # Privileged cross-namespace reads a tenant's `edit` RoleBinding cannot
+    # self-grant: HTTPRoutes (own namespace), the shared Gateway (kube-system),
+    # and Namespaces (cluster-wide informer). Capabilities live in the
+    # tenant-external-dns / tenant-external-dns-global ClusterRoles
+    # (infrastructure/cluster-roles/). The tenant creates the `external-dns` SA
+    # itself in its own artifact; only these bindings are platform territory.
+    - id: externalDnsHttproutes
+      includeWhen:
+        - ${schema.spec.externalDns}
+      template:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: ${schema.spec.name}-external-dns
+          namespace: ${namespace.metadata.name}
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: tenant-external-dns
+        subjects:
+          - kind: ServiceAccount
+            name: external-dns
+            namespace: ${namespace.metadata.name}
+    - id: externalDnsGateway
+      includeWhen:
+        - ${schema.spec.externalDns}
+      template:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: ${schema.spec.name}-external-dns
+          namespace: kube-system
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: tenant-external-dns
+        subjects:
+          - kind: ServiceAccount
+            name: external-dns
+            namespace: ${namespace.metadata.name}
+    - id: externalDnsNamespaces
+      includeWhen:
+        - ${schema.spec.externalDns}
+      template:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ClusterRoleBinding
+        metadata:
+          name: ${schema.spec.name}-external-dns
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: tenant-external-dns-global
+        subjects:
+          - kind: ServiceAccount
+            name: external-dns
+            namespace: ${namespace.metadata.name}
