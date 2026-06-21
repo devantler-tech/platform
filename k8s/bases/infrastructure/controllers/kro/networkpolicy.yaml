@@ -1,0 +1,36 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-kro
+  namespace: kro-system
+spec:
+  endpointSelector: {}
+  ingress:
+    # Intra-namespace (the two HA replicas; leader-election peers).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kro-system
+  egress:
+    # Intra-namespace.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kro-system
+    # Kube API. KRO reconciles ResourceGraphDefinitions and creates/updates the
+    # child resources they expand into entirely through the apiserver, and
+    # writes its leader-election Lease there. KRO needs NO world/external egress:
+    # it never pulls charts or images itself -- the resources it creates (e.g.
+    # HelmReleases) are reconciled by their own controllers, which hold their own
+    # egress.
+    - toEntities:
+        - kube-apiserver
+    # DNS resolution.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

@@ -1,0 +1,18 @@
+# Native PSA enforce=restricted is safe here (unlike keda / ksail-operator).
+#
+# The KRO chart ships a COMPLETE restricted-compliant securityContext out of the
+# box -- pod-level seccompProfile: RuntimeDefault and a container securityContext
+# with a NUMERIC runAsUser: 1000, runAsNonRoot: true, allowPrivilegeEscalation:
+# false and capabilities.drop: [ALL]. So kube-apiserver's PSA validator admits
+# the pod natively on cold bootstrap, before Kyverno's add-security-context
+# mutating webhook runs -- there is no partial-context gap to paper over. The
+# numeric runAsUser also avoids the "image has non-numeric user, cannot verify"
+# kubelet failure (cf. ksail-operator). The Kyverno validate-pod-security
+# ClusterPolicy (Enforce) remains a backstop at the webhook layer.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kro-system
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

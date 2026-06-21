@@ -1,0 +1,17 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: kro
+  namespace: kro-system
+spec:
+  # Drain-safe PDB (#1880/#1882): maxUnavailable: 1 keeps the node drainable at
+  # any replica count, unlike minAvailable: 1 which deadlocks a drain when only
+  # 1 replica is ready. The KRO chart ships no PDB knob, so this is a standalone
+  # manifest (same approach as ksail-operator / snapshot-controller). Pairs with
+  # deployment.replicaCount: 2 in helm-release.yaml -- KRO is leader-elected, so
+  # the standby keeps reconciliation available while a node drains.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kro
+      app.kubernetes.io/instance: kro

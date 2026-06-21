@@ -1,0 +1,78 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kro
+  namespace: kro-system
+  labels:
+    # The chart ships the ResourceGraphDefinition CRD; let Flux manage its
+    # lifecycle (install/upgrade crds: CreateReplace below).
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m0s
+  timeout: 10m
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  chart:
+    spec:
+      chart: kro
+      version: 0.9.2
+      sourceRef:
+        kind: HelmRepository
+        name: kro
+  # https://kro.run -- KRO (kube-resource-orchestrator) lets the platform define
+  # higher-level "archetype" APIs as ResourceGraphDefinitions (RGDs) that expand
+  # into a graph of standard Kubernetes resources. This release installs the
+  # CONTROLLER + RGD CRD ONLY; the Tenant (#1932) and WebApp (#1933) archetype
+  # RGDs land later in the `infrastructure` layer, which `dependsOn`
+  # `infrastructure-controllers` -- a CR of an RGD-defined kind cannot share a
+  # Flux Kustomization with the controller that installs its CRD (same
+  # server-side-dry-run deadlock the Coroot CR documents).
+  #
+  # KRO is pre-1.0 (v1alpha1 API); pinned to an exact patch and health-gated by
+  # the `wait: true` infrastructure-controllers Kustomization.
+  values:
+    # Clean resource names (kro instead of <release>-kro).
+    fullnameOverride: kro
+    rbac:
+      # Least-privilege RBAC. `aggregation` grants KRO only the minimal
+      # permissions to manage its OWN resources (RGDs + the instance CRDs it
+      # generates) and aggregates any ClusterRole labelled
+      # `rbac.kro.run/aggregate-to-controller: "true"`. The chart default
+      # `unrestricted` is a cluster-admin wildcard, which clashes with the
+      # platform's least-privilege posture (cf. ksail-operator clusterAdmin:
+      # false). Each archetype RGD PR (#1932 Tenant / #1933 WebApp) ships an
+      # aggregated ClusterRole granting exactly the verbs for the child kinds it
+      # manages -- until then KRO holds no standing access to arbitrary
+      # resources, which is the correct posture for a controller-only install.
+      mode: aggregation
+    deployment:
+      # Run HA matching the rest of the operator tier (Coroot flags a sole
+      # replica "single instance - not resilient to node failure"). The chart
+      # enables leader election by default (config.enableLeaderElection: true),
+      # so 2 replicas = one active reconciler + a warm standby that takes over
+      # on a node drain/failure -- not double-reconciliation. Drain safety comes
+      # from the standalone maxUnavailable: 1 PDB (pod-disruption-budget.yaml).
+      replicaCount: 2
+      # Spread the 2 HA replicas across nodes so a single node failure cannot
+      # take out both. ScheduleAnyway (soft) so a single-node local/CI cluster
+      # still schedules both pods -- matching the velero/ksail-operator posture.
+      # The chart exposes this as a value, so no post-renderer is needed (the
+      # chart's securityContext is already restricted-compliant -- see
+      # namespace.yaml).
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: kro
+              app.kubernetes.io/instance: kro
+    config:
+      # GitOps owns CRD lifecycle (Flux, via crds: CreateReplace above) -- never
+      # let the controller delete a CRD out from under Git. (Chart default is
+      # already false; pinned explicitly so the intent survives a chart bump.)
+      allowCRDDeletion: false
