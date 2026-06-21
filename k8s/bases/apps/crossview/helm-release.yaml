@@ -75,3 +75,42 @@ spec:
           # plugin embeds in its "Open Crossview" iframe (resolved from the
           # crossview-ingress Ingress).
           origin: https://crossview.${domain}
+        # Authenticate via the platform SSO chain instead of Crossview's built-in
+        # username/password DB. Crossview already sits behind oauth2-proxy (Dex ->
+        # GitHub): httproute.yaml routes crossview.${domain} -> oauth2-proxy ->
+        # auth-proxy -> crossview-service:3001, and oauth2-proxy injects (and
+        # OVERWRITES — pass_user_headers, on by default) the authenticated identity
+        # as X-Forwarded-Email on the upstream request. AUTH_MODE=header makes
+        # Crossview trust that header — crossview-go-server/api/middlewares/
+        # header_auth.go reads it and 401s if it is absent — and auto-provision the
+        # user, so there is no second login prompt and the chart-default
+        # admin/password in the crossview-secrets Secret stops being an access path.
+        #
+        # Not spoofable from outside the cluster: oauth2-proxy sets X-Forwarded-Email
+        # from the validated Dex session (replacing any client-sent value) and
+        # redirects unauthenticated requests before they reach the upstream, and
+        # auth-proxy only accepts ingress from oauth2-proxy. The crossview
+        # NetworkPolicy additionally admits host/remote-node on :3001, but that path
+        # carries no header, so (a) kubelet probes hit the PUBLIC /api/health
+        # (registered with no auth middleware — health stays green in header mode)
+        # and (b) a direct pod port-forward just 401s; forging the header there
+        # already requires in-cluster port-forward access, far above read-only view.
+        #
+        # New users land as `viewer` — read-only, matching Crossview's role here
+        # (raise defaultRole to `admin` to let the SSO user manage Crossview itself;
+        # the SSO gate already restricts to the devantler-tech/platform GitHub team).
+        # createUsers + defaultRole are pinned, not cosmetic: the bundled Postgres is
+        # ephemeral (persistence disabled), so the user is re-created on every pod
+        # restart — a chart default-flip must not silently break login or escalate
+        # the granted role.
+        #
+        # Trade-off: the Headlamp DESKTOP "Open Crossview" port-forward now 401s (no
+        # oauth2-proxy in that path); the web crossview.${domain} iframe path
+        # (supported since #2188) is unaffected. If a real login 401s because
+        # X-Forwarded-Email is empty for an account, switch trustedHeader to
+        # X-Forwarded-Preferred-Username (the GitHub login).
+        auth:
+          mode: header
+          trustedHeader: X-Forwarded-Email
+          createUsers: true
+          defaultRole: viewer
