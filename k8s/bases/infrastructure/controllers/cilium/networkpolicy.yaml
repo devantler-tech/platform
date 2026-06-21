@@ -1,9 +1,9 @@
 ---
-# Allow KEDA HTTP add-on interceptor to reach Hubble UI on port 8081.
-# Traffic flow: oauth2-proxy -> auth-proxy -> KEDA interceptor -> hubble-ui.
+# Allow auth-proxy to reach Hubble UI on port 8081.
+# Traffic flow: oauth2-proxy -> auth-proxy -> hubble-ui.
 # Hubble UI lives in kube-system which has no default-deny, so this CNP is
 # defense-in-depth: if/when a kube-system default-deny is introduced, the
-# KEDA → hubble-ui path stays open while every other path is denied.
+# auth-proxy → hubble-ui path stays open while every other path is denied.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -16,8 +16,8 @@ spec:
   ingress:
     - fromEndpoints:
         - matchLabels:
-            k8s:io.kubernetes.pod.namespace: keda
-            app.kubernetes.io/component: interceptor
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+            app: auth-proxy
       toPorts:
         - ports:
             - port: "8081"

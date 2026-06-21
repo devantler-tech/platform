@@ -39,11 +39,18 @@ spec:
       metadata:
         serverAddress: http://coroot-prometheus.observability.svc.cluster.local:9090
         # Per-pod target (AverageValue): the 3rd replica appears when sustained
-        # load exceeds 2 pods × 10 rps. Homepage is a single-threaded Next.js
-        # SSR app (~14 /api/* polls per dashboard refresh), so 10 rps/pod is
-        # real work, while a couple of open dashboard tabs stay on 2. Tune
-        # against live data in coroot-prometheus. The vowel-free hash regex
-        # excludes homepage-primary-* pods, same trick as the Flagger
-        # MetricTemplates (docs/progressive-delivery.md "Measuring the canary").
-        threshold: "10"
+        # load exceeds 2 pods × this threshold. Vertical-first calibration — the
+        # threshold should track the RPS a VPA-right-sized pod can serve, so VPA
+        # grows each pod in place (up to maxAllowed) BEFORE a replica is added.
+        # Homepage is a single-threaded Next.js SSR app, so its effective vertical
+        # ceiling is ~1 core (one request thread can't use extra CPU), making the
+        # vertical axis shallow — horizontal is genuinely the right primary axis
+        # here, so the threshold stays low. Nudged 10 -> 12 to give VPA a little
+        # headroom first; PROVISIONAL — validate against live data in
+        # coroot-prometheus (compare this query's per-pod rate to pod CPU at the
+        # latency the canary gates on, latency-p99 < 2000ms) and correct. The
+        # vowel-free hash regex excludes homepage-primary-* pods, same trick as the
+        # Flagger MetricTemplates (docs/progressive-delivery.md "Measuring the
+        # canary").
+        threshold: "12"
         query: 'sum(rate(container_http_inbound_requests_total{container_id=~"/k8s/homepage/homepage-[bcdfghjklmnpqrstvwxz2-9]+-[a-z0-9]+/.*"}[2m]))'

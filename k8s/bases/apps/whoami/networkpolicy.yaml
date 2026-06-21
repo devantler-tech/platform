@@ -6,10 +6,9 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # KEDA interceptor proxy routes traffic from gateway
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: keda
+    # Gateway ingress (direct from Cilium envoy)
+    - fromEntities:
+        - ingress
       toPorts:
         - ports:
             - port: "80"

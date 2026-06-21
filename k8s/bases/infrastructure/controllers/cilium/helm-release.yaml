@@ -88,12 +88,12 @@ spec:
           maxUnavailable: 1
       ui:
         enabled: true
-        # KEDA HTTP add-on scales hubble-ui between 0 and 1 based on traffic.
-        # The replica count here is the initial value at HelmRelease apply
-        # time only — KEDA's HTTPScaledObject takes over immediately.
+        # Static single replica that just stays on; auto-vpa right-sizes it at
+        # idle. (Was KEDA HTTP scale-to-zero; the HTTPScaledObject was removed.)
         replicas: ${hubble_ui_replicas:=1}
         rollOutPods: true
-        # PDB intentionally disabled: incompatible with scale-to-zero managed by KEDA.
+        # PDB intentionally disabled: a single-replica admin UI, exempt from the
+        # replica floor (see validate-replica-floor).
         podDisruptionBudget:
           enabled: false
     operator:

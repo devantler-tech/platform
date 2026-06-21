@@ -6,8 +6,8 @@
 # a node drain (not a concurrent second failure); stronger 3-replica HA is opt-in
 # per workload via the cluster config, not mandated by this floor.
 #
-# Audit, not Enforce: .spec.replicas is owned by KEDA (scale-to-zero), Flagger
-# (canary primaries) and leader-election operators -- mutating it would fight
+# Audit, not Enforce: .spec.replicas is owned by KEDA (request-rate autoscaling),
+# Flagger (canary primaries) and leader-election operators -- mutating it would fight
 # those controllers and cause perpetual drift, and doubling every singleton would
 # strain this cluster's memory budget at once. This surfaces single-replica
 # workloads in Kyverno's PolicyReports for a human to raise (or exempt)
@@ -19,7 +19,6 @@
 #     for any new singleton / scale-to-zero / operator-managed workload;
 #   * Flagger primaries (*-primary) and the scaled-to-0 canary sources -- Flagger
 #     owns their replica count;
-#   * KEDA scale-to-zero targets -- a floor defeats scale-to-zero;
 #   * namespaces whose workloads genuinely can't run 2: velero (chart hardcodes
 #     replicas: 1, no leader election), flux controllers and coroot
 #     (observability), and kubescape (the operator + kubescape/kubevuln/storage/
@@ -90,10 +89,17 @@ spec:
                 - observability
                 - kubescape
                 - crossplane-system
-          # KEDA scale-to-zero targets, Flagger canary primaries (*-primary) and
-          # the scaled-to-0 canary sources -- their replica count is owned by a
-          # controller, not declared statically (the Flagger primary runs the HA
-          # replicas).
+          # Two kinds of legitimate sub-floor workloads are exempt here:
+          #   * Flagger-managed (a controller owns the replica count, not declared
+          #     statically): the *-primary Deployments run the HA replicas, while
+          #     the canary SOURCES (homepage, umami-umami, opencost) are paused at
+          #     0 between rollouts.
+          #   * Single-replica-by-design UIs (formerly KEDA scale-to-zero, now
+          #     static single replicas -- the HTTPScaledObjects were removed):
+          #     actual-budget (SQLite single-writer on an RWO PVC), headlamp (OIDC
+          #     login state in-memory per pod), hubble-ui (per-pod streaming
+          #     connection state), longhorn-ui (single admin dashboard) and whoami
+          #     (diagnostic echo). fleet is disabled in prod (single on re-enable).
           - resources:
               names:
                 - "?*-primary"
@@ -134,8 +140,7 @@ spec:
           #   * Longhorn-owned: longhorn-driver-deployer, csi-snapshotter
           #     (longhorn-manager / the chart owns their replica count).
           #   * single-controller operators (leader election makes >1 a hot
-          #     standby at best, all off the serving path): cluster-autoscaler,
-          #     keda-add-ons-http-controller-manager.
+          #     standby at best, all off the serving path): cluster-autoscaler.
           #     (ksail-operator + tetragon-operator were promoted OUT of this
           #     exemption -- they now run HA: 2 leader-elected replicas + a
           #     drain-safe maxUnavailable: 1 PDB + topology spread, so they meet
@@ -158,7 +163,6 @@ spec:
           - resources:
               names:
                 - cluster-autoscaler-hetzner-cluster-autoscaler
-                - keda-add-ons-http-controller-manager
                 - keda-operator-metrics-apiserver
                 - longhorn-driver-deployer
                 - csi-snapshotter
