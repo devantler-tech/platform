@@ -6,10 +6,9 @@ metadata:
 spec:
   # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880).
   # The community chart exposes no PDB value, so the PDB is declared here.
-  # actual-budget is a KEDA scale-to-zero app (0/1 replicas) on an RWO SQLite
-  # PVC; at 0 replicas the PDB is inert, and at 1 it still permits the eviction
-  # (maxUnavailable is evaluated against the live replica count), so drains are
-  # never deadlocked. Selector mirrors the labels already used by the
+  # actual-budget is a static single-replica app on an RWO SQLite PVC; with
+  # maxUnavailable: 1 the PDB still permits the one pod's eviction, so a node
+  # drain is never deadlocked. Selector mirrors the labels already used by the
   # topologySpreadConstraints patch in the HelmRelease.
   maxUnavailable: 1
   selector:

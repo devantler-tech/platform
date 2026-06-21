@@ -40,10 +40,16 @@ spec:
       metadata:
         serverAddress: http://coroot-prometheus.observability.svc.cluster.local:9090
         # Per-pod target (AverageValue): the 3rd replica appears when sustained
-        # load exceeds 2 pods × 50 rps. Umami's /api/send ingest calls are
-        # cheap, so the per-pod target is higher than Homepage's SSR. Tune
-        # against live data in coroot-prometheus. The vowel-free hash regex
+        # load exceeds 2 pods × this threshold. Vertical-first calibration — the
+        # threshold should track the RPS a VPA-right-sized pod can serve, so VPA
+        # grows each pod in place (up to maxAllowed) BEFORE a replica is added.
+        # Umami's /api/send ingest calls are cheap and largely I/O-bound, so a pod
+        # has real vertical headroom (unlike single-threaded Homepage) and the
+        # per-pod target is higher. Nudged 50 -> 75 to let VPA grow the pod before
+        # scaling out; PROVISIONAL — validate against live data in coroot-prometheus
+        # (compare this query's per-pod rate to pod CPU at the latency the canary
+        # gates on, latency-p99 < 500ms) and correct. The vowel-free hash regex
         # excludes umami-umami-primary-* pods, same trick as the Flagger
         # MetricTemplates (docs/progressive-delivery.md "Measuring the canary").
-        threshold: "50"
+        threshold: "75"
         query: 'sum(rate(container_http_inbound_requests_total{container_id=~"/k8s/umami/umami-umami-[bcdfghjklmnpqrstvwxz2-9]+-[a-z0-9]+/.*"}[2m]))'

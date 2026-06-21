@@ -1,7 +1,6 @@
 # PSA enforce label intentionally NOT set on the keda namespace.
 #
-# The keda-add-ons-http-* pods (controller-manager, interceptor,
-# external-scaler) ship a partial securityContext from the upstream
+# KEDA's chart pods can ship a partial securityContext from the upstream
 # chart. With an explicit pod-security.kubernetes.io/enforce label,
 # kube-apiserver's PSA validator rejects them before Kyverno's
 # add-security-context mutating webhook can fill in the missing

@@ -8,5 +8,4 @@ resources:
   - helm-release.yaml
   - helm-repository.yaml
   - httproute.yaml
-  - http-scaled-object.yaml
   - networkpolicy.yaml

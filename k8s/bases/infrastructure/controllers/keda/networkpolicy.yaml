@@ -6,29 +6,6 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Gateway ingress to interceptor proxy. Apps routed straight from the
-    # Cilium Gateway to the interceptor (whoami, headlamp, actual-budget)
-    # arrive with the reserved "ingress" identity.
-    - fromEntities:
-        - ingress
-      toPorts:
-        - ports:
-            - port: "8080"
-              protocol: TCP
-    # auth-proxy ingress to interceptor proxy. Hubble UI needs SSO, so its
-    # cold-start path is Gateway -> oauth2-proxy -> auth-proxy -> interceptor.
-    # The client reaching :8080 is therefore the auth-proxy pod, not the
-    # "ingress" identity above. Without this rule the request is silently
-    # dropped by default-deny, the interceptor never sees it, hubble-ui never
-    # scales from zero, and the request hangs until the edge returns a 504.
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: oauth2-proxy
-            app: auth-proxy
-      toPorts:
-        - ports:
-            - port: "8080"
-              protocol: TCP
     # Webhook from kube-apiserver (hostNetwork on control plane nodes)
     - fromEntities:
         - kube-apiserver
@@ -40,7 +17,7 @@ spec:
               protocol: TCP
             - port: "6443"
               protocol: TCP
-    # Intra-namespace communication (scaler→interceptor:9090, etc.)
+    # Intra-namespace communication (operator ↔ metrics-apiserver, etc.)
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: keda
@@ -48,55 +25,10 @@ spec:
     # Kube API for watching scalers
     - toEntities:
         - kube-apiserver
-    # Intra-namespace (external-scaler→interceptor:9090, controller→operator, etc.)
+    # Intra-namespace (operator ↔ metrics-apiserver, etc.)
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: keda
-    # HTTP interceptor -> backend services in KEDA-managed namespaces
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: fleetdm
-      toPorts:
-        - ports:
-            - port: "8080"
-              protocol: TCP
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: headlamp
-      toPorts:
-        - ports:
-            - port: "4466"
-              protocol: TCP
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: whoami
-      toPorts:
-        - ports:
-            - port: "80"
-              protocol: TCP
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: actual-budget
-      toPorts:
-        - ports:
-            - port: "5006"
-              protocol: TCP
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: kube-system
-      toPorts:
-        - ports:
-            - port: "8081"
-              protocol: TCP
-    # longhorn-ui (Hetzner-only; Service longhorn-frontend :80 -> pod :8000).
-    # Inert on local where longhorn-system has no pods.
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: longhorn-system
-      toPorts:
-        - ports:
-            - port: "8000"
-              protocol: TCP
     # KEDA operator -> Coroot's bundled Prometheus, for ScaledObject prometheus
     # triggers (request-rate horizontal scaling of the Flagger-managed apps,
     # homepage/umami). Same endpoint Flagger and OpenCost query; Coroot's

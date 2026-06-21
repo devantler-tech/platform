@@ -20,21 +20,17 @@ data:
   # election or are stateless/admission webhooks, so the second replica is a cheap
   # warm standby (3-replica HA, to also survive a concurrent failure, is opt-in).
   # cert_manager_replicas drives the controller, webhook AND cainjector; the keda
-  # vars drive the operator, admission webhooks, HTTP scaler and interceptor floor.
+  # vars drive the operator and admission webhooks.
   cert_manager_replicas: "2"
   metrics_server_replicas: "2"
   vpa_admission_replicas: "2"
   keda_operator_replicas: "2"
   keda_webhooks_replicas: "2"
-  keda_scaler_replicas: "2"
-  keda_interceptor_min_replicas: "2"
   # keda_metrics_server_replicas drives the KEDA metrics-apiserver (aggregated
-  # external.metrics.k8s.io API server — stateless, no leader election);
-  # keda_http_operator_replicas drives the http-add-on controller-manager
-  # (leader-elected, active/standby). Both were single-replica and flagged by
-  # Coroot as "single instance - not resilient to node failure".
+  # external.metrics.k8s.io API server — stateless, no leader election). It was
+  # single-replica and flagged by Coroot as "single instance - not resilient to
+  # node failure".
   keda_metrics_server_replicas: "2"
-  keda_http_operator_replicas: "2"
   # --- Leader-elected operators (2 replicas for HA; the require-replica-floor minimum) ---
   # One replica is active; the other is a warm standby that takes over on a node
   # failure/drain. velero stays 1 — its chart hardcodes replicas: 1 and it has
@@ -60,12 +56,12 @@ data:
   # (set true in the helm-release), so these two MUST stay aligned -- 2 replicas
   # without the lease would run two active operators.
   tetragon_operator_replicas: "2"
-  # KEDA-managed apps: HelmRelease replicas are the initial value only;
-  # KEDA HTTPScaledObject overrides at runtime. Setting the initial to 1
-  # saves memory until the first KEDA reconciliation.
-  # headlamp: min 0, max 1 (OIDC state in-memory — must stay single-pod)
-  # whoami/fleetdm: min 0, max 2
-  # actual-budget: parked at 0/0 (unused; SQLite on RWO PVC keeps max≤1 when re-enabled)
+  # Always-on UIs (the KEDA HTTPScaledObjects that used to scale these to zero
+  # were removed). Static single replica each; auto-vpa right-sizes them at idle
+  # so they stay cheap. headlamp: OIDC login state is in-memory per pod, so a 2nd
+  # pod would break the callback — must stay single (see validate-replica-floor).
+  # whoami: diagnostic echo, one replica is plenty. fleetdm: disabled in prod
+  # since 2026-06-03, so this var is idle until re-enable.
   headlamp_replicas: "1"
   whoami_replicas: "1"
   fleetdm_replicas: "1"
@@ -77,17 +73,12 @@ data:
   fleetdm_mysql_secondary_replicas: "0"
   fleetdm_redis_architecture: "standalone"
   fleetdm_redis_replicas: "0"
-  # Parked: HelmRelease starts at 0; KEDA holds it at 0 (min=0) but can spin up
-  # 1 pod on a stray HTTP hit (max=1) since KEDA HTTP rejects max=0 at the
-  # translated ScaledObject layer (MinReplicaCount=1 must be less than
-  # MaxReplicaCount=0). SQLite on RWO PVC requires max <= 1 even when re-enabled.
-  # To re-enable as actively-served, set:
-  #   actual_budget_replicas: "1"
-  #   actual_budget_replicas_min: "1"
-  #   actual_budget_replicas_max: "1"
-  actual_budget_replicas: "0"
-  actual_budget_replicas_min: "0"
-  actual_budget_replicas_max: "1"
+  # actual-budget: static single replica (always on). SQLite on an RWO PVC is
+  # single-writer, so it can never run 2 (single-by-design — see
+  # validate-replica-floor); auto-vpa right-sizes it at idle. It used to be parked
+  # at 0 behind KEDA scale-to-zero; with the HTTPScaledObject removed, 0 would
+  # mean permanently down, so it is pinned to 1.
+  actual_budget_replicas: "1"
   hubble_ui_replicas: "1"
   # OpenCost (FinOps cost API/UI): 2 replicas for node-failure resilience
   # (Coroot flagged opencost-primary as a single instance). It is a Flagger
@@ -138,15 +129,12 @@ data:
   longhorn_csi_resizer_replicas: "2"
   # The longhorn-ui (longhorn-frontend) is the web dashboard only — it is NOT in
   # the storage data path (longhorn-manager, the CSI sidecars, and the
-  # instance-managers run the data plane and never touch the UI). It is wired for
-  # KEDA HTTP scale-to-zero like hubble-ui, so this is the INITIAL replica count
-  # only: the longhorn-ui HTTPScaledObject (providers/hetzner/infrastructure/
-  # http-scaled-objects/longhorn.yaml) owns /spec/replicas at runtime — held at 0
-  # while idle, scaled 0->1 on the first request to longhorn.${domain} (Gateway ->
-  # oauth2-proxy -> auth-proxy -> KEDA interceptor -> longhorn-ui), then back to 0
-  # after the scaledownPeriod. Start at 0 to avoid running the pod until first use.
-  # (Flux drift detection ignores Deployment /spec/replicas, so it won't fight KEDA.)
-  longhorn_ui_replicas: "0"
+  # instance-managers run the data plane and never touch the UI). Static single
+  # replica (always on); auto-vpa right-sizes it at idle. It used to be parked at
+  # 0 behind KEDA scale-to-zero; with the HTTPScaledObject removed, 0 would mean
+  # permanently down, so it is pinned to 1 (single-by-design admin UI — see
+  # validate-replica-floor).
+  longhorn_ui_replicas: "1"
   # --- Non-essential services scaled to 0 ---
   # Origin CA issuer requests 1 CPU (50% of worker allocatable) for a simple
   # cert controller. Disabled until we actually need Cloudflare Origin certs.
