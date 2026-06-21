@@ -31,6 +31,15 @@ metadata:
   name: tenant.kro.run
   labels:
     app.kubernetes.io/managed-by: ksail
+  annotations:
+    # Exempt from Flux postBuild envsubst. The `infrastructure` Kustomization
+    # runs variable substitution (substituteFrom variables-base/variables-cluster),
+    # which would try to expand this RGD's KRO `${...}` CEL expressions as Flux
+    # variables and fail ("envsubst error: variable substitution failed: missing
+    # closing brace"). Every `${...}` below is a KRO expression resolved by the
+    # kro controller at instance time — this resource needs no Flux variables —
+    # so substitution is disabled for it wholesale.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
 spec:
   schema:
     apiVersion: v1alpha1
