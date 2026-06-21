@@ -66,6 +66,27 @@ patches:
                   # requests.memory quota. Longhorn sizing is operator-/VPA-owned
                   # (manager, csi, ui carry VPAs), not quota-bounded.
                   - longhorn-system
+                  # Velero backup data plane. Velero runs a kopia
+                  # repository-maintenance Job per backup repo (one per backed-up
+                  # namespace, ~15), keeps the last few, and recreates them every
+                  # maintenance cycle -- a constant churn of short-lived pods. The
+                  # Kubernetes ResourceQuota controller LEAKS requests.memory usage
+                  # under that churn (kubernetes#118946): completed pods are dropped
+                  # from accounting unreliably, so status.used.requests.memory drifts
+                  # upward unbounded -- observed 16300Mi "used" against this 16Gi cap
+                  # while only ~430Mi of pods were actually non-terminal. Once the
+                  # phantom usage reaches the cap the quota admission webhook rejects
+                  # every new maintenance/backup pod ("exceeded quota:
+                  # default-resourcequota, requested: requests.memory=128Mi"), which
+                  # silently halts repository maintenance and kopia/restic backups --
+                  # a data-protection outage with no failing Deployment to alert on.
+                  # Velero's real footprint is the node-agent DaemonSet (one per
+                  # node) plus these ephemeral Jobs, not steady-state tenant
+                  # workloads, so a static per-namespace memory quota is the wrong
+                  # tool and actively harmful here. Exempt it like the other
+                  # platform-owned namespaces; the LimitRange (rule 1) still applies,
+                  # so backup pods keep sane default requests/limits.
+                  - velero
       - op: add
         path: /spec/rules/0/generate/generateExisting
         value: true
