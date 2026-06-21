@@ -21,10 +21,8 @@ spec:
     replicaCount: ${whoami_replicas:=2}
     pdb:
       create: true
-      # Drain-safe + scale-to-zero compatible (#1880/#1882): maxUnavailable: 1
-      # lets the single pod be evicted during a node drain (minAvailable would
-      # block it), and KEDA can still scale to 0 — a controller scale-down is a
-      # direct ReplicaSet delete, not an eviction-API call the PDB governs.
+      # Drain-safe (#1880/#1882): maxUnavailable: 1 lets the pod be evicted
+      # during a node drain (minAvailable would block a single-replica pod).
       minAvailable: null
       maxUnavailable: 1
     podSecurityContext:
