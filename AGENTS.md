@@ -268,8 +268,6 @@ Illustrative healthy local node listing (Kubernetes version tracks the pinned Ta
 NAME                  STATUS   ROLES           AGE   VERSION
 local-controlplane-1  Ready    control-plane   5m    v1.xx.x
 local-worker-1        Ready    <none>          4m    v1.xx.x
-local-worker-2        Ready    <none>          4m    v1.xx.x
-local-worker-3        Ready    <none>          4m    v1.xx.x
 ```
 
 ## Emergency / Recovery Procedures
