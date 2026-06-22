@@ -96,6 +96,21 @@ spec:
         cookie_secure = true
         cookie_httponly = true
         cookie_samesite = "lax"
+        # Per-request CSRF cookies. The platform front page (homepage, served at
+        # the apex ${domain}) fires several unauthenticated requests at once on a
+        # cold visit -- the HTML document plus the /favicon.ico and
+        # /apple-touch-icon*.png the browser probes -- and each independently
+        # triggers an OAuth login. With the default single shared CSRF cookie
+        # (_oauth2_proxy_csrf) the last flow to start overwrites the document
+        # flow's cookie, so when the document's /oauth2/callback returns its
+        # nonce is gone and oauth2-proxy rejects it with "CSRF token mismatch"
+        # (HTTP 403): the dashboard fails to load on the first visit and only a
+        # reload -- assets now cached, no competing flow -- succeeds. Naming the
+        # CSRF cookie per request (the state nonce is embedded in the cookie name)
+        # lets the concurrent flows coexist, so the document flow's callback
+        # always finds its own token. Fixes "homepage often doesn't start on
+        # first visit".
+        cookie_csrf_per_request = true
         cookie_domains=[".${domain}"]
         whitelist_domains = ["${domain}", ".${domain}"]
         redirect_url = "https://oauth2-proxy.${domain}/oauth2/callback"
