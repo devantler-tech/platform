@@ -1,4 +1,4 @@
-# Tenant archetype (#1932) — the KRO ResourceGraphDefinition that expands a
+# Tenant RGD (#1932) — the KRO ResourceGraphDefinition that expands a
 # small typed `Tenant` declaration into the full platform-side control-plane
 # skeleton every tenant otherwise hand-copies (namespace, Flux-impersonated SA +
 # RoleBinding, cosign-verified OCIRepository, impersonating Kustomization,

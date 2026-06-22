@@ -591,10 +591,13 @@ spec:
               }
               POLICY
 
-              # crossview reads its bundled-Postgres password + app session
-              # secret from OpenBao via the shared `external-secrets`
-              # ClusterSecretStore role (apps/crossview/{db,app}); the values are
-              # generated and seeded by infrastructure/vault-seed.
+              # crossview reads its bundled-Postgres password, app session secret,
+              # and break-glass admin password from OpenBao via the shared
+              # `external-secrets` ClusterSecretStore role (apps/crossview/{db,app,
+              # admin}); the values are generated and seeded by
+              # infrastructure/vault-seed. (Its OIDC client secret is read from the
+              # shared infrastructure/oidc/dex path via infra-oidc-readonly, also on
+              # that role — no crossview-specific grant needed.)
               bao policy write app-crossview-readonly - <<'POLICY'
               path "secret/data/apps/crossview/*" {
                 capabilities = ["read"]

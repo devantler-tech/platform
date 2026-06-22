@@ -114,6 +114,19 @@ spec:
                 - |
                   set -u
                   BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
+                  # This cluster enforces Cilium mutual authentication
+                  # (CiliumClusterwideNetworkPolicy require-mutual-auth, mode:
+                  # required). The FIRST packet from this short-lived pod to coroot
+                  # is dropped while the SPIRE handshake is established, so a single
+                  # un-retried in-cluster call intermittently fails (curl exit /
+                  # HTTP 000). The project-discovery loop below already absorbs that
+                  # for /api/user, but the pricing GET + POST ran exactly once and so
+                  # flapped: a dropped GET skips the "already correct" short-circuit
+                  # and triggers a needless POST, which the same race then fails ->
+                  # the run errors even though pricing is already correct. Retry
+                  # transient connection/setup errors so a single tick converges
+                  # (still idempotent; the schedule remains the outer retry loop).
+                  RETRY="--retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused"
 
                   # Resolve the operator-created 'platform' project id (a random
                   # NanoId, so match by name). Recursive-descent jq pulls the id
@@ -140,7 +153,7 @@ spec:
                   # returns the custom per-unit rates. jq does the numeric drift
                   # check (1e-7 tolerance, matching the old awk) so any drift
                   # re-POSTs; an empty/unparseable body falls through to the POST.
-                  cur="$(curl -sf --max-time 10 "$BASE/api/project/$pid/custom_cloud_pricing" 2>/dev/null || true)"
+                  cur="$(curl -sf --max-time 10 $RETRY "$BASE/api/project/$pid/custom_cloud_pricing" 2>/dev/null || true)"
                   uptodate="$(printf '%s' "$cur" | jq -r \
                     --argjson cpu "$PER_CPU_CORE" --argjson mem "$PER_MEMORY_GB" '
                     def approx(a;b): (a - b | if . < 0 then -. else . end) < 1e-7;
@@ -160,7 +173,7 @@ spec:
                   # body so the numbers are always valid JSON.
                   body="$(jq -nc --argjson cpu "$PER_CPU_CORE" --argjson mem "$PER_MEMORY_GB" \
                     '{per_cpu_core: $cpu, per_memory_gb: $mem}')"
-                  resp="$(curl -s -w '\n%{http_code}' --max-time 10 \
+                  resp="$(curl -s -w '\n%{http_code}' --max-time 10 $RETRY \
                     -X POST "$BASE/api/project/$pid/custom_cloud_pricing" \
                     -H 'content-type: application/json' \
                     -d "$body")"

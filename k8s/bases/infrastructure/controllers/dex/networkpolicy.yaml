@@ -22,6 +22,18 @@ spec:
         - ports:
             - port: "5556"
               protocol: TCP
+    # OIDC token + userinfo exchange from the Crossview backend. Crossview does
+    # native OIDC against Dex (apps/crossview/helm-release.yaml, config.sso.oidc)
+    # and dials the in-cluster Dex Service directly on :5556, so Dex sees the
+    # crossview pod identity here — matching crossview's egress allow. Inert on
+    # local/CI where the crossview namespace is absent (crossview is prod-only).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: crossview
+      toPorts:
+        - ports:
+            - port: "5556"
+              protocol: TCP
     # gRPC from oauth2-proxy
     - fromEndpoints:
         - matchLabels:

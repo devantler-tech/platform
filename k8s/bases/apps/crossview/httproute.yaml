@@ -1,11 +1,16 @@
-# SSO-fronted route for Crossview at crossview.${domain}. Its primary purpose is
-# to give the Headlamp crossview-headlamp plugin a browser-reachable URL to embed
-# in its "Open Crossview" iframe: the plugin reads the crossview-ingress Ingress
-# (ingress.yaml), resolves https://crossview.${domain}, and frames it. Direct
-# navigation to the host works too — always behind oauth2-proxy/Dex SSO, since
-# Crossview exposes infrastructure state and must never be reachable
-# unauthenticated. No homepage tile by design: Crossview is surfaced through
-# Headlamp, not the homepage (the consolidation intent of #2156).
+# Route for Crossview at crossview.${domain}. Two purposes: a browser-reachable
+# host for direct navigation, and the URL the Headlamp crossview-headlamp plugin
+# embeds in its "Open Crossview" iframe (the plugin reads the crossview-ingress
+# Ingress (ingress.yaml), resolves https://crossview.${domain}, and frames it).
+# No homepage tile by design: Crossview is surfaced through Headlamp, not the
+# homepage (the consolidation intent of #2156).
+#
+# Crossview authenticates itself via native Dex OIDC (helm-release.yaml), so this
+# route goes STRAIGHT to crossview-service — there is no oauth2-proxy hop. The app
+# gates its data routes (session middleware) and redirects unauthenticated users
+# to its own /login, so the host is never an unauthenticated window into cluster
+# state. The backendRef is same-namespace (crossview -> crossview-service), so no
+# ReferenceGrant is needed.
 #
 # Prod/hetzner only in practice: this lives in bases/apps/crossview, but apps are
 # opt-in on the local docker overlay, so the route renders only where Crossview
@@ -23,16 +28,7 @@ spec:
   hostnames:
     - crossview.${domain}
   rules:
-    # Front with oauth2-proxy (Dex SSO) like the other infra dashboards
-    # (homepage/coroot/opencost/longhorn). oauth2-proxy's static upstream is the
-    # auth-proxy Traefik instance, which host-fans-out crossview.${domain} to
-    # crossview-service:80 (see controllers/auth-proxy/config-map.yaml).
     - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://crossview.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
@@ -49,9 +45,8 @@ spec:
                 value: "frame-ancestors 'self' https://headlamp.${domain}"
             remove:
               # Belt-and-braces for older browsers that honor X-Frame-Options over
-              # CSP: strip any DENY/SAMEORIGIN the app or oauth2-proxy emit.
+              # CSP: strip any DENY/SAMEORIGIN the app emits.
               - X-Frame-Options
       backendRefs:
-        - name: oauth2-proxy
-          namespace: oauth2-proxy
+        - name: crossview-service
           port: 80

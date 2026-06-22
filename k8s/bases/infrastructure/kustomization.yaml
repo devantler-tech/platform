@@ -2,10 +2,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  # KRO archetype RGDs (Tenant #1932 / WebApp #1933) + their aggregated KRO
-  # ClusterRoles. In `infrastructure` (not `infrastructure-controllers`) so the
-  # RGD CRs land a layer after the KRO controller that installs the RGD CRD.
-  - archetypes/
   - certificates/
   - cluster-policies/
   - cluster-role-bindings/
@@ -22,6 +18,10 @@ resources:
   # that layer's health check would wait for OpenCost to become Ready, but the CR
   # that produces its Prometheus can't be applied until the layer is Ready.
   - opencost/
+  # KRO RGDs (Tenant #1932 / WebApp #1933) + their aggregated KRO
+  # ClusterRoles. In `infrastructure` (not `infrastructure-controllers`) so the
+  # RGD CRs land a layer after the KRO controller that installs the RGD CRD.
+  - resource-graph-definitions/
   - security-exceptions/
   - tracing-policies/
   - vault-config/

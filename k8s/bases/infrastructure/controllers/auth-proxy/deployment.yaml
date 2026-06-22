@@ -7,7 +7,7 @@ metadata:
   annotations:
     # Disable Coroot's latency SLO for this proxy (availability SLO stays).
     # auth-proxy is a low-traffic (~600 requests/day) Host fan-out in front of
-    # several heavy dashboards (Coroot, OpenCost, Hubble, Longhorn, Crossview);
+    # several heavy dashboards (Coroot, OpenCost, Hubble, Longhorn);
     # a few slow first-render responses are enough to blow a 99%-under-500ms SLO
     # at that volume, making it a permanent false-critical. Warm-path health is
     # still covered by the availability SLO here and by the per-app SLOs behind

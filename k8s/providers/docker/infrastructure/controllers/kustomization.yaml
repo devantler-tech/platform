@@ -61,8 +61,8 @@ resources:
   # Utilities:
   #   - ../../../../bases/infrastructure/controllers/reloader/
   #   - ../../../../bases/infrastructure/controllers/ksail-operator/
-  # KRO archetype controller (pair with infrastructure/archetypes/ for the
-  # Tenant #1932 / WebApp #1933 RGDs — needed for the local-first pilot):
+  # KRO controller (pair with infrastructure/resource-graph-definitions/
+  # for the Tenant #1932 / WebApp #1933 RGDs — needed for the local-first pilot):
   #   - ../../../../bases/infrastructure/controllers/kro/
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
