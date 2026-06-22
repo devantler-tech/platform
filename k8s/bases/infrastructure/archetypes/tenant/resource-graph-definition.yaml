@@ -59,7 +59,7 @@ spec:
       sops: boolean | default=false
   resources:
     # --- Core skeleton (always rendered) ---------------------------------
-    - id: namespace
+    - id: tenantNamespace
       template:
         apiVersion: v1
         kind: Namespace
@@ -75,7 +75,7 @@ spec:
         kind: ServiceAccount
         metadata:
           name: ${schema.spec.name}
-          namespace: ${namespace.metadata.name}
+          namespace: ${tenantNamespace.metadata.name}
           labels:
             app.kubernetes.io/managed-by: ksail
         automountServiceAccountToken: false
@@ -87,7 +87,7 @@ spec:
         kind: RoleBinding
         metadata:
           name: ${schema.spec.name}
-          namespace: ${namespace.metadata.name}
+          namespace: ${tenantNamespace.metadata.name}
           labels:
             app.kubernetes.io/managed-by: ksail
         roleRef:
@@ -97,7 +97,7 @@ spec:
         subjects:
           - kind: ServiceAccount
             name: ${serviceAccount.metadata.name}
-            namespace: ${namespace.metadata.name}
+            namespace: ${tenantNamespace.metadata.name}
     # GHCR image-pull secret, sourced from OpenBao (not a SOPS Secret) via the
     # shared cluster-scoped `openbao` ClusterSecretStore reading the platform
     # path infrastructure/ghcr/auth. Reconciled platform-side (flux-system), so
@@ -110,7 +110,7 @@ spec:
         kind: ExternalSecret
         metadata:
           name: ghcr-auth
-          namespace: ${namespace.metadata.name}
+          namespace: ${tenantNamespace.metadata.name}
           labels:
             app.kubernetes.io/managed-by: ksail
         spec:
@@ -142,7 +142,7 @@ spec:
         kind: NetworkPolicy
         metadata:
           name: default-deny
-          namespace: ${namespace.metadata.name}
+          namespace: ${tenantNamespace.metadata.name}
         spec:
           podSelector: {}
           policyTypes:
@@ -154,7 +154,7 @@ spec:
         kind: OCIRepository
         metadata:
           name: ${schema.spec.name}
-          namespace: ${namespace.metadata.name}
+          namespace: ${tenantNamespace.metadata.name}
           labels:
             app.kubernetes.io/managed-by: ksail
         spec:
@@ -183,7 +183,7 @@ spec:
         kind: Kustomization
         metadata:
           name: ${schema.spec.name}
-          namespace: ${namespace.metadata.name}
+          namespace: ${tenantNamespace.metadata.name}
           labels:
             app.kubernetes.io/managed-by: ksail
           annotations:
@@ -200,7 +200,7 @@ spec:
           sourceRef:
             kind: OCIRepository
             name: ${ociRepository.metadata.name}
-          targetNamespace: ${namespace.metadata.name}
+          targetNamespace: ${tenantNamespace.metadata.name}
     - id: kustomizationSops
       includeWhen:
         - ${schema.spec.sops}
@@ -209,7 +209,7 @@ spec:
         kind: Kustomization
         metadata:
           name: ${schema.spec.name}
-          namespace: ${namespace.metadata.name}
+          namespace: ${tenantNamespace.metadata.name}
           labels:
             app.kubernetes.io/managed-by: ksail
           annotations:
@@ -226,7 +226,7 @@ spec:
           sourceRef:
             kind: OCIRepository
             name: ${ociRepository.metadata.name}
-          targetNamespace: ${namespace.metadata.name}
+          targetNamespace: ${tenantNamespace.metadata.name}
           decryption:
             provider: sops
             secretRef:
@@ -246,7 +246,7 @@ spec:
         kind: RoleBinding
         metadata:
           name: ${schema.spec.name}-external-dns
-          namespace: ${namespace.metadata.name}
+          namespace: ${tenantNamespace.metadata.name}
         roleRef:
           apiGroup: rbac.authorization.k8s.io
           kind: ClusterRole
@@ -254,7 +254,7 @@ spec:
         subjects:
           - kind: ServiceAccount
             name: external-dns
-            namespace: ${namespace.metadata.name}
+            namespace: ${tenantNamespace.metadata.name}
     - id: externalDnsGateway
       includeWhen:
         - ${schema.spec.externalDns}
@@ -271,7 +271,7 @@ spec:
         subjects:
           - kind: ServiceAccount
             name: external-dns
-            namespace: ${namespace.metadata.name}
+            namespace: ${tenantNamespace.metadata.name}
     - id: externalDnsNamespaces
       includeWhen:
         - ${schema.spec.externalDns}
@@ -287,4 +287,4 @@ spec:
         subjects:
           - kind: ServiceAccount
             name: external-dns
-            namespace: ${namespace.metadata.name}
+            namespace: ${tenantNamespace.metadata.name}
