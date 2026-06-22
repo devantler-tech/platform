@@ -50,6 +50,32 @@ spec:
         mountPath: /tmp
     ingress:
       enabled: false
+    # Gateway API HTTPRoute rendered by the chart (replaces the former hand-rolled
+    # httproute.yaml): attaches to the shared `platform` Gateway (kube-system, https
+    # listener) and sets the platform-wide HSTS header; the chart auto-injects the
+    # backendRef to the dex Service (:5556). dex's httpRoute support is EXPERIMENTAL
+    # upstream but renders a route equivalent to the previous hand-authored one
+    # (verified with `helm template`). The explicit PathPrefix `/` match is the
+    # chart's required form of the hand-rolled match-all rule.
+    httpRoute:
+      enabled: true
+      parentRefs:
+        - name: platform
+          namespace: kube-system
+          sectionName: https
+      hostnames:
+        - dex.${domain}
+      rules:
+        - matches:
+            - path:
+                type: PathPrefix
+                value: /
+          filters:
+            - type: ResponseHeaderModifier
+              responseHeaderModifier:
+                set:
+                  - name: Strict-Transport-Security
+                    value: max-age=63072000; includeSubDomains; preload
     envVars:
       - name: CLIENT_ID
         value: ${github_app_client_id}
