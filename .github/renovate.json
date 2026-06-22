@@ -68,6 +68,20 @@
     },
     {
       "customType": "regex",
+      "description": "Track the kubelet-serving-cert-approver version pinned in the prod controller's kustomize remote resource URL. The project ships NO Helm chart (only raw deploy/*-install.yaml manifests), so it is installed as a kustomize remote resource pinned to a release tag rather than the moving `main` branch — but the version then lives inside a raw.githubusercontent.com URL that no built-in manager (flux/kubernetes/docker) sees. This regex manager resolves it from the authoritative alex1989hu/kubelet-serving-cert-approver GitHub releases; the `v` literal sits outside the capture group and extractVersionTemplate strips the leading `v` from the `vX.Y.Z` release tags, so the resolved version matches the captured X.Y.Z while the URL keeps its `v` prefix. On a bump, re-check the standalone PDB selector still matches the upstream labels (see the kustomization comment).",
+      "managerFilePatterns": [
+        "/^k8s/providers/hetzner/infrastructure/controllers/kubelet-serving-cert-approver/kustomization\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "kubelet-serving-cert-approver/v(?<currentValue>[0-9.]+)/deploy/"
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "alex1989hu/kubelet-serving-cert-approver",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
       "description": "Track the Kubernetes version pinned for the prod cluster in ksail.prod.yaml (kubernetesVersion), resolved from the authoritative kubernetes/kubernetes GitHub releases. This pin is the version's ONLY home in the repo, so Renovate edits ksail.prod.yaml to bump it. KSail/Talos own this pin and the docker system-test runs off ksail.yaml (which has no kubernetesVersion), so the built-in kubernetes/flux managers — scoped to k8s/** — never see it; a custom manager is the only way to track it. The v regex literal sits outside the capture group and extractVersionTemplate strips the leading v from the vX.Y.Z release tags, so the resolved version matches the captured X.Y.Z while the file keeps its v prefix. Renovate opens the PR automatically — the same flow as every other dependency, with no Dependency Dashboard approval gate. It is NOT automerged (see the matching packageRule): CI never validates this prod pin, and a Kubernetes minor/major can exceed the pinned Talos version's supported Kubernetes ceiling, so each bump is reviewed and promoted in lockstep with Talos.",
       "managerFilePatterns": [
         "/^ksail\\.prod\\.ya?ml$/"
