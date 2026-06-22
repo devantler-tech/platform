@@ -9,3 +9,4 @@ kind: Kustomization
 # child kinds it renders (KRO runs with rbac.mode: aggregation).
 resources:
   - tenant/
+  - webapp/
