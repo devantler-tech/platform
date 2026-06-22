@@ -126,3 +126,18 @@ spec:
   symbols: 0
   noUpper: false
   allowRepeat: true
+---
+# crossview's break-glass native `admin` login password (ADMIN_PASSWORD),
+# replacing the chart's well-known admin/password default. symbols:0 keeps it
+# safe to pass as an env var without escaping.
+apiVersion: generators.external-secrets.io/v1alpha1
+kind: Password
+metadata:
+  name: crossview-admin-password
+  namespace: openbao
+spec:
+  length: 32
+  digits: 8
+  symbols: 0
+  noUpper: false
+  allowRepeat: true
