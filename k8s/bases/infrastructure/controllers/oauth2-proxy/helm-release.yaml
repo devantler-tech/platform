@@ -111,7 +111,18 @@ spec:
         # always finds its own token. Fixes "homepage often doesn't start on
         # first visit".
         cookie_csrf_per_request = true
-        cookie_domains=[".${domain}"]
+        # Cookie scope: the bare apex (${domain}), no leading dot. oauth2-proxy
+        # suffix-matches the request host against cookie_domains, and a leading
+        # dot (".${domain}") fails that match for the apex host itself --
+        # strings.HasSuffix("platform...", ".platform...") is false -- so it
+        # logged a "request host did not match any of the specific cookie
+        # domains" warning on every apex request and fell back to the dotted
+        # domain anyway. The bare apex suffix-matches both the apex and every
+        # subdomain (oauth2-proxy., dex.), and per RFC 6265 a cookie with
+        # Domain=${domain} is still sent to the apex AND all subdomains, so
+        # cross-subdomain SSO is preserved without the warning. whitelist_domains
+        # (the redirect allowlist) keeps both forms intentionally.
+        cookie_domains = ["${domain}"]
         whitelist_domains = ["${domain}", ".${domain}"]
         redirect_url = "https://oauth2-proxy.${domain}/oauth2/callback"
         upstreams = [ "http://auth-proxy.oauth2-proxy.svc.cluster.local:80" ]
