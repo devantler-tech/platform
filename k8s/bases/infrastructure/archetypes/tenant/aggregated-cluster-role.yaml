@@ -1,0 +1,58 @@
+# Aggregated ClusterRole for the Tenant archetype (#1932).
+#
+# The KRO controller is installed with `rbac.mode: aggregation` (see
+# controllers/kro/helm-release.yaml): it holds NO standing access to arbitrary
+# resources and instead aggregates any ClusterRole labelled
+# `rbac.kro.run/aggregate-to-controller: "true"`. This role grants KRO exactly
+# the verbs to manage the child kinds the Tenant RGD renders — nothing more — so
+# each archetype's blast radius is its own declared resources.
+#
+# Keep in lockstep with resource-graph-definition.yaml: a child kind added there
+# without a rule here makes KRO fail to reconcile that resource (forbidden);
+# a rule here with no corresponding child is dead over-grant.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kro-tenant-archetype
+  labels:
+    app.kubernetes.io/managed-by: ksail
+    rbac.kro.run/aggregate-to-controller: "true"
+rules:
+  # Namespace + ServiceAccount (core API group).
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - serviceaccounts
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # RoleBinding (tenant + external-dns) and the external-dns ClusterRoleBinding.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - rolebindings
+      - clusterrolebindings
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # RBAC escalation guard: creating a binding to a ClusterRole requires the
+  # `bind` verb on that role (or holding all its rules). Scope `bind` to exactly
+  # the roles the Tenant bindings reference — `edit` (tenant SA) and the two
+  # tenant-external-dns roles — never a blanket grant.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames:
+      - edit
+      - tenant-external-dns
+      - tenant-external-dns-global
+    verbs: ["bind"]
+  # ghcr-auth pull secret.
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Default-deny NetworkPolicy.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Flux source + the impersonating Kustomization.
+  - apiGroups: ["source.toolkit.fluxcd.io"]
+    resources: ["ocirepositories"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+    resources: ["kustomizations"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

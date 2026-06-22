@@ -32,5 +32,14 @@ spec:
       - kind: Secret
         name: variables-cluster
   wait: true
+  # kstatus (used by `wait: true`) has no built-in readiness rule for KRO's
+  # ResourceGraphDefinition, so it stays InProgress forever and the whole
+  # infrastructure reconcile times out (the Tenant archetype RGD added here).
+  # KRO reports readiness via `status.state: Active|Inactive`, so teach Flux to
+  # health-check RGDs by that field via a CEL expression.
+  healthCheckExprs:
+    - apiVersion: kro.run/v1alpha1
+      kind: ResourceGraphDefinition
+      current: status.state == 'Active'
   prune: true
   force: true
