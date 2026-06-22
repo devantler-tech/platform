@@ -1,11 +1,11 @@
-# Aggregated ClusterRole for the Tenant archetype (#1932).
+# Aggregated ClusterRole for the Tenant RGD (#1932).
 #
 # The KRO controller is installed with `rbac.mode: aggregation` (see
 # controllers/kro/helm-release.yaml): it holds NO standing access to arbitrary
 # resources and instead aggregates any ClusterRole labelled
 # `rbac.kro.run/aggregate-to-controller: "true"`. This role grants KRO exactly
 # the verbs to manage the child kinds the Tenant RGD renders — nothing more — so
-# each archetype's blast radius is its own declared resources.
+# each RGD's blast radius is its own declared resources.
 #
 # Keep in lockstep with resource-graph-definition.yaml: a child kind added there
 # without a rule here makes KRO fail to reconcile that resource (forbidden);
@@ -13,7 +13,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: kro-tenant-archetype
+  name: kro-tenant-rgd
   labels:
     app.kubernetes.io/managed-by: ksail
     rbac.kro.run/aggregate-to-controller: "true"

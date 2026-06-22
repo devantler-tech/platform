@@ -34,7 +34,7 @@ spec:
   wait: true
   # kstatus (used by `wait: true`) has no built-in readiness rule for KRO's
   # ResourceGraphDefinition, so it stays InProgress forever and the whole
-  # infrastructure reconcile times out (the Tenant archetype RGD added here).
+  # infrastructure reconcile times out (the Tenant RGD added here).
   # KRO reports readiness via `status.state: Active|Inactive`, so teach Flux to
   # health-check RGDs by that field via a CEL expression.
   healthCheckExprs:
