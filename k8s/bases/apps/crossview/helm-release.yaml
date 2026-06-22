@@ -26,6 +26,15 @@ spec:
       createNamespace: false
     app:
       replicas: ${crossview_replicas:=1}
+      extraEnv:
+        # Crossview keys several behaviours off NODE_ENV (lib/env.go ->
+        # Environment): with it set to `production` the session-cookie middleware
+        # marks the cookie Secure (api/middlewares/session.go), CORS debug logging
+        # is off, and gin runs in release mode. Crossview is always served over
+        # HTTPS (crossview.${domain}), local included, so a Secure cookie is safe
+        # in every environment.
+        - name: NODE_ENV
+          value: "production"
     # The chart bundles a Postgres for session/user state. Run it ephemeral (no
     # PVC) instead of provisioning a Longhorn volume: Crossview is an
     # SSO-fronted, read-only dashboard, so losing session/user rows on a pod
@@ -43,19 +52,28 @@ spec:
         tag: "18.4"
       persistence:
         enabled: false
-    # The chart's bundled Postgres refuses to initialize without
-    # POSTGRES_PASSWORD, and the app signs sessions with SESSION_SECRET. Both
-    # default to empty strings in the chart, so the chart omitted the env vars
-    # entirely — leaving Postgres in CrashLoopBackOff ("superuser password is
-    # not specified"), the app stuck in Init, and the HelmRelease install
-    # hanging (which froze the whole `apps` Kustomization). Source both from the
-    # crossview-credentials Secret (external-secret.yaml) via secretKeyRef. That
-    # Secret is materialized from OpenBao by External Secrets — the values are
-    # generated once and seeded into OpenBao by the ESO Password generators +
-    # PushSecrets in infrastructure/vault-seed (apps/crossview/db,
-    # apps/crossview/app), exactly like umami's app secret — so nothing is
-    # committed to this public repo. Stable values keep Postgres data readable
-    # and login sessions valid across chart upgrades / pod restarts.
+    # Every Crossview secret is sourced from the crossview-credentials Secret
+    # (external-secret.yaml) via secretKeyRef. That Secret is materialized from
+    # OpenBao by External Secrets — the values are generated once and seeded by
+    # the ESO Password generators + PushSecrets in infrastructure/vault-seed
+    # (apps/crossview/{db,app,admin}), and oidc-client-secret is the shared Dex
+    # client secret read from infrastructure/oidc/dex — so nothing is committed
+    # to this public repo.
+    #
+    #   dbPassword       the chart's bundled Postgres refuses to initialize
+    #                    without POSTGRES_PASSWORD (it CrashLoopBackOffs with
+    #                    "superuser password is not specified", stalling the app
+    #                    in Init and hanging the whole `apps` Kustomization).
+    #   sessionSecret    signs the session cookie set after OIDC / admin login;
+    #                    a stable value keeps logins valid across pod restarts.
+    #   adminPassword    the break-glass native `admin` login (createAdmin runs
+    #                    at boot in session mode). Overriding it here means the
+    #                    chart no longer emits the well-known admin/password
+    #                    default into the crossview-secrets Secret — that Secret
+    #                    now carries only the non-secret admin USERNAME.
+    #   OIDCClientSecret the Dex confidential-client secret for the OIDC login
+    #                    (config.sso.oidc below); Crossview presents it as the
+    #                    shared `public-client`.
     secrets:
       dbPassword:
         secretKeyRef:
@@ -65,52 +83,73 @@ spec:
         secretKeyRef:
           name: crossview-credentials
           key: session-secret
+      adminPassword:
+        secretKeyRef:
+          name: crossview-credentials
+          key: admin-password
+      OIDCClientSecret:
+        secretKeyRef:
+          name: crossview-credentials
+          key: oidc-client-secret
     config:
       server:
         cors:
-          # The public URL Crossview is served at (crossview.${domain}, behind
-          # oauth2-proxy SSO — see httproute.yaml). It is the post-SSO-login
-          # redirect target (must be the public URL, or users bounce to localhost
-          # after authenticating) AND the URL the Headlamp crossview-headlamp
-          # plugin embeds in its "Open Crossview" iframe (resolved from the
-          # crossview-ingress Ingress).
+          # The public URL Crossview is served at (crossview.${domain}). It is the
+          # post-login redirect target (must be the public URL, or users bounce to
+          # localhost after authenticating) AND the URL the Headlamp
+          # crossview-headlamp plugin embeds in its "Open Crossview" iframe
+          # (resolved from the crossview-ingress Ingress).
           origin: https://crossview.${domain}
-        # Authenticate via the platform SSO chain instead of Crossview's built-in
-        # username/password DB. Crossview already sits behind oauth2-proxy (Dex ->
-        # GitHub): httproute.yaml routes crossview.${domain} -> oauth2-proxy ->
-        # auth-proxy -> crossview-service:3001, and oauth2-proxy injects (and
-        # OVERWRITES — pass_user_headers, on by default) the authenticated identity
-        # as X-Forwarded-Email on the upstream request. AUTH_MODE=header makes
-        # Crossview trust that header — crossview-go-server/api/middlewares/
-        # header_auth.go reads it and 401s if it is absent — and auto-provision the
-        # user, so there is no second login prompt and the chart-default
-        # admin/password in the crossview-secrets Secret stops being an access path.
-        #
-        # Not spoofable from outside the cluster: oauth2-proxy sets X-Forwarded-Email
-        # from the validated Dex session (replacing any client-sent value) and
-        # redirects unauthenticated requests before they reach the upstream, and
-        # auth-proxy only accepts ingress from oauth2-proxy. The crossview
-        # NetworkPolicy additionally admits host/remote-node on :3001, but that path
-        # carries no header, so (a) kubelet probes hit the PUBLIC /api/health
-        # (registered with no auth middleware — health stays green in header mode)
-        # and (b) a direct pod port-forward just 401s; forging the header there
-        # already requires in-cluster port-forward access, far above read-only view.
-        #
-        # New users land as `viewer` — read-only, matching Crossview's role here
-        # (raise defaultRole to `admin` to let the SSO user manage Crossview itself;
-        # the SSO gate already restricts to the devantler-tech/platform GitHub team).
-        # createUsers + defaultRole are pinned, not cosmetic: the bundled Postgres is
-        # ephemeral (persistence disabled), so the user is re-created on every pod
-        # restart — a chart default-flip must not silently break login or escalate
-        # the granted role.
-        #
-        # Trade-off: the Headlamp DESKTOP "Open Crossview" port-forward now 401s (no
-        # oauth2-proxy in that path); the web crossview.${domain} iframe path
-        # (supported since #2188) is unaffected. If a real login 401s because
-        # X-Forwarded-Email is empty for an account, switch trustedHeader to
-        # X-Forwarded-Preferred-Username (the GitHub login).
+        # Crossview does its OWN authentication now — there is no oauth2-proxy in
+        # front of it (httproute.yaml routes crossview.${domain} straight to
+        # crossview-service). Mode `session` is mandatory for the OIDC flow below:
+        # the SessionAuthMiddleware gates the /api/kubernetes/* data routes on a
+        # signed session cookie, the cookie store is ONLY wired up when
+        # AUTH_MODE=session (api/middlewares/session.go), and the boot-time admin
+        # user is seeded only in session mode (createAdmin, commands/serve.go). The
+        # public /api/auth/* + /api/health routes stay unauthenticated so login and
+        # kubelet probes work.
         auth:
-          mode: header
-          trustedHeader: X-Forwarded-Email
-          createUsers: true
-          defaultRole: viewer
+          mode: session
+      # Native OIDC against Dex — the platform's single OIDC IdP (Dex -> GitHub).
+      # Crossview's Login page shows a "Sign in with OIDC" button when this is
+      # enabled (src/presentation/pages/Login.jsx); clicking it runs
+      # /api/auth/oidc -> Dex -> GitHub -> /api/auth/oidc/callback, which sets the
+      # session cookie. Crossview reuses the shared confidential `public-client`
+      # (clientId below + OIDCClientSecret from infrastructure/oidc/dex), exactly
+      # like oauth2-proxy / headlamp; its callback is registered on that client in
+      # controllers/dex/helm-release.yaml.
+      #
+      # Split-horizon endpoints, mirroring oauth2-proxy (skip_oidc_discovery):
+      #   - authorizationURL is the PUBLIC Dex URL — the browser is redirected
+      #     there and resolves it via /etc/hosts (local) or public DNS (prod).
+      #   - tokenURL / userInfoURL are the IN-CLUSTER Dex Service — these are
+      #     server-side calls from the Crossview pod, which cannot resolve
+      #     dex.${domain} on the local/docker cluster and should not hairpin the
+      #     LoadBalancer in prod.
+      # WORKAROUND (upstream gap): Crossview's SSO code (services/sso_service.go)
+      # runs OIDC discovery whenever `issuer` is non-empty and lets a successful
+      # discovery OVERRIDE the explicit endpoints below — and the chart's configmap
+      # forces a non-empty issuer (it `default`s an unset value to a localhost URL).
+      # There is no skip-discovery / explicit-endpoint-precedence knob, so to keep
+      # the split we rely on the chart's localhost default being unreachable
+      # in-cluster: the discovery GET is refused instantly, discovery fails closed,
+      # and the split URLs below are used verbatim on every cluster. Revisit if the
+      # chart gains a discovery toggle or if discovery ever becomes fatal (it would
+      # crash-loop the pod). Crossview validates the user via the userinfo endpoint,
+      # not the id_token, so no JWKS/issuer match is required.
+      #
+      # SECURITY NOTE: removing oauth2-proxy drops its allowed_groups gate
+      # (devantler-tech:platform team). Crossview does not gate on OIDC groups, so
+      # the effective gate widens to any devantler-tech ORG member that Dex
+      # authenticates (its github connector is org-scoped). They land as a
+      # non-admin `user` on a read-only dashboard (the first login is the
+      # break-glass `admin` seeded at boot, so SSO users are never `admin`).
+      sso:
+        oidc:
+          enabled: true
+          clientId: public-client
+          authorizationURL: https://dex.${domain}/auth
+          tokenURL: http://dex.dex.svc.cluster.local:5556/token
+          userInfoURL: http://dex.dex.svc.cluster.local:5556/userinfo
+          callbackURL: https://crossview.${domain}/api/auth/oidc/callback

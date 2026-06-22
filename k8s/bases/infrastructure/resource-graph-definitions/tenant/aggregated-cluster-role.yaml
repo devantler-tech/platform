@@ -1,23 +1,41 @@
-# Aggregated ClusterRole for the Tenant archetype (#1932).
+# Aggregated ClusterRole for the Tenant RGD (#1932).
 #
 # The KRO controller is installed with `rbac.mode: aggregation` (see
 # controllers/kro/helm-release.yaml): it holds NO standing access to arbitrary
 # resources and instead aggregates any ClusterRole labelled
 # `rbac.kro.run/aggregate-to-controller: "true"`. This role grants KRO exactly
 # the verbs to manage the child kinds the Tenant RGD renders — nothing more — so
-# each archetype's blast radius is its own declared resources.
+# each RGD's blast radius is its own declared resources.
 #
-# Keep in lockstep with resource-graph-definition.yaml: a child kind added there
-# without a rule here makes KRO fail to reconcile that resource (forbidden);
-# a rule here with no corresponding child is dead over-grant.
+# Two distinct grants live here:
+#   1. The instance kind ITSELF (`tenants`) — KRO's dynamic micro-controller
+#      opens an informer on the kind, so it needs get/list/watch on it (and
+#      update/patch to write status back). Aggregation mode does NOT grant this
+#      automatically; without it the controller fails to start ("cache sync
+#      timeout for kro.run, Resource=tenants") and the RGD stays Inactive (#2212).
+#   2. The child kinds the RGD renders — so KRO can create/manage them.
+# Keep BOTH in lockstep with resource-graph-definition.yaml: a child kind added
+# there without a rule here makes KRO fail to reconcile that resource (forbidden);
+# a rule here with no corresponding child is dead over-grant. Every future RGD
+# (e.g. the #1933 WebApp RGD) needs its own instance-kind self-watch.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: kro-tenant-archetype
+  name: kro-tenant-rgd
   labels:
     app.kubernetes.io/managed-by: ksail
     rbac.kro.run/aggregate-to-controller: "true"
 rules:
+  # The instance kind itself: KRO's per-RGD micro-controller watches `tenants`
+  # (informer cache sync) and patches their status. Required for the RGD to
+  # reach state: Active — see header note (1). Dropping it reverts the #2212
+  # fix and re-wedges the infrastructure Kustomization, so keep it through any
+  # future refactor of this file.
+  - apiGroups: ["kro.run"]
+    resources:
+      - tenants
+      - tenants/status
+    verbs: ["get", "list", "watch", "update", "patch"]
   # Namespace + ServiceAccount (core API group).
   - apiGroups: [""]
     resources:

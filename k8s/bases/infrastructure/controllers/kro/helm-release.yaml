@@ -24,10 +24,10 @@ spec:
         kind: HelmRepository
         name: kro
   # https://kro.run -- KRO (kube-resource-orchestrator) lets the platform define
-  # higher-level "archetype" APIs as ResourceGraphDefinitions (RGDs) that expand
+  # higher-level APIs as ResourceGraphDefinitions (RGDs) that expand
   # into a graph of standard Kubernetes resources. This release installs the
-  # CONTROLLER + RGD CRD ONLY; the Tenant (#1932) and WebApp (#1933) archetype
-  # RGDs land later in the `infrastructure` layer, which `dependsOn`
+  # CONTROLLER + RGD CRD ONLY; the Tenant (#1932) and WebApp (#1933) RGDs
+  # land later in the `infrastructure` layer, which `dependsOn`
   # `infrastructure-controllers` -- a CR of an RGD-defined kind cannot share a
   # Flux Kustomization with the controller that installs its CRD (same
   # server-side-dry-run deadlock the Coroot CR documents).
@@ -44,7 +44,7 @@ spec:
       # `rbac.kro.run/aggregate-to-controller: "true"`. The chart default
       # `unrestricted` is a cluster-admin wildcard, which clashes with the
       # platform's least-privilege posture (cf. ksail-operator clusterAdmin:
-      # false). Each archetype RGD PR (#1932 Tenant / #1933 WebApp) ships an
+      # false). Each RGD PR (#1932 Tenant / #1933 WebApp) ships an
       # aggregated ClusterRole granting exactly the verbs for the child kinds it
       # manages -- until then KRO holds no standing access to arbitrary
       # resources, which is the correct posture for a controller-only install.
