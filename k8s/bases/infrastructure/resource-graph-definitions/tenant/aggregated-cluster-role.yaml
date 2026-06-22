@@ -28,9 +28,9 @@ metadata:
 rules:
   # The instance kind itself: KRO's per-RGD micro-controller watches `tenants`
   # (informer cache sync) and patches their status. Required for the RGD to
-  # reach state: Active — see header note (1). Restored from #2212, which this
-  # rename branch predated; without it the rename would revert the fix and
-  # re-wedge the infrastructure Kustomization.
+  # reach state: Active — see header note (1). Dropping it reverts the #2212
+  # fix and re-wedges the infrastructure Kustomization, so keep it through any
+  # future refactor of this file.
   - apiGroups: ["kro.run"]
     resources:
       - tenants
