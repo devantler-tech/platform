@@ -18,6 +18,21 @@ metadata:
     app.kubernetes.io/managed-by: ksail
     rbac.kro.run/aggregate-to-controller: "true"
 rules:
+  # The parent Tenant CR itself. KRO renders the child kinds below, but its
+  # dynamic controller must first watch/list the instances of the kind this RGD
+  # generates -- and in rbac.mode: aggregation KRO holds NO standing access even
+  # to the CRD it just created from the RGD. Without this rule the controller
+  # fails to start ("cannot list resource tenants in API group kro.run" -> cache
+  # sync timeout -> ControllerReady=False / RGD Inactive), which wedges the
+  # infrastructure Kustomization health check and blocks the apps layer behind it.
+  # get/list/watch to observe instances; update/patch (+ status/finalizers) to
+  # write reconcile status and manage the lifecycle finalizer.
+  - apiGroups: ["kro.run"]
+    resources: ["tenants"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["kro.run"]
+    resources: ["tenants/status", "tenants/finalizers"]
+    verbs: ["get", "update", "patch"]
   # Namespace + ServiceAccount (core API group).
   - apiGroups: [""]
     resources:
