@@ -163,6 +163,23 @@ spec:
                   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
                   const H = (t) => ({ 'content-type': 'application/json', ...(t ? { authorization: 'Bearer ' + t } : {}) });
                   const asArray = (j) => Array.isArray(j) ? j : (j && Array.isArray(j.data) ? j.data : []);
+                  // This cluster enforces Cilium mutual authentication
+                  // (CiliumClusterwideNetworkPolicy require-mutual-auth, mode:
+                  // required). The FIRST packet from this short-lived pod to umami is
+                  // dropped while the SPIRE handshake is established, so a one-shot
+                  // fetch intermittently throws `TypeError: fetch failed`. The
+                  // ensureAuth loop below already absorbs that for login, but
+                  // ensureTeam/ensureWebsite/ensureMember called fetch exactly once
+                  // each -- a single dropped packet failed the whole run (observed:
+                  // `fetch failed at async ensureTeam`). Retry only THROWN (network)
+                  // errors; an HTTP error RESPONSE is returned untouched so every
+                  // caller's existing !r.ok / status handling is preserved.
+                  const fetchRetry = async (u, o) => {
+                    for (let i = 0; ; i++) {
+                      try { return await globalThis.fetch(u, o); }
+                      catch (e) { if (i >= 4) throw e; await sleep(500 * (i + 1)); }
+                    }
+                  };
                   // Why each login attempt failed, for the retry-loop log line and the
                   // final error. Distinguishing rejected credentials (401) from a broken
                   // backend (500, e.g. Umami's DB password drifted -> Prisma P1000) from
@@ -172,7 +189,7 @@ spec:
                   let lastLoginFailure = 'no attempt yet';
                   async function login(pw) {
                     try {
-                      const r = await fetch(base + '/api/auth/login', { method: 'POST', headers: H(), body: JSON.stringify({ username: 'admin', password: pw }) });
+                      const r = await fetchRetry(base + '/api/auth/login', { method: 'POST', headers: H(), body: JSON.stringify({ username: 'admin', password: pw }) });
                       if (r.ok) return (await r.json()).token;
                       lastLoginFailure = r.status === 401
                         ? 'HTTP 401 (credentials rejected)'
@@ -185,24 +202,24 @@ spec:
                     if (token) return token;
                     const def = await login('umami');
                     if (!def) return null; // not ready yet
-                    const r = await fetch(base + '/api/me/password', { method: 'POST', headers: H(def), body: JSON.stringify({ currentPassword: 'umami', newPassword: newPw }) });
+                    const r = await fetchRetry(base + '/api/me/password', { method: 'POST', headers: H(def), body: JSON.stringify({ currentPassword: 'umami', newPassword: newPw }) });
                     if (!r.ok) throw new Error('admin password rotation failed: ' + r.status + ' ' + (await r.text()));
                     console.log('rotated default admin password to the managed value');
                     return await login(newPw);
                   }
                   // Umami does not enforce unique team names, so match by name then create.
                   async function ensureTeam(token, name) {
-                    const r = await fetch(base + '/api/teams?pageSize=200', { headers: H(token) });
+                    const r = await fetchRetry(base + '/api/teams?pageSize=200', { headers: H(token) });
                     if (!r.ok) throw new Error('list teams failed: ' + r.status + ' ' + (await r.text()));
                     const existing = asArray(await r.json()).find((t) => t.name === name);
                     if (existing) return existing.id;
-                    const c = await fetch(base + '/api/teams', { method: 'POST', headers: H(token), body: JSON.stringify({ name }) });
+                    const c = await fetchRetry(base + '/api/teams', { method: 'POST', headers: H(token), body: JSON.stringify({ name }) });
                     if (!c.ok) throw new Error('create team ' + name + ' failed: ' + c.status + ' ' + (await c.text()));
                     console.log('team created:', name);
                     return (await c.json()).id;
                   }
                   async function ensureWebsite(token, s, teamId) {
-                    const g = await fetch(base + '/api/websites/' + s.id, { headers: H(token) });
+                    const g = await fetchRetry(base + '/api/websites/' + s.id, { headers: H(token) });
                     // Umami returns 200 with a `null` body (NOT a 404) for a website id
                     // that doesn't exist yet, so a 2xx alone doesn't mean it's present —
                     // only treat it as existing when the body is a real website object,
@@ -212,7 +229,7 @@ spec:
                     if (w && w.id) {
                       // Move a pre-existing personal site into its team.
                       if (w.teamId !== teamId) {
-                        const t = await fetch(base + '/api/websites/' + s.id + '/transfer', { method: 'POST', headers: H(token), body: JSON.stringify({ teamId }) });
+                        const t = await fetchRetry(base + '/api/websites/' + s.id + '/transfer', { method: 'POST', headers: H(token), body: JSON.stringify({ teamId }) });
                         if (!t.ok) throw new Error('transfer website ' + s.domain + ' failed: ' + t.status + ' ' + (await t.text()));
                         console.log('website moved to team:', s.domain);
                       }
@@ -221,7 +238,7 @@ spec:
                       // domain migration applies on the next tick instead of a hand-edit in
                       // the Umami UI. Guarded so a steady-state tick stays a no-op.
                       if (w.name !== s.name || w.domain !== s.domain) {
-                        const u = await fetch(base + '/api/websites/' + s.id, { method: 'POST', headers: H(token), body: JSON.stringify({ name: s.name, domain: s.domain }) });
+                        const u = await fetchRetry(base + '/api/websites/' + s.id, { method: 'POST', headers: H(token), body: JSON.stringify({ name: s.name, domain: s.domain }) });
                         if (!u.ok) throw new Error('update website ' + s.domain + ' failed: ' + u.status + ' ' + (await u.text()));
                         console.log('website updated:', s.domain);
                       } else {
@@ -229,7 +246,7 @@ spec:
                       }
                       return;
                     }
-                    const c = await fetch(base + '/api/websites', { method: 'POST', headers: H(token), body: JSON.stringify({ id: s.id, name: s.name, domain: s.domain, teamId }) });
+                    const c = await fetchRetry(base + '/api/websites', { method: 'POST', headers: H(token), body: JSON.stringify({ id: s.id, name: s.name, domain: s.domain, teamId }) });
                     if (!c.ok) throw new Error('create website ' + s.domain + ' failed: ' + c.status + ' ' + (await c.text()));
                     console.log('website created:', s.domain);
                   }
@@ -238,7 +255,7 @@ spec:
                     // only handles POST (create); GET lives at `/api/admin/users`
                     // (paged + `search`, admin-gated). Hitting `/api/users` here
                     // returned 405 and aborted every member-provisioning run.
-                    const r = await fetch(base + '/api/admin/users?pageSize=200&search=' + encodeURIComponent(username), { headers: H(token) });
+                    const r = await fetchRetry(base + '/api/admin/users?pageSize=200&search=' + encodeURIComponent(username), { headers: H(token) });
                     if (!r.ok) throw new Error('list users failed: ' + r.status + ' ' + (await r.text()));
                     const u = asArray(await r.json()).find((u) => u.username === username);
                     return u ? u.id : null;
@@ -255,7 +272,7 @@ spec:
                     } else {
                       const password = process.env[m.passwordEnv];
                       if (!password) throw new Error('cannot create member ' + m.username + ': bootstrap password env ' + m.passwordEnv + ' is empty');
-                      const c = await fetch(base + '/api/users', { method: 'POST', headers: H(token), body: JSON.stringify({ username: m.username, password, role: m.accountRole || 'user' }) });
+                      const c = await fetchRetry(base + '/api/users', { method: 'POST', headers: H(token), body: JSON.stringify({ username: m.username, password, role: m.accountRole || 'user' }) });
                       if (c.ok) {
                         userId = (await c.json()).id;
                         console.log('user created:', m.username);
@@ -272,7 +289,7 @@ spec:
                       }
                     }
                     const role = m.teamRole || 'team-view-only';
-                    const a = await fetch(base + '/api/teams/' + teamId + '/users', { method: 'POST', headers: H(token), body: JSON.stringify({ userId, role }) });
+                    const a = await fetchRetry(base + '/api/teams/' + teamId + '/users', { method: 'POST', headers: H(token), body: JSON.stringify({ userId, role }) });
                     if (a.ok) { console.log('member added:', m.username, '->', role); return; }
                     const ab = await a.text();
                     if (a.status === 400 && /member/i.test(ab)) { console.log('member ok:', m.username); return; }
