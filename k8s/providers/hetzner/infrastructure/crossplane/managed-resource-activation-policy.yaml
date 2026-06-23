@@ -31,3 +31,11 @@ spec:
     - teams.team.github.m.upbound.io
     - teammemberships.team.github.m.upbound.io
     - teamrepositories.team.github.m.upbound.io
+    # Actions repository permissions — the per-repo "Require actions to be pinned
+    # to a full-length commit SHA" policy (sha_pinning_required), declared in
+    # devantler-tech/.github deploy/actions-permissions/ for every managed repo
+    # except `actions`. The tenant Role already covers the
+    # actions.github.m.upbound.io group. REQUIRES a provider-upjet-github release
+    # embedding terraform-provider-github >= 6.11.0 (where sha_pinning_required
+    # landed) — absent in the currently-deployed v0.19.1 (TF 6.6.0).
+    - repositorypermissions.actions.github.m.upbound.io
