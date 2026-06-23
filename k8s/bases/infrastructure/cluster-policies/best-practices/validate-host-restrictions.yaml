@@ -49,6 +49,7 @@ spec:
                 - cdi
                 - observability
                 - velero
+                - chaos-mesh
           - resources:
               names:
                 - "helper-pod-create-pvc-*"
@@ -80,6 +81,7 @@ spec:
                 - cdi
                 - observability
                 - velero
+                - chaos-mesh
           - resources:
               names:
                 - "helper-pod-create-pvc-*"

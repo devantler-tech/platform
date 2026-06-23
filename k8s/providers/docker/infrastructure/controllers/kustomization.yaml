@@ -58,6 +58,8 @@ resources:
   # VM stack (local/CI-only; add the kubevirt CR patch below):
   #   - ../../../../bases/infrastructure/controllers/cdi/
   #   - ../../../../bases/infrastructure/controllers/kubevirt/
+  # Chaos engineering (game-day fault injection; see docs/chaos-engineering.md):
+  #   - ../../../../bases/infrastructure/controllers/chaos-mesh/
   # Utilities:
   #   - ../../../../bases/infrastructure/controllers/reloader/
   #   - ../../../../bases/infrastructure/controllers/ksail-operator/
