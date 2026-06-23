@@ -20,7 +20,8 @@ spec:
     # Kube API for Kubernetes auth configuration
     - toEntities:
         - kube-apiserver
-    # DNS resolution
+    # DNS resolution. rules.dns makes Cilium snoop the responses so it can
+    # populate the toFQDNs IP set for the off-cluster mirror egress below.
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system
@@ -30,4 +31,26 @@ spec:
             - port: "53"
               protocol: UDP
             - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"
+    # Off-cluster snapshot mirror for the fetch-snapshot initContainer's DR
+    # auto-restore (Cloudflare R2 in prod). Scoped by FQDN to R2's domain ONLY --
+    # deliberately NOT `toEntities: world` -- so this root-token-holding Job can
+    # reach the backup target and nothing else on the internet. (Reaching another
+    # R2 account is moot: it only holds OUR account's read credentials.)
+    - toFQDNs:
+        - matchPattern: "*.r2.cloudflarestorage.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # In-cluster MinIO mirror target for local/CI (the same restore source).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: minio
+      toPorts:
+        - ports:
+            - port: "9000"
               protocol: TCP

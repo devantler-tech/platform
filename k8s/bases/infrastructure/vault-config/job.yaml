@@ -86,16 +86,88 @@ spec:
           secret:
             secretName: vault-config-oidc
             optional: true
-        # Raft snapshots written by the vault-snapshot CronJob (vault-backup/),
-        # mounted read-only as the vault-init container's automated restore
-        # source. RWO is fine: the CronJob only holds the volume for seconds
-        # around 03:30 UTC, so attach conflicts with this Job are practically
-        # impossible.
+        # Local scratch for the newest raft snapshot, populated by the
+        # fetch-snapshot initContainer from the OFF-CLUSTER mirror (Cloudflare R2
+        # in prod, in-cluster MinIO locally) -- NOT the single-attach RWO
+        # vault-snapshots PVC. Mounting that PVC here made vault-config attach the
+        # hcloud volume on every hourly run and collide with the vault-snapshot
+        # CronJob / vault-snapshot-init (both also mount it) -> hourly FailedMount
+        # (exit 255 / "Resource busy"). R2 is also the copy that SURVIVES a
+        # disaster that loses the local PVC, so it is the correct restore source.
         - name: snapshots
-          persistentVolumeClaim:
-            claimName: vault-snapshots
-            readOnly: true
+          emptyDir: {}
+        # R2 credentials synced by ESO (vault-backup/external-secret.yaml).
+        # Optional: on a fresh cluster the fetch container skips with a log line
+        # until the sync lands; auto-restore degrades gracefully (see vault-init).
+        - name: r2-credentials
+          secret:
+            secretName: vault-snapshot-r2
+            optional: true
+        - name: mc-config
+          emptyDir: {}
       initContainers:
+        # --- 0. Fetch newest snapshot from the off-cluster mirror (best-effort) ---
+        # Pulls ONLY the newest raft snapshot from R2/MinIO into the shared
+        # `snapshots` emptyDir so the vault-init container's DR auto-restore can
+        # read it WITHOUT mounting the RWO vault-snapshots PVC. Best-effort by
+        # design: in steady state (vault already initialized) vault-init never
+        # reads /snapshots, and on a real DR an empty /snapshots makes vault-init
+        # abort with its existing "no snapshot available" guidance -- so a missing
+        # Secret or an R2 hiccup must NEVER fail this Job.
+        - name: fetch-snapshot
+          image: quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            - name: MC_CONFIG_DIR
+              value: /tmp/.mc
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              # kubescape C-0270; generous for the mc download.
+              cpu: 250m
+              memory: 128Mi
+          volumeMounts:
+            - name: snapshots
+              mountPath: /snapshots
+            - name: r2-credentials
+              mountPath: /r2
+              readOnly: true
+            - name: mc-config
+              mountPath: /tmp/.mc
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              if [ ! -f /r2/access_key_id ]; then
+                echo "vault-snapshot-r2 Secret not synced yet -- skipping snapshot"
+                echo "fetch. Auto-restore aborts cleanly if a DR is in progress."
+                exit 0
+              fi
+              # ${r2_endpoint}/${r2_bucket} are Flux post-build substitutions
+              # (Cloudflare R2 in prod, in-cluster MinIO locally) -- the same vars
+              # the vault-snapshot CronJob/init-job use to MIRROR; here we READ.
+              mc alias set backup "${r2_endpoint}" \
+                "$(cat /r2/access_key_id)" "$(cat /r2/secret_access_key)" || exit 0
+              # Newest by name (openbao-YYYYMMDD-HHMMSS.snap sorts chronologically).
+              LATEST=$(mc ls "backup/${r2_bucket}/openbao-snapshots/" 2>/dev/null \
+                | awk '{print $NF}' | grep '\.snap$' | sort | tail -n1)
+              if [ -z "$LATEST" ]; then
+                echo "No snapshot in the mirror yet -- nothing to fetch."
+                exit 0
+              fi
+              echo "Fetching newest snapshot $LATEST from the off-cluster mirror..."
+              mc cp "backup/${r2_bucket}/openbao-snapshots/$LATEST" "/snapshots/$LATEST" || true
+              ls -l /snapshots/ || true
         # --- 1. Auto-init + unseal ---
         - name: vault-init
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
