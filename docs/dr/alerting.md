@@ -70,12 +70,22 @@ stays quiet by design, exactly as the old Alertmanager did.
 
 ### Changed from the old stack
 
-- **Custom PromQL platform alerts are gone.** The old
+- **Custom PromQL platform alerts: partially re-instated.** The old
   `alerts/platform-critical.yaml` (Velero/CNPG backup, cert expiry,
   `FluxKustomizationNotReady`, autoscaler) had no 1:1 in Coroot's SLO/inspection
   model and was dropped. Node/pod/OOM/disk/crashloop health is covered by
-  Coroot's auto-inspections; the backup/cert/Flux checks can be re-expressed
-  later as Coroot `alertingRules` if needed.
+  Coroot's auto-inspections. The **`FluxKustomizationNotReady`** check is now
+  back — re-expressed the Flux-native way rather than as a Coroot rule: a
+  notification-controller `Provider` + `Alert`
+  (`providers/hetzner/infrastructure/flux-notifications/`) posts every
+  Kustomization reconciliation error to the same Slack webhook, event-driven and
+  with no polling pod for the kubescape scan to flag. The four top-level
+  Kustomizations (`bootstrap → infrastructure-controllers → infrastructure →
+  apps`) wait on their children, so a failed controller / app / HelmRelease
+  surfaces here as its parent going NotReady. The remaining **backup-success**
+  and **cert-expiry** checks are not Flux resources, so they need a scan-safe
+  synthetic check (e.g. per-CronJob dead-man pings like the heartbeat below, tied
+  to the silent vault snapshot in #1970) and are still TODO.
 - **kube-apiserver audit-log retention is gone.** Coroot's node-agent ingests
   container logs/traces, not host audit-log files, so the previous
   alloy-audit → Loki pipeline was removed.

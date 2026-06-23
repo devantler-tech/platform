@@ -1,0 +1,29 @@
+# Re-instates the FluxKustomizationNotReady safety-net alert that was dropped in
+# the Coroot migration (docs/dr/alerting.md "Changed from the old stack"): Coroot
+# auto-inspects node/pod/OOM/disk/crashloop health, but it does NOT know when a
+# Flux *reconciliation* is stuck or failing — a build error, a failed
+# server-side apply, an unresolved dependency, or a child resource that never
+# goes Ready under a wait:true Kustomization.
+#
+# Watching every Kustomization at error severity catches the whole class: the
+# four top-level health gates (bootstrap → infrastructure-controllers →
+# infrastructure → apps) wait on their children, so a failed controller / app /
+# HelmRelease surfaces as its parent Kustomization going NotReady → an error
+# event here → Slack. Event-driven (no polling pod, so nothing for the kubescape
+# scan to flag) and posting to the same channel as the Coroot alerts.
+#
+# notification-controller dedupes + rate-limits, so a persistently-failing
+# Kustomization pages once, not every reconcile.
+apiVersion: notification.toolkit.fluxcd.io/v1beta3
+kind: Alert
+metadata:
+  name: platform-reconciliation
+  namespace: flux-system
+spec:
+  providerRef:
+    name: slack
+  eventSeverity: error
+  eventSources:
+    - kind: Kustomization
+      name: "*"
+  summary: "Flux reconciliation error — prod platform"

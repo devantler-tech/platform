@@ -43,6 +43,13 @@ resources:
   - coroot/db-scheduled-backup.yaml
   - coroot/networkpolicy.yaml
   - coroot/pod-disruption-budget.yaml
+  # Prod-only safety-net alerting: a Flux notification-controller Provider + Alert
+  # that posts Kustomization reconciliation errors to the SAME Slack webhook the
+  # Coroot integration uses (${alertmanager_webhook_url}). Re-instates the
+  # FluxKustomizationNotReady alert dropped in the Coroot migration (see
+  # docs/dr/alerting.md) — event-driven, so nothing for the kubescape scan to
+  # flag. Prod-only, where that webhook is configured.
+  - flux-notifications/
   # Longhorn CSI VolumeSnapshotClass for Velero CSI backups. Kept in this
   # `infrastructure` layer (not `infrastructure/controllers/`) so the
   # snapshot.storage.k8s.io CRDs shipped by the snapshot-controller HelmRelease
