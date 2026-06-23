@@ -29,7 +29,18 @@ metadata:
     # Jobs are immutable; let Flux delete-and-recreate on spec change.
     kustomize.toolkit.fluxcd.io/force: enabled
 spec:
-  ttlSecondsAfterFinished: 600
+  # No ttlSecondsAfterFinished (intentional). This is a one-shot "snapshot at
+  # deploy/change time" Job (see header) -- it must run ONCE per vault-backup
+  # change, NOT hourly. A finite TTL deletes the completed Job, so every
+  # `infrastructure` reconcile re-created it (via the force annotation) ~hourly;
+  # it then mounted the single-attach RWO vault-snapshots PVC *concurrently with
+  # the also-hourly vault-config Job*. The two pods land on different nodes, so
+  # the hcloud volume cannot reattach in time and both spam `FailedMount`
+  # (exit 255 / "Resource busy") every hour. Persisting the completed Job means
+  # only the force-recreation on a real spec change re-runs it; vault-config
+  # then runs alone against a detached volume and attaches cleanly. (vault-config
+  # keeps its TTL + hourly re-run on purpose -- its config steps retry for
+  # late-arriving deps; only this one-shot snapshot Job was re-running needlessly.)
   backoffLimit: 30
   activeDeadlineSeconds: 3600
   template:
