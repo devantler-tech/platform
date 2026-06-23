@@ -1,0 +1,213 @@
+# WebApp RGD (#1933) — the KRO ResourceGraphDefinition that expands a small typed
+# `WebApp` declaration into the standard containerized-web-app workload skeleton
+# (Deployment + Service + Gateway-API HTTPRoute) every tenant web app
+# (`ascoachingogvaner`, `wedding-app`) otherwise hand-copies into its OCI artifact.
+#
+# Sibling to the Tenant RGD: a *Tenant* sets up the namespace/isolation/sync
+# (tenant/resource-graph-definition.yaml); a *WebApp* defines the application that
+# runs INSIDE that tenant namespace. A WebApp instance therefore does NOT create
+# its namespace — it renders into the namespace named by `spec.name`, which the
+# Tenant archetype already provisioned. The convention is app == namespace
+# (ascoachingogvaner / wedding-app are both); add a `namespace` override field
+# only if a future app diverges (the same "template the invariant, add an override
+# when it breaks" rule the Tenant RGD follows for the OCIRepository URL).
+#
+# Onboarding a web app becomes a ~7-line `WebApp` CR instead of a 3-file
+# Deployment/Service/HTTPRoute copy:
+#
+#   apiVersion: kro.run/v1alpha1
+#   kind: WebApp
+#   metadata: { name: wedding-app, namespace: wedding-app }
+#   spec:
+#     name: wedding-app
+#     image: ghcr.io/devantler-tech/wedding-app:latest
+#     host: wedding.platform.lan
+#     port: 3000
+#     probePath: /login
+#
+# SCOPE (V1 — a deliberately render-diffable first cut mirroring the Tenant RGD's
+# conservative start): the common workload SKELETON only. App-specific extensions —
+# secret-backed env (ESO/SOPS-sourced k8s Secrets consumed via secretKeyRef), KEDA
+# HTTP scale-to-zero, the www→apex 301 redirect + per-tenant public-domain SNI
+# listeners, OIDC/auth — stay in the tenant artifact for now and land here
+# incrementally as the pilot migration needs them (tracked in the #1933 follow-up).
+# The skeleton IS the boilerplate the readability win targets (#1933: "no more
+# Kustomize overlay/component stacking").
+#
+# Lands in the `infrastructure` layer alongside the Tenant RGD (a CR of an
+# RGD-defined kind cannot share a Flux Kustomization with the controller that
+# installs its CRD). Pre-1.0 KRO (v1alpha1): only scalar schema fields with
+# defaults (the proven Tenant-RGD subset, which reconciled live); `WebApp`
+# instances arrive with the pilot migration, not here.
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: webapp.kro.run
+  labels:
+    app.kubernetes.io/managed-by: ksail
+  annotations:
+    # Exempt from Flux postBuild envsubst — see the Tenant RGD for the full
+    # rationale. Every `${...}` below is a KRO CEL expression resolved by the kro
+    # controller at instance time, not a Flux variable; the `infrastructure`
+    # Kustomization's substituteFrom would otherwise fail trying to expand them
+    # ("envsubst error: variable substitution failed: missing closing brace").
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: WebApp
+    spec:
+      # App name — used verbatim as the Deployment/Service/HTTPRoute name AND as
+      # the target namespace (the tenant namespace the Tenant archetype created).
+      # Required.
+      name: string
+      # Container image (with tag/digest). Required.
+      image: string
+      # Public hostname the HTTPRoute answers for (e.g. wedding.platform.lan).
+      # Attaches to the shared wildcard `https` listener on the central gateway.
+      # Required.
+      host: string
+      # Container port (and Service targetPort). The Service always fronts it on
+      # port 80. Default 8080 (ascoachingogvaner); wedding-app overrides to 3000.
+      port: integer | default=8080
+      # Desired replicas. Default 2 (HA across nodes via the topology spread
+      # below), matching both pilots.
+      replicas: integer | default=2
+      # HTTP path for the liveness/readiness probes. Default "/"
+      # (ascoachingogvaner); wedding-app overrides to "/login".
+      probePath: string | default="/"
+      # Pod resource requests/limits. Defaults match ascoachingogvaner's tiny
+      # static-site footprint; override per app (wedding-app runs larger).
+      cpuRequest: string | default="10m"
+      memoryRequest: string | default="16Mi"
+      cpuLimit: string | default="100m"
+      memoryLimit: string | default="64Mi"
+  resources:
+    - id: deployment
+      template:
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${schema.spec.name}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/managed-by: ksail
+            # Both pilots opt out of the replica-floor policy and self-manage
+            # replicas (default 2). Kept for behaviour-preserving parity; revisit
+            # if a WebApp should instead inherit the platform replica floor.
+            platform.devantler.tech/replica-floor: exempt
+        spec:
+          replicas: ${schema.spec.replicas}
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: ${schema.spec.name}
+          strategy:
+            type: RollingUpdate
+            rollingUpdate:
+              maxSurge: 1
+              maxUnavailable: 0
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/name: ${schema.spec.name}
+                app.kubernetes.io/managed-by: ksail
+            spec:
+              # restricted-PSA-compliant: the tenant namespace enforces
+              # `pod-security.kubernetes.io/enforce: restricted`, so the pod ships
+              # a compliant security context (Kyverno mutate is additive and
+              # idempotent over these — it sets the same values, no conflict).
+              # Matches both pilots (non-root uid/gid 1000).
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 1000
+                runAsGroup: 1000
+                seccompProfile:
+                  type: RuntimeDefault
+              # Spread replicas across nodes (soft) so a single node failure can't
+              # take out the whole app; ScheduleAnyway keeps single-node local/CI
+              # clusters schedulable — matches both pilots + the operator tier.
+              topologySpreadConstraints:
+                - maxSkew: 1
+                  topologyKey: kubernetes.io/hostname
+                  whenUnsatisfiable: ScheduleAnyway
+                  labelSelector:
+                    matchLabels:
+                      app.kubernetes.io/name: ${schema.spec.name}
+              containers:
+                - name: ${schema.spec.name}
+                  image: ${schema.spec.image}
+                  ports:
+                    - containerPort: ${schema.spec.port}
+                      protocol: TCP
+                  livenessProbe:
+                    httpGet:
+                      path: ${schema.spec.probePath}
+                      port: ${schema.spec.port}
+                    initialDelaySeconds: 5
+                    periodSeconds: 10
+                  readinessProbe:
+                    httpGet:
+                      path: ${schema.spec.probePath}
+                      port: ${schema.spec.port}
+                    initialDelaySeconds: 3
+                    periodSeconds: 5
+                  resources:
+                    requests:
+                      cpu: ${schema.spec.cpuRequest}
+                      memory: ${schema.spec.memoryRequest}
+                    limits:
+                      cpu: ${schema.spec.cpuLimit}
+                      memory: ${schema.spec.memoryLimit}
+                  securityContext:
+                    allowPrivilegeEscalation: false
+                    readOnlyRootFilesystem: false
+                    capabilities:
+                      drop:
+                        - ALL
+                    seccompProfile:
+                      type: RuntimeDefault
+    - id: service
+      template:
+        apiVersion: v1
+        kind: Service
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${schema.spec.name}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/managed-by: ksail
+        spec:
+          type: ClusterIP
+          selector:
+            app.kubernetes.io/name: ${schema.spec.name}
+          ports:
+            - name: http
+              port: 80
+              targetPort: ${schema.spec.port}
+              protocol: TCP
+    - id: httpRoute
+      template:
+        apiVersion: gateway.networking.k8s.io/v1
+        kind: HTTPRoute
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${schema.spec.name}
+          labels:
+            app.kubernetes.io/name: ${schema.spec.name}
+            app.kubernetes.io/managed-by: ksail
+        spec:
+          parentRefs:
+            # The central Cilium Gateway in kube-system — reference it, never
+            # recreate it. The shared wildcard `https` listener terminates TLS;
+            # per-tenant public-domain SNI listeners (e.g. ascoachingogvaner.dk)
+            # remain app-specific gateway patches outside this archetype.
+            - name: platform
+              namespace: kube-system
+              sectionName: https
+          hostnames:
+            - ${schema.spec.host}
+          rules:
+            - backendRefs:
+                - name: ${service.metadata.name}
+                  port: 80
