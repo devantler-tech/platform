@@ -51,6 +51,20 @@
     },
     {
       "customType": "regex",
+      "description": "Track the ksail-operator OCI Helm chart version (its HelmRelease chart.spec.version) via the devantler-tech/ksail GitHub *releases*, NOT the chart's own OCI registry tags. The chart is published per global monorepo version, so a release that builds no ksail binary (e.g. the copilot-plugin-only release v7.74.1) still publishes a ksail-operator chart at that version whose default image tag (v<appVersion>) points at a ghcr.io/devantler-tech/ksail:v<ver> image that was never built or cosign-signed. The verify-ksail-images ImageValidatingPolicy then denies the Pod (MANIFEST_UNKNOWN), hanging the Helm upgrade and stalling the whole infrastructure-controllers layer (and infrastructure -> apps behind it). Resolving from github-releases means the chart only bumps to versions that have a real ksail release — hence a built, tag-signed image. Mirrors the flux-operator manager above; the built-in flux manager is disabled for this chart in packageRules below so the two cannot open duplicate/registry-based PRs.",
+      "managerFilePatterns": [
+        "/^k8s/bases/infrastructure/controllers/ksail-operator/helm-release\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "chart:\\s*ksail-operator\\s+version:\\s*(?<currentValue>\\S+)"
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "devantler-tech/ksail",
+      "versioningTemplate": "semver",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
       "description": "Track the Talos Linux distribution version pinned in the prod node install image (talos/cluster/install-image.yaml). The image is served by the Talos Image Factory (factory.talos.dev), whose OCI registry does NOT implement tag listing (`/v2/<schematic>/tags/list` returns 404), so the image's own registry cannot be a version datasource — which is also why Dependabot cannot track it (its docker manager can only query the image registry, and has no regex/custom manager to point the lookup elsewhere). Resolve the version from the authoritative siderolabs/talos GitHub releases instead. Both matchStrings capture the numeric version only and extractVersionTemplate strips the leading `v` from the `vX.Y.Z` release tags, so the resolved version matches both captures; the image tag keeps its `v` via a regex literal outside the group. This keeps the image tag (`:vX.Y.Z`) and the schematic-URL comment (`version=X.Y.Z`) updated in sync. This also bumps the source-of-truth talos.version pin in ksail.prod.yaml in the same PR; the Hetzner iso snapshot id there is not a version string and cannot be auto-derived, so a maintainer completes the iso (and any lockstep kubernetesVersion) edit before merging. Renovate opens the PR automatically — there is no Dependency Dashboard approval gate (see the matching packageRule below, which keeps automerge off).",
       "managerFilePatterns": [
         "/^talos/cluster/install-image\\.ya?ml$/",
@@ -146,7 +160,18 @@
       "enabled": false
     },
     {
-      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (flux manager, helm-release.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a separate Dependabot PR. Both grouped deps resolve to the same upstream ksail version, and the devantler-tech 0-day minimumReleaseAge rule below still matches these first-party deps, so the grouped PR opens immediately.",
+      "description": "ksail-operator is tracked by the dedicated regex customManager above (resolved from devantler-tech/ksail github-releases, NOT the chart's OCI registry tags), so it never bumps to an image-less chart version such as 7.74.1. Disable the built-in `flux` manager for this chart so the two managers cannot open duplicate or registry-based PRs.",
+      "matchManagers": [
+        "flux"
+      ],
+      "matchPackageNames": [
+        "ksail-operator",
+        "ghcr.io/devantler-tech/charts/ksail-operator"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (dedicated github-releases custom manager, helm-release.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a separate Dependabot PR. Both grouped deps now resolve via the same devantler-tech/ksail github-releases datasource, so they always move to the same real ksail release in lockstep (no more split CLI=7.74.0 / chart=7.74.1 bumps), and the devantler-tech 0-day minimumReleaseAge rule below still matches these first-party deps, so the grouped PR opens immediately.",
       "matchPackageNames": [
         "devantler-tech/ksail",
         "ghcr.io/devantler-tech/charts/ksail-operator",
