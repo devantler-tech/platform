@@ -1,0 +1,52 @@
+# CloudNativePG-managed PostgreSQL for Backstage. CNPG bootstraps the `backstage`
+# database owned by the `backstage` role and publishes the connection credentials
+# in the auto-generated `backstage-db-app` Secret (keys: username/password/dbname/
+# host/port/uri). The Backstage HelmRelease consumes that Secret directly via
+# POSTGRES_* env (see helm-release.yaml) — the same CNPG-generated-secret pattern
+# coroot-db uses, so there is no OpenBao rotation to keep in sync.
+#
+# longhorn is hardcoded because Backstage is a prod-only app (CNPG + longhorn are
+# absent from the local/docker overlay), matching umami and the tenants.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: backstage-db
+  namespace: backstage
+  annotations:
+    # Never let Flux force-delete+recreate this DB: the apps Flux Kustomization
+    # runs force + prune and longhorn PVCs are reclaimPolicy=Delete, so a
+    # force-recreate would wipe the data (the failure that hit coroot-db on
+    # 2026-06-18). Flux can still update it in place.
+    kustomize.toolkit.fluxcd.io/force: disabled
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  # 2 instances (1 primary + 1 streaming replica) = the drain-safe floor: CNPG
+  # drains a node by promoting the replica and sets a maxUnavailable replica PDB,
+  # so a Talos roll / autoscaler scale-down never blocks and a single node loss
+  # never takes the DB down (a single-instance Cluster's minAvailable=1 PDB would
+  # block every voluntary eviction — see umami-db). umami-db runs 3 for
+  # one-per-storage-worker; Backstage's lighter metadata DB uses the floor of 2.
+  instances: 2
+  storage:
+    size: 2Gi
+    storageClass: longhorn
+  # Quorum synchronous replication so a failover never strands the old primary on
+  # a diverged timeline (the 2026-06-19 umami/wedding rejoin incident): number: 1
+  # acks each commit only once the standby holds the WAL, so the promoted standby
+  # already has every committed transaction. dataDurability: preferred keeps the
+  # DB writable if the standby is briefly unavailable instead of blocking commits.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
+  bootstrap:
+    initdb:
+      database: backstage
+      owner: backstage
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi

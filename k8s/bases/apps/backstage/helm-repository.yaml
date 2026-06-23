@@ -1,0 +1,9 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: backstage
+  namespace: backstage
+spec:
+  # The official Backstage Helm chart repo (backstage/charts). The chart is
+  # image-agnostic (no appVersion) — it deploys whatever image you point it at.
+  url: https://backstage.github.io/charts

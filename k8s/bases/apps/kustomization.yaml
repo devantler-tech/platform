@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - actual-budget/
   - ascoachingogvaner/
+  - backstage/
   # Crossplane resource dashboard (Crossview). Prod-only in practice: it reads
   # Crossplane CRDs, and Crossplane runs only on the Hetzner provider. The
   # docker provider deploys no apps, so it is naturally excluded from local.
