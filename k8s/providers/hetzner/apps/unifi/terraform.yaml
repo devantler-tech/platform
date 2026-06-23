@@ -22,6 +22,14 @@ spec:
   varsFrom:
     - kind: Secret
       name: unifi-credentials
+  # Keep the plan-runner pod alive between reconciles instead of recreating it
+  # every `interval`. With the controller default (true) the observe-first,
+  # plan-only loop creates + deletes the `unifi-tf-runner` pod every 15m, which
+  # Coroot reports as recurring "application restarted N times" alerts even
+  # though nothing is wrong (the Terraform stays Ready / no-drift — the runner
+  # is just being recycled, not crashing). A single persistent runner removes
+  # that churn at the cost of one small pod holding the read-only UniFi API key.
+  alwaysCleanupRunnerPod: false
   # Restricted-PSS-compliant runner. NB (live-validate): the upstream tf-runner
   # image may default to a root user; if it cannot satisfy restricted PSS, the
   # platform Kyverno mutate policies should supply the container securityContext
