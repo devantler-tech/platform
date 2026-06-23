@@ -56,8 +56,14 @@ Velero), so the manually-set values are durable without a GitOps source of truth
 1. Create a **GitHub App** on the devantler-tech org (Settings → Developer
    settings → GitHub Apps): permissions *Repository: Administration
    (read/write), Contents (read)* and *Organization: Administration
-   (read/write)* to start — widen as more resource kinds come under
-   management. Install it on **all repositories** of the org. No webhook.
+   (read/write), Members (read/write)* to start — widen as more resource
+   kinds come under management. **Organization → Members (read/write) is
+   required for the `maintainers`-team resources**: `Team` observe needs
+   `read`, and `TeamMembership`/`TeamRepository` create needs `write` —
+   without it they stay stuck on `CannotObserveExternalResource` /
+   `403 must be an organization owner or team maintainer` and flap the
+   `github-config` Flux health check. Install it on **all repositories**
+   of the org. No webhook.
 2. **Overwrite the placeholders in OpenBao** with the App's real values — the
    keys already exist (seeded by the vault-config Job), so just set them, e.g.:
    ```sh
