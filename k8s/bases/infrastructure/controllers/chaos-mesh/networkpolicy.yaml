@@ -1,0 +1,40 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-chaos-mesh
+  namespace: chaos-mesh
+spec:
+  # The Kyverno add-default-deny policy generates a default-deny (ingress+egress)
+  # CiliumNetworkPolicy plus an allow-dns rule per namespace; this allow-list
+  # opens only what Chaos Mesh actually needs on top of that baseline.
+  endpointSelector: {}
+  ingress:
+    # kube-apiserver -> controller-manager admission/conversion webhooks.
+    - fromEntities:
+        - kube-apiserver
+    # controller-manager <-> chaos-daemon gRPC, both in this namespace.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: chaos-mesh
+  egress:
+    # Reconcile chaos CRs and select target pods/nodes via the API.
+    - toEntities:
+        - kube-apiserver
+    # controller-manager -> chaos-daemon gRPC (fault dispatch), both in this
+    # namespace. Faults themselves are applied node-locally by the daemon
+    # (containerd socket + hostPID), not over the pod network, so no egress to
+    # target namespaces is required.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: chaos-mesh
+    # DNS resolution.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP

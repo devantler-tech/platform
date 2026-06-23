@@ -42,6 +42,11 @@ resources:
   # HelmRelease is included via ../../../../bases/...; this dir only adds the
   # prod-only ConfigMap, and the patch below rewires the HelmRelease.
   - velero/
+  # Opt-in game-day chaos engineering — uncomment to enable, re-comment when the
+  # game day ends (see docs/chaos-engineering.md). Left off by default: the
+  # chaos-daemon is a permanently-privileged DaemonSet, so it ships only while
+  # experiments are actually running, not as always-on prod attack surface.
+  # - ../../../../bases/infrastructure/controllers/chaos-mesh/
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled). Restores
   # Helm-rendered resources deleted/mutated out-of-band — the cause of the

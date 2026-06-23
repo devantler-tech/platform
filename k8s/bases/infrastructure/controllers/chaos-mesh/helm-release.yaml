@@ -1,0 +1,77 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: chaos-mesh
+  namespace: chaos-mesh
+  labels:
+    # The chart ships its CRDs (PodChaos, NetworkChaos, StressChaos, Schedule,
+    # Workflow, …) in the chart's crds/ dir — Helm installs but never upgrades
+    # them, so let Flux own them. The helm-release-install-crds Kyverno policy
+    # turns this label into install/upgrade `crds: CreateReplace` (also set
+    # explicitly below, mirroring flagger).
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  timeout: 10m
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  chart:
+    spec:
+      chart: chaos-mesh
+      version: 2.8.3
+      sourceRef:
+        kind: HelmRepository
+        name: chaos-mesh
+  # https://github.com/chaos-mesh/chaos-mesh/blob/master/helm/chaos-mesh/values.yaml
+  values:
+    # Talos runs containerd. The chart DEFAULTS to docker + /var/run/docker.sock,
+    # which CrashLoops chaos-daemon on boot here — both fields MUST be overridden.
+    # The daemon mounts dir(socketPath) (=/run/containerd) as a hostPath and
+    # reaches a target container through base(socketPath) under it.
+    chaosDaemon:
+      runtime: containerd
+      socketPath: /run/containerd/containerd.sock
+      # privileged: true is the chart default and is REQUIRED: alongside the
+      # hardcoded hostPID and the hostPath socket mount, it is what lets the
+      # daemon enter a target pod's namespaces to inject faults. This is the
+      # reason the namespace is PSA `privileged` and Kyverno-exempt
+      # (see namespace.yaml) — the privilege is irreducible, not a shortcut.
+
+    controllerManager:
+      # Single leader-elected replica. The cluster is memory-tight and chaos is
+      # an occasional game-day tool, not a latency-critical control loop, so one
+      # replica is enough — and a lone replica is exempt from the replica-floor /
+      # drain-safe-PDB policies (no PDB needed).
+      replicaCount: 1
+      # The controller-manager is an ordinary workload (no host access), so give
+      # it a fully specified restricted securityContext: it stays PSA-compliant
+      # on its own merits even though the namespace is exempt. Only the daemon
+      # relies on the exemption (defence-in-depth).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        seccompProfile:
+          type: RuntimeDefault
+        capabilities:
+          drop:
+            - ALL
+
+    # Minimal footprint. This installs the fault-injection ENGINE
+    # (controller-manager + chaos-daemon + CRDs) only; experiments are
+    # Git-defined Schedule/PodChaos CRs reviewed through a PR, not clicked in a
+    # UI (see docs/chaos-engineering.md). The optional dashboard, the DNSChaos
+    # server (chart default is ON), the eBPF KernelChaos installer and the Go
+    # debug-server are all left off.
+    dashboard:
+      create: false
+    dnsServer:
+      create: false
+    bpfki:
+      create: false
+    chaosDlv:
+      enable: false

@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: chaos-mesh
+  labels:
+    # chaos-daemon is irreducibly privileged: it mounts the host containerd
+    # socket (hostPath) and the chart hardcodes hostPID so it can enter a target
+    # pod's namespaces to inject faults. That can never satisfy PSA `restricted`,
+    # so this namespace runs `privileged` and is added to the matching exclusions
+    # in the Kyverno cluster-policies (validate-host-restrictions,
+    # validate-pod-security, add-security-context) — the same treatment
+    # kubevirt/cdi get for their host-level access. The controller-manager keeps
+    # a fully specified restricted securityContext regardless (see
+    # helm-release.yaml); only the daemon needs the privilege.
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/enforce-version: latest

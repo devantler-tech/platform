@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: chaos-mesh
+  namespace: chaos-mesh
+spec:
+  # The canonical Chaos Mesh Helm repo. There is no official OCI chart
+  # (ghcr.io/chaos-mesh hosts images only), so this stays a default-type
+  # HelmRepository.
+  url: https://charts.chaos-mesh.org
