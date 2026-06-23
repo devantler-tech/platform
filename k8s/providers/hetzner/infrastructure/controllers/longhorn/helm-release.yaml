@@ -68,6 +68,24 @@ spec:
       # against it). Longhorn briefly attaches the volume in maintenance mode,
       # rebuilds, and detaches again.
       offlineReplicaRebuilding: true
+      # Engine->replica gRPC timeout. Raised from the 8s chart default to the
+      # 30s maximum because this cluster enforces Cilium SPIRE mutual
+      # authentication (the require-mutual-auth CiliumClusterwideNetworkPolicy,
+      # mode: required) on all intra-cluster traffic. When an engine<->replica
+      # auth-cache entry is cold -- after a cilium/spire-agent roll wipes every
+      # node's cache, or once an idle entry expires -- Cilium drops the first
+      # packet(s) while the SPIRE handshake completes, and the TCP
+      # retransmit-during-handshake delay intermittently exceeds the 8s default.
+      # The engine then declares an otherwise-healthy replica `in error` ->
+      # Faulted -> rebuild -> recover (~40-80s), so longhorn-manager spams
+      # Faulted / FailedRebuilding / FailedSnapshotPurge events (and matching
+      # log errors) every hour even though every volume is healthy at every
+      # point-in-time check. 30s absorbs the handshake latency WITHOUT weakening
+      # mutual auth (WireGuard still encrypts the wire and the SPIRE identity
+      # gate is unchanged) -- the long-lived-data-plane equivalent of the in-run
+      # curl retries the coroot-pricing / umami-provision CronJobs already use
+      # for the same first-packet-drop race. Longhorn caps this setting at 30s.
+      engineReplicaTimeout: "30"
 
     persistence:
       # Longhorn is the default StorageClass (replaces hcloud for new PVCs).
