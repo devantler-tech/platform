@@ -1,0 +1,12 @@
+# Routes Flux notification-controller events to Slack via the incoming-webhook
+# Secret. notification-controller is enabled in the FluxInstance (see
+# controllers/flux-instance) and runs HA (2 replicas).
+apiVersion: notification.toolkit.fluxcd.io/v1beta3
+kind: Provider
+metadata:
+  name: slack
+  namespace: flux-system
+spec:
+  type: slack
+  secretRef:
+    name: slack-webhook
