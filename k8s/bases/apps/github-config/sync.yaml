@@ -47,7 +47,21 @@ spec:
   retryInterval: 2m
   path: .
   prune: true
-  wait: true
+  # wait: false (NOT true like other apps). This Kustomization applies external
+  # GitHub state as Crossplane managed resources, whose readiness depends on the
+  # GitHub API + App credentials -- OUTSIDE the platform's control. With
+  # wait: true, Flux gates this Kustomization's health on that external
+  # reconciliation, and because this Kustomization is itself health-checked by
+  # the parent `apps` Flux Kustomization, any GitHub-side failure cascades into
+  # the WHOLE apps layer's GitOps health. That is currently happening: the
+  # maintainers-team resources fail forever (teamId references the team by name
+  # not id -> strconv.ParseInt error; the App lacks org-owner perms -> 403 -- a
+  # devantler-tech/.github + GitHub-App problem, tracked in #2235), so wait: true
+  # times out at 5m and flaps `apps` into HealthCheckFailed. The apply still
+  # runs and apply errors are still surfaced; only the readiness WAIT is dropped,
+  # so a broken EXTERNAL resource is tracked via its Crossplane status / alerts
+  # instead of degrading unrelated in-cluster apps' GitOps health.
+  wait: false
   force: true
   # Runs as the app SA: the GitHub managed resources are applied with only the
   # namespace-scoped authority in rbac.yaml. This Kustomization is itself applied
