@@ -1,0 +1,60 @@
+# An always-on web app plus a CloudNativePG cluster in one namespace — same
+# shape as the umami / wedding-app policies. Covers forward-auth ingress to
+# Backstage (7007), intra-namespace app<->db traffic, and CNPG operator
+# management (cnpg-system).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-backstage
+  namespace: backstage
+spec:
+  endpointSelector: {}
+  ingress:
+    # Forward-auth: the auth-proxy (Traefik, in the oauth2-proxy namespace)
+    # reaches Backstage after oauth2-proxy / Dex authentication.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "7007"
+              protocol: TCP
+    # Intra-namespace (Backstage -> DB, CNPG replication).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: backstage
+    # CNPG operator reaches the instance status (8000) and PostgreSQL (5432).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: cnpg-system
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+            - port: "5432"
+              protocol: TCP
+  egress:
+    # Intra-namespace (Backstage -> DB).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: backstage
+    # Kube API (CNPG operator manages the cluster; the instance pods coordinate
+    # via the API). The demo image needs no external egress — it ships an example
+    # catalog. GitHub catalog discovery (a custom-image follow-up) will add a
+    # pinned api.github.com FQDN egress here; see docs/backstage.md.
+    - toEntities:
+        - kube-apiserver
+    # DNS resolution.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

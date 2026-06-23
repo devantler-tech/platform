@@ -48,6 +48,11 @@ data:
           rule: "Host(`crossview.${domain}`)"
           entryPoints: ["web"]
           service: crossview
+        # Backstage IDP (forward-auth, demo-image scaffold — see docs/backstage.md).
+        backstage:
+          rule: "Host(`backstage.${domain}`)"
+          entryPoints: ["web"]
+          service: backstage
       services:
         homepage:
           loadBalancer:
@@ -75,3 +80,7 @@ data:
           loadBalancer:
             servers:
               - url: "http://crossview-service.crossview.svc.cluster.local:80"
+        backstage:
+          loadBalancer:
+            servers:
+              - url: "http://backstage.backstage.svc.cluster.local:7007"

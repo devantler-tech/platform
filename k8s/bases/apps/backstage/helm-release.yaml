@@ -1,0 +1,131 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: backstage
+  namespace: backstage
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  timeout: 10m
+  chart:
+    spec:
+      chart: backstage
+      version: 2.8.2
+      sourceRef:
+        kind: HelmRepository
+        name: backstage
+  # https://github.com/backstage/charts/blob/main/charts/backstage/values.yaml
+  values:
+    # External Postgres (CNPG, postgres-cluster.yaml); the bundled subchart off.
+    postgresql:
+      enabled: false
+    # Cilium owns NetworkPolicy + Gateway-API ingress; the chart's own are off.
+    networkPolicy:
+      enabled: false
+    ingress:
+      enabled: false
+    service:
+      type: ClusterIP
+
+    backstage:
+      # ── SCAFFOLD IMAGE — read docs/backstage.md before promoting ────────────
+      # ghcr.io/backstage/backstage is the upstream DEMO image (example plugin
+      # set + example catalog). A production Backstage with SSO, the Kubernetes
+      # plugin and GitHub catalog discovery needs a CUSTOM-BUILT image — those
+      # plugins are compiled in at build time and CANNOT be enabled through
+      # values. This scaffold stands up the full platform integration (CNPG DB,
+      # forward-auth SSO, HTTPRoute, netpol) so the only remaining step to
+      # productionise is swapping this for an own-built image (ideally a tenant
+      # repo published via publish-app.yaml). Pinned to a real tag — never
+      # :latest (the disallow-latest-tag policy).
+      image:
+        registry: ghcr.io
+        repository: backstage/backstage
+        tag: "1.52.0"
+
+      # Single pod: Backstage runs plugin DB migrations on startup, so two
+      # concurrent pods can race them. maxSurge:0 retires the old pod before the
+      # new one starts (one pod at a time). 1 replica is deliberate, so opt out of
+      # the (Audit-only) replica floor via the documented label.
+      replicas: 1
+      strategy:
+        type: RollingUpdate
+        rollingUpdate:
+          maxSurge: 0
+          maxUnavailable: 1
+      podLabels:
+        platform.devantler.tech/replica-floor: exempt
+
+      podSecurityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containerSecurityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+        # Backstage writes to /app and /tmp at runtime; a read-only root would
+        # need writable volume mounts. PSS-restricted does not require it here
+        # (validate-pod-security explicitly does not check readOnlyRootFilesystem).
+        readOnlyRootFilesystem: false
+
+      extraEnvVars:
+        # Public URLs. Flux substitutes ${domain}; Backstage reads APP_CONFIG_*
+        # env keys as config overrides, so no custom appConfig ConfigMap is needed
+        # (the demo image's app-config already references these + the POSTGRES_*
+        # and BACKEND_SECRET vars below).
+        - name: APP_CONFIG_app_baseUrl
+          value: https://backstage.${domain}
+        - name: APP_CONFIG_backend_baseUrl
+          value: https://backstage.${domain}
+        - name: APP_CONFIG_backend_cors_origin
+          value: https://backstage.${domain}
+        # One database, a schema per plugin: the CNPG `backstage` role owns the DB
+        # and can create schemas, whereas the default database-per-plugin mode
+        # would need CREATEDB on the role.
+        - name: APP_CONFIG_backend_database_pluginDivisionMode
+          value: schema
+        - name: APP_CONFIG_backend_database_connection_database
+          value: backstage
+        # DB connection from the CNPG-generated backstage-db-app Secret.
+        - name: POSTGRES_HOST
+          valueFrom:
+            secretKeyRef:
+              name: backstage-db-app
+              key: host
+        - name: POSTGRES_PORT
+          valueFrom:
+            secretKeyRef:
+              name: backstage-db-app
+              key: port
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: backstage-db-app
+              key: username
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: backstage-db-app
+              key: password
+        # Backend signing key (generated; backend-secret.yaml).
+        - name: BACKEND_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: backstage-backend-secret
+              key: password
+
+      resources:
+        requests:
+          cpu: 100m
+          memory: 384Mi
+        limits:
+          memory: 1Gi

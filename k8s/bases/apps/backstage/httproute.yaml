@@ -1,0 +1,43 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: backstage
+  namespace: backstage
+  annotations:
+    # Surface on the homepage dashboard (same convention as headlamp/whoami).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Backstage
+    gethomepage.dev/description: Internal developer portal — software catalog.
+    gethomepage.dev/group: Platform
+    gethomepage.dev/icon: backstage.png
+    gethomepage.dev/href: https://backstage.${domain}
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - backstage.${domain}
+  rules:
+    # Backstage has no native OIDC in the demo image, so it is fronted by
+    # oauth2-proxy forward-auth (Dex SSO) exactly like homepage / the Coroot /
+    # Longhorn UIs: the route backends to oauth2-proxy, which after authentication
+    # hands the request to the auth-proxy (Traefik), which routes by Host to the
+    # backstage Service (see auth-proxy config-map). Productionising to native
+    # Backstage OIDC (a custom image + a Dex static client) is the follow-up in
+    # docs/backstage.md.
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://backstage.${domain}/
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80
