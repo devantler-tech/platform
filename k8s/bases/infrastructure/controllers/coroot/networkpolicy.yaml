@@ -74,14 +74,24 @@ spec:
         - remote-node
     # External HTTPS, pinned by FQDN instead of world:443 so a compromised
     # pod cannot exfiltrate telemetry to arbitrary external services:
-    # - hooks.slack.com — Coroot incident notifications (Slack webhook)
-    # - hc-ping.com     — the cluster-heartbeat CronJob's dead-man ping
-    #                     (${alertmanager_heartbeat_url})
-    # - coroot.com      — Coroot version checks / usage statistics
+    # - hooks.slack.com  — Coroot incident notifications (Slack webhook)
+    # - hc-ping.com      — the cluster-heartbeat CronJob's dead-man ping
+    #                      (${alertmanager_heartbeat_url})
+    # - coroot.com       — Coroot version checks / usage statistics
+    # - coroot.github.io — the cloud-pricing data dump
+    #                      (coroot.github.io/cloud-pricing/data/cloud-pricing.json.gz).
+    #                      Coroot's cost engine loads this dump into its in-memory
+    #                      pricing model on startup; if it can't reach the host the
+    #                      model stays nil and GetNodePrice returns nil for EVERY
+    #                      node — so even a correctly-applied Custom Cloud Pricing
+    #                      (the coroot-custom-cloud-pricing CronJob, prod) yields an
+    #                      empty cost rollup with custom_pricing:false (#2148). This
+    #                      is a DIFFERENT host from coroot.com above.
     - toFQDNs:
         - matchName: "hooks.slack.com"
         - matchName: "hc-ping.com"
         - matchName: "coroot.com"
+        - matchName: "coroot.github.io"
       toPorts:
         - ports:
             - port: "443"
