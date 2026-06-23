@@ -75,9 +75,13 @@ spec:
               type: RuntimeDefault
           containers:
             - name: set-pricing
-              # Same pinned image as the heartbeat CronJob (curl + busybox sh /
-              # grep / sed / awk — no jq needed for this tiny JSON).
-              image: docker.io/curlimages/curl:8.20.0@sha256:b3f1fb2a51d923260350d21b8654bbc607164a987e2f7c84a0ac199a67df812a
+              # curl + jq, pinned by digest. jq replaces the former grep/sed/awk
+              # JSON parsing + awk float compare with a robust, structure-tolerant
+              # parse (the heartbeat CronJob still uses curlimages/curl — it has no
+              # JSON to parse). No official curl+jq image exists, so this is the
+              # de-facto community one, digest-pinned; observability is exempt from
+              # disallow-latest-tag. Swappable for any curl+jq image.
+              image: docker.io/badouralix/curl-jq:latest@sha256:3670578737d1d2019b10a4f9e607284101feb9fdd6b0478e78ea87bf61d96145
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
@@ -110,15 +114,30 @@ spec:
                 - |
                   set -u
                   BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
+                  # This cluster enforces Cilium mutual authentication
+                  # (CiliumClusterwideNetworkPolicy require-mutual-auth, mode:
+                  # required). The FIRST packet from this short-lived pod to coroot
+                  # is dropped while the SPIRE handshake is established, so a single
+                  # un-retried in-cluster call intermittently fails (curl exit /
+                  # HTTP 000). The project-discovery loop below already absorbs that
+                  # for /api/user, but the pricing GET + POST ran exactly once and so
+                  # flapped: a dropped GET skips the "already correct" short-circuit
+                  # and triggers a needless POST, which the same race then fails ->
+                  # the run errors even though pricing is already correct. Retry
+                  # transient connection/setup errors so a single tick converges
+                  # (still idempotent; the schedule remains the outer retry loop).
+                  RETRY="--retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused"
 
                   # Resolve the operator-created 'platform' project id (a random
-                  # NanoId, so match by name). Retry while Coroot / the project
-                  # are still warming up.
+                  # NanoId, so match by name). Recursive-descent jq pulls the id
+                  # out of the {id, name:"platform"} object wherever it sits in the
+                  # /api/user response -- robust to response-shape changes, unlike
+                  # the former grep/sed. Retry while Coroot / the project warm up.
                   pid=""
                   i=0
                   while [ "$i" -lt 60 ]; do
-                    user="$(curl -sf --max-time 10 "$BASE/api/user" 2>/dev/null || true)"
-                    pid="$(printf '%s' "$user" | grep -oE '"id":"[^"]+","name":"platform"' | head -n1 | sed -E 's/.*"id":"([^"]+)".*/\1/')"
+                    pid="$(curl -sf --max-time 10 "$BASE/api/user" 2>/dev/null \
+                      | jq -r 'first(.. | objects | select(.name? == "platform" and (.id? | strings)) | .id) // empty' 2>/dev/null || true)"
                     [ -n "$pid" ] && break
                     echo "waiting for coroot and the 'platform' project..."
                     i=$((i + 1))
@@ -129,30 +148,38 @@ spec:
                     exit 1
                   fi
 
-                  # Skip if Hetzner pricing is already applied (Coroot reports
-                  # default:true while still on the GCP-C4 fallback). The numeric
-                  # compare keeps the loop declarative: any drift re-POSTs.
-                  cur="$(curl -sf --max-time 10 "$BASE/api/project/$pid/custom_cloud_pricing" 2>/dev/null || true)"
-                  isdefault="$(printf '%s' "$cur" | grep -c '"default":true' 2>/dev/null || true)"
-                  curcpu="$(printf '%s' "$cur" | sed -n 's/.*"per_cpu_core":\([0-9.eE+-]*\).*/\1/p')"
-                  curmem="$(printf '%s' "$cur" | sed -n 's/.*"per_memory_gb":\([0-9.eE+-]*\).*/\1/p')"
-                  if [ "${isdefault:-0}" = "0" ] && [ -n "$curcpu" ] && [ -n "$curmem" ] && \
-                     awk -v a="$curcpu" -v b="$PER_CPU_CORE" -v c="$curmem" -v d="$PER_MEMORY_GB" \
-                       'BEGIN { x = a - b; if (x < 0) x = -x; y = c - d; if (y < 0) y = -y; exit !(x < 1e-7 && y < 1e-7) }'; then
+                  # Skip if Hetzner pricing is already applied. Coroot reports
+                  # default:true while still on the GCP-C4 fallback; once set it
+                  # returns the custom per-unit rates. jq does the numeric drift
+                  # check (1e-7 tolerance, matching the old awk) so any drift
+                  # re-POSTs; an empty/unparseable body falls through to the POST.
+                  cur="$(curl -sf --max-time 10 $RETRY "$BASE/api/project/$pid/custom_cloud_pricing" 2>/dev/null || true)"
+                  uptodate="$(printf '%s' "$cur" | jq -r \
+                    --argjson cpu "$PER_CPU_CORE" --argjson mem "$PER_MEMORY_GB" '
+                    def approx(a;b): (a - b | if . < 0 then -. else . end) < 1e-7;
+                    (first(.. | objects | select(has("per_cpu_core"))) // {}) as $p
+                    | (any(.. | objects; .default == true)) as $isdefault
+                    | if ($isdefault | not)
+                         and ($p.per_cpu_core != null) and ($p.per_memory_gb != null)
+                         and approx($p.per_cpu_core; $cpu) and approx($p.per_memory_gb; $mem)
+                      then "yes" else "no" end' 2>/dev/null || echo "no")"
+                  if [ "$uptodate" = "yes" ]; then
                     echo "custom cloud pricing already correct for project $pid; nothing to do"
                     exit 0
                   fi
 
                   # anonymous == Admin in-cluster (oauth2-proxy fronts only the
-                  # external route), so no credential is needed.
-                  resp="$(curl -s -w '\n%{http_code}' --max-time 10 \
+                  # external route), so no credential is needed. jq -n builds the
+                  # body so the numbers are always valid JSON.
+                  body="$(jq -nc --argjson cpu "$PER_CPU_CORE" --argjson mem "$PER_MEMORY_GB" \
+                    '{per_cpu_core: $cpu, per_memory_gb: $mem}')"
+                  resp="$(curl -s -w '\n%{http_code}' --max-time 10 $RETRY \
                     -X POST "$BASE/api/project/$pid/custom_cloud_pricing" \
                     -H 'content-type: application/json' \
-                    -d "{\"per_cpu_core\":$PER_CPU_CORE,\"per_memory_gb\":$PER_MEMORY_GB}")"
+                    -d "$body")"
                   code="$(printf '%s' "$resp" | tail -n1)"
-                  body="$(printf '%s' "$resp" | sed '$d')"
                   if [ "$code" != "200" ]; then
-                    echo "ERROR: set custom cloud pricing failed (HTTP $code): $body"
+                    echo "ERROR: set custom cloud pricing failed (HTTP $code): $(printf '%s' "$resp" | sed '$d')"
                     exit 1
                   fi
                   echo "applied Hetzner custom cloud pricing to project $pid: per_cpu_core=$PER_CPU_CORE/h per_memory_gb=$PER_MEMORY_GB/h"

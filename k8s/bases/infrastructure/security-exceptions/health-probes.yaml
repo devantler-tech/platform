@@ -48,3 +48,11 @@ spec:
             - dex
             - oauth2-proxy
             - homepage
+            # Controller namespaces added since this list was last updated whose
+            # workloads genuinely lack probe endpoints (verified failing C-0018 /
+            # C-0056 in the cluster Kubescape operator): the external-secrets
+            # operator/webhook/cert-controller and the Crossplane control-plane
+            # (core, rbac-manager, provider pods). crossview / ksail-operator /
+            # flagger DO configure probes, so they are deliberately NOT listed.
+            - external-secrets
+            - crossplane-system

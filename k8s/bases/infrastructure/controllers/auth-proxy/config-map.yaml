@@ -42,12 +42,6 @@ data:
           rule: "Host(`longhorn.${domain}`)"
           entryPoints: ["web"]
           service: longhorn
-        # Hetzner-only (Crossplane dashboard): inert on local/CI where no
-        # HTTPRoute sends crossview.${domain} to oauth2-proxy.
-        crossview:
-          rule: "Host(`crossview.${domain}`)"
-          entryPoints: ["web"]
-          service: crossview
         # Backstage IDP (forward-auth, demo-image scaffold — see docs/backstage.md).
         backstage:
           rule: "Host(`backstage.${domain}`)"
@@ -76,10 +70,6 @@ data:
           loadBalancer:
             servers:
               - url: "http://longhorn-frontend.longhorn-system.svc.cluster.local:80"
-        crossview:
-          loadBalancer:
-            servers:
-              - url: "http://crossview-service.crossview.svc.cluster.local:80"
         backstage:
           loadBalancer:
             servers:

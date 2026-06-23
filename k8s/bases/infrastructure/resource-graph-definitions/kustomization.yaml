@@ -1,11 +1,12 @@
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# KRO archetype ResourceGraphDefinitions (#1932 Tenant, #1933 WebApp) — typed
+# KRO ResourceGraphDefinitions (#1932 Tenant, #1933 WebApp) — typed
 # higher-level APIs that expand into the standard platform skeleton each tenant
 # /app otherwise hand-copies. Lives in the `infrastructure` layer (RGD CRs need
 # the KRO controller's RGD CRD from infrastructure-controllers/kro). Each
-# archetype ships its own aggregated ClusterRole granting KRO the verbs for the
+# RGD ships its own aggregated ClusterRole granting KRO the verbs for the
 # child kinds it renders (KRO runs with rbac.mode: aggregation).
 resources:
   - tenant/
+  - webapp/

@@ -11,8 +11,13 @@ resources:
   # the 2 replicas land on different nodes. So 2 replicas = one active CSR
   # approver + a warm standby that takes over on a node drain/failure, not two
   # active approvers. The standalone PDB (pod-disruption-budget.yaml) makes the
-  # node drain-safe (maxUnavailable: 1). When bumping, re-pin both this URL and
-  # the PDB selector to the same upstream ref.
-  - https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/main/deploy/ha-install.yaml
+  # node drain-safe (maxUnavailable: 1).
+  #
+  # Pinned to a release tag (not the moving `main` branch) for reproducibility:
+  # Renovate bumps the version in this URL automatically via the github-releases
+  # custom manager in .github/renovate.json (the project ships no Helm chart, only
+  # these raw install manifests, so a kustomize remote resource is the install
+  # path). On a bump, re-check the PDB selector still matches the upstream labels.
+  - https://raw.githubusercontent.com/alex1989hu/kubelet-serving-cert-approver/v0.11.0/deploy/ha-install.yaml
   - networkpolicy.yaml
   - pod-disruption-budget.yaml
