@@ -54,10 +54,24 @@ Velero), so the manually-set values are durable without a GitOps source of truth
 ## Credential setup (one-time, maintainer)
 
 1. Create a **GitHub App** on the devantler-tech org (Settings → Developer
-   settings → GitHub Apps): permissions *Repository: Administration
-   (read/write), Contents (read)* and *Organization: Administration
-   (read/write)* to start — widen as more resource kinds come under
-   management. Install it on **all repositories** of the org. No webhook.
+   settings → GitHub Apps) with these permissions, then install it on **all
+   repositories** of the org (no webhook):
+   - *Repository → Administration (read/write)* — repositories, rulesets and
+     team↔repo access; plus *Repository → Contents (read)*.
+   - *Organization → Administration (read/write)* — org-level rulesets.
+   - *Organization → Members (read/write)* — **required for the `maintainers`
+     `Team`, `TeamMembership` and `TeamRepository` resources, and easy to miss
+     (`Administration` is NOT enough).** Without `Members`, the provider can't
+     even *read* a team (observe fails `external resource does not exist`, even
+     though the team exists) and team *writes* fail `403 You must be an
+     organization owner or team maintainer` — so team management silently breaks
+     while the repo/ruleset/label resources keep working. Widen further as more
+     resource kinds come under management.
+
+   When you **add** a permission to an *existing* App, you must also **approve
+   the new permission on the org installation** (Org settings → Installed GitHub
+   Apps → the App → review the request) — the installation keeps the old
+   permission set until you do, so the resources stay broken until approved.
 2. **Overwrite the placeholders in OpenBao** with the App's real values — the
    keys already exist (seeded by the vault-config Job), so just set them, e.g.:
    ```sh
