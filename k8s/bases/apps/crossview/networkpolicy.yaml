@@ -7,27 +7,14 @@ spec:
   endpointSelector: {}
   ingress:
     # Public route traffic from the Cilium Gateway (crossview.${domain},
-    # httproute.yaml), which also backs the Headlamp crossview-headlamp plugin's
-    # "Open Crossview" iframe. There is no oauth2-proxy hop anymore — the gateway
-    # dials the crossview pod directly, arriving with the reserved `ingress`
-    # identity (Cilium's L7 proxy). Like the gateway -> oauth2-proxy hop, this is
-    # NOT a SPIRE workload, so the cluster-wide require-mutual-auth policy does not
-    # apply and authentication.mode must NOT be set here.
+    # httproute.yaml) — the gateway dials the crossview pod directly, arriving
+    # with the reserved `ingress` identity (Cilium's L7 proxy). This is NOT a
+    # SPIRE workload, so the cluster-wide require-mutual-auth policy does not apply
+    # and authentication.mode must NOT be set here. Kubelet health probes reach
+    # the pod via Cilium's implicit allow-localhost=auto path (no explicit host
+    # rule needed — matching every other app's policy, e.g. headlamp).
     - fromEntities:
         - ingress
-      toPorts:
-        - ports:
-            - port: "3001"
-              protocol: TCP
-    # Also reachable via the Headlamp crossview-headlamp plugin's port-forward in
-    # the Headlamp DESKTOP app: that final hop is dialed by the kubelet on the
-    # pod's node, so it arrives with the "host" identity (no SVID) and is exempt
-    # from the SPIRE mutual-auth requirement — authentication.mode must NOT be set
-    # here. (Desktop port-forward reaches Crossview's own /login; without a Dex
-    # session it cannot read cluster data, same as web.)
-    - fromEntities:
-        - host
-        - remote-node
       toPorts:
         - ports:
             - port: "3001"
