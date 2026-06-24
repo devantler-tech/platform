@@ -65,9 +65,15 @@ spec:
       # Generated ConfigMap: the chart auto-mounts it and appends a second
       # `--config /app/app-config-from-configmap.yaml`. Overrides only the database
       # block — replaces app-config.yaml's in-memory SQLite (client:
-      # better-sqlite3, connection: ':memory:') with Postgres. ${POSTGRES_*} are
-      # substituted at load time from the extraEnvVars below (sourced from the CNPG
-      # backstage-db-app Secret), so no secret values land in the ConfigMap itself.
+      # better-sqlite3, connection: ':memory:') with Postgres. This establishes
+      # `backend.database.connection` as an OBJECT (so reading it never hits the
+      # in-memory string); the connection's secret values (host/port/user/password)
+      # are layered on top from the APP_CONFIG_* env vars below rather than written
+      # here. NB: we must NOT put `${POSTGRES_*}` here — Flux's Kustomize postBuild
+      # substitution runs on this manifest at deploy time and, since those are not
+      # Flux variables, would replace them with empty/null before Backstage ever
+      # sees them (the image's app-config.production.yaml gets away with ${…}
+      # because it lives inside the container image, which Flux never touches).
       appConfig:
         backend:
           database:
@@ -77,10 +83,6 @@ spec:
             # CREATEDB on the role.
             pluginDivisionMode: schema
             connection:
-              host: ${POSTGRES_HOST}
-              port: ${POSTGRES_PORT}
-              user: ${POSTGRES_USER}
-              password: ${POSTGRES_PASSWORD}
               database: backstage
 
       # Single pod: Backstage runs plugin DB migrations on startup, so two
@@ -117,13 +119,14 @@ spec:
         readOnlyRootFilesystem: false
 
       extraEnvVars:
-        # Public URLs. Flux substitutes ${domain}; Backstage reads APP_CONFIG_*
-        # env keys as config overrides (highest precedence). The database wiring
-        # lives in the generated appConfig above (not here) so the whole
-        # backend.database block comes from a single source — avoiding a
-        # string/object merge conflict between a scalar env override and the
-        # connection object. The POSTGRES_* vars below are referenced by ${…} in
-        # that appConfig; BACKEND_SECRET signs backend-to-backend auth.
+        # Backstage reads APP_CONFIG_<dotted_path> env keys as config overrides at
+        # the HIGHEST precedence, and (unlike a config file) their values are NOT
+        # run through Flux's ${…} substitution — so secret values reach the backend
+        # intact. Public URLs: ${domain} IS a Flux substitution var. The DB
+        # connection's secret-derived values come straight from the CNPG
+        # backstage-db-app Secret via valueFrom and layer onto the connection
+        # object defined in the appConfig above; BACKEND_SECRET signs
+        # backend-to-backend auth.
         - name: APP_CONFIG_app_baseUrl
           value: https://backstage.${domain}
         - name: APP_CONFIG_backend_baseUrl
@@ -131,22 +134,22 @@ spec:
         - name: APP_CONFIG_backend_cors_origin
           value: https://backstage.${domain}
         # DB connection from the CNPG-generated backstage-db-app Secret.
-        - name: POSTGRES_HOST
+        - name: APP_CONFIG_backend_database_connection_host
           valueFrom:
             secretKeyRef:
               name: backstage-db-app
               key: host
-        - name: POSTGRES_PORT
+        - name: APP_CONFIG_backend_database_connection_port
           valueFrom:
             secretKeyRef:
               name: backstage-db-app
               key: port
-        - name: POSTGRES_USER
+        - name: APP_CONFIG_backend_database_connection_user
           valueFrom:
             secretKeyRef:
               name: backstage-db-app
               key: username
-        - name: POSTGRES_PASSWORD
+        - name: APP_CONFIG_backend_database_connection_password
           valueFrom:
             secretKeyRef:
               name: backstage-db-app
