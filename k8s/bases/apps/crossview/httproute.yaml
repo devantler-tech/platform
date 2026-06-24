@@ -1,9 +1,10 @@
-# Route for Crossview at crossview.${domain}. Two purposes: a browser-reachable
-# host for direct navigation, and the URL the Headlamp crossview-headlamp plugin
-# embeds in its "Open Crossview" iframe (the plugin reads the crossview-ingress
-# Ingress (ingress.yaml), resolves https://crossview.${domain}, and frames it).
-# No homepage tile by design: Crossview is surfaced through Headlamp, not the
-# homepage (the consolidation intent of #2156).
+# Route for Crossview at crossview.${domain} — a standalone, top-level dashboard
+# reached directly in the browser and surfaced as a homepage tile (see the
+# gethomepage.dev annotations below). Crossview is no longer embedded in Headlamp:
+# the crossview-headlamp plugin framed it in an iframe, but its OIDC sign-in
+# traverses Dex -> GitHub and github.com sends X-Frame-Options: deny, so the flow
+# can never complete inside a frame. Served top-level, its native Dex OIDC works
+# like every other platform app.
 #
 # Crossview authenticates itself via native Dex OIDC (helm-release.yaml), so this
 # route goes STRAIGHT to crossview-service — there is no oauth2-proxy hop. The app
@@ -20,6 +21,18 @@ kind: HTTPRoute
 metadata:
   name: crossview
   namespace: crossview
+  annotations:
+    # Homepage tile in the "Infrastructure as Code" group (between the Internal
+    # Developer Platform and Kubernetes groups — see homepage config-map layout).
+    # Homepage discovers this through its Gateway API HTTPRoute integration
+    # (kubernetes.yaml gateway: true); the href derives from the route host and
+    # the status dot from the app pod (pod-selector below).
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Crossview
+    gethomepage.dev/description: Crossplane resource explorer.
+    gethomepage.dev/group: Infrastructure as Code
+    gethomepage.dev/icon: mdi-graph-outline
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=crossview,app.kubernetes.io/component=app
 spec:
   parentRefs:
     - name: platform
@@ -34,19 +47,13 @@ spec:
             set:
               - name: Strict-Transport-Security
                 value: max-age=63072000; includeSubDomains; preload
-              # Allow ONLY Headlamp to frame Crossview: the crossview-headlamp
-              # plugin embeds https://crossview.${domain} in an iframe served from
-              # https://headlamp.${domain}. A scoped frame-ancestors both enables
-              # that embed and blocks clickjacking from any other origin, and as
-              # CSP it overrides X-Frame-Options in modern browsers. This `set`
-              # replaces any CSP Crossview returns; it returns none today (revisit
-              # if that changes).
+              # Crossview is a standalone top-level app (no longer framed by
+              # Headlamp), so deny cross-origin framing as clickjacking
+              # protection. As CSP, frame-ancestors overrides X-Frame-Options in
+              # modern browsers; 'self' still permits any same-origin sub-frame the
+              # SPA may use while blocking every cross-origin embed.
               - name: Content-Security-Policy
-                value: "frame-ancestors 'self' https://headlamp.${domain}"
-            remove:
-              # Belt-and-braces for older browsers that honor X-Frame-Options over
-              # CSP: strip any DENY/SAMEORIGIN the app emits.
-              - X-Frame-Options
+                value: "frame-ancestors 'self'"
       backendRefs:
         - name: crossview-service
           port: 80

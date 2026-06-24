@@ -94,11 +94,10 @@ spec:
     config:
       server:
         cors:
-          # The public URL Crossview is served at (crossview.${domain}). It is the
-          # post-login redirect target (must be the public URL, or users bounce to
-          # localhost after authenticating) AND the URL the Headlamp
-          # crossview-headlamp plugin embeds in its "Open Crossview" iframe
-          # (resolved from the crossview-ingress Ingress).
+          # The public URL Crossview is served at (crossview.${domain}) — a
+          # standalone, top-level dashboard. It is the post-login redirect target
+          # (must be the public URL, or users bounce to localhost after
+          # authenticating).
           origin: https://crossview.${domain}
         # Crossview does its OWN authentication now — there is no oauth2-proxy in
         # front of it (httproute.yaml routes crossview.${domain} straight to
