@@ -44,6 +44,47 @@ spec:
         repository: backstage/backstage
         tag: "1.52.0"
 
+      # Wire the backend to Postgres. The chart's default command
+      # (`node packages/backend`) loads ONLY the bundled app-config.yaml, which
+      # hard-codes an in-memory SQLite database; pluginDivisionMode:schema (a
+      # Postgres-only feature, set in the appConfig below) then throws "The SQLite
+      # driver does not support plugin division mode 'schema'" and the install
+      # never goes Ready. So we load app-config.yaml AND a small generated
+      # appConfig (below) that swaps the database over to Postgres.
+      #
+      # We deliberately do NOT load the image's bundled app-config.production.yaml:
+      # it sets `backend.listen: ':7007'` as a STRING, which collides with
+      # app-config.yaml's object form (`listen: {port: 7007}`) and crashes the
+      # backend on startup — "Invalid type in config for key 'backend.listen' …
+      # got string, wanted object". Our appConfig touches only backend.database, so
+      # the correct listen object from app-config.yaml stands.
+      args:
+        - "--config"
+        - "app-config.yaml"
+
+      # Generated ConfigMap: the chart auto-mounts it and appends a second
+      # `--config /app/app-config-from-configmap.yaml`. Overrides only the database
+      # block — replaces app-config.yaml's in-memory SQLite (client:
+      # better-sqlite3, connection: ':memory:') with Postgres. This establishes
+      # `backend.database.connection` as an OBJECT (so reading it never hits the
+      # in-memory string); the connection's secret values (host/port/user/password)
+      # are layered on top from the APP_CONFIG_* env vars below rather than written
+      # here. NB: we must NOT put `${POSTGRES_*}` here — Flux's Kustomize postBuild
+      # substitution runs on this manifest at deploy time and, since those are not
+      # Flux variables, would replace them with empty/null before Backstage ever
+      # sees them (the image's app-config.production.yaml gets away with ${…}
+      # because it lives inside the container image, which Flux never touches).
+      appConfig:
+        backend:
+          database:
+            client: pg
+            # One database, a schema per plugin: the CNPG `backstage` role owns the
+            # DB and can create schemas, whereas database-per-plugin would need
+            # CREATEDB on the role.
+            pluginDivisionMode: schema
+            connection:
+              database: backstage
+
       # Single pod: Backstage runs plugin DB migrations on startup, so two
       # concurrent pods can race them. maxSurge:0 retires the old pod before the
       # new one starts (one pod at a time). 1 replica is deliberate, so opt out of
@@ -78,40 +119,37 @@ spec:
         readOnlyRootFilesystem: false
 
       extraEnvVars:
-        # Public URLs. Flux substitutes ${domain}; Backstage reads APP_CONFIG_*
-        # env keys as config overrides, so no custom appConfig ConfigMap is needed
-        # (the demo image's app-config already references these + the POSTGRES_*
-        # and BACKEND_SECRET vars below).
+        # Backstage reads APP_CONFIG_<dotted_path> env keys as config overrides at
+        # the HIGHEST precedence, and (unlike a config file) their values are NOT
+        # run through Flux's ${…} substitution — so secret values reach the backend
+        # intact. Public URLs: ${domain} IS a Flux substitution var. The DB
+        # connection's secret-derived values come straight from the CNPG
+        # backstage-db-app Secret via valueFrom and layer onto the connection
+        # object defined in the appConfig above; BACKEND_SECRET signs
+        # backend-to-backend auth.
         - name: APP_CONFIG_app_baseUrl
           value: https://backstage.${domain}
         - name: APP_CONFIG_backend_baseUrl
           value: https://backstage.${domain}
         - name: APP_CONFIG_backend_cors_origin
           value: https://backstage.${domain}
-        # One database, a schema per plugin: the CNPG `backstage` role owns the DB
-        # and can create schemas, whereas the default database-per-plugin mode
-        # would need CREATEDB on the role.
-        - name: APP_CONFIG_backend_database_pluginDivisionMode
-          value: schema
-        - name: APP_CONFIG_backend_database_connection_database
-          value: backstage
         # DB connection from the CNPG-generated backstage-db-app Secret.
-        - name: POSTGRES_HOST
+        - name: APP_CONFIG_backend_database_connection_host
           valueFrom:
             secretKeyRef:
               name: backstage-db-app
               key: host
-        - name: POSTGRES_PORT
+        - name: APP_CONFIG_backend_database_connection_port
           valueFrom:
             secretKeyRef:
               name: backstage-db-app
               key: port
-        - name: POSTGRES_USER
+        - name: APP_CONFIG_backend_database_connection_user
           valueFrom:
             secretKeyRef:
               name: backstage-db-app
               key: username
-        - name: POSTGRES_PASSWORD
+        - name: APP_CONFIG_backend_database_connection_password
           valueFrom:
             secretKeyRef:
               name: backstage-db-app
