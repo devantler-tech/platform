@@ -84,6 +84,20 @@ spec:
             pluginDivisionMode: schema
             connection:
               database: backstage
+        # Guest sign-in. The upstream demo image runs with NODE_ENV=production,
+        # where Backstage's guest provider refuses to mint a token unless this is
+        # set — without it the sign-in page's guest "Enter" 403s ("the guest
+        # provider cannot be used outside of a development environment …"), and
+        # every subsequent frontend API call is then 401, so the UI throws errors
+        # on every action. Access is already gated by the oauth2-proxy / Dex
+        # (GitHub) SSO forward-auth in front of the HTTPRoute, so a guest identity
+        # INSIDE Backstage is the intended model for this scaffold; swapping in a
+        # custom-built image with a real sign-in resolver is the productionisation
+        # step (see docs/backstage.md).
+        auth:
+          providers:
+            guest:
+              dangerouslyAllowOutsideDevelopment: true
 
       # Single pod: Backstage runs plugin DB migrations on startup, so two
       # concurrent pods can race them. maxSurge:0 retires the old pod before the
