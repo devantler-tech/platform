@@ -8,7 +8,7 @@ metadata:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: Backstage
     gethomepage.dev/description: Internal developer portal — software catalog.
-    gethomepage.dev/group: Platform
+    gethomepage.dev/group: Internal Developer Platform
     gethomepage.dev/icon: backstage.png
     gethomepage.dev/href: https://backstage.${domain}
 spec:
