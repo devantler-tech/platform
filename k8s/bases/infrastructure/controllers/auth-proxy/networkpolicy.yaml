@@ -19,6 +19,14 @@ spec:
             - port: "8080"
               protocol: TCP
   egress:
+    # Backstage upstream (developer portal; Service backstage :7007).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: backstage
+      toPorts:
+        - ports:
+            - port: "7007"
+              protocol: TCP
     # Homepage upstream
     - toEndpoints:
         - matchLabels:
