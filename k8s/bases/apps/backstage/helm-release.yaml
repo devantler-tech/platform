@@ -44,6 +44,22 @@ spec:
         repository: backstage/backstage
         tag: "1.52.0"
 
+      # Load the image's production config so the backend talks to Postgres. The
+      # chart's default command (`node packages/backend`) loads ONLY the bundled
+      # app-config.yaml, which hard-codes an in-memory SQLite database; the
+      # Postgres wiring (client: pg + connection from the POSTGRES_* env vars
+      # below) lives in the image's app-config.production.yaml and must be passed
+      # explicitly. Without this the backend runs on SQLite, so
+      # pluginDivisionMode:schema (a Postgres-only feature) throws "The SQLite
+      # driver does not support plugin division mode 'schema'" and the install
+      # never goes Ready. Base first, production last so it wins; the APP_CONFIG_*
+      # env overrides below still take final precedence over both files.
+      args:
+        - "--config"
+        - "app-config.yaml"
+        - "--config"
+        - "app-config.production.yaml"
+
       # Single pod: Backstage runs plugin DB migrations on startup, so two
       # concurrent pods can race them. maxSurge:0 retires the old pod before the
       # new one starts (one pod at a time). 1 replica is deliberate, so opt out of
@@ -79,9 +95,9 @@ spec:
 
       extraEnvVars:
         # Public URLs. Flux substitutes ${domain}; Backstage reads APP_CONFIG_*
-        # env keys as config overrides, so no custom appConfig ConfigMap is needed
-        # (the demo image's app-config already references these + the POSTGRES_*
-        # and BACKEND_SECRET vars below).
+        # env keys as config overrides (highest precedence), so no custom appConfig
+        # ConfigMap is needed. The POSTGRES_* + BACKEND_SECRET vars below feed the
+        # image's app-config.production.yaml (loaded via the args above).
         - name: APP_CONFIG_app_baseUrl
           value: https://backstage.${domain}
         - name: APP_CONFIG_backend_baseUrl
