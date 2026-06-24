@@ -61,6 +61,11 @@ data:
     # the HTTPRoutes under k8s/bases/apps/** and k8s/**/infrastructure/** (incl.
     # provider overlays, e.g. Longhorn on Hetzner) and the service entries below.
     layout:
+      # First on the page: the Internal Developer Platform (Backstage and any
+      # future self-service portals). Keep this entry first so the IDP is the
+      # landing focus.
+      Internal Developer Platform:
+        icon: mdi-developer-board
       Kubernetes:
         icon: si-talos-#FF7300
       Observability:
