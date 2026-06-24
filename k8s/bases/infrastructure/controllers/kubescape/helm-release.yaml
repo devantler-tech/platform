@@ -65,6 +65,19 @@ spec:
     hostScanner:
       enabled: true
     nodeAgent:
+      image:
+        # Chart 1.40.2 pins node-agent v0.3.119, whose vendored inspektor-gadget
+        # has a data race in GadgetPubSub.Publish -- under container churn the
+        # DaemonSet dies with "fatal error: concurrent map writes" (observed
+        # crashlooping every prod node, 15/8/3 restarts, during the 06-20..06-23
+        # load). node-agent v0.3.128 fixed it by bumping the inspektor-gadget pin
+        # (kubescape/node-agent#825); this pin also carries the later v0.3.132
+        # (eBPF deadlock + OOM under load) and v0.3.136 (send-on-closed-channel
+        # panic on SIGTERM/rolling restart) crash fixes. The chart's node-agent
+        # default still lags the node-agent release train (kubevuln is already at
+        # v0.3.142 in the same chart), so override it here; drop this once the
+        # chart default catches up past v0.3.128.
+        tag: v0.3.142
       config:
         hostSensor:
           enabled: true
