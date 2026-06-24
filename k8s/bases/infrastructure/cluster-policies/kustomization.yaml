@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   # Custom policies (no upstream equivalent)
   - best-practices/add-default-deny.yaml
+  - best-practices/add-default-limitrange.yaml
   - best-practices/add-resource-defaults.yaml
   - best-practices/add-security-context.yaml
   - best-practices/auto-vpa.yaml
@@ -50,7 +51,8 @@ patches:
                   # stalls the coroot-operator and the infrastructure-controllers
                   # Flux Kustomization cluster-wide. Exempt it like the other
                   # platform-owned namespaces; its sizing is VPA-owned, not
-                  # quota-bounded. The LimitRange (rule 1) still applies.
+                  # quota-bounded. It still gets the default LimitRange from the
+                  # add-default-limitrange policy.
                   - observability
                   # Longhorn storage data plane. longhorn-manager creates the
                   # instance-manager pods WITHOUT a memory limit by design: during
@@ -60,11 +62,13 @@ patches:
                   # engine on that node (DetachedUnexpectedly), cascading into
                   # CNPG primary failover and Postgres timeline divergence
                   # cluster-wide (observed 2026-06-20). It is excluded from BOTH
-                  # rules: rule 1 drops the OOM-inducing limit, and this rule
-                  # (ResourceQuota) must drop too -- otherwise pods that no longer
-                  # receive the LimitRange-supplied requests get rejected by the
-                  # requests.memory quota. Longhorn sizing is operator-/VPA-owned
-                  # (manager, csi, ui carry VPAs), not quota-bounded.
+                  # the ResourceQuota (here) and the LimitRange
+                  # (add-default-limitrange drops the OOM-inducing limit by
+                  # excluding it too); this rule must drop it as well -- otherwise
+                  # pods that no longer receive LimitRange-supplied requests get
+                  # rejected by the requests.memory quota. Longhorn sizing is
+                  # operator-/VPA-owned (manager, csi, ui carry VPAs), not
+                  # quota-bounded.
                   - longhorn-system
                   # Velero backup data plane. Velero runs a kopia
                   # repository-maintenance Job per backup repo (one per backed-up
@@ -84,8 +88,8 @@ patches:
                   # node) plus these ephemeral Jobs, not steady-state tenant
                   # workloads, so a static per-namespace memory quota is the wrong
                   # tool and actively harmful here. Exempt it like the other
-                  # platform-owned namespaces; the LimitRange (rule 1) still applies,
-                  # so backup pods keep sane default requests/limits.
+                  # platform-owned namespaces; it still gets the default LimitRange
+                  # from add-default-limitrange, so backup pods keep sane defaults.
                   - velero
       - op: add
         path: /spec/rules/0/generate/generateExisting
@@ -104,49 +108,25 @@ patches:
           # resources; limits are burst ceilings VPA now owns per pod.
           requests.cpu: "8"
           requests.memory: 16Gi
-      - op: add
-        path: /spec/rules/1/exclude
-        value:
-          any:
-            - resources:
-                names:
-                  - kube-system
-                  - kube-public
-                  - kube-node-lease
-                  - flux-system
-                  # See rule 0: Longhorn instance-managers must run without the
-                  # default memory limit -- an OOM during a rebuild recreates the
-                  # IM pod and faults every volume on the node, taking the storage
-                  # data plane (and every CNPG database on it) down.
-                  - longhorn-system
-      - op: add
-        path: /spec/rules/1/generate/generateExisting
-        value: true
-      - op: replace
-        path: /spec/rules/1/generate/data/spec/limits/0/default
-        value:
-          cpu: 500m
-          memory: 512Mi
-      - op: replace
-        path: /spec/rules/1/generate/data/spec/limits/0/defaultRequest
-        value:
-          # CPU floor lowered 50m->15m to match VPA minAllowed (auto-vpa.yaml);
-          # idle controllers default lower until VPA right-sizes them.
-          cpu: 15m
-          memory: 128Mi
+      # Remove the upstream sample's LimitRange rule. It is re-homed in the
+      # standalone add-default-limitrange policy so the ResourceQuota and the
+      # LimitRange never share one policy: Kyverno evaluates EVERY rule of a
+      # policy against any trigger matching ANY rule (one shared UpdateRequest),
+      # so while the LimitRange rule (which does not exclude observability/velero)
+      # lived here next to this ResourceQuota rule (which does), this rule fired
+      # against those two namespaces and emitted "generate-resourcequota error:
+      # policy does not apply to resource" PolicyError events every reconcile.
+      # Removing a generate rule leaves its already-generated LimitRanges in
+      # place (stale, not deleted -- verified via the validate-policy webhook),
+      # so add-default-limitrange adopts them with no gap.
+      - op: remove
+        path: /spec/rules/1
       # Skip namespaces that are being deleted. A terminating namespace (e.g.
       # cdi/kubevirt after the prod disable) rejects new ResourceQuota/LimitRange
       # with "forbidden: namespace is being terminated", which Kyverno surfaces
       # as PolicyError Warning events that trip the merge-queue event gate.
       - op: add
         path: /spec/rules/0/preconditions
-        value:
-          all:
-            - key: "{{ request.object.metadata.deletionTimestamp || '' }}"
-              operator: Equals
-              value: ""
-      - op: add
-        path: /spec/rules/1/preconditions
         value:
           all:
             - key: "{{ request.object.metadata.deletionTimestamp || '' }}"

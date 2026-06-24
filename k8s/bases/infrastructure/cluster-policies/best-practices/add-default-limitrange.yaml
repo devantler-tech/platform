@@ -1,0 +1,77 @@
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: add-default-limitrange
+  annotations:
+    policies.kyverno.io/title: Add Default LimitRange
+    policies.kyverno.io/category: Multi-Tenancy
+    policies.kyverno.io/subject: LimitRange
+    policies.kyverno.io/description: >-
+      Generates the default-limitrange LimitRange (per-container request/limit
+      defaults) in every tenant namespace. Split out of add-ns-quota -- which now
+      generates only the ResourceQuota -- so the two no longer share one policy.
+      Kyverno evaluates EVERY rule of a policy against any trigger that matches ANY
+      rule (a single shared UpdateRequest per trigger), so while the ResourceQuota
+      and LimitRange rules lived together with different exclude scopes, the
+      ResourceQuota rule fired against observability and velero (which it excludes
+      but the LimitRange rule did not) and emitted "generate-resourcequota error:
+      policy does not apply to resource" PolicyError events on every background
+      reconcile. As two independent single-rule policies that cross-rule mismatch
+      cannot occur: each namespace either matches a policy (and is generated for)
+      or does not (and produces no UpdateRequest).
+spec:
+  # Required for generateExisting + synchronize to reconcile pre-existing
+  # namespaces and keep the generated LimitRange in sync.
+  background: true
+  rules:
+    - name: generate-limitrange
+      match:
+        any:
+          - resources:
+              kinds:
+                - Namespace
+      exclude:
+        any:
+          - resources:
+              names:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+                - flux-system
+                # Longhorn instance-managers must run WITHOUT the default memory
+                # limit: during a volume rebuild they burst past the default
+                # (512Mi), get OOMKilled, and longhorn-manager recreates the IM
+                # pod -- faulting every replica engine on the node and cascading
+                # into CNPG failover (observed 2026-06-20). observability and
+                # velero are intentionally NOT excluded here -- they are exempt
+                # from the ResourceQuota (see add-ns-quota) but still need sane
+                # default requests/limits.
+                - longhorn-system
+      preconditions:
+        all:
+          # Skip a terminating namespace: it rejects a new LimitRange with
+          # "namespace is being terminated", which Kyverno surfaces as a
+          # PolicyError Warning event. Mirrors add-ns-quota.
+          - key: "{{ request.object.metadata.deletionTimestamp || '' }}"
+            operator: Equals
+            value: ""
+      generate:
+        apiVersion: v1
+        kind: LimitRange
+        name: default-limitrange
+        namespace: "{{request.object.metadata.name}}"
+        synchronize: true
+        generateExisting: true
+        data:
+          spec:
+            limits:
+              - default:
+                  cpu: 500m
+                  memory: 512Mi
+                defaultRequest:
+                  # CPU floor matches VPA minAllowed (auto-vpa.yaml); idle
+                  # controllers default lower until VPA right-sizes them.
+                  cpu: 15m
+                  memory: 128Mi
+                type: Container
