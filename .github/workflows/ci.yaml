@@ -59,16 +59,19 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        # Pinned to 7.65.0 (deliberately NOT renovate-bumped): 7.66.x
-        # parallelised the in-process Helm render and made it racy, so both
-        # `ksail workload validate` (varying YAML parse errors on a different
-        # kustomization each run) and `ksail workload scan` (swinging compliance
-        # score) are non-deterministic. 7.65.0 renders serially and both are
-        # run-to-run deterministic. Drop the pin once a ksail release fixes the
-        # race (https://github.com/devantler-tech/ksail/issues/5371).
+        # Renovate-managed (datasource github-releases; grouped 'ksail' with the
+        # deploy-prod / dr-rebuild pins). Previously frozen at 7.65.0 to dodge the
+        # non-deterministic in-process Helm render 7.66.x introduced — `ksail
+        # workload validate` (varying YAML parse errors) and `ksail workload scan`
+        # (swinging compliance score) flaked run-to-run. That race is resolved
+        # upstream (devantler-tech/ksail#5371, closed COMPLETED), so the pin is
+        # lifted back onto the latest release.
+        # TRIPWIRE: if validate or scan starts swinging run-to-run again, re-pin
+        # to a known-good version (drop the renovate comment) and reopen #5371.
         shell: bash
         env:
-          KSAIL_VERSION: "7.65.0"
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.77.0"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -88,23 +91,24 @@ jobs:
         # FAILS if a change drops the posture below the threshold, so new
         # findings must be fixed (or justified) before merge.
         #
-        # The threshold (85) is a regression FLOOR set a few points below the
-        # score the scan reports in CI (a stable ≈87.4% on 7.65.0). The Kubescape
-        # compliance score is **environment-dependent** — the same binary on the
-        # same manifests scores ≈87% on the Linux CI runner but ≈94% locally
-        # (macOS), a gap that isn't the render, the framework cache, or the merge
-        # content — so the gate is pinned under the observed CI value to catch
-        # real regressions without flaking on that variance. 7.65.0 keeps it
-        # run-to-run deterministic (7.66.x's parallel render is racy:
-        # https://github.com/devantler-tech/ksail/issues/5371).
+        # The threshold (85) is a regression FLOOR, not the live score. The
+        # Kubescape compliance score is **environment-dependent** — the same
+        # binary on the same manifests scores higher locally (macOS, ≈94%) than on
+        # the Linux CI runner (≈87%), a gap that isn't the render, the framework
+        # cache, or the merge content — and the absolute value also shifts with the
+        # ksail render, so it can't be reproduced exactly offline. CI is the source
+        # of truth; the gate sits a few points under the observed CI value to catch
+        # real regressions without flaking on that variance. (NB the floor may need
+        # re-baselining after a ksail version bump.)
         #
         # It is not higher because the residual findings are either runtime-
         # enforced (Kyverno securityContext/limits, CiliumNetworkPolicy) or
         # genuinely unfixable — notably C-0002, the KubeVirt operator's pods/exec
-        # RBAC, which it needs to manage VMs and can only be excepted. The CLI
-        # can't consume the platform's ClusterSecurityException CRs yet
-        # (https://github.com/devantler-tech/ksail/issues/5369). Ratchet this up
-        # as genuine gaps are fixed; never lower it.
+        # RBAC, which it needs to manage VMs and can only be excepted. Native scan
+        # exceptions have now shipped (devantler-tech/ksail#5369); wiring the
+        # platform's ClusterSecurityException CRs into the scan and ratcheting the
+        # threshold toward 100 is tracked in #2264. Until then, ratchet up as
+        # genuine gaps are fixed; never lower it.
         run: ksail workload scan --framework nsa --compliance-threshold 85
 
   deploy-prod:
