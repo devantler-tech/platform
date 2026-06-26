@@ -1,11 +1,9 @@
 ---
-# Allow the gateway's Envoy to reach Hubble UI on port 8081.
-# Traffic flow (Gateway API ExternalAuth): Envoy --ext_authz--> oauth2-proxy for
-# the per-request SSO check, then Envoy --> hubble-ui DIRECTLY on allow (no
-# auth-proxy hop). The source is the `ingress` identity.
+# Allow auth-proxy to reach Hubble UI on port 8081.
+# Traffic flow: oauth2-proxy -> auth-proxy -> hubble-ui.
 # Hubble UI lives in kube-system which has no default-deny, so this CNP is
 # defense-in-depth: if/when a kube-system default-deny is introduced, the
-# gateway → hubble-ui path stays open while every other path is denied.
+# auth-proxy → hubble-ui path stays open while every other path is denied.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -16,8 +14,10 @@ spec:
     matchLabels:
       k8s-app: hubble-ui
   ingress:
-    - fromEntities:
-        - ingress
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+            app: auth-proxy
       toPorts:
         - ports:
             - port: "8081"

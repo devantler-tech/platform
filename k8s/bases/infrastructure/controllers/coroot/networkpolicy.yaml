@@ -24,11 +24,10 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
-    # Gateway ingress (Envoy → Coroot UI) after the ExternalAuth SSO check. The
-    # gateway's Envoy connects DIRECTLY to the backend on allow (no
-    # oauth2-proxy/auth-proxy hop), so the source is the `ingress` identity.
-    - fromEntities:
-        - ingress
+    # auth-proxy (oauth2-proxy SSO) reaches the Coroot UI after authentication.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
       toPorts:
         - ports:
             - port: "8080"

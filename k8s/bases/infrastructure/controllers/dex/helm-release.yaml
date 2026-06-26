@@ -95,17 +95,6 @@ spec:
           secret: ${dex_client_secret}
           redirectURIs:
             - "https://oauth2-proxy.${domain}/oauth2/callback"
-            # Per-host oauth2-proxy callbacks for the Gateway API ExternalAuth SSO
-            # (platform#1881). With a RELATIVE oauth2-proxy redirect_url, the
-            # callback lands on the originating app host, so each protected host
-            # must be whitelisted here. longhorn is Hetzner-only; listing it in
-            # this base manifest is inert where Longhorn isn't deployed.
-            - "https://${domain}/oauth2/callback"
-            - "https://hubble.${domain}/oauth2/callback"
-            - "https://observability.${domain}/oauth2/callback"
-            - "https://opencost.${domain}/oauth2/callback"
-            - "https://longhorn.${domain}/oauth2/callback"
-            - "https://backstage.${domain}/oauth2/callback"
             - "https://headlamp.${domain}/oidc-callback"
             - "https://budget.${domain}/oidc/callback"
             - "https://vault.${domain}/ui/vault/auth/oidc/oidc/callback"
