@@ -1,6 +1,5 @@
 # Blue/green canary for OpenCost (an infrastructure cost UI), behind oauth2-proxy
-# SSO (the opencost HTTPRoute's ExternalAuth filter -> opencost.opencost.svc:9090).
-# The `kubernetes` provider does
+# (auth-proxy -> opencost.opencost.svc:9090). The `kubernetes` provider does
 # blue/green (no gateway weighting). It builds opencost-primary, analyses against
 # the opencost-canary Service, and promotes by repointing the apex Service.
 #
