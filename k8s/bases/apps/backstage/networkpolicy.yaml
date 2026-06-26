@@ -10,11 +10,11 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Forward-auth: the auth-proxy (Traefik, in the oauth2-proxy namespace)
-    # reaches Backstage after oauth2-proxy / Dex authentication.
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+    # Gateway ingress (Envoy → Backstage) after the ExternalAuth SSO check. The
+    # gateway's Envoy connects DIRECTLY to the backend on allow (no
+    # oauth2-proxy/auth-proxy hop), so the source is the `ingress` identity.
+    - fromEntities:
+        - ingress
       toPorts:
         - ports:
             - port: "7007"

@@ -1,10 +1,11 @@
 # Blue/green canary for Homepage (the root dashboard, `${domain}`). It sits behind
-# oauth2-proxy (auth-proxy forwards ${domain} -> homepage.homepage.svc:80), so a
-# gateway-level weighted split isn't possible. Flagger's `kubernetes` provider
-# does blue/green instead: it builds homepage-primary, runs the analysis against
-# the homepage-canary Service, and promotes by repointing the apex Service to the
-# new version. The public path (httproute.yaml -> oauth2-proxy -> auth-proxy ->
-# homepage apex Service) is untouched and always resolves to the primary.
+# oauth2-proxy SSO (the homepage HTTPRoute's ExternalAuth filter checks auth, then
+# routes to homepage.homepage.svc:80), so a gateway-level weighted split isn't
+# possible. Flagger's `kubernetes` provider does blue/green instead: it builds
+# homepage-primary, runs the analysis against the homepage-canary Service, and
+# promotes by repointing the apex Service to the new version. The public path
+# (httproute.yaml ExternalAuth filter -> homepage apex Service) is untouched and
+# always resolves to the primary.
 #
 # ⚠️ High blast radius (platform front page) — watch the first rollout.
 # Replicas are owned by the KEDA ScaledObject referenced below (autoscalerRef):

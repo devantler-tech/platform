@@ -1,9 +1,7 @@
-# Expose the Coroot UI behind oauth2-proxy SSO (the same forward-auth pattern
-# the Prometheus / Alertmanager UIs used): the route backends to the
-# oauth2-proxy Service; after authentication oauth2-proxy forwards to
-# auth-proxy, which routes by Host to the Coroot Service (see auth-proxy
-# config-map.yaml). Coroot CE has no native OIDC, so this is how SSO is
-# enforced. The Coroot app serves its UI on port 8080.
+# Expose the Coroot UI behind oauth2-proxy SSO. Coroot CE has no native OIDC, so
+# SSO is enforced at the gateway: the GEP-1494 ExternalAuth filter (below) runs
+# the per-request auth check against oauth2-proxy and routes straight to the
+# Coroot Service. The Coroot app serves its UI on port 8080.
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
@@ -39,12 +37,13 @@ spec:
   hostnames:
     - observability.${domain}
   rules:
-    - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://observability.${domain}/
+    # 1) Login dance — oauth2-proxy serves its own /oauth2/* endpoints directly,
+    #    WITHOUT the ExternalAuth filter. The longer /oauth2 PathPrefix wins.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /oauth2
+      filters:
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
@@ -54,3 +53,39 @@ spec:
         - name: oauth2-proxy
           namespace: oauth2-proxy
           port: 80
+    # 2) App traffic — the GEP-1494 ExternalAuth filter delegates the per-request
+    #    SSO check to oauth2-proxy and, on allow, routes STRAIGHT to the backend
+    #    Service below (same namespace). SPIKE-VALIDATED (platform#1881, real
+    #    Cilium 1.20.0-pre.3): the filter targets oauth2-proxy's PROXY path (NOT
+    #    /oauth2/auth, which returns a bare 401 with no redirect); an
+    #    unauthenticated check returns 302 → Dex (Cilium passes it to the
+    #    browser), an authed check returns 202. Per-host /oauth2/callback (rule 1
+    #    + Dex redirectURIs) returns the user to THIS host after login.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: ExternalAuth
+          externalAuth:
+            protocol: HTTP
+            backendRef:
+              name: oauth2-proxy
+              namespace: oauth2-proxy
+              port: 80
+            http:
+              # Forward the session cookie (auth state) + X-Forwarded-Proto/Host
+              # so oauth2-proxy recognises the session and builds the correct
+              # per-host https://<host>/oauth2/callback login-return URL.
+              allowedHeaders:
+                - cookie
+                - x-forwarded-proto
+                - x-forwarded-host
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: coroot-coroot
+          port: 8080

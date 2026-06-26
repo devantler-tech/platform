@@ -139,7 +139,7 @@ spec:
         # ^https?://.+$). Coroot interpolates it into the `.URL` template
         # variable used in the Slack templates below, so incident/alert links
         # deep-link back to the affected app in this instance. Same host the
-        # HTTPRoute + auth-proxy serve the UI on; `${domain}` is substituted by
+        # HTTPRoute serves the UI on; `${domain}` is substituted by
         # Flux from the per-cluster variables-cluster ConfigMap.
         baseURL: https://observability.${domain}
         webhook:

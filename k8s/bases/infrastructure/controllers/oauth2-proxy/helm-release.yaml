@@ -128,18 +128,31 @@ spec:
         # (the redirect allowlist) keeps both forms intentionally.
         cookie_domains = ["${domain}"]
         whitelist_domains = ["${domain}", ".${domain}"]
-        redirect_url = "https://oauth2-proxy.${domain}/oauth2/callback"
-        upstreams = [ "http://auth-proxy.oauth2-proxy.svc.cluster.local:80" ]
-        # upstream_timeout — max time to await upstream response headers
-        # (default 30s). Kept generous (90s) so a slow first render from one of
-        # the heavy dashboards behind auth-proxy (Coroot, OpenCost, Hubble,
-        # Longhorn) doesn't surface as a 504. Kept under Cloudflare's
-        # ~100s edge timeout so oauth2-proxy answers first.
-        upstream_timeout = "90s"
+        # Per-host callback (spike-validated approach): a RELATIVE redirect_url
+        # lets oauth2-proxy build https://<this-host>/oauth2/callback from each
+        # request's (gateway-forwarded) X-Forwarded-Proto/Host, so after login the
+        # browser returns to the ORIGINATING app host rather than one central
+        # host. Each app host's /oauth2/callback is whitelisted in Dex's
+        # staticClient redirectURIs and reached via that host's /oauth2/* rule.
+        redirect_url = "/oauth2/callback"
+        # AUTH-ONLY (Gateway API ExternalAuth / GEP-1494, platform#1881): app
+        # traffic no longer flows THROUGH oauth2-proxy. Each app HTTPRoute carries
+        # an `ExternalAuth` filter that calls oauth2-proxy's PROXY path per request
+        # (Envoy ext_authz): on an UNauthenticated check oauth2-proxy returns a
+        # 302 -> Dex (Cilium passes it straight to the browser), on an AUTHED check
+        # the static://202 upstream returns 202 and the gateway routes STRAIGHT to
+        # the backend. The Traefik auth-proxy host fan-out is deleted. The filter
+        # deliberately does NOT target /oauth2/auth — that returns a bare 401 with
+        # no redirect (both behaviours spike-validated on real Cilium 1.20.0-pre.3).
+        upstreams = [ "static://202" ]
         # Button-less flow: with skip_provider_button + Dex skipApprovalScreen
         # + a single Dex connector, app -> oauth2-proxy -> Dex -> GitHub -> back
         # needs no extra clicks.
         skip_provider_button = true
+        # reverse_proxy stays true: oauth2-proxy still terminates the /oauth2/*
+        # login dance (start/callback/sign_in), reached via each host's /oauth2/*
+        # HTTPRoute rule, and trusts the gateway's X-Forwarded-* headers (needed to
+        # build the per-host redirect_url above).
         reverse_proxy = true
     ingress:
       enabled: false

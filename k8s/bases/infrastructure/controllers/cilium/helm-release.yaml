@@ -12,7 +12,16 @@ spec:
   chart:
     spec:
       chart: cilium
-      version: 1.19.5
+      # 1.20.0-pre.3 (pre-release) for the native Gateway API `ExternalAuth`
+      # HTTPRoute filter (GEP-1494, cilium/cilium#45739) — it lets each
+      # HTTPRoute delegate SSO to oauth2-proxy via Envoy ext_authz and route
+      # straight to the backend, replacing the oauth2-proxy(reverse-proxy) +
+      # Traefik auth-proxy host fan-out (deleted in this change). Maintainer
+      # accepted the pre-release CNI in prod ahead of 1.20 GA (devantler-tech/
+      # platform#1881); rollback = pin back to 1.19.5. The required
+      # experimental-channel Gateway API CRDs are already installed by ksail
+      # (v1.5.1) and carry the externalAuth field — no CRD change needed here.
+      version: 1.20.0-pre.3
       sourceRef:
         kind: HelmRepository
         name: cilium
