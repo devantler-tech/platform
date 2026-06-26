@@ -1,0 +1,76 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-proxy-config
+  namespace: oauth2-proxy
+data:
+  traefik.yaml: |
+    entryPoints:
+      web:
+        address: ":8080"
+    providers:
+      file:
+        filename: /etc/traefik/dynamic.yaml
+    log:
+      level: INFO
+  dynamic.yaml: |
+    http:
+      routers:
+        homepage:
+          rule: "Host(`${domain}`)"
+          entryPoints: ["web"]
+          service: homepage
+        hubble:
+          rule: "Host(`hubble.${domain}`)"
+          entryPoints: ["web"]
+          service: hubble-ui
+        coroot:
+          rule: "Host(`observability.${domain}`)"
+          entryPoints: ["web"]
+          service: coroot
+        opencost:
+          rule: "Host(`opencost.${domain}`)"
+          entryPoints: ["web"]
+          service: opencost
+        # Hetzner-only: Longhorn is deployed solely on prod. On local/CI the
+        # backend (longhorn-frontend.longhorn-system) does not exist, but this
+        # router is inert there -- no HTTPRoute sends longhorn.${domain} to
+        # oauth2-proxy, so it is never matched (matches how base policies
+        # already scope the prod-only longhorn-system namespace).
+        longhorn:
+          rule: "Host(`longhorn.${domain}`)"
+          entryPoints: ["web"]
+          service: longhorn
+        # Backstage IDP (forward-auth, demo-image scaffold — see docs/backstage.md).
+        backstage:
+          rule: "Host(`backstage.${domain}`)"
+          entryPoints: ["web"]
+          service: backstage
+      services:
+        homepage:
+          loadBalancer:
+            servers:
+              - url: "http://homepage.homepage.svc.cluster.local:80"
+        hubble-ui:
+          loadBalancer:
+            servers:
+              - url: "http://hubble-ui.kube-system.svc.cluster.local:80"
+        coroot:
+          loadBalancer:
+            servers:
+              - url: "http://coroot-coroot.observability.svc.cluster.local:8080"
+        opencost:
+          loadBalancer:
+            servers:
+              - url: "http://opencost.opencost.svc.cluster.local:9090"
+        # Longhorn UI (longhorn-frontend Service :80 -> longhorn-ui pod :8000).
+        # Hetzner-only and inert on local (longhorn-system has no pods there).
+        longhorn:
+          loadBalancer:
+            servers:
+              - url: "http://longhorn-frontend.longhorn-system.svc.cluster.local:80"
+        backstage:
+          loadBalancer:
+            servers:
+              - url: "http://backstage.backstage.svc.cluster.local:7007"

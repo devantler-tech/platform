@@ -19,15 +19,15 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: longhorn-system
-    # Longhorn UI: the client is the gateway's Envoy (post-SSO). With Gateway API
-    # ExternalAuth the gateway connects DIRECTLY to longhorn-frontend after the
-    # ext_authz check (no oauth2-proxy/auth-proxy hop); longhorn-frontend forwards
-    # to the longhorn-ui pod on container port 8000 (Service longhorn-frontend:
-    # 80 -> 8000). Source is the `ingress` identity. Mirrors allow-hubble-ui;
-    # mutual auth (require-mutual-auth) is applied cluster-wide, so only the
-    # L3/L4 allow is needed here.
-    - fromEntities:
-        - ingress
+    # Longhorn UI: the client is auth-proxy (post-SSO): Gateway -> oauth2-proxy
+    # -> auth-proxy -> longhorn-frontend. longhorn-frontend forwards to the
+    # longhorn-ui pod on container port 8000 (Service longhorn-frontend: 80 ->
+    # 8000). Mirrors allow-hubble-ui; mutual auth (require-mutual-auth) is
+    # applied cluster-wide, so only the L3/L4 allow is needed here.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+            app: auth-proxy
       toPorts:
         - ports:
             - port: "8000"
