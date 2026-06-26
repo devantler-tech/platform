@@ -164,3 +164,22 @@ spec:
     sourceDirectory: k8s
     kustomizationFile: clusters/prod
     tag: latest
+    validation:
+      # Parity with ksail.yaml: the prod kustomization pulls the same shared
+      # bases (Coroot + Flagger), so `ksail --config ksail.prod.yaml workload
+      # validate` hits the identical CRDs whose CRD-catalog schemas kubeconform
+      # cannot resolve (requires ksail >= 7.26.0):
+      #   - Coroot (coroot.com/v1): the datreeio catalog schema is stale
+      #     (additionalProperties: false, missing newer fields like
+      #     nodeAgent/clickhouse), so kubeconform rejects valid manifests.
+      #   - MetricTemplate / Canary (flagger.app/v1beta1): the Flagger CRDs are
+      #     installed by the flagger HelmRelease at runtime and are not in the
+      #     catalog, so the MetricTemplates and the onboarded Canaries (umami,
+      #     homepage, opencost) can't be schema-checked offline.
+      # Validation-only: the prod CD path is `workload push` (no validateOnPush),
+      # so this field never affects what is deployed. Remove once the upstream
+      # Coroot/Flagger CRD catalog schemas are current (drop from both configs).
+      skipKinds:
+        - Coroot
+        - MetricTemplate
+        - Canary
