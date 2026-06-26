@@ -9,7 +9,6 @@ kind: Kustomization
 #       VirtualMachines/DataVolumes run on Hetzner and virt-handler crash-loops
 #       with zero VMs, so prod opts out by simply not referencing them.
 resources:
-  - auth-proxy/
   - cert-manager/
   - cilium/
   - cloudnative-pg/

@@ -11,12 +11,16 @@ spec:
   hostnames:
     - ${domain}
   rules:
-    - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://${domain}/
+    # 1) Login dance — oauth2-proxy serves its own /oauth2/* endpoints
+    #    (start / callback / sign_in) directly, WITHOUT the ExternalAuth filter
+    #    (those endpoints must be reachable unauthenticated). The longer /oauth2
+    #    PathPrefix wins over the catch-all rule below. Cross-namespace
+    #    backendRef → oauth2-proxy Service (allow-oauth2-proxy-backends grant).
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /oauth2
+      filters:
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
@@ -25,4 +29,48 @@ spec:
       backendRefs:
         - name: oauth2-proxy
           namespace: oauth2-proxy
+          port: 80
+    # 2) App traffic — the GEP-1494 ExternalAuth filter delegates the per-request
+    #    SSO check to oauth2-proxy /oauth2/auth (Envoy ext_authz, HTTP mode); on
+    #    allow Envoy copies the identity headers and routes STRAIGHT to the
+    #    homepage Service (same namespace — no ReferenceGrant). Replaces the old
+    #    oauth2-proxy(reverse-proxy) → Traefik auth-proxy host fan-out.
+    #    SPIKE-PENDING (platform#1881): the allowedHeaders/allowedResponseHeaders
+    #    set and the unauthenticated → /oauth2/start redirect are confirmed on the
+    #    local spike before promotion.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://${domain}/
+        - type: ExternalAuth
+          externalAuth:
+            protocol: HTTP
+            backendRef:
+              name: oauth2-proxy
+              namespace: oauth2-proxy
+              port: 80
+            http:
+              path: /oauth2/auth
+              allowedHeaders:
+                - cookie
+                - authorization
+                - x-auth-request-redirect
+              allowedResponseHeaders:
+                - x-auth-request-user
+                - x-auth-request-email
+                - x-auth-request-groups
+                - set-cookie
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: homepage
           port: 80

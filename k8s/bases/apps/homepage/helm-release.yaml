@@ -94,14 +94,14 @@ spec:
                 value: 5
               # Graceful drain on termination. The release rolls often (helm
               # revisions + reloader restarts) and the Service's ClientIP
-              # affinity (below) pins each auth-proxy pod to one homepage
+              # affinity (below) pins each gateway Envoy source to one homepage
               # replica. Without draining, a rolling pod stops serving the
-              # instant it is SIGTERMed while auth-proxy is still routed to it,
+              # instant it is SIGTERMed while the gateway is still routed to it,
               # so the rollout window returns 502 Bad Gateway — and the
               # dashboard's ~14 /api/* polls per refresh amplify that into a
-              # latency+error incident on oauth2-proxy and auth-proxy. A short
-              # preStop keeps the old pod answering until it has been removed
-              # from the Service endpoints and the affinity has rebalanced.
+              # latency+error incident at the gateway. A short preStop keeps the
+              # old pod answering until it has been removed from the Service
+              # endpoints and the affinity has rebalanced.
               - op: add
                 path: /spec/template/spec/terminationGracePeriodSeconds
                 value: 30
@@ -116,7 +116,7 @@ spec:
           # round-robins between two pods that each maintain their own
           # kube-apiserver watcher cache — values pop between slightly-stale
           # and slightly-fresh on every refresh. Pinning to ClientIP keeps
-          # each oauth2-proxy backend stuck to one homepage replica so the
+          # each gateway Envoy source stuck to one homepage replica so the
           # widget reads from a consistent cache.
           - target:
               kind: Service

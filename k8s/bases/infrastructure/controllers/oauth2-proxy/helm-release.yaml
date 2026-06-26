@@ -129,18 +129,34 @@ spec:
         cookie_domains = ["${domain}"]
         whitelist_domains = ["${domain}", ".${domain}"]
         redirect_url = "https://oauth2-proxy.${domain}/oauth2/callback"
-        upstreams = [ "http://auth-proxy.oauth2-proxy.svc.cluster.local:80" ]
-        # upstream_timeout — max time to await upstream response headers
-        # (default 30s). Kept generous (90s) so a slow first render from one of
-        # the heavy dashboards behind auth-proxy (Coroot, OpenCost, Hubble,
-        # Longhorn) doesn't surface as a 504. Kept under Cloudflare's
-        # ~100s edge timeout so oauth2-proxy answers first.
-        upstream_timeout = "90s"
+        # AUTH-ONLY (Gateway API ExternalAuth / GEP-1494, platform#1881): app
+        # traffic no longer flows THROUGH oauth2-proxy. Each app HTTPRoute now
+        # carries an `ExternalAuth` filter that calls oauth2-proxy's /oauth2/auth
+        # per request (Envoy ext_authz) and, on allow, routes STRAIGHT to the
+        # backend — so the former Traefik auth-proxy host fan-out is deleted.
+        # The only "upstream" left is a no-op 202 for the authenticated check;
+        # oauth2-proxy still serves its own /oauth2/* endpoints directly.
+        upstreams = [ "static://202" ]
+        # Emit the identity headers ON the auth-check response so the
+        # ExternalAuth filter can copy them to the backend
+        # (X-Auth-Request-User/Email/Groups via allowedResponseHeaders). The old
+        # reverse-proxy path injected these implicitly; ext_authz needs them set.
+        set_xauthrequest = true
         # Button-less flow: with skip_provider_button + Dex skipApprovalScreen
         # + a single Dex connector, app -> oauth2-proxy -> Dex -> GitHub -> back
         # needs no extra clicks.
         skip_provider_button = true
+        # reverse_proxy stays true: oauth2-proxy still terminates the /oauth2/*
+        # login dance (start/callback/sign_in), reached via each host's /oauth2/*
+        # HTTPRoute rule, and honors the gateway's X-Forwarded-* headers.
         reverse_proxy = true
+        # SPIKE-PENDING (platform#1881): the unauthenticated -> Dex redirect in
+        # ext_authz HTTP mode is the one behaviour to confirm on the local spike
+        # before promotion. /oauth2/auth returns a bare 401 (not a 302 to
+        # /oauth2/start), so the live spike verifies how the browser is driven
+        # into the OIDC dance (per-host /oauth2/* bypass rule + the
+        # X-Auth-Request-Redirect header the filters forward) and whether any
+        # tweak here is needed.
     ingress:
       enabled: false
     # Gateway API HTTPRoute rendered by the chart (replaces the former hand-rolled

@@ -19,12 +19,14 @@ spec:
   hostnames:
     - hubble.${domain}
   rules:
-    - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://hubble.${domain}/
+    # 1) Login dance — oauth2-proxy serves its own /oauth2/* endpoints directly,
+    #    WITHOUT the ExternalAuth filter (those endpoints must be reachable
+    #    unauthenticated). The longer /oauth2 PathPrefix wins over the catch-all.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /oauth2
+      filters:
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
@@ -33,4 +35,48 @@ spec:
       backendRefs:
         - name: oauth2-proxy
           namespace: oauth2-proxy
+          port: 80
+    # 2) App traffic — GEP-1494 ExternalAuth filter delegates the per-request SSO
+    #    check to oauth2-proxy /oauth2/auth (ext_authz, HTTP); on allow it routes
+    #    STRAIGHT to the hubble-ui Service (same namespace). Replaces the old
+    #    oauth2-proxy → auth-proxy hop. SPIKE-PENDING (platform#1881): header sets
+    #    + unauth redirect confirmed on the local spike before promotion.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://hubble.${domain}/
+        - type: ExternalAuth
+          externalAuth:
+            protocol: HTTP
+            backendRef:
+              name: oauth2-proxy
+              namespace: oauth2-proxy
+              port: 80
+            http:
+              path: /oauth2/auth
+              allowedHeaders:
+                - cookie
+                - authorization
+                - x-auth-request-redirect
+              allowedResponseHeaders:
+                - x-auth-request-user
+                - x-auth-request-email
+                - x-auth-request-groups
+                - set-cookie
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        # hubble-ui Service (kube-system, port 80 → pod :8081). NOTE: corrects
+        # platform#1881's stale "keda-add-ons-http-interceptor" backend — the
+        # KEDA scale-to-zero for the UIs was removed; Hubble UI is always-on.
+        - name: hubble-ui
           port: 80
