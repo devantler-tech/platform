@@ -28,7 +28,6 @@ resources:
   - ../../../../bases/infrastructure/controllers/external-secrets/
   - ../../../../bases/infrastructure/controllers/dex/
   - ../../../../bases/infrastructure/controllers/oauth2-proxy/
-  - ../../../../bases/infrastructure/controllers/auth-proxy/
   # --- Core: data ---------------------------------------------------------
   - ../../../../bases/infrastructure/controllers/cloudnative-pg/
   # --- Core: docker-provider-local ----------------------------------------
