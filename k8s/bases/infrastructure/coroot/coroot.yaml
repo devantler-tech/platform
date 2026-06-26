@@ -29,8 +29,8 @@ spec:
   # (observed 2026-06-19, observability blind for hours). Reloader (deployed
   # cluster-wide, `--reload-strategy=annotations`) watches the named Secret and
   # rolls the server's pods on change; the annotation goes on the pod template via
-  # podAnnotations, matching the platform's existing convention (auth-proxy,
-  # oauth2-proxy, coredns).
+  # podAnnotations, matching the platform's existing convention (oauth2-proxy,
+  # coredns).
   podAnnotations:
     secret.reloader.stakater.com/reload: coroot-db-app
 

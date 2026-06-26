@@ -20,18 +20,17 @@ spec:
     - backstage.${domain}
   rules:
     # Backstage has no native OIDC in the demo image, so it is fronted by
-    # oauth2-proxy forward-auth (Dex SSO) exactly like homepage / the Coroot /
-    # Longhorn UIs: the route backends to oauth2-proxy, which after authentication
-    # hands the request to the auth-proxy (Traefik), which routes by Host to the
-    # backstage Service (see auth-proxy config-map). Productionising to native
-    # Backstage OIDC (a custom image + a Dex static client) is the follow-up in
-    # docs/backstage.md.
-    - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://backstage.${domain}/
+    # oauth2-proxy SSO (Dex) exactly like homepage / the Coroot / Longhorn UIs.
+    # Productionising to native Backstage OIDC (a custom image + a Dex static
+    # client) is the follow-up in docs/backstage.md.
+    #
+    # 1) Login dance — oauth2-proxy serves its own /oauth2/* endpoints directly,
+    #    WITHOUT the ExternalAuth filter. The longer /oauth2 PathPrefix wins.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /oauth2
+      filters:
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
@@ -41,3 +40,47 @@ spec:
         - name: oauth2-proxy
           namespace: oauth2-proxy
           port: 80
+    # 2) App traffic — the GEP-1494 ExternalAuth filter delegates the per-request
+    #    SSO check to oauth2-proxy and, on allow, routes STRAIGHT to the backend
+    #    Service below (same namespace). SPIKE-VALIDATED (platform#1881, real
+    #    Cilium 1.20.0-pre.3): the filter targets oauth2-proxy's PROXY path (NOT
+    #    /oauth2/auth, which returns a bare 401 with no redirect); an
+    #    unauthenticated check returns 302 → Dex (Cilium passes it to the
+    #    browser), an authed check returns 202. Per-host /oauth2/callback (rule 1
+    #    + Dex redirectURIs) returns the user to THIS host after login.
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      filters:
+        - type: ExternalAuth
+          externalAuth:
+            protocol: HTTP
+            backendRef:
+              name: oauth2-proxy
+              namespace: oauth2-proxy
+              port: 80
+            http:
+              # Forward the session cookie (auth state) + X-Forwarded-Proto/Host
+              # so oauth2-proxy recognises the session and builds the correct
+              # per-host https://<host>/oauth2/callback login-return URL.
+              allowedHeaders:
+                - cookie
+                - x-forwarded-proto
+                - x-forwarded-host
+              # allowedResponseHeaders MUST be non-empty: Cilium 1.20.0-pre.3 ExternalAuth
+              # allow path HANGS (gateway 504) with an empty list (platform#1881 incident);
+              # these also propagate SSO identity + let oauth2-proxy refresh the session cookie.
+              allowedResponseHeaders:
+                - set-cookie
+                - x-auth-request-user
+                - x-auth-request-email
+                - x-auth-request-groups
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: backstage
+          port: 7007
