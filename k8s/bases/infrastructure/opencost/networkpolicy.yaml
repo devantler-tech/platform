@@ -20,11 +20,10 @@ spec:
         - ports:
             - port: "9003"
               protocol: TCP
-    # Gateway ingress (Envoy → OpenCost UI) after the ExternalAuth SSO check. The
-    # gateway's Envoy connects DIRECTLY to the backend on allow (no
-    # oauth2-proxy/auth-proxy hop), so the source is the `ingress` identity.
-    - fromEntities:
-        - ingress
+    # auth-proxy (oauth2-proxy SSO) reaches the OpenCost UI after authentication.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
       toPorts:
         - ports:
             - port: "9090"

@@ -6,13 +6,10 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Gateway ingress (Envoy → homepage). With Gateway API ExternalAuth the
-    # gateway's Envoy connects to the backend DIRECTLY after the per-request
-    # ext_authz check (no oauth2-proxy/auth-proxy hop), so the source is the
-    # `ingress` identity — the same identity the oauth2-proxy policy already
-    # trusts on its own port.
-    - fromEntities:
-        - ingress
+    # Traffic from oauth2-proxy (via gateway → oauth2-proxy → homepage)
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
       toPorts:
         - ports:
             - port: "3000"

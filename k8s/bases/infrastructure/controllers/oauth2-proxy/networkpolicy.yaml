@@ -16,10 +16,15 @@ spec:
             - port: "4180"
               protocol: TCP
   egress:
-    # No app-traffic egress: with Gateway API ExternalAuth (GEP-1494) oauth2-proxy
-    # is an auth-only sidecar — the gateway's Envoy calls it for the per-request
-    # check and routes straight to the backend, so the former egress to the
-    # Traefik auth-proxy upstream is gone (component deleted).
+    # Auth-proxy upstream (forward authenticated traffic to host-routing proxy)
+    - toEndpoints:
+        - matchLabels:
+            app: auth-proxy
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
     # Dex token exchange (redeem_url) + JWKS (oidc_jwks_url) over the
     # in-cluster Dex Service. oauth2-proxy does its server-side OIDC calls
     # in-cluster (skip_oidc_discovery; see helm-release.yaml), which the pod
