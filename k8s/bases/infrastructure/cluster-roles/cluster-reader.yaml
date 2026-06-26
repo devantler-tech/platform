@@ -6,7 +6,9 @@
 # complete read-only picture of the cluster:
 #   - `view`           → namespaced workloads/config (pods, deployments,
 #                        configmaps, pod logs, events, ...), minus Secrets.
-#   - `cluster-reader` → everything `view` omits (see rules below).
+#   - `cluster-reader` → everything `view` omits (see rules below), plus read
+#                        access to selected operator CRDs surfaced in the
+#                        Headlamp UI plugins (KEDA autoscaling, Kubescape scans).
 #
 # Deliberately NOT granted: Secrets (kept in the vault on purpose), and any
 # write/exec verb (no pods/exec, pods/portforward, create/update/delete).
@@ -81,4 +83,24 @@ rules:
       - clusterrolebindings
       - roles
       - rolebindings
+    verbs: ["get", "list", "watch"]
+  # Operator CRDs surfaced in the Headlamp UI plugins. These hold operational
+  # and security-scan data inspected read-only via Headlamp, which proxies the
+  # API as the user's OIDC identity — so that identity needs read on them too.
+  # No secret material: KEDA TriggerAuthentications reference Secrets by name
+  # only, and Kubescape objects are scan metadata / SBOMs.
+  #   - KEDA autoscaling (keda Headlamp plugin).
+  - apiGroups: ["keda.sh"]
+    resources:
+      - scaledobjects
+      - scaledjobs
+      - triggerauthentications
+      - clustertriggerauthentications
+    verbs: ["get", "list", "watch"]
+  #   - Kubescape scan results — the whole read-only aggregated API served by
+  #     the kubescape `storage` component (config-scan + vulnerability
+  #     summaries, SBOMs, network neighborhoods, ...). `*` keeps the kubescape
+  #     Headlamp plugin working across releases as kinds are added in this group.
+  - apiGroups: ["spdx.softwarecomposition.kubescape.io"]
+    resources: ["*"]
     verbs: ["get", "list", "watch"]
