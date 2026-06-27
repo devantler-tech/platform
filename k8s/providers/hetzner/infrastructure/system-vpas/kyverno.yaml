@@ -1,0 +1,105 @@
+# VPAs for the kyverno controllers. Policy mirrors auto-vpa.yaml (see
+# kustomization.yaml). InPlaceOrRecreate resizes in place, so the admission
+# controller is never evicted (no cluster-wide admission gap). The memory
+# request right-sizes UP where needed too — e.g. the admission controller
+# currently uses ~245Mi against its 128Mi request.
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: kyverno-admission-controller
+  namespace: kyverno
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kyverno-admission-controller
+  updatePolicy:
+    updateMode: InPlaceOrRecreate
+    minReplicas: 1
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        controlledResources: ["cpu", "memory"]
+        controlledValues: RequestsAndLimits
+        minAllowed:
+          cpu: 50m
+          memory: 64Mi
+        maxAllowed:
+          cpu: "3"
+          memory: 6Gi
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: kyverno-background-controller
+  namespace: kyverno
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kyverno-background-controller
+  updatePolicy:
+    updateMode: InPlaceOrRecreate
+    minReplicas: 1
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        controlledResources: ["cpu", "memory"]
+        controlledValues: RequestsAndLimits
+        minAllowed:
+          cpu: 50m
+          memory: 64Mi
+        maxAllowed:
+          cpu: "3"
+          memory: 6Gi
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: kyverno-cleanup-controller
+  namespace: kyverno
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kyverno-cleanup-controller
+  updatePolicy:
+    updateMode: InPlaceOrRecreate
+    minReplicas: 1
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        controlledResources: ["cpu", "memory"]
+        controlledValues: RequestsAndLimits
+        minAllowed:
+          cpu: 50m
+          memory: 64Mi
+        maxAllowed:
+          cpu: "3"
+          memory: 6Gi
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: kyverno-reports-controller
+  namespace: kyverno
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: kyverno-reports-controller
+  updatePolicy:
+    updateMode: InPlaceOrRecreate
+    minReplicas: 1
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        controlledResources: ["cpu", "memory"]
+        controlledValues: RequestsAndLimits
+        minAllowed:
+          cpu: 50m
+          memory: 64Mi
+        maxAllowed:
+          cpu: "3"
+          memory: 6Gi

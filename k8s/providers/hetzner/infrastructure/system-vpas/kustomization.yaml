@@ -1,0 +1,42 @@
+---
+# Static VerticalPodAutoscalers for kube-system + kyverno (prod/hetzner only).
+#
+# WHY STATIC (not auto-vpa): `auto-vpa` is a Kyverno *generate* policy, and
+# Kyverno's global resourceFilters (`[*/*,kube-system,*]`, `[*/*,kyverno,*]` in
+# the kyverno ConfigMap) exclude these two namespaces from ALL Kyverno
+# processing — so auto-vpa never creates VPAs there (0 VPAs live). VPA's OWN
+# admission webhook has empty selectors, so it DOES inject recommendations into
+# every namespace; the only missing piece is the VPA objects themselves. These
+# plain manifests supply them, bypassing Kyverno entirely. Names/kinds mirror the
+# live workloads exactly (a VPA whose targetRef misses silently no-ops).
+#
+# POLICY mirrors auto-vpa.yaml so these behave identically to every other
+# VPA in the cluster (controlledValues RequestsAndLimits; minAllowed cpu 50m /
+# mem 64Mi; maxAllowed cpu 3 / mem 6Gi for Deployment/StatefulSet, cpu 1 /
+# mem 1Gi for DaemonSets so a DS pod still fits the smallest autoscale-cx23
+# node; updateMode InPlaceOrRecreate so the datapath/admission pods are RESIZED
+# IN PLACE, never evicted — spire-server is a singleton StatefulSet on an RWO
+# volume, so it uses Initial like auto-vpa's StatefulSet rule).
+#
+# GENEROUS MEMORY RATIO (no OOM): the base LimitRanges
+# (k8s/bases/infrastructure/limitranges/) are CPU-only. The parent hetzner
+# kustomization patches a generous memory `default` onto them (kube-system 4Gi,
+# kyverno 2Gi) so VPA has a memory limit to scale RATIO-PRESERVING:
+#   * VPA right-sizes the memory REQUEST down to real average usage (e.g. cilium
+#     ~250Mi vs its 512Mi request — the capacity win the requests reclaim).
+#   * The limit stays a generous multiple of that request (cilium ~8:1, smaller
+#     add-ons far more), so a load spike has headroom before it ever reaches the
+#     limit — bursts don't OOMKill. The seed (4Gi/2Gi) is far above every
+#     workload's real peak (<~600Mi), which is exactly what keeps it safe: the
+#     2026-06-20 longhorn OOM cascade was a TIGHT 512Mi cap, not a generous one.
+# CPU is compressible, so its generous limit (#2308's default.cpu "2", scaled by
+# VPA) only ever throttles, never kills.
+#
+# longhorn-system is deliberately NOT here: it already has auto-vpa-managed VPAs
+# (it is not globally filtered) and its LimitRange MUST stay memory-unset (the
+# instance-manager OOM-cascade safeguard).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - kube-system.yaml
+  - kyverno.yaml
