@@ -18,7 +18,6 @@ components:
 # they need only a path — no redundant `target:` selector. JSON6902 patches have
 # no embedded identity and keep an explicit target (see whoami below).
 patches:
-  - path: ascoachingogvaner/patches/kustomization-patch.yaml
   # fleetdm disabled 2026-06-03 (see bases/apps/kustomization.yaml). Its
   # prod-only HelmRelease patch (timeout + MySQL primary service address +
   # hcloud storageClass) and the providers/hetzner/apps/fleetdm/ dir were

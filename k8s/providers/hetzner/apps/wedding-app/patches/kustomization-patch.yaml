@@ -45,33 +45,11 @@ spec:
               method: any
               number: 1
               dataDurability: preferred
-    - target:
-        kind: HTTPRoute
-        name: wedding-app
-      patch: |
-        - op: replace
-          path: /spec/hostnames
-          value:
-            - wedding.platform.devantler.tech
-    # Surface this tenant on the homepage dashboard. The HTTPRoute ships
-    # from an external OCI artifact (ghcr.io/devantler-tech/wedding-app),
-    # so the gethomepage.dev/* annotations have to be injected here rather
-    # than committed at the source. Strategic merge (not JSON patch) so we
-    # add to — rather than overwrite — any annotations that already exist
-    # on the upstream HTTPRoute.
-    - target:
-        kind: HTTPRoute
-        name: wedding-app
-      patch: |
-        apiVersion: gateway.networking.k8s.io/v1
-        kind: HTTPRoute
-        metadata:
-          name: wedding-app
-          annotations:
-            gethomepage.dev/enabled: "true"
-            gethomepage.dev/name: Wedding
-            gethomepage.dev/description: Wedding RSVP and information site.
-            gethomepage.dev/group: Personal Sites
-            gethomepage.dev/icon: mdi-ring
-            gethomepage.dev/href: https://wedding.platform.devantler.tech
-            gethomepage.dev/pod-selector: app.kubernetes.io/name=wedding-app
+    # NOTE: the tenant's public hostnames (wedding.platform.devantler.tech + the
+    # wedding.platform.lan dev host) and its gethomepage.dev/* dashboard
+    # annotations are NOT patched here — they are tenant self-presentation and
+    # live in the wedding-app repo's deploy/httproute.yaml (mirroring
+    # ascoachingogvaner). Only environment adaptations the env-agnostic artifact
+    # cannot carry (the storageClass above) and operational-safety annotations
+    # belong in this overlay patch — see docs/TENANTS.md "Provider overlays —
+    # what may be patched platform-side".
