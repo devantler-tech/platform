@@ -1,0 +1,32 @@
+---
+# CPU-only default LimitRange for the kyverno namespace.
+#
+# kyverno is in Kyverno's own global resourceFilters (`[*/*,kyverno,*]`, the
+# standard bootstrap-deadlock safeguard so Kyverno never gates its own pods), so
+# — exactly like kube-system — none of the Kyverno resource policies reach it:
+# no `add-resource-defaults` stamp, no generated `default-limitrange` (which is
+# why kyverno has no LimitRange despite not being in that policy's exclude list),
+# and no `auto-vpa` (0 VPAs in kyverno). Its four controllers (admission /
+# background / cleanup / reports) thus run with no CPU limit and fail C-0270.
+#
+# A static LimitRange bypasses the resourceFilters (the built-in LimitRanger
+# applies it regardless). CPU-only and generous, for the same reasons as the
+# kube-system manifest: a high CPU limit gives the reports/background controllers
+# burst head-room without throttling, while a memory limit is omitted (the
+# reports controller can spike memory on large clusters; an incompressible cap
+# would OOMKill it). defaultRequest.memory is kept (the kyverno namespace carries
+# a requests.memory ResourceQuota, which requires every pod to declare a memory
+# request — the LimitRanger supplies it for any container that omits one).
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-limitrange
+  namespace: kyverno
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "2"
+      defaultRequest:
+        cpu: 15m
+        memory: 128Mi
