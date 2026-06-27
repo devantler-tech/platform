@@ -6,7 +6,9 @@
 # documents the entire CIS section 1.1 file permission/ownership family
 # (1.1.13-1.1.19) as FALSE POSITIVES on Talos, with no machine-config knob to
 # satisfy them ("architectural by design" — there is no file at those paths to own):
-#   https://docs.siderolabs.com/talos/v1.12/security/talos-default-hardening-and-cis-compliance
+#   https://docs.siderolabs.com/talos/v1.13/security/talos-default-hardening-and-cis-compliance
+#   ("Every check in section 1.1 will fail on Talos ... not because the controls are
+#    missing, but because Talos's architecture does not rely on those paths.")
 # These map to Kubescape host-scanner controls C-0104..C-0110. We ignore them so the
 # in-cluster posture dashboard stops alerting on findings that cannot (and should
 # not) be remediated without abandoning Talos's PKI model.
@@ -30,7 +32,8 @@ spec:
     controls inspect. Sidero documents the CIS 1.1.13-1.1.19 control-plane file
     permission/ownership checks as false positives on Talos, with no configuration
     able to satisfy them. Ignored to keep the in-cluster posture dashboard signal
-    clean.
+    clean. Reference:
+    https://docs.siderolabs.com/talos/v1.13/security/talos-default-hardening-and-cis-compliance
   posture:
     # CIS 1.1.13 — admin.conf file permissions
     - controlID: C-0104
