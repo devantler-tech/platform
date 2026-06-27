@@ -22,6 +22,19 @@ metadata:
     kustomize.toolkit.fluxcd.io/force: disabled
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
+  # Pin the PostgreSQL operand image explicitly instead of riding the CNPG operator
+  # default. The latest GA operator (v1.29.1) still defaults to
+  # postgresql:18.3-system-trixie, whose rolling tag is now frozen (last rebuilt
+  # 2026-05-11) and carries fixable base-OS CVEs (openssl/libssl3, libgnutls30,
+  # libc6, python3.13); the operator default only advances to 18.4 in the
+  # not-yet-GA v1.30, so a chart/operator bump (the built-in flux manager) does NOT
+  # clear them — an explicit pin is the only fix today. 18.4 (2026-05-14) also fixes
+  # 11 PostgreSQL CVEs incl. the RCE-class CVE-2026-6473. Renovate keeps this current
+  # via the postgres-cluster.yaml customManager in .github/renovate.json; CNPG rolls
+  # the image in place (replicas first, then a primary switchover), so the >=2-instance
+  # HA Clusters stay available with no data-loss path (force/prune are disabled above).
+  # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
   # Run 3 instances (1 primary + 2 streaming replicas) for high availability.
   # A single-instance Cluster makes CNPG create a `<cluster>-primary`
   # PodDisruptionBudget with minAvailable=1 on the only pod, which BLOCKS every
