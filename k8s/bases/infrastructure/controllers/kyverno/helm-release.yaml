@@ -71,18 +71,22 @@ spec:
     # so we must set pod-level seccompProfile + runAsNonRoot via chart values.
     admissionController:
       replicas: ${kyverno_admission_replicas:=2}
-      # Explicit static sizing -- NOT VPA-managed. Kyverno's own admission and
-      # generate policies exclude the kyverno namespace (to avoid an eviction
-      # deadlock during a Kyverno outage), so auto-vpa.yaml never creates a VPA
-      # for these Deployments (verified: zero VPAs in ns/kyverno). That left the
-      # admission controller on the chart-default limits.memory: 384Mi, which
-      # OOMKilled (exit 137) under image-verification + policy-evaluation load.
-      # Because the verify-image-signatures webhooks are failurePolicy: Fail,
-      # the dead admission controller then rejected every Pod/Deployment/Job
-      # CREATE cluster-wide (e.g. ksail-operator FailedCreate -> stuck
-      # HelmRelease upgrade) until it recovered. Pin a generous explicit limit
-      # -- still far under auto-vpa's 6Gi maxAllowed ceiling -- so this pod has
-      # real headroom and a single sizing authority.
+      # Explicit resources = the COLD-START FLOOR. Kyverno's global resourceFilters
+      # exclude ns/kyverno from auto-vpa, so the admission controller was long left
+      # on the chart-default limits.memory: 384Mi, which OOMKilled (exit 137) under
+      # image-verification + policy-evaluation load; because the
+      # verify-image-signatures webhooks are failurePolicy: Fail, the dead
+      # controller then rejected every Pod/Deployment/Job CREATE cluster-wide (e.g.
+      # ksail-operator FailedCreate -> stuck HelmRelease upgrade) until it
+      # recovered. It is now ALSO VPA-managed via a static VPA in
+      # providers/hetzner/infrastructure/system-vpas/ (auto-vpa still can't reach
+      # this namespace), which right-sizes it at steady state; these values remain
+      # as the safe baseline a fresh pod starts on before VPA has a recommendation
+      # (the 1Gi memory limit keeps that window well above the 384Mi OOM
+      # threshold). Eviction is no longer a deadlock risk: the VPA resizes IN PLACE
+      # (no eviction), and with replicas: 2 + the PDB a Recreate fallback or an OOM
+      # only ever takes one replica, so the admission path stays up. Limit stays
+      # far under auto-vpa's 6Gi maxAllowed ceiling.
       resources:
         requests:
           cpu: 100m
