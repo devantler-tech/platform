@@ -11,5 +11,6 @@ resources:
   - infrastructure-privileged.yaml
   - pod-security-mutations.yaml
   - service-account-tokens.yaml
+  - talos-cis-host-file-controls.yaml
   - upstream-chart-defaults.yaml
   - vpa-managed-resources.yaml
