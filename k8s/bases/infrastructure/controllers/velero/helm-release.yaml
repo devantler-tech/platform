@@ -82,6 +82,16 @@ spec:
       volumeSnapshotLocation: []
       defaultVolumesToFsBackup: true
       uploaderType: kopia
+      # Kopia repository maintenance cadence. Velero's built-in default is 1h,
+      # so with one BackupRepository per backed-up namespace it spins up ~16
+      # short-lived `*-kopia-maintain-job-*` pods every hour. That hourly churn
+      # of fast-exiting Job containers is the dominant trigger for the kubescape
+      # node-agent SBOM reap-race and the containerd "find container" NotFound
+      # log noise. Kopia's own default maintenance interval is 24h, which is
+      # ample for repo compaction/GC at this scale, so raise it to cut the churn
+      # ~24x. (Applies to newly-created BackupRepositories; existing ones keep
+      # their stored frequency until recreated.)
+      defaultRepoMaintainFrequency: 24h
       features: ""
 
     # Velero runs a SINGLE replica — this is correct, not a gap, and is why
