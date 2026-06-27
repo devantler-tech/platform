@@ -14,5 +14,4 @@ resources:
   - default-deny-networkpolicy.yaml
   - rolebinding.yaml
   - serviceaccount.yaml
-  - sops-age-secret.enc.yaml
   - sync.yaml

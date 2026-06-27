@@ -176,7 +176,47 @@ resources:
 
 Open the change as a PR; once merged, Flux reconciles the new tenant.
 
-## 6. Staying current
+## 6. Provider overlays — what may be patched platform-side
+
+A tenant's manifests ship from its own OCI artifact, but the **prod (hetzner) overlay** can
+layer a `Kustomization` `spec.patches` onto the tenant's platform-side Flux `Kustomization`
+at `k8s/providers/hetzner/apps/<tenant>/patches/kustomization-patch.yaml`, which Flux then
+applies to the tenant's resources *after* pulling the artifact. This is a **narrow escape
+hatch**, not a place for tenant config.
+
+A platform-side patch is legitimate **only for what the environment-agnostic artifact cannot
+carry itself**:
+
+- **Environment adaptations** — values that must differ per provider/cluster and so cannot be
+  hardcoded in the single artifact that deploys to both local/docker and prod/hetzner. The
+  only example in the repo: `wedding-app`'s CNPG `Cluster` `storage.storageClass: longhorn`
+  (local/docker has no longhorn, so the artifact stays class-agnostic and the overlay supplies
+  the class).
+- **Operational-safety annotations** — platform-enforced guards such as
+  `kustomize.toolkit.fluxcd.io/{force,prune}: disabled` on a stateful resource to prevent a
+  Flux delete+recreate data-loss event.
+
+**Everything a tenant can express in its own `deploy/` is tenant-owned and must NOT be patched
+here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes, and app config:
+
+- List all of a tenant's hostnames (local + prod + any custom domains) directly in its
+  `deploy/httproute.yaml`. The Gateway attaches only the hostnames that match a listener in a
+  given environment, so listing them all is safe everywhere.
+- The platform's `homepage` app discovers `gethomepage.dev/*` annotations on the tenant's
+  HTTPRoute cluster-wide, so the tenant authors them in its own artifact — they are tenant
+  self-presentation, not platform config.
+
+Use an existing tenant's `deploy/httproute.yaml` (e.g. `ascoachingogvaner`, which owns its
+hostnames *and* its dashboard annotations) as the reference.
+
+> **Validation gotcha:** these patch files are schema-validated **standalone** by
+> `ksail workload validate`. If removing a patch leaves the file empty, **delete the file and
+> its `- path:` entry** in
+> [`k8s/providers/hetzner/apps/kustomization.yaml`](../k8s/providers/hetzner/apps/kustomization.yaml)
+> — a partial `Kustomization` (no `spec.interval`) fails validation on its own (the same reason
+> the disabled `fleetdm` patch was deleted, not just unreferenced).
+
+## 7. Staying current
 
 template-sync opens a PR in the tenant whenever the template's shared plumbing
 changes (a bumped action pin, a workflow fix, an updated convention). Review and
