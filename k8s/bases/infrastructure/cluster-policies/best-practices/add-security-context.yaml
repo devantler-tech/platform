@@ -34,7 +34,8 @@
 # add-pod-security-context rule therefore excludes tofu-controller runner pods —
 # they self-harden via their runnerPodTemplate (runAsNonRoot + seccomp) and the
 # container-level rule still applies; the add-tofu-runner-pod-security-context rule
-# below re-supplies the pod-level seccomp + runAsNonRoot.
+# below re-supplies the pod-level seccomp, runAsNonRoot, fsGroup and
+# fsGroupChangePolicy (everything except the sandbox-breaking runAsGroup).
 #
 # Uses +(key) to never overwrite values explicitly set by Helm charts.
 # Excluded namespaces require elevated privileges by design.
@@ -165,13 +166,14 @@ spec:
     # tofu-controller runner pods are EXCLUDED from add-pod-security-context above
     # (a pod-level runAsGroup with no runAsUser yields the OCI user string ":1000",
     # which containerd rejects so the sandbox never starts — see the header). They
-    # still must satisfy the require-seccomp-profile validate rule, and
+    # still must satisfy require-seccomp-profile and the rest of C-0211, and
     # tofu-controller does NOT propagate the runnerPodTemplate's pod-level
     # securityContext to the created runner pod, so the mutate must supply it. This
-    # rule re-applies the SAFE subset for runner pods only — seccompProfile +
-    # runAsNonRoot, i.e. everything the pod rule injects EXCEPT the runAsGroup that
-    # breaks sandbox creation. The container-level rule already hardens their
-    # containers; this closes the pod-level seccomp gap that excluding them opened.
+    # rule re-applies everything the pod rule injects EXCEPT the sandbox-breaking
+    # runAsGroup: seccompProfile + runAsNonRoot + fsGroup + fsGroupChangePolicy.
+    # runAsNonRoot keeps non-root-containers satisfied (the runnerPodTemplate
+    # supplies runAsUser); fsGroup + fsGroupChangePolicy here, plus the
+    # container-level seLinuxOptions, make these runner pods C-0211-complete too.
     - name: add-tofu-runner-pod-security-context
       match:
         any:
@@ -191,3 +193,5 @@ spec:
               +(seccompProfile):
                 type: RuntimeDefault
               +(runAsNonRoot): true
+              +(fsGroup): 1000
+              +(fsGroupChangePolicy): OnRootMismatch
