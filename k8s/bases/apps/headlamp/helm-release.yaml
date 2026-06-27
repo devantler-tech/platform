@@ -121,13 +121,18 @@ spec:
     # cluster-admin, but Headlamp runs with OIDC (config.oidc below;
     # unsafeUseServiceAccountToken defaults to false), so every Kubernetes API
     # request is authenticated with the logged-in USER's token — the pod
-    # ServiceAccount is not used to serve user requests. Bind the SA to the
-    # platform's read-only cluster-reader ClusterRole instead of cluster-admin:
-    # no `*/*/*` god-role (clears Kubescape CIS-5.1.3 / C-0187), while still
-    # covering any baseline cluster reads the backend performs. See
-    # k8s/bases/infrastructure/cluster-roles/cluster-reader.yaml.
+    # ServiceAccount is not used to serve user requests.
+    #
+    # Disable the chart's ClusterRoleBinding and bind the SA to the read-only
+    # cluster-reader ClusterRole via our own binding (clusterrolebinding.yaml).
+    # We deliberately do NOT just set clusterRoleName: a ClusterRoleBinding's
+    # roleRef is IMMUTABLE, so retargeting the existing headlamp-admin binding
+    # fails the Helm upgrade ("cannot change roleRef"). Disabling create lets Helm
+    # delete the old cluster-admin binding, and our separate, differently-named
+    # binding is created fresh — no `*/*/*` god-role (clears Kubescape CIS-5.1.3 /
+    # C-0187), while still covering any baseline cluster reads the backend makes.
     clusterRoleBinding:
-      clusterRoleName: cluster-reader
+      create: false
     config:
       watchPlugins: true
       oidc:
