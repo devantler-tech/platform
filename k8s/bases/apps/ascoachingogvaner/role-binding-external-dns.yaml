@@ -1,0 +1,22 @@
+# RBAC for the tenant-owned external-dns instance ascoachingogvaner ships in
+# its own deploy/ artifact (manages its simply.com zone from its HTTPRoute
+# hostnames). The tenant creates the dedicated `external-dns` ServiceAccount
+# itself; only these grants are platform territory — a tenant's `edit` role
+# cannot read the shared Gateway in kube-system, list namespaces, or create
+# RBAC. Capabilities live in
+# k8s/bases/infrastructure/cluster-roles/tenant-external-dns.yaml.
+---
+# HTTPRoute reads, limited to the tenant's own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ascoachingogvaner-external-dns
+  namespace: ascoachingogvaner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenant-external-dns
+subjects:
+  - kind: ServiceAccount
+    name: external-dns
+    namespace: ascoachingogvaner

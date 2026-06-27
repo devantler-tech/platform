@@ -126,7 +126,7 @@ RBAC: ClusterRoleBindings oidc-view + oidc-cluster-reader
 ## RBAC
 
 OIDC access is **read-only**. Two ClusterRoleBindings in
-`k8s/bases/infrastructure/cluster-role-bindings/oidc-readonly.yaml` bind the
+`k8s/bases/infrastructure/cluster-role-bindings/oidc-view.yaml` and `oidc-cluster-reader.yaml` bind the
 user whose email matches the Dex `email` claim (`oidc:${admin_email}`) to:
 
 | Binding | Role | Grants |
@@ -194,7 +194,7 @@ kube-apiserver's `--oidc-client-id` flag.
 | `error: You must be logged in to the server (Unauthorized)` | Token expired or wrong audience | Run `kubectl oidc-login setup --oidc-issuer-url=... --oidc-client-id=kubectl` to verify the flow |
 | Browser doesn't open | kubelogin not installed or not in `$PATH` | Verify `kubectl oidc-login --help` works |
 | `x509: certificate signed by unknown authority` (local) | mkcert CA not trusted | Pass `--certificate-authority-data` or install the mkcert root CA in your system trust store |
-| `Forbidden` on a **read** | Email not bound, or resource outside the read-only roles | Check `kubectl auth whoami`; confirm the email matches the `oidc-readonly.yaml` subjects |
+| `Forbidden` on a **read** | Email not bound, or resource outside the read-only roles | Check `kubectl auth whoami`; confirm the email matches the `oidc-view.yaml` / `oidc-cluster-reader.yaml` subjects |
 | `Forbidden` on a **write** | Expected — OIDC is read-only | Use the [break-glass admin cert](#break-glass-admin-access) for writes |
 
 ## References

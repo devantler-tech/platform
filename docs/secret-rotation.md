@@ -14,17 +14,17 @@ ships as its own reviewed PR.
 - **OpenBao = KV v2 + Kubernetes auth only** (configured by the `vault-config`
   Job). No Database secrets engine is enabled yet.
 - **Two sourcing paths coexist (mid-migration):**
-  - **OpenBao → ESO**: generators (`k8s/bases/infrastructure/vault-seed/generators.yaml`) seed OpenBao KV
+  - **OpenBao → ESO**: generators (the `password-*` files in `k8s/bases/infrastructure/vault-seed/`) seed OpenBao KV
     once; `ExternalSecret`s sync to consumer namespaces (1h refresh). Used by
     fleetdm DB/redis/license, headlamp/actual-budget OIDC, cloudflare token, R2.
   - **SOPS → Flux postBuild substitution**: `${dex_client_secret}`,
     `${flux_web_client_secret}`, `${oauth2_proxy_cookie_secret}` etc. are still
-    read from `k8s/clusters/*/bootstrap/variables-cluster-secret.enc.yaml`. **Dex
+    read from `k8s/clusters/*/bootstrap/secret.enc.yaml`. **Dex
     (the OIDC provider) and oauth2-proxy read from here, not OpenBao.**
 
 ### Validated finding — `refreshInterval` does **not** rotate generators
 
-The `k8s/bases/infrastructure/vault-seed/push-generated-secrets.yaml` PushSecrets
+The `external-secret-generated-*` files in `k8s/bases/infrastructure/vault-seed/`
 use `refreshInterval: "0"`, and the comment implies a non-zero value would rotate.
 **It would not.** ESO **v2.5.0**'s
 [PushSecret reconciler](https://github.com/external-secrets/external-secrets/blob/v2.5.0/pkg/controllers/pushsecret/pushsecret_controller.go)

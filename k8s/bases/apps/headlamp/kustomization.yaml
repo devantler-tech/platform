@@ -4,9 +4,9 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - external-secret.yaml
-  - pvc.yaml
+  - persistent-volume-claim.yaml
   - helm-release.yaml
   - helm-repository.yaml
-  - clusterrolebinding.yaml
-  - httproute.yaml
-  - networkpolicy.yaml
+  - cluster-role-binding.yaml
+  - http-route.yaml
+  - cilium-network-policy.yaml

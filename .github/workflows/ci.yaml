@@ -38,6 +38,7 @@ jobs:
               - '.sops.yaml'
               - 'talos-local/**'
               - 'talos/**'
+              - 'scripts/validate-naming.py'
               - '.github/workflows/ci.yaml'
 
   validate:
@@ -122,6 +123,27 @@ jobs:
         # genuine gaps are fixed; never lower it.
         run: ksail workload scan --framework nsa --compliance-threshold 85
 
+  naming:
+    name: 🏷️ Validate Naming Conventions
+    needs: [changes]
+    # Static folder/file naming gate: kebab-case dirs, one-resource-per-file,
+    # type-led filenames, and flux-kustomization disambiguation. Pure Python
+    # stdlib — no cluster, no secrets, no network — so it also runs on fork PRs
+    # and returns in seconds. See scripts/validate-naming.py and AGENTS.md
+    # 'File and Directory Naming Conventions'.
+    if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: 🏷️ Validate naming conventions
+        run: python3 scripts/validate-naming.py
+
   deploy-prod:
     name: 🚀 Deploy to Prod
     needs: [changes]
@@ -159,7 +181,7 @@ jobs:
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [changes, validate, deploy-prod]
+    needs: [changes, validate, naming, deploy-prod]
     if: always()
     permissions: {}
     steps:
@@ -169,4 +191,5 @@ jobs:
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.validate.result }}
+            ${{ needs.naming.result }}
             ${{ needs.deploy-prod.result }}

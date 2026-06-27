@@ -64,9 +64,9 @@ values, point ksail at it".
 Each `k8s/clusters/<env>/bootstrap/` directory contains the only resources
 Flux reads that are genuinely per-cluster:
 
-- `variables-cluster-config-map.yaml` — non-secret values (hostnames, URLs,
+- `config-map.yaml` — non-secret values (hostnames, URLs,
   feature flags, Hetzner LB location and type, etc).
-- `variables-cluster-secret.enc.yaml` — SOPS-encrypted secrets. Re-encrypt
+- `secret.enc.yaml` — SOPS-encrypted secrets. Re-encrypt
   these with your own Age key (update `.sops.yaml`, then `sops -e` each file).
 
 ### 5. SOPS configuration

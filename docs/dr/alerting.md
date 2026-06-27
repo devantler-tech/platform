@@ -123,7 +123,7 @@ backups are filesystem-level and crash-consistent, fine for a 24 h RPO.
 ## Per-environment setup
 
 **No new setup** — both values are inherited from the previous stack, already
-present in the per-cluster `variables-cluster-secret.enc.yaml` (under
+present in the per-cluster `secret.enc.yaml` (under
 `bootstrap/`) and injected by Flux `substituteFrom`:
 
 - `alertmanager_webhook_url` — Slack incoming-webhook, reused by Coroot's
@@ -140,7 +140,7 @@ To change either, `sops --set` it in the prod secret, e.g.:
 
 ```bash
 sops --set '["stringData"]["alertmanager_heartbeat_url"] "https://hc-ping.com/<uuid>"' \
-  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/secret.enc.yaml
 ```
 
 Recommended heartbeat monitor: [healthchecks.io](https://healthchecks.io) — a

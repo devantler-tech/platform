@@ -17,8 +17,8 @@ resources:
   # covered by the base allow-coroot policy. The wedding-app TENANT owns its own
   # equivalent in its repo's deploy/ (cluster.yaml + networkpolicy.yaml), since
   # tenant DB instrumentation is tenant self-description, not a platform patch.
-  - umami/coroot-scrape-networkpolicy.yaml
-  - backstage/coroot-scrape-networkpolicy.yaml
+  - umami/cilium-network-policy.yaml
+  - backstage/cilium-network-policy.yaml
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
   # bases/components/helmrelease-drift-detection.
@@ -35,7 +35,7 @@ patches:
   # standalone by `ksail workload validate`, and a partial HelmRelease (no
   # spec.interval) fails. Restore the patch from git history if re-enabling.
   - path: headlamp/patches/helm-release-patch.yaml
-  - path: wedding-app/patches/kustomization-patch.yaml
+  - path: wedding-app/patches/flux-kustomization-patch.yaml
   # Prod-only Coroot Postgres integration for the in-repo CNPG DBs (strategic
   # merge: inheritedMetadata scrape annotations + pg_stat_statements params, plus
   # for backstage a pg_monitor managed role). These self-identify, so no target.

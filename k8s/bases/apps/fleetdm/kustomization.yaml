@@ -5,11 +5,14 @@ resources:
   - namespace.yaml
   - helm-release.yaml
   - helm-repository.yaml
-  - httproute.yaml
-  - external-secrets.yaml
-  - external-secrets-serviceaccount.yaml
-  - mysql-static-cred-generator.yaml
-  - server-key-external-secret.yaml
-  - networkpolicy.yaml
+  - http-route.yaml
+  - external-secret-mysql.yaml
+  - external-secret-redis.yaml
+  - external-secret-fleet-license.yaml
+  - external-secret-mysql-fleet-rotated.yaml
+  - service-account.yaml
+  - vault-dynamic-secret.yaml
+  - external-secret-server-key.yaml
+  - cilium-network-policy.yaml
   - pod-disruption-budget.yaml
-  - mysql-primary-service.yaml
+  - service.yaml

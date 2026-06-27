@@ -79,7 +79,7 @@ spec:
       # controller then rejected every Pod/Deployment/Job CREATE cluster-wide (e.g.
       # ksail-operator FailedCreate -> stuck HelmRelease upgrade) until it
       # recovered. It is now ALSO VPA-managed via a static VPA in
-      # providers/hetzner/infrastructure/system-vpas/ (auto-vpa still can't reach
+      # providers/hetzner/infrastructure/vertical-pod-autoscalers/ (auto-vpa still can't reach
       # this namespace), which right-sizes it at steady state; these values remain
       # as the safe baseline a fresh pod starts on before VPA has a recommendation
       # (the 1Gi memory limit keeps that window well above the 384Mi OOM

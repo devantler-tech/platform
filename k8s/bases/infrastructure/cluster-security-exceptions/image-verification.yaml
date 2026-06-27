@@ -1,0 +1,23 @@
+---
+# Exempt image signature verification cluster-wide (kubescape C-0237).
+# First-party images (ghcr.io/devantler-tech/*) ARE cosign-signed and verified
+# — by Flux on the OCI manifest artifacts (apps' oci-repository.yaml verify.provider:
+# cosign) and, at the node pull layer, by Talos ImageVerificationConfig
+# (talos/cluster/image-verification.yaml). But third-party chart images
+# (Cilium, Longhorn, Coroot, registry.k8s.io, …) are not all signed, and there
+# is no admission-layer signature enforcement, so this cluster-wide control —
+# which scans every workload image ref — remains exempted.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: image-verification
+spec:
+  reason: >-
+    First-party images (ghcr.io/devantler-tech/*) are cosign-signed and
+    verified at both the Flux OCI source layer and the Talos containerd pull
+    layer (ImageVerificationConfig). Third-party chart images are not all
+    signed and there is no admission-layer signature enforcement, so this
+    cluster-wide control still fails on unsigned workload images.
+  posture:
+    - controlID: C-0237
+      action: ignore

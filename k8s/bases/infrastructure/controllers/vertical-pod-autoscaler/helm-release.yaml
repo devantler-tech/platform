@@ -30,7 +30,7 @@ spec:
       # The lock Lease defaults to kube-system (VPA hardcodes ResourceNamespace
       # to metav1.NamespaceSystem), where the recommender SA has no leases grant,
       # so the election fails forever. Pin it to this namespace, matching the
-      # least-privilege Role in leader-election-rbac.yaml.
+      # least-privilege Role in role.yaml + role-binding.yaml.
       extraArgs:
         leader-elect: true
         leader-elect-resource-namespace: vertical-pod-autoscaler
@@ -57,7 +57,7 @@ spec:
       # updaters would double-evict pods. VPA 1.6.0 supports --leader-elect.
       # Pin the lock Lease to this namespace (defaults to kube-system, where the
       # updater SA has no grant) -- see the recommender block and
-      # leader-election-rbac.yaml.
+      # role.yaml + role-binding.yaml.
       extraArgs:
         leader-elect: true
         leader-elect-resource-namespace: vertical-pod-autoscaler

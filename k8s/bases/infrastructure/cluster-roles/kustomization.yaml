@@ -8,3 +8,4 @@ resources:
   - external-secrets-tenant-edit.yaml
   - gateway-tenant-edit.yaml
   - tenant-external-dns.yaml
+  - tenant-external-dns-global.yaml

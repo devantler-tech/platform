@@ -124,7 +124,7 @@ spec:
     # ServiceAccount is not used to serve user requests.
     #
     # Disable the chart's ClusterRoleBinding and bind the SA to the read-only
-    # cluster-reader ClusterRole via our own binding (clusterrolebinding.yaml).
+    # cluster-reader ClusterRole via our own binding (cluster-role-binding.yaml).
     # We deliberately do NOT just set clusterRoleName: a ClusterRoleBinding's
     # roleRef is IMMUTABLE, so retargeting the existing headlamp-admin binding
     # fails the Helm upgrade ("cannot change roleRef"). Disabling create lets Helm

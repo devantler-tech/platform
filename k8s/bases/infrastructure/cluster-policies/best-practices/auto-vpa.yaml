@@ -7,9 +7,9 @@
 # Because VPA right-sizing IS wanted for those controllers (cilium, cilium-envoy,
 # spire-agent, coredns, metrics-server, hubble, hcloud ccm/csi, tetragon,
 # cluster-autoscaler, the kyverno controllers), prod ships equivalent STATIC VPAs
-# (same policy as below) in k8s/providers/hetzner/infrastructure/system-vpas/,
+# (same policy as below) in k8s/providers/hetzner/infrastructure/vertical-pod-autoscalers/,
 # which bypass Kyverno entirely; their CPU/memory burst *limits* are seeded by
-# the LimitRanges in k8s/bases/infrastructure/limitranges/ (CPU there, plus a
+# the LimitRanges in k8s/bases/infrastructure/limit-ranges/ (CPU there, plus a
 # generous prod memory `default` patched on in the hetzner overlay) for VPA to
 # scale ratio-preserving. Static control-plane pods (kube-apiserver/etcd/
 # scheduler/controller-manager) are bare mirror Pods, not Deployment/StatefulSet/

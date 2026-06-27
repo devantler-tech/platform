@@ -83,7 +83,7 @@ Promotion vs rollback is gated on:
 
 1. **Pick the mode** (table above). Stateless, directly-routed apps → weighted;
    oauth2-proxy-fronted apps → blue/green.
-2. **Free the route** (weighted only) — delete the app's `httproute.yaml`;
+2. **Free the route** (weighted only) — delete the app's `http-route.yaml`;
    Flagger generates the route from the Canary's `gatewayRefs` + `hosts`. Re-add
    any response-header filters via `spec.service.headers`. Blue/green keeps the
    existing route untouched.
@@ -97,7 +97,7 @@ Promotion vs rollback is gated on:
    webhook on `<app>-canary`.
 5. **Open the netpols** — app namespace: ingress from `flagger-system` on the app
    port; `flagger-system`: load-tester egress to the app namespace+port (in
-   [`controllers/flagger/networkpolicy.yaml`](../k8s/bases/infrastructure/controllers/flagger/networkpolicy.yaml)).
+   [`controllers/flagger/cilium-network-policy.yaml`](../k8s/bases/infrastructure/controllers/flagger/cilium-network-policy.yaml)).
 6. **Place the Canary** in the apps layer (app) or the `infrastructure` layer
    (infra component) — never in `infrastructure/controllers`.
 

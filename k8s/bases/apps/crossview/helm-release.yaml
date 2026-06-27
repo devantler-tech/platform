@@ -100,7 +100,7 @@ spec:
           # authenticating).
           origin: https://crossview.${domain}
         # Crossview does its OWN authentication now — there is no oauth2-proxy in
-        # front of it (httproute.yaml routes crossview.${domain} straight to
+        # front of it (http-route.yaml routes crossview.${domain} straight to
         # crossview-service). Mode `session` is mandatory for the OIDC flow below:
         # the SessionAuthMiddleware gates the /api/kubernetes/* data routes on a
         # signed session cookie, the cookie store is ONLY wired up when

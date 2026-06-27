@@ -3,7 +3,7 @@
 # node drain or a VPA Recreate-fallback eviction could take both replicas at once
 # and briefly black-hole cluster DNS. This adds the same drain-safe PDB the
 # docker overlay already has, so at least one replica always serves. Pairs with
-# the coredns VPA in providers/hetzner/infrastructure/system-vpas/.
+# the coredns VPA in providers/hetzner/infrastructure/vertical-pod-autoscalers/.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:

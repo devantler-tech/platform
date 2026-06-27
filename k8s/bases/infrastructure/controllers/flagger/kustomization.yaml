@@ -5,6 +5,6 @@ resources:
   - namespace.yaml
   - helm-repository.yaml
   - helm-release.yaml
-  - loadtester-helm-release.yaml
-  - networkpolicy.yaml
+  - helm-release-loadtester.yaml
+  - cilium-network-policy.yaml
   - pod-disruption-budget.yaml

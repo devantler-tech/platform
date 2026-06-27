@@ -1,6 +1,6 @@
 # Weighted Gateway API canary for Umami (the platform's one directly-routed,
 # non-KEDA app). Flagger generates and OWNS the HTTPRoute (replacing the deleted
-# httproute.yaml), creates umami-umami-primary/-canary Deployments + Services, and
+# http-route.yaml), creates umami-umami-primary/-canary Deployments + Services, and
 # shifts gateway traffic in 10% steps while gating on Coroot SLOs + load tests.
 #
 # ⚠️ PROD-ONLY (umami is excluded from the docker/CI overlay, so this canary is
