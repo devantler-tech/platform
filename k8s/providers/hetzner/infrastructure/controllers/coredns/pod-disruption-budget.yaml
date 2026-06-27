@@ -1,0 +1,19 @@
+---
+# Prod CoreDNS (KSail/Talos-managed Deployment, 2 replicas) ships no PDB, so a
+# node drain or a VPA Recreate-fallback eviction could take both replicas at once
+# and briefly black-hole cluster DNS. This adds the same drain-safe PDB the
+# docker overlay already has, so at least one replica always serves. Pairs with
+# the coredns VPA in providers/hetzner/infrastructure/vertical-pod-autoscalers/.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: coredns
+  namespace: kube-system
+spec:
+  # maxUnavailable: 1 is the platform-wide drain-safe PDB pattern (issue #1880):
+  # never deadlocks a drain regardless of replica count, and bounds disruption to
+  # one pod at a time (behaviourally identical to minAvailable: 1 at 2 replicas).
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      k8s-app: kube-dns

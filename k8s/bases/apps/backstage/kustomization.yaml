@@ -4,8 +4,9 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - helm-repository.yaml
-  - postgres-cluster.yaml
-  - backend-secret.yaml
+  - cluster.yaml
+  - password.yaml
+  - external-secret.yaml
   - helm-release.yaml
-  - httproute.yaml
-  - networkpolicy.yaml
+  - http-route.yaml
+  - cilium-network-policy.yaml

@@ -82,6 +82,16 @@ spec:
       volumeSnapshotLocation: []
       defaultVolumesToFsBackup: true
       uploaderType: kopia
+      # Kopia repository maintenance cadence. Velero's built-in default is 1h,
+      # so with one BackupRepository per backed-up namespace it spins up ~16
+      # short-lived `*-kopia-maintain-job-*` pods every hour. That hourly churn
+      # of fast-exiting Job containers is the dominant trigger for the kubescape
+      # node-agent SBOM reap-race and the containerd "find container" NotFound
+      # log noise. Kopia's own default maintenance interval is 24h, which is
+      # ample for repo compaction/GC at this scale, so raise it to cut the churn
+      # ~24x. (Applies to newly-created BackupRepositories; existing ones keep
+      # their stored frequency until recreated.)
+      defaultRepoMaintainFrequency: 24h
       features: ""
 
     # Velero runs a SINGLE replica — this is correct, not a gap, and is why
@@ -99,7 +109,7 @@ spec:
     # `helm template --set replicaCount=2` still renders `replicas: 1`. (An
     # earlier comment here claimed the server was leader-elected; that was
     # incorrect — corrected to match the accurate rationale already in
-    # k8s/clusters/prod/bootstrap/variables-cluster-config-map.yaml and the
+    # k8s/clusters/prod/bootstrap/config-map.yaml and the
     # validate-replica-floor policy.)
     #
     # Resilience to node failure therefore comes from FAST RESCHEDULE, not a warm
@@ -144,7 +154,7 @@ spec:
         rollingUpdate:
           maxUnavailable: 1
       # Explicit (tiny) resources for the per-volume VGDP micro-service pods —
-      # see node-agent-configmap.yaml for why the Kyverno-stamped 128Mi default
+      # see config-map.yaml for why the Kyverno-stamped 128Mi default
       # request gets them rejected on memory-saturated nodes.
       extraArgs:
         - --node-agent-configmap=node-agent-config
@@ -186,9 +196,24 @@ spec:
     metrics:
       enabled: true
 
+    # Velero's memory is extremely bursty: the server idles at ~55Mi but spikes to
+    # ~770Mi for the ~3 minutes of the daily backup (VPA's observed upperBound was
+    # 770Mi). The auto-vpa policy right-sizes the *request* to steady-state (~105Mi)
+    # and, under RequestsAndLimits, scales the *limit* proportionally to the authored
+    # limit:request ratio. At the previous 4:1 ratio (512Mi:128Mi) the effective limit
+    # was only ~419Mi — below the backup peak — so the server was OOMKilled mid-backup
+    # and the daily backup Failed three days running (2026-06-25..27).
+    #
+    # Fix without fighting VPA (auto-vpa's generate rule is immutable, so velero cannot
+    # be excluded from it in place): widen the authored ratio to 16:1 (2Gi:128Mi). VPA
+    # preserves the ratio, so the effective limit is always 16x the request it sets,
+    # and it never sets the request below auto-vpa's 64Mi floor — so the limit is always
+    # >= 1Gi (16 x 64Mi), clearing the 770Mi peak. At the ~105Mi steady-state target the
+    # limit lands ~1.6Gi. (The live pod confirms VPA keeps the ratio: 4:1 authored ->
+    # 419Mi:105Mi observed.) node-agent is unaffected — its own resources, not bursty.
     resources:
       requests:
         cpu: 25m
         memory: 128Mi
       limits:
-        memory: 512Mi
+        memory: 2Gi

@@ -9,6 +9,16 @@ resources:
   # API it reaches are Hetzner-only — on local/CI clusters the Terraform CRD is
   # absent. Reconciled by the shared `apps` Flux Kustomization like any tenant.
   - unifi/
+  # Prod-only Coroot Postgres integration for the platform-owned CNPG DBs:
+  # additive CiliumNetworkPolicies that let the observability cluster-agent
+  # scrape each on 5432 (the Cluster patches below stamp the
+  # coroot.com/postgres-scrape annotations + pg_monitor + pg_stat_statements).
+  # coroot-db needs none — it is intra-namespace to the agent and already
+  # covered by the base allow-coroot policy. The wedding-app TENANT owns its own
+  # equivalent in its repo's deploy/ (cluster.yaml + networkpolicy.yaml), since
+  # tenant DB instrumentation is tenant self-description, not a platform patch.
+  - umami/cilium-network-policy.yaml
+  - backstage/cilium-network-policy.yaml
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
   # bases/components/helmrelease-drift-detection.
@@ -18,7 +28,6 @@ components:
 # they need only a path — no redundant `target:` selector. JSON6902 patches have
 # no embedded identity and keep an explicit target (see whoami below).
 patches:
-  - path: ascoachingogvaner/patches/kustomization-patch.yaml
   # fleetdm disabled 2026-06-03 (see bases/apps/kustomization.yaml). Its
   # prod-only HelmRelease patch (timeout + MySQL primary service address +
   # hcloud storageClass) and the providers/hetzner/apps/fleetdm/ dir were
@@ -26,7 +35,22 @@ patches:
   # standalone by `ksail workload validate`, and a partial HelmRelease (no
   # spec.interval) fails. Restore the patch from git history if re-enabling.
   - path: headlamp/patches/helm-release-patch.yaml
-  - path: wedding-app/patches/kustomization-patch.yaml
+  - path: wedding-app/patches/flux-kustomization-patch.yaml
+  # Prod-only Coroot Postgres integration for the in-repo CNPG DBs (strategic
+  # merge: inheritedMetadata scrape annotations + pg_stat_statements params, plus
+  # for backstage a pg_monitor managed role). These self-identify, so no target.
+  - path: umami/patches/postgres-cluster-patch.yaml
+  - path: backstage/patches/postgres-cluster-patch.yaml
+  # umami's pg_monitor grant is a JSON6902 append onto its EXISTING managed role
+  # (so it doesn't replace the list / desync the OpenBao-rotation enforcer); a
+  # JSON6902 patch has no embedded identity, so it keeps an explicit target.
+  - target:
+      group: postgresql.cnpg.io
+      version: v1
+      kind: Cluster
+      name: umami-db
+      namespace: umami
+    path: umami/patches/grant-pg-monitor-patch.yaml
   # Pilot: user namespaces (hostUsers: false) on whoami — prod-only; see the
   # patch file for the full rationale. JSON6902 patch (a list of ops) has no
   # embedded identity, so it must keep an explicit target.

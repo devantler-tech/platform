@@ -5,5 +5,10 @@ resources:
   - namespace.yaml
   - helm-repository.yaml
   - helm-release.yaml
-  - networkpolicy.yaml
-  - httproute.yaml
+  - cilium-network-policy.yaml
+  - http-route.yaml
+  # CPU-only LimitRange: restores a CPU limit (dropped when longhorn-system was
+  # excluded from the Kyverno limit policies on 2026-06-20) so longhorn pods pass
+  # kubescape C-0270, while keeping the memory limit unset to preserve the
+  # instance-manager OOM-cascade safeguard. See limit-range.yaml for details.
+  - limit-range.yaml

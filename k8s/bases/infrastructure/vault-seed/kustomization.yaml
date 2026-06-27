@@ -2,6 +2,42 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - generators.yaml
-  - push-generated-secrets.yaml
-  - push-secrets.yaml
+  - password-fleetdm-mysql-root-password.yaml
+  - password-fleetdm-mysql-replication-password.yaml
+  - password-fleetdm-mysql-password.yaml
+  - password-fleetdm-redis-password.yaml
+  - password-fleetdm-server-private-key.yaml
+  - password-umami-app-secret.yaml
+  - password-umami-admin-password.yaml
+  - password-umami-ascoachingogvaner-password.yaml
+  - password-crossview-db-password.yaml
+  - password-crossview-session-secret.yaml
+  - password-crossview-admin-password.yaml
+  - external-secret-generated-fleetdm-mysql-root-password.yaml
+  - push-secret-push-fleetdm-mysql-passwords.yaml
+  - external-secret-generated-fleetdm-mysql-replication-password.yaml
+  - push-secret-push-fleetdm-mysql-replication-password.yaml
+  - external-secret-generated-fleetdm-mysql-password.yaml
+  - push-secret-push-fleetdm-mysql-password.yaml
+  - external-secret-generated-fleetdm-redis-password.yaml
+  - push-secret-push-fleetdm-redis-password.yaml
+  - external-secret-generated-fleetdm-server-private-key.yaml
+  - push-secret-push-fleetdm-server-key.yaml
+  - external-secret-generated-umami-app-secret.yaml
+  - push-secret-push-umami-app-secret.yaml
+  - external-secret-generated-umami-admin-password.yaml
+  - push-secret-push-umami-admin-password.yaml
+  - external-secret-generated-umami-ascoachingogvaner-password.yaml
+  - push-secret-push-umami-ascoachingogvaner-password.yaml
+  - external-secret-generated-crossview-db-password.yaml
+  - push-secret-push-crossview-db-password.yaml
+  - external-secret-generated-crossview-session-secret.yaml
+  - push-secret-push-crossview-session-secret.yaml
+  - external-secret-generated-crossview-admin-password.yaml
+  - push-secret-push-crossview-admin-password.yaml
+  - push-secret-seed-r2-credentials.yaml
+  - push-secret-seed-github-app.yaml
+  - push-secret-seed-ghcr.yaml
+  - push-secret-seed-dex-client-secret.yaml
+  - push-secret-seed-oauth2-proxy-cookie-secret.yaml
+  - push-secret-seed-velero-repo-credentials.yaml

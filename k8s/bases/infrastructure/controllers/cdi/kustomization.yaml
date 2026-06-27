@@ -4,7 +4,7 @@ kind: Kustomization
 resources:
   - cdi-operator.yaml
   - cdi-cr.yaml
-  - networkpolicy.yaml
+  - cilium-network-policy.yaml
 patches:
   # Add pod-security labels to match platform convention.
   - target:

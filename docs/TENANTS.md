@@ -106,14 +106,14 @@ and workloads consume the values **from OpenBao via `ExternalSecret`s**.
 ### The GHCR image-pull secret (`ghcr-auth`)
 
 A **platform-managed** credential, not a tenant secret. Every registration dir
-ships a `ghcr-auth-externalsecret.yaml` that sources the shared org pull
+ships a `external-secret-ghcr-auth.yaml` that sources the shared org pull
 credential from OpenBao (`infrastructure/ghcr/auth`) via the cluster-scoped `openbao`
 **ClusterSecretStore** and materialises the `ghcr-auth` dockerconfigjson the
 `OCIRepository` and ServiceAccount consume. It is reconciled by flux-system (not
 your tenant SA) — which is why it may use the ClusterSecretStore where your own
 resources may not (the Kyverno policy carves out flux-system-applied resources).
 The value lives SOPS-encrypted as `ghcr_dockerconfigjson` in the shared
-`variables-base-secret.enc.yaml` (the same org token both clusters use); the
+`secret.enc.yaml` (the same org token both clusters use); the
 `seed-ghcr` PushSecret pushes it to `infrastructure/ghcr/auth` via the `openbao`
 ClusterSecretStore.
 
@@ -138,18 +138,18 @@ artifacts produced by that trusted workflow are ever reconciled onto the cluster
 
 Add `k8s/bases/apps/<tenant>/` — copy `wedding-app/` (a tenant with app secrets)
 or `ascoachingogvaner/` (a static tenant that also runs a **tenant-owned
-external-dns** for its custom domain, with the extra `external-dns-rbac.yaml`
-grant below) and rename — with:
+external-dns** for its custom domain, with the extra external-dns RBAC
+grants below) and rename — with:
 
 | File | Purpose |
 |---|---|
 | `kustomization.yaml` | Kustomize entrypoint listing the resources in this directory |
 | `namespace.yaml` | Namespace, `pod-security.kubernetes.io/enforce: restricted` |
-| `serviceaccount.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
-| `rolebinding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
-| `ghcr-auth-externalsecret.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret |
-| `external-dns-rbac.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — binds the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
-| `sync.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + `Kustomization` (prune, `serviceAccountName: <tenant>`) |
+| `service-account.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
+| `role-binding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
+| `external-secret-ghcr-auth.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret (just `external-secret.yaml` when it is the tenant's only one) |
+| `role-binding-external-dns*.yaml` + `cluster-role-binding.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — bind the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
+| `oci-repository.yaml` + `flux-kustomization.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`) |
 
 > **Tenant-owned (in the tenant repo's `deploy/`, not here):** the
 > `CiliumNetworkPolicy` allow-lists (`networkpolicy.yaml`, and
@@ -157,10 +157,10 @@ grant below) and rename — with:
 > with app secrets — the namespaced `secretstore.yaml`. The tenant's `edit`
 > RoleBinding aggregates `cilium-tenant-edit` and `external-secrets-tenant-edit`,
 > so its ServiceAccount applies them from its own artifact; the platform keeps
-> only the default-deny floor, the `external-dns-rbac.yaml` cross-namespace
+> only the default-deny floor, the external-dns cross-namespace
 > grants, and the Vault role/policy.
 
-In `sync.yaml`, update the `name`/`namespace`/`url`
+In `oci-repository.yaml` / `flux-kustomization.yaml`, update the `name`/`namespace`/`url`
 (`oci://ghcr.io/devantler-tech/<tenant>/manifests`) and keep the `verify` block
 pointing at `publish-app.yaml`. No Flux `spec.decryption` is needed — tenant
 secrets are delivered by External Secrets from OpenBao (§3), not SOPS-encrypted
@@ -176,7 +176,47 @@ resources:
 
 Open the change as a PR; once merged, Flux reconciles the new tenant.
 
-## 6. Staying current
+## 6. Provider overlays — what may be patched platform-side
+
+A tenant's manifests ship from its own OCI artifact, but the **prod (hetzner) overlay** can
+layer a `Kustomization` `spec.patches` onto the tenant's platform-side Flux `Kustomization`
+at `k8s/providers/hetzner/apps/<tenant>/patches/kustomization-patch.yaml`, which Flux then
+applies to the tenant's resources *after* pulling the artifact. This is a **narrow escape
+hatch**, not a place for tenant config.
+
+A platform-side patch is legitimate **only for what the environment-agnostic artifact cannot
+carry itself**:
+
+- **Environment adaptations** — values that must differ per provider/cluster and so cannot be
+  hardcoded in the single artifact that deploys to both local/docker and prod/hetzner. The
+  only example in the repo: `wedding-app`'s CNPG `Cluster` `storage.storageClass: longhorn`
+  (local/docker has no longhorn, so the artifact stays class-agnostic and the overlay supplies
+  the class).
+- **Operational-safety annotations** — platform-enforced guards such as
+  `kustomize.toolkit.fluxcd.io/{force,prune}: disabled` on a stateful resource to prevent a
+  Flux delete+recreate data-loss event.
+
+**Everything a tenant can express in its own `deploy/` is tenant-owned and must NOT be patched
+here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes, and app config:
+
+- List all of a tenant's hostnames (local + prod + any custom domains) directly in its
+  `deploy/httproute.yaml`. The Gateway attaches only the hostnames that match a listener in a
+  given environment, so listing them all is safe everywhere.
+- The platform's `homepage` app discovers `gethomepage.dev/*` annotations on the tenant's
+  HTTPRoute cluster-wide, so the tenant authors them in its own artifact — they are tenant
+  self-presentation, not platform config.
+
+Use an existing tenant's `deploy/httproute.yaml` (e.g. `ascoachingogvaner`, which owns its
+hostnames *and* its dashboard annotations) as the reference.
+
+> **Validation gotcha:** these patch files are schema-validated **standalone** by
+> `ksail workload validate`. If removing a patch leaves the file empty, **delete the file and
+> its `- path:` entry** in
+> [`k8s/providers/hetzner/apps/kustomization.yaml`](../k8s/providers/hetzner/apps/kustomization.yaml)
+> — a partial `Kustomization` (no `spec.interval`) fails validation on its own (the same reason
+> the disabled `fleetdm` patch was deleted, not just unreferenced).
+
+## 7. Staying current
 
 template-sync opens a PR in the tenant whenever the template's shared plumbing
 changes (a bumped action pin, a workflow fix, an updated convention). Review and

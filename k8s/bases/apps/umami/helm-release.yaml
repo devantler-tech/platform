@@ -69,6 +69,23 @@ spec:
     serviceAccount:
       # Umami needs no Kubernetes API access.
       automountServiceAccountToken: false
+    # Loosen the startup probe. The chart default (probes.startup) fires the first
+    # probe at +30s with only a 3s timeout, but umami's serial cold boot —
+    # npm-run-all → check-db → a cross-node Prisma connect to the CNPG primary →
+    # migration diff → Next.js standalone listen — takes ~27s and /api/heartbeat is
+    # still slow to answer right as that first probe fires, so the 3s timeout trips
+    # "Startup probe failed: context deadline exceeded" (Coroot "Unhealthy" alert)
+    # even though the pod then goes Ready (failureThreshold: 30 is generous). Widen
+    # the per-probe timeout and period so a slightly slow boot no longer alerts;
+    # liveness/readiness keep the chart defaults.
+    probes:
+      startup:
+        enabled: true
+        path: /api/heartbeat
+        initialDelaySeconds: 30
+        periodSeconds: 10
+        timeoutSeconds: 8
+        failureThreshold: 30
     umami:
       port: 3000
       # Stable APP_SECRET from OpenBao via External Secrets — the `umami-app`
@@ -91,7 +108,7 @@ spec:
       # External-PostgreSQL path pointed at the CloudNativePG cluster in
       # postgres-cluster.yaml. The password is OWNED AND ROTATED by OpenBao's
       # Database secrets engine (7-day static role — see vault-config), surfaced
-      # by db-rotated-external-secret.yaml as the `umami-db-rotated` Secret
+      # by external-secret-db-rotated.yaml as the `umami-db-rotated` Secret
       # (not CNPG's static umami-db-app). Mirrors the fleetdm MySQL rotation.
       external:
         host: umami-db-rw.umami.svc.cluster.local
@@ -104,7 +121,7 @@ spec:
       # Service port 80 -> container port 3000 (named `http`).
       port: 80
     # Routing, ingress and NetworkPolicy are handled by the platform's own
-    # resources (canary.yaml's Flagger-generated HTTPRoute + networkpolicy.yaml),
+    # resources (canary.yaml's Flagger-generated HTTPRoute + cilium-network-policy.yaml),
     # not the chart.
     gatewayAPI:
       enabled: false

@@ -19,5 +19,5 @@ kind: Kustomization
 resources:
   - helm-release.yaml
   - helm-repository.yaml
-  - networkpolicy.yaml
+  - cilium-network-policy.yaml
   - pod-disruption-budget.yaml

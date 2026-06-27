@@ -44,7 +44,7 @@ data:
     iconStyle: gradient
     hideVersion: true
     # Disable Homepage's built-in GitHub release check. The cluster egress
-    # NetworkPolicy (networkpolicy.yaml) intentionally allows no internet
+    # NetworkPolicy (cilium-network-policy.yaml) intentionally allows no internet
     # access, so the check — GET api.github.com/repos/gethomepage/homepage/
     # releases, fired by the Version component — is dropped by Cilium and
     # hangs ~8s on the TCP connect timeout before failing, wasting an

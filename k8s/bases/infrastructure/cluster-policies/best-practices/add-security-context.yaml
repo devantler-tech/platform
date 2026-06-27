@@ -4,10 +4,38 @@
 # - readOnlyRootFilesystem: true (C-0017)
 # - drop ALL capabilities (C-0055)
 # - runAsNonRoot: true (C-0013) — pod + container
+# - runAsGroup: 1000 (C-0013/C-0211 non-root group) — pod level
+# - fsGroup: 1000 + fsGroupChangePolicy: OnRootMismatch (C-0211) — pod level
+# - seLinuxOptions: {level: s0} (C-0211 CIS-5.7.3) — containers + initContainers
 #
-# NOTE: runAsGroup is intentionally NOT injected because it would
-# override pod-level runAsGroup inheritance at the container level.
-# Charts that need a non-root group should set it explicitly.
+# Together these complete the security context kubescape's CIS-5.7.3 (C-0211) checks
+# (non-root-containers, set-fsgroup-value, set-fsgroupchangepolicy-value,
+# set-seLinuxOptions). Why each is safe to inject cluster-wide:
+# - runAsGroup is injected at the POD level only (never the container level), so it
+#   sets the process primary GID without clobbering a container-level value a chart
+#   sets. Pod-level runAsGroup alone satisfies the non-root-containers rule — no
+#   runAsUser needed (verified with kubescape).
+# - runAsUser is deliberately NOT injected: it would override image-baked UIDs and
+#   break charts (cert-manager, distroless images, …). The non-root rule is already
+#   satisfied by runAsGroup, so runAsUser is unnecessary here.
+# - fsGroup uses a conditional anchor, so any workload that sets its own (every
+#   PVC-mounting workload in scope does) keeps it; only stateless pods get the
+#   default, where it governs emptyDir/projected-volume ownership harmlessly.
+# - seLinuxOptions is a no-op on this AppArmor cluster — runc ignores SELinux labels
+#   when SELinux isn't the active LSM (verified: Cilium already ships one and a probe
+#   pod ran fine) — but CIS-5.7.3 requires it and it is correct defense-in-depth on
+#   any SELinux node. level: s0 is the default non-privileged MCS level (not Cilium's
+#   spc_t, which is for privileged pods).
+#
+# CAVEAT — images with NO baked-in UID (e.g. tofu-controller's tf-runner, which
+# expects runAsUser from its runnerPodTemplate): a pod-level runAsGroup with no
+# runAsUser yields the OCI user string ":1000", which containerd rejects ("user
+# group \"1000\" is specified without user") so the sandbox never starts. The
+# add-pod-security-context rule therefore excludes tofu-controller runner pods —
+# they self-harden via their runnerPodTemplate (runAsNonRoot + seccomp) and the
+# container-level rule still applies; the add-tofu-runner-pod-security-context rule
+# below re-supplies the pod-level seccomp, runAsNonRoot, fsGroup and
+# fsGroupChangePolicy (everything except the sandbox-breaking runAsGroup).
 #
 # Uses +(key) to never overwrite values explicitly set by Helm charts.
 # Excluded namespaces require elevated privileges by design.
@@ -57,6 +85,15 @@ spec:
                 - observability
                 - velero
                 - chaos-mesh
+          # tofu-controller runner pods ship no image-baked UID, so a pod-level
+          # runAsGroup with no runAsUser breaks containerd sandbox creation (see
+          # the header comment). They are hardened by their own runnerPodTemplate
+          # and the add-container-security-context rule, so exclude them from the
+          # pod-level runAsGroup injection only.
+          - resources:
+              selector:
+                matchLabels:
+                  app.kubernetes.io/created-by: tofu-controller
       mutate:
         patchStrategicMerge:
           spec:
@@ -64,6 +101,9 @@ spec:
               +(seccompProfile):
                 type: RuntimeDefault
               +(runAsNonRoot): true
+              +(runAsGroup): 1000
+              +(fsGroup): 1000
+              +(fsGroupChangePolicy): OnRootMismatch
     - name: add-container-security-context
       match:
         any:
@@ -105,6 +145,8 @@ spec:
                           - ALL
                       +(seccompProfile):
                         type: RuntimeDefault
+                      +(seLinuxOptions):
+                        level: s0
           - list: "request.object.spec.initContainers[]"
             patchStrategicMerge:
               spec:
@@ -119,3 +161,37 @@ spec:
                           - ALL
                       +(seccompProfile):
                         type: RuntimeDefault
+                      +(seLinuxOptions):
+                        level: s0
+    # tofu-controller runner pods are EXCLUDED from add-pod-security-context above
+    # (a pod-level runAsGroup with no runAsUser yields the OCI user string ":1000",
+    # which containerd rejects so the sandbox never starts — see the header). They
+    # still must satisfy require-seccomp-profile and the rest of C-0211, and
+    # tofu-controller does NOT propagate the runnerPodTemplate's pod-level
+    # securityContext to the created runner pod, so the mutate must supply it. This
+    # rule re-applies everything the pod rule injects EXCEPT the sandbox-breaking
+    # runAsGroup: seccompProfile + runAsNonRoot + fsGroup + fsGroupChangePolicy.
+    # runAsNonRoot keeps non-root-containers satisfied (the runnerPodTemplate
+    # supplies runAsUser); fsGroup + fsGroupChangePolicy here, plus the
+    # container-level seLinuxOptions, make these runner pods C-0211-complete too.
+    - name: add-tofu-runner-pod-security-context
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              # CREATE only — same immutability rationale as the rules above.
+              operations:
+                - CREATE
+              selector:
+                matchLabels:
+                  app.kubernetes.io/created-by: tofu-controller
+      mutate:
+        patchStrategicMerge:
+          spec:
+            securityContext:
+              +(seccompProfile):
+                type: RuntimeDefault
+              +(runAsNonRoot): true
+              +(fsGroup): 1000
+              +(fsGroupChangePolicy): OnRootMismatch

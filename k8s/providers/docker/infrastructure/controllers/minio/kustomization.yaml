@@ -4,5 +4,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - deployment.yaml
-  - networkpolicy.yaml
-  - default-deny-networkpolicy.yaml
+  - service.yaml
+  - job.yaml
+  - cilium-network-policy.yaml
+  - network-policy.yaml

@@ -41,7 +41,7 @@ stored in this repo either.
 | --- | --- | --- |
 | License key | **User-fed** — an operator writes it to OpenBao (`bao kv put secret/apps/fleetdm/license license-key=<jwt>`); it persists via the raft snapshot mirror. **Fleet premium license JWT** — replace before expiry or Fleet reverts to the free tier. | `apps/fleetdm/license` |
 | MDM server private key | **Auto-generated**, consumed via `server-key-external-secret.yaml`. **Must stay stable** — losing it invalidates every enrolled device, so its durability comes from OpenBao persistence (the Velero backup of the `openbao` PVC). | `apps/fleetdm/server` |
-| MySQL root / user / replication passwords | **Auto-generated**, consumed via `external-secrets.yaml`. | `apps/fleetdm/mysql` |
+| MySQL root / user / replication passwords | **Auto-generated**, consumed via the `external-secret-*` files. | `apps/fleetdm/mysql` |
 | Redis password | **Auto-generated**. | `apps/fleetdm/redis` |
 
 ### Rotating

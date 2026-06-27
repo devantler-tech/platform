@@ -78,14 +78,18 @@ spec:
         oidc_jwks_url = "http://dex.dex.svc.cluster.local:5556/keys"
         # Request the groups scope so Dex returns the user's GitHub teams as
         # group claims (its github connector uses teamNameField: slug), then
-        # gate on the 'platform' team -- preserving the stricter team
+        # gate on the 'maintainers' team -- preserving the stricter team
         # restriction the github provider enforced. NOTE: OIDC mode has no
         # per-user bypass (the old github_users escape hatch is gone), so the
-        # authenticating user MUST be a member of devantler-tech/platform.
+        # authenticating user MUST be a member of devantler-tech/maintainers.
+        # This must match an EXISTING GitHub team: devantler-tech has a single
+        # team, 'maintainers' (the old 'platform' team was consolidated into
+        # it), and Dex returns groups=[devantler-tech:maintainers]; gating on a
+        # non-existent 'platform' team rejects every login as "unauthorized".
         # Drop allowed_groups for an org-only gate (Dex's connector already
         # restricts to the devantler-tech org).
         scope = "openid email profile groups"
-        allowed_groups = ["devantler-tech:platform"]
+        allowed_groups = ["devantler-tech:maintainers"]
         # email_domains = ["*"] is intentional: GitHub (via Dex) does not
         # always return a public email, and the real gate is now
         # allowed_groups -- so don't additionally gate on the email domain.
@@ -140,7 +144,7 @@ spec:
     ingress:
       enabled: false
     # Gateway API HTTPRoute rendered by the chart (replaces the former hand-rolled
-    # httproute.yaml): attaches to the shared `platform` Gateway (kube-system, https
+    # http-route.yaml): attaches to the shared `platform` Gateway (kube-system, https
     # listener) and sets the platform-wide HSTS header; the chart auto-injects the
     # backendRef to the oauth2-proxy Service (:80). The cross-namespace ReferenceGrant
     # that lets other namespaces' HTTPRoutes back-end to oauth2-proxy for SSO stays a

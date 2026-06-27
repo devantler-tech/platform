@@ -1,0 +1,19 @@
+# VPA targets for kube-system. The shared updatePolicy + resourcePolicy is
+# applied ONCE via patches in kustomization.yaml (so it is not repeated per
+# workload); each entry here is just a targetRef. DaemonSets carry
+# `vpa-tier: daemonset` so the patch can give them the tighter per-node ceiling.
+# Mirror pods (kube-apiserver/etcd/scheduler/controller-manager) are bare Pods,
+# not controllers, so they are intentionally absent — VPA cannot target them.
+#
+# --- Deployments ---
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: cilium-operator
+  namespace: kube-system
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: cilium-operator

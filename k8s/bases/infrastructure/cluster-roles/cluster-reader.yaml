@@ -1,84 +1,126 @@
 # Read-only ClusterRole for the resources the built-in `view` role omits.
-# Most are cluster-scoped (nodes, PVs, storage, CRDs, API services, classes,
-# CSRs), but a few are namespaced — RBAC roles/rolebindings and pod metrics —
-# granted cluster-wide here for read-only diagnostics. Bound ALONGSIDE `view`
-# (see cluster-role-bindings/oidc-readonly.yaml) so an OIDC identity gets a
-# complete read-only picture of the cluster:
+# Bound ALONGSIDE `view` (see cluster-role-bindings/oidc-cluster-reader.yaml) so an
+# OIDC identity gets a COMPLETE read-only picture of the cluster — including
+# every custom resource, so the Headlamp UI can display all of them:
 #   - `view`           → namespaced workloads/config (pods, deployments,
 #                        configmaps, pod logs, events, ...), minus Secrets.
-#   - `cluster-reader` → everything `view` omits (see rules below).
+#   - `cluster-reader` → cluster-scoped core resources `view` omits (nodes,
+#                        PVs), PLUS get/list/watch on every non-core API group
+#                        on the cluster (all CRDs: gateway, keda, kubescape,
+#                        cert-manager, Flux, KubeVirt, Crossplane, Longhorn,
+#                        monitoring, Velero, Kyverno, ...).
 #
-# Deliberately NOT granted: Secrets (kept in the vault on purpose), and any
-# write/exec verb (no pods/exec, pods/portforward, create/update/delete).
-# Everything here is get/list/watch only.
+# Secrets are deliberately EXCLUDED: the core ("") group is enumerated, never
+# wildcarded, so `secrets` is never granted (kept in the vault on purpose; OIDC
+# is the read-only daily-driver, sensitive reads/writes go through the
+# break-glass client-cert kubeconfig — see docs/oidc-kubectl.md). Everything
+# here is get/list/watch only — no write/exec verb.
+#
+# Excluding Secrets is WHY the non-core groups are listed explicitly: an
+# `apiGroups: ["*"]` wildcard would re-include the core group (and thus
+# Secrets). When a new operator adds a new API group, add it below so it shows
+# in Headlamp. Regenerate the full set (kept sorted) with:
+#   kubectl api-resources -o name | sed 's/^[^.]*//;s/^\.//' | grep . | sort -u
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: cluster-reader
 rules:
-  # Cluster-scoped core resources not covered by `view`.
+  # Cluster-scoped CORE resources not covered by `view`. The core ("") group is
+  # enumerated explicitly — never wildcarded — so Secrets stay excluded.
   - apiGroups: [""]
     resources:
       - nodes
       - persistentvolumes
     verbs: ["get", "list", "watch"]
-  # Node and pod metrics (kubectl top).
-  - apiGroups: ["metrics.k8s.io"]
-    resources:
-      - nodes
-      - pods
-    verbs: ["get", "list", "watch"]
-  # Storage topology.
-  - apiGroups: ["storage.k8s.io"]
-    resources:
-      - storageclasses
-      - volumeattachments
-      - csidrivers
-      - csinodes
-      - csistoragecapacities
-    verbs: ["get", "list", "watch"]
-  # API surface discovery.
-  - apiGroups: ["apiextensions.k8s.io"]
-    resources:
-      - customresourcedefinitions
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["apiregistration.k8s.io"]
-    resources:
-      - apiservices
-    verbs: ["get", "list", "watch"]
-  # Scheduling / runtime / ingress classes.
-  - apiGroups: ["scheduling.k8s.io"]
-    resources:
-      - priorityclasses
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["node.k8s.io"]
-    resources:
-      - runtimeclasses
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["networking.k8s.io"]
-    resources:
-      - ingressclasses
-    verbs: ["get", "list", "watch"]
-  # APIServer flow control (apiserver debugging).
-  - apiGroups: ["flowcontrol.apiserver.k8s.io"]
-    resources:
-      - flowschemas
-      - prioritylevelconfigurations
-    verbs: ["get", "list", "watch"]
-  # Certificate signing requests (kubelet-serving-cert-approver lives here).
-  # CSRs carry a public certificate request only — never a private key.
-  - apiGroups: ["certificates.k8s.io"]
-    resources:
-      - certificatesigningrequests
-    verbs: ["get", "list", "watch"]
-  # RBAC objects — reading these is invaluable for diagnosing "Forbidden"
-  # errors and exposes no secret material. This is the one place we go
-  # beyond the built-in `view` role's conservative defaults.
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources:
-      - clusterroles
-      - clusterrolebindings
-      - roles
-      - rolebindings
+  # Every non-core API group on the cluster — all resources, read-only. This is
+  # the catch-all that lets Headlamp display all custom resources. No Secrets
+  # here: `secrets` is a CORE resource, granted nowhere in this role.
+  - apiGroups:
+      - acme.cert-manager.io
+      - actions.github.m.upbound.io
+      - admissionregistration.k8s.io
+      - apiextensions.crossplane.io
+      - apiextensions.k8s.io
+      - apiregistration.k8s.io
+      - apps
+      - authentication.k8s.io
+      - authorization.k8s.io
+      - autoscaling
+      - autoscaling.k8s.io
+      - autoscaling.x-k8s.io
+      - backup.kubevirt.io
+      - barmancloud.cnpg.io
+      - batch
+      - cdi.kubevirt.io
+      - cert-manager.io
+      - cert-manager.k8s.cloudflare.com
+      - certificates.k8s.io
+      - cilium.io
+      - clone.kubevirt.io
+      - com.github.runnerm.cert-manager-simply-webhook
+      - coordination.k8s.io
+      - coroot.com
+      - dex.coreos.com
+      - discovery.k8s.io
+      - enterprise.github.m.upbound.io
+      - eventing.keda.sh
+      - events.k8s.io
+      - export.kubevirt.io
+      - external-secrets.io
+      - externaldns.k8s.io
+      - flagger.app
+      - flowcontrol.apiserver.k8s.io
+      - fluxcd.controlplane.io
+      - forklift.cdi.kubevirt.io
+      - gateway.networking.k8s.io
+      - gateway.networking.x-k8s.io
+      - generators.external-secrets.io
+      - github.m.upbound.io
+      - github.upbound.io
+      - groupsnapshot.storage.k8s.io
+      - helm.toolkit.fluxcd.io
+      - hostdata.kubescape.cloud
+      - image.toolkit.fluxcd.io
+      - infra.contrib.fluxcd.io
+      - instancetype.kubevirt.io
+      - internal.kro.run
+      - keda.sh
+      - kro.run
+      - ksail.io
+      - kubescape.io
+      - kubevirt.io
+      - kustomize.toolkit.fluxcd.io
+      - kyverno.io
+      - longhorn.io
+      - metrics.k8s.io
+      - migrations.kubevirt.io
+      - monitoring.coreos.com
+      - monitoring.grafana.com
+      - networking.k8s.io
+      - node.k8s.io
+      - notification.toolkit.fluxcd.io
+      - ops.crossplane.io
+      - pkg.crossplane.io
+      - policies.kyverno.io
+      - policy
+      - pool.kubevirt.io
+      - postgresql.cnpg.io
+      - protection.crossplane.io
+      - rbac.authorization.k8s.io
+      - repo.github.m.upbound.io
+      - reports.kyverno.io
+      - resource.k8s.io
+      - scheduling.k8s.io
+      - snapshot.kubevirt.io
+      - snapshot.storage.k8s.io
+      - source.toolkit.fluxcd.io
+      - spdx.softwarecomposition.kubescape.io
+      - storage.k8s.io
+      - team.github.m.upbound.io
+      - trust.cert-manager.io
+      - velero.io
+      - wgpolicyk8s.io
+    resources: ["*"]
     verbs: ["get", "list", "watch"]

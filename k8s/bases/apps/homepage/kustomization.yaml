@@ -6,8 +6,8 @@ resources:
   - canary.yaml
   - helm-release.yaml
   - helm-repository.yaml
-  - httproute.yaml
+  - http-route.yaml
   - namespace.yaml
   - pod-disruption-budget.yaml
-  - networkpolicy.yaml
+  - cilium-network-policy.yaml
   - scaled-object.yaml

@@ -7,12 +7,12 @@ resources:
   # (flux-system-applied), which a tenant SecretStore cannot reach. The tenant's
   # own CiliumNetworkPolicy (networkpolicy.yaml) and namespaced SecretStore now
   # live in the tenant repo's deploy/.
-  - db-backup-external-secret.yaml
-  - db-object-store.yaml
-  - ghcr-auth-externalsecret.yaml
+  - external-secret-db-backup.yaml
+  - object-store.yaml
+  - external-secret-ghcr-auth.yaml
   - namespace.yaml
-  - default-deny-networkpolicy.yaml
-  - rolebinding.yaml
-  - serviceaccount.yaml
-  - sops-age-secret.enc.yaml
-  - sync.yaml
+  - network-policy.yaml
+  - role-binding.yaml
+  - service-account.yaml
+  - oci-repository.yaml
+  - flux-kustomization.yaml

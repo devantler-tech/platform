@@ -10,6 +10,6 @@ resources:
   - namespace.yaml
   - helm-repository.yaml
   - helm-release.yaml
-  - httproute.yaml
-  - networkpolicy.yaml
-  - cluster-heartbeat-cronjob.yaml
+  - http-route.yaml
+  - cilium-network-policy.yaml
+  - cron-job.yaml

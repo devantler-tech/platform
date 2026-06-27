@@ -1,0 +1,65 @@
+---
+# CIS Kubernetes Benchmark WORKER-NODE checks (sections 4.1–4.2) that are FALSE
+# POSITIVES on Talos Linux. This set matches Sidero's canonical worker skip list in
+# "Step 6: produce a clean compliance report":
+#   https://docs.siderolabs.com/talos/v1.13/security/talos-default-hardening-and-cis-compliance#step-6-produce-a-clean-compliance-report
+#
+# Why these are false positives (not security gaps, not remediable by config):
+#   * §4.1 4.1.1 (C-0162): Talos does not manage the kubelet via systemd, so
+#     /etc/systemd/system/kubelet.service.d/10-kubeadm.conf does not exist.
+#   * §4.1 4.1.5–4.1.6 (C-0166/C-0167): Talos uses /etc/kubernetes/kubelet.yaml, not
+#     the kubeadm /etc/kubernetes/kubelet.conf the check looks for.
+#   * §4.1 4.1.9–4.1.10 (C-0170/C-0171): the kubeadm /var/lib/kubelet/config.yaml path
+#     does not exist on Talos.
+#   * §4.2 4.2.1–4.2.3 (C-0172/C-0173/C-0174): kube-bench reads anonymous-auth /
+#     authorization-mode / client-ca-file from those nonexistent files, though Talos
+#     sets them correctly (anonymous.enabled:false, authorization.mode:Webhook,
+#     authentication.x509.clientCAFile).
+#
+# Deliberately NOT exempted (Step 6 omits these — not false-positive FAILs):
+#   * 4.1.2 (kubelet service file ownership) and §4.2 4.2.4–4.2.6, 4.2.8–4.2.11, 4.3.1:
+#     genuine PASSes on Talos.
+#   * 4.1.3–4.1.4, 4.1.7–4.1.8 (kube-proxy / CA-file perms): WARN / manual.
+#   * 4.2.7, 4.2.12, 4.2.13: genuine operator decisions.
+#
+# NOTE — intentionally NO `match:` block. Host-scanner findings on the node are not
+# namespaced, so the namespaceSelector pattern the other exceptions use cannot target
+# them. The ClusterSecurityException CRD makes `match` optional; omitting it applies
+# the ignore cluster-wide — correct because the kubelet runs on every node and these
+# checks evaluate the host, not a namespaced resource.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: talos-cis-worker-false-positives
+spec:
+  reason: >-
+    CIS worker-node checks that are false positives on Talos Linux, matching Sidero's
+    "Step 6: produce a clean compliance report" skip list. kube-bench looks for the
+    kubelet service file, kubeconfig and config files at kubeadm paths Talos does not
+    use (Talos does not run the kubelet under systemd, and uses
+    /etc/kubernetes/kubelet.yaml rather than kubelet.conf / /var/lib/kubelet/config.yaml),
+    and it reads the kubelet auth flags (anonymous-auth, authorization-mode,
+    client-ca-file) from those nonexistent files even though Talos sets them correctly
+    (anonymous.enabled:false, authorization.mode:Webhook, x509.clientCAFile). No machine
+    configuration can satisfy them. Ignored to keep the in-cluster posture dashboard
+    signal clean. Reference:
+    https://docs.siderolabs.com/talos/v1.13/security/talos-default-hardening-and-cis-compliance#step-6-produce-a-clean-compliance-report
+  posture:
+    # ── CIS §4.1 — worker node configuration files ──
+    - controlID: C-0162 # CIS 4.1.1  kubelet service file permissions
+      action: ignore
+    - controlID: C-0166 # CIS 4.1.5  kubelet.conf (kubeconfig) file permissions
+      action: ignore
+    - controlID: C-0167 # CIS 4.1.6  kubelet.conf (kubeconfig) file ownership (root:root)
+      action: ignore
+    - controlID: C-0170 # CIS 4.1.9  kubelet config.yaml file permissions
+      action: ignore
+    - controlID: C-0171 # CIS 4.1.10 kubelet config.yaml file ownership (root:root)
+      action: ignore
+    # ── CIS §4.2 — kubelet (flags read from a manifest Talos doesn't have on disk) ──
+    - controlID: C-0172 # CIS 4.2.1  --anonymous-auth set to false
+      action: ignore
+    - controlID: C-0173 # CIS 4.2.2  --authorization-mode != AlwaysAllow
+      action: ignore
+    - controlID: C-0174 # CIS 4.2.3  --client-ca-file set as appropriate
+      action: ignore

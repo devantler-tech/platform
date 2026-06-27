@@ -6,5 +6,5 @@ resources:
   - helm-release.yaml
   - helm-repository.yaml
   - reference-grant.yaml
-  - networkpolicy.yaml
-  - networkpolicy-default-deny.yaml
+  - cilium-network-policy-allow-oauth2-proxy.yaml
+  - cilium-network-policy-default-deny.yaml
