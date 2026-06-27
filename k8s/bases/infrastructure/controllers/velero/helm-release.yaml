@@ -186,9 +186,24 @@ spec:
     metrics:
       enabled: true
 
+    # Velero's memory is extremely bursty: the server idles at ~55Mi but spikes to
+    # ~770Mi for the ~3 minutes of the daily backup (VPA's observed upperBound was
+    # 770Mi). The auto-vpa policy right-sizes the *request* to steady-state (~105Mi)
+    # and, under RequestsAndLimits, scales the *limit* proportionally to the authored
+    # limit:request ratio. At the previous 4:1 ratio (512Mi:128Mi) the effective limit
+    # was only ~419Mi — below the backup peak — so the server was OOMKilled mid-backup
+    # and the daily backup Failed three days running (2026-06-25..27).
+    #
+    # Fix without fighting VPA (auto-vpa's generate rule is immutable, so velero cannot
+    # be excluded from it in place): widen the authored ratio to 16:1 (2Gi:128Mi). VPA
+    # preserves the ratio, so the effective limit is always 16x the request it sets,
+    # and it never sets the request below auto-vpa's 64Mi floor — so the limit is always
+    # >= 1Gi (16 x 64Mi), clearing the 770Mi peak. At the ~105Mi steady-state target the
+    # limit lands ~1.6Gi. (The live pod confirms VPA keeps the ratio: 4:1 authored ->
+    # 419Mi:105Mi observed.) node-agent is unaffected — its own resources, not bursty.
     resources:
       requests:
         cpu: 25m
         memory: 128Mi
       limits:
-        memory: 512Mi
+        memory: 2Gi
