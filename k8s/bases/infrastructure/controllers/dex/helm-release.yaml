@@ -20,6 +20,20 @@ spec:
   # https://github.com/dexidp/helm-charts/blob/master/charts/dex/values.yaml
   values:
     replicaCount: ${dex_replicas:=2}
+    # Zero-downtime rollout. dex re-upgrades whenever a new platform OCI artifact
+    # is pushed (helm-controller re-applies the chart), and with only
+    # ${dex_replicas:=2} replicas the chart's default RollingUpdate
+    # (maxUnavailable 25% → 1 of 2) can terminate a replica before the new one is
+    # Ready — briefly dropping the dex Service to 0 endpoints, which Coroot raises
+    # as dex "no instances available". maxUnavailable: 0 + maxSurge: 1 brings the
+    # replacement up Ready before the old pod is removed, so a rollout never drops
+    # below the running replica count. Independent of the PDB (maxUnavailable
+    # there governs voluntary disruptions/drains, not rollouts).
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 0
+        maxSurge: 1
     podSecurityContext:
       runAsUser: 65534
       runAsGroup: 65534
