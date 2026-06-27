@@ -15,3 +15,4 @@ resources:
   - talos-cis-worker-false-positives.yaml
   - upstream-chart-defaults.yaml
   - vpa-managed-resources.yaml
+  - wildcard-rbac.yaml
