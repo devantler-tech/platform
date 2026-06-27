@@ -7,5 +7,6 @@ resources:
   - pvc.yaml
   - helm-release.yaml
   - helm-repository.yaml
+  - clusterrolebinding.yaml
   - httproute.yaml
   - networkpolicy.yaml

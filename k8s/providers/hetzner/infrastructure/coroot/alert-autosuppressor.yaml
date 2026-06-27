@@ -35,6 +35,25 @@
 #      separate `dns-server-errors` (SERVFAIL) builtin still covers genuine DNS
 #      faults for this app, so real "host does not exist" signal is not fully lost.
 #
+#   3. extensions-host-failed-conns - the `network-tcp-connections` ("failed to
+#      connect to N upstream services") warning on `_:Unknown:extensions`. This is
+#      NOT a Kubernetes workload: Coroot groups the Talos host-level processes it
+#      sees via eBPF but cannot map to a pod into per-node "Unknown" apps, and
+#      `extensions` is the Talos system-extension service group (siderolabs/
+#      iscsi-tools etc., one instance per node - see talos/cluster/install-image.yaml).
+#      Its failed connections are benign host noise: (a) stale/transient iSCSI
+#      (port 3260) sessions to targets Coroot cannot map (`external:3260`) during
+#      normal Longhorn volume churn - Longhorn itself stays healthy/attached - and
+#      (b) low-rate host->ksail-operator connects that don't complete while
+#      ksail-operator is itself fully healthy and reachable (verified: kubelet
+#      health probes to it are FORWARDED with zero Cilium drops). Nothing in a Talos
+#      host extension is fixable via a manifest, and a genuine storage fault would
+#      still surface via Longhorn volume health and the instance-manager apps' own
+#      SLOs, so this host-app connectivity signal is the least-actionable place to
+#      lose. Scoped to rule_id + the single app id. NB the sibling
+#      `_:Unknown:kubelet` raises the same rule; it is intentionally NOT suppressed
+#      here until its specific failed upstreams are separately verified benign.
+#
 # PROD-ONLY: Coroot alerting (the Slack webhook) is wired only in the hetzner
 # overlay, so this lives here, not in the base.
 apiVersion: batch/v1
@@ -131,6 +150,17 @@ spec:
                                and (.application_id | endswith(":flux-system:Deployment:tofu-controller")))
                       | .id'); do
                     ids="$ids $id"; echo "match tofu-empty-aaaa: $id"
+                  done
+
+                  # Exemption 3 - Talos host system-extension group benign failed
+                  # TCP connections (see header entry 3). Coroot-synthesised non-k8s
+                  # host app, so a genuine fault surfaces elsewhere (Longhorn volume
+                  # health, instance-manager SLOs), not here.
+                  for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
+                      | select(.suppressed==false and .resolved_at==null and .rule_id=="network-tcp-connections"
+                               and (.application_id | endswith(":_:Unknown:extensions")))
+                      | .id'); do
+                    ids="$ids $id"; echo "match extensions-host-failed-conns: $id"
                   done
 
                   n=$(echo $ids | wc -w)

@@ -1,0 +1,39 @@
+---
+# CPU-only default LimitRange for longhorn-system (prod/hetzner only — Longhorn
+# is not deployed on the local docker cluster).
+#
+# Root cause (kubescape C-0270): longhorn-system USED to receive the generic
+# Kyverno-generated `default-limitrange` (cpu 500m + memory 512Mi). On 2026-06-20
+# it was excluded from both add-default-limitrange and add-ns-quota because the
+# *memory* limit OOMKilled instance-manager pods during volume rebuilds, and the
+# resulting IM restart faulted every replica engine on the node and cascaded into
+# CNPG primary failover. Excluding it removed the whole LimitRange, which also
+# dropped the harmless *CPU* limit — so every longhorn pod recreated since
+# (instance-managers on rebuild, longhorn-ui, the CSI sidecars on rollout) runs
+# with no CPU limit and fails C-0270. VPA (longhorn has 10) cannot help: it only
+# rescales an existing limit, never creates one.
+#
+# This restores ONLY the CPU limit and deliberately keeps memory unset, so the
+# OOM-cascade safeguard is preserved:
+#   * default.cpu "2" is generous and compressible — historically longhorn ran
+#     fine under the old 500m CPU cap (the incident was memory, never CPU), so a
+#     4x-higher ceiling cannot throttle a rebuild into failure; a CPU limit only
+#     slows, it never OOMKills, so it cannot trigger the IM-restart cascade.
+#   * NO default.memory — this is the entire point of the longhorn exclusion and
+#     must stay unset (instance-managers must be free to burst memory during a
+#     rebuild).
+#   * defaultRequest is a low floor so a container that omits requests is not
+#     handed the 2-core limit as its request.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-limitrange
+  namespace: longhorn-system
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "2"
+      defaultRequest:
+        cpu: 15m
+        memory: 128Mi

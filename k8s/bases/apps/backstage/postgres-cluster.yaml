@@ -20,6 +20,11 @@ metadata:
     kustomize.toolkit.fluxcd.io/force: disabled
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
+  # Pin the PostgreSQL operand image to clear fixable base-OS + PostgreSQL CVEs in
+  # the CNPG operator default (18.3-system-trixie) — same rationale and Renovate
+  # wiring as umami-db. CNPG rolls the image in place across the HA instances.
+  # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
   # 2 instances (1 primary + 1 streaming replica) = the drain-safe floor: CNPG
   # drains a node by promoting the replica and sets a maxUnavailable replica PDB,
   # so a Talos roll / autoscaler scale-down never blocks and a single node loss

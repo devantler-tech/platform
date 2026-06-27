@@ -1,11 +1,18 @@
 # TODO: Upstream `auto-vpa.yaml` to Kyverno policies repository.
 #
-# kube-system is intentionally NOT excluded: its controllers (cilium,
-# cilium-envoy, spire-agent, coredns, metrics-server, hubble, hcloud
-# ccm/csi, tetragon, cluster-autoscaler) carry ~10Gi of hand-tuned request
-# floors that VPA can right-size to observed usage instead. Static
-# control-plane pods (kube-apiserver/etcd/scheduler/controller-manager) are
-# bare Pods, not Deployment/StatefulSet/DaemonSet, so they never match.
+# kube-system is intentionally NOT excluded by THIS policy's match rules — but
+# be aware Kyverno's GLOBAL resourceFilters (`[*/*,kube-system,*]` and
+# `[*/*,kyverno,*]` in the kyverno ConfigMap) exclude kube-system and kyverno
+# from ALL Kyverno processing, so in practice NO VerticalPodAutoscaler is
+# generated there (0 VPAs live in both). Their controllers (cilium, cilium-envoy,
+# spire-agent, coredns, metrics-server, hubble, hcloud ccm/csi, tetragon,
+# cluster-autoscaler, the kyverno controllers) keep their hand-tuned request
+# floors but are NOT VPA-right-sized; their CPU *limits* are seeded instead by
+# the static CPU-only LimitRanges in k8s/bases/infrastructure/limitranges/ (the
+# only admission path that reaches a globally-filtered namespace — kubescape
+# C-0270). Static control-plane pods (kube-apiserver/etcd/scheduler/
+# controller-manager) are bare mirror Pods, not Deployment/StatefulSet/DaemonSet,
+# so they never match here and bypass the LimitRange too.
 #
 # IN-PLACE RESIZE (no eviction) is active. InPlacePodVerticalScaling went GA
 # in k8s 1.35 (KEP-1287) and prod runs v1.35.5; VPA is 1.6 (its own
