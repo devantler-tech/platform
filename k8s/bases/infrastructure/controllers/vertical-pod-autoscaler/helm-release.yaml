@@ -26,8 +26,14 @@ spec:
       # is active at a time, standbys take over on failure. Without it, multiple
       # recommenders produce racy recommendations. VPA 1.6.0 supports
       # --leader-elect (extraArgs is a map -> --leader-elect=true).
+      #
+      # The lock Lease defaults to kube-system (VPA hardcodes ResourceNamespace
+      # to metav1.NamespaceSystem), where the recommender SA has no leases grant,
+      # so the election fails forever. Pin it to this namespace, matching the
+      # least-privilege Role in leader-election-rbac.yaml.
       extraArgs:
         leader-elect: true
+        leader-elect-resource-namespace: vertical-pod-autoscaler
       podDisruptionBudget:
         # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 never
         # deadlocks a node drain regardless of replica count, and at the
@@ -49,8 +55,12 @@ spec:
       # HA: leader election runs replicas active/standby -- only one updater is
       # active at a time, standbys take over on failure. Without it, multiple
       # updaters would double-evict pods. VPA 1.6.0 supports --leader-elect.
+      # Pin the lock Lease to this namespace (defaults to kube-system, where the
+      # updater SA has no grant) -- see the recommender block and
+      # leader-election-rbac.yaml.
       extraArgs:
         leader-elect: true
+        leader-elect-resource-namespace: vertical-pod-autoscaler
       podDisruptionBudget:
         # Drain-safe PDB pattern (#1880/#1882) -- see the recommender block.
         maxUnavailable: 1
