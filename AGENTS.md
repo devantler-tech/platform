@@ -206,14 +206,27 @@ You **cannot** decrypt existing secrets without the proper Age keys. For local d
 - **Never commit plaintext secrets** — all secrets must be SOPS-encrypted with the `.enc.yaml` suffix.
 - **Base files are immutable** — use Kustomize `patches:` in overlays; never edit `k8s/bases/` directly from a provider or cluster overlay.
 - **Flux dependency order** — `bootstrap` → `infrastructure-controllers` → `infrastructure` → `apps`. One prod-only side layer hangs off `infrastructure` without gating `apps`: `infrastructure-overprovisioning` (apply-only autoscaler buffer). Declarative GitHub org management runs as a normal **app** (`github-config`) consuming the `devantler-tech/.github` artifact, with its Crossplane provider in the `infrastructure` layer — see [`docs/github-management.md`](docs/github-management.md).
+- **File & directory naming** — kebab-case folders, one resource per file, and filenames led by the resource Kind (CR folders excepted); enforced by the `naming` CI job. See [File and Directory Naming Conventions](#file-and-directory-naming-conventions) below.
+
+### File and Directory Naming Conventions
+
+Enforced in CI by [`scripts/validate-naming.py`](scripts/validate-naming.py) (the `naming` job in `ci.yaml`); run it locally before any manifest PR.
+
+- **Directories are kebab-case**, named after the **application/component** *or* a **CR Kind in plural**. Co-locate a component's own CRs in its folder by default; break a CR out into a `‹kind-plural›/` folder only when it cannot live with its component (see the two reasons in the next section).
+- **One Kubernetes resource per file.** The only exception is a vendored upstream operator bundle, explicitly whitelisted in the validator (today `controllers/cdi/cdi-operator.yaml` and `controllers/kubevirt/kubevirt-operator.yaml`).
+- **Component-folder files are named after their resource Kind, kebab-cased**: `‹kind›.yaml` (e.g. `helm-release.yaml`, `http-route.yaml`, `cilium-network-policy.yaml`, `service-account.yaml`). When a folder holds more than one of a Kind, qualify each with a purpose: `‹kind›-‹purpose›.yaml` (e.g. `external-secret-db-backup.yaml`). The Kind→kebab map is acronym-aware: `HTTPRoute → http-route`, `OCIRepository → oci-repository`, `CiliumNetworkPolicy → cilium-network-policy`, `PodDisruptionBudget → pod-disruption-budget`.
+- **CR-folder files** omit the folder-implied Kind and are named `‹verb›-‹purpose›.yaml` (e.g. `restrict-tenant-secret-stores.yaml`).
+- A **Flux `Kustomization` CR** (`kustomize.toolkit.fluxcd.io`) is named `flux-kustomization*.yaml`; the `flux-` prefix disambiguates it from the kustomize **build** file, which must stay exactly `kustomization.yaml` (`kustomize.config.k8s.io`).
+- **Patch fragments** (under a `patches/` directory or named `*-patch.yaml`) are overlay inputs, not deployed resources — they keep an intent-describing name and are exempt from the Kind-leads rule (but stay kebab-case, one-resource, and keep the `flux-kustomization` prefix where applicable).
 
 ### Infrastructure File Structure Convention
 
-Resources under `k8s/bases/infrastructure/` are organized by **resource type**, not by the component that uses them — for example `certificates/`, `cluster-policies/`, `controllers/` (HelmRelease / HelmRepository and related resources, each in a subdirectory by component name), `gateway/` (Gateway and infrastructure-level HTTPRoute resources such as the HTTP→HTTPS redirect), `external-secrets/`, and the `vault-*/` (OpenBao) directories.
+Resources under `k8s/bases/infrastructure/` are **component-folder-first**: a component's HelmRelease/HelmRepository and its own CRs live together in a folder named after the component — `controllers/<component>/` in the controller layer, and a sibling folder in the `infrastructure` layer (e.g. `gateway/`, `coroot/`, `opencost/`, `vault-*/`). The central Cilium `Gateway`, its HTTP→HTTPS `HTTPRoute` and its TLS `Certificate` all live in `gateway/` and deploy to `kube-system` (the Cilium namespace).
 
-Central gateway resources (the Cilium `Gateway` and its TLS `Certificate`) are deployed to `kube-system` (the Cilium namespace) rather than to a dedicated namespace.
+A CR is split out into its own **plural-Kind folder** only when it cannot live with its component:
 
-Progressive delivery uses **Flagger** (Gateway API canary deployments); like Coroot, its CRDs ship with the controller HelmRelease in `controllers/flagger/`, so its `MetricTemplate` CRs live one layer later in `infrastructure/flagger/` to avoid the CR-and-its-CRD-in-one-Kustomization deadlock. See [`docs/progressive-delivery.md`](docs/progressive-delivery.md).
+- **Dependency split** — the CRD ships with the controller's HelmRelease, so the CR must reconcile a layer later to avoid the CR-and-its-CRD-in-one-Kustomization deadlock: `flagger/` (`MetricTemplate`; see [`docs/progressive-delivery.md`](docs/progressive-delivery.md)), `tracing-policies/` (Tetragon `TracingPolicy`), the Coroot CR in `coroot/`, and `resource-graph-definitions/` (KRO, which also installs its CRD via the controller layer).
+- **Cluster-scoped / cross-cutting** — no single owning component: `cluster-policies/` (Kyverno), `cluster-roles/` + `cluster-role-bindings/`, `cluster-secret-stores/`, `external-secrets/` (bootstrap ExternalSecrets), `security-exceptions/` (Kubescape) and `limitranges/`.
 
 ### Kustomization Flow
 

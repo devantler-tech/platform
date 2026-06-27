@@ -132,7 +132,7 @@ SVIDs, or it deadlocks. Options, hardest constraint first:
 
 ### Datastore connection + credentials (repo pattern)
 
-- **Cluster:** new `spire-db` CNPG `Cluster` mirroring `umami/postgres-cluster.yaml`
+- **Cluster:** new `spire-db` CNPG `Cluster` mirroring `umami/cluster.yaml`
   *structurally* (managed role, superuser-for-OpenBao, R2 Barman backups via the
   plugin) but placed in an **infrastructure-controllers**-tier directory and on
   **hcloud** storage, not longhorn. Bootstrap an empty `spire` DB owned by a

@@ -1,0 +1,141 @@
+# CloudNativePG-managed PostgreSQL for Umami — the platform's standard Postgres
+# operator (see infrastructure/controllers/cloudnative-pg). CNPG bootstraps the
+# `umami` database owned by the `umami` role and publishes the connection
+# credentials in an auto-generated Secret named `<cluster>-app` (here:
+# `umami-db-app`, keys: username/password/dbname/host/port/uri). The Umami
+# HelmRelease consumes that Secret via `database.external.existingSecret`.
+#
+# longhorn is hardcoded because Umami is a prod-only app (it is excluded from the
+# local/docker overlay, which has no CNPG operator or longhorn — same as the
+# wedding-app and ascoachingogvaner tenants).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: umami-db
+  namespace: umami
+  annotations:
+    # Never let Flux delete+recreate this database: the apps Flux Kustomization
+    # runs force: true + prune: true, and the longhorn PVCs are reclaimPolicy=
+    # Delete, so a force-recreate would wipe the data (the failure that hit
+    # coroot-db on 2026-06-18). Flux can still update it; immutable changes must
+    # be made by an operator with a backup/restore plan.
+    kustomize.toolkit.fluxcd.io/force: disabled
+    kustomize.toolkit.fluxcd.io/prune: disabled
+spec:
+  # Pin the PostgreSQL operand image explicitly instead of riding the CNPG operator
+  # default. The latest GA operator (v1.29.1) still defaults to
+  # postgresql:18.3-system-trixie, whose rolling tag is now frozen (last rebuilt
+  # 2026-05-11) and carries fixable base-OS CVEs (openssl/libssl3, libgnutls30,
+  # libc6, python3.13); the operator default only advances to 18.4 in the
+  # not-yet-GA v1.30, so a chart/operator bump (the built-in flux manager) does NOT
+  # clear them — an explicit pin is the only fix today. 18.4 (2026-05-14) also fixes
+  # 11 PostgreSQL CVEs incl. the RCE-class CVE-2026-6473. Renovate keeps this current
+  # via the cluster.yaml customManager in .github/renovate.json; CNPG rolls
+  # the image in place (replicas first, then a primary switchover), so the >=2-instance
+  # HA Clusters stay available with no data-loss path (force/prune are disabled above).
+  # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
+  # Run 3 instances (1 primary + 2 streaming replicas) for high availability.
+  # A single-instance Cluster makes CNPG create a `<cluster>-primary`
+  # PodDisruptionBudget with minAvailable=1 on the only pod, which BLOCKS every
+  # voluntary eviction — a node drain (Talos roll, autoscaler scale-down) hangs
+  # forever, and an involuntary node loss takes the database offline until the
+  # pod reschedules. With >=2 instances CNPG drains a node by promoting a replica
+  # (switchover) and sets the replica PDB to minAvailable=instances-1, so drains
+  # proceed one pod at a time and the database survives any single node going
+  # away. Three lands one instance on each of the 3 static Longhorn storage
+  # workers via CNPG's default (preferred) pod anti-affinity, keeping a
+  # primary+replica quorum even while one node is under maintenance.
+  instances: 3
+  # Expose the postgres superuser so OpenBao's Database secrets engine has a
+  # stable admin to rotate the `umami` application role's password (the engine
+  # cannot rotate a role using that same role's credentials, so it needs a
+  # separate stable admin). The superuser secret (umami-db-superuser) is pushed
+  # to OpenBao KV by db-superuser-pushsecret.yaml and used only in-cluster.
+  enableSuperuserAccess: true
+  storage:
+    size: 5Gi
+    storageClass: longhorn
+  # Quorum-based SYNCHRONOUS replication so a failover can never strand the old
+  # primary. Background: on 2026-06-19 the longhorn instance-manager on a storage
+  # worker was replaced; the CNPG primaries pinned to that node lost their RWO
+  # volume and CNPG failed over (failoverDelay defaults to 0 = immediate). Under
+  # the default ASYNC replication the promoted standby can be behind the dead
+  # primary, so the old primary came back on a diverged timeline and CNPG's
+  # automatic pg_rewind rejoin failed for hours with "could not find common
+  # ancestor of the source and target cluster's timelines" — umami-db and
+  # wedding-db both sat at 2/3 and wedged the apps / wedding-app Flux health
+  # checks until an operator deleted the stranded PVC to force a re-bootstrap.
+  # With `number: 1` every commit is acknowledged only once at least one standby
+  # has the WAL, so whichever standby is promoted already holds every committed
+  # transaction — the timeline never forks behind the old primary and the rejoin
+  # self-heals with no manual step. `dataDurability: preferred` keeps the DB
+  # WRITABLE if BOTH standbys are ever unavailable (it transparently relaxes to
+  # async for that window) instead of blocking commits the way `required` would,
+  # so this hardens durability with no write-availability regression — a good fit
+  # for this low-write metadata DB where the extra in-cluster commit round-trip is
+  # negligible.
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+      dataDurability: preferred
+  bootstrap:
+    initdb:
+      database: umami
+      owner: umami
+      postInitApplicationSQL:
+        # Provision pgcrypto for Umami up front, in the bootstrap superuser
+        # context (the app role cannot CREATE EXTENSION). Harmless if unused.
+        - CREATE EXTENSION IF NOT EXISTS pgcrypto
+  # OpenBao's Database secrets engine owns and rotates the `umami` role's password
+  # (external-secret-db-rotated.yaml + vault-config), and CNPG ENFORCES that same
+  # value by declaring the OpenBao-synced `umami-db-rotated` Secret as the managed
+  # role's passwordSecret. History of why enforcement (not abstinence) is needed:
+  #   - 2026-06-03: with the default wiring (passwordSecret umami-db-app), CNPG
+  #     re-applied ITS password on primary startup, clobbering OpenBao's rotated
+  #     value -> app broke with 28P01 (the app consumes `umami-db-rotated`, not
+  #     `umami-db-app`).
+  #   - The first fix (no passwordSecret at all, relying on "an existing role
+  #     with no passwordSecret keeps its current password", cnpg#2029) held for
+  #     steady-state reconciles but NOT for promotions: on 2026-06-09 a freshly
+  #     joined instance was promoted primary and CNPG's role synchronizer still
+  #     re-applied the stale bootstrap password (pg_authid xmin matched the
+  #     recorded managedRolesStatus transactionID), locking the app out for ~13h
+  #     (28P01 / Prisma P1000, analytics ingest down).
+  # Pointing passwordSecret at the OpenBao-synced Secret turns every such
+  # re-application into convergence: whatever path CNPG takes (promotion, join,
+  # restore, periodic reconcile), it applies the value OpenBao serves and the
+  # app uses. The Secret is kubernetes.io/basic-auth (CNPG requirement) and
+  # carries `cnpg.io/reload` so rotations are picked up promptly. Attributes
+  # mirror the initdb owner (LOGIN + CNPG defaults), so no other role attribute
+  # changes.
+  managed:
+    roles:
+      - name: umami
+        ensure: present
+        login: true
+        passwordSecret:
+          name: umami-db-rotated
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  # Off-cluster DB backup to Cloudflare R2 (continuous WAL archiving + base
+  # backups, so PITR is possible) via the Barman Cloud Plugin — the supported
+  # replacement for the in-tree spec.backup.barmanObjectStore, which CNPG
+  # deprecated in 1.26 and removes in 1.30. The R2 destination, the
+  # `umami-db-backup-r2` credentials (external-secret-db-backup.yaml, OpenBao
+  # infrastructure/backup/r2 — the SAME creds Velero uses) and retention now live
+  # in the ObjectStore CR (object-store.yaml); the daily base backup is driven
+  # by db-scheduled-backup.yaml. Egress to R2 is opened in cilium-network-policy.yaml
+  # (the plugin injects a barman-cloud sidecar into these instance pods, so the
+  # existing R2 egress still applies). isWALArchiver routes WAL archiving through
+  # the plugin.
+  plugins:
+    - name: barman-cloud.cloudnative-pg.io
+      isWALArchiver: true
+      parameters:
+        barmanObjectName: umami-db

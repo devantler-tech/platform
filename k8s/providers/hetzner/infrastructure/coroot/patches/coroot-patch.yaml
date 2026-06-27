@@ -17,7 +17,7 @@ spec:
   # pod-disruption-budget.yaml and spec.affinity (below).
   replicas: 2
   # External Postgres datastore = the precondition for replicas > 1. Points at
-  # the CloudNativePG cluster in postgres-cluster.yaml; CNPG owns the `coroot`
+  # the CloudNativePG cluster in cluster.yaml; CNPG owns the `coroot`
   # role's password and publishes it (with host/port/dbname) in the
   # auto-generated coroot-db-app Secret, which the operator consumes via
   # passwordSecret -> PG_PASSWORD + PG_CONNECTION_STRING (controller/postgres.go).

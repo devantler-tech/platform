@@ -6,5 +6,5 @@ resources:
   - helm-repository.yaml
   - helm-release.yaml
   - external-secret.yaml
-  - networkpolicy.yaml
-  - httproute.yaml
+  - cilium-network-policy.yaml
+  - http-route.yaml

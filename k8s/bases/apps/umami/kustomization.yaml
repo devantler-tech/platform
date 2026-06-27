@@ -3,22 +3,23 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - namespace.yaml
-  - serviceaccount.yaml
+  - service-account.yaml
   - external-secret.yaml
-  - admin-external-secret.yaml
-  - ascoachingogvaner-external-secret.yaml
-  - postgres-cluster.yaml
-  - db-superuser-pushsecret.yaml
-  - db-rotated-external-secret.yaml
-  - db-backup-external-secret.yaml
-  - db-object-store.yaml
-  - db-scheduled-backup.yaml
+  - external-secret-admin.yaml
+  - external-secret-ascoachingogvaner.yaml
+  - cluster.yaml
+  - push-secret.yaml
+  - vault-dynamic-secret.yaml
+  - external-secret-db-rotated.yaml
+  - external-secret-db-backup.yaml
+  - object-store.yaml
+  - scheduled-backup.yaml
   - helm-repository.yaml
   - helm-release.yaml
-  # httproute.yaml removed — Flagger generates and owns Umami's HTTPRoute from
+  # http-route.yaml removed — Flagger generates and owns Umami's HTTPRoute from
   # canary.yaml (Gateway API weighted canary).
   - canary.yaml
   - scaled-object.yaml
-  - networkpolicy.yaml
+  - cilium-network-policy.yaml
   - pod-disruption-budget.yaml
-  - provision-cronjob.yaml
+  - cron-job.yaml

@@ -857,7 +857,7 @@ spec:
 
               # Dedicated tenant role for github-config. Authenticates the app's
               # own `github-config` ServiceAccount (used by its namespaced
-              # SecretStore, k8s/bases/apps/github-config/secretstore.yaml) and
+              # SecretStore, k8s/bases/apps/github-config/secret-store.yaml) and
               # carries ONLY `infra-github-readonly` (read on
               # secret/data/infrastructure/github/*) — never the broad
               # `external-secrets` bundle — so the tenant can read the GitHub App

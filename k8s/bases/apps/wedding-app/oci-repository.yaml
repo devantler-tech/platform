@@ -1,0 +1,20 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: ksail
+  name: wedding-app
+  namespace: wedding-app
+spec:
+  interval: 1m
+  ref:
+    semver: ">=1.0.0"
+  url: oci://ghcr.io/devantler-tech/wedding-app/manifests
+  secretRef:
+    name: ghcr-auth
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-app\.yaml@.+$'

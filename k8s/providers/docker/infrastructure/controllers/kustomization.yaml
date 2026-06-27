@@ -34,8 +34,8 @@ resources:
   # --- Core: docker-provider-local ----------------------------------------
   - coredns/
   - flux-instance/
-  - local-path-storage-namespace.yaml
-  - local-path-storage-networkpolicy.yaml
+  - namespace.yaml
+  - cilium-network-policy.yaml
   #
   # --- Opt-in controllers (uncomment what you want to try locally) --------
   # Pair each with its `infrastructure`-layer resources in ../kustomization.yaml

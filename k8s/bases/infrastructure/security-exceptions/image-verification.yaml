@@ -1,7 +1,7 @@
 ---
 # Exempt image signature verification cluster-wide (kubescape C-0237).
 # First-party images (ghcr.io/devantler-tech/*) ARE cosign-signed and verified
-# — by Flux on the OCI manifest artifacts (apps' sync.yaml verify.provider:
+# — by Flux on the OCI manifest artifacts (apps' oci-repository.yaml verify.provider:
 # cosign) and, at the node pull layer, by Talos ImageVerificationConfig
 # (talos/cluster/image-verification.yaml). But third-party chart images
 # (Cilium, Longhorn, Coroot, registry.k8s.io, …) are not all signed, and there

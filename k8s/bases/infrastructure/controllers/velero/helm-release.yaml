@@ -109,7 +109,7 @@ spec:
     # `helm template --set replicaCount=2` still renders `replicas: 1`. (An
     # earlier comment here claimed the server was leader-elected; that was
     # incorrect — corrected to match the accurate rationale already in
-    # k8s/clusters/prod/bootstrap/variables-cluster-config-map.yaml and the
+    # k8s/clusters/prod/bootstrap/config-map.yaml and the
     # validate-replica-floor policy.)
     #
     # Resilience to node failure therefore comes from FAST RESCHEDULE, not a warm
@@ -154,7 +154,7 @@ spec:
         rollingUpdate:
           maxUnavailable: 1
       # Explicit (tiny) resources for the per-volume VGDP micro-service pods —
-      # see node-agent-configmap.yaml for why the Kyverno-stamped 128Mi default
+      # see config-map.yaml for why the Kyverno-stamped 128Mi default
       # request gets them rejected on memory-saturated nodes.
       extraArgs:
         - --node-agent-configmap=node-agent-config

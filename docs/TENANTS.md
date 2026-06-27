@@ -106,14 +106,14 @@ and workloads consume the values **from OpenBao via `ExternalSecret`s**.
 ### The GHCR image-pull secret (`ghcr-auth`)
 
 A **platform-managed** credential, not a tenant secret. Every registration dir
-ships a `ghcr-auth-externalsecret.yaml` that sources the shared org pull
+ships a `external-secret-ghcr-auth.yaml` that sources the shared org pull
 credential from OpenBao (`infrastructure/ghcr/auth`) via the cluster-scoped `openbao`
 **ClusterSecretStore** and materialises the `ghcr-auth` dockerconfigjson the
 `OCIRepository` and ServiceAccount consume. It is reconciled by flux-system (not
 your tenant SA) — which is why it may use the ClusterSecretStore where your own
 resources may not (the Kyverno policy carves out flux-system-applied resources).
 The value lives SOPS-encrypted as `ghcr_dockerconfigjson` in the shared
-`variables-base-secret.enc.yaml` (the same org token both clusters use); the
+`secret.enc.yaml` (the same org token both clusters use); the
 `seed-ghcr` PushSecret pushes it to `infrastructure/ghcr/auth` via the `openbao`
 ClusterSecretStore.
 
@@ -138,18 +138,18 @@ artifacts produced by that trusted workflow are ever reconciled onto the cluster
 
 Add `k8s/bases/apps/<tenant>/` — copy `wedding-app/` (a tenant with app secrets)
 or `ascoachingogvaner/` (a static tenant that also runs a **tenant-owned
-external-dns** for its custom domain, with the extra `external-dns-rbac.yaml`
-grant below) and rename — with:
+external-dns** for its custom domain, with the extra external-dns RBAC
+grants below) and rename — with:
 
 | File | Purpose |
 |---|---|
 | `kustomization.yaml` | Kustomize entrypoint listing the resources in this directory |
 | `namespace.yaml` | Namespace, `pod-security.kubernetes.io/enforce: restricted` |
-| `serviceaccount.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
-| `rolebinding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
-| `ghcr-auth-externalsecret.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret |
-| `external-dns-rbac.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — binds the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
-| `sync.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + `Kustomization` (prune, `serviceAccountName: <tenant>`) |
+| `service-account.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
+| `role-binding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
+| `external-secret-ghcr-auth.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret (just `external-secret.yaml` when it is the tenant's only one) |
+| `role-binding-external-dns*.yaml` + `cluster-role-binding.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — bind the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
+| `oci-repository.yaml` + `flux-kustomization.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`) |
 
 > **Tenant-owned (in the tenant repo's `deploy/`, not here):** the
 > `CiliumNetworkPolicy` allow-lists (`networkpolicy.yaml`, and
@@ -157,10 +157,10 @@ grant below) and rename — with:
 > with app secrets — the namespaced `secretstore.yaml`. The tenant's `edit`
 > RoleBinding aggregates `cilium-tenant-edit` and `external-secrets-tenant-edit`,
 > so its ServiceAccount applies them from its own artifact; the platform keeps
-> only the default-deny floor, the `external-dns-rbac.yaml` cross-namespace
+> only the default-deny floor, the external-dns cross-namespace
 > grants, and the Vault role/policy.
 
-In `sync.yaml`, update the `name`/`namespace`/`url`
+In `oci-repository.yaml` / `flux-kustomization.yaml`, update the `name`/`namespace`/`url`
 (`oci://ghcr.io/devantler-tech/<tenant>/manifests`) and keep the `verify` block
 pointing at `publish-app.yaml`. No Flux `spec.decryption` is needed — tenant
 secrets are delivered by External Secrets from OpenBao (§3), not SOPS-encrypted

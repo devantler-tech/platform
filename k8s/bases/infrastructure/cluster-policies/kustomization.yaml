@@ -18,7 +18,8 @@ resources:
   - best-practices/validate-pod-security.yaml
   - best-practices/validate-replica-ceiling.yaml
   - best-practices/validate-replica-floor.yaml
-  - best-practices/verify-image-signatures.yaml
+  - best-practices/verify-ksail-images.yaml
+  - best-practices/verify-app-images.yaml
   - flux/enforce-flux-best-practices.yaml
   - flux/helm-release-enable-tests.yaml
   - flux/helm-release-install-crds.yaml

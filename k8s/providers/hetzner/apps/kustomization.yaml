@@ -25,7 +25,7 @@ patches:
   # standalone by `ksail workload validate`, and a partial HelmRelease (no
   # spec.interval) fails. Restore the patch from git history if re-enabling.
   - path: headlamp/patches/helm-release-patch.yaml
-  - path: wedding-app/patches/kustomization-patch.yaml
+  - path: wedding-app/patches/flux-kustomization-patch.yaml
   # Pilot: user namespaces (hostUsers: false) on whoami — prod-only; see the
   # patch file for the full rationale. JSON6902 patch (a list of ops) has no
   # embedded identity, so it must keep an explicit target.

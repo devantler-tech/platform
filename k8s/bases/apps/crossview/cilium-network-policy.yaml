@@ -1,0 +1,60 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-crossview
+  namespace: crossview
+spec:
+  endpointSelector: {}
+  ingress:
+    # Public route traffic from the Cilium Gateway (crossview.${domain},
+    # http-route.yaml) — the gateway dials the crossview pod directly, arriving
+    # with the reserved `ingress` identity (Cilium's L7 proxy). This is NOT a
+    # SPIRE workload, so the cluster-wide require-mutual-auth policy does not apply
+    # and authentication.mode must NOT be set here. Kubelet health probes reach
+    # the pod via Cilium's implicit allow-localhost=auto path (no explicit host
+    # rule needed — matching every other app's policy, e.g. headlamp).
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "3001"
+              protocol: TCP
+    # Intra-namespace: app <-> bundled Postgres (and any Helm-test pods).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: crossview
+  egress:
+    # Kube API — Crossview reads Crossplane CRDs, claims, composites, managed
+    # resources, and providers.
+    - toEntities:
+        - kube-apiserver
+    # Dex OIDC server-side calls: the authorization-code -> token exchange and the
+    # userinfo lookup (config.sso.oidc tokenURL / userInfoURL in helm-release.yaml)
+    # go to the IN-CLUSTER Dex Service on :5556, which the pod can always resolve —
+    # unlike the public dex.${domain} URL, which the browser (not this pod) hits
+    # for the authorization redirect. Mirrors the oauth2-proxy egress.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: dex
+      toPorts:
+        - ports:
+            - port: "5556"
+              protocol: TCP
+    # Intra-namespace: app -> bundled Postgres (5432).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: crossview
+    # DNS resolution (engages Cilium's L7 DNS proxy).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

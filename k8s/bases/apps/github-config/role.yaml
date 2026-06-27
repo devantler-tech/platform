@@ -1,0 +1,55 @@
+---
+# Least-privilege RBAC for the github-config app's ServiceAccount.
+#
+# Deliberately NOT the stock app pattern (a RoleBinding to the built-in `edit`
+# ClusterRole) and deliberately NOT aggregated into `edit`: GitHub managed
+# resources let their holder manipulate the org's real repositories, so that
+# authority must be confined to THIS app — never inherited by every tenant that
+# has an `edit` binding. Instead, a dedicated namespaced Role grants the SA full
+# verbs over the namespaced provider-upjet-github managed-resource API groups,
+# and only within the github-config namespace. Because the managed resources are
+# namespaced (Crossplane v2 `*.github.m.upbound.io`), a plain Role + RoleBinding
+# suffices — no ClusterRole/ClusterRoleBinding, no cluster RBAC. Widen apiGroups
+# here only as new GitHub MR groups are activated in the
+# ManagedResourceActivationPolicy.
+#
+# The .github artifact the SA applies also contains the namespaced ProviderConfig
+# (github.m.upbound.io) and the GitHub App credential ExternalSecret
+# (external-secrets.io), so the SA needs verbs on those two groups too — still
+# confined to this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: github-config-managed-resources
+  namespace: github-config
+  labels:
+    app.kubernetes.io/managed-by: ksail
+rules:
+  - apiGroups:
+      - repo.github.m.upbound.io
+      - team.github.m.upbound.io
+      - actions.github.m.upbound.io
+      - enterprise.github.m.upbound.io
+      - github.m.upbound.io
+    resources:
+      - "*"
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
+      - external-secrets.io
+    resources:
+      - externalsecrets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete

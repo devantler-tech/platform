@@ -13,7 +13,8 @@
 #   - `tenant-external-dns-global` carries only the namespace read and is
 #     bound via a ClusterRoleBinding (namespaces are cluster-scoped).
 # Per-tenant bindings live in the tenant's registration dir
-# (k8s/bases/apps/<tenant>/external-dns-rbac.yaml).
+# (k8s/bases/apps/<tenant>/role-binding-external-dns*.yaml +
+# cluster-role-binding.yaml).
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -24,19 +25,6 @@ rules:
     resources:
       - gateways
       - httproutes
-    verbs:
-      - get
-      - list
-      - watch
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: tenant-external-dns-global
-rules:
-  - apiGroups: [""]
-    resources:
-      - namespaces
     verbs:
       - get
       - list

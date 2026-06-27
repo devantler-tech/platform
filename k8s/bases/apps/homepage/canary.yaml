@@ -3,7 +3,7 @@
 # gateway-level weighted split isn't possible. Flagger's `kubernetes` provider
 # does blue/green instead: it builds homepage-primary, runs the analysis against
 # the homepage-canary Service, and promotes by repointing the apex Service to the
-# new version. The public path (httproute.yaml -> oauth2-proxy -> auth-proxy ->
+# new version. The public path (http-route.yaml -> oauth2-proxy -> auth-proxy ->
 # homepage apex Service) is untouched and always resolves to the primary.
 #
 # ⚠️ High blast radius (platform front page) — watch the first rollout.

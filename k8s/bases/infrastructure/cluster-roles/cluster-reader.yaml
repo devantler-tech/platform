@@ -1,5 +1,5 @@
 # Read-only ClusterRole for the resources the built-in `view` role omits.
-# Bound ALONGSIDE `view` (see cluster-role-bindings/oidc-readonly.yaml) so an
+# Bound ALONGSIDE `view` (see cluster-role-bindings/oidc-cluster-reader.yaml) so an
 # OIDC identity gets a COMPLETE read-only picture of the cluster — including
 # every custom resource, so the Headlamp UI can display all of them:
 #   - `view`           → namespaced workloads/config (pods, deployments,

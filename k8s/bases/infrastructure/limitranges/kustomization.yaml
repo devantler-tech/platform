@@ -22,7 +22,7 @@
 # every pod regardless. These files restore a CPU limit to those pods.
 #
 # longhorn-system's equivalent lives in the hetzner provider overlay
-# (k8s/providers/hetzner/infrastructure/controllers/longhorn/limitrange.yaml)
+# (k8s/providers/hetzner/infrastructure/controllers/longhorn/limit-range.yaml)
 # because Longhorn is prod-only — its namespace does not exist in the local
 # (docker) cluster, so a base manifest targeting it would have nothing to bind.
 apiVersion: kustomize.config.k8s.io/v1beta1

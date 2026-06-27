@@ -17,7 +17,7 @@ spec:
         name: backstage
   # https://github.com/backstage/charts/blob/main/charts/backstage/values.yaml
   values:
-    # External Postgres (CNPG, postgres-cluster.yaml); the bundled subchart off.
+    # External Postgres (CNPG, cluster.yaml); the bundled subchart off.
     postgresql:
       enabled: false
     # Cilium owns NetworkPolicy + Gateway-API ingress; the chart's own are off.
@@ -168,7 +168,7 @@ spec:
             secretKeyRef:
               name: backstage-db-app
               key: password
-        # Backend signing key (generated; backend-secret.yaml).
+        # Backend signing key (generated; password.yaml + external-secret.yaml).
         - name: BACKEND_SECRET
           valueFrom:
             secretKeyRef:

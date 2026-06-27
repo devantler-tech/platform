@@ -1,0 +1,41 @@
+---
+# Leader-election RBAC for the VPA recommender and updater.
+#
+# helm-release.yaml runs both at the prod 2-replica HA floor with
+# `extraArgs.leader-elect: true` (active/standby, so duplicate recommenders
+# don't race and duplicate updaters don't double-evict). The Fairwinds chart
+# wires a coordination.k8s.io/leases grant only for the admission-controller
+# (the recommender/updater default to a single replica with no leader election),
+# so enabling leader-elect via extraArgs WITHOUT this Role leaves both
+# controllers unable to create/renew their lock Lease:
+#
+#   leaderelection.go: "Error retrieving lease lock" / "Error initially creating
+#   lease lock" err="leases.coordination.k8s.io \"vpa-recommender-lease\" is
+#   forbidden: User \"system:serviceaccount:vertical-pod-autoscaler:
+#   vertical-pod-autoscaler-vpa-recommender\" cannot ... at the cluster scope"
+#
+# logged every few seconds on all four pods -- a constant error stream (Coroot
+# "Log errors") and, worse, leader election never completes so the HA standby
+# can't actually coordinate.
+#
+# IMPORTANT: the recommender and updater default their lock Lease namespace to
+# kube-system (VPA's defaultLeaderElectionConfiguration hardcodes
+# ResourceNamespace to metav1.NamespaceSystem), NOT their own namespace -- so a
+# Role here alone is inert and the live error reads `... in the namespace
+# "kube-system"`. helm-release.yaml therefore also pins
+# `--leader-elect-resource-namespace: vertical-pod-autoscaler` on both
+# controllers, so the Lease lands in this namespace where this Role grants
+# access. Keeping the Lease (and grant) namespaced -- rather than granting the
+# workload SAs lease write in the more privileged kube-system -- is the
+# least-privilege choice. Scoped to leases only. The admission-controller
+# already has its own chart-provided lease grant (its Lease is in this
+# namespace), so it is intentionally not bound here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: vpa-leader-election
+  namespace: vertical-pod-autoscaler
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]

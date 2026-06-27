@@ -7,7 +7,6 @@ kind: Kustomization
 # hetzner/prod overlay, this does NOT pull the full `bases/infrastructure/`
 # aggregate, so a local bring-up stays small/fast.
 resources:
-  - ../../../bases/infrastructure/certificates/ # Gateway TLS Certificate (kube-system)
   - ../../../bases/infrastructure/cluster-policies/ # Kyverno policies (prod-like admission)
   - ../../../bases/infrastructure/cluster-role-bindings/ # OIDC read-only binding
   - ../../../bases/infrastructure/cluster-roles/ # tenant/OIDC aggregated roles

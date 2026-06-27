@@ -5,6 +5,6 @@ resources:
   - namespace.yaml
   - helm-repository.yaml
   - helm-release.yaml
-  - networkpolicy.yaml
-  - velero-r2-credentials.yaml
-  - node-agent-configmap.yaml
+  - cilium-network-policy.yaml
+  - secret.yaml
+  - config-map.yaml

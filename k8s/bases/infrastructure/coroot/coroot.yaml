@@ -60,7 +60,7 @@ spec:
       name: ghcr.io/coroot/coroot:1.22.2
 
   # CE has no native OIDC/SSO (Enterprise only), so the UI is fronted by the
-  # existing oauth2-proxy (Dex) via httproute.yaml — exactly how Prometheus /
+  # existing oauth2-proxy (Dex) via http-route.yaml — exactly how Prometheus /
   # Alertmanager were exposed. Every request that clears the proxy is treated
   # as Admin, mirroring the old single-operator "everyone -> Grafana Admin".
   authAnonymousRole: Admin
