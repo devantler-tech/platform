@@ -5,6 +5,7 @@ resources:
   # Custom policies (no upstream equivalent)
   - best-practices/add-default-deny.yaml
   - best-practices/add-default-limitrange.yaml
+  - best-practices/add-recommended-labels.yaml
   - best-practices/add-resource-defaults.yaml
   - best-practices/add-security-context.yaml
   - best-practices/auto-vpa.yaml

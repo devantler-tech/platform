@@ -34,6 +34,10 @@
 #     external-secrets, keda, kubescape, vertical-pod-autoscaler)
 #   * APIService `.spec.caBundle` — aggregated-apiserver cert injection
 #   * CRD conversion `.caBundle` — cert-manager CA injection
+#   * /metadata/labels (Deployment/StatefulSet/DaemonSet) — the add-recommended-
+#     labels Kyverno policy stamps app / app.kubernetes.io/name onto workloads
+#     that lack them (C-0076/C-0077), so the rendered chart metadata never
+#     matches the live (labelled) metadata.
 #
 # This is a Kustomize Component so the policy is defined once and applied to
 # every layer/provider build that renders HelmReleases (see the `components:`
@@ -56,15 +60,18 @@ patches:
               paths:
                 - /spec/replicas
                 - /spec/template
+                - /metadata/labels
             - target:
                 kind: StatefulSet
               paths:
                 - /spec/replicas
                 - /spec/template
+                - /metadata/labels
             - target:
                 kind: DaemonSet
               paths:
                 - /spec/template
+                - /metadata/labels
             - target:
                 kind: ValidatingWebhookConfiguration
               paths:
