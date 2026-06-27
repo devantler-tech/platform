@@ -13,3 +13,4 @@ resources:
   - service-account-tokens.yaml
   - upstream-chart-defaults.yaml
   - vpa-managed-resources.yaml
+  - wildcard-rbac.yaml
