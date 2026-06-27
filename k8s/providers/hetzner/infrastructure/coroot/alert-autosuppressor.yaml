@@ -1,0 +1,173 @@
+# Auto-suppressor for genuinely by-design Coroot alerts.
+#
+# A few recurring Coroot alerts are NOT bugs in our workloads, they are correct
+# behaviour that Coroot surfaces as an error. There is nothing to fix in the
+# workload, the control plane, or the platform, so the honest action is a NARROW,
+# auditable suppression of just those alerts. Coroot has no declarative per-alert
+# or per-pattern exemption (the Coroot CR only has the all-or-nothing
+# `disableBuiltinAlerts`; alerting-rule selectors are inclusive-only with no
+# negation, and per-alert suppression lives only in the coroot-db Postgres). So
+# this CronJob re-asserts the suppressions through the API on a schedule, the same
+# self-healing pattern as custom-cloud-pricing-cronjob.yaml: it survives a DR
+# restore / coroot-db rebuild and never needs a manual UI click. The in-cluster
+# API bypasses oauth2-proxy and is Admin (authAnonymousRole=Admin on the CR), so
+# no credential is needed.
+#
+# The exemption list IS this script (every entry is reviewed via PR). Each entry
+# is deliberately narrow and is documented with WHY it is by-design:
+#
+#   1. kcm-keda-gc-reflector - kube-controller-manager "Log errors" for the
+#      `reflector.go ... Failed to watch *v1.PartialObjectMetadata ... could not
+#      find the requested resource` line. KEDA's external.metrics.k8s.io is a
+#      get-only aggregated metrics API, so the kube-controller-manager garbage
+#      collector's metadata informer can only 404 - inherent to aggregated metrics
+#      APIs (kubernetes-sigs/custom-metrics-apiserver#146, SIG-confirmed correct).
+#      SAFETY: matched on the alert's Sample log line containing BOTH distinctive
+#      substrings, so the SEPARATE `horizontal.go "failed to compute"` pattern on
+#      the same app (the Cilium mutual-auth symptom, cilium/cilium#46767, a real
+#      issue) and any genuinely new kube-controller-manager error are never
+#      touched (they are a different pattern / fingerprint and still alert).
+#
+#   2. tofu-empty-aaaa - tofu-controller "DNS NXDOMAIN errors". This cluster is
+#      single-stack IPv4 (cilium enable-ipv6=false), so the Go tf-runner's parallel
+#      AAAA lookups for IPv4-only hosts correctly return empty (NODATA). The DNS
+#      check is not sub-pattern granular, so this is scoped to the app+rule; the
+#      separate `dns-server-errors` (SERVFAIL) builtin still covers genuine DNS
+#      faults for this app, so real "host does not exist" signal is not fully lost.
+#
+#   3. extensions-host-failed-conns - the `network-tcp-connections` ("failed to
+#      connect to N upstream services") warning on `_:Unknown:extensions`. This is
+#      NOT a Kubernetes workload: Coroot groups the Talos host-level processes it
+#      sees via eBPF but cannot map to a pod into per-node "Unknown" apps, and
+#      `extensions` is the Talos system-extension service group (siderolabs/
+#      iscsi-tools etc., one instance per node - see talos/cluster/install-image.yaml).
+#      Its failed connections are benign host noise: (a) stale/transient iSCSI
+#      (port 3260) sessions to targets Coroot cannot map (`external:3260`) during
+#      normal Longhorn volume churn - Longhorn itself stays healthy/attached - and
+#      (b) low-rate host->ksail-operator connects that don't complete while
+#      ksail-operator is itself fully healthy and reachable (verified: kubelet
+#      health probes to it are FORWARDED with zero Cilium drops). Nothing in a Talos
+#      host extension is fixable via a manifest, and a genuine storage fault would
+#      still surface via Longhorn volume health and the instance-manager apps' own
+#      SLOs, so this host-app connectivity signal is the least-actionable place to
+#      lose. Scoped to rule_id + the single app id. NB the sibling
+#      `_:Unknown:kubelet` raises the same rule; it is intentionally NOT suppressed
+#      here until its specific failed upstreams are separately verified benign.
+#
+# PROD-ONLY: Coroot alerting (the Slack webhook) is wired only in the hetzner
+# overlay, so this lives here, not in the base.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: coroot-alert-autosuppressor
+  namespace: observability
+spec:
+  # Every 15m: an exempted alert still fires its first notification when it opens,
+  # then this suppresses it within one interval so it stops re-notifying. The
+  # schedule IS the retry loop (backoffLimit 0 + restartPolicy Never).
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Backstop for a hung run; well above the worst-case curl retry budget.
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app: coroot-alert-autosuppressor
+        spec:
+          restartPolicy: Never
+          # No Kubernetes API access is needed (HTTP-only to the Coroot service).
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: autosuppressor
+              # curl + jq, digest-pinned (same image as custom-cloud-pricing).
+              # observability is exempt from disallow-latest-tag.
+              image: docker.io/badouralix/curl-jq:latest@sha256:3670578737d1d2019b10a4f9e607284101feb9fdd6b0478e78ea87bf61d96145
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -u
+                  BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
+                  # Cilium mutual-auth drops the FIRST packet of this short-lived
+                  # pod's connection to coroot while the SPIRE handshake completes
+                  # (same race custom-cloud-pricing documents), so retry transient
+                  # connection/setup errors.
+                  RETRY="-sS --retry 5 --retry-delay 2 --retry-all-errors --retry-connrefused --max-time 30"
+
+                  # Resolve the operator-created 'platform' project id (a random
+                  # NanoId, so match by name) - robust to response-shape changes.
+                  PID=$(curl $RETRY "$BASE/api/user" | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
+                  [ -n "$PID" ] || { echo "ERROR: could not resolve 'platform' project id"; exit 1; }
+
+                  ALERTS=$(curl $RETRY "$BASE/api/project/$PID/alerts?limit=500")
+                  ids=""
+
+                  # Exemption 1 - kube-controller-manager KEDA-GC reflector pattern.
+                  # Match the Sample line on BOTH substrings so the separate
+                  # horizontal.go pattern (cilium/cilium#46767) and any new kcm
+                  # error are never suppressed.
+                  for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
+                      | select(.suppressed==false and .resolved_at==null and .rule_id=="new-log-patterns"
+                               and (.application_id | endswith(":kube-system:StaticPods:kube-controller-manager")))
+                      | .id'); do
+                    hit=$(curl $RETRY "$BASE/api/project/$PID/alerts/$id" | jq -r '
+                      ([.data.details[]? | select(.name=="Sample") | .value] | first // "")
+                      | if (contains("PartialObjectMetadata") and contains("could not find the requested resource"))
+                        then "y" else "n" end')
+                    [ "$hit" = "y" ] && { ids="$ids $id"; echo "match kcm-keda-gc-reflector: $id"; }
+                  done
+
+                  # Exemption 2 - tofu-controller benign empty AAAA (single-stack).
+                  for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
+                      | select(.suppressed==false and .resolved_at==null and .rule_id=="dns-nxdomain-errors"
+                               and (.application_id | endswith(":flux-system:Deployment:tofu-controller")))
+                      | .id'); do
+                    ids="$ids $id"; echo "match tofu-empty-aaaa: $id"
+                  done
+
+                  # Exemption 3 - Talos host system-extension group benign failed
+                  # TCP connections (see header entry 3). Coroot-synthesised non-k8s
+                  # host app, so a genuine fault surfaces elsewhere (Longhorn volume
+                  # health, instance-manager SLOs), not here.
+                  for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
+                      | select(.suppressed==false and .resolved_at==null and .rule_id=="network-tcp-connections"
+                               and (.application_id | endswith(":_:Unknown:extensions")))
+                      | .id'); do
+                    ids="$ids $id"; echo "match extensions-host-failed-conns: $id"
+                  done
+
+                  n=$(echo $ids | wc -w)
+                  if [ "$n" -gt 0 ]; then
+                    payload=$(printf '%s\n' $ids | jq -R . | jq -s '{ids: .}')
+                    curl $RETRY -X POST -H 'Content-Type: application/json' -d "$payload" "$BASE/api/project/$PID/alerts/suppress" >/dev/null \
+                      && echo "suppressed $n by-design alert(s)"
+                  else
+                    echo "no by-design alerts to suppress"
+                  fi

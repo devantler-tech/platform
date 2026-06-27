@@ -1,0 +1,53 @@
+---
+# Wildcard-RBAC exception (Kubescape CIS-5.1.3 / C-0187, "Minimize wildcard use
+# in Roles and ClusterRoles") for the cluster-admin holders that require it BY
+# DESIGN.
+#
+# Why this is a separate CR and not a `namespaceSelector` entry in
+# controller-rbac.yaml: a namespaceSelector does NOT suppress C-0187 findings.
+# Kubescape attaches RBAC findings to the Role/ClusterRole/binding object, not to
+# a namespaced workload, so a namespace match never applies (proven: the
+# namespaced velero-server Role kept failing C-0187 even though `velero` was
+# listed in controller-rbac.yaml's selector). Matching the specific RBAC objects
+# by kind+name is the mechanism that actually works.
+#
+# Deliberately MINIMAL scope so C-0187 still flags any *new*/accidental wildcard
+# or cluster-admin grant elsewhere:
+#   - Flux GitOps reconcilers — kustomize-controller and helm-controller (bound
+#     via cluster-reconciler-flux-system) and flux-operator. cluster-admin is the
+#     GitOps trust model: Flux applies arbitrary manifests cluster-wide and
+#     cannot reconcile resources it lacks permission for.
+#   - Velero — the cluster-admin ClusterRoleBinding plus the namespaced
+#     velero-server Role. The chart's RBAC is all-or-nothing (no scoped mode) and
+#     restore must create/patch arbitrary resource kinds.
+#
+# NOT exempted (intentionally): Headlamp is fixed at the root (its SA is scoped to
+# the read-only cluster-reader role in k8s/bases/apps/headlamp/helm-release.yaml),
+# and longhorn-support-bundle is a transient diagnostic SA created on demand.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: wildcard-rbac-by-design
+spec:
+  reason: >-
+    Flux GitOps controllers and Velero legitimately require cluster-admin /
+    wildcard RBAC by design: arbitrary-manifest reconciliation (Flux) and
+    cluster-wide backup/restore (Velero). The specific bindings are matched by
+    kind+name so C-0187 still catches any new wildcard or cluster-admin grant.
+  posture:
+    - controlID: C-0187
+      action: ignore
+  match:
+    resources:
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: cluster-reconciler-flux-system
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: flux-operator
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: velero-server
+      - apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: velero-server

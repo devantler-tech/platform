@@ -1,0 +1,87 @@
+---
+# CIS Kubernetes Benchmark CONTROL-PLANE checks (sections 1.1–1.2) that are FALSE
+# POSITIVES on Talos Linux. This set matches Sidero's canonical control-plane skip
+# list in "Step 6: produce a clean compliance report":
+#   https://docs.siderolabs.com/talos/v1.13/security/talos-default-hardening-and-cis-compliance#step-6-produce-a-clean-compliance-report
+#
+# Why these are false positives (not security gaps, not remediable by config):
+#   * §1.1 1.1.1–1.1.8 + 1.1.11–1.1.19 (C-0092..C-0099, C-0102..C-0110): Talos runs
+#     control-plane components directly via machined (no pod-spec manifest files),
+#     manages etcd internally, and stores PKI + component kubeconfigs via trustd —
+#     none at the kubeadm /etc/kubernetes paths the host-scanner inspects.
+#   * §1.2 1.2.5–1.2.8 (C-0117..C-0120): kube-bench reads --kubelet-certificate-authority
+#     and --authorization-mode from the API-server manifest file, which Talos does not
+#     have; it sets kubelet trust via mTLS bootstrap and always enables Node + RBAC
+#     authorization at the platform level.
+#
+# Deliberately NOT exempted (Step 6 omits these — they are NOT false-positive FAILs):
+#   * 1.1.9–1.1.10 CNI file perms/ownership (C-0100/C-0101): genuine PASS on Talos.
+#   * 1.1.20–1.1.21 PKI cert/key file perms (C-0111/C-0112): WARN, not FAIL.
+#   * Genuine operator decisions: 1.2.3, 1.2.9, 1.2.11, 1.2.28, 1.3.1.
+#
+# NOTE — intentionally NO `match:` block. Host-scanner findings on the control-plane
+# node are not namespaced, so the namespaceSelector pattern the other exceptions use
+# cannot target them. The ClusterSecurityException CRD makes `match` optional; omitting
+# it applies the ignore cluster-wide — correct because these controls only ever
+# evaluate the control-plane host.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: talos-cis-control-plane-false-positives
+spec:
+  reason: >-
+    CIS control-plane checks that are false positives on Talos Linux, matching
+    Sidero's "Step 6: produce a clean compliance report" skip list. Talos runs
+    control-plane components directly via machined (no pod-spec manifest files),
+    manages etcd internally, and stores PKI and component kubeconfigs via trustd —
+    none at the kubeadm /etc/kubernetes paths the CIS section 1.1 file checks inspect
+    — and it sets API-server kubelet trust (mTLS bootstrap) and Node+RBAC
+    authorization at the platform level rather than via manifest flags (CIS
+    1.2.5-1.2.8). No machine configuration can satisfy them. Ignored to keep the
+    in-cluster posture dashboard signal clean. Reference:
+    https://docs.siderolabs.com/talos/v1.13/security/talos-default-hardening-and-cis-compliance#step-6-produce-a-clean-compliance-report
+  posture:
+    # ── CIS §1.1 — control-plane node configuration files ──
+    - controlID: C-0092 # CIS 1.1.1  API server pod spec file permissions
+      action: ignore
+    - controlID: C-0093 # CIS 1.1.2  API server pod spec file ownership
+      action: ignore
+    - controlID: C-0094 # CIS 1.1.3  controller-manager pod spec file permissions
+      action: ignore
+    - controlID: C-0095 # CIS 1.1.4  controller-manager pod spec file ownership
+      action: ignore
+    - controlID: C-0096 # CIS 1.1.5  scheduler pod spec file permissions
+      action: ignore
+    - controlID: C-0097 # CIS 1.1.6  scheduler pod spec file ownership
+      action: ignore
+    - controlID: C-0098 # CIS 1.1.7  etcd pod spec file permissions
+      action: ignore
+    - controlID: C-0099 # CIS 1.1.8  etcd pod spec file ownership
+      action: ignore
+    - controlID: C-0102 # CIS 1.1.11 etcd data directory permissions
+      action: ignore
+    - controlID: C-0103 # CIS 1.1.12 etcd data directory ownership (etcd:etcd)
+      action: ignore
+    - controlID: C-0104 # CIS 1.1.13 admin.conf file permissions
+      action: ignore
+    - controlID: C-0105 # CIS 1.1.14 admin.conf file ownership (root:root)
+      action: ignore
+    - controlID: C-0106 # CIS 1.1.15 scheduler.conf file permissions
+      action: ignore
+    - controlID: C-0107 # CIS 1.1.16 scheduler.conf file ownership (root:root)
+      action: ignore
+    - controlID: C-0108 # CIS 1.1.17 controller-manager.conf file permissions
+      action: ignore
+    - controlID: C-0109 # CIS 1.1.18 controller-manager.conf file ownership (root:root)
+      action: ignore
+    - controlID: C-0110 # CIS 1.1.19 Kubernetes PKI directory and file ownership (root:root)
+      action: ignore
+    # ── CIS §1.2 — API server flags (manifest not on disk) ──
+    - controlID: C-0117 # CIS 1.2.5  --kubelet-certificate-authority set as appropriate
+      action: ignore
+    - controlID: C-0118 # CIS 1.2.6  --authorization-mode != AlwaysAllow
+      action: ignore
+    - controlID: C-0119 # CIS 1.2.7  --authorization-mode includes Node
+      action: ignore
+    - controlID: C-0120 # CIS 1.2.8  --authorization-mode includes RBAC
+      action: ignore

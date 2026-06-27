@@ -27,6 +27,15 @@
 #   any SELinux node. level: s0 is the default non-privileged MCS level (not Cilium's
 #   spc_t, which is for privileged pods).
 #
+# CAVEAT — images with NO baked-in UID (e.g. tofu-controller's tf-runner, which
+# expects runAsUser from its runnerPodTemplate): a pod-level runAsGroup with no
+# runAsUser yields the OCI user string ":1000", which containerd rejects ("user
+# group \"1000\" is specified without user") so the sandbox never starts. The
+# add-pod-security-context rule therefore excludes tofu-controller runner pods —
+# they self-harden via their runnerPodTemplate (runAsNonRoot + seccomp) and the
+# container-level rule still applies; the add-tofu-runner-pod-security-context rule
+# below re-supplies the pod-level seccomp + runAsNonRoot.
+#
 # Uses +(key) to never overwrite values explicitly set by Helm charts.
 # Excluded namespaces require elevated privileges by design.
 apiVersion: kyverno.io/v1
@@ -75,6 +84,15 @@ spec:
                 - observability
                 - velero
                 - chaos-mesh
+          # tofu-controller runner pods ship no image-baked UID, so a pod-level
+          # runAsGroup with no runAsUser breaks containerd sandbox creation (see
+          # the header comment). They are hardened by their own runnerPodTemplate
+          # and the add-container-security-context rule, so exclude them from the
+          # pod-level runAsGroup injection only.
+          - resources:
+              selector:
+                matchLabels:
+                  app.kubernetes.io/created-by: tofu-controller
       mutate:
         patchStrategicMerge:
           spec:
@@ -144,3 +162,32 @@ spec:
                         type: RuntimeDefault
                       +(seLinuxOptions):
                         level: s0
+    # tofu-controller runner pods are EXCLUDED from add-pod-security-context above
+    # (a pod-level runAsGroup with no runAsUser yields the OCI user string ":1000",
+    # which containerd rejects so the sandbox never starts — see the header). They
+    # still must satisfy the require-seccomp-profile validate rule, and
+    # tofu-controller does NOT propagate the runnerPodTemplate's pod-level
+    # securityContext to the created runner pod, so the mutate must supply it. This
+    # rule re-applies the SAFE subset for runner pods only — seccompProfile +
+    # runAsNonRoot, i.e. everything the pod rule injects EXCEPT the runAsGroup that
+    # breaks sandbox creation. The container-level rule already hardens their
+    # containers; this closes the pod-level seccomp gap that excluding them opened.
+    - name: add-tofu-runner-pod-security-context
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              # CREATE only — same immutability rationale as the rules above.
+              operations:
+                - CREATE
+              selector:
+                matchLabels:
+                  app.kubernetes.io/created-by: tofu-controller
+      mutate:
+        patchStrategicMerge:
+          spec:
+            securityContext:
+              +(seccompProfile):
+                type: RuntimeDefault
+              +(runAsNonRoot): true

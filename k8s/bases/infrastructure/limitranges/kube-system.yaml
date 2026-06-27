@@ -1,0 +1,44 @@
+---
+# CPU-only default LimitRange for kube-system.
+#
+# kube-system is in Kyverno's global resourceFilters (`[*/*,kube-system,*]`), so
+# NONE of the Kyverno resource policies touch it: no `add-resource-defaults`
+# stamp, no generated `default-limitrange`, and no `auto-vpa` VerticalPodAutoscaler
+# (there are 0 VPAs in kube-system on the live cluster — the auto-vpa.yaml comment
+# claiming VPA right-sizes kube-system is defeated by this global filter). Its
+# datapath/control-plane add-ons (cilium, coredns, hubble, spire-agent, hcloud
+# ccm/csi, metrics-server, tetragon, cluster-autoscaler, …) therefore run with no
+# CPU limit and fail kubescape C-0270.
+#
+# Why a generous CPU-ONLY limit:
+#   * default.cpu "2" is a deliberately high ceiling: CPU is compressible and a
+#     limit does NOT affect scheduling (only requests do), so a high limit costs
+#     nothing, never throttles the datapath under burst, and is ~10x cilium's
+#     200m request / much more for the smaller add-ons (honouring the
+#     "high limit when request is low" burst-headroom goal). It comfortably
+#     exceeds every authored request in the namespace (max 200m), so the
+#     LimitRanger can never reject a pod for limit < request.
+#   * NO default.memory: memory is incompressible, so a too-low memory cap
+#     OOMKills. A 512Mi cap on cilium/spire under load would kill the datapath.
+#     Memory limits are intentionally left unset here.
+#   * defaultRequest is a low floor so a container that omits requests is not
+#     handed the 2-core *limit* as its request (LimitRanger copies the limit into
+#     the request when defaultRequest is unset, which would reserve 2 cores).
+#
+# NOTE: the static control-plane pods (kube-apiserver, etcd, kube-scheduler,
+# kube-controller-manager) are kubelet mirror pods and bypass admission entirely,
+# so this LimitRange cannot reach them — and they should not be CPU-limited
+# anyway. They remain covered by the vpa-managed-resources ClusterSecurityException.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: default-limitrange
+  namespace: kube-system
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "2"
+      defaultRequest:
+        cpu: 15m
+        memory: 128Mi

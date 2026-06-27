@@ -11,6 +11,11 @@ resources:
   - external-secrets/
   - flagger/
   - gateway/
+  # CPU-only LimitRanges for the namespaces no Kyverno resource policy can reach
+  # (kube-system + kyverno are in Kyverno's global resourceFilters, so they get
+  # no limit seed and no auto-VPA). Restores a CPU limit so their pods pass
+  # kubescape C-0270. See limitranges/kustomization.yaml for the full writeup.
+  - limitranges/
   # OpenCost lives in the `infrastructure` layer (not `controllers`) because it
   # hard-fails at startup unless it can query Coroot's bundled Prometheus
   # (coroot-prometheus.observability.svc:9090), which the operator only builds from the

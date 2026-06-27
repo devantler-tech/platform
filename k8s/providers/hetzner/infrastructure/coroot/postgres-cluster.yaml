@@ -42,6 +42,11 @@ metadata:
     kustomize.toolkit.fluxcd.io/force: disabled
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
+  # Pin the PostgreSQL operand image to clear fixable base-OS + PostgreSQL CVEs in
+  # the CNPG operator default (18.3-system-trixie) — same rationale and Renovate
+  # wiring as umami-db. CNPG rolls the image in place across the HA instances.
+  # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
   # Run 3 instances (1 primary + 2 streaming replicas) for high availability —
   # the SAME rationale as umami-db: a single-instance Cluster makes CNPG create a
   # `<cluster>-primary` PDB with minAvailable=1 on the only pod, which BLOCKS
