@@ -4,10 +4,17 @@
 # - readOnlyRootFilesystem: true (C-0017)
 # - drop ALL capabilities (C-0055)
 # - runAsNonRoot: true (C-0013) — pod + container
+# - runAsGroup: 1000 (C-0013 non-root group) — pod level only
 #
-# NOTE: runAsGroup is intentionally NOT injected because it would
-# override pod-level runAsGroup inheritance at the container level.
-# Charts that need a non-root group should set it explicitly.
+# runAsGroup is injected at the POD level (not the container level): kubescape's
+# C-0013 "non-root-containers" rule requires a non-zero runAsGroup, and a pod-level
+# value satisfies it without overriding any container-level value a chart may set
+# (the earlier concern was specifically about clobbering container inheritance).
+# It sets the process primary GID only — runAsUser and fsGroup are deliberately NOT
+# injected, so image-baked UIDs and volume ownership are left untouched. Verified
+# with kubescape: pod-level runAsGroup alone flips C-0013 to pass with no fsGroup
+# or runAsUser, and every PVC-mounting workload in scope already self-sets fsGroup,
+# so no volume is chowned.
 #
 # Uses +(key) to never overwrite values explicitly set by Helm charts.
 # Excluded namespaces require elevated privileges by design.
@@ -63,6 +70,7 @@ spec:
               +(seccompProfile):
                 type: RuntimeDefault
               +(runAsNonRoot): true
+              +(runAsGroup): 1000
     - name: add-container-security-context
       match:
         any:
