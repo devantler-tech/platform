@@ -142,3 +142,32 @@ spec:
                           - ALL
                       +(seccompProfile):
                         type: RuntimeDefault
+    # tofu-controller runner pods are EXCLUDED from add-pod-security-context above
+    # (a pod-level runAsGroup with no runAsUser yields the OCI user string ":1000",
+    # which containerd rejects so the sandbox never starts — see the header). They
+    # still must satisfy the require-seccomp-profile validate rule, and
+    # tofu-controller does NOT propagate the runnerPodTemplate's pod-level
+    # securityContext to the created runner pod, so the mutate must supply it. This
+    # rule re-applies the SAFE subset for runner pods only — seccompProfile +
+    # runAsNonRoot, i.e. everything the pod rule injects EXCEPT the runAsGroup that
+    # breaks sandbox creation. The container-level rule already hardens their
+    # containers; this closes the pod-level seccomp gap that excluding them opened.
+    - name: add-tofu-runner-pod-security-context
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              # CREATE only — same immutability rationale as the rules above.
+              operations:
+                - CREATE
+              selector:
+                matchLabels:
+                  app.kubernetes.io/created-by: tofu-controller
+      mutate:
+        patchStrategicMerge:
+          spec:
+            securityContext:
+              +(seccompProfile):
+                type: RuntimeDefault
+              +(runAsNonRoot): true
