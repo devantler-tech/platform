@@ -1,0 +1,60 @@
+# Stamps the recommended Kubernetes labels onto workloads that don't already
+# carry them, addressing kubescape:
+#   C-0076 Label usage for resources  -> metadata.labels[app]
+#   C-0077 K8s common labels usage     -> metadata.labels + pod-template
+#                                         labels[app.kubernetes.io/name]
+#
+# The value is the workload's own name (a meaningful identifier, not a
+# placeholder) and `+(key)` conditional anchors never overwrite a label a chart
+# already sets. The pod-template label lives under /spec/template, which the
+# helmrelease-drift-detection component already ignores; the workload's own
+# metadata labels are added to that component's ignore list in the same change
+# so Flux does not revert them.
+#
+# Scoped to the three workload kinds the drift-detection component manages
+# (Deployment/StatefulSet/DaemonSet). It does NOT activate the insert-pod-
+# antiaffinity / spread-pods policies (which key off app.kubernetes.io/name):
+# those evaluate their preconditions against the original admission object, not
+# this policy's mutation — verified with `kyverno apply` (no topologySpread /
+# affinity is injected when both run together).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: add-recommended-labels
+  annotations:
+    policies.kyverno.io/title: Recommended Labels
+    policies.kyverno.io/category: Best Practices
+    policies.kyverno.io/subject: Workload
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Adds the recommended `app` and `app.kubernetes.io/name` labels (valued by
+      the workload name) to workloads and their pod templates using conditional
+      anchors, so explicit chart labels are never overwritten.
+spec:
+  rules:
+    - name: add-workload-labels
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - kube-system
+                - kube-public
+                - kube-node-lease
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              +(app): "{{ request.object.metadata.name }}"
+              +(app.kubernetes.io/name): "{{ request.object.metadata.name }}"
+          spec:
+            template:
+              metadata:
+                labels:
+                  +(app.kubernetes.io/name): "{{ request.object.metadata.name }}"
