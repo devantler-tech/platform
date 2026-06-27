@@ -17,8 +17,8 @@ resources:
   # covered by the base allow-coroot policy. The wedding-app TENANT owns its own
   # equivalent in its repo's deploy/ (cluster.yaml + networkpolicy.yaml), since
   # tenant DB instrumentation is tenant self-description, not a platform patch.
-  - umami/coroot-scrape-networkpolicy.yaml
-  - backstage/coroot-scrape-networkpolicy.yaml
+  - umami/cilium-network-policy.yaml
+  - backstage/cilium-network-policy.yaml
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
   # bases/components/helmrelease-drift-detection.
