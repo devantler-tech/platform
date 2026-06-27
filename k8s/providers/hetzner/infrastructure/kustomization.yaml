@@ -31,6 +31,12 @@ resources:
   # ~16x the real bill). Lives in this `infrastructure` layer because it targets
   # the `platform` project the coroot-patch below adds to the Coroot CR.
   - coroot/custom-cloud-pricing-cronjob.yaml
+  # Re-asserts narrow suppressions for genuinely by-design Coroot alerts (the KEDA
+  # external.metrics GC reflector noise on kube-controller-manager, and the benign
+  # empty-AAAA DNS noise on tofu-controller) via the API on a schedule, since
+  # Coroot has no declarative per-alert exemption. See the file header for the
+  # exemption list + why each is by-design.
+  - coroot/alert-autosuppressor.yaml
   # Prod-only: the CloudNativePG datastore + backup wiring that lets the Coroot
   # SERVER run HA (replicas: 2 — set in the coroot-patch below). The operator
   # only honours replicas > 1 when spec.postgres is set, so this Postgres is the
