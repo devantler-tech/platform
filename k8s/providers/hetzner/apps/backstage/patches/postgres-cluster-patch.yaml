@@ -1,0 +1,48 @@
+# Prod-only Coroot Postgres integration for backstage-db (strategic merge onto
+# the base Cluster). Coroot/SPIRE run only on Hetzner, so this lives in the
+# hetzner overlay. The base Cluster defines NO managed.roles, so adding the
+# block here creates it (nothing to replace).
+#
+#   inheritedMetadata.annotations — CNPG propagates these to the DB instance
+#     Pods so Coroot's cluster-agent can discover and scrape them (it only reads
+#     POD annotations). Credentials come from the CNPG-generated
+#     `backstage-db-app` Secret (kubernetes.io/basic-auth, username=backstage),
+#     the same one Backstage itself consumes. sslmode=require works whether
+#     CNPG's pg_hba uses `host` or `hostssl`.
+#   managed.roles — grant the existing `backstage` login membership in
+#     pg_monitor so Coroot (which logs in AS that role) can read the full
+#     pg_stat_* surface. passwordSecret pins the role to the CNPG-generated
+#     `backstage-db-app` value (which is exactly what the app uses), so CNPG's
+#     role synchronizer converges to that on every reconcile/promotion instead of
+#     re-applying a stale bootstrap password (the cnpg#2029 footgun that bit
+#     umami) — here it is a no-op convergence since CNPG owns that secret.
+#   postgresql.parameters.pg_stat_statements.* — CNPG's managed-extensions
+#     feature auto-adds the library to shared_preload_libraries (one-time rolling
+#     restart) and runs CREATE EXTENSION in every database; fully declarative.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: backstage-db
+  namespace: backstage
+spec:
+  inheritedMetadata:
+    annotations:
+      coroot.com/postgres-scrape: "true"
+      coroot.com/postgres-scrape-port: "5432"
+      coroot.com/postgres-scrape-credentials-secret-name: backstage-db-app
+      coroot.com/postgres-scrape-credentials-secret-username-key: username
+      coroot.com/postgres-scrape-credentials-secret-password-key: password
+      coroot.com/postgres-scrape-param-sslmode: require
+  managed:
+    roles:
+      - name: backstage
+        ensure: present
+        login: true
+        inRoles:
+          - pg_monitor
+        passwordSecret:
+          name: backstage-db-app
+  postgresql:
+    parameters:
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: all

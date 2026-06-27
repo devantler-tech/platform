@@ -1,0 +1,38 @@
+# Let the Coroot cluster-agent (observability namespace) reach the umami-db
+# CloudNativePG instances on 5432 for the declarative Postgres integration —
+# the cluster-agent discovers the DB pods via the coroot.com/postgres-scrape
+# annotations the Cluster's inheritedMetadata stamps onto them, then connects to
+# scrape pg_stat_* (see patches/postgres-cluster-patch.yaml).
+#
+# ADDITIVE, not a replacement for allow-umami: Cilium unions the ingress allows
+# across every policy selecting an endpoint, so this standalone policy only adds
+# the cross-namespace observability source on 5432 while allow-umami keeps
+# permitting intra-namespace + cnpg-system + openbao. Scoped to the DB instance
+# pods via CNPG's cnpg.io/cluster label, mirroring the prod-only allow-coroot-db
+# policy in infrastructure/coroot/.
+#
+# No `authentication` stanza here on purpose: the cluster-wide
+# require-mutual-auth CiliumClusterwideNetworkPolicy already attaches
+# authentication.mode: required to ALL pod-to-pod ingress, and both the
+# cluster-agent and the DB pods carry SPIRE identities, so mutual auth is
+# enforced automatically — exactly how the existing cnpg-system/openbao ingress
+# rules in allow-umami work. The cluster-agent's egress to this namespace is
+# already permitted by the base allow-coroot policy (toEndpoints: namespace
+# Exists). Prod-only (hetzner overlay): Coroot and SPIRE run only on Hetzner.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-coroot-postgres-scrape
+  namespace: umami
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: umami-db
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
