@@ -24,7 +24,7 @@ resources:
   # Progressive delivery (needs controllers/flagger):
   #   - ../../../bases/infrastructure/flagger/
   # Runtime security:
-  #   - ../../../bases/infrastructure/security-exceptions/  # Kubescape exceptions — needs controllers/kubescape
+  #   - ../../../bases/infrastructure/cluster-security-exceptions/  # Kubescape exceptions — needs controllers/kubescape
   #   - ../../../bases/infrastructure/tracing-policies/     # Tetragon TracingPolicy — needs controllers/tetragon
   # OpenBao raft-snapshot backups (needs controllers/velero + minio):
   #   - ../../../bases/infrastructure/vault-backup/

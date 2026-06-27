@@ -88,8 +88,8 @@ resources:
   # (Kyverno) can't reach these namespaces (global resourceFilters), so VPA is
   # supplied as plain manifests here. Pairs with the LimitRange memory-seed
   # patches below — together VPA right-sizes requests down while keeping a
-  # generous, no-OOM burst limit. See system-vpas/kustomization.yaml.
-  - system-vpas/
+  # generous, no-OOM burst limit. See vertical-pod-autoscalers/kustomization.yaml.
+  - vertical-pod-autoscalers/
   #
   # NOTE: tenant-owned custom-domain TLS (the ascoachingogvaner.dk Certificate +
   # its simply.com DNS01 solver credential) is NOT a platform resource at all —
@@ -131,7 +131,7 @@ patches:
   - path: vault-snapshots-hcloud-patch.yaml
   # Prod-only: add a generous memory `default` to the kube-system / kyverno
   # LimitRanges (which are CPU-only in the base). This seeds the memory limit the
-  # system-vpas/ VPAs scale ratio-preserving, so VPA right-sizes the memory
+  # vertical-pod-autoscalers/ VPAs scale ratio-preserving, so VPA right-sizes the memory
   # REQUEST down to real usage while the limit stays a generous multiple (no OOM
   # — the seed is far above every workload's real peak). kube-system 4Gi gives
   # cilium (512Mi req) ~8:1 and smaller add-ons far more; kyverno 2Gi gives its

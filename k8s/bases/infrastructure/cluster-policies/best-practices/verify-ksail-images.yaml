@@ -34,7 +34,7 @@
 # verification functions, so third-party chart images (Cilium, Longhorn,
 # Coroot, …) are unaffected. This is intentionally NOT a deny-all-unsigned
 # control; kubescape C-0237 stays exempted
-# (security-exceptions/image-verification.yaml) because third-party images
+# (cluster-security-exceptions/image-verification.yaml) because third-party images
 # remain unverified.
 #
 # Operational dependencies (both self-heal via controller retries if absent

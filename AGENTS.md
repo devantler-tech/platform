@@ -25,8 +25,8 @@ This is a **GitOps-based Kubernetes platform** — not a traditional code reposi
 k8s/                  # All Kubernetes manifests
   bases/              # Shared base resources (never modify directly from overlays)
     bootstrap/        # Flux post-build substitution variables (ConfigMap + SOPS secret)
-    infrastructure/   # Organized by resource type: controllers/, certificates/, gateway/,
-                      #   cluster-policies/, external-secrets/, vault-*/, etc.
+    infrastructure/   # Component-folder-first: controllers/, gateway/, vault-*/, plus
+                      #   plural-Kind CR folders (cluster-policies/, external-secrets/, …)
     apps/             # Application deployments
   providers/          # Provider-specific overlays (docker, hetzner)
   clusters/           # Per-environment overlays (local, prod)
@@ -100,7 +100,7 @@ CI runs **static manifest validation** on PRs that touch k8s-related paths (`k8s
 The scan is a **hard gate**: it fails the PR if the NSA compliance score drops below the threshold, so new findings must be fixed or justified before merge. Two non-obvious limits:
 
 - **ksail is Renovate-managed** (the Setup step, grouped `ksail` with the deploy pins). It was previously frozen at 7.65.0 because 7.66.x parallelised the in-process Helm render and made it racy — `ksail workload validate` threw varying YAML parse errors and the scan score swung run-to-run. That race is resolved upstream ([devantler-tech/ksail#5371](https://github.com/devantler-tech/ksail/issues/5371), closed), so the pin is lifted back onto the latest release. Tripwire: if `validate`/`scan` swing run-to-run again, re-pin to a known-good version and reopen #5371.
-- **The threshold (85) is a regression floor, not the actual score.** The Kubescape compliance score is **environment-dependent**: the same ksail binary on the same manifests reports ≈**87%** on the Linux CI runner but ≈**94%** locally (macOS) — a gap that is *not* the render mode, the framework cache, or PR-merge content (all ruled out) — and the absolute value also shifts with the ksail render, so **CI is the source of truth and the score can't be reproduced exactly offline** (re-baseline the floor after a ksail bump). It is below 100 because the residual findings are either runtime-enforced (Kyverno securityContext/limits mutation, `CiliumNetworkPolicy`) — invisible to a static scan — or genuinely unfixable, notably **C-0002** (the KubeVirt operator's `pods/exec` RBAC, which it needs to manage VMs and can only be excepted). The platform documents these as kubescape `ClusterSecurityException` CRs (`k8s/bases/infrastructure/security-exceptions/`); native scan exceptions have now shipped ([ksail#5369](https://github.com/devantler-tech/ksail/issues/5369)), and wiring them in to ratchet the threshold toward 100 is tracked in [#2264](https://github.com/devantler-tech/platform/issues/2264). Until then, **ratchet up** as genuine gaps are fixed; never lower it.
+- **The threshold (85) is a regression floor, not the actual score.** The Kubescape compliance score is **environment-dependent**: the same ksail binary on the same manifests reports ≈**87%** on the Linux CI runner but ≈**94%** locally (macOS) — a gap that is *not* the render mode, the framework cache, or PR-merge content (all ruled out) — and the absolute value also shifts with the ksail render, so **CI is the source of truth and the score can't be reproduced exactly offline** (re-baseline the floor after a ksail bump). It is below 100 because the residual findings are either runtime-enforced (Kyverno securityContext/limits mutation, `CiliumNetworkPolicy`) — invisible to a static scan — or genuinely unfixable, notably **C-0002** (the KubeVirt operator's `pods/exec` RBAC, which it needs to manage VMs and can only be excepted). The platform documents these as kubescape `ClusterSecurityException` CRs (`k8s/bases/infrastructure/cluster-security-exceptions/`); native scan exceptions have now shipped ([ksail#5369](https://github.com/devantler-tech/ksail/issues/5369)), and wiring them in to ratchet the threshold toward 100 is tracked in [#2264](https://github.com/devantler-tech/platform/issues/2264). Until then, **ratchet up** as genuine gaps are fixed; never lower it.
 
 ## Local Development Cluster
 
@@ -212,7 +212,7 @@ You **cannot** decrypt existing secrets without the proper Age keys. For local d
 
 Enforced in CI by [`scripts/validate-naming.py`](scripts/validate-naming.py) (the `naming` job in `ci.yaml`); run it locally before any manifest PR.
 
-- **Directories are kebab-case**, named after the **application/component** *or* a **CR Kind in plural**. Co-locate a component's own CRs in its folder by default; break a CR out into a `‹kind-plural›/` folder only when it cannot live with its component (see the two reasons in the next section).
+- **Directories are kebab-case**, named after the **application/component** *or* a **CR Kind in plural**. Co-locate a component's own CRs in its folder by default; break a CR out into a `‹kind-plural›/` folder only when it cannot live with its component (see the two reasons in the next section). `‹kind-plural›` is the **kebab-cased plural of the Kind** (`VerticalPodAutoscaler → vertical-pod-autoscalers/`, `LimitRange → limit-ranges/`) — a folder that groups ≥2 instances of one non-workload Kind under any other name is flagged.
 - **One Kubernetes resource per file.** The only exception is a vendored upstream operator bundle, explicitly whitelisted in the validator (today `controllers/cdi/cdi-operator.yaml` and `controllers/kubevirt/kubevirt-operator.yaml`).
 - **Component-folder files are named after their resource Kind, kebab-cased**: `‹kind›.yaml` (e.g. `helm-release.yaml`, `http-route.yaml`, `cilium-network-policy.yaml`, `service-account.yaml`). When a folder holds more than one of a Kind, qualify each with a purpose: `‹kind›-‹purpose›.yaml` (e.g. `external-secret-db-backup.yaml`). The Kind→kebab map is acronym-aware: `HTTPRoute → http-route`, `OCIRepository → oci-repository`, `CiliumNetworkPolicy → cilium-network-policy`, `PodDisruptionBudget → pod-disruption-budget`.
 - **CR-folder files** omit the folder-implied Kind and are named `‹verb›-‹purpose›.yaml` (e.g. `restrict-tenant-secret-stores.yaml`).
@@ -226,7 +226,7 @@ Resources under `k8s/bases/infrastructure/` are **component-folder-first**: a co
 A CR is split out into its own **plural-Kind folder** only when it cannot live with its component:
 
 - **Dependency split** — the CRD ships with the controller's HelmRelease, so the CR must reconcile a layer later to avoid the CR-and-its-CRD-in-one-Kustomization deadlock: `flagger/` (`MetricTemplate`; see [`docs/progressive-delivery.md`](docs/progressive-delivery.md)), `tracing-policies/` (Tetragon `TracingPolicy`), the Coroot CR in `coroot/`, and `resource-graph-definitions/` (KRO, which also installs its CRD via the controller layer).
-- **Cluster-scoped / cross-cutting** — no single owning component: `cluster-policies/` (Kyverno), `cluster-roles/` + `cluster-role-bindings/`, `cluster-secret-stores/`, `external-secrets/` (bootstrap ExternalSecrets), `security-exceptions/` (Kubescape) and `limitranges/`.
+- **Cluster-scoped / cross-cutting** — no single owning component: `cluster-policies/` (Kyverno), `cluster-roles/` + `cluster-role-bindings/`, `cluster-secret-stores/`, `external-secrets/` (bootstrap ExternalSecrets), `cluster-security-exceptions/` (Kubescape), `limit-ranges/`, and `vertical-pod-autoscalers/` (prod system VPAs).
 
 ### Kustomization Flow
 

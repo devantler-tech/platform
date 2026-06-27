@@ -14,6 +14,10 @@ Exits non-zero (and prints a grouped report) on any violation. Checks:
   5. In a component folder, a single-resource file's name leads with the
      kebab-cased Kind (<kind>.yaml or <kind>-<purpose>.yaml). CR folders, patch
      fragments (under patches/ or *-patch.yaml) and kustomization.yaml are exempt.
+  6. A folder that groups multiple instances of a single (non-workload) Kind is a
+     CR folder and must be named the kebab-cased plural of that Kind
+     (e.g. VerticalPodAutoscaler -> vertical-pod-autoscalers/). Organizational
+     subfolders inside a known CR folder are exempt.
 """
 import os, re, sys
 
@@ -33,8 +37,8 @@ CR_DIR_PATHS = [
     "k8s/bases/infrastructure/cluster-role-bindings",
     "k8s/bases/infrastructure/cluster-roles",
     "k8s/bases/infrastructure/cluster-secret-stores",
-    "k8s/bases/infrastructure/limitranges",
-    "k8s/bases/infrastructure/security-exceptions",
+    "k8s/bases/infrastructure/limit-ranges",
+    "k8s/bases/infrastructure/cluster-security-exceptions",
     "k8s/bases/infrastructure/tracing-policies",
     "k8s/bases/infrastructure/external-secrets",
     "k8s/bases/bootstrap/priority-classes",
@@ -42,7 +46,25 @@ CR_DIR_PATHS = [
     "k8s/providers/hetzner/infrastructure/cluster-issuers",
     "k8s/providers/hetzner/infrastructure/cluster-policies",
     "k8s/providers/hetzner/infrastructure/volume-snapshot-classes",
+    "k8s/providers/hetzner/infrastructure/vertical-pod-autoscalers",
 ]
+
+# Kinds that define a component (a folder of them is named by app, not a CR folder).
+WORKLOAD_KINDS = {
+    "HelmRelease", "HelmRepository", "Deployment", "StatefulSet", "DaemonSet",
+    "ReplicaSet", "Pod", "Job", "CronJob", "OCIRepository", "Kustomization", "Component",
+}
+
+def pluralize(word):
+    """Pluralize the last hyphen-segment of a kebab name (English rules)."""
+    head, _, last = word.rpartition("-")
+    if last.endswith(("s", "x", "z", "ch", "sh")):
+        last += "es"
+    elif last.endswith("y") and (len(last) < 2 or last[-2] not in "aeiou"):
+        last = last[:-1] + "ies"
+    else:
+        last += "s"
+    return f"{head}-{last}" if head else last
 
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
@@ -75,7 +97,8 @@ def docs_with_kind(path):
     return out
 
 def main():
-    bad_dirs, multi, flux_bad, build_bad, kind_bad = [], [], [], [], []
+    bad_dirs, multi, flux_bad, build_bad, kind_bad, cr_name_bad = [], [], [], [], [], []
+    folder_kinds = {}  # dirpath -> [kind, ...] for real single-resource files
 
     for dirpath, dirnames, filenames in os.walk(K8S):
         for dn in dirnames:
@@ -93,6 +116,8 @@ def main():
                     multi.append((r, [k for _, k in docs]))
                 continue
             api, kind = docs[0]
+            if fn != "kustomization.yaml" and not is_patch(r):
+                folder_kinds.setdefault(dirpath, []).append(kind)
             stem = fn[:-9] if fn.endswith(".enc.yaml") else fn.rsplit(".", 1)[0]
             if kind == "Kustomization" and api.startswith("kustomize.toolkit.fluxcd.io"):
                 if not fn.startswith("flux-kustomization"):
@@ -108,6 +133,21 @@ def main():
             if not (stem == kb or stem.startswith(kb + "-")):
                 kind_bad.append((r, kind, kb))
 
+    # Check 6: a folder grouping >=2 instances of one non-workload Kind is a CR
+    # folder and must be named the kebab-cased plural of that Kind.
+    for folder, kinds in folder_kinds.items():
+        if len(kinds) < 2 or len(set(kinds)) != 1:
+            continue
+        kind = kinds[0]
+        if kind in WORKLOAD_KINDS:
+            continue
+        rfolder = rel(folder)
+        if any(rfolder.startswith(d + "/") for d in CR_DIR_PATHS):
+            continue  # organizational subfolder inside a known CR folder
+        expected = pluralize(kebab(kind))
+        if os.path.basename(rfolder) != expected:
+            cr_name_bad.append((rfolder, kind, expected))
+
     groups = [
         ("Directories not kebab-case", bad_dirs, lambda x: x),
         ("Files with more than one resource", multi, lambda x: f"{x[0]}  ->  {x[1]}"),
@@ -115,6 +155,8 @@ def main():
         ("Kustomize build files not named kustomization.yaml", build_bad, lambda x: x),
         ("Filename does not lead with its Kind", kind_bad,
          lambda x: f"{x[0]}  (kind {x[1]} -> expected {x[2]}.yaml or {x[2]}-<purpose>.yaml)"),
+        ("CR-grouping folder not named by Kind plural", cr_name_bad,
+         lambda x: f"{x[0]}  ({x[1]} grouping -> expected folder '{x[2]}/')"),
     ]
     problems = sum(len(items) for _, items, _ in groups)
     for title, items, fmt in groups:

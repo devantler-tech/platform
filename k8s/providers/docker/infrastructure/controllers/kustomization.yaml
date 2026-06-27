@@ -48,7 +48,7 @@ resources:
   # Autoscaling (KEDA request-rate ScaledObjects, e.g. homepage/umami):
   #   - ../../../../bases/infrastructure/controllers/keda/
   # Runtime security (add the matching patch below):
-  #   - ../../../../bases/infrastructure/controllers/kubescape/   # also infrastructure/security-exceptions/
+  #   - ../../../../bases/infrastructure/controllers/kubescape/   # also infrastructure/cluster-security-exceptions/
   #   - ../../../../bases/infrastructure/controllers/tetragon/    # also infrastructure/tracing-policies/
   # Backup (Velero + the local R2 stand-in; enables infrastructure/vault-backup/):
   #   - ../../../../bases/infrastructure/controllers/velero/

@@ -23,7 +23,7 @@
 #     volume, so it is right-sized only at its next natural restart, never evicted.
 #
 # GENEROUS MEMORY RATIO (no OOM): the base LimitRanges
-# (k8s/bases/infrastructure/limitranges/) are CPU-only; the parent hetzner
+# (k8s/bases/infrastructure/limit-ranges/) are CPU-only; the parent hetzner
 # kustomization patches a generous memory `default` onto them (kube-system 4Gi,
 # kyverno 2Gi) so VPA scales the memory limit RATIO-PRESERVING — the request is
 # right-sized down to real usage (cilium ~250Mi vs its 512Mi request) while the
@@ -41,26 +41,26 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - vertical-pod-autoscaler-cilium-envoy.yaml
-  - vertical-pod-autoscaler-cilium-operator.yaml
-  - vertical-pod-autoscaler-cilium.yaml
-  - vertical-pod-autoscaler-cluster-autoscaler-hetzner-cluster-autoscaler.yaml
-  - vertical-pod-autoscaler-coredns.yaml
-  - vertical-pod-autoscaler-hcloud-cloud-controller-manager.yaml
-  - vertical-pod-autoscaler-hcloud-csi-controller.yaml
-  - vertical-pod-autoscaler-hcloud-csi-node.yaml
-  - vertical-pod-autoscaler-hubble-relay.yaml
-  - vertical-pod-autoscaler-hubble-ui.yaml
-  - vertical-pod-autoscaler-kyverno-admission-controller.yaml
-  - vertical-pod-autoscaler-kyverno-background-controller.yaml
-  - vertical-pod-autoscaler-kyverno-cleanup-controller.yaml
-  - vertical-pod-autoscaler-kyverno-reports-controller.yaml
-  - vertical-pod-autoscaler-metrics-server.yaml
-  - vertical-pod-autoscaler-snapshot-controller.yaml
-  - vertical-pod-autoscaler-spire-agent.yaml
-  - vertical-pod-autoscaler-spire-server.yaml
-  - vertical-pod-autoscaler-tetragon-operator.yaml
-  - vertical-pod-autoscaler-tetragon.yaml
+  - cilium-envoy.yaml
+  - cilium-operator.yaml
+  - cilium.yaml
+  - cluster-autoscaler-hetzner-cluster-autoscaler.yaml
+  - coredns.yaml
+  - hcloud-cloud-controller-manager.yaml
+  - hcloud-csi-controller.yaml
+  - hcloud-csi-node.yaml
+  - hubble-relay.yaml
+  - hubble-ui.yaml
+  - kyverno-admission-controller.yaml
+  - kyverno-background-controller.yaml
+  - kyverno-cleanup-controller.yaml
+  - kyverno-reports-controller.yaml
+  - metrics-server.yaml
+  - snapshot-controller.yaml
+  - spire-agent.yaml
+  - spire-server.yaml
+  - tetragon-operator.yaml
+  - tetragon.yaml
 patches:
   # Shared policy for every system VPA (mirrors auto-vpa.yaml).
   - target:
