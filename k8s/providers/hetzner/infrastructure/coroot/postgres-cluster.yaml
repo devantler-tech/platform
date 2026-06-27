@@ -42,6 +42,26 @@ metadata:
     kustomize.toolkit.fluxcd.io/force: disabled
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
+  # Coroot Postgres self-integration: stamp the coroot.com/postgres-scrape
+  # annotations onto the DB instance Pods (CNPG inheritedMetadata propagates to
+  # all managed objects, incl. Pods) so Coroot's own cluster-agent discovers and
+  # scrapes this metadata DB. It only reads POD annotations, so inheritedMetadata
+  # is the supported path for a CNPG-managed Postgres. Credentials come from the
+  # CNPG-generated `coroot-db-app` Secret (kubernetes.io/basic-auth,
+  # username=coroot) — the same one the Coroot server consumes. Intra-namespace,
+  # so the base allow-coroot policy already permits the scrape (no extra
+  # NetworkPolicy, unlike the cross-namespace umami/backstage DBs; the wedding-app
+  # tenant ships its own equivalent in its repo's deploy/networkpolicy.yaml).
+  # sslmode=require works whether CNPG's pg_hba uses `host` or `hostssl`.
+  inheritedMetadata:
+    annotations:
+      coroot.com/postgres-scrape: "true"
+      coroot.com/postgres-scrape-port: "5432"
+      coroot.com/postgres-scrape-credentials-secret-name: coroot-db-app
+      coroot.com/postgres-scrape-credentials-secret-username-key: username
+      coroot.com/postgres-scrape-credentials-secret-password-key: password
+      coroot.com/postgres-scrape-param-sslmode: require
+
   # Run 3 instances (1 primary + 2 streaming replicas) for high availability —
   # the SAME rationale as umami-db: a single-instance Cluster makes CNPG create a
   # `<cluster>-primary` PDB with minAvailable=1 on the only pod, which BLOCKS
@@ -75,6 +95,13 @@ spec:
       # replica from a base backup (cheap: the DB is ~32Mi). Set well above
       # normal WAL for this low-write metadata DB, yet well below the 10Gi volume.
       max_slot_wal_keep_size: "3GB"
+      # Enable pg_stat_statements for Coroot's per-query latency/calls view. CNPG's
+      # managed-extensions feature keys off any pg_stat_statements.* parameter: it
+      # adds the library to shared_preload_libraries (a one-time rolling restart)
+      # AND runs CREATE EXTENSION IF NOT EXISTS in every database automatically —
+      # fully declarative, no Job or superuser step.
+      pg_stat_statements.max: "10000"
+      pg_stat_statements.track: all
     # Quorum-based SYNCHRONOUS replication — the SAME rationale as umami-db: it
     # guarantees the promoted standby holds every committed transaction, so an
     # unclean primary loss during a longhorn instance-manager restart / node roll
@@ -90,6 +117,22 @@ spec:
     initdb:
       database: coroot
       owner: coroot
+  # Grant the existing `coroot` login membership in pg_monitor so the cluster-agent
+  # (which logs in AS the coroot role via coroot-db-app) can read the full
+  # pg_stat_* surface. passwordSecret pins the role to the CNPG-generated
+  # coroot-db-app value the server already uses, so CNPG's role synchronizer
+  # converges to it on every reconcile/promotion (a no-op here, since CNPG owns
+  # that Secret) rather than re-applying a stale bootstrap password. pg_monitor is
+  # read-only — a minimal addition to a login the Coroot server already holds.
+  managed:
+    roles:
+      - name: coroot
+        ensure: present
+        login: true
+        inRoles:
+          - pg_monitor
+        passwordSecret:
+          name: coroot-db-app
   resources:
     requests:
       cpu: 50m
