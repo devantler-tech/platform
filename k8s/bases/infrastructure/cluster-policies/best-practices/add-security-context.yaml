@@ -14,7 +14,13 @@
 # injected, so image-baked UIDs and volume ownership are left untouched. Verified
 # with kubescape: pod-level runAsGroup alone flips C-0013 to pass with no fsGroup
 # or runAsUser, and every PVC-mounting workload in scope already self-sets fsGroup,
-# so no volume is chowned.
+# so no volume is chowned. The one caveat is images with NO baked-in UID (e.g.
+# tofu-controller's tf-runner, which expects runAsUser from its runnerPodTemplate):
+# a pod-level runAsGroup with no runAsUser yields the OCI user string ":1000", which
+# containerd rejects ("user group \"1000\" is specified without user") so the sandbox
+# never starts. The add-pod-security-context rule therefore excludes tofu-controller
+# runner pods — they self-harden via their runnerPodTemplate (runAsNonRoot + seccomp)
+# and the container-level rule still applies.
 #
 # Uses +(key) to never overwrite values explicitly set by Helm charts.
 # Excluded namespaces require elevated privileges by design.
@@ -64,6 +70,15 @@ spec:
                 - observability
                 - velero
                 - chaos-mesh
+          # tofu-controller runner pods ship no image-baked UID, so a pod-level
+          # runAsGroup with no runAsUser breaks containerd sandbox creation (see
+          # the header comment). They are hardened by their own runnerPodTemplate
+          # and the add-container-security-context rule, so exclude them from the
+          # pod-level runAsGroup injection only.
+          - resources:
+              selector:
+                matchLabels:
+                  app.kubernetes.io/created-by: tofu-controller
       mutate:
         patchStrategicMerge:
           spec:
