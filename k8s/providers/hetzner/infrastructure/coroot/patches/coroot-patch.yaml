@@ -78,6 +78,22 @@ spec:
       cpu: "2"
       memory: 6Gi
   prometheus:
+    # The bundled Prometheus (the metrics TSDB, also queried by OpenCost/Flagger/
+    # KEDA) had no explicit resources, so the auto-vpa floor (~128Mi req / 512Mi
+    # limit) capped it — and a head-compaction / query spike OOMKilled it
+    # (exitCode 137, 2026-06-21), which drops telemetry during the restart and
+    # makes the :9090 endpoint briefly unavailable to in-cluster queriers. Pin a
+    # block in the same pattern as clickhouse/coroot above (auto-vpa runs
+    # controlledValues:RequestsAndLimits, preserving this 4:1 ratio when it sets
+    # the request from live usage): ~512Mi request (above the ~300Mi live working
+    # set) and a 2Gi limit (4x the old OOM ceiling) for compaction/query bursts.
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "2"
+        memory: 2Gi
     # 14d metrics retention (matches the old kube-prometheus-stack posture).
     retention: 14d
     storage:
