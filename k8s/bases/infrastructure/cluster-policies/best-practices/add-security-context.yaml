@@ -4,23 +4,38 @@
 # - readOnlyRootFilesystem: true (C-0017)
 # - drop ALL capabilities (C-0055)
 # - runAsNonRoot: true (C-0013) — pod + container
-# - runAsGroup: 1000 (C-0013 non-root group) — pod level only
+# - runAsGroup: 1000 (C-0013/C-0211 non-root group) — pod level
+# - fsGroup: 1000 + fsGroupChangePolicy: OnRootMismatch (C-0211) — pod level
+# - seLinuxOptions: {level: s0} (C-0211 CIS-5.7.3) — containers + initContainers
 #
-# runAsGroup is injected at the POD level (not the container level): kubescape's
-# C-0013 "non-root-containers" rule requires a non-zero runAsGroup, and a pod-level
-# value satisfies it without overriding any container-level value a chart may set
-# (the earlier concern was specifically about clobbering container inheritance).
-# It sets the process primary GID only — runAsUser and fsGroup are deliberately NOT
-# injected, so image-baked UIDs and volume ownership are left untouched. Verified
-# with kubescape: pod-level runAsGroup alone flips C-0013 to pass with no fsGroup
-# or runAsUser, and every PVC-mounting workload in scope already self-sets fsGroup,
-# so no volume is chowned. The one caveat is images with NO baked-in UID (e.g.
-# tofu-controller's tf-runner, which expects runAsUser from its runnerPodTemplate):
-# a pod-level runAsGroup with no runAsUser yields the OCI user string ":1000", which
-# containerd rejects ("user group \"1000\" is specified without user") so the sandbox
-# never starts. The add-pod-security-context rule therefore excludes tofu-controller
-# runner pods — they self-harden via their runnerPodTemplate (runAsNonRoot + seccomp)
-# and the container-level rule still applies.
+# Together these complete the security context kubescape's CIS-5.7.3 (C-0211) checks
+# (non-root-containers, set-fsgroup-value, set-fsgroupchangepolicy-value,
+# set-seLinuxOptions). Why each is safe to inject cluster-wide:
+# - runAsGroup is injected at the POD level only (never the container level), so it
+#   sets the process primary GID without clobbering a container-level value a chart
+#   sets. Pod-level runAsGroup alone satisfies the non-root-containers rule — no
+#   runAsUser needed (verified with kubescape).
+# - runAsUser is deliberately NOT injected: it would override image-baked UIDs and
+#   break charts (cert-manager, distroless images, …). The non-root rule is already
+#   satisfied by runAsGroup, so runAsUser is unnecessary here.
+# - fsGroup uses a conditional anchor, so any workload that sets its own (every
+#   PVC-mounting workload in scope does) keeps it; only stateless pods get the
+#   default, where it governs emptyDir/projected-volume ownership harmlessly.
+# - seLinuxOptions is a no-op on this AppArmor cluster — runc ignores SELinux labels
+#   when SELinux isn't the active LSM (verified: Cilium already ships one and a probe
+#   pod ran fine) — but CIS-5.7.3 requires it and it is correct defense-in-depth on
+#   any SELinux node. level: s0 is the default non-privileged MCS level (not Cilium's
+#   spc_t, which is for privileged pods).
+#
+# CAVEAT — images with NO baked-in UID (e.g. tofu-controller's tf-runner, which
+# expects runAsUser from its runnerPodTemplate): a pod-level runAsGroup with no
+# runAsUser yields the OCI user string ":1000", which containerd rejects ("user
+# group \"1000\" is specified without user") so the sandbox never starts. The
+# add-pod-security-context rule therefore excludes tofu-controller runner pods —
+# they self-harden via their runnerPodTemplate (runAsNonRoot + seccomp) and the
+# container-level rule still applies; the add-tofu-runner-pod-security-context rule
+# below re-supplies the pod-level seccomp, runAsNonRoot, fsGroup and
+# fsGroupChangePolicy (everything except the sandbox-breaking runAsGroup).
 #
 # Uses +(key) to never overwrite values explicitly set by Helm charts.
 # Excluded namespaces require elevated privileges by design.
@@ -87,6 +102,8 @@ spec:
                 type: RuntimeDefault
               +(runAsNonRoot): true
               +(runAsGroup): 1000
+              +(fsGroup): 1000
+              +(fsGroupChangePolicy): OnRootMismatch
     - name: add-container-security-context
       match:
         any:
@@ -128,6 +145,8 @@ spec:
                           - ALL
                       +(seccompProfile):
                         type: RuntimeDefault
+                      +(seLinuxOptions):
+                        level: s0
           - list: "request.object.spec.initContainers[]"
             patchStrategicMerge:
               spec:
@@ -142,16 +161,19 @@ spec:
                           - ALL
                       +(seccompProfile):
                         type: RuntimeDefault
+                      +(seLinuxOptions):
+                        level: s0
     # tofu-controller runner pods are EXCLUDED from add-pod-security-context above
     # (a pod-level runAsGroup with no runAsUser yields the OCI user string ":1000",
     # which containerd rejects so the sandbox never starts — see the header). They
-    # still must satisfy the require-seccomp-profile validate rule, and
+    # still must satisfy require-seccomp-profile and the rest of C-0211, and
     # tofu-controller does NOT propagate the runnerPodTemplate's pod-level
     # securityContext to the created runner pod, so the mutate must supply it. This
-    # rule re-applies the SAFE subset for runner pods only — seccompProfile +
-    # runAsNonRoot, i.e. everything the pod rule injects EXCEPT the runAsGroup that
-    # breaks sandbox creation. The container-level rule already hardens their
-    # containers; this closes the pod-level seccomp gap that excluding them opened.
+    # rule re-applies everything the pod rule injects EXCEPT the sandbox-breaking
+    # runAsGroup: seccompProfile + runAsNonRoot + fsGroup + fsGroupChangePolicy.
+    # runAsNonRoot keeps non-root-containers satisfied (the runnerPodTemplate
+    # supplies runAsUser); fsGroup + fsGroupChangePolicy here, plus the
+    # container-level seLinuxOptions, make these runner pods C-0211-complete too.
     - name: add-tofu-runner-pod-security-context
       match:
         any:
@@ -171,3 +193,5 @@ spec:
               +(seccompProfile):
                 type: RuntimeDefault
               +(runAsNonRoot): true
+              +(fsGroup): 1000
+              +(fsGroupChangePolicy): OnRootMismatch
