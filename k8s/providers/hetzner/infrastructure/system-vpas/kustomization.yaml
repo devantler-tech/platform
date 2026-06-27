@@ -1,0 +1,87 @@
+---
+# Static VerticalPodAutoscalers for kube-system + kyverno (prod/hetzner only).
+#
+# WHY STATIC (not auto-vpa): `auto-vpa` is a Kyverno *generate* policy, and
+# Kyverno's global resourceFilters (`[*/*,kube-system,*]`, `[*/*,kyverno,*]` in
+# the kyverno ConfigMap) exclude these two namespaces from ALL Kyverno
+# processing — so auto-vpa never creates VPAs there. Narrowing that global
+# filter would re-expose both namespaces to EVERY mutate/validate policy (several
+# of which don't self-exclude kube-system, e.g. image-signature verification on
+# the third-party system images), so the surgical fix is to author the VPA
+# objects directly here. VPA's own admission webhook has empty selectors, so it
+# injects recommendations into every namespace regardless.
+#
+# NO PER-WORKLOAD DUPLICATION: the shared updatePolicy + resourcePolicy (which
+# mirrors auto-vpa.yaml) is defined ONCE in the patches below and applied to
+# every VPA via a kind selector. The per-workload files carry only targetRefs.
+#   * base patch  → all VPAs: InPlaceOrRecreate (resize in place, never evict the
+#     datapath/admission pods), controlledValues RequestsAndLimits, minAllowed
+#     cpu 50m/mem 64Mi, maxAllowed cpu 3/mem 6Gi.
+#   * `vpa-tier: daemonset` → tighter maxAllowed cpu 1/mem 1Gi, so a per-node pod
+#     still fits the smallest autoscale-cx23 worker.
+#   * spire-server → updateMode Initial: it is a singleton StatefulSet on an RWO
+#     volume, so it is right-sized only at its next natural restart, never evicted.
+#
+# GENEROUS MEMORY RATIO (no OOM): the base LimitRanges
+# (k8s/bases/infrastructure/limitranges/) are CPU-only; the parent hetzner
+# kustomization patches a generous memory `default` onto them (kube-system 4Gi,
+# kyverno 2Gi) so VPA scales the memory limit RATIO-PRESERVING — the request is
+# right-sized down to real usage (cilium ~250Mi vs its 512Mi request) while the
+# limit stays a generous multiple far above any real peak (<~600Mi), so bursts
+# don't OOMKill. CPU is compressible, so its limit only ever throttles.
+#
+# EVICTION SAFETY: in-place resize means no eviction in the normal path; for the
+# Recreate fallback, the eviction-sensitive targets are HA so it is harmless —
+# kyverno controllers + coredns run 2 replicas with PDBs (coredns PDB added in
+# controllers/coredns/), and spire-server uses updateMode Initial.
+#
+# longhorn-system is deliberately NOT here: it already has auto-vpa-managed VPAs
+# (not globally filtered) and its LimitRange MUST stay memory-unset (the
+# instance-manager OOM-cascade safeguard).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - kube-system.yaml
+  - kyverno.yaml
+patches:
+  # Shared policy for every system VPA (mirrors auto-vpa.yaml).
+  - target:
+      kind: VerticalPodAutoscaler
+    patch: |
+      - op: add
+        path: /spec/updatePolicy
+        value:
+          updateMode: InPlaceOrRecreate
+          minReplicas: 1
+      - op: add
+        path: /spec/resourcePolicy
+        value:
+          containerPolicies:
+            - containerName: "*"
+              controlledResources: ["cpu", "memory"]
+              controlledValues: RequestsAndLimits
+              minAllowed:
+                cpu: 50m
+                memory: 64Mi
+              maxAllowed:
+                cpu: "3"
+                memory: 6Gi
+  # DaemonSets: per-node pods must fit the smallest autoscale-cx23 worker.
+  - target:
+      kind: VerticalPodAutoscaler
+      labelSelector: vpa-tier=daemonset
+    patch: |
+      - op: replace
+        path: /spec/resourcePolicy/containerPolicies/0/maxAllowed
+        value:
+          cpu: "1"
+          memory: 1Gi
+  # spire-server: singleton StatefulSet on an RWO volume — never evict.
+  - target:
+      kind: VerticalPodAutoscaler
+      name: spire-server
+    patch: |
+      - op: replace
+        path: /spec/updatePolicy
+        value:
+          updateMode: Initial
