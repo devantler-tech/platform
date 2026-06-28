@@ -168,6 +168,9 @@ data:
         - Codecov:
             - icon: si-codecov-#F01F7A
               href: https://app.codecov.io
+        - Enable Banking:
+            - icon: mdi-bank-outline
+              href: https://enablebanking.com
         - StepSecurity:
             - icon: si-stepsecurity
               href: https://app.stepsecurity.io
