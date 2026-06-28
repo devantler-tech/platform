@@ -58,7 +58,8 @@ spec:
       #       exists in kubescape image >= v4.0.9 (kubescape#2322); chart 1.40.2 still pins
       #       the scanner to v4.0.8 → see the `kubescape.image.tag` override below; and
       #   (2) the scanner ServiceAccount needs RBAC to `list` those CRDs, which NO chart
-      #       version grants it (only operator/kubevuln get it) → see `exceptions-rbac.yaml`.
+      #       version grants it (only operator/kubevuln get it) → see `cluster-role.yaml`
+      #       + `cluster-role-binding.yaml`.
       # With v4.0.8 + no RBAC the scanner silently loads zero exceptions (its merged getter
       # swallows the missing/forbidden CRD source and falls back to the offline = empty
       # primary), so the dashboard reads "excluding 0 controls" even though the CRs are
@@ -104,7 +105,8 @@ spec:
         # (kubescape#2291 + #2322). Chart 1.40.2 still pins the scanner to v4.0.8, which
         # has NO such getter, so posture exceptions are silently ignored no matter how the
         # CRs are authored or what RBAC exists. Override to v4.0.9 so the getter is present;
-        # it is paired with `exceptions-rbac.yaml`, which grants the scanner SA the `list`
+        # it is paired with `cluster-role.yaml` + `cluster-role-binding.yaml`, which grant
+        # the scanner SA the `list`
         # RBAC the getter needs (the chart never grants it). The v4.0.9 merged getter still
         # swallows a missing-RBAC/CRD source, so this bump cannot break scans on its own.
         # Drop both once the chart bumps the scanner past v4.0.9 AND grants it the

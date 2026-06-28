@@ -10,7 +10,7 @@
 # the offline (empty) source, so ZERO posture exceptions apply and the dashboard reads
 # "excluding 0 controls" even though the ClusterSecurityException CRs are deployed and
 # schema-valid. This supplements the chart's RBAC; remove it once the chart grants the
-# scanner this access upstream.
+# scanner this access upstream. Bound to the scanner SA by `cluster-role-binding.yaml`.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -19,16 +19,3 @@ rules:
   - apiGroups: ["kubescape.io"]
     resources: ["securityexceptions", "clustersecurityexceptions"]
     verbs: ["get", "list", "watch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: kubescape-security-exceptions-reader
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: kubescape-security-exceptions-reader
-subjects:
-  - kind: ServiceAccount
-    name: kubescape
-    namespace: kubescape

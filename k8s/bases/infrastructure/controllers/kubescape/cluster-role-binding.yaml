@@ -1,0 +1,15 @@
+---
+# Binds the `kubescape-security-exceptions-reader` ClusterRole (see `cluster-role.yaml`)
+# to the posture scanner's `kubescape` ServiceAccount.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubescape-security-exceptions-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubescape-security-exceptions-reader
+subjects:
+  - kind: ServiceAccount
+    name: kubescape
+    namespace: kubescape

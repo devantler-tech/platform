@@ -6,4 +6,5 @@ resources:
   - helm-release.yaml
   - helm-repository.yaml
   - cilium-network-policy.yaml
-  - exceptions-rbac.yaml
+  - cluster-role.yaml
+  - cluster-role-binding.yaml
