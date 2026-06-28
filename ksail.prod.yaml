@@ -135,6 +135,24 @@ spec:
         - siderolabs/qemu-guest-agent
     localRegistry:
       registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
+    # Cosign keyless signature verification on the flux-system OCIRepository that
+    # KSail generates and owns (rendered onto spec.verify; a hand-written override
+    # would lose the reconcile fight, so it is configured here per ksail#4987).
+    # The manifests artifact is already cosign-signed keyless in the deploy-prod
+    # composite (push → sign → attest); this makes Flux REJECT any infra artifact
+    # whose signature is missing or whose signer is not the platform deploy
+    # workflow — closing the supply-chain gap #1559 opened for apps but left on
+    # the infra source (#1570). The signer identity was confirmed against the live
+    # signature: the artifact is signed by .github/workflows/ci.yaml (the
+    # merge-queue deploy-prod path) under GitHub's Fulcio OIDC issuer; cd.yaml (the
+    # manual deploy path, same composite/identity flow) is allowed too so a manual
+    # deploy is not rejected. `@.+` keeps the matcher resilient to the per-run ref
+    # (merge_group runs sign under refs/heads/gh-readonly-queue/...).
+    verify:
+      provider: cosign
+      matchOIDCIdentity:
+        - issuer: '^https://token\.actions\.githubusercontent\.com$'
+          subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/(ci|cd)\.yaml@.+$'
   provider:
     hetzner:
       # Hetzner account hard cap: at most 10 servers total. Under the in-progress
