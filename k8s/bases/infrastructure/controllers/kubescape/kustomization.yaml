@@ -8,3 +8,4 @@ resources:
   - cilium-network-policy.yaml
   - cluster-role.yaml
   - cluster-role-binding.yaml
+  - config-map-headlamp-exceptions.yaml
