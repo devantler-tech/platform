@@ -142,17 +142,24 @@ spec:
     # composite (push → sign → attest); this makes Flux REJECT any infra artifact
     # whose signature is missing or whose signer is not the platform deploy
     # workflow — closing the supply-chain gap #1559 opened for apps but left on
-    # the infra source (#1570). The signer identity was confirmed against the live
-    # signature: the artifact is signed by .github/workflows/ci.yaml (the
-    # merge-queue deploy-prod path) under GitHub's Fulcio OIDC issuer; cd.yaml (the
-    # manual deploy path, same composite/identity flow) is allowed too so a manual
-    # deploy is not rejected. `@.+` keeps the matcher resilient to the per-run ref
-    # (merge_group runs sign under refs/heads/gh-readonly-queue/...).
+    # the infra source (#1570). The signer identity + ref were confirmed against
+    # the live signature with `cosign verify`: the artifact is signed by
+    # .github/workflows/ci.yaml on refs/heads/gh-readonly-queue/main/<pr> (the
+    # merge-queue deploy-prod path — the real prod deploy) under GitHub's Fulcio
+    # OIDC issuer. The subject is pinned to the two *production* deploy refs only
+    # (merge-queue refs off main, plus a manual cd.yaml dispatch from main) rather
+    # than `@.+`, so a signature these workflows might produce on any other ref is
+    # not trusted (defence in depth on a high-blast-radius source).
     verify:
       provider: cosign
       matchOIDCIdentity:
+        # Automatic prod deploy: ci.yaml deploy-prod runs on merge_group, which
+        # signs under the merge-queue ref refs/heads/gh-readonly-queue/main/<pr>.
         - issuer: '^https://token\.actions\.githubusercontent\.com$'
-          subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/(ci|cd)\.yaml@.+$'
+          subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/ci\.yaml@refs/heads/gh-readonly-queue/main/.+$'
+        # Manual prod deploy: cd.yaml is workflow_dispatch, run from main.
+        - issuer: '^https://token\.actions\.githubusercontent\.com$'
+          subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/cd\.yaml@refs/heads/main$'
   provider:
     hetzner:
       # Hetzner account hard cap: at most 10 servers total. Under the in-progress
