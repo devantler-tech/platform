@@ -154,6 +154,20 @@ spec:
     # generous 2-core limit survives its proportional scaling. CPU is
     # compressible and the namespace ResourceQuota caps requests, not limits,
     # so a 2-core ceiling reserves nothing while it idles.
+    # Pod-level runAsUser/runAsGroup. The chart's podSecurityContext default
+    # only sets fsGroup (1000) — runAsUser/runAsGroup live on the CONTAINER
+    # securityContext. The add-security-context Kyverno policy injects a
+    # pod-level runAsGroup: 1000 (C-0013) but deliberately never injects a
+    # pod-level runAsUser (it would clobber image-baked UIDs). With a pod-level
+    # group but no pod-level user, containerd builds the OCI user string ":1000"
+    # and rejects it ("user group \"1000\" is specified without user"), so the
+    # pod sandbox never starts — homepage rolled to 1/2 ready in prod. Supplying
+    # the pod-level runAsUser here pairs with the injected group → "1000:1000",
+    # matching how whoami/dex set pod-level runAsUser. Deep-merges with the
+    # chart default, so fsGroup/fsGroupChangePolicy are preserved.
+    podSecurityContext:
+      runAsUser: 1000
+      runAsGroup: 1000
     resources:
       requests:
         cpu: 15m
