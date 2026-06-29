@@ -1,11 +1,10 @@
----
-# Bounded resources for the provider runtime pod (created by Crossplane, so
-# the HelmRelease values can't reach it). The empty selector is the documented
-# placeholder — Crossplane fills in the real match labels.
+# Bounded resources for the AWS family config provider runtime pod (created by
+# Crossplane, so the HelmRelease values can't reach it). The empty selector is the
+# documented placeholder — Crossplane fills in the real match labels.
 apiVersion: pkg.crossplane.io/v1beta1
 kind: DeploymentRuntimeConfig
 metadata:
-  name: provider-upjet-github
+  name: provider-family-aws
 spec:
   deploymentTemplate:
     spec:

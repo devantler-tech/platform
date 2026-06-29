@@ -1,0 +1,13 @@
+# provider-aws-iam — the IAM family member, the only one needed now (EKS =
+# provider-aws-eks, added as a sibling member when the EKS-test identity work
+# needs it, platform#2326). Its package version must match provider-family-aws
+# (see provider-family-aws.yaml). Resource-bounded via
+# deployment-runtime-config-aws-iam.yaml.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-iam
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-iam:v2.6.1
+  runtimeConfigRef:
+    name: provider-aws-iam

@@ -1,11 +1,8 @@
----
-# Bounded resources for the provider runtime pod (created by Crossplane, so
-# the HelmRelease values can't reach it). The empty selector is the documented
-# placeholder — Crossplane fills in the real match labels.
+# Bounded resources for the AWS IAM provider runtime pod.
 apiVersion: pkg.crossplane.io/v1beta1
 kind: DeploymentRuntimeConfig
 metadata:
-  name: provider-upjet-github
+  name: provider-aws-iam
 spec:
   deploymentTemplate:
     spec:
