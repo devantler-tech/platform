@@ -149,6 +149,38 @@ spec:
             name: coroot-api-key
             key: key
           description: bundled node-agent + cluster-agent
+      # Mute Slack INCIDENTS for Coroot's synthesised host pseudo-apps. The eBPF
+      # node-agent buckets every process it sees but cannot map to a Kubernetes
+      # object into per-node apps under the `_` namespace (`_/runtime` = the
+      # Talos container runtime/containerd, `_/kubelet`, `_/init`,
+      # `_/extensions` = the system-extension group, …). These are NOT
+      # deployable workloads, and Coroot computes a default availability SLO on
+      # the eBPF-observed request flows anyway. For `_/runtime` those "requests"
+      # are containerd's outbound image pulls to ghcr.io / registry-1.docker.io /
+      # auth.docker.io: a handful of transient registry connection resets at a
+      # very low, bursty rate (≈0.008 req/s) push the error *ratio* over the SLO,
+      # so the incident flaps CRITICAL→resolved every few minutes and spammed
+      # #notifications all evening (2026-06-29) with no actionable cause — image
+      # pulls succeed on kubelet retry and pods run. A genuine host/storage fault
+      # still surfaces on the real workloads' SLOs and Longhorn volume health
+      # (same rationale as the alert-autosuppressor's `_:Unknown:*` entries), so
+      # the least-actionable place to lose signal is these synthesised host apps.
+      # Keep them fully visible in the Coroot UI (this only drops the Slack
+      # fan-out, mirroring the integration-wide alerts:false posture below); flip
+      # incidents back on if a host pseudo-app ever warrants paging.
+      applicationCategories:
+        - name: host-runtime
+          customPatterns:
+            - "_/*"
+          notificationSettings:
+            incidents:
+              enabled: false
+              webhook:
+                enabled: false
+            deployments:
+              enabled: false
+            alerts:
+              enabled: false
       notificationIntegrations:
         # Required by the Coroot CRD whenever any notificationIntegrations are
         # set (`spec.projects[].notificationIntegrations.baseURL`, pattern
