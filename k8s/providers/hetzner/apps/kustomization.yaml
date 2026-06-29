@@ -51,11 +51,18 @@ patches:
       name: umami-db
       namespace: umami
     path: umami/patches/grant-pg-monitor-patch.yaml
-  # Pilot: user namespaces (hostUsers: false) on whoami — prod-only; see the
-  # patch file for the full rationale. JSON6902 patch (a list of ops) has no
-  # embedded identity, so it must keep an explicit target.
+  # User namespaces (hostUsers: false) — prod-only; see each patch file for the
+  # full rationale. JSON6902 patches (a list of ops) have no embedded identity,
+  # so they must keep an explicit target. whoami is the proven stateless canary
+  # (#1808); homepage is the next step (#1807) — apex dashboard, configMap-only
+  # volumes, so no idmap-volume constraints.
   - target:
       kind: HelmRelease
       name: whoami
       namespace: whoami
     path: whoami/patches/helm-release-patch.yaml
+  - target:
+      kind: HelmRelease
+      name: homepage
+      namespace: homepage
+    path: homepage/patches/helm-release-patch.yaml
