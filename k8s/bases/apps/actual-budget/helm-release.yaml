@@ -62,6 +62,73 @@ spec:
   # https://github.com/community-charts/helm-charts/blob/main/charts/actualbudget/values.yaml
   values:
     replicaCount: ${actual_budget_replicas:=1}
+    # Enable Banking bank-sync credentials live only in the sync-server's internal
+    # `secrets` SQLite table (set via the web UI; no env/config hook). This sidecar
+    # reconciles them there from the ESO-synced `actual-budget-enablebanking` Secret
+    # (OpenBao → ESO), using the app's own better-sqlite3 for byte-identical writes.
+    # See config-map.yaml for the reconciler and its robustness notes.
+    # Image is pinned to the chart appVersion; the reconciler only needs
+    # better-sqlite3 so it is version-insensitive — keep it roughly in sync on bumps.
+    extraContainers:
+      - name: enablebanking-seed
+        image: docker.io/actualbudget/actual-server:26.6.0
+        imagePullPolicy: IfNotPresent
+        # `args` (not `command`) so the image's tini ENTRYPOINT is preserved —
+        # proper PID-1 signal forwarding/zombie reaping, and no dependency on the
+        # tini path (differs between the bookworm/alpine image variants).
+        args: ["node", "/scripts/seed-enablebanking.cjs"]
+        workingDir: /app
+        env:
+          - name: NODE_PATH
+            value: /app/node_modules
+          - name: ACTUAL_SERVER_FILES
+            value: /data/server-files
+          - name: SEED_INTERVAL_SECONDS
+            value: "300"
+          # The creds come from a MOUNTED Secret (below), not secretKeyRef env:
+          # env is snapshotted at container start, so a later ESO refresh after an
+          # OpenBao edit would never reach the running sidecar. kubelet updates the
+          # projected Secret files in place, and the loop re-reads them each pass.
+          - name: ENABLEBANKING_SECRET_DIR
+            value: /var/run/enablebanking
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1001
+          runAsGroup: 1001
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
+        resources:
+          requests:
+            cpu: 10m
+            memory: 32Mi
+          limits:
+            memory: 64Mi
+        volumeMounts:
+          - name: data
+            mountPath: /data
+          - name: tmp
+            mountPath: /tmp
+          - name: enablebanking-secret
+            mountPath: /var/run/enablebanking
+            readOnly: true
+          - name: enablebanking-seed-script
+            mountPath: /scripts
+            readOnly: true
+    volumes:
+      # optional: absent on local/CI where the OpenBao path is unset — the script
+      # treats missing files (and the PLACEHOLDER sentinel) as "not configured".
+      - name: enablebanking-secret
+        secret:
+          secretName: actual-budget-enablebanking
+          optional: true
+      - name: enablebanking-seed-script
+        configMap:
+          name: actual-budget-enablebanking-seed
+          defaultMode: 0444
     serviceAccount:
       automount: false
     podSecurityContext:

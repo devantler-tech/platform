@@ -1,0 +1,140 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: actual-budget-enablebanking-seed
+  namespace: actual-budget
+data:
+  # Reconciles Actual Budget's Enable Banking credentials (Application ID + PEM
+  # secret key) into the sync-server's internal `secrets` SQLite table from an
+  # ESO-synced Secret (sourced from OpenBao). Actual stores these via the web UI
+  # only — there is no env/config hook — so this writes the SAME rows the UI
+  # would, using the app's own better-sqlite3 (byte-identical TEXT storage) so
+  # OpenBao stays the source of truth.
+  #
+  # Robustness notes:
+  #   - Waits for the server to create account.sqlite + the `secrets` table; it
+  #     never creates or migrates anything itself (no coupling to Actual's
+  #     migration framework — only the trivial 2-column table contract).
+  #   - secretsService.get() reads the DB live (its cache is only filled by the
+  #     UI's set()), so a running server picks up the row with no restart and
+  #     OpenBao rotations propagate on the next sync.
+  #   - Idempotent: writes only when the stored value differs; a missing/empty
+  #     Secret (local/CI, where the OpenBao path is unset) is a no-op.
+  #   - Never throws out of the loop, so it can't crash-loop the pod.
+  seed-enablebanking.cjs: |
+    'use strict';
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const Database = require('better-sqlite3');
+
+    const SERVER_FILES = process.env.ACTUAL_SERVER_FILES || '/data/server-files';
+    const DB_PATH = path.join(SERVER_FILES, 'account.sqlite');
+    const INTERVAL = (Number(process.env.SEED_INTERVAL_SECONDS) || 300) * 1000;
+    const SECRET_DIR = process.env.ENABLEBANKING_SECRET_DIR || '/var/run/enablebanking';
+
+    // Actual's secret-table key -> filename in the mounted ESO Secret. The key
+    // names are the stable public contract from the sync-server's SecretName enum.
+    // Read from a MOUNTED Secret (not secretKeyRef env, which freezes at container
+    // start) and re-read every pass, so an ESO refresh after an OpenBao edit —
+    // which kubelet propagates into these projected files in place — is picked up
+    // without a pod restart.
+    const SECRET_FILES = {
+      enablebanking_applicationId: 'application-id',
+      enablebanking_secretKey: 'secret-key',
+    };
+
+    // OpenBao is seeded with this sentinel (push-secret-seed-actual-budget-
+    // enablebanking) until the operator types in the real values; never write it.
+    const PLACEHOLDER = 'PLACEHOLDER';
+    const configured = (v) => v != null && v.trim() !== '' && v.trim() !== PLACEHOLDER;
+
+    function readSecret(file) {
+      try {
+        return fs.readFileSync(path.join(SECRET_DIR, file), 'utf8');
+      } catch (err) {
+        if (err.code === 'ENOENT') return null; // Secret absent on local/CI
+        throw err;
+      }
+    }
+
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const log = (...a) =>
+      console.log(new Date().toISOString(), '[enablebanking-seed]', ...a);
+
+    function reconcileOnce() {
+      const appId = readSecret(SECRET_FILES.enablebanking_applicationId);
+      const secretKey = readSecret(SECRET_FILES.enablebanking_secretKey);
+      // application-id is a typed identifier (trim stray whitespace); secret-key
+      // is the raw .pem text, stored verbatim exactly as the UI's file.text() does.
+      const desired = {
+        enablebanking_applicationId: appId == null ? null : appId.trim(),
+        enablebanking_secretKey: secretKey,
+      };
+      if (
+        !configured(desired.enablebanking_applicationId) ||
+        !configured(desired.enablebanking_secretKey)
+      ) {
+        log('credentials not configured yet (missing, empty, or placeholder); skipping');
+        return;
+      }
+      if (!fs.existsSync(DB_PATH)) {
+        log(`waiting for ${DB_PATH} to be created by the server`);
+        return;
+      }
+
+      const db = new Database(DB_PATH, { fileMustExist: true });
+      try {
+        db.pragma('busy_timeout = 5000');
+        const hasTable = db
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='secrets'",
+          )
+          .get();
+        if (!hasTable) {
+          log('secrets table not present yet; waiting for server migrations');
+          return;
+        }
+
+        const select = db.prepare('SELECT value FROM secrets WHERE name = ?');
+        // Identical statement to the app's secretsService.set(): a bound JS
+        // string is stored with SQLite TEXT affinity, exactly as the UI writes it.
+        const upsert = db.prepare(
+          'INSERT OR REPLACE INTO secrets (name, value) VALUES (?, ?)',
+        );
+        // The application-id and secret-key are a matched credential pair —
+        // write both in one transaction so a mid-rotation failure can't leave
+        // Actual with a mixed pair (which would break bank sync until the next
+        // pass).
+        const updates = Object.entries(desired).filter(([name, value]) => {
+          const current = select.get(name)?.value;
+          const currentStr = current == null ? null : current.toString();
+          return currentStr !== value;
+        });
+        if (updates.length > 0) {
+          db.transaction((rows) => {
+            for (const [name, value] of rows) upsert.run(name, value);
+          })(updates);
+          for (const [name] of updates) log(`reconciled secret '${name}'`);
+        }
+      } finally {
+        db.close();
+      }
+    }
+
+    async function main() {
+      log(
+        `reconciling Enable Banking secrets into ${DB_PATH} every ${
+          INTERVAL / 1000
+        }s`,
+      );
+      for (;;) {
+        try {
+          reconcileOnce();
+        } catch (err) {
+          log('reconcile error (will retry):', err.message);
+        }
+        await sleep(INTERVAL);
+      }
+    }
+
+    main();
