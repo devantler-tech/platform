@@ -85,18 +85,12 @@ spec:
             value: /data/server-files
           - name: SEED_INTERVAL_SECONDS
             value: "300"
-          - name: ENABLEBANKING_APPLICATION_ID
-            valueFrom:
-              secretKeyRef:
-                name: actual-budget-enablebanking
-                key: application-id
-                optional: true # absent on local/CI where OpenBao path is unset
-          - name: ENABLEBANKING_SECRET_KEY
-            valueFrom:
-              secretKeyRef:
-                name: actual-budget-enablebanking
-                key: secret-key
-                optional: true
+          # The creds come from a MOUNTED Secret (below), not secretKeyRef env:
+          # env is snapshotted at container start, so a later ESO refresh after an
+          # OpenBao edit would never reach the running sidecar. kubelet updates the
+          # projected Secret files in place, and the loop re-reads them each pass.
+          - name: ENABLEBANKING_SECRET_DIR
+            value: /var/run/enablebanking
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: true
@@ -118,10 +112,19 @@ spec:
             mountPath: /data
           - name: tmp
             mountPath: /tmp
+          - name: enablebanking-secret
+            mountPath: /var/run/enablebanking
+            readOnly: true
           - name: enablebanking-seed-script
             mountPath: /scripts
             readOnly: true
     volumes:
+      # optional: absent on local/CI where the OpenBao path is unset — the script
+      # treats missing files (and the PLACEHOLDER sentinel) as "not configured".
+      - name: enablebanking-secret
+        secret:
+          secretName: actual-budget-enablebanking
+          optional: true
       - name: enablebanking-seed-script
         configMap:
           name: actual-budget-enablebanking-seed

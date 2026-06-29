@@ -30,29 +30,51 @@ data:
     const SERVER_FILES = process.env.ACTUAL_SERVER_FILES || '/data/server-files';
     const DB_PATH = path.join(SERVER_FILES, 'account.sqlite');
     const INTERVAL = (Number(process.env.SEED_INTERVAL_SECONDS) || 300) * 1000;
+    const SECRET_DIR = process.env.ENABLEBANKING_SECRET_DIR || '/var/run/enablebanking';
 
-    // Actual's secret-table key -> env var holding the desired value. These key
+    // Actual's secret-table key -> filename in the mounted ESO Secret. The key
     // names are the stable public contract from the sync-server's SecretName enum.
-    const SECRETS = {
-      enablebanking_applicationId: process.env.ENABLEBANKING_APPLICATION_ID,
-      enablebanking_secretKey: process.env.ENABLEBANKING_SECRET_KEY,
+    // Read from a MOUNTED Secret (not secretKeyRef env, which freezes at container
+    // start) and re-read every pass, so an ESO refresh after an OpenBao edit —
+    // which kubelet propagates into these projected files in place — is picked up
+    // without a pod restart.
+    const SECRET_FILES = {
+      enablebanking_applicationId: 'application-id',
+      enablebanking_secretKey: 'secret-key',
     };
 
     // OpenBao is seeded with this sentinel (push-secret-seed-actual-budget-
     // enablebanking) until the operator types in the real values; never write it.
     const PLACEHOLDER = 'PLACEHOLDER';
-    const configured = (v) => v && v !== PLACEHOLDER;
+    const configured = (v) => v != null && v.trim() !== '' && v.trim() !== PLACEHOLDER;
+
+    function readSecret(file) {
+      try {
+        return fs.readFileSync(path.join(SECRET_DIR, file), 'utf8');
+      } catch (err) {
+        if (err.code === 'ENOENT') return null; // Secret absent on local/CI
+        throw err;
+      }
+    }
 
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     const log = (...a) =>
       console.log(new Date().toISOString(), '[enablebanking-seed]', ...a);
 
     function reconcileOnce() {
+      const appId = readSecret(SECRET_FILES.enablebanking_applicationId);
+      const secretKey = readSecret(SECRET_FILES.enablebanking_secretKey);
+      // application-id is a typed identifier (trim stray whitespace); secret-key
+      // is the raw .pem text, stored verbatim exactly as the UI's file.text() does.
+      const desired = {
+        enablebanking_applicationId: appId == null ? null : appId.trim(),
+        enablebanking_secretKey: secretKey,
+      };
       if (
-        !configured(SECRETS.enablebanking_applicationId) ||
-        !configured(SECRETS.enablebanking_secretKey)
+        !configured(desired.enablebanking_applicationId) ||
+        !configured(desired.enablebanking_secretKey)
       ) {
-        log('credentials not configured yet (empty or placeholder); skipping');
+        log('credentials not configured yet (missing, empty, or placeholder); skipping');
         return;
       }
       if (!fs.existsSync(DB_PATH)) {
@@ -79,7 +101,7 @@ data:
         const upsert = db.prepare(
           'INSERT OR REPLACE INTO secrets (name, value) VALUES (?, ?)',
         );
-        for (const [name, value] of Object.entries(SECRETS)) {
+        for (const [name, value] of Object.entries(desired)) {
           const current = select.get(name)?.value;
           const currentStr = current == null ? null : current.toString();
           if (currentStr === value) continue;
