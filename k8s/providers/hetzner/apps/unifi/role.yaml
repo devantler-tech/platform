@@ -7,8 +7,10 @@
 # ExternalSecrets are platform-applied (flux-system), not by this SA. Because the
 # managed resources are namespaced (Crossplane v2 `*.unifi.m.crossplane.io`), a
 # plain Role + RoleBinding suffices — no ClusterRole, no cluster RBAC. Widen
-# apiGroups here only as new UniFi MR groups are activated in the
-# ManagedResourceActivationPolicy.
+# apiGroups/resources here only as new UniFi MR kinds are activated in the
+# ManagedResourceActivationPolicy (resources are enumerated, not "*", to keep
+# the grant least-privilege — the policy currently activates only clients,
+# trafficroutes, and records).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -22,7 +24,9 @@ rules:
       - route.unifi.m.crossplane.io
       - dns.unifi.m.crossplane.io
     resources:
-      - "*"
+      - clients
+      - trafficroutes
+      - records
     verbs:
       - get
       - list
