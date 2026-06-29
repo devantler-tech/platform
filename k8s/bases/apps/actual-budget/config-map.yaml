@@ -3,6 +3,15 @@ kind: ConfigMap
 metadata:
   name: actual-budget-enablebanking-seed
   namespace: actual-budget
+  annotations:
+    # The seed-enablebanking.cjs payload is JavaScript and uses `${...}` template
+    # literals (e.g. `${DB_PATH}`, `${INTERVAL / 1000}`). Flux's Kustomize
+    # postBuild substitution runs over this manifest at deploy time, and
+    # `${INTERVAL / 1000}` is not a valid shell variable name → it fails the
+    # `apps` Kustomization build (`envsubst error: unable to parse variable
+    # name`), wedging every app deploy. This ConfigMap needs no Flux variables,
+    # so substitution is disabled for it wholesale.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
 data:
   # Reconciles Actual Budget's Enable Banking credentials (Application ID + PEM
   # secret key) into the sync-server's internal `secrets` SQLite table from an
