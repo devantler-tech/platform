@@ -1,0 +1,29 @@
+---
+# Applies the UniFi Managed Resources from the devantler-tech/unifi GitRepository
+# into this namespace, AS the namespace-scoped `unifi` ServiceAccount (so the MRs
+# are created with only the authority granted in role.yaml). Replaces the former
+# tofu-controller Terraform CR. It is itself applied by the `apps` Flux
+# Kustomization; it must NOT dependsOn it (deadlock) — it retries benignly until
+# the provider (infrastructure layer) has established the namespaced unifi CRDs.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: unifi
+  namespace: unifi
+  labels:
+    app.kubernetes.io/managed-by: ksail
+  annotations:
+    ksail.devantler.tech/reconcile-exclude: "true"
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  path: ./
+  prune: true
+  wait: true
+  force: true
+  serviceAccountName: unifi
+  sourceRef:
+    kind: GitRepository
+    name: unifi
+  targetNamespace: unifi

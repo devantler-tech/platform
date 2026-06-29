@@ -538,6 +538,23 @@ spec:
                 echo "UniFi credentials already present at secret/infrastructure/unifi/controller (leaving as-is)."
               fi
 
+              # --- 1d. Seed placeholder UniFi WireGuard keys (only if absent) ---
+              # The `unifi` tenant's WireGuard VPN Client managed resource
+              # references these via the cluster-wireguard ExternalSecret: the
+              # gateway's own private key (sensitive) and the Talos server's public
+              # key (not secret, but the provider schema requires a Secret ref).
+              # Placeholders until the platform WireGuard server lands; the
+              # maintainer overwrites them in place via the OpenBao UI/CLI. Same
+              # seed-if-absent + durable-via-backup pattern as the controller creds.
+              if ! bao kv get -mount=secret infrastructure/unifi/wireguard >/dev/null 2>&1; then
+                echo "Seeding placeholder UniFi WireGuard keys at secret/infrastructure/unifi/wireguard..."
+                bao kv put -mount=secret infrastructure/unifi/wireguard \
+                  private_key="REPLACE_WITH_GATEWAY_WIREGUARD_PRIVATE_KEY" \
+                  peer_public_key="REPLACE_WITH_TALOS_WG_SERVER_PUBLIC_KEY"
+              else
+                echo "UniFi WireGuard keys already present at secret/infrastructure/unifi/wireguard (leaving as-is)."
+              fi
+
               # --- 2. Enable Kubernetes auth ---
               if ! bao auth list -format=json | grep -q '"kubernetes/"'; then
                 echo "Enabling Kubernetes auth method..."
@@ -832,7 +849,7 @@ spec:
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-crossview-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,infra-unifi-readonly,vault-seed-write \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-crossview-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,vault-seed-write \
                 ttl=1h
 
               # Dedicated role for the fleetdm VaultDynamicSecret generator.
@@ -866,6 +883,18 @@ spec:
                 bound_service_account_names=github-config \
                 bound_service_account_namespaces=github-config \
                 policies=infra-github-readonly \
+                ttl=1h
+
+              # Dedicated tenant role for the unifi app. Authenticates the app's
+              # own `unifi` ServiceAccount (used by its namespaced SecretStore,
+              # providers/hetzner/apps/unifi/secret-store.yaml) and carries ONLY
+              # `infra-unifi-readonly` (read on secret/data/infrastructure/unifi/*)
+              # — never the broad `external-secrets` bundle — so the tenant reads
+              # its UniFi controller credentials + WireGuard keys and nothing else.
+              bao write auth/kubernetes/role/unifi \
+                bound_service_account_names=unifi \
+                bound_service_account_namespaces=unifi \
+                policies=infra-unifi-readonly \
                 ttl=1h
 
               # Dedicated tenant role for wedding-app. Authenticates the tenant's
