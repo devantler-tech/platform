@@ -16,3 +16,41 @@ spec:
   package: ghcr.io/crossplane-contrib/provider-upjet-github:v0.19.1
   runtimeConfigRef:
     name: provider-upjet-github
+---
+# AWS provider (Upbound official family) — foundation for declarative AWS test
+# credentials (the devantler-tech/aws tenant, platform#2324 / platform#2325).
+# The family approach keeps the install small: provider-family-aws ships the
+# shared ProviderConfig CRD, and only the family members actually needed are
+# installed — here just provider-aws-iam (EKS comes later). Crossplane would
+# auto-resolve the family dependency, but it is declared explicitly so its
+# version is pinned and its runtime pod is resource-bounded (see
+# deployment-runtime-config.yaml), exactly like the IAM member.
+#
+# No ProviderConfig/credentials yet: a Provider package becomes Healthy on its
+# own; credentials are only consulted when reconciling managed resources.
+# SafeStart + `defaultActivations: []` (controllers/crossplane/helm-release.yaml)
+# means this provider's ManagedResourceDefinitions install Inactive at zero
+# apiserver cost — the specific IAM kinds are activated by an explicit
+# ManagedResourceActivationPolicy when the EKS-test IAM identity is created
+# (platform#2326). xpkg.upbound.io is the official publish registry for the
+# Upbound family providers.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-family-aws
+spec:
+  package: xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
+  runtimeConfigRef:
+    name: provider-family-aws
+---
+# provider-aws-iam — the IAM family member. Its package version must match the
+# family config provider above. EKS (provider-aws-eks) is added as a sibling
+# member when the EKS-test identity work needs it (platform#2326).
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-aws-iam
+spec:
+  package: xpkg.upbound.io/upbound/provider-aws-iam:v2.6.1
+  runtimeConfigRef:
+    name: provider-aws-iam
