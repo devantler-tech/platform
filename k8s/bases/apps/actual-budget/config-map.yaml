@@ -101,12 +101,20 @@ data:
         const upsert = db.prepare(
           'INSERT OR REPLACE INTO secrets (name, value) VALUES (?, ?)',
         );
-        for (const [name, value] of Object.entries(desired)) {
+        // The application-id and secret-key are a matched credential pair —
+        // write both in one transaction so a mid-rotation failure can't leave
+        // Actual with a mixed pair (which would break bank sync until the next
+        // pass).
+        const updates = Object.entries(desired).filter(([name, value]) => {
           const current = select.get(name)?.value;
           const currentStr = current == null ? null : current.toString();
-          if (currentStr === value) continue;
-          upsert.run(name, value);
-          log(`reconciled secret '${name}'`);
+          return currentStr !== value;
+        });
+        if (updates.length > 0) {
+          db.transaction((rows) => {
+            for (const [name, value] of rows) upsert.run(name, value);
+          })(updates);
+          for (const [name] of updates) log(`reconciled secret '${name}'`);
         }
       } finally {
         db.close();
