@@ -1,0 +1,162 @@
+# Reconciles Longhorn's Node CRs against the real Kubernetes Nodes once a day,
+# removing the orphans the autoscaler leaves behind.
+#
+# Why this exists: Longhorn deliberately NEVER auto-deletes a nodes.longhorn.io
+# CR when its Kubernetes Node disappears (it keeps the CR in case the node comes
+# back). On a cluster-autoscaler cluster every scale-down therefore strands a
+# Longhorn Node CR — plus its InstanceManager — and because the autoscaler mints
+# a fresh node name on every scale-up these accumulate forever: UI/API noise,
+# scheduler bookkeeping, and a steadily-growing list that obscures the real
+# nodes (observed: 7 stale autoscale-* Node CRs on prod, ref #2024). Longhorn's
+# own design expects an operator to clean them up; this job IS that operator,
+# declaratively, so the toil never returns.
+#
+# Safety — it only ever deletes a Node CR that is unambiguously orphaned:
+#   1. no Kubernetes Node of that name exists (the core-Node list is fetched
+#      once and an EMPTY list aborts the run, so an API hiccup can never be read
+#      as "every node is gone"); AND
+#   2. no Longhorn Replica or Engine still references it via spec.nodeID (so a
+#      node holding live volume data is never touched).
+# A real, present node fails test 1 and is kept. Set DRY_RUN=true to log the
+# decisions without mutating anything:
+#   kubectl -n longhorn-system create job stale-node-cleanup-dryrun \
+#     --from=cronjob/longhorn-stale-node-cleanup
+# (then inspect the pod log; the CronJob itself runs with DRY_RUN=false).
+#
+# Egress to the kube-apiserver and DNS is already granted to every pod in the
+# namespace by the allow-longhorn CiliumNetworkPolicy (endpointSelector: {}), so
+# no extra network policy is needed. The cluster enforces Cilium mutual auth, so
+# every API call is wrapped in a short retry to absorb the first-packet drop.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: longhorn-stale-node-cleanup
+  namespace: longhorn-system
+spec:
+  # Daily, off the top of the hour. Stale CRs are pure cosmetic/bookkeeping
+  # debt, never urgent, so one reconcile a day is ample.
+  schedule: "17 3 * * *"
+  # Never overlap; a slow run skips the next tick and resumes after.
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 200
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # The daily schedule is the retry loop: one attempt per run, next run
+      # retries. A failed run keeps its pod for log inspection.
+      backoffLimit: 0
+      # Backstop for a hung run; well above the handful of quick API calls a
+      # normal run makes.
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app: longhorn-stale-node-cleanup
+        spec:
+          serviceAccountName: longhorn-stale-node-cleanup
+          # The job talks to the Kubernetes API via kubectl, so it genuinely
+          # needs its ServiceAccount token (unlike the curl-only heartbeat that
+          # opts out). This trips kubescape C-0034 by design; the NSA scan still
+          # clears its compliance threshold with it mounted.
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: cleanup
+              image: registry.k8s.io/kubectl:v1.36.2@sha256:b0d792e0d8dfb9bb1b922b78b23137e2a34bb6f9667640353a9d2aadd1fd7761
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                capabilities:
+                  drop:
+                    - ALL
+              env:
+                # kubectl writes its discovery/HTTP cache under $HOME; point it
+                # at the writable emptyDir so readOnlyRootFilesystem holds.
+                - name: HOME
+                  value: /tmp
+                - name: DRY_RUN
+                  value: "false"
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  # CPU limit for kubescape C-0270; generous so the short run
+                  # never throttles.
+                  cpu: 100m
+                  memory: 64Mi
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  NS=longhorn-system
+                  DRY_RUN="${DRY_RUN:-false}"
+                  # Cilium mutual auth can drop the first packet from this
+                  # short-lived pod during the SPIRE handshake; retry each call.
+                  kc() { n=0; until kubectl "$@"; do n=$((n+1)); [ "$n" -ge 5 ] && return 1; sleep $((n*2)); done; }
+
+                  echo "longhorn stale-node cleanup: starting (DRY_RUN=$DRY_RUN)"
+
+                  # Authoritative "does a Kubernetes Node exist" set, fetched
+                  # once. An empty result means the API is not answering truthfully
+                  # — abort rather than treat every Longhorn Node as orphaned.
+                  k8s_nodes="$(kc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')"
+                  if [ -z "$k8s_nodes" ]; then
+                    echo "ERROR: core Node list is empty — refusing to evaluate orphans"
+                    exit 1
+                  fi
+
+                  lh_nodes="$(kc -n "$NS" get nodes.longhorn.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')"
+                  rep_nodes="$(kc -n "$NS" get replicas.longhorn.io -o jsonpath='{range .items[*]}{.spec.nodeID}{"\n"}{end}')"
+                  eng_nodes="$(kc -n "$NS" get engines.longhorn.io -o jsonpath='{range .items[*]}{.spec.nodeID}{"\n"}{end}')"
+
+                  kept=0; removed=0; skipped=0
+                  for ln in $lh_nodes; do
+                    if printf '%s\n' "$k8s_nodes" | grep -qx "$ln"; then
+                      kept=$((kept+1)); continue
+                    fi
+                    # k8s Node gone -> orphan candidate. Refuse if data references it.
+                    if printf '%s\n' "$rep_nodes" | grep -qx "$ln"; then
+                      echo "SKIP $ln: Kubernetes node missing but replicas still reference it"
+                      skipped=$((skipped+1)); continue
+                    fi
+                    if printf '%s\n' "$eng_nodes" | grep -qx "$ln"; then
+                      echo "SKIP $ln: Kubernetes node missing but engines still reference it"
+                      skipped=$((skipped+1)); continue
+                    fi
+                    echo "ORPHAN $ln: Kubernetes node missing, no replicas/engines reference it"
+                    if [ "$DRY_RUN" = "true" ]; then
+                      echo "  [dry-run] would disable scheduling, delete its InstanceManagers, and delete nodes.longhorn.io/$ln"
+                      continue
+                    fi
+                    # The validating webhook rejects deleting a schedulable Node.
+                    kc -n "$NS" patch nodes.longhorn.io "$ln" --type=merge -p '{"spec":{"allowScheduling":false}}' || true
+                    # Remove the orphan's leftover InstanceManagers first.
+                    kc -n "$NS" get instancemanagers.longhorn.io -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.spec.nodeID}{"\n"}{end}' \
+                      | while read -r im imnode; do
+                          if [ "$imnode" = "$ln" ]; then
+                            echo "  deleting instancemanager $im"
+                            kc -n "$NS" delete instancemanagers.longhorn.io "$im" --ignore-not-found
+                          fi
+                        done
+                    kc -n "$NS" delete nodes.longhorn.io "$ln" --ignore-not-found
+                    removed=$((removed+1))
+                  done
+                  echo "longhorn stale-node cleanup: done (kept=$kept removed=$removed skipped=$skipped)"
+          volumes:
+            - name: tmp
+              emptyDir: {}
