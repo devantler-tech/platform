@@ -285,7 +285,71 @@ runs:
         GITHUB_ACTOR: ${{ github.actor }}
         GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-      run: ksail --config ksail.prod.yaml workload reconcile
+        # The OCI manifest digest cosign just resolved and signed — exactly the
+        # bytes Flux's OCIRepository pulls. The Kustomizations' revisions are
+        # "<tag>@<digest>", so we converge-check on this digest. (Empirically the
+        # cosign subject-digest and the OCIRepository .status.artifact.revision
+        # digest are byte-identical.)
+        PUSHED_DIGEST: ${{ steps.cosign-sign.outputs.digest }}
+      # `ksail workload reconcile` TRIGGERS reconciliation of the OCI source and
+      # every Kustomization, but only SNAPSHOTS their Ready status sub-second —
+      # it does NOT wait for the just-pushed revision to propagate down the
+      # bootstrap → infrastructure-controllers → infrastructure → apps dependency
+      # chain. That snapshot races propagation: it reads whatever revision each
+      # Kustomization last reconciled, so it can both (a) FALSE-FAIL a deploy that
+      # FIXES a currently-broken layer (the new healthy revision hasn't built yet,
+      # so it still reads the old failure — e.g. a wedged `apps` BuildFailed) and
+      # (b) FALSE-PASS a deploy that BREAKS a layer (the old healthy revision is
+      # still applied). We therefore use it only to KICK reconciliation, discard
+      # its premature verdict, and gate on an explicit convergence wait: the leaf
+      # Kustomization (`apps`) must actually reconcile the PUSHED digest and report
+      # Ready=True. Because `apps` is last in the dependency chain, its
+      # convergence implies the whole platform artifact converged.
+      run: |
+        set -uo pipefail
+        ksail --config ksail.prod.yaml workload reconcile || \
+          echo "ksail reconcile returned non-zero (premature snapshot) — gating on convergence wait below."
+
+        get() {
+          kubectl --context admin@prod -n flux-system get kustomization apps \
+            -o jsonpath="{$1}" 2>/dev/null || true
+        }
+
+        deadline=$(( SECONDS + 20 * 60 ))
+        last=""
+        while (( SECONDS < deadline )); do
+          attempted=$(get '.status.lastAttemptedRevision')
+          ready=$(get '.status.conditions[?(@.type=="Ready")].status')
+          reason=$(get '.status.conditions[?(@.type=="Ready")].reason')
+          message=$(get '.status.conditions[?(@.type=="Ready")].message')
+
+          if [[ "${attempted}" == *"@${PUSHED_DIGEST}" ]]; then
+            # `apps` has now built the PUSHED artifact (lastAttemptedRevision only
+            # advances once it actually builds, i.e. dependencies are ready).
+            if [[ "${ready}" == "True" ]]; then
+              echo "✅ apps reconciled the pushed revision (${attempted}) and is Ready — prod converged."
+              exit 0
+            fi
+            # A build/substitution error on the pushed artifact is deterministic
+            # (it will never self-heal), so fail fast rather than wait out the
+            # timeout. Health/apply flaps (other reasons) may self-heal, so keep
+            # waiting for those until the deadline.
+            if [[ "${reason}" == "BuildFailed" ]]; then
+              echo "::error::apps failed to BUILD the pushed revision (${attempted}): ${message}"
+              exit 1
+            fi
+          fi
+
+          state="${attempted:-<none>}|${ready:-?}|${reason:-?}"
+          if [[ "${state}" != "${last}" ]]; then
+            echo "waiting for apps to converge: attempted=${attempted:-<none>} ready=${ready:-?} reason=${reason:-?} (want @${PUSHED_DIGEST}, Ready=True)"
+            last="${state}"
+          fi
+          sleep 10
+        done
+
+        echo "::error::apps Kustomization did not reach Ready=True on the pushed revision (@${PUSHED_DIGEST}) within 20m. Last seen: ready=${ready:-?} reason=${reason:-?} message=${message:-?}"
+        exit 1
 
     - name: 🩺 Diagnose Flux on failure
       if: failure() && steps.reconcile.outcome == 'failure'
