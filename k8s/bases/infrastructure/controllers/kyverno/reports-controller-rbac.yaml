@@ -1,0 +1,33 @@
+# Extra permissions for Kyverno's reports controller.
+#
+# Kyverno aggregates any ClusterRole carrying the
+# rbac.kyverno.io/aggregate-to-reports-controller label into the reports
+# controller's ClusterRole (kyverno:reports-controller). For background scanning
+# that controller starts a watch on every resource kind a background policy
+# matches, and it can only watch the kinds the bundled view roles already cover.
+#
+# The validate-replica-ceiling ClusterPolicy (cluster-policies, the next Flux
+# layer) matches KEDA ScaledObjects. Without a grant the reports controller's
+# resource-report-controller fails to list/watch keda.sh ScaledObjects and
+# retries in a tight loop ("scaledobjects.keda.sh is forbidden"), pegging a full
+# CPU core. The VPA then inflates the controller's CPU request to match, which
+# starves the schedulable budget and makes cluster-autoscaler add nodes. The
+# grant ships here -- one layer earlier (infrastructure-controllers) than the
+# policy (infrastructure) -- so it is live and aggregated before the policy is
+# admitted. scaledjobs is included as the sibling replica-bearing KEDA kind.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:reports-controller:read-keda
+  labels:
+    rbac.kyverno.io/aggregate-to-reports-controller: "true"
+rules:
+  - apiGroups:
+      - keda.sh
+    resources:
+      - scaledobjects
+      - scaledjobs
+    verbs:
+      - get
+      - list
+      - watch
