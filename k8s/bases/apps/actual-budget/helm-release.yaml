@@ -59,6 +59,56 @@ spec:
                   periodSeconds: 5
                   timeoutSeconds: 3
                   failureThreshold: 12  # 60s grace beyond initial delay
+              # OpenID/OIDC (Dex) env. The chart only emits the ACTUAL_OPENID_*
+              # block when `ingress.enabled=true` (its deployment template gates
+              # the whole block on the chart Ingress), but we serve via a Gateway
+              # API HTTPRoute with the chart ingress disabled — so the chart drops
+              # every OpenID var and the server's startup auto-enable (it runs
+              # bootstrapOpenId(forced) when a discovery URL is present) never
+              # fires, leaving OpenID disabled. Inject the env directly here so it
+              # activates regardless of the ingress gate. The chart-native
+              # `login.openid` values below are kept ONLY to satisfy the chart's
+              # values schema (its `login.openid` oneOf rejects the empty default
+              # when `login.method: openid`); they are inert at runtime (same
+              # ingress gate), so the real config is these env vars. SERVER_HOSTNAME
+              # drives the redirect_uri https://budget.${domain}/openid/callback,
+              # which must be registered on the Dex public-client (see the dex
+              # HelmRelease). CLIENT_SECRET is the ESO-synced Dex shared secret.
+              # On the next pod start OpenID becomes the active login method
+              # (sessions reset; ENFORCE=true removes the password option).
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: ACTUAL_OPENID_DISCOVERY_URL
+                  value: "https://dex.${domain}/.well-known/openid-configuration"
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: ACTUAL_OPENID_CLIENT_ID
+                  value: "public-client"
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: ACTUAL_OPENID_CLIENT_SECRET
+                  valueFrom:
+                    secretKeyRef:
+                      name: actual-budget-oidc
+                      key: client-secret
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: ACTUAL_OPENID_SERVER_HOSTNAME
+                  value: "https://budget.${domain}"
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: ACTUAL_OPENID_AUTH_METHOD
+                  value: "openid"
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: ACTUAL_OPENID_ENFORCE
+                  value: "true"
   # https://github.com/community-charts/helm-charts/blob/main/charts/actualbudget/values.yaml
   values:
     replicaCount: ${actual_budget_replicas:=1}
@@ -145,6 +195,16 @@ spec:
     persistence:
       enabled: true
       size: 10Gi
+    # `login.method` renders ACTUAL_LOGIN_METHOD=openid (unconditional). The
+    # `login.openid` block is SCHEMA-ONLY: the chart's values schema validates a
+    # `login.openid` oneOf and rejects the empty default when method=openid, so
+    # these fields must be populated for `helm upgrade` to pass — but the chart
+    # gates the ACTUAL_OPENID_* env they would render behind `ingress.enabled`
+    # (disabled here), so they are inert at runtime. The active OpenID config is
+    # the ACTUAL_OPENID_* env injected by the postRenderer above. Do NOT remove
+    # this block: dropping it fails the chart schema and wedges the apps
+    # Kustomization (the helm upgrade never succeeds). clientSecret comes from the
+    # ESO-synced `actual-budget-oidc` Secret via `valuesFrom` above.
     login:
       method: "openid"
       openid:
