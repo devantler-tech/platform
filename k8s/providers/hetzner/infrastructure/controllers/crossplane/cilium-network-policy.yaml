@@ -20,10 +20,22 @@ spec:
     #     pkg-containers.githubusercontent.com).
     #   api.github.com — the GitHub REST/GraphQL API used by
     #     provider-upjet-github to reconcile org/repo state.
+    #   xpkg.upbound.io + d3qrbvrml4iuq4.cloudfront.net — the Upbound registry
+    #     and its blob CDN, for the provider-aws-iam / provider-family-aws
+    #     package pulls. The registry serves the /v2 API, token endpoint and
+    #     manifests from xpkg.upbound.io itself, then 307-redirects layer blob
+    #     downloads to its CloudFront distribution. Pinned by exact host (not
+    #     *.cloudfront.net) to keep egress tight; if Upbound rotates the
+    #     distribution the blob pull will fail and the new host can be rediscovered
+    #     with: curl -sSI -H "Authorization: Bearer <token>" \
+    #     https://xpkg.upbound.io/v2/upbound/provider-aws-iam/blobs/<digest>
+    #     and read the Location header.
     - toFQDNs:
         - matchName: "ghcr.io"
         - matchName: "pkg-containers.githubusercontent.com"
         - matchName: "api.github.com"
+        - matchName: "xpkg.upbound.io"
+        - matchName: "d3qrbvrml4iuq4.cloudfront.net"
       toPorts:
         - ports:
             - port: "443"
@@ -47,4 +59,6 @@ spec:
               - matchName: "ghcr.io"
               - matchName: "pkg-containers.githubusercontent.com"
               - matchName: "api.github.com"
+              - matchName: "xpkg.upbound.io"
+              - matchName: "d3qrbvrml4iuq4.cloudfront.net"
               - matchPattern: "*.cluster.local"
