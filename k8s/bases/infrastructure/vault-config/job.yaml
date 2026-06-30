@@ -663,6 +663,20 @@ spec:
               }
               POLICY
 
+              # actual-budget reads its Enable Banking bank-sync credential
+              # (application-id + secret-key) from OpenBao via the shared
+              # `external-secrets` ClusterSecretStore role (apps/actual-budget/
+              # enablebanking); the path is create-seeded with placeholders by
+              # the seed-actual-budget-enablebanking PushSecret in
+              # infrastructure/vault-seed and the operator types the real values
+              # in by hand. Read back by the actual-budget
+              # external-secret-enablebanking ExternalSecret.
+              bao policy write app-actual-budget-readonly - <<'POLICY'
+              path "secret/data/apps/actual-budget/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
               # crossview reads its bundled-Postgres password, app session secret,
               # and break-glass admin password from OpenBao via the shared
               # `external-secrets` ClusterSecretStore role (apps/crossview/{db,app,
@@ -786,6 +800,9 @@ spec:
               path "secret/data/apps/umami/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/data/apps/actual-budget/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/data/apps/crossview/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -828,6 +845,9 @@ spec:
               path "secret/metadata/apps/umami/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/metadata/apps/actual-budget/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/metadata/apps/crossview/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -851,7 +871,7 @@ spec:
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-crossview-readonly,app-actual-budget-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,infra-unifi-readonly,vault-seed-write \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-actual-budget-readonly,app-crossview-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,infra-unifi-readonly,vault-seed-write \
                 ttl=1h
 
               # Dedicated role for the fleetdm VaultDynamicSecret generator.
