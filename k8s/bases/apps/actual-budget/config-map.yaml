@@ -3,6 +3,16 @@ kind: ConfigMap
 metadata:
   name: actual-budget-enablebanking-seed
   namespace: actual-budget
+  annotations:
+    # The embedded Node.js script below uses JS template literals (`${DB_PATH}`,
+    # `${name}`, and a multi-line `${ INTERVAL / 1000 }`) that are NOT Flux
+    # post-build variables. The apps Kustomization runs substituteFrom, so Flux's
+    # envsubst tries to expand them and fails to parse the multi-line one
+    # ("envsubst error: variable substitution failed: unable to parse variable
+    # name"), which blocks the entire apps Kustomization. This ConfigMap needs no
+    # Flux substitution, so opt it out — same pattern as the KRO
+    # ResourceGraphDefinitions whose `${...}` are CEL expressions.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
 data:
   # Reconciles Actual Budget's Enable Banking credentials (Application ID + PEM
   # secret key) into the sync-server's internal `secrets` SQLite table from an
