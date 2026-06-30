@@ -310,45 +310,55 @@ runs:
         ksail --config ksail.prod.yaml workload reconcile || \
           echo "ksail reconcile returned non-zero (premature snapshot) — gating on convergence wait below."
 
-        get() {
-          kubectl --context admin@prod -n flux-system get kustomization apps \
-            -o jsonpath="{$1}" 2>/dev/null || true
-        }
+        # Collapse newlines/CRs so a multi-line Flux message can't truncate or
+        # break out of a ::error:: workflow-command annotation.
+        sanitize() { printf '%s' "${1:-}" | tr '\n\r' '  '; }
 
         deadline=$(( SECONDS + 20 * 60 ))
         last=""
+        applied="" attempted="" ready="" reason="" message=""
         while (( SECONDS < deadline )); do
-          attempted=$(get '.status.lastAttemptedRevision')
-          ready=$(get '.status.conditions[?(@.type=="Ready")].status')
-          reason=$(get '.status.conditions[?(@.type=="Ready")].reason')
-          message=$(get '.status.conditions[?(@.type=="Ready")].message')
+          # ONE JSON snapshot per poll so the fields can't be stitched from
+          # different reconcile states; --request-timeout bounds each call so a
+          # stalled API request can't outlive the loop deadline.
+          snap=$(kubectl --context admin@prod -n flux-system get kustomization apps \
+            -o json --request-timeout=30s 2>/dev/null || true)
+          if [[ -n "${snap}" ]]; then
+            applied=$(jq -r '.status.lastAppliedRevision // ""' <<<"${snap}")
+            attempted=$(jq -r '.status.lastAttemptedRevision // ""' <<<"${snap}")
+            ready=$(jq -r '(.status.conditions[]? | select(.type=="Ready") | .status) // ""' <<<"${snap}")
+            reason=$(jq -r '(.status.conditions[]? | select(.type=="Ready") | .reason) // ""' <<<"${snap}")
+            message=$(jq -r '(.status.conditions[]? | select(.type=="Ready") | .message) // ""' <<<"${snap}")
 
-          if [[ "${attempted}" == *"@${PUSHED_DIGEST}" ]]; then
-            # `apps` has now built the PUSHED artifact (lastAttemptedRevision only
-            # advances once it actually builds, i.e. dependencies are ready).
-            if [[ "${ready}" == "True" ]]; then
-              echo "✅ apps reconciled the pushed revision (${attempted}) and is Ready — prod converged."
+            # Success only once the pushed revision is APPLIED (not merely
+            # attempted) and the Kustomization is Ready. lastAppliedRevision
+            # advances after a successful apply, so this can't be fooled by a
+            # stale Ready=True carried over from the prior revision while a new
+            # build is still mid-flight.
+            if [[ "${applied}" == *"@${PUSHED_DIGEST}" && "${ready}" == "True" ]]; then
+              echo "✅ apps applied the pushed revision (${applied}) and is Ready — prod converged."
               exit 0
             fi
-            # A build/substitution error on the pushed artifact is deterministic
+            # A build/substitution error on the pushed revision is deterministic
             # (it will never self-heal), so fail fast rather than wait out the
-            # timeout. Health/apply flaps (other reasons) may self-heal, so keep
-            # waiting for those until the deadline.
-            if [[ "${reason}" == "BuildFailed" ]]; then
-              echo "::error::apps failed to BUILD the pushed revision (${attempted}): ${message}"
+            # timeout. lastAttemptedRevision advances when the build is attempted
+            # even though it is never applied. Health/apply flaps (other reasons)
+            # may self-heal, so keep waiting for those until the deadline.
+            if [[ "${attempted}" == *"@${PUSHED_DIGEST}" && "${reason}" == "BuildFailed" ]]; then
+              echo "::error::apps failed to BUILD the pushed revision (${attempted}): $(sanitize "${message}")"
               exit 1
             fi
           fi
 
-          state="${attempted:-<none>}|${ready:-?}|${reason:-?}"
+          state="${applied:-<none>}|${attempted:-<none>}|${ready:-?}|${reason:-?}"
           if [[ "${state}" != "${last}" ]]; then
-            echo "waiting for apps to converge: attempted=${attempted:-<none>} ready=${ready:-?} reason=${reason:-?} (want @${PUSHED_DIGEST}, Ready=True)"
+            echo "waiting for apps to converge: applied=${applied:-<none>} attempted=${attempted:-<none>} ready=${ready:-?} reason=${reason:-?} (want applied @${PUSHED_DIGEST}, Ready=True)"
             last="${state}"
           fi
           sleep 10
         done
 
-        echo "::error::apps Kustomization did not reach Ready=True on the pushed revision (@${PUSHED_DIGEST}) within 20m. Last seen: ready=${ready:-?} reason=${reason:-?} message=${message:-?}"
+        echo "::error::apps Kustomization did not converge to the pushed revision (applied @${PUSHED_DIGEST}, Ready=True) within 20m. Last seen: applied=${applied:-?} attempted=${attempted:-?} ready=${ready:-?} reason=${reason:-?} message=$(sanitize "${message}")"
         exit 1
 
     - name: 🩺 Diagnose Flux on failure
