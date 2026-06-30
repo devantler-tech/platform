@@ -12,3 +12,11 @@ resources:
   # kubescape C-0270, while keeping the memory limit unset to preserve the
   # instance-manager OOM-cascade safeguard. See limit-range.yaml for details.
   - limit-range.yaml
+  # Self-healing cleanup of orphaned Longhorn Node CRs left by autoscaler
+  # scale-downs (Longhorn never auto-deletes them). See #2024.
+  - service-account-stale-node-cleanup.yaml
+  - cluster-role-stale-node-cleanup.yaml
+  - cluster-role-binding-stale-node-cleanup.yaml
+  - role-stale-node-cleanup.yaml
+  - role-binding-stale-node-cleanup.yaml
+  - cron-job-stale-node-cleanup.yaml
