@@ -123,9 +123,9 @@ spec:
       iso: 125127
       # Talos Image Factory extensions baked into the node image. KSail
       # computes the schematic ID from this list and uses it both for
-      # machine.install.image and for the Hetzner snapshot the Cluster
-      # Autoscaler boots new nodes from. Must match the schematic in
-      # talos/cluster/install-image.yaml.
+      # machine.install.image (derived during config generation — there is no
+      # hand-maintained install-image patch) and for the Hetzner snapshot the
+      # Cluster Autoscaler boots new nodes from.
       #   - siderolabs/iscsi-tools      (Longhorn data plane)
       #   - siderolabs/util-linux-tools (Longhorn fstrim)
       #   - siderolabs/qemu-guest-agent (Hetzner Cloud VM integration)
