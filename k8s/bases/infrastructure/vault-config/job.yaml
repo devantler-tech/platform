@@ -690,6 +690,19 @@ spec:
               }
               POLICY
 
+              # actual-budget reads its Enable Banking bank-sync credentials from
+              # OpenBao via the shared `external-secrets` ClusterSecretStore role
+              # (apps/actual-budget/enablebanking). The value is seeded as a
+              # placeholder by infrastructure/vault-seed and overwritten with the
+              # real credentials out of band. (Its OIDC client secret is read from
+              # the shared infrastructure/oidc/dex path via infra-oidc-readonly,
+              # also on that role — no actual-budget-specific grant needed for it.)
+              bao policy write app-actual-budget-readonly - <<'POLICY'
+              path "secret/data/apps/actual-budget/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
               # Read-only view of ascoachingogvaner's app path for the shared
               # ClusterSecretStore bundle: the cert-manager simply.com DNS01
               # solver consumes the tenant-owned simply.com API credentials
@@ -793,6 +806,9 @@ spec:
               path "secret/data/apps/crossview/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/data/apps/actual-budget/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/data/flux/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -833,6 +849,9 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/crossview/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/actual-budget/*" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/flux/*" {
