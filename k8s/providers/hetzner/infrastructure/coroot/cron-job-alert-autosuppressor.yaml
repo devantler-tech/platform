@@ -40,7 +40,8 @@
 #      NOT a Kubernetes workload: Coroot groups the Talos host-level processes it
 #      sees via eBPF but cannot map to a pod into per-node "Unknown" apps, and
 #      `extensions` is the Talos system-extension service group (siderolabs/
-#      iscsi-tools etc., one instance per node - see talos/cluster/install-image.yaml).
+#      iscsi-tools etc., one instance per node - see spec.cluster.talos.extensions
+#      in ksail.prod.yaml).
 #      Its failed connections are benign host noise: (a) stale/transient iSCSI
 #      (port 3260) sessions to targets Coroot cannot map (`external:3260`) during
 #      normal Longhorn volume churn - Longhorn itself stays healthy/attached - and
