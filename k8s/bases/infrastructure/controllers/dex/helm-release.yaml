@@ -110,7 +110,9 @@ spec:
           redirectURIs:
             - "https://oauth2-proxy.${domain}/oauth2/callback"
             - "https://headlamp.${domain}/oidc-callback"
-            - "https://budget.${domain}/oidc/callback"
+            # actual-budget (sync-server) hardcodes its OIDC callback path as
+            # /openid/callback (ACTUAL_OPENID_SERVER_HOSTNAME=https://budget.${domain}).
+            - "https://budget.${domain}/openid/callback"
             - "https://vault.${domain}/ui/vault/auth/oidc/oidc/callback"
             - "https://ksail.${domain}/api/v1/auth/callback"
             # crossview authenticates natively against Dex as this shared
