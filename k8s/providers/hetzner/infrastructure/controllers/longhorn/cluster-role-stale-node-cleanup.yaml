@@ -1,0 +1,13 @@
+---
+# Cluster-scoped read on core Nodes: the job's orphan test is "no Kubernetes Node
+# of this name exists". get is used per-candidate; list lets the job confirm the
+# API is answering before it trusts a NotFound (a transient API error must never
+# be read as "the node is gone"). Read-only, the minimum to make the decision.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: longhorn-stale-node-cleanup
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
