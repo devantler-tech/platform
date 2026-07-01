@@ -41,3 +41,5 @@ resources:
   - push-secret-seed-dex-client-secret.yaml
   - push-secret-seed-oauth2-proxy-cookie-secret.yaml
   - push-secret-seed-velero-repo-credentials.yaml
+  - secret-actual-budget-enablebanking-placeholder.yaml
+  - push-secret-seed-actual-budget-enablebanking.yaml

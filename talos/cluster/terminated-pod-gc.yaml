@@ -1,0 +1,28 @@
+# Terminated-pod garbage collection (kube-controller-manager PodGC).
+#
+# Kubernetes only reaps terminated pods (phase Succeeded/Failed whose owner
+# still exists) when their cluster-wide count exceeds --terminated-pod-gc-threshold.
+# The upstream default is 12500, so node-shutdown / eviction / OOM tombstones —
+# e.g. the "Completed" cert-manager pods left behind by Talos node reboots during
+# `ksail cluster update` upgrades — accumulate almost indefinitely.
+#
+# Job/CronJob pods are NOT what this controls: those are bounded by each Job's
+# spec.ttlSecondsAfterFinished and each CronJob's successful/failedJobsHistoryLimit
+# (set per-workload across k8s/). This is the catch-all for everything else.
+#
+# 100 is sized for this cluster (3 control planes + 3 static workers + up to 4
+# autoscaler workers = max 10 nodes). It leaves enough headroom that a rolling
+# Talos upgrade — which briefly produces a tombstone per evicted pod on every
+# rebooting node — does not blow past the threshold and start reaping
+# still-useful recent Failed pods mid-roll, while keeping steady-state tombstone
+# clutter low. PodGC deletes oldest-first, so recent failures stay inspectable.
+#
+# cluster.* config only takes effect on control-plane nodes (where
+# kube-controller-manager runs), so this lives in talos/cluster/ alongside the
+# other control-plane component tuning (see audit-logging.yaml).
+#
+# Reference: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-garbage-collection
+cluster:
+  controllerManager:
+    extraArgs:
+      terminated-pod-gc-threshold: "100"

@@ -117,15 +117,15 @@ spec:
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
-      version: v1.13.4
+      version: v1.13.5
       # Hetzner Talos ISO (x86_64). The v1.11.2 ISO (122630) was deprecated
       # and removed from Hetzner on 2026-03-18. Use v1.12.4 (125127).
       iso: 125127
       # Talos Image Factory extensions baked into the node image. KSail
       # computes the schematic ID from this list and uses it both for
-      # machine.install.image and for the Hetzner snapshot the Cluster
-      # Autoscaler boots new nodes from. Must match the schematic in
-      # talos/cluster/install-image.yaml.
+      # machine.install.image (derived during config generation — there is no
+      # hand-maintained install-image patch) and for the Hetzner snapshot the
+      # Cluster Autoscaler boots new nodes from.
       #   - siderolabs/iscsi-tools      (Longhorn data plane)
       #   - siderolabs/util-linux-tools (Longhorn fstrim)
       #   - siderolabs/qemu-guest-agent (Hetzner Cloud VM integration)
@@ -135,6 +135,31 @@ spec:
         - siderolabs/qemu-guest-agent
     localRegistry:
       registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
+    # Cosign keyless signature verification on the flux-system OCIRepository that
+    # KSail generates and owns (rendered onto spec.verify; a hand-written override
+    # would lose the reconcile fight, so it is configured here per ksail#4987).
+    # The manifests artifact is already cosign-signed keyless in the deploy-prod
+    # composite (push → sign → attest); this makes Flux REJECT any infra artifact
+    # whose signature is missing or whose signer is not the platform deploy
+    # workflow — closing the supply-chain gap #1559 opened for apps but left on
+    # the infra source (#1570). The signer identity + ref were confirmed against
+    # the live signature with `cosign verify`: the artifact is signed by
+    # .github/workflows/ci.yaml on refs/heads/gh-readonly-queue/main/<pr> (the
+    # merge-queue deploy-prod path — the real prod deploy) under GitHub's Fulcio
+    # OIDC issuer. The subject is pinned to the two *production* deploy refs only
+    # (merge-queue refs off main, plus a manual cd.yaml dispatch from main) rather
+    # than `@.+`, so a signature these workflows might produce on any other ref is
+    # not trusted (defence in depth on a high-blast-radius source).
+    verify:
+      provider: cosign
+      matchOIDCIdentity:
+        # Automatic prod deploy: ci.yaml deploy-prod runs on merge_group, which
+        # signs under the merge-queue ref refs/heads/gh-readonly-queue/main/<pr>.
+        - issuer: '^https://token\.actions\.githubusercontent\.com$'
+          subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/ci\.yaml@refs/heads/gh-readonly-queue/main/.+$'
+        # Manual prod deploy: cd.yaml is workflow_dispatch, run from main.
+        - issuer: '^https://token\.actions\.githubusercontent\.com$'
+          subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/cd\.yaml@refs/heads/main$'
   provider:
     hetzner:
       # Hetzner account hard cap: at most 10 servers total. Under the in-progress
