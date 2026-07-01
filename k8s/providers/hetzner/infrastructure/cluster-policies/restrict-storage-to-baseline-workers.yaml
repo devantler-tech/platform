@@ -22,20 +22,26 @@
 # named autoscale-<pool>-<id>, and Longhorn mirrors the Kubernetes node name
 # into its nodes.longhorn.io CR name.
 #
-# MECHANISM: mutate the Longhorn Node CR at admission —
+# MECHANISM: two mutations set the same two fields —
 #   * allowScheduling: false  → no NEW replica is ever scheduled to the node
 #     (node-level gate; overrides every per-disk allowScheduling);
 #   * evictionRequested: true → belt-and-braces: any replica that slipped on
 #     (e.g. landed before this policy deployed) is actively rebuilt onto a
-#     baseline worker and removed. A no-op on nodes with zero replicas.
+#     baseline worker (rebuild completes BEFORE removal — no redundancy loss)
+#     and removed. A no-op on nodes with zero replicas.
+# Rule 1 mutates at ADMISSION, catching every future autoscale Node CR the
+# moment longhorn-manager creates it. Rule 2 is a mutate-EXISTING rule
+# (mutateExistingOnPolicyUpdate), so deploying/updating this policy also
+# retro-patches CRs that predate it — the 4 replica-hosting autoscale nodes
+# of 2026-06-30 are drained by the policy itself, no manual kubectl needed.
+# It requires the kyverno:background-controller:mutate-longhorn-nodes grant
+# (controllers/longhorn/, one Flux layer earlier — Kyverno rejects the policy
+# at admission if the grant is missing).
 # Longhorn only ever sets these two fields from user action (UI/API), so the
 # mutation fights no controller. Engine instance-managers still run on
 # autoscale nodes while a Longhorn-volume-mounting pod runs there — that is
 # required for I/O and correct; they hold no data and are evictable (see
 # kubernetesClusterAutoscalerEnabled in the longhorn HelmRelease).
-#
-# The existing 4 autoscale nodes' CRs were patched live to the same values on
-# 2026-07-01; this policy makes the contract permanent for every future node.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -53,7 +59,10 @@ metadata:
       workers so the cluster-autoscaler can reclaim idle nodes and no
       replica lives on a node that may be deleted at any time.
 spec:
+  mutateExistingOnPolicyUpdate: true
   rules:
+    # Admission path: every future autoscale Node CR is patched as it is
+    # created (or on any later spec update that slips through).
     - name: disable-replica-scheduling-on-autoscale-nodes
       match:
         any:
@@ -63,6 +72,27 @@ spec:
               names:
                 - "autoscale-*"
       mutate:
+        patchStrategicMerge:
+          spec:
+            allowScheduling: false
+            evictionRequested: true
+    # Background path: retro-patch the autoscale Node CRs that already exist
+    # when this policy lands (mutateExistingOnPolicyUpdate above). Also
+    # re-asserts on any matched Node event, healing manual UI flips.
+    - name: drain-existing-autoscale-nodes
+      match:
+        any:
+          - resources:
+              kinds:
+                - longhorn.io/v1beta2/Node
+              names:
+                - "autoscale-*"
+      mutate:
+        targets:
+          - apiVersion: longhorn.io/v1beta2
+            kind: Node
+            namespace: longhorn-system
+            name: "autoscale-*"
         patchStrategicMerge:
           spec:
             allowScheduling: false
