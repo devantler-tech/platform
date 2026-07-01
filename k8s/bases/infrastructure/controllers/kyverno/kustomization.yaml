@@ -7,3 +7,4 @@ resources:
   - helm-repository.yaml
   - cilium-network-policy.yaml
   - cluster-role.yaml
+  - cluster-role-reports-controller-read-keda.yaml

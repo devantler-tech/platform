@@ -117,15 +117,15 @@ spec:
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
-      version: v1.13.4
+      version: v1.13.5
       # Hetzner Talos ISO (x86_64). The v1.11.2 ISO (122630) was deprecated
       # and removed from Hetzner on 2026-03-18. Use v1.12.4 (125127).
       iso: 125127
       # Talos Image Factory extensions baked into the node image. KSail
       # computes the schematic ID from this list and uses it both for
-      # machine.install.image and for the Hetzner snapshot the Cluster
-      # Autoscaler boots new nodes from. Must match the schematic in
-      # talos/cluster/install-image.yaml.
+      # machine.install.image (derived during config generation — there is no
+      # hand-maintained install-image patch) and for the Hetzner snapshot the
+      # Cluster Autoscaler boots new nodes from.
       #   - siderolabs/iscsi-tools      (Longhorn data plane)
       #   - siderolabs/util-linux-tools (Longhorn fstrim)
       #   - siderolabs/qemu-guest-agent (Hetzner Cloud VM integration)
