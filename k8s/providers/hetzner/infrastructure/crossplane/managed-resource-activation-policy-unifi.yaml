@@ -1,0 +1,20 @@
+# provider-upjet-unifi declares SafeStart, so its ManagedResourceDefinitions
+# install Inactive; only the ones named here become CRDs (each active MRD costs
+# the apiserver ~3MiB). The chart's activate-everything default MRAP is disabled
+# via `provider.defaultActivations: []` in the crossplane HelmRelease.
+#
+# We activate the NAMESPACED (Crossplane v2, `*.unifi.m.crossplane.io`) variants
+# only — namespaced managed resources can be applied by the namespace-scoped
+# `unifi` tenant ServiceAccount with a plain Role (no cluster RBAC), which is what
+# makes unifi a genuinely isolated app/tenant. Extend this list as more of the
+# UniFi network (networks/VLANs, WLANs, firewall, port-forwards) comes under
+# management.
+apiVersion: apiextensions.crossplane.io/v1alpha1
+kind: ManagedResourceActivationPolicy
+metadata:
+  name: unifi
+spec:
+  activate:
+    - clients.vpn.unifi.m.crossplane.io
+    - trafficroutes.route.unifi.m.crossplane.io
+    - records.dns.unifi.m.crossplane.io

@@ -6,7 +6,10 @@ resources:
   - service-account.yaml
   - role.yaml
   - role-binding.yaml
-  - cilium-network-policy.yaml
-  - git-repository.yaml
+  - network-policy.yaml
+  - secret-store.yaml
+  - provider-config.yaml
   - external-secret.yaml
-  - terraform.yaml
+  - external-secret-wireguard.yaml
+  - git-repository.yaml
+  - flux-kustomization.yaml

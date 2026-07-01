@@ -5,7 +5,10 @@ resources:
   - provider.yaml
   - provider-family-aws.yaml
   - provider-aws-iam.yaml
+  - provider-upjet-unifi.yaml
   - deployment-runtime-config.yaml
   - deployment-runtime-config-family-aws.yaml
   - deployment-runtime-config-aws-iam.yaml
+  - deployment-runtime-config-upjet-unifi.yaml
   - managed-resource-activation-policy.yaml
+  - managed-resource-activation-policy-unifi.yaml
