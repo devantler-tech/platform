@@ -176,6 +176,22 @@ spec:
     image:
       name: ghcr.io/coroot/coroot-node-agent:1.33.3
     priorityClassName: platform-critical
+    # Authored memory sizing — REQUIRED. DaemonSet VPAs are CPU-only (see
+    # cluster-policies/best-practices/auto-vpa.yaml: VPA sized every node's
+    # agent to the busiest node's peak — 826Mi/node × every node — and that
+    # per-node inflation ratcheted the cluster-autoscaler on 2026-06-30), so
+    # memory must be authored here. Without it the observability LimitRange
+    # default (512Mi limit) applies, and this agent's observed live range is
+    # 369–695Mi/node — a 512Mi limit would OOM-crashloop the hotter nodes.
+    # request ≈ typical per-node usage (~450Mi live median); the limit covers
+    # the observed peak with headroom. CPU request is just the VPA floor —
+    # VPA still right-sizes CPU above it.
+    resources:
+      requests:
+        cpu: 50m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
     tolerations:
       - operator: Exists
 

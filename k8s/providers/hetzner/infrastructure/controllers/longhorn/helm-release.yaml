@@ -59,6 +59,17 @@ spec:
       # Restrict Longhorn system-managed pods (instance-managers, etc.)
       # to storage nodes. Prevents ~100Mi overhead per non-storage node.
       systemManagedComponentsNodeSelector: "node.longhorn.io/create-default-disk:true"
+      # Tell Longhorn this cluster runs the Cluster Autoscaler: Longhorn then
+      # annotates its system-managed per-node pods (instance-managers, etc.)
+      # as safe-to-evict where no replica pins them, so the autoscaler can
+      # drain and remove an under-utilized node instead of treating every
+      # Longhorn pod as an unevictable blocker. Without this, any node that
+      # ever ran an instance-manager was permanently unremovable (part of the
+      # 2026-06-30 stuck-autoscale-node ratchet). Data safety is unchanged —
+      # Longhorn still refuses to evict a pod that hosts the last healthy
+      # replica; pair with the restrict-storage-to-baseline-workers policy
+      # (cluster-policies/) which keeps replicas off autoscale nodes entirely.
+      kubernetesClusterAutoscalerEnabled: true
       # Rebuild degraded replicas of DETACHED volumes too. A volume can sit
       # detached for long stretches (an app scaled down or disabled, or a PVC
       # between pod reschedules); when an autoscaled node holding a replica

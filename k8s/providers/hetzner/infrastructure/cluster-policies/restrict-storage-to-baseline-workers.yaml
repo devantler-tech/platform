@@ -1,0 +1,69 @@
+# Prod-only: keep Longhorn replica storage OFF the ephemeral autoscaler nodes,
+# enforcing the documented compute-only contract for the autoscale-cx* pools
+# (ksail.prod.yaml: "the static workers are ... the only Longhorn storage
+# nodes (autoscaler nodes are compute-only)").
+#
+# WHY THIS EXISTS: autoscaler nodes boot from the SAME Talos worker config as
+# the static workers (talos/workers/node-labels.yaml), so they inherit the
+# node.longhorn.io/create-default-disk=true kubelet label. With
+# createDefaultDiskOnLabeledNodesOnly Longhorn then treats every autoscale
+# node as a storage node: it creates a default disk, and replicaAutoBalance:
+# best-effort actively migrates volume replicas onto it. Observed 2026-06-30:
+# 14 replicas (~72Gi scheduled) living on 4 autoscale-cx33 nodes. That is
+# wrong twice over:
+#   * durability — replicas on nodes the autoscaler may delete at any time;
+#   * elasticity — replica-hosting instance-managers pin the node, so the
+#     autoscaler can never scale it back down (part of the 2026-06-30
+#     stuck-node ratchet).
+# KSail exposes no per-pool node labels/taints, so the label itself cannot be
+# dropped for the autoscaler pools (same gap that keeps prefer-baseline-nodes
+# inert — see its DISCRIMINATOR note). Until KSail can stamp a distinguishing
+# label, the reliable discriminator is the node name: autoscaler nodes are
+# named autoscale-<pool>-<id>, and Longhorn mirrors the Kubernetes node name
+# into its nodes.longhorn.io CR name.
+#
+# MECHANISM: mutate the Longhorn Node CR at admission —
+#   * allowScheduling: false  → no NEW replica is ever scheduled to the node
+#     (node-level gate; overrides every per-disk allowScheduling);
+#   * evictionRequested: true → belt-and-braces: any replica that slipped on
+#     (e.g. landed before this policy deployed) is actively rebuilt onto a
+#     baseline worker and removed. A no-op on nodes with zero replicas.
+# Longhorn only ever sets these two fields from user action (UI/API), so the
+# mutation fights no controller. Engine instance-managers still run on
+# autoscale nodes while a Longhorn-volume-mounting pod runs there — that is
+# required for I/O and correct; they hold no data and are evictable (see
+# kubernetesClusterAutoscalerEnabled in the longhorn HelmRelease).
+#
+# The existing 4 autoscale nodes' CRs were patched live to the same values on
+# 2026-07-01; this policy makes the contract permanent for every future node.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-storage-to-baseline-workers
+  annotations:
+    policies.kyverno.io/title: Restrict Longhorn Storage to Baseline Workers
+    policies.kyverno.io/category: Storage, FinOps
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Node (longhorn.io)
+    policies.kyverno.io/description: >-
+      Disables Longhorn replica scheduling (and requests eviction of any
+      stray replicas) on autoscaler-provisioned nodes, which inherit the
+      storage label from the shared Talos worker config but are ephemeral
+      compute-only capacity. Keeps volume data on the static baseline
+      workers so the cluster-autoscaler can reclaim idle nodes and no
+      replica lives on a node that may be deleted at any time.
+spec:
+  rules:
+    - name: disable-replica-scheduling-on-autoscale-nodes
+      match:
+        any:
+          - resources:
+              kinds:
+                - longhorn.io/v1beta2/Node
+              names:
+                - "autoscale-*"
+      mutate:
+        patchStrategicMerge:
+          spec:
+            allowScheduling: false
+            evictionRequested: true

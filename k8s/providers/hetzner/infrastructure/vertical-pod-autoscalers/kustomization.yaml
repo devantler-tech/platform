@@ -84,16 +84,33 @@ patches:
               maxAllowed:
                 cpu: "3"
                 memory: 6Gi
-  # DaemonSets: per-node pods must fit the smallest autoscale-cx23 worker.
+  # DaemonSets: CPU only — VPA must not manage DaemonSet MEMORY (mirrors the
+  # auto-vpa.yaml DaemonSet rule; full rationale there). VPA keeps one usage
+  # histogram across all pods of a DaemonSet, so it sizes EVERY node's agent
+  # to the busiest node's peak and multiplies that by the node count; that
+  # pushed the per-node agent stack to ~3.5Gi ≈ 50% of a cx33's allocatable —
+  # exactly the cluster-autoscaler's scale-down utilization threshold — making
+  # autoscale nodes unremovable even when empty of movable pods (the
+  # 2026-06-30 four-node ratchet). Memory reverts to the authored values in
+  # the cilium HelmRelease (agent 512Mi, envoy 64Mi, spire-agent 128Mi, ...)
+  # with the generous kube-system LimitRange memory default (4Gi) as the
+  # burst limit. CPU stays managed (compressible, no OOM risk); per-node pods
+  # must still fit the smallest autoscale-cx23 worker.
   - target:
       kind: VerticalPodAutoscaler
       labelSelector: vpa-tier=daemonset
     patch: |
       - op: replace
+        path: /spec/resourcePolicy/containerPolicies/0/controlledResources
+        value: ["cpu"]
+      - op: replace
+        path: /spec/resourcePolicy/containerPolicies/0/minAllowed
+        value:
+          cpu: 50m
+      - op: replace
         path: /spec/resourcePolicy/containerPolicies/0/maxAllowed
         value:
           cpu: "1"
-          memory: 1Gi
   # spire-server: singleton StatefulSet on an RWO volume — never evict.
   - target:
       kind: VerticalPodAutoscaler
