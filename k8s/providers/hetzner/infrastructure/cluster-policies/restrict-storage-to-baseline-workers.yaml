@@ -15,12 +15,15 @@
 #   * elasticity — replica-hosting instance-managers pin the node, so the
 #     autoscaler can never scale it back down (part of the 2026-06-30
 #     stuck-node ratchet).
-# KSail exposes no per-pool node labels/taints, so the label itself cannot be
-# dropped for the autoscaler pools (same gap that keeps prefer-baseline-nodes
-# inert — see its DISCRIMINATOR note). Until KSail can stamp a distinguishing
-# label, the reliable discriminator is the node name: autoscaler nodes are
-# named autoscale-<pool>-<id>, and Longhorn mirrors the Kubernetes node name
-# into its nodes.longhorn.io CR name.
+# KSail now stamps `ksail.io/autoscaled: "true"` on autoscaler nodes
+# (ksail#5113, verified live 2026-07-01) — that activates the soft
+# prefer-baseline-nodes scheduling bias, but it cannot fix THIS problem:
+# Longhorn's default-disk gating keys exclusively on its own
+# node.longhorn.io/create-default-disk label (no "unless other-label" form),
+# and that label is still stamped by the shared worker kubelet config. So the
+# discriminator used here is the node name: autoscaler nodes are named
+# autoscale-<pool>-<id>, and Longhorn mirrors the Kubernetes node name into
+# its nodes.longhorn.io CR name.
 #
 # MECHANISM: two mutations set the same two fields —
 #   * allowScheduling: false  → no NEW replica is ever scheduled to the node
