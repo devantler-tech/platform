@@ -1,0 +1,66 @@
+# Prod-only — the RETROFIT half of restrict-storage-to-baseline-workers.yaml
+# (read that file's header for the full WHY): a mutate-EXISTING Kyverno
+# policy that patches the autoscale Longhorn Node CRs that ALREADY exist when
+# the policy lands (mutateExistingOnPolicyUpdate), so the replica-hosting
+# autoscale nodes observed 2026-06-30 are drained by the policy itself — no
+# manual kubectl needed. It sets the same two fields as the admission half:
+# allowScheduling: false + evictionRequested: true (replicas are rebuilt onto
+# a baseline worker BEFORE removal — no redundancy loss).
+#
+# This is a SEPARATE ClusterPolicy because Kyverno requires EVERY mutate rule
+# to declare mutate.targets when spec.mutateExistingOnPolicyUpdate is set,
+# and the sibling's admission rule has none — combining both rules in one
+# policy is rejected by the validate-policy webhook at apply time
+# ("rules[0].mutate.targets has to be specified when
+# mutateExistingOnPolicyUpdate is set"), which froze the whole
+# `infrastructure` Flux layer (observed live 2026-07-02).
+#
+# It requires the kyverno:background-controller:mutate-longhorn-nodes grant
+# (controllers/longhorn/, one Flux layer earlier — Kyverno rejects the policy
+# at admission if the grant is missing).
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: drain-autoscale-node-storage
+  annotations:
+    policies.kyverno.io/title: Drain Longhorn Storage off Autoscale Nodes (Retrofit)
+    policies.kyverno.io/category: Storage, FinOps
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Node (longhorn.io)
+    policies.kyverno.io/description: >-
+      Retro-patches pre-existing autoscaler-provisioned Longhorn Node CRs to
+      disable replica scheduling and request eviction of any replicas that
+      landed before the restrict-storage-to-baseline-workers admission
+      policy deployed. Split out from that policy because Kyverno requires
+      mutate.targets on every rule when mutateExistingOnPolicyUpdate is set,
+      which an admission mutate rule cannot carry.
+spec:
+  mutateExistingOnPolicyUpdate: true
+  rules:
+    # The trigger is restricted to CREATE so Longhorn's steady Node-CR update
+    # churn does not re-enqueue background UpdateRequests for already-patched
+    # nodes — after the policy-update retrofit, this rule only fires again
+    # when a NEW autoscale node registers (rare, and a cheap re-assert of all
+    # targets). Manual UI flips are still healed by Kyverno's periodic
+    # background scan (hourly by default), which runs for mutate-existing
+    # rules regardless of triggers.
+    - name: drain-existing-autoscale-nodes
+      match:
+        any:
+          - resources:
+              kinds:
+                - longhorn.io/v1beta2/Node
+              names:
+                - "autoscale-*"
+              operations:
+                - CREATE
+      mutate:
+        targets:
+          - apiVersion: longhorn.io/v1beta2
+            kind: Node
+            namespace: longhorn-system
+            name: "autoscale-*"
+        patchStrategicMerge:
+          spec:
+            allowScheduling: false
+            evictionRequested: true
