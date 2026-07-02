@@ -37,13 +37,20 @@ metadata:
 spec:
   mutateExistingOnPolicyUpdate: true
   rules:
-    # The trigger is restricted to CREATE so Longhorn's steady Node-CR update
-    # churn does not re-enqueue background UpdateRequests for already-patched
-    # nodes — after the policy-update retrofit, this rule only fires again
-    # when a NEW autoscale node registers (rare, and a cheap re-assert of all
-    # targets). Manual UI flips are still healed by Kyverno's periodic
-    # background scan (hourly by default), which runs for mutate-existing
-    # rules regardless of triggers.
+    # The trigger match must NOT carry an `operations:` filter: Kyverno's
+    # policy controller enumerates EXISTING trigger resources through the same
+    # match when it generates the mutateExistingOnPolicyUpdate retrofit URs
+    # (and again on its hourly resync), and an `operations: [CREATE]` filter
+    # excludes every already-existing resource from that enumeration — the
+    # retrofit then never fires at all (observed live 2026-07-02: 28h after
+    # admission, 0 UpdateRequests, no background-controller log lines for
+    # this policy, all 4 pre-existing autoscale Node CRs still
+    # allowScheduling: true — while the filterless
+    # propagate-reloader-to-flagger-primary mutate-existing rule re-fired
+    # every hour). Longhorn's steady Node-CR update churn re-enqueues URs,
+    # but the patch is an idempotent re-assert (same two fields), so the
+    # extra URs are cheap no-ops — the same trade the propagate-reloader
+    # policy already makes for cluster-wide Deployment churn.
     - name: drain-existing-autoscale-nodes
       match:
         any:
@@ -52,8 +59,6 @@ spec:
                 - longhorn.io/v1beta2/Node
               names:
                 - "autoscale-*"
-              operations:
-                - CREATE
       mutate:
         targets:
           - apiVersion: longhorn.io/v1beta2
