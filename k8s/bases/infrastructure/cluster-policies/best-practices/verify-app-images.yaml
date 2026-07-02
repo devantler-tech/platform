@@ -14,9 +14,12 @@ metadata:
     policies.kyverno.io/category: Supply Chain Security
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/description: >-
-      Requires keyless cosign signatures from the devantler-tech publish-app
-      release pipeline on all non-ksail ghcr.io/devantler-tech/* container
-      images at Pod admission. Third-party images admit unverified.
+      Requires keyless cosign signatures from a devantler-tech release
+      pipeline on all non-ksail ghcr.io/devantler-tech/* container images
+      at Pod admission — the shared publish-app workflow for app images,
+      and a Crossplane provider repo's own publish-provider-package
+      workflow for provider-upjet-* packages (each class verified ONLY
+      against its own identity). Third-party images admit unverified.
 spec:
   failurePolicy: Fail
   validationActions: [Deny]
@@ -49,13 +52,40 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-app\.yaml@.+$
+    # Crossplane provider packages (provider-upjet-*): the crossplane-contrib
+    # reusable publish workflow they use cannot sign, so each provider repo
+    # attaches the keyless signature in its own publish-provider-package.yml
+    # follow-up job (provider-upjet-unifi#12), which is the workflow identity
+    # Fulcio certifies. Their package-runtime Deployments run the package
+    # image itself, so without this identity every devantler-tech provider
+    # pod is denied at admission (observed on prod 2026-07-02:
+    # provider-upjet-unifi stuck 0/1, the whole UniFi Crossplane migration
+    # stalled). Kept as a SEPARATE attestor, verified only against
+    # provider-upjet-* images in the validations below — folding it into
+    # publishapp would let a provider-workflow signature satisfy
+    # verification for ANY app image (identities within one attestor are
+    # OR'd per image).
+    - name: publishprovider
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@.+$
   validations:
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
-        .filter(image, image.startsWith('ghcr.io/devantler-tech/') && !image.startsWith('ghcr.io/devantler-tech/ksail'))
+        .filter(image, image.startsWith('ghcr.io/devantler-tech/') && !image.startsWith('ghcr.io/devantler-tech/ksail') && !image.startsWith('ghcr.io/devantler-tech/provider-upjet-'))
         .map(image, verifyImageSignatures(image, [attestors.publishapp]))
         .all(e, e > 0)
       message: >-
         first-party app image is not signed by the publish-app release
         pipeline (keyless cosign, reusable-workflows publish-app.yaml
         identity)
+    - expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image, image.startsWith('ghcr.io/devantler-tech/provider-upjet-'))
+        .map(image, verifyImageSignatures(image, [attestors.publishprovider]))
+        .all(e, e > 0)
+      message: >-
+        provider-upjet package image is not signed by its repo's
+        publish-provider-package workflow (keyless cosign)
