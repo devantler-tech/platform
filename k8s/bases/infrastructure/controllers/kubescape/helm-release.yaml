@@ -98,6 +98,20 @@ spec:
       config:
         hostSensor:
           enabled: true
+      # Authored memory sizing — REQUIRED. DaemonSet VPAs are CPU-only (see
+      # cluster-policies/best-practices/auto-vpa.yaml: VPA sized every node's
+      # agent to the busiest node's peak — 523Mi/node × every node — which
+      # ratcheted the cluster-autoscaler on 2026-06-30), so memory must be
+      # authored here. Observed live range is 261–436Mi/node; request ≈
+      # typical usage, limit covers scan-time spikes with headroom (the
+      # kubescape LimitRange default limit is only 512Mi — too tight for scan
+      # bursts). CPU request is the VPA floor; VPA still right-sizes CPU.
+      resources:
+        requests:
+          cpu: 50m
+          memory: 320Mi
+        limits:
+          memory: 1Gi
     kubescape:
       image:
         # The posture scanner applies the SecurityException / ClusterSecurityException

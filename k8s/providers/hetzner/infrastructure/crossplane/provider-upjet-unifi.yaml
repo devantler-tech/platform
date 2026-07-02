@@ -1,0 +1,18 @@
+---
+# provider-upjet-unifi — Upjet-generated Crossplane provider wrapping the
+# ubiquiti-community/unifi Terraform provider. Lives in the `infrastructure`
+# layer (not `infrastructure/controllers/`) because the Provider/
+# DeploymentRuntimeConfig are pkg.crossplane.io CRs that need the Crossplane CRDs
+# the core HelmRelease in controllers/crossplane/ installs first — the same
+# controller-then-CR ordering as provider-upjet-github. Installing this provider
+# establishes the namespaced unifi CRDs the `unifi` app
+# (providers/hetzner/apps/unifi/) consumes. ghcr.io is the project's publish
+# registry and the trust root for every first-party image in this cluster.
+apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-upjet-unifi
+spec:
+  package: ghcr.io/devantler-tech/provider-upjet-unifi:v0.1.0
+  runtimeConfigRef:
+    name: provider-upjet-unifi

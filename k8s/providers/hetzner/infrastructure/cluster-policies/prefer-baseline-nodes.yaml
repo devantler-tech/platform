@@ -12,18 +12,18 @@
 # load drops. A hard nodeAffinity (or a NoSchedule taint) would defeat burst,
 # which is why the strength is "preferred", not "required".
 #
-# DISCRIMINATOR — KSail contract: autoscaler-provisioned nodes are expected to
-# carry the node label `ksail.io/autoscaled: "true"`; baseline (static) workers
-# and control planes do NOT. There is currently NO Kubernetes node label that
-# distinguishes the two — static workers and autoscaler nodes share an
-# identical Talos worker config (same kubelet --node-labels, same
-# node.longhorn.io/create-default-disk=true, overlapping cx33 instance-type),
-# differing only by node-name prefix (prod-worker-* vs autoscale-*). For this
-# preference to take effect, KSail must stamp this label onto its autoscaler
-# node groups (per-pool kubelet --node-labels in the autoscaler cloud-init).
-# Until that lands this policy is an inert no-op: with the label absent on every
-# node, `DoesNotExist` matches all nodes equally and scheduling is unchanged —
-# so it is safe to ship ahead of the KSail change.
+# DISCRIMINATOR — KSail contract: autoscaler-provisioned nodes carry the node
+# label `ksail.io/autoscaled: "true"`; baseline (static) workers and control
+# planes do NOT. SHIPPED: KSail stamps the label since ksail#5113 (verified on
+# the live prod autoscale-cx33 nodes, 2026-07-01), so this policy is ACTIVE —
+# pods created since then are biased toward the baseline workers. Note the
+# label does NOT gate Longhorn's default-disk creation (that keys exclusively
+# on node.longhorn.io/create-default-disk, still stamped by the shared Talos
+# worker config) — replica placement is handled separately by
+# restrict-storage-to-baseline-workers.yaml in this folder. Also note the bias
+# only helps while the baseline has room: a soft preference cannot drain
+# already-placed pods, and under request pressure the scheduler still uses
+# autoscaler nodes freely (by design).
 #
 # Coverage: mutates Pods directly for the broadest reach (Deployments,
 # StatefulSets, DaemonSets, Jobs, CronJobs, bare and operator-created pods).
