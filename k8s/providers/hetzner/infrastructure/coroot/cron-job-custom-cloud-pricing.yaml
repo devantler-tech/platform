@@ -81,7 +81,7 @@ spec:
               # JSON to parse). No official curl+jq image exists, so this is the
               # de-facto community one, digest-pinned; observability is exempt from
               # disallow-latest-tag. Swappable for any curl+jq image.
-              image: docker.io/badouralix/curl-jq:latest@sha256:3670578737d1d2019b10a4f9e607284101feb9fdd6b0478e78ea87bf61d96145
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
