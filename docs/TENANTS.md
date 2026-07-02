@@ -136,6 +136,17 @@ artifacts produced by that trusted workflow are ever reconciled onto the cluster
 
 ## 5. Register the tenant on the platform
 
+> **Piloting: the `Tenant` archetype (#1932).** The manual multi-file copy below
+> is being replaced by one typed declaration — a KRO `Tenant` CR expanded by the
+> [tenant ResourceGraphDefinition](../k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml)
+> into this whole skeleton (namespace, SA + RoleBinding, ghcr-auth
+> ExternalSecret, default-deny NetworkPolicy, cosign-verified OCIRepository,
+> impersonating Kustomization, optional external-dns RBAC / SOPS decryption).
+> It is piloting **local-first** as an opt-in on the Docker provider
+> (`k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml`); prod tenants keep
+> the manual skeleton until the pilot proves out. Until then, follow the steps
+> below for a new tenant.
+
 Add `k8s/bases/apps/<tenant>/` — copy `wedding-app/` (a tenant with app secrets)
 or `ascoachingogvaner/` (a static tenant that also runs a **tenant-owned
 external-dns** for its custom domain, with the extra external-dns RBAC
