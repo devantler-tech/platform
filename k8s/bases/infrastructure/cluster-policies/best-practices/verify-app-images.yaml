@@ -14,9 +14,11 @@ metadata:
     policies.kyverno.io/category: Supply Chain Security
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/description: >-
-      Requires keyless cosign signatures from the devantler-tech publish-app
-      release pipeline on all non-ksail ghcr.io/devantler-tech/* container
-      images at Pod admission. Third-party images admit unverified.
+      Requires keyless cosign signatures from a devantler-tech release
+      pipeline (the shared publish-app workflow, or a Crossplane provider
+      repo's own publish-provider-package workflow) on all non-ksail
+      ghcr.io/devantler-tech/* container images at Pod admission.
+      Third-party images admit unverified.
 spec:
   failurePolicy: Fail
   validationActions: [Deny]
@@ -49,6 +51,19 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-app\.yaml@.+$
+            # Crossplane provider packages (provider-upjet-*): the
+            # crossplane-contrib reusable publish workflow they use cannot
+            # sign, so each provider repo attaches the keyless signature in
+            # its own publish-provider-package.yml follow-up job
+            # (provider-upjet-unifi#12), which is the workflow identity
+            # Fulcio certifies. Their package-runtime Deployments run the
+            # package image itself, so without this identity every
+            # devantler-tech provider pod is denied at admission (observed
+            # on prod 2026-07-02: provider-upjet-unifi stuck 0/1, the whole
+            # UniFi Crossplane migration stalled). Identities in this list
+            # are OR'd per image.
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@.+$
   validations:
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
