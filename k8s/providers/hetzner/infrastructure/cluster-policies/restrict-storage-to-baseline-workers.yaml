@@ -34,7 +34,13 @@
 #     and removed. A no-op on nodes with zero replicas.
 # Rule 1 mutates at ADMISSION, catching every future autoscale Node CR the
 # moment longhorn-manager creates it. Rule 2 is a mutate-EXISTING rule
-# (mutateExistingOnPolicyUpdate), so deploying/updating this policy also
+# (rule-level mutate.mutateExistingOnPolicyUpdate, the same form
+# disable-default-sa-automount and propagate-reloader-to-flagger-primary
+# use — NOT the policy-level spec flag, which Kyverno's webhook rejects
+# here because it then demands mutate.targets on EVERY rule, including the
+# admission-only rule 1 that cannot have them; the policy-level form froze
+# the whole infrastructure Flux layer on 2026-07-02 via its failed
+# server-side dry-run). Deploying/updating this policy thus also
 # retro-patches CRs that predate it — the 4 replica-hosting autoscale nodes
 # of 2026-06-30 are drained by the policy itself, no manual kubectl needed.
 # It requires the kyverno:background-controller:mutate-longhorn-nodes grant
@@ -62,7 +68,6 @@ metadata:
       workers so the cluster-autoscaler can reclaim idle nodes and no
       replica lives on a node that may be deleted at any time.
 spec:
-  mutateExistingOnPolicyUpdate: true
   rules:
     # Admission path: every future autoscale Node CR is patched as it is
     # created (or on any later spec update that slips through).
@@ -80,7 +85,8 @@ spec:
             allowScheduling: false
             evictionRequested: true
     # Background path: retro-patch the autoscale Node CRs that already exist
-    # when this policy lands (mutateExistingOnPolicyUpdate above). The trigger
+    # when this policy lands (rule-level mutateExistingOnPolicyUpdate below —
+    # policy-level is rejected because rule 1 has no targets). The trigger
     # is restricted to CREATE so Longhorn's steady Node-CR update churn does
     # not re-enqueue background UpdateRequests for already-patched nodes —
     # after the retrofit, this rule only fires again when a NEW autoscale
@@ -98,6 +104,7 @@ spec:
               operations:
                 - CREATE
       mutate:
+        mutateExistingOnPolicyUpdate: true
         targets:
           - apiVersion: longhorn.io/v1beta2
             kind: Node

@@ -16,6 +16,10 @@ resources:
   # restrict-storage-to-baseline-workers policy (hetzner cluster-policies/,
   # next Flux layer) — must be live before the policy is admitted.
   - cluster-role-kyverno-mutate-longhorn-nodes.yaml
+  # Kyverno reports-controller read grant for the same policy — without it the
+  # reports controller tight-loops on forbidden longhorn.io node watches (the
+  # 2026-07-01 KEDA-RBAC CPU-leak failure mode). See the file header.
+  - cluster-role-kyverno-reports-read-longhorn-nodes.yaml
   # Self-healing cleanup of orphaned Longhorn Node CRs left by autoscaler
   # scale-downs (Longhorn never auto-deletes them). See #2024.
   - service-account-stale-node-cleanup.yaml

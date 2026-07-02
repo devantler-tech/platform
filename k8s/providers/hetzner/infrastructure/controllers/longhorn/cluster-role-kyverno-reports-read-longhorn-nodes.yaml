@@ -1,0 +1,30 @@
+# Extra permissions for Kyverno's reports controller (prod/hetzner only).
+#
+# The restrict-storage-to-baseline-workers ClusterPolicy (hetzner
+# cluster-policies/, the next Flux layer) matches longhorn.io Nodes. Kyverno's
+# reports controller starts a watch on every resource kind a policy matches,
+# and it can only watch kinds the aggregated view roles cover — without this
+# grant it fails to list/watch longhorn.io nodes and retries in a tight loop,
+# pegging a CPU core, inflating the VPA request, and starving the schedulable
+# budget (the exact failure mode of the 2026-07-01 KEDA ScaledObject incident;
+# see the base kyverno:reports-controller:read-keda grant this mirrors — a
+# server-side dry-run of the policy warns about precisely this permission).
+# Like the sibling mutate grant it ships one layer earlier
+# (infrastructure-controllers) than the policy (infrastructure), and lives in
+# the longhorn folder because both the resource and the consuming policy are
+# Hetzner-only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:reports-controller:read-longhorn-nodes
+  labels:
+    rbac.kyverno.io/aggregate-to-reports-controller: "true"
+rules:
+  - apiGroups:
+      - longhorn.io
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
