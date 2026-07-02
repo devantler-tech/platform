@@ -12,6 +12,10 @@ resources:
   # kubescape C-0270, while keeping the memory limit unset to preserve the
   # instance-manager OOM-cascade safeguard. See limit-range.yaml for details.
   - limit-range.yaml
+  # Kyverno background-controller grant for the
+  # restrict-storage-to-baseline-workers policy (hetzner cluster-policies/,
+  # next Flux layer) — must be live before the policy is admitted.
+  - cluster-role-kyverno-mutate-longhorn-nodes.yaml
   # Self-healing cleanup of orphaned Longhorn Node CRs left by autoscaler
   # scale-downs (Longhorn never auto-deletes them). See #2024.
   - service-account-stale-node-cleanup.yaml
