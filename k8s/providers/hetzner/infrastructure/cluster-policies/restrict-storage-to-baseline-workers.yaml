@@ -80,8 +80,13 @@ spec:
             allowScheduling: false
             evictionRequested: true
     # Background path: retro-patch the autoscale Node CRs that already exist
-    # when this policy lands (mutateExistingOnPolicyUpdate above). Also
-    # re-asserts on any matched Node event, healing manual UI flips.
+    # when this policy lands (mutateExistingOnPolicyUpdate above). The trigger
+    # is restricted to CREATE so Longhorn's steady Node-CR update churn does
+    # not re-enqueue background UpdateRequests for already-patched nodes —
+    # after the retrofit, this rule only fires again when a NEW autoscale
+    # node registers (rare, and a cheap re-assert of all targets). Manual UI
+    # flips are still healed by Kyverno's periodic background scan (hourly by
+    # default), which runs for mutate-existing rules regardless of triggers.
     - name: drain-existing-autoscale-nodes
       match:
         any:
@@ -90,6 +95,8 @@ spec:
                 - longhorn.io/v1beta2/Node
               names:
                 - "autoscale-*"
+              operations:
+                - CREATE
       mutate:
         targets:
           - apiVersion: longhorn.io/v1beta2
