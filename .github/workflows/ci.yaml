@@ -61,17 +61,18 @@ jobs:
 
       - name: ⚙️ Setup KSail
         # Renovate-managed (datasource github-releases; grouped 'ksail' with the
-        # deploy-prod / dr-rebuild pins). NOTE: the in-process Helm render added
-        # in 7.66.x (#5344) is non-deterministic — concurrent renders share
-        # process-global Helm caches and corrupt the rendered stream, so `ksail
-        # workload validate` fails with a *different* random YAML parse error
-        # run-to-run (ksail#5362). #5362's CLOSED fix (#5364/#5366) is INCOMPLETE:
-        # 7.77/7.78 still flake; only <=7.65 (pre-in-process-render) is clean.
-        # Rather than re-pin back 13 versions we stay current and pass
-        # --skip-helm-render to the validate step below (deterministic; same
-        # coverage as the old 7.65.0 pin). `scan` stays on the rendered path
-        # (score-gated with margin). TRIPWIRE: drop --skip-helm-render once #5362
-        # is genuinely fixed upstream; if scan starts swinging, re-pin to 7.65.0.
+        # deploy-prod / dr-rebuild pins). The validate step below renders
+        # HelmReleases in-process (Kustomize + Helm) so the actually-applied
+        # manifests are validated. This was briefly non-deterministic — a
+        # buffer-aliasing data race in kubeconform's resource.FromStream (it yields
+        # resources aliasing the reused bufio.Scanner buffer, parsed concurrently
+        # with the producer's next Scan()) corrupted the validated stream on the
+        # >4MB HelmRelease-dense overlays (ksail#5362) — and was worked around with
+        # --skip-helm-render (platform PR #2270). Fixed upstream in
+        # yannh/kubeconform#363 and picked up via ksail's kubeconform bump, so the
+        # workaround is removed below and full-render validation is restored.
+        # TRIPWIRE: if validate/scan starts swinging run-to-run again, re-add
+        # --skip-helm-render and reopen ksail#5362.
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
@@ -85,18 +86,13 @@ jobs:
       - name: ✅ Validate manifests (local + prod overlays)
         # Schema-aware kubeconform validation with Flux variable substitution,
         # building both cluster overlays. Fully static: no cluster, no SOPS key
-        # (Secrets are skipped), no network (offline schema cache).
-        #
-        # --skip-helm-render: INTERIM workaround for the still-open ksail#5362 —
-        # the default in-process Helm render is non-deterministic (concurrent
-        # renders share process-global Helm caches and corrupt the output, failing
-        # a random kustomization with a random YAML parse error each run). Skipping
-        # it validates HelmRelease CRs as-is (same coverage as the old 7.65.0 pin)
-        # and is deterministic. REMOVE once #5362 is genuinely fixed upstream to
-        # restore rendered-chart validation. See the Setup KSail note above.
+        # (Secrets are skipped), no network (offline schema cache). HelmReleases
+        # are rendered in-process so the actually-applied manifests are validated;
+        # this is deterministic now that the kubeconform FromStream race (ksail#5362,
+        # fixed via yannh/kubeconform#363) is resolved. See the Setup KSail note.
         run: |
-          ksail workload validate --skip-helm-render
-          ksail --config ksail.prod.yaml workload validate --skip-helm-render
+          ksail workload validate
+          ksail --config ksail.prod.yaml workload validate
 
       - name: 🔎 Scan manifests (Kubescape NSA) — hard gate
         # Static NSA-CISA security scan, gated on the compliance score: the job
