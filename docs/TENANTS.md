@@ -143,7 +143,7 @@ artifacts produced by that trusted workflow are ever reconciled onto the cluster
 > ExternalSecret, default-deny NetworkPolicy, cosign-verified OCIRepository,
 > impersonating Kustomization, optional external-dns RBAC / SOPS decryption).
 > It is piloting **local-first** as an opt-in on the Docker provider
-> (`k8s/providers/docker/apps/ascoachingogvaner-tenant.yaml`); prod tenants keep
+> (`k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml`); prod tenants keep
 > the manual skeleton until the pilot proves out. Until then, follow the steps
 > below for a new tenant.
 

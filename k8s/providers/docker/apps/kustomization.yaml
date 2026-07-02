@@ -31,10 +31,10 @@ kind: Kustomization
 #
 # Tenant RGD pilot (#1932 step 3) — opt-in like the apps above. Enabling it has
 # the KRO controller expand ascoachingogvaner's full control-plane skeleton from
-# the one typed declaration in ascoachingogvaner-tenant.yaml (see that file's
+# the one typed declaration in tenant-ascoachingogvaner.yaml (see that file's
 # header for what to expect without locally-seeded GHCR credentials):
 #   resources:
-#     - ascoachingogvaner-tenant.yaml
+#     - tenant-ascoachingogvaner.yaml
 #
 # Not available on the local cluster (intentionally excluded):
 #   wedding-app, ascoachingogvaner — prod-only tenants (need GHCR, CNPG, longhorn)
