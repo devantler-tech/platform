@@ -201,6 +201,12 @@ spec:
       #     installed by the flagger HelmRelease at runtime and are not in the
       #     catalog, so the MetricTemplates and the onboarded Canaries (umami,
       #     homepage, opencost) can't be schema-checked offline.
+      #   - Tenant (kro.run/v1alpha1): the CRD is generated at runtime by the
+      #     KRO controller from the tenant ResourceGraphDefinition (#1932), so
+      #     no static schema exists in any catalog (same class as the Flagger
+      #     runtime CRDs). Prod renders no Tenant CR yet (the pilot is local
+      #     opt-in), but `ksail workload validate` schema-checks unreferenced
+      #     files standalone, so both configs need the skip.
       # Validation-only: the prod CD path is `workload push` (no validateOnPush),
       # so this field never affects what is deployed. Remove once the upstream
       # Coroot/Flagger CRD catalog schemas are current (drop from both configs).
@@ -208,3 +214,4 @@ spec:
         - Coroot
         - MetricTemplate
         - Canary
+        - Tenant
