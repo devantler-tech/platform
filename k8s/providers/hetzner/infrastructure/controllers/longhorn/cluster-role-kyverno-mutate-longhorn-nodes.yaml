@@ -1,7 +1,8 @@
 # Extra permissions for Kyverno's background controller (prod/hetzner only).
 #
-# The restrict-storage-to-baseline-workers ClusterPolicy (hetzner
-# cluster-policies/, the next Flux layer) uses mutateExisting to force
+# The drain-autoscale-node-storage ClusterPolicy (hetzner cluster-policies/,
+# the next Flux layer — the mutate-existing retrofit half of
+# restrict-storage-to-baseline-workers) uses mutateExisting to force
 # allowScheduling=false + evictionRequested=true onto the Longhorn Node CRs of
 # autoscaler-provisioned nodes (autoscale-*), including the ones that already
 # exist when the policy lands. Kyverno checks this grant at policy admission
