@@ -49,6 +49,17 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/ksail/\.github/workflows/cd\.yaml@refs/tags/v.+$
+  # Crossplane PROVIDER package images (ghcr.io/devantler-tech/provider-upjet-*)
+  # are signed by each provider repo's OWN publish-provider-package.yml — a
+  # different keyless identity than publish-app.yaml, because the upstream
+  # crossplane-contrib publish reusable workflow can't run publish-app.yaml.
+  # Mirrors the verify-app-images ImageValidatingPolicy provider-upjet-*
+  # attestor (#2382). MUST precede the catch-all below (first-match-wins) or the
+  # catch-all's publish-app.yaml identity rejects these (ImagePullBackOff).
+  - image: ghcr.io/devantler-tech/provider-upjet-*
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@.+$
   # First-party APP images signed by reusable-workflows/publish-app.yaml.
   - image: ghcr.io/devantler-tech/*
     keyless:
