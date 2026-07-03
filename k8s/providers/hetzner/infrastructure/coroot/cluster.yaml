@@ -89,7 +89,7 @@ spec:
     # ample headroom; the longhorn StorageClass has allowVolumeExpansion=true, so
     # CNPG (1.29) resizes the existing PVCs in place — no recreation needed.
     size: 10Gi
-    storageClass: longhorn
+    storageClass: longhorn-wffc
   postgresql:
     parameters:
       # Bound replication-slot WAL retention so a replica that is down during a

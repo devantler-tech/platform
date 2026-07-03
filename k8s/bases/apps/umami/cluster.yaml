@@ -55,7 +55,7 @@ spec:
   enableSuperuserAccess: true
   storage:
     size: 5Gi
-    storageClass: longhorn
+    storageClass: longhorn-wffc
   # Quorum-based SYNCHRONOUS replication so a failover can never strand the old
   # primary. Background: on 2026-06-19 the longhorn instance-manager on a storage
   # worker was replaced; the CNPG primaries pinned to that node lost their RWO

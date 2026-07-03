@@ -34,7 +34,7 @@ spec:
   instances: 2
   storage:
     size: 2Gi
-    storageClass: longhorn
+    storageClass: longhorn-wffc
   # Quorum synchronous replication so a failover never strands the old primary on
   # a diverged timeline (the 2026-06-19 umami/wedding rejoin incident): number: 1
   # acks each commit only once the standby holds the WAL, so the promoted standby
