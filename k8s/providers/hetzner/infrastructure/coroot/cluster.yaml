@@ -86,10 +86,10 @@ spec:
     # all three instances ("Not enough disk space"), so the coroot-db Cluster
     # never went Ready and the `infrastructure` Kustomization's health check
     # timed out — wedging infrastructure -> apps platform-wide. 10Gi gives WAL
-    # ample headroom; the longhorn StorageClass has allowVolumeExpansion=true, so
+    # ample headroom; the longhorn-wffc StorageClass has allowVolumeExpansion=true, so
     # CNPG (1.29) resizes the existing PVCs in place — no recreation needed.
     size: 10Gi
-    storageClass: longhorn
+    storageClass: longhorn-wffc
   postgresql:
     parameters:
       # Bound replication-slot WAL retention so a replica that is down during a
