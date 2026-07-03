@@ -9,13 +9,14 @@
 #
 # === Sizing (TUNE ME) ===
 # 2 CPU / 4Gi per chunk x replicas: 1 (see capacity-buffer.yaml) == one warm
-# spare node. The smallest overflow pool is cx33 (4 vCPU / 8 GB; see
-# ksail.prod.yaml). A fresh cx33 must also run the per-node kube-system
+# spare node. The smallest overflow pool is cx43 (8 vCPU / 16 GB; see
+# ksail.prod.yaml — cx33 was dropped as an overflow type because its per-node
+# DaemonSet overhead left it above the scale-down utilization threshold and
+# unable to be reclaimed). A fresh cx43 must also run the per-node kube-system
 # DaemonSets (cilium, spire-agent, tetragon, hcloud-csi node, ...), which take
-# ~0.3 CPU / ~1.5 GB, so the chunk is deliberately set BELOW raw allocatable to
-# guarantee it still fits a brand-new cx33 (otherwise the autoscaler would jump
-# to a pricier cx43). 2 CPU / 4Gi is also far too large to squeeze onto the
-# already-loaded baseline workers, so it reliably forces a new autoscaler node.
+# ~0.3 CPU / ~1.5 GB, so the chunk stays comfortably below raw allocatable.
+# 2 CPU / 4Gi is also far too large to squeeze onto the already-loaded baseline
+# workers, so it reliably forces a new autoscaler node.
 # Widen the buffer by raising capacity-buffer.yaml's replicas (one warm node per
 # chunk) or this per-chunk request -- bounded by ksail.prod.yaml's
 # maxNodesTotal: 10.

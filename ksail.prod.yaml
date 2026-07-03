@@ -23,18 +23,26 @@ spec:
     # Cost-optimized overflow: one pool per cost-optimized Hetzner x86
     # shared-vCPU type (the CX line), so the autoscaler can pick the smallest
     # *adequate* node for whatever can't schedule on the static workers. Sizes
-    # double cleanly per step (cx33 4c/8G → cx43 8c/16G →
-    # cx53 16c/32G; ~€4.99/€8.11/€14.99/€28.11 gross/mo in fsn1). All pools
-    # scale to zero (min: 0) so idle capacity costs nothing; the static
-    # workers are the guaranteed baseline and the only Longhorn storage nodes
-    # (autoscaler nodes are compute-only). CAX/ARM is cheaper but needs an ARM
-    # Talos image — not applicable to this x86 cluster.
+    # double cleanly per step (cx43 8c/16G → cx53 16c/32G;
+    # ~€8.11/€14.99 gross/mo in fsn1). All pools scale to zero (min: 0) so idle
+    # capacity costs nothing; the static workers are the guaranteed baseline and
+    # the only Longhorn storage nodes (autoscaler nodes are compute-only).
+    # CAX/ARM is cheaper but needs an ARM Talos image — not applicable here.
+    #
+    # cx33 (4c/8G) is deliberately EXCLUDED as an overflow type. The per-node
+    # kube-system + observability DaemonSets (cilium, coroot, kubescape,
+    # longhorn-manager, tetragon, …) request ~3Gi combined — already ~40% of an
+    # 8G cx33's allocatable — so a cx33 overflow node sits above the 50%
+    # scale-down-utilization threshold on DaemonSets ALONE and can NEVER be
+    # reclaimed (it stays pinned indefinitely, and on a maxed hcloud account
+    # that starves the Talos-snapshot slot). cx43 (16G) amortizes that fixed
+    # overhead to ~19%, so an idle overflow node can actually scale back down.
     #
     # expander: [LeastNodes, LeastWaste] — an ordered priority chain (upstream
     # cluster-autoscaler --expander=least-nodes,least-waste). LeastNodes runs
     # FIRST: on scale-up it keeps the node groups that meet the pending pods
     # with the FEWEST total new nodes (preferring the largest adequate type,
-    # cx53 > cx43 > cx33, to consolidate a burst onto fewer, bigger servers).
+    # cx53 > cx43, to consolidate a burst onto fewer, bigger servers).
     # LeastWaste is the tiebreaker: among the groups LeastNodes leaves tied,
     # pick the one with the least idle CPU/memory.
     # NB this list form requires KSail's expander-list support ("feat: support a
@@ -75,11 +83,6 @@ spec:
         # (renovate-managed) must reach it first.
         capacityBuffers: true
         pools:
-          - name: autoscale-cx33
-            serverType: cx33
-            location: fsn1
-            min: 0
-            max: 4
           - name: autoscale-cx43
             serverType: cx43
             location: fsn1
