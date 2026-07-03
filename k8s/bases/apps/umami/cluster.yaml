@@ -5,7 +5,7 @@
 # `umami-db-app`, keys: username/password/dbname/host/port/uri). The Umami
 # HelmRelease consumes that Secret via `database.external.existingSecret`.
 #
-# longhorn is hardcoded because Umami is a prod-only app (it is excluded from the
+# longhorn-wffc is hardcoded because Umami is a prod-only app (it is excluded from the
 # local/docker overlay, which has no CNPG operator or longhorn — same as the
 # wedding-app and ascoachingogvaner tenants).
 apiVersion: postgresql.cnpg.io/v1

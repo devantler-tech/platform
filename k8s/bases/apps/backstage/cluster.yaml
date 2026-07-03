@@ -5,7 +5,7 @@
 # POSTGRES_* env (see helm-release.yaml) — the same CNPG-generated-secret pattern
 # coroot-db uses, so there is no OpenBao rotation to keep in sync.
 #
-# longhorn is hardcoded because Backstage is a prod-only app (CNPG + longhorn are
+# longhorn-wffc is hardcoded because Backstage is a prod-only app (CNPG + longhorn are
 # absent from the local/docker overlay), matching umami and the tenants.
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
