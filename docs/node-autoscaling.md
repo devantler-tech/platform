@@ -17,8 +17,6 @@ KSail (static baseline)
 └── 3 static workers (cx33, 4 vCPU / 8 GB, guaranteed minimum, Longhorn storage nodes)
 
 Cluster Autoscaler (dynamic workers, managed by KSail)
-├── Pool: autoscale-cx23 → 0-4 × CX23 (2 vCPU, 4 GB)
-├── Pool: autoscale-cx33 → 0-4 × CX33 (4 vCPU, 8 GB)
 ├── Pool: autoscale-cx43 → 0-4 × CX43 (8 vCPU, 16 GB)
 ├── Pool: autoscale-cx53 → 0-4 × CX53 (16 vCPU, 32 GB)
 ├── maxNodesTotal: 10 (total cluster nodes incl. baseline: 6 static + 4 autoscaler)
@@ -75,16 +73,6 @@ spec:
         maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
         pools:
-          - name: autoscale-cx23
-            serverType: cx23
-            location: fsn1
-            min: 0
-            max: 4
-          - name: autoscale-cx33
-            serverType: cx33
-            location: fsn1
-            min: 0
-            max: 4
           - name: autoscale-cx43
             serverType: cx43
             location: fsn1
