@@ -1,0 +1,11 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aws
+  labels:
+    # The aws tenant holds only Crossplane Managed Resources, the
+    # ProviderConfig, and credential Secrets — no pods run here (the provider
+    # runs in crossplane-system). Restricted PSS is enforced regardless.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest

@@ -9,6 +9,12 @@ resources:
   # API it reaches are Hetzner-only — on local/CI clusters the Terraform CRD is
   # absent. Reconciled by the shared `apps` Flux Kustomization like any tenant.
   - unifi/
+  # Prod-only tenant: AWS-as-code via the upbound Crossplane family providers
+  # (providers/hetzner/apps/aws/ — platform#2325). Credential plumbing only for
+  # now (namespace, SecretStore, bootstrap-IAM ExternalSecret, ProviderConfig);
+  # the devantler-tech/aws repo sync lands in a follow-up increment. Hetzner-only
+  # because Crossplane (and the provider packages) are prod-only.
+  - aws/
   # Prod-only Coroot Postgres integration for the platform-owned CNPG DBs:
   # additive CiliumNetworkPolicies that let the observability cluster-agent
   # scrape each on 5432 (the Cluster patches below stamp the
