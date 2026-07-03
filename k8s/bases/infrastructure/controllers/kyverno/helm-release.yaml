@@ -167,16 +167,6 @@ spec:
               app.kubernetes.io/instance: kyverno
     backgroundController:
       replicas: ${kyverno_background_replicas:=1}
-      # TEMPORARY diagnostic for #2392: the drain-autoscale-node-storage
-      # mutate-existing retrofit generates zero UpdateRequests and logs
-      # NOTHING at the default v=2 -- every rejection path in the policy
-      # controller's ApplyBackgroundChecks is V(4)-only, so the failure is
-      # silent by construction. extraArgs render AFTER the features-derived
-      # --v=2 and klog is last-wins, so this raises verbosity to 4 on this
-      # controller only (admission/cleanup/reports stay at v=2). Revert once
-      # #2392 is root-caused.
-      extraArgs:
-        v: 4
       # The chart auto-enables this controller's PDB whenever replicas > 1 and
       # defaults it to minAvailable: 1 -- the exact shape validate-pdb-drain-safe
       # flags. Pin the drain-safe house pattern (#1880/#1882) instead. The
