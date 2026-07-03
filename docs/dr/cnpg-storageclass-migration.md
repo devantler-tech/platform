@@ -54,31 +54,42 @@ kubectl -n $NS get cluster $CL -o jsonpath='{.spec.storage.storageClass}{"\n"}' 
 ```
 
 ### 2. Migrate each REPLICA, one at a time
-For each instance that is **not** the current primary (`<inst>`):
+Repeat for every instance that is **not** the current primary. Set `inst` to that replica's
+name (e.g. `inst=umami-db-8`) so the block below is copy-pasteable:
 ```sh
+inst=<replica-name>   # a NON-primary instance, e.g. umami-db-8
+
 # a) delete the replica's PVC and pod together — CNPG recreates the instance on longhorn-wffc
-kubectl -n $NS delete pvc $<inst> --wait=false
-kubectl -n $NS delete pod $<inst>
+kubectl -n "$NS" delete pvc "$inst" --wait=false
+kubectl -n "$NS" delete pod "$inst"
 
 # b) WAIT for CNPG to recreate and fully re-sync it before touching the next one
-kubectl -n $NS get pods -l cnpg.io/cluster=$CL -w        # <inst> returns, becomes Running 1/1
-kubectl -n $NS get pvc $<inst> -o jsonpath='{.spec.storageClassName}{"\n"}'   # MUST read longhorn-wffc
-kubectl -n $NS get cluster $CL -o jsonpath='{.status.instancesStatus}{"\n"}'  # <inst> back under "healthy"
-kubectl -n $NS get pod $<inst> -o wide                    # confirm it landed on a BASELINE worker
+kubectl -n "$NS" get pods -l cnpg.io/cluster="$CL" -w                              # "$inst" returns, Running 1/1
+kubectl -n "$NS" get pvc "$inst" -o jsonpath='{.spec.storageClassName}{"\n"}'      # MUST read longhorn-wffc
+kubectl -n "$NS" get cluster "$CL" -o jsonpath='{.status.instancesStatus}{"\n"}'  # "$inst" back under "healthy"
+kubectl -n "$NS" get pod "$inst" -o wide                                           # confirm a BASELINE worker
 ```
 **Gate:** do not proceed to the next replica until `readyInstances == instances` again and the
 recreated replica shows zero replication lag. If a replica fails to re-clone, the primary and
 the other replicas are untouched — investigate or restore before continuing.
 
 ### 3. Migrate the primary last
+Only after **every** replica is a healthy `longhorn-wffc` instance, move the primary off
+`longhorn` by triggering a controlled switchover onto an already-migrated replica:
 ```sh
-# a) switch the primary onto an already-migrated replica (triggers a fast, controlled failover)
-kubectl -n $NS patch cluster $CL --type merge -p '{"spec":{"switchover":{"...":"..."}}}'
-#    (or: kubectl cnpg promote $CL <migrated-replica>  — if the cnpg plugin is installed)
-# b) confirm the new primary, then recreate the OLD primary (now a replica) exactly as in step 2
+# Preferred — graceful switchover (requires the cnpg kubectl plugin: `kubectl krew install cnpg`):
+kubectl cnpg promote "$CL" -n "$NS" <migrated-replica>
+
+# Plugin-free alternative — delete the primary pod; CNPG promotes the most-advanced (already
+# -migrated) replica. Expect a brief (seconds) write failover:
+kubectl -n "$NS" delete pod <current-primary>
+
+# Then confirm the new primary is a longhorn-wffc instance and recreate the OLD primary
+# (now a replica) exactly as in step 2:
+kubectl -n "$NS" get cluster "$CL" -o jsonpath='{.status.currentPrimary}{"\n"}'
 ```
-CNPG performs a clean switchover (WAL flushed, replica promoted). Only once the primary is a
-`longhorn-wffc` instance do you recreate the former primary's PVC+pod.
+CNPG flushes WAL and promotes an in-sync replica, so no committed data is lost. Only once the
+primary is a `longhorn-wffc` instance do you recreate the former primary's PVC+pod.
 
 ### 4. Post-checks
 ```sh
