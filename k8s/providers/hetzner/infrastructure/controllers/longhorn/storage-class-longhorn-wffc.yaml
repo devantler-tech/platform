@@ -1,0 +1,35 @@
+---
+# longhorn-wffc — Longhorn StorageClass with volumeBindingMode WaitForFirstConsumer,
+# and the cluster default. New PVCs bind lazily: the scheduler places the consuming
+# pod FIRST (honouring node affinity and the restrict-storage-to-baseline-workers
+# policy), then the Longhorn volume is provisioned where the pod landed. This stops
+# stateful pods being dragged onto autoscaler overflow nodes by an eagerly-bound
+# volume (which blocked scale-down) and lets the cluster-autoscaler simulate scale-up
+# correctly.
+#
+# The chart-managed `longhorn` StorageClass (volumeBindingMode: Immediate) is demoted
+# to non-default (persistence.defaultClass: false in helm-release.yaml) but KEPT: it is
+# referenced by name from existing PVCs and CNPG clusters (spec.storage.storageClass:
+# longhorn), so it must keep resolving. Migrating those workloads onto this class is a
+# deliberate, per-workload follow-up — never a bulk PVC delete, because reclaimPolicy
+# is Delete. Parameters mirror `kubectl get sc longhorn` so volumes are otherwise identical.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-wffc
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  numberOfReplicas: "${longhorn_replica_count:=3}"
+  staleReplicaTimeout: "30"
+  fromBackup: ""
+  fsType: ext4
+  dataLocality: disabled
+  unmapMarkSnapChainRemoved: ignored
+  disableRevisionCounter: "true"
+  dataEngine: v1
+  backupTargetName: default

@@ -99,8 +99,15 @@ spec:
       engineReplicaTimeout: "30"
 
     persistence:
-      # Longhorn is the default StorageClass (replaces hcloud for new PVCs).
-      defaultClass: true
+      # The chart-managed `longhorn` StorageClass uses volumeBindingMode: Immediate,
+      # binding a PVC (and provisioning its Longhorn volume) BEFORE the consuming pod
+      # is scheduled — which strands stateful pods on whatever node the volume landed
+      # on (incl. autoscaler overflow nodes) and defeats scale-down. So the cluster
+      # default is now the sibling `longhorn-wffc` class (WaitForFirstConsumer,
+      # storage-class-longhorn-wffc.yaml). This `longhorn` class is KEPT but demoted to
+      # non-default so existing PVCs and CNPG clusters that name it still resolve; move
+      # workloads onto longhorn-wffc per-workload (reclaimPolicy is Delete — no bulk PVC deletes).
+      defaultClass: false
       defaultClassReplicaCount: ${longhorn_replica_count:=3}
       # RWX support via Longhorn's built-in NFS server.
       defaultFsType: ext4
