@@ -181,7 +181,7 @@ spec:
                 subject: '^https://github\.com/devantler-tech/(reusable-workflows|actions)/\.github/workflows/publish-app\.yaml@.+$'
     # --- Flux Kustomization (one of two variants by `sops`) ---------------
     # The impersonating Kustomization that reconciles the tenant's own artifact
-    # under its namespaced `tenant-edit` SA. Two variants because the SOPS `decryption`
+    # under its namespaced SA (bound to the `tenant-edit` role). Two variants because the SOPS `decryption`
     # block is a field of the Kustomization spec (not a separable resource) and
     # must be present ONLY for SOPS tenants — a `decryption.secretRef: sops-age`
     # on a tenant with no `sops-age` Secret would wedge reconciliation.

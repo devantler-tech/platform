@@ -10,7 +10,12 @@
 # gets cert-manager from the chart's own aggregated role).
 #
 # Namespaced Issuer + Certificate only — never the cluster-scoped ClusterIssuer,
-# which remains platform territory.
+# which remains platform territory. CertificateRequests are read-only: cert-manager's
+# controller mints them from a tenant's Certificate under its own identity, so a
+# tenant never creates them directly — read access covers issuance debugging.
+# NOTE: RBAC alone cannot stop a tenant Certificate from *referencing* a
+# ClusterIssuer via `spec.issuerRef.kind` — that boundary needs admission
+# enforcement, tracked separately.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -21,7 +26,6 @@ rules:
   - apiGroups: ["cert-manager.io"]
     resources:
       - certificates
-      - certificaterequests
       - issuers
     verbs:
       - get
@@ -31,3 +35,10 @@ rules:
       - update
       - patch
       - delete
+  - apiGroups: ["cert-manager.io"]
+    resources:
+      - certificaterequests
+    verbs:
+      - get
+      - list
+      - watch

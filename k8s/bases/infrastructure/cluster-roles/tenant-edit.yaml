@@ -35,4 +35,3 @@ aggregationRule:
 # `rules` is intentionally OMITTED: the ClusterRole aggregation controller owns
 # and populates it from the labelled pieces. Declaring `rules: []` here would make
 # Flux's server-side apply fight the controller for that field on every reconcile.
-

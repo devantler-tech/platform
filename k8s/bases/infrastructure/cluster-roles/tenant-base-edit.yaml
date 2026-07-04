@@ -9,8 +9,9 @@
 # at the root for tenants.
 #
 # Deliberately excludes, versus built-in `edit`: the exec-family subresources
-# above; `serviceaccounts` impersonation and `*/proxy` (privilege-escalation
-# surface a manifest-reconciler does not need); and the operator-CRD rules `edit`
+# above; `serviceaccounts/token` (TokenRequest), `serviceaccounts` impersonation
+# and `*/proxy` (privilege-escalation surface a manifest-reconciler does not
+# need — Flux impersonates via headers, it never mints SA tokens); and the operator-CRD rules `edit`
 # dynamically aggregates (KubeVirt, CDI, cert-manager, Flux, Kyverno, …) — tenant
 # CRD access is granted explicitly via the sibling `*-tenant-edit` pieces.
 #
@@ -40,9 +41,6 @@ rules:
     verbs: ["create", "delete", "deletecollection", "patch", "update"]
   - apiGroups: [""]
     resources: ["pods/eviction"]
-    verbs: ["create"]
-  - apiGroups: [""]
-    resources: ["serviceaccounts/token"]
     verbs: ["create"]
   # Core resources — read (incl. pod logs/status for debugging).
   - apiGroups: [""]
