@@ -21,6 +21,12 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: opencost
+    # The Policy Reporter UI HTTPRoute (policy-reporter) backends to the
+    # oauth2-proxy Service for SSO. Prod-only (the app ships only via the hetzner
+    # overlay); inert on local/CI where the policy-reporter namespace has no HTTPRoute.
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: policy-reporter
     # Hetzner-only: the Longhorn UI HTTPRoute (longhorn-system) backends to the
     # oauth2-proxy Service for SSO. Inert on local/CI where longhorn-system has
     # no HTTPRoute.
