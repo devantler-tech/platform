@@ -53,18 +53,23 @@ spec:
       # the in-cluster SecurityException / ClusterSecurityException CRDs
       # (k8s/bases/infrastructure/cluster-security-exceptions/) and emit posture-exception
       # match events (kubescape#2291). IMPORTANT: this flag alone does NOT make POSTURE
-      # exceptions apply — that needs TWO more things the chart (<= 1.40.2) does not give us:
+      # exceptions apply — that needs THREE more things the chart (<= 1.40.2) does not give us:
       #   (1) the posture scanner reads those CRDs via a CRD exceptions getter that only
-      #       exists in kubescape image >= v4.0.9 (kubescape#2322); chart 1.40.2 still pins
-      #       the scanner to v4.0.8 → see the `kubescape.image.tag` override below; and
-      #   (2) the scanner ServiceAccount needs RBAC to `list` those CRDs, which NO chart
+      #       exists in kubescape image >= v4.0.9 (kubescape#2291/#2322); chart 1.40.2 still
+      #       pins the scanner to v4.0.8 → see the `kubescape.image.tag` override below;
+      #   (2) that getter must LIST the CRDs at the apiVersion the chart serves — v4.0.9
+      #       hard-coded kubescape.io/v1 while the chart's CRDs serve ONLY v1beta1, so its
+      #       List() 404s and (being the secondary/merged source) is silently swallowed →
+      #       still zero exceptions. kubescape#2366 (image >= v4.0.10) switches the getter to
+      #       v1beta1, so the override below is at v4.0.10 for this reason; and
+      #   (3) the scanner ServiceAccount needs RBAC to `list` those CRDs, which NO chart
       #       version grants it (only operator/kubevuln get it) → see `cluster-role.yaml`
       #       + `cluster-role-binding.yaml`.
-      # With v4.0.8 + no RBAC the scanner silently loads zero exceptions (its merged getter
-      # swallows the missing/forbidden CRD source and falls back to the offline = empty
-      # primary), so the dashboard reads "excluding 0 controls" even though the CRs are
-      # deployed and schema-valid. Exemptions stay a LAST RESORT behind real fixes — keep
-      # the cluster-security-exceptions set minimal and irreducible.
+      # Missing any one of the three → the scanner silently loads zero exceptions (its merged
+      # getter swallows the missing/forbidden/wrong-version CRD source and falls back to the
+      # offline = empty primary), so the dashboard reads "excluding 0 controls" even though
+      # the CRs are deployed and schema-valid. Exemptions stay a LAST RESORT behind real
+      # fixes — keep the cluster-security-exceptions set minimal and irreducible.
       riskAcceptance: enable
       # Run posture/config scanning OFFLINE (air-gapped). This cluster has no
       # ARMO SaaS account, but the chart defaults to submit-mode: the scanner
@@ -114,19 +119,22 @@ spec:
           memory: 1Gi
     kubescape:
       image:
-        # The posture scanner applies the SecurityException / ClusterSecurityException
-        # CRDs via its CRD exceptions getter, added in kubescape v4.0.9
-        # (kubescape#2291 + #2322). Chart 1.40.2 still pins the scanner to v4.0.8, which
-        # has NO such getter, so posture exceptions are silently ignored no matter how the
-        # CRs are authored or what RBAC exists. Override to v4.0.9 so the getter is present;
-        # it is paired with `cluster-role.yaml` + `cluster-role-binding.yaml`, which grant
-        # the scanner SA the `list`
-        # RBAC the getter needs (the chart never grants it). The v4.0.9 merged getter still
-        # swallows a missing-RBAC/CRD source, so this bump cannot break scans on its own.
-        # Drop both once the chart bumps the scanner past v4.0.9 AND grants it the
-        # securityexceptions RBAC. (Same component-image-ahead-of-chart pattern as the
-        # nodeAgent override above.)
-        tag: v4.0.9
+        # The posture scanner applies the SecurityException / ClusterSecurityException CRDs
+        # via its CRD exceptions getter (added in kubescape v4.0.9, kubescape#2291 + #2322).
+        # Chart 1.40.2 pins the scanner to v4.0.8, which has NO such getter, so posture
+        # exceptions are silently ignored no matter how the CRs are authored or what RBAC
+        # exists. But v4.0.9's getter hard-coded the CRD apiVersion to kubescape.io/v1 while
+        # the chart serves ONLY kubescape.io/v1beta1 — so its List() 404s and, as the
+        # secondary/merged source, is silently swallowed → still ZERO exceptions applied
+        # (dashboard "excluding 0 controls"). kubescape#2366 (first shipped in image v4.0.10)
+        # switches the getter to v1beta1, so v4.0.10 is the first scanner that actually reads
+        # our CRs offline. Paired with `cluster-role.yaml` + `cluster-role-binding.yaml`,
+        # which grant the scanner SA the `list` RBAC the getter needs (the chart never grants
+        # it). The merged getter still swallows a missing-RBAC/CRD source, so this bump cannot
+        # break scans on its own. Drop this override + the reader RBAC once the chart bumps
+        # the scanner to >= v4.0.10 AND grants it the securityexceptions RBAC. (Same
+        # component-image-ahead-of-chart pattern as the nodeAgent override above.)
+        tag: v4.0.10
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.
     persistence:

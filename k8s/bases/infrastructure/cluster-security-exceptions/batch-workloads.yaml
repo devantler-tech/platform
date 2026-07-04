@@ -1,0 +1,35 @@
+---
+# Exempt the health-probe controls (C-0018 readiness, C-0056 liveness) for
+# run-to-completion batch workloads. A Job/CronJob pod runs to completion and
+# never serves traffic, so readiness/liveness probes are semantically
+# inapplicable — Kubescape nonetheless flags every Job/CronJob as missing them.
+#
+# Matched by workload KIND (not namespace) so it covers current and future batch
+# pods cluster-wide — e.g. openbao `vault-snapshot-init`, kyverno
+# `migrate-resources`, coroot `custom-cloud-pricing` — WITHOUT over-excepting any
+# long-running Deployment/StatefulSet in those namespaces. This is deliberately
+# narrower than a namespaceSelector: it lets the openbao StatefulSet (which has a
+# readiness probe) keep being scanned for probes while excusing only its batch
+# Job, honouring the health-probes.yaml principle of never excepting a namespace
+# whose long-running workloads do configure probes.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: batch-workloads
+spec:
+  reason: >-
+    Readiness and liveness probes are inapplicable to run-to-completion batch
+    workloads (Jobs/CronJobs): the pod terminates on completion and never serves
+    traffic. Matched by workload kind so long-running workloads still require
+    probes.
+  posture:
+    - controlID: C-0018
+      action: ignore
+    - controlID: C-0056
+      action: ignore
+  match:
+    resources:
+      - apiGroup: batch
+        kind: Job
+      - apiGroup: batch
+        kind: CronJob
