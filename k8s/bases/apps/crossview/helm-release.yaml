@@ -26,6 +26,38 @@ spec:
       createNamespace: false
     app:
       replicas: ${crossview_replicas:=1}
+      # Crossview is a bursty, near-idle dashboard: ~14Mi RSS while nobody is
+      # looking at it, but a single dashboard load lists Crossplane resources
+      # cluster-wide (every managed resource across all provider CRDs, plus
+      # composites/claims/XRDs/providers/functions) and spikes to ~240Mi+ — a
+      # ~17x jump — with the frontend firing those lists concurrently.
+      #
+      # auto-vpa (the Kyverno-generated VerticalPodAutoscaler, controlledValues:
+      # RequestsAndLimits) right-sizes the memory REQUEST to that low idle/steady
+      # histogram and, preserving the authored limit:request ratio, drags the
+      # LIMIT down with it. At the chart's default 4:1 ratio (1Gi:256Mi) a
+      # transient-low request recommendation (~100Mi, e.g. after a VPA-recommender
+      # restart) pins the limit near ~400Mi — below the load burst — and the pod
+      # is OOMKilled mid-request. Every dashboard widget then shows "Error
+      # loading", so Crossview looks like it lost kube-API access when it hasn't:
+      # the SA token, RBAC (wildcard get/list/watch) and network are all fine.
+      #
+      # Fix (same auto-vpa footgun the homepage HelmRelease documents): author
+      # resources explicitly with a WIDE memory ratio (8:1). VPA still scales the
+      # request to the observed working set, but the preserved 8:1 ratio keeps the
+      # limit generous at every request level — ~800Mi even at the ~100Mi low
+      # bootstrap, ~1.9Gi at the ~240Mi steady target — so the burst is absorbed.
+      # The limit is a ceiling, not a reservation (idle still reserves only the
+      # request), and the auto-vpa maxAllowed (6Gi) remains the runaway/leak
+      # guard. CPU stays at the chart default: compressible, VPA-managed, never
+      # the OOM cause.
+      resources:
+        requests:
+          cpu: 250m
+          memory: 256Mi
+        limits:
+          cpu: "1"
+          memory: 2Gi
       extraEnv:
         # Crossview keys several behaviours off NODE_ENV (lib/env.go ->
         # Environment): with it set to `production` the session-cookie middleware
