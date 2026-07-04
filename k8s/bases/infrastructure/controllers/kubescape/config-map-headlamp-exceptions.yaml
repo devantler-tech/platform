@@ -95,12 +95,20 @@ data:
         "actions": [
           "alertOnly"
         ],
-        "reason": "Controllers, operators and tenant deployers require delete permissions by design (C-0007). The operator CSE (delete-rbac.yaml) matches each RBAC binding by kind+name; this plugin mirror matches the owning ServiceAccount's namespace (plus the crossplane-masters Group by name, whose namespace is empty).",
+        "reason": "Controllers, operators and tenant deployers require delete permissions by design (C-0007). Mirrors the operator CSE (delete-rbac.yaml) by kind+name: C-0007 findings terminate on the RBAC binding objects themselves (19 of 26 on cluster-scoped ClusterRoleBindings whose namespace is empty), so a namespace designator can never cover them.",
         "resources": [
           {
             "designatorType": "Attributes",
             "attributes": {
-              "namespace": "^(cdi|cert-manager|cnpg-system|flux-system|observability|crossplane-system|flagger-system|kro-system|ksail-operator|monitoring|kubevirt|longhorn-system|reloader|ascoachingogvaner|kyverno|unifi|velero|wedding-app)$"
+              "kind": "^ClusterRoleBinding$",
+              "name": "^(cdi-sa|cert-manager-controller-(issuers|clusterissuers|certificates|challenges)|cloudnative-pg|cluster-reconciler-flux-system|flux-operator|coroot-operator|crossplane-admin|crossplane:provider:provider-upjet-github-[0-9a-f]+:system|flagger|kro:controller|ksail-operator|kube-prometheus-stack-operator|kubevirt-apiserver|kubevirt-controller|longhorn-bind|reloader-reloader-role-binding)$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^(ascoachingogvaner|kyverno:admission-controller|kyverno:cleanup-controller|longhorn|tf-runner|velero-server|wedding-app)$"
             }
           },
           {
