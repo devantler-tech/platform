@@ -142,3 +142,41 @@ spec:
         limits:
           cpu: 500m
           memory: 1Gi
+  # WORKAROUND — chart 1.40.2 breaks the posture scanner under `kubescapeOffline:
+  # enable` (above). In that mode the chart mounts the EMPTY `kubescape-volume`
+  # emptyDir directly AT the file path /home/nonroot/.kubescape/config.json
+  # (subPath config.json); kubelet auto-creates a non-existent subPath as a
+  # DIRECTORY, so config.json is a directory, not a file. The v4.0.9 scanner's
+  # account-ID step then fails EVERY scan with "open
+  # /home/nonroot/.kubescape/config.json: is a directory" — AFTER generating
+  # results locally but BEFORE persisting them, so workloadconfigurationscans
+  # stop updating and the C-0030/C-0054/C-0260 ClusterSecurityException (and the
+  # whole compliance score) never refresh. Re-point the mount at the PARENT dir
+  # /home/nonroot/.kubescape (config.json is then a real writable file inside it,
+  # co-existing with the nested host-scanner.yaml mount) — exactly the fix already
+  # on the chart's unreleased main, which removed the offline conditional. Strategic
+  # -merge patches key volumeMounts by mountPath, so delete the broken entry and
+  # re-add the corrected one. Drop this postRenderer once a chart > 1.40.2 ships
+  # the mount fix (kubescape/helm-charts).
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: kubescape
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: kubescape
+              spec:
+                template:
+                  spec:
+                    containers:
+                      - name: kubescape
+                        volumeMounts:
+                          - mountPath: /home/nonroot/.kubescape/config.json
+                            $patch: delete
+                          - name: kubescape-volume
+                            mountPath: /home/nonroot/.kubescape
+                            subPath: config.json
