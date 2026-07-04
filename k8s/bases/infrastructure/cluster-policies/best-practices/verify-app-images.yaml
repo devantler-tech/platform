@@ -52,14 +52,21 @@ spec:
         keyless:
           # The publish-app workflow moved from reusable-workflows into the
           # actions monorepo (reusable-workflows is being archived); both
-          # identities are accepted during the transition so images signed by
-          # either repo's publish-app.yaml admit. Identities within one attestor
-          # are OR'd, so a match against either satisfies verification.
+          # identities are accepted during the transition via ONE identity
+          # whose subjectRegExp alternates the repo — the same shape as the
+          # tenants' Flux OCIRepository verify blocks. Do NOT list a second
+          # identity entry instead: the IVPOL engine verifies cosign v3
+          # bundles through sigstore-go, which rejects more than one identity
+          # per verification ("unsupported: multiple identities are not
+          # supported at this time" — sigstore/cosign pkg/cosign/verify.go),
+          # so a second entry fail-closes EVERY image this attestor gates
+          # (observed live 2026-07-04: wedding-app v1.14.1 denied at
+          # admission for hours, wedging the whole merge queue). Narrow the
+          # alternation to actions-only once every first-party app image in
+          # prod ships actions-signed.
           identities:
             - issuer: https://token.actions.githubusercontent.com
-              subjectRegExp: ^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@.+$
-            - issuer: https://token.actions.githubusercontent.com
-              subjectRegExp: ^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-app\.yaml@.+$
+              subjectRegExp: ^https://github\.com/devantler-tech/(actions|reusable-workflows)/\.github/workflows/publish-app\.yaml@.+$
     # Crossplane provider packages (provider-upjet-*): the crossplane-contrib
     # reusable publish workflow they use cannot sign, so each provider repo
     # attaches the keyless signature in its own publish-provider-package.yml

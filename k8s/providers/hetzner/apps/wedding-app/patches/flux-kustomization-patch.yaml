@@ -5,8 +5,9 @@ metadata:
   namespace: wedding-app
 spec:
   patches:
-    # storageClass is a platform-specific override: the wedding-app OCI artifact
-    # is environment-agnostic and must not hardcode Hetzner's longhorn class.
+    # wedding-app is Hetzner-only, so its storageClass (longhorn-wffc) is hardcoded
+    # in the source artifact rather than overridden here; this overlay patches only
+    # the operational-safety annotations and synchronous-replication settings below.
     # HA (spec.instances: 3, for the PDB / node-drain reasons documented on the
     # umami-db Cluster) is owned by the wedding-app source repo, so it is
     # deliberately NOT patched here.
@@ -27,19 +28,15 @@ spec:
             kustomize.toolkit.fluxcd.io/force: disabled
             kustomize.toolkit.fluxcd.io/prune: disabled
         spec:
-          storage:
-            storageClass: longhorn
           # Quorum-based SYNCHRONOUS replication, same rationale as umami-db: a
           # longhorn instance-manager restart that kills the primary must not be
           # able to fork the timeline and strand the old primary on a pg_rewind
           # "could not find common ancestor" loop (which wedged wedding-db at 2/3
           # and failed the wedding-app health check on 2026-06-19, requiring a
-          # manual PVC re-bootstrap). Like storageClass above this is a
-          # platform-storage concern (it mitigates longhorn/instance-manager
-          # churn), so it is patched here rather than hardcoded in the
-          # environment-agnostic wedding-app source artifact. `dataDurability:
-          # preferred` relaxes to async if BOTH standbys are unavailable, so the
-          # DB stays writable instead of blocking commits.
+          # manual PVC re-bootstrap). This is a platform-storage concern (it
+          # mitigates longhorn/instance-manager churn), so it is patched here.
+          # `dataDurability: preferred` relaxes to async if BOTH standbys are
+          # unavailable, so the DB stays writable instead of blocking commits.
           postgresql:
             synchronous:
               method: any
@@ -49,7 +46,7 @@ spec:
     # wedding.platform.lan dev host) and its gethomepage.dev/* dashboard
     # annotations are NOT patched here — they are tenant self-presentation and
     # live in the wedding-app repo's deploy/httproute.yaml (mirroring
-    # ascoachingogvaner). Only environment adaptations the env-agnostic artifact
-    # cannot carry (the storageClass above) and operational-safety annotations
-    # belong in this overlay patch — see docs/TENANTS.md "Provider overlays —
+    # ascoachingogvaner). Only operational-safety annotations and platform-storage
+    # settings (the synchronous-replication config above) belong in this overlay
+    # patch — see docs/TENANTS.md "Provider overlays —
     # what may be patched platform-side".
