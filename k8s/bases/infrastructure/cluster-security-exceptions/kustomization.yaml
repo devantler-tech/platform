@@ -6,6 +6,7 @@ resources:
   - batch-workloads.yaml
   - cilium-network-policies.yaml
   - controller-rbac.yaml
+  - exec-into-container-rbac.yaml
   - health-probes.yaml
   - helm-chart-metadata.yaml
   - image-verification.yaml
