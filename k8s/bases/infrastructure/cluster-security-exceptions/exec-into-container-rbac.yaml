@@ -21,13 +21,14 @@
 # avoids.
 #
 # Covered (each genuinely requires pods/exec and cannot be scoped away):
-#   - Velero — namespaced velero-server Role (all-or-nothing chart RBAC) plus its
-#     cluster-admin ClusterRoleBinding; restore must exec/patch arbitrary kinds.
+#   - Velero — namespaced velero-server RoleBinding/Role (all-or-nothing chart
+#     RBAC) plus its cluster-admin ClusterRoleBinding; restore must exec/patch
+#     arbitrary kinds.
 #   - CloudNativePG — its ClusterRole explicitly grants `create pods/exec` to
 #     manage/inspect Postgres instances.
-#   - Flux — helm-controller (via cluster-reconciler-flux-system) and flux-operator
-#     hold cluster-admin; arbitrary-manifest reconciliation is the GitOps trust
-#     model.
+#   - Flux — kustomize-controller and helm-controller (both bound via
+#     cluster-reconciler-flux-system) and flux-operator hold cluster-admin;
+#     arbitrary-manifest reconciliation is the GitOps trust model.
 #
 # NOT covered (intentionally): the two tenant Flux-impersonation SAs
 # (wedding-app, ascoachingogvaner) inherit pods/exec only via the built-in `edit`
@@ -41,8 +42,9 @@ spec:
   reason: >-
     Velero (all-or-nothing backup/restore RBAC + cluster-admin), CloudNativePG
     (operator execs into Postgres pods — explicit pods/exec grant), and the Flux
-    GitOps reconcilers helm-controller and flux-operator (cluster-admin trust
-    model) legitimately hold pods/exec by design. The specific RBAC bindings are
+    GitOps reconcilers kustomize-controller, helm-controller (both via the
+    cluster-reconciler-flux-system binding), and flux-operator (cluster-admin
+    trust model) legitimately hold pods/exec by design. The specific RBAC bindings are
     matched by kind+name so C-0002 still catches any new exec grant.
   posture:
     - controlID: C-0002
@@ -63,7 +65,7 @@ spec:
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
         name: cloudnative-pg
-      # Flux helm-controller — cluster-admin via cluster-reconciler CRB
+      # Flux kustomize-/helm-controller — cluster-admin via cluster-reconciler CRB
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
         name: cluster-reconciler-flux-system
