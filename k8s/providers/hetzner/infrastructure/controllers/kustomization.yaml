@@ -20,6 +20,12 @@ resources:
   # has no ExternalSecret dependency, so unlike external-dns it stays in this
   # wait-gated controllers layer.)
   - crossplane/
+  # Prod-only: the SIG Descheduler — rebalances RUNNING pods (violated affinity/
+  # taints/spread, replica clumps) and drains nearly-empty nodes so the
+  # ksail-managed Cluster Autoscaler can reclaim them. Karpenter has no Hetzner
+  # provider, so CA (provision/deprovision) + descheduler (rebalance/consolidate)
+  # is the Hetzner-native consolidation pair — see docs/node-autoscaling.md.
+  - descheduler/
   # NB: external-dns moved to ../external-dns/ (the `infrastructure` layer):
   # its Cloudflare token now arrives via an OpenBao ExternalSecret, and the
   # ClusterSecretStore only exists once `infrastructure` reconciles — in this
