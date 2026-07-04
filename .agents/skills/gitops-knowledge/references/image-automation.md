@@ -14,6 +14,8 @@ All three resources use `apiVersion: image.toolkit.fluxcd.io/v1`.
 Required controllers: `image-reflector-controller` and `image-automation-controller`
 (add to FluxInstance components only on clusters that run automation).
 
+**Contents:** [ImageRepository](#imagerepository) | [ImagePolicy](#imagepolicy) | [ImageUpdateAutomation](#imageupdateautomation) | [Image Policy Markers](#image-policy-markers) | [Complete End-to-End Pipeline](#complete-end-to-end-pipeline)
+
 ## ImageRepository
 
 Scans a container image repository at regular intervals and stores discovered tags.
@@ -206,6 +208,7 @@ spec:
 | `git.commit.author.name` | string | no | Commit author name |
 | `git.commit.author.email` | string | yes | Commit author email |
 | `git.commit.messageTemplate` | string | no | Go template for commit message |
+| `git.commit.signingKey.secretRef.name` | string | no | Secret with an OpenPGP or SSH key to sign the commit |
 | `git.push.branch` | string | no | Branch to push to (enables PR workflow) |
 | `update.path` | string | no | Directory to scan for image markers (default: repository root) |
 | `update.strategy` | string | no | `Setters` (default) |
@@ -224,6 +227,27 @@ spec:
 
 This creates/updates a branch with the image changes. Set up a CI workflow or
 manual process to create PRs from this branch and merge into main.
+
+### Signed Commits
+
+Sign the automation commits with an OpenPGP or SSH key so the pushed commits carry a
+verifiable signature (which a downstream `GitRepository` with `spec.verify` can then enforce):
+
+```yaml
+spec:
+  git:
+    commit:
+      author:
+        name: flux-bot
+        email: flux@example.com
+      signingKey:
+        secretRef:
+          name: git-signing-key
+```
+
+The referenced Secret holds either:
+- **OpenPGP** — a `git.asc` ASCII-armored key pair (and optional `passphrase`), or
+- **SSH** — an `identity` SSH private key.
 
 ### Commit Message Template
 

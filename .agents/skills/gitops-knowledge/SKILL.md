@@ -4,9 +4,9 @@ description: |
 license: Apache-2.0
 metadata:
     github-path: skills/gitops-knowledge
-    github-ref: refs/tags/v0.0.4
+    github-ref: refs/tags/v0.1.0
     github-repo: https://github.com/fluxcd/agent-skills
-    github-tree-sha: 87c84bc20bf3a0356deb68be41334149eb9a4371
+    github-tree-sha: d47bb25f90b66b224297b75b4df34d554d2d6763
 name: gitops-knowledge
 ---
 # Flux CD Knowledge Base
@@ -18,6 +18,7 @@ to answer questions accurately, generate correct YAML manifests, and explain Flu
 - Always use the exact apiVersion/kind combinations from the CRD table below. Never invent API versions.
 - Before generating YAML for any CRD, read its OpenAPI schema from `assets/schemas/` to verify field names, types, and enum values.
 - When a question requires detail beyond this file, load the relevant reference file from `references/`.
+- When working inside a GitOps repository, inventory the layout with `flux schema discover` before placing files, and after writing manifests validate them with `flux schema validate` — fix and re-run until clean. Load `references/flux-cli.md` for the full CLI workflow, local rendering, and overlay debugging. If the tools aren't installed, skip validation and say so.
 - Prefer Flux Operator (FluxInstance) for cluster setup. Do not reference `flux bootstrap` or legacy `gotk-*` files.
 
 ## What is Flux
@@ -80,7 +81,7 @@ Namespaces, Sources, Kustomizations, HelmReleases, RBAC, ...
 | HelmChart | source.toolkit.fluxcd.io/v1 | source-controller | Fetch and package Helm charts |
 | Bucket | source.toolkit.fluxcd.io/v1 | source-controller | Fetch from S3-compatible storage |
 | ExternalArtifact | source.toolkit.fluxcd.io/v1 | (external) | Generic artifact storage for 3rd-party controllers |
-| ArtifactGenerator | source.extensions.fluxcd.io/v1beta1 | source-controller | Compose/decompose artifacts from multiple sources |
+| ArtifactGenerator | source.extensions.fluxcd.io/v1beta1 | source-watcher | Compose/decompose artifacts from multiple sources |
 | Kustomization | kustomize.toolkit.fluxcd.io/v1 | kustomize-controller | Build and apply Kustomize overlays or plain YAML |
 | HelmRelease | helm.toolkit.fluxcd.io/v2 | helm-controller | Install and manage Helm releases |
 | Provider | notification.toolkit.fluxcd.io/v1beta3 | notification-controller | External notification provider config |
@@ -128,6 +129,9 @@ spec:
       ready: true
       readyExpr: "status.conditions.filter(e, e.type == 'Ready').all(e, e.status == 'True')"
 ```
+
+For ordering *within* a single ResourceSet, use `spec.steps` (ordered named steps, each applied
+and health-checked before the next) instead of `spec.resources` — see `references/resourcesets.md`.
 
 ### Reactivity with Watch Labels
 
@@ -412,6 +416,10 @@ load `references/notifications.md`.
     operation: copy
   ```
 
+**Drift control — pick the right knob:**
+- Kustomization `spec.ignore` — exclude specific JSON-pointer fields from drift detection/apply (e.g. HPA `replicas`). Distinct from the `kustomize.toolkit.fluxcd.io/ssa: Ignore` annotation, which skips a whole object.
+- HelmRelease `spec.driftDetection.ignore` — the HelmRelease equivalent, only active when `driftDetection.mode` is `warn`/`enabled`.
+
 ## Reference Index
 
 Load reference files and OpenAPI schemas based on the question topic.
@@ -446,5 +454,6 @@ Load at most 1-2 reference files per question. Read schemas for field-level vali
 | Web UI, dashboard, SSO, OIDC, Dex, Keycloak, Entra ID, RBAC | `references/web-ui.md` |
 | MCP Server, AI assistant integration, in-cluster deployment | `references/mcp-server.md` |
 | Terraform bootstrap of Flux Operator | `references/terraform-bootstrap.md` |
+| Flux CLI and plugins: `flux schema` discover/validate/extract, local rendering with `flux build` and `flux operator build`, overlay debugging | `references/flux-cli.md` |
 | Gitless GitOps, Flux OCI artifacts, `flux push artifact`, registry-based delivery | `references/gitless-gitops.md` |
 | Gitless image automation (ResourceSet + OCIArtifactTag) | `references/gitless-image-automation.md` |
