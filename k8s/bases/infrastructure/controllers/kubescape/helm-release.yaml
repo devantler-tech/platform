@@ -46,7 +46,20 @@ spec:
     clusterName: ${cluster_name}
     capabilities:
       configurationScan: enable
-      continuousScan: enable
+      # Chart default (disable) — deliberately NOT enabled on this air-gapped
+      # install. With continuousScan enabled the operator's continuous-scanning
+      # service fires a `kubescapeScan` command per watched-resource event, and
+      # that request path never carries `scanV1.keepLocal` (upstream's offline
+      # fix, helm-charts#862, only patched the scheduler CronJob request body —
+      # see kubescapeScheduler.requestBody below). Offline, every such scan runs
+      # Submit-mode, dies at cloud account-ID generation ("chmod
+      # /home/nonroot/.kubescape: read-only file system"), persists NO
+      # workloadconfigurationscan CRs, and the ~1-per-36s retry flood keeps the
+      # scan queue permanently backlogged — starving the daily keepLocal
+      # scheduler scan that DOES work (observed live 2026-07-04, issue #2463).
+      # Posture freshness offline = the daily scheduler scan. Re-enable only if
+      # upstream propagates keepLocal into the continuous-scan command path.
+      continuousScan: disable
       vulnerabilityScan: enable
       runtimeDetection: enable
       # Enables Kubescape's risk-acceptance feature, so the operator/kubevuln process

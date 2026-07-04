@@ -187,6 +187,16 @@ spec:
       ui:
         enabled: true
         securityContext:
+          # C-0017 EXCEPTION (Kubescape immutable container filesystem): the
+          # opencost-ui entrypoint runs `sed -i` in-place over every *.js under
+          # /var/www on EACH start (injecting BASE_URL=/model + footer/aggregation
+          # placeholders) — unpredictable writes into the baked-in app-asset dir,
+          # so the root FS cannot be immutable. /var/www also cannot be an emptyDir:
+          # the image bakes assets via `COPY --from=builder /opt/standard /var/www`
+          # and the entrypoint never repopulates an empty mount → the UI would 404.
+          # The main `opencost` container DOES run readOnlyRootFilesystem:true; only
+          # this nginx-based UI keeps the exception. Revisit once the entrypoint
+          # stops mutating /var/www in place (upstream opencost/opencost#2655).
           readOnlyRootFilesystem: false
         resources:
           requests:

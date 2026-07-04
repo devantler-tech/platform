@@ -520,15 +520,19 @@ spec:
               fi
 
               # --- 1c. Seed placeholder UniFi controller credentials (only if absent) ---
-              # The `unifi` tenant's Terraform CR (tofu-controller) reads the UniFi
-              # API credentials from secret/infrastructure/unifi/controller via the
-              # unifi-credentials ExternalSecret. We seed PLACEHOLDERS here
-              # declaratively (no SOPS) ONLY when the secret is absent, so the
+              # The `unifi` tenant's Crossplane provider (provider-upjet-unifi) reads
+              # the UniFi credentials from secret/infrastructure/unifi/controller via
+              # the unifi-controller-credentials ExternalSecret. We seed PLACEHOLDERS
+              # here declaratively (no SOPS) ONLY when the secret is absent, so the
               # maintainer can overwrite them in place via the OpenBao UI/CLI and a
               # later Job re-run won't clobber the real values. OpenBao is backed up
               # (Raft snapshots → R2 via Velero), so these manually-set values are
-              # durable — no GitOps re-seed is needed. api_url omits the /api path;
-              # api_key is a Limited-Admin Local-Access-Only key (UniFi OS >= 9.0.108).
+              # durable — no GitOps re-seed is needed. GATE: overwrite `api_key` with a
+              # UniFi Site Manager / Cloud API key that has WRITE scope (unifi.ui.com →
+              # API, Site + Application scope) — the provider runs in Cloud Connector
+              # mode (routes through https://api.ui.com), so a local Limited-Admin key
+              # is NOT used, and `api_url` is left as an unused placeholder for a
+              # possible future local/tunnel path.
               if ! bao kv get -mount=secret infrastructure/unifi/controller >/dev/null 2>&1; then
                 echo "Seeding placeholder UniFi credentials at secret/infrastructure/unifi/controller..."
                 bao kv put -mount=secret infrastructure/unifi/controller \

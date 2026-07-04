@@ -161,6 +161,33 @@ spec:
       limits:
         cpu: "2"
         memory: 512Mi
+    # Harden against Kubescape C-0017 (immutable container filesystem). The chart
+    # renders the container securityContext with `toYaml .Values.securityContext`,
+    # so this block REPLACES the chart default in full — it repeats the chart's
+    # restricted context verbatim and flips only readOnlyRootFilesystem to true
+    # (dropping any field here would silently weaken the context).
+    #
+    # Safe to make the root FS read-only: homepage's only runtime writes go to
+    # /app/config (boot-copied defaults + generated files, e.g. proxmox.yaml) and
+    # /app/config/logs (homepage.log) — and the chart's deployment template
+    # already hardcodes BOTH as writable `config`/`logs` emptyDir volumes
+    # (verified on the live prod pod). Everything else the app touches is either a
+    # read-only configMap subPath or /app/.next build artifacts written at
+    # image-build time; /app/.next/cache is never created at runtime, so no extra
+    # writable mount is needed. Flagger copies this pod template to
+    # homepage-primary, so the hardening propagates to the primary it manages.
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      privileged: false
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      seccompProfile:
+        type: RuntimeDefault
     config:
       allowedHosts:
         - ${domain}
