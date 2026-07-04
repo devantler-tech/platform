@@ -79,9 +79,6 @@ data:
             "controlID": "^C-0031$"
           },
           {
-            "controlID": "^C-0002$"
-          },
-          {
             "controlID": "^C-0063$"
           },
           {
@@ -89,6 +86,63 @@ data:
           },
           {
             "controlID": "^C-0188$"
+          }
+        ]
+      },
+      {
+        "name": "exec-into-container-rbac",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "reason": "Infra controllers (Velero, CloudNativePG, Flux helm-controller and flux-operator) legitimately hold pods/exec by design; matched by kind+name on the RBAC binding so C-0002 still catches new exec grants. Tenant SAs are scoped at the root instead, not excepted here.",
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^velero-server$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^velero-server$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^velero-server$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cloudnative-pg$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cluster-reconciler-flux-system$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^flux-operator$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0002$"
           }
         ]
       },
