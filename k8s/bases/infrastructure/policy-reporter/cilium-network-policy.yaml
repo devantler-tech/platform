@@ -1,0 +1,59 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-policy-reporter
+  namespace: policy-reporter
+spec:
+  endpointSelector: {}
+  ingress:
+    # Intra-namespace: the UI queries the core REST API and the kyverno-plugin,
+    # all on :8080.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: policy-reporter
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # auth-proxy (oauth2-proxy SSO) reaches the UI after authentication.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # Coroot's host-networked eBPF node-agent scrapes the core /metrics on :8080.
+    # The scrape appears as the host / remote-node entity rather than a
+    # namespaced endpoint.
+    - fromEntities:
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+  egress:
+    # Kube API: the core watches (Cluster)PolicyReports / openreports and lists
+    # namespaces; the kyverno-plugin reads Kyverno policies and CRDs.
+    - toEntities:
+        - kube-apiserver
+    # Intra-namespace API calls (UI -> core / kyverno-plugin on :8080).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: policy-reporter
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+    # DNS resolution.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
