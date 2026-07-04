@@ -177,6 +177,7 @@ jobs:
           talos-config: ${{ secrets.TALOS_CONFIG }}
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+          wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
   heal-prod-on-failure:
     name: 🩹 Heal Prod (restore main on merge-group failure)
@@ -233,6 +234,7 @@ jobs:
           talos-config: ${{ secrets.TALOS_CONFIG }}
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+          wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
   ci-required-checks:
     name: CI - Required Checks

@@ -6,26 +6,30 @@
 # (PR #9), which configures the UniFi gateway as the WireGuard CLIENT. The home
 # side initiates the tunnel, so the dynamic residential IP never matters (no DDNS).
 #
-# KEY EXCHANGE (both are env-expanded by ksail at load time — never committed):
-#   ${WG_SERVER_PRIVATE_KEY}  the server's own private key. Generate a key pair
+# KEY MATERIAL (env-expanded by ksail at load time — never committed):
+#   ${WG_SERVER_PRIVATE_KEY}  the server's own private key, from the `prod`
+#                             environment secret of the same name (threaded to
+#                             `ksail cluster create/update` by the deploy-prod
+#                             composite and dr-rebuild). Generate a key pair
 #                             (`wg genkey | tee priv | wg pubkey`); set the
 #                             PRIVATE half as the WG_SERVER_PRIVATE_KEY secret,
 #                             and put the PUBLIC half in the tenant's
 #                             `cluster_wg_peer_public_key`.
-#   ${WG_GATEWAY_PUBLIC_KEY}  the UniFi gateway's public key. The provider
-#                             generates the gateway's key pair on apply and
-#                             exposes the public half as the tenant output
-#                             `cluster_wireguard_gateway_public_key`; set that as
-#                             the WG_GATEWAY_PUBLIC_KEY secret here.
-# So the order is: generate the server key pair -> fill the tenant peer pubkey +
-# endpoint -> apply the tenant (gateway mints its key, outputs its pubkey) ->
-# set WG_GATEWAY_PUBLIC_KEY here -> apply this patch -> tunnel comes up.
 #
-# SCOPE: this patch is the LISTENER only. The gateway handshakes and can reach
-# the server's wg0 address (10.200.0.1). Routing tunnel traffic onward to other
-# cluster networks / the internal admin gateway VIP is follow-on datapath work
-# (forwarding + masquerade or VIP announcement), tracked separately — it is NOT
-# solved by this interface patch alone.
+# PHASE SPLIT — the LISTENER ships first, the gateway PEER follows (#2473):
+# the gateway's key pair does not exist until provider-upjet-unifi applies the
+# tenant's `cluster_wireguard` resource (gated on the provider fix + unpausing
+# the tenant, which itself waits for this server to land — a deadlock if the
+# peer were required here). So this patch brings up wg0 with NO peers: the
+# port listens, WireGuard answers no unauthenticated packet, nothing can
+# connect yet. Once the tenant applies and outputs
+# `cluster_wireguard_gateway_public_key`, a follow-up adds the peer block
+# (publicKey + allowedIPs 10.200.0.2/32) fed by a WG_GATEWAY_PUBLIC_KEY secret.
+#
+# SCOPE: this patch is the LISTENER only. Routing tunnel traffic onward to
+# other cluster networks / the internal admin gateway VIP is follow-on datapath
+# work (forwarding + masquerade or VIP announcement), tracked separately — it
+# is NOT solved by this interface patch alone.
 #
 # CAVEAT — applying to EXISTING nodes: ksail's `cluster update` diff only tracks
 # node count / Talos version / ISO, so a machine-config-only change like this is
@@ -34,7 +38,7 @@
 # to nodes that are already up, patch them once out-of-band (wireguard is a
 # no-reboot field):
 #   talosctl --nodes <control-plane-ips> patch mc \
-#     --patch @<this file, ${WG_SERVER_PRIVATE_KEY} + ${WG_GATEWAY_PUBLIC_KEY} filled>
+#     --patch @<this file, ${WG_SERVER_PRIVATE_KEY} filled>
 # See docs/dr/runbook.md.
 #
 # The same identity is intentionally placed on all three control planes: if one
@@ -52,8 +56,3 @@ machine:
         wireguard:
           privateKey: ${WG_SERVER_PRIVATE_KEY}
           listenPort: 51820
-          peers:
-            # The home UniFi gateway (its tunnel address is 10.200.0.2/32).
-            - publicKey: ${WG_GATEWAY_PUBLIC_KEY}
-              allowedIPs:
-                - 10.200.0.2/32
