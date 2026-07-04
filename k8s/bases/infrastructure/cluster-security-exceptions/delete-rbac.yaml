@@ -1,0 +1,124 @@
+---
+# Delete-capable-RBAC exception (Kubescape C-0007, "Roles with delete
+# capabilities") for the infrastructure controllers and platform/app service
+# accounts that require delete permissions BY DESIGN — GitOps reconcilers,
+# operators, backup/restore, storage, virtualisation, cert/DB/secret managers,
+# and tenant deployers all delete the resources they own.
+#
+# Why this is a separate CR matched by kind+name, and NOT a namespaceSelector
+# entry in controller-rbac.yaml (mirrors wildcard-rbac.yaml / C-0187): Kubescape
+# attaches an RBAC finding to the Role/ClusterRole/binding object, not to a
+# namespaced workload, so a namespaceSelector never matches it. 19 of C-0007's
+# 26 findings terminate on cluster-scoped ClusterRoleBindings whose namespace is
+# empty — a namespace match can NEVER cover those. Matching each offending
+# binding by kind+name is the mechanism that actually works.
+#
+# Deliberately explicit (one entry per binding) so C-0007 still flags any NEW or
+# accidental delete-capable grant elsewhere — that residual signal is wanted.
+# Two entries are known-fragile and may need a periodic refresh (documented
+# inline): the Crossplane provider CRB embeds a provider-revision hash that
+# changes on provider re-install, and the tofu-controller `tf-runner` RoleBinding
+# is created on demand per Terraform apply. Keep this list reconciled against a
+# fresh scan (it can only be re-verified live once the scanner mount fix lands —
+# see the kubescape HelmRelease postRenderer / helm-charts#862).
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: delete-capable-rbac-by-design
+spec:
+  reason: >-
+    Infrastructure controllers, operators and tenant deployers legitimately
+    require delete permissions by design (GitOps reconciliation, operator
+    lifecycle, backup/restore, storage, virtualisation, cert/DB/secret
+    management). Each offending Role/binding is matched by kind+name so C-0007
+    still catches any new or accidental delete-capable grant.
+  posture:
+    - controlID: C-0007
+      action: ignore
+  match:
+    resources:
+      # --- cluster-scoped: ClusterRoleBinding -> ClusterRole (19) ---
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: cdi-sa                                     # CDI (KubeVirt storage import)
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: cert-manager-controller-issuers
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: cert-manager-controller-clusterissuers
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: cert-manager-controller-certificates
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: cert-manager-controller-challenges
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: cloudnative-pg                             # CNPG Postgres operator
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: cluster-reconciler-flux-system             # Flux kustomize/helm controllers
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: flux-operator
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: coroot-operator
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: crossplane-admin                           # Crossplane core (Group crossplane-masters)
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        # FRAGILE: the trailing hash is the provider revision; it changes on
+        # provider re-install. Refresh this name if the crossplane provider CRB
+        # churns (or replace with an objectSelector if the CSE schema gains one).
+        name: "crossplane:provider:provider-upjet-github-04d509bb9f6f:system"
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: flagger                                    # progressive delivery
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: "kro:controller"                           # KRO resource-graph operator
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: ksail-operator
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: kube-prometheus-stack-operator
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: kubevirt-apiserver
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: kubevirt-controller
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: longhorn-bind                              # Longhorn distributed storage
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: reloader-reloader-role-binding             # config/secret change reloader
+      # --- namespaced: RoleBinding -> Role/ClusterRole (7) ---
+      - apiGroup: rbac.authorization.k8s.io
+        kind: RoleBinding
+        name: ascoachingogvaner                          # tenant deployer SA (edit)
+      - apiGroup: rbac.authorization.k8s.io
+        kind: RoleBinding
+        name: "kyverno:admission-controller"
+      - apiGroup: rbac.authorization.k8s.io
+        kind: RoleBinding
+        name: "kyverno:cleanup-controller"
+      - apiGroup: rbac.authorization.k8s.io
+        kind: RoleBinding
+        name: longhorn
+      - apiGroup: rbac.authorization.k8s.io
+        kind: RoleBinding
+        # FRAGILE: tofu-controller creates this on demand per Terraform apply;
+        # it is absent between runs (the exception simply no-ops while absent).
+        name: tf-runner
+      - apiGroup: rbac.authorization.k8s.io
+        kind: RoleBinding
+        name: velero-server                              # backup/restore
+      - apiGroup: rbac.authorization.k8s.io
+        kind: RoleBinding
+        name: wedding-app                                # tenant deployer SA (edit)

@@ -70,9 +70,6 @@ data:
             "controlID": "^C-0015$"
           },
           {
-            "controlID": "^C-0007$"
-          },
-          {
             "controlID": "^C-0037$"
           },
           {
@@ -89,6 +86,34 @@ data:
           },
           {
             "controlID": "^C-0188$"
+          }
+        ]
+      },
+      {
+        "name": "delete-capable-rbac-by-design",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "reason": "Controllers, operators and tenant deployers require delete permissions by design (C-0007). The operator CSE (delete-rbac.yaml) matches each RBAC binding by kind+name; this plugin mirror matches the owning ServiceAccount's namespace (plus the crossplane-masters Group by name, whose namespace is empty).",
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "namespace": "^(cdi|cert-manager|cnpg-system|flux-system|observability|crossplane-system|flagger-system|kro-system|ksail-operator|monitoring|kubevirt|longhorn-system|reloader|ascoachingogvaner|kyverno|unifi|velero|wedding-app)$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Group$",
+              "name": "^crossplane-masters$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0007$"
           }
         ]
       },
