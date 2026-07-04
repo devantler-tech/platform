@@ -41,13 +41,13 @@ spec:
     resources:
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: cluster-reconciler-flux-system
+        name: ^cluster-reconciler-flux-system$
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: flux-operator
+        name: ^flux-operator$
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: velero-server
+        name: ^velero-server$
       - apiGroup: rbac.authorization.k8s.io
         kind: Role
-        name: velero-server
+        name: ^velero-server$
