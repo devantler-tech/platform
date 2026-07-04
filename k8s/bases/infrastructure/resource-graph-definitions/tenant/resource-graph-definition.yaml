@@ -92,8 +92,11 @@ spec:
             app.kubernetes.io/managed-by: ksail
         roleRef:
           apiGroup: rbac.authorization.k8s.io
+          # Scoped tenant namespace-admin role (aggregated from *-tenant-edit
+          # pieces) — like the built-in `edit` but WITHOUT pods/exec, so tenants
+          # do not trip Kubescape C-0002. See cluster-roles/tenant-edit.yaml.
           kind: ClusterRole
-          name: edit
+          name: tenant-edit
         subjects:
           - kind: ServiceAccount
             name: ${serviceAccount.metadata.name}
@@ -178,7 +181,7 @@ spec:
                 subject: '^https://github\.com/devantler-tech/(reusable-workflows|actions)/\.github/workflows/publish-app\.yaml@.+$'
     # --- Flux Kustomization (one of two variants by `sops`) ---------------
     # The impersonating Kustomization that reconciles the tenant's own artifact
-    # under its namespaced `edit` SA. Two variants because the SOPS `decryption`
+    # under its namespaced `tenant-edit` SA. Two variants because the SOPS `decryption`
     # block is a field of the Kustomization spec (not a separable resource) and
     # must be present ONLY for SOPS tenants — a `decryption.secretRef: sops-age`
     # on a tenant with no `sops-age` Secret would wedge reconciliation.
@@ -239,7 +242,7 @@ spec:
             secretRef:
               name: sops-age
     # --- external-dns RBAC (only when the tenant runs external-dns) -------
-    # Privileged cross-namespace reads a tenant's `edit` RoleBinding cannot
+    # Privileged cross-namespace reads a tenant's `tenant-edit` RoleBinding cannot
     # self-grant: HTTPRoutes (own namespace), the shared Gateway (kube-system),
     # and Namespaces (cluster-wide informer). Capabilities live in the
     # tenant-external-dns / tenant-external-dns-global ClusterRoles

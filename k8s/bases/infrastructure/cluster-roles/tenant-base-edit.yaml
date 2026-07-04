@@ -1,0 +1,125 @@
+# Core namespaced-admin capability for tenants — the equivalent of the built-in
+# `edit` ClusterRole's core-Kubernetes rules, MINUS the exec-family pod
+# subresources (`pods/exec`, `pods/attach`, `pods/portforward`, `pods/proxy`).
+#
+# Aggregated into `tenant-edit` via the `devantler.tech/aggregate-to-tenant-edit`
+# label. A tenant's Flux reconciliation identity manages its own workloads,
+# config, secrets and networking with this role; it never needs to exec into a
+# pod, so those subresources are omitted — that is what clears Kubescape C-0002
+# at the root for tenants.
+#
+# Deliberately excludes, versus built-in `edit`: the exec-family subresources
+# above; `serviceaccounts` impersonation and `*/proxy` (privilege-escalation
+# surface a manifest-reconciler does not need); and the operator-CRD rules `edit`
+# dynamically aggregates (KubeVirt, CDI, cert-manager, Flux, Kyverno, …) — tenant
+# CRD access is granted explicitly via the sibling `*-tenant-edit` pieces.
+#
+# On a major Kubernetes upgrade, re-check this against `kubectl get clusterrole
+# edit` and add any new CORE (non-operator, non-exec) resources a tenant may
+# legitimately manage.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenant-base-edit
+  labels:
+    devantler.tech/aggregate-to-tenant-edit: "true"
+rules:
+  # Core resources — create/manage (NO pods/exec, pods/attach, pods/portforward,
+  # pods/proxy, services/proxy, or serviceaccounts impersonation).
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - endpoints
+      - persistentvolumeclaims
+      - pods
+      - replicationcontrollers
+      - replicationcontrollers/scale
+      - secrets
+      - serviceaccounts
+      - services
+    verbs: ["create", "delete", "deletecollection", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods/eviction"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    verbs: ["create"]
+  # Core resources — read (incl. pod logs/status for debugging).
+  - apiGroups: [""]
+    resources:
+      - bindings
+      - configmaps
+      - endpoints
+      - events
+      - limitranges
+      - persistentvolumeclaims
+      - persistentvolumeclaims/status
+      - pods
+      - pods/log
+      - pods/status
+      - replicationcontrollers
+      - replicationcontrollers/scale
+      - replicationcontrollers/status
+      - resourcequotas
+      - resourcequotas/status
+      - secrets
+      - serviceaccounts
+      - services
+      - services/status
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+  # Workloads.
+  - apiGroups: ["apps"]
+    resources:
+      - daemonsets
+      - deployments
+      - deployments/scale
+      - replicasets
+      - replicasets/scale
+      - statefulsets
+      - statefulsets/scale
+    verbs: ["create", "delete", "deletecollection", "patch", "update"]
+  - apiGroups: ["apps"]
+    resources:
+      - controllerrevisions
+      - daemonsets
+      - daemonsets/status
+      - deployments
+      - deployments/scale
+      - deployments/status
+      - replicasets
+      - replicasets/scale
+      - replicasets/status
+      - statefulsets
+      - statefulsets/scale
+      - statefulsets/status
+    verbs: ["get", "list", "watch"]
+  # Autoscaling.
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers", "horizontalpodautoscalers/status"]
+    verbs: ["create", "delete", "deletecollection", "patch", "update", "get", "list", "watch"]
+  # Batch.
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "cronjobs/status", "jobs", "jobs/status"]
+    verbs: ["create", "delete", "deletecollection", "patch", "update", "get", "list", "watch"]
+  # Disruption budgets.
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets", "poddisruptionbudgets/status"]
+    verbs: ["create", "delete", "deletecollection", "patch", "update", "get", "list", "watch"]
+  # Networking.
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "ingresses/status", "networkpolicies"]
+    verbs: ["create", "delete", "deletecollection", "patch", "update", "get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  # Leader-election / coordination for tenant workloads.
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+  # Events.
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch", "create", "patch"]

@@ -1,0 +1,33 @@
+# Aggregate ClusterRole that extends the tenant role (`tenant-edit`) with
+# cert-manager verbs, so a tenant that manages its own certificates (e.g.
+# ascoachingogvaner issues a cert for its simply.com domain via a namespaced
+# Issuer + Certificate) can own them from its deploy artifact.
+#
+# The built-in `edit` grants these already (cert-manager's chart ships an
+# `aggregate-to-edit` ClusterRole), so this piece exists to preserve that
+# capability now that tenants bind to the scoped `tenant-edit` instead of `edit`.
+# It is labelled ONLY `devantler.tech/aggregate-to-tenant-edit` (edit already
+# gets cert-manager from the chart's own aggregated role).
+#
+# Namespaced Issuer + Certificate only — never the cluster-scoped ClusterIssuer,
+# which remains platform territory.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cert-manager-tenant-edit
+  labels:
+    devantler.tech/aggregate-to-tenant-edit: "true"
+rules:
+  - apiGroups: ["cert-manager.io"]
+    resources:
+      - certificates
+      - certificaterequests
+      - issuers
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
