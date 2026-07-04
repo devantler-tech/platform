@@ -43,3 +43,5 @@ resources:
   - push-secret-seed-velero-repo-credentials.yaml
   - secret-actual-budget-enablebanking-placeholder.yaml
   - push-secret-seed-actual-budget-enablebanking.yaml
+  - secret-actual-budget-encryption-placeholder.yaml
+  - push-secret-seed-actual-budget-encryption.yaml
