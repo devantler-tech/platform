@@ -144,7 +144,8 @@ spec:
             clientID: $CLIENT_ID
             clientSecret: $CLIENT_SECRET
             redirectURI: https://dex.${domain}/callback
-            # CLIENT_ID/CLIENT_SECRET come from envVars (Flux substitution).
+            # CLIENT_ID comes from envVars (Flux substitution); CLIENT_SECRET is
+            # injected into env via a secretKeyRef (see external-secret.yaml).
             # Dex resolves $VAR references from process env at runtime.
             teamNameField: slug
             useLoginAsID: false
