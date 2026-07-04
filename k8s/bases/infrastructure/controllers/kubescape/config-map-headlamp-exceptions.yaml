@@ -204,6 +204,27 @@ data:
         ]
       },
       {
+        "name": "gitops-managed-cronjobs",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "reason": "C-0026 lists every CronJob for manual approval and has no hardening remedy; all CronJobs are GitOps-managed platform components delivered by Flux after PR review (the review is the approval). Namespace-scoped so a CronJob in any unexpected namespace still surfaces for review. fleetdm is pre-listed (disabled on prod, but its chart ships a fleet-vulnprocessing CronJob).",
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "namespace": "^(kube-system|kubescape|longhorn-system|observability|openbao|umami|fleetdm)$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0026$"
+          }
+        ]
+      },
+      {
         "name": "admission-controllers",
         "policyType": "postureExceptionPolicy",
         "actions": [
