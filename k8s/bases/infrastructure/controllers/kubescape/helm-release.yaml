@@ -142,3 +142,35 @@ spec:
         limits:
           cpu: 500m
           memory: 1Gi
+  # Offline-mode chart bug (kubescape-operator 1.40.2): the scanner Deployment
+  # mounts the empty `kubescape-volume` emptyDir onto the FILE path
+  # /home/nonroot/.kubescape/config.json (subPath config.json). When the target
+  # does not exist kubelet MATERIALISES it as a DIRECTORY, so ksserver's
+  # config-write (GenerateAccountID) fails with `open .../config.json: is a
+  # directory`; the scan aborts at finalize ("scanning failed"), the aggregate
+  # ConfigurationScanSummary is never written, and NO posture
+  # (Cluster)SecurityException is ever applied — so every by-design exception
+  # (e.g. C-0007) renders as failed and the compliance dashboard freezes.
+  # Strictly offline-specific: with kubescapeOffline disabled the chart mounts
+  # the volume at the parent DIR, so only the config.json FILE is created.
+  # Upstream fix kubescape/helm-charts#862 (issue #857) remounts at the parent
+  # dir; it is merged to main (2026-06-24) but NOT in any released chart (latest
+  # is 1.40.2), so reproduce it here via post-render until a chart release ships
+  # it — then bump spec.chart.spec.version and DELETE this postRenderer. The
+  # `test` op pins the assumption (kubescape-volume is volumeMounts[1] on chart
+  # 1.40.2, verified against the live Deployment) so a future mount-order change
+  # fails the reconcile loudly instead of silently remounting the wrong volume.
+  # Offline mode and submit=false are untouched — no cloud egress is re-enabled.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: kubescape
+            patch: |
+              - op: test
+                path: /spec/template/spec/containers/0/volumeMounts/1/mountPath
+                value: /home/nonroot/.kubescape/config.json
+              - op: replace
+                path: /spec/template/spec/containers/0/volumeMounts/1/mountPath
+                value: /home/nonroot/.kubescape
