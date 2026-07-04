@@ -17,6 +17,81 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: crossview
+  # Harden against Kubescape C-0017 (immutable container filesystem). The chart
+  # exposes app/database.containerSecurityContext but NO extraVolumes/
+  # extraVolumeMounts knob, and it hardcodes only /app/logs (app) and
+  # /var/run/postgresql (postgres) as emptyDir volumes — so both the
+  # readOnlyRootFilesystem flip AND the extra writable mounts postgres needs are
+  # applied here as a post-render kustomize patch (strategic-merge merges the
+  # named containers/volumes additively; every other securityContext field —
+  # capabilities.drop, runAsUser, seccompProfile — is preserved).
+  postRenderers:
+    - kustomize:
+        patches:
+          # App (Go server) + wait-for-db init — flip root FS read-only. The
+          # crossview binary is a static CGO-free Go server that writes NOTHING to
+          # the filesystem at runtime (state lives in Postgres; sessions are a
+          # signed cookie, no server-side session files), so no extra writable
+          # mount is needed — the chart's hardcoded /app/logs emptyDir already
+          # covers the one path it mounts. The wait-for-db init only runs
+          # `psql -c "SELECT 1"` over TCP, so it is read-only-safe too.
+          - target:
+              kind: Deployment
+              name: crossview
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: crossview
+              spec:
+                template:
+                  spec:
+                    initContainers:
+                      - name: wait-for-db
+                        securityContext:
+                          readOnlyRootFilesystem: true
+                    containers:
+                      - name: crossview
+                        securityContext:
+                          readOnlyRootFilesystem: true
+          # Bundled Postgres (postgres:18.4, persistence disabled → data dir is an
+          # emptyDir). Flip the root FS read-only and add the writable mounts the
+          # postgres entrypoint genuinely needs:
+          #   /var/lib/postgresql  the image VOLUME. PG18 initdb writes the fresh
+          #                        cluster to PGDATA=/var/lib/postgresql/18/docker;
+          #                        with persistence off the chart mounts nothing
+          #                        here, so it must be a writable emptyDir. This is
+          #                        the ephemeral data dir — losing it on restart is
+          #                        by design (SSO-fronted read-only dashboard).
+          #   /tmp                 the entrypoint mktemp's the initdb pwfile here.
+          # /var/run/postgresql (the socket dir) is already a chart emptyDir.
+          - target:
+              kind: Deployment
+              name: crossview-postgres
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: crossview-postgres
+              spec:
+                template:
+                  spec:
+                    containers:
+                      - name: postgres
+                        securityContext:
+                          readOnlyRootFilesystem: true
+                        volumeMounts:
+                          - name: postgres-data
+                            mountPath: /var/lib/postgresql
+                          - name: tmp
+                            mountPath: /tmp
+                    volumes:
+                      - name: postgres-data
+                        emptyDir:
+                          sizeLimit: 2Gi
+                      - name: tmp
+                        emptyDir:
+                          sizeLimit: 128Mi
   # https://github.com/crossplane-contrib/crossview/blob/main/helm/crossview/values.yaml
   values:
     global:
@@ -26,6 +101,38 @@ spec:
       createNamespace: false
     app:
       replicas: ${crossview_replicas:=1}
+      # Crossview is a bursty, near-idle dashboard: ~14Mi RSS while nobody is
+      # looking at it, but a single dashboard load lists Crossplane resources
+      # cluster-wide (every managed resource across all provider CRDs, plus
+      # composites/claims/XRDs/providers/functions) and spikes to ~240Mi+ — a
+      # ~17x jump — with the frontend firing those lists concurrently.
+      #
+      # auto-vpa (the Kyverno-generated VerticalPodAutoscaler, controlledValues:
+      # RequestsAndLimits) right-sizes the memory REQUEST to that low idle/steady
+      # histogram and, preserving the authored limit:request ratio, drags the
+      # LIMIT down with it. At the chart's default 4:1 ratio (1Gi:256Mi) a
+      # transient-low request recommendation (~100Mi, e.g. after a VPA-recommender
+      # restart) pins the limit near ~400Mi — below the load burst — and the pod
+      # is OOMKilled mid-request. Every dashboard widget then shows "Error
+      # loading", so Crossview looks like it lost kube-API access when it hasn't:
+      # the SA token, RBAC (wildcard get/list/watch) and network are all fine.
+      #
+      # Fix (same auto-vpa footgun the homepage HelmRelease documents): author
+      # resources explicitly with a WIDE memory ratio (8:1). VPA still scales the
+      # request to the observed working set, but the preserved 8:1 ratio keeps the
+      # limit generous at every request level — ~800Mi even at the ~100Mi low
+      # bootstrap, ~1.9Gi at the ~240Mi steady target — so the burst is absorbed.
+      # The limit is a ceiling, not a reservation (idle still reserves only the
+      # request), and the auto-vpa maxAllowed (6Gi) remains the runaway/leak
+      # guard. CPU stays at the chart default: compressible, VPA-managed, never
+      # the OOM cause.
+      resources:
+        requests:
+          cpu: 250m
+          memory: 256Mi
+        limits:
+          cpu: "1"
+          memory: 2Gi
       extraEnv:
         # Crossview keys several behaviours off NODE_ENV (lib/env.go ->
         # Environment): with it set to `production` the session-cookie middleware

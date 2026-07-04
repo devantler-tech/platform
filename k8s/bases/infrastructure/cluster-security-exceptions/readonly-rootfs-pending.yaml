@@ -1,0 +1,40 @@
+---
+# C-0017 (immutable container filesystem) exceptions for the few NON-privileged
+# workloads whose root FS cannot yet be made read-only in-spec. Every other
+# non-privileged workload now sets readOnlyRootFilesystem: true genuinely (its app
+# HelmRelease / DeploymentRuntimeConfig), so this is the narrow remainder — scoped
+# by namespace so it never suppresses C-0017 for the workloads that DO pass it.
+#
+#   - opencost: the opencost-UI (nginx) entrypoint runs `sed -i` in-place over the
+#     baked /var/www *.js on every boot to inject BASE_URL/footer placeholders, so
+#     an immutable root FS crashes it, and an emptyDir over /var/www blanks the UI
+#     (the image bakes assets there and the entrypoint never repopulates an empty
+#     mount). Upstream fix needed: opencost/opencost#2655. The MAIN opencost
+#     container already runs readOnlyRootFilesystem: true — only the UI is exempt,
+#     but Kubescape scopes exceptions by namespace, so the namespace is listed.
+#   - wedding-app: the container securityContext lives in the wedding-app app repo's
+#     env-agnostic OCI artifact (deploy/deployment.yaml), not this platform repo.
+#     It is hardened there (readOnlyRootFilesystem + a /tmp emptyDir) in a follow-up
+#     app release; once that ships, remove wedding-app from this list.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: readonly-rootfs-pending
+spec:
+  reason: >-
+    opencost-UI (nginx) rewrites its baked /var/www assets in place at boot so it
+    cannot run a read-only root (upstream opencost/opencost#2655); wedding-app's
+    container securityContext lives in its own OCI artifact and is hardened in a
+    follow-up app release. Every other non-privileged workload sets
+    readOnlyRootFilesystem in-spec, so C-0017 genuinely passes for them.
+  posture:
+    - controlID: C-0017
+      action: ignore
+  match:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - opencost
+            - wedding-app

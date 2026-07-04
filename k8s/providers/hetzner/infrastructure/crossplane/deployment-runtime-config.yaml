@@ -14,6 +14,27 @@ spec:
         spec:
           containers:
             - name: package-runtime
+              # Kubescape C-0017 (immutable container filesystem) + the hardening
+              # set Kyverno's add-security-context ClusterPolicy injects at pod
+              # admission. Kubescape scans this stored DRC-built spec (not the live
+              # pod), so the fields must be present here too — otherwise C-0017
+              # flags it even though the running pod is already read-only. No
+              # writable /tmp is needed: provider-upjet-github's no-fork upjet
+              # runtime keeps Terraform state in memory / the resource status,
+              # never on disk (verified reconciling read-only in prod).
+              # runAsUser/runAsGroup are left to Crossplane's package-manager
+              # default (2000) — clearing them is the one unsupported DRC op.
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: RuntimeDefault
+                seLinuxOptions:
+                  level: s0
               resources:
                 requests:
                   cpu: 10m

@@ -75,7 +75,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.135.0"
+          KSAIL_VERSION: "7.136.0"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -177,6 +177,7 @@ jobs:
           talos-config: ${{ secrets.TALOS_CONFIG }}
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+          wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
   heal-prod-on-failure:
     name: 🩹 Heal Prod (restore main on merge-group failure)
@@ -233,6 +234,7 @@ jobs:
           talos-config: ${{ secrets.TALOS_CONFIG }}
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+          wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
   ci-required-checks:
     name: CI - Required Checks
