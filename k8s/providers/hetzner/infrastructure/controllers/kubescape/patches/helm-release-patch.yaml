@@ -1,0 +1,33 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kubescape
+  namespace: kubescape
+spec:
+  # Matches the base interval so this patch is a no-op on that field once merged.
+  interval: 10m
+  values:
+    nodeAgent:
+      config:
+        # Fan the runtime-detection alerts out to their three destinations
+        # (prod-only — runtimeDetection is disabled on the docker/local overlay).
+        #
+        #   1. Headlamp + 2. Slack — via the in-cluster Alertmanager deployed in
+        #      ../alertmanager/. The node-agent POSTs alerts to it; the Headlamp
+        #      Kubescape plugin's "Runtime Detection > Alerts" tab reads them back
+        #      (GET /api/v2/alerts), and the Alertmanager Slack receiver forwards
+        #      them to the shared incoming-webhook. The value is HOST:PORT ONLY
+        #      (no scheme, no path) — the node-agent's Prometheus Alertmanager
+        #      client appends /api/v2/alerts itself.
+        #   3. Coroot — via stdout. Coroot CE has no inbound alert receiver, but
+        #      its eBPF node-agent captures this pod's stdout, so the alerts show
+        #      up in Coroot's Logs view (and its log-pattern inspection). This is
+        #      the chart default (stdoutExporter: true); pinned here so the Coroot
+        #      path is explicit and survives a chart-default change.
+        #
+        # The default httpExporterConfig (→ synchronizer:8089) is deliberately
+        # left untouched: it is what feeds the plugin's other Runtime Detection
+        # tabs (Application Profiles, Rules, …) from the Kubescape storage CRs.
+        alertManagerExporterUrls:
+          - alertmanager.kubescape.svc:9093
+        stdoutExporter: true

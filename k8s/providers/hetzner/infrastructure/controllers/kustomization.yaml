@@ -8,6 +8,13 @@ resources:
   # local/CI only): no VirtualMachines/DataVolumes exist on Hetzner and
   # virt-handler crash-looped (1000+ restarts) with zero VMs.
   - ../../../../bases/infrastructure/controllers/
+  # Prod-only: a minimal Alertmanager scoped to Kubescape runtime-detection
+  # alerts. The Headlamp Kubescape plugin's "Runtime Detection > Alerts" tab
+  # reads ONLY from a Prometheus Alertmanager (GET /api/v2/alerts), which the
+  # Coroot migration removed from the cluster; this reintroduces one, fed by the
+  # node-agent (kubescape/patches/ below) and routing to Slack. See its
+  # helm-release.yaml header. Prod-only (runtimeDetection is off on docker/local).
+  - alertmanager/
   # Prod-only: layers a cluster-wide mutual-auth (SPIRE mTLS) policy on top of
   # the base Cilium controller listed above. SPIRE is enabled only on Hetzner,
   # so the policy lives here, not in the base — see cilium/ for the rationale.
@@ -70,6 +77,10 @@ patches:
   # eager startup OIDC discovery that needs a cluster-resolvable + TLS-trusted
   # issuer, which the local *.platform.lan host-file domain isn't — see file.
   - path: ksail-operator/patches/helm-release-patch.yaml
+  # Prod-only: point the Kubescape node-agent's runtime-detection alerts at the
+  # in-cluster Alertmanager (alertmanager/ above) + keep the stdout exporter on,
+  # fanning them out to the Headlamp plugin, Slack, and Coroot — see file.
+  - path: kubescape/patches/helm-release-patch.yaml
   # NB: the Coroot CR moved to the `infrastructure` layer (so the operator's
   # CRD is installed first), so its hetzner patch now lives in
   # ../coroot/patches/ and is applied by ../kustomization.yaml, not here.
