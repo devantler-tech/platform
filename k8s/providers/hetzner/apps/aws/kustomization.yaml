@@ -8,3 +8,5 @@ resources:
   - secret-store.yaml
   - provider-config.yaml
   - external-secret.yaml
+  - oci-repository.yaml
+  - flux-kustomization.yaml
