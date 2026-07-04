@@ -3,6 +3,8 @@
 Detailed reference for Flux custom resource definitions, organized by controller.
 Use this when you need to understand CRD fields, status conditions, or common failure modes.
 
+**Contents:** [Resource Relationships](#resource-relationships) | [Flux Operator](#flux-operator) | [Source Controller](#source-controller) | [Kustomize Controller](#kustomize-controller) | [Helm Controller](#helm-controller) | [Notification Controller](#notification-controller) | [Image Automation Controllers](#image-automation-controllers)
+
 ## Resource Relationships
 
 ```
@@ -55,10 +57,11 @@ Use this when you need to understand CRD fields, status conditions, or common fa
 
 **Purpose**: Reflects the state of a Flux installation, providing cluster-wide summary.
 
-**Key status fields**:
-- `.spec.distribution` — Installed Flux version and components
-- `.spec.conditions` — Aggregated health across all Flux resources
-- `.spec.resources` — Summary of Flux resource counts and statuses
+**Key fields**:
+- `.spec.distribution` — Installed Flux version and entitlement status
+- `.spec.components` — Status of the Flux controller deployments
+- `.spec.reconcilers` — Flux resource statistics (failing, running, suspended) grouped by kind
+- `.status.conditions` — Readiness of the report object itself
 
 **Common failures**:
 - Report not generated (FluxInstance not installed or not ready)
@@ -68,14 +71,14 @@ Use this when you need to understand CRD fields, status conditions, or common fa
 **Purpose**: Manages groups of Kubernetes resources based on input matrices.
 
 **Key spec fields**:
-- `.spec.inputsFrom` — References to ResourceSetInputProvider or ConfigMaps
-- `.spec.resources` — Go templates for generating Kubernetes resources
+- `.spec.inputsFrom` — References to ResourceSetInputProvider objects that supply dynamic inputs
+- `.spec.resources` — Templated Kubernetes resources using `<< inputs.field >>` delimiters (not Go's `{{ }}`)
 - `.spec.serviceAccountName` — Service account for applying resources
 
 **Key status conditions**: `Ready`, `Reconciling`, `Stalled`
 
 **Common failures**:
-- Template rendering errors (invalid Go templates, missing input values)
+- Template rendering errors (invalid template syntax, missing input values)
 - RBAC errors (service account lacks permissions)
 - Input provider not ready
 
@@ -83,7 +86,7 @@ Use this when you need to understand CRD fields, status conditions, or common fa
 
 **Purpose**: Provides input values for ResourceSets from external services or static definitions.
 
-**Provider types**: `Static` (inline inputs), Git server (pull requests, branches, tags), OCI registry (artifact tags).
+**Provider types**: `Static` (inline inputs), Git servers (`GitHub*`, `GitLab*`, `AzureDevOps*`, `AWSCodeCommit*`, `Gitea*` variants for branches, tags, and pull/merge requests, plus `GitLabEnvironment`), registry scanners (`OCIArtifactTag`, `ACRArtifactTag`, `ECRArtifactTag`, `GARArtifactTag`), and `ExternalService` (custom webhook-driven inputs).
 
 **Key spec fields**:
 - `.spec.type` — Provider type (see list above)

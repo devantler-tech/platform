@@ -31,19 +31,18 @@ spec:
       action: ignore
     - controlID: C-0031
       action: ignore
-    - controlID: C-0002
-      action: ignore
     - controlID: C-0063
       action: ignore
     - controlID: C-0035
       action: ignore
-    # NOTE: C-0187 (wildcard RBAC, CIS-5.1.3) is handled in wildcard-rbac.yaml,
-    # not here — a namespaceSelector exception does not suppress RBAC findings
-    # (Kubescape keys them on the Role/ClusterRole/binding object, so a namespace
-    # match never applies; proven: the namespaced velero-server Role kept failing
-    # despite `velero` being listed below). Headlamp is fixed at the root (SA
-    # scoped to read-only cluster-reader); Flux and Velero are exempted by-design
-    # in wildcard-rbac.yaml via an explicit kind+name resources match.
+    # NOTE: RBAC-review controls are NOT suppressible here. Kubescape anchors
+    # their findings on the RBAC Role/ClusterRole/binding object, not on a
+    # namespaced workload, so a namespaceSelector match never applies (proven:
+    # the namespaced velero-server binding kept failing despite `velero` being
+    # listed below). They are handled by explicit kind+name `match.resources` CRs:
+    #   - C-0187 (wildcard RBAC, CIS-5.1.3) → wildcard-rbac.yaml
+    #   - C-0002 (exec into container)      → exec-into-container-rbac.yaml
+    # Headlamp is fixed at the root (SA scoped to read-only cluster-reader).
     - controlID: C-0188
       action: ignore
   match:

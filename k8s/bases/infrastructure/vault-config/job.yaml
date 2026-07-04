@@ -538,6 +538,42 @@ spec:
                 echo "UniFi credentials already present at secret/infrastructure/unifi/controller (leaving as-is)."
               fi
 
+              # --- 1d. Seed placeholder UniFi WireGuard keys (only if absent) ---
+              # The `unifi` tenant's WireGuard VPN Client managed resource
+              # references these via the cluster-wireguard ExternalSecret: the
+              # gateway's own private key (sensitive) and the Talos server's public
+              # key (not secret, but the provider schema requires a Secret ref).
+              # Placeholders until the platform WireGuard server lands; the
+              # maintainer overwrites them in place via the OpenBao UI/CLI. Same
+              # seed-if-absent + durable-via-backup pattern as the controller creds.
+              if ! bao kv get -mount=secret infrastructure/unifi/wireguard >/dev/null 2>&1; then
+                echo "Seeding placeholder UniFi WireGuard keys at secret/infrastructure/unifi/wireguard..."
+                bao kv put -mount=secret infrastructure/unifi/wireguard \
+                  private_key="REPLACE_WITH_GATEWAY_WIREGUARD_PRIVATE_KEY" \
+                  peer_public_key="REPLACE_WITH_TALOS_WG_SERVER_PUBLIC_KEY"
+              else
+                echo "UniFi WireGuard keys already present at secret/infrastructure/unifi/wireguard (leaving as-is)."
+              fi
+
+              # --- 1e. Seed placeholder AWS bootstrap credentials (only if absent) ---
+              # provider-aws-iam (the future `aws` tenant, platform#2325) authenticates
+              # with a bootstrap IAM access key; it lives at
+              # secret/infrastructure/aws/bootstrap and is read by the tenant's
+              # aws-bootstrap-credentials ExternalSecret. We seed PLACEHOLDERS here
+              # declaratively (no SOPS) ONLY when the secret is absent, so the
+              # maintainer can overwrite them in place via the OpenBao UI/CLI and a
+              # later Job re-run won't clobber the real values. OpenBao is backed up
+              # (Raft snapshots → R2 via Velero), so these manually-set values are
+              # durable — no GitOps re-seed is needed.
+              if ! bao kv get -mount=secret infrastructure/aws/bootstrap >/dev/null 2>&1; then
+                echo "Seeding placeholder AWS bootstrap credentials at secret/infrastructure/aws/bootstrap..."
+                bao kv put -mount=secret infrastructure/aws/bootstrap \
+                  access_key_id="REPLACE_WITH_AWS_ACCESS_KEY_ID" \
+                  secret_access_key="REPLACE_WITH_AWS_SECRET_ACCESS_KEY"
+              else
+                echo "AWS bootstrap credentials already present at secret/infrastructure/aws/bootstrap (leaving as-is)."
+              fi
+
               # --- 2. Enable Kubernetes auth ---
               if ! bao auth list -format=json | grep -q '"kubernetes/"'; then
                 echo "Enabling Kubernetes auth method..."
@@ -746,6 +782,16 @@ spec:
               }
               POLICY
 
+              # AWS bootstrap IAM access key read by the future `aws` tenant's
+              # ExternalSecret (platform#2325; seeded as a placeholder in step 1e).
+              # Scoped to the aws path only — the tenant role below carries just
+              # this policy, mirroring github-config/unifi isolation.
+              bao policy write infra-aws-readonly - <<'POLICY'
+              path "secret/data/infrastructure/aws/*" {
+                capabilities = ["read"]
+              }
+              POLICY
+
               bao policy write vault-snapshot-readonly - <<'POLICY'
               path "sys/health" {
                 capabilities = ["read"]
@@ -871,7 +917,7 @@ spec:
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-actual-budget-readonly,app-crossview-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,infra-unifi-readonly,vault-seed-write \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-actual-budget-readonly,app-crossview-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,vault-seed-write \
                 ttl=1h
 
               # Dedicated role for the fleetdm VaultDynamicSecret generator.
@@ -905,6 +951,32 @@ spec:
                 bound_service_account_names=github-config \
                 bound_service_account_namespaces=github-config \
                 policies=infra-github-readonly \
+                ttl=1h
+
+              # Dedicated tenant role for the unifi app. Authenticates the app's
+              # own `unifi` ServiceAccount (used by its namespaced SecretStore,
+              # providers/hetzner/apps/unifi/secret-store.yaml) and carries ONLY
+              # `infra-unifi-readonly` (read on secret/data/infrastructure/unifi/*)
+              # — never the broad `external-secrets` bundle — so the tenant reads
+              # its UniFi controller credentials + WireGuard keys and nothing else.
+              bao write auth/kubernetes/role/unifi \
+                bound_service_account_names=unifi \
+                bound_service_account_namespaces=unifi \
+                policies=infra-unifi-readonly \
+                ttl=1h
+
+              # Dedicated tenant role for the aws tenant (platform#2325).
+              # Authenticates the tenant's own `aws` ServiceAccount (used by its
+              # namespaced SecretStore once the devantler-tech/aws tenant wiring
+              # lands) and carries ONLY `infra-aws-readonly` (read on
+              # secret/data/infrastructure/aws/*) — never the broad
+              # `external-secrets` bundle — so the tenant reads its bootstrap IAM
+              # access key and nothing else. Declared ahead of the namespace/SA:
+              # an auth role is inert config until something authenticates with it.
+              bao write auth/kubernetes/role/aws \
+                bound_service_account_names=aws \
+                bound_service_account_namespaces=aws \
+                policies=infra-aws-readonly \
                 ttl=1h
 
               # Dedicated tenant role for wedding-app. Authenticates the tenant's

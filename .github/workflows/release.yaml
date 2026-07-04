@@ -9,7 +9,7 @@ permissions: {}
 
 jobs:
   release:
-    uses: devantler-tech/reusable-workflows/.github/workflows/create-release.yaml@c830916321473ec23bb612e41de963b9b01af897 # v5.6.6
+    uses: devantler-tech/actions/.github/workflows/create-release.yaml@5aa2657f976103d716f585266a0fa4e964594df2 # v9.0.0
     permissions:
       contents: write # create releases and tags
       issues: write # comment on related issues

@@ -11,7 +11,7 @@ spec:
   chart:
     spec:
       chart: velero
-      version: 12.0.3
+      version: 12.1.0
       sourceRef:
         kind: HelmRepository
         name: vmware-tanzu
@@ -43,7 +43,7 @@ spec:
         # Upstream fix (skip the header when no tags are configured) is open
         # but unreleased: velero-io/velero-plugin-for-aws#299 / #303.
         # Safe to bump again once a release ships one of those PRs.
-        image: velero/velero-plugin-for-aws:v1.14.0
+        image: velero/velero-plugin-for-aws:v1.14.2
         imagePullPolicy: IfNotPresent
         volumeMounts:
           - mountPath: /target

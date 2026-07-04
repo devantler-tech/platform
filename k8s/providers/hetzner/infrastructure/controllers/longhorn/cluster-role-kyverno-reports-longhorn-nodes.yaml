@@ -1,0 +1,29 @@
+# Extra permissions for Kyverno's reports controller (prod/hetzner only).
+#
+# The restrict-storage-to-baseline-workers / drain-autoscale-node-storage
+# ClusterPolicies (hetzner cluster-policies/, the next Flux layer) match
+# longhorn.io/v1beta2/Node, so the reports controller needs read access to
+# that kind to build policy reports — the API server surfaces exactly this on
+# policy admission ("kyverno-reports-controller requires permissions
+# get,list,watch for resource longhorn.io/v1beta2/Node", observed in a
+# server-side dry-run 2026-07-02). Without the grant the reports controller
+# hot-loops on the forbidden list/watch — the same missing-RBAC pattern that
+# melted it on keda.sh/scaledobjects on 2026-07-01 (VPA then inflated its
+# request and leaked autoscaler nodes) — so the grant ships together with the
+# policies that need it, one layer earlier (infrastructure-controllers), like
+# the background-controller grant beside it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:reports-controller:read-longhorn-nodes
+  labels:
+    rbac.kyverno.io/aggregate-to-reports-controller: "true"
+rules:
+  - apiGroups:
+      - longhorn.io
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch

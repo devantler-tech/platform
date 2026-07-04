@@ -37,7 +37,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.105.1"
+        KSAIL_VERSION: "7.135.0"
       run: |
         curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
         tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -229,7 +229,7 @@ runs:
       # artifact); the SBOM is attested to the registry in the next step.
       env:
         # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-        SYFT_VERSION: "1.45.1"
+        SYFT_VERSION: "1.46.0"
       uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
       with:
         image: ghcr.io/devantler-tech/platform/manifests@${{ steps.cosign-sign.outputs.digest }}

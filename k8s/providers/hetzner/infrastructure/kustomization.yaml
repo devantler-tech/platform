@@ -26,6 +26,16 @@ resources:
   # the hetzner overlay because autoscaling is Hetzner/prod-only; see the file
   # header for the `ksail.io/autoscaled` node-label contract it depends on.
   - cluster-policies/prefer-baseline-nodes.yaml
+  # Prod-only: enforce the compute-only contract for autoscaler nodes at the
+  # Longhorn layer — autoscale-* nodes inherit the storage label from the
+  # shared Talos worker config, so without this Longhorn schedules volume
+  # replicas onto ephemeral nodes (durability risk) and those replicas pin
+  # the node against autoscaler scale-down. Two policies (admission half +
+  # mutate-existing retrofit half) because Kyverno rejects a single policy
+  # mixing an admission mutate rule with mutateExistingOnPolicyUpdate — see
+  # the file headers.
+  - cluster-policies/restrict-storage-to-baseline-workers.yaml
+  - cluster-policies/drain-autoscale-node-storage.yaml
   # Prod-only: reconcile Coroot's node Custom Cloud Pricing to Hetzner rates
   # (Coroot otherwise prices non-AWS/GCP/Azure nodes at the GCP-C4 fallback,
   # ~16x the real bill). Lives in this `infrastructure` layer because it targets
