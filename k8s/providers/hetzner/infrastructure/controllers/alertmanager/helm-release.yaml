@@ -39,6 +39,9 @@ spec:
     # Headlamp plugin setting can hard-code it: Service = alertmanager.kubescape.svc:9093.
     fullnameOverride: alertmanager
     replicaCount: 1
+    # This Alertmanager never calls the Kubernetes API — don't mount the SA
+    # token (chart default is true).
+    automountServiceAccountToken: false
     # Ephemeral by design: this Alertmanager only relays transient runtime alerts
     # (no silences or gossip cluster worth persisting), so drop the chart's PVC
     # and back /alertmanager with an emptyDir. Keeps it a zero-storage add-on.
