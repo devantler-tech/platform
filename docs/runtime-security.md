@@ -24,13 +24,13 @@ they sit inside a wider set of controls:
 
 | Layer | Control | What it does at runtime |
 | --- | --- | --- |
-| Kernel LSM | **AppArmor** ([`talos/cluster/apparmor.yaml`](../talos/cluster/apparmor.yaml)) | Confines container processes to a profile; default-deny for unexpected file/cap access |
+| Kernel LSM | **AppArmor** ([`talos/cluster/enable-apparmor.yaml`](../talos/cluster/enable-apparmor.yaml)) | Confines container processes to a profile; default-deny for unexpected file/cap access |
 | Syscall filter | **seccomp `RuntimeDefault`** (mutated + enforced by [Kyverno](../k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml)) | Blocks the dangerous-syscall tail every container gets by default |
-| Kernel hardening | **sysctls** ([`talos/cluster/sysctls.yaml`](../talos/cluster/sysctls.yaml)) | `kptr_restrict`, `ptrace_scope`, unprivileged-eBPF off, etc. — shrinks the local-privesc surface |
+| Kernel hardening | **sysctls** ([`talos/cluster/harden-kernel-sysctls.yaml`](../talos/cluster/harden-kernel-sysctls.yaml)) | `kptr_restrict`, `ptrace_scope`, unprivileged-eBPF off, etc. — shrinks the local-privesc surface |
 | Network | **Cilium + Hubble** | L3–L7 flow visibility and default-deny [CiliumNetworkPolicy](../k8s/bases/infrastructure/cluster-policies/best-practices/add-default-deny.yaml) per namespace |
 | Runtime detection | **Kubescape node-agent** | Learned-behaviour anomaly detection, correlated with config/CVE/compliance posture |
 | Runtime enforcement | **Tetragon** | Declarative kernel-hook policies that **terminate the offending process** (SIGKILL) on a policy match |
-| Forensics | **API audit log** ([`talos/cluster/audit-logging.yaml`](../talos/cluster/audit-logging.yaml)) | Who-did-what record of control-plane mutations |
+| Forensics | **API audit log** ([`talos/cluster/enable-audit-logging.yaml`](../talos/cluster/enable-audit-logging.yaml)) | Who-did-what record of control-plane mutations |
 
 This document focuses on the two middle-to-bottom rows — the eBPF sensors.
 

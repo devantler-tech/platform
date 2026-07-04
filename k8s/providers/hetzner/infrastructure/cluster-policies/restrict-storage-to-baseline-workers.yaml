@@ -4,7 +4,7 @@
 # nodes (autoscaler nodes are compute-only)").
 #
 # WHY THIS EXISTS: autoscaler nodes boot from the SAME Talos worker config as
-# the static workers (talos/workers/node-labels.yaml), so they inherit the
+# the static workers (talos/workers/label-nodes.yaml), so they inherit the
 # node.longhorn.io/create-default-disk=true kubelet label. With
 # createDefaultDiskOnLabeledNodesOnly Longhorn then treats every autoscale
 # node as a storage node: it creates a default disk, and replicaAutoBalance:

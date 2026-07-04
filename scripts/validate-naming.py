@@ -26,10 +26,11 @@ Exits non-zero (and prints a grouped report) on any violation. Checks:
      intent-describing <verb>-<purpose>.yaml — and must not lead with the
      patched resource's Kind (a Flux Kustomization CR patch keeps the
      flux-kustomization prefix per check 3).
-
-Talos machine-config patches (talos/, talos-local/) are exempt from all naming
-and file-structure conventions; the walk covers k8s/ only, keeping them out of
-scope by design.
+  9. Talos machine-config patches (talos*/ at the repo root) hold ONE YAML
+     document per file, in kebab-case, intent-describing <verb>-<purpose>.yaml
+     files (no -patch suffix, not led by a document kind). The k8s-specific
+     rules (Kind-led filenames, patches/ placement, flux-kustomization prefix)
+     do not apply to them.
 """
 import os, re, sys
 
@@ -108,6 +109,15 @@ def docs_with_kind(path):
             out.append((api or "", kind))
     return out
 
+def count_docs(path):
+    """Count YAML documents with any non-comment content (kind-less included)."""
+    with open(path, encoding="utf-8", errors="replace") as f:
+        text = f.read()
+    return sum(
+        1 for chunk in re.split(r"(?m)^---[ \t]*$", text)
+        if any(l.strip() and not l.lstrip().startswith("#") for l in chunk.splitlines())
+    )
+
 def main():
     bad_dirs, multi, flux_bad, build_bad, kind_bad, cr_name_bad = [], [], [], [], [], []
     patch_suffix, patch_misplaced, patch_kind_bad = [], [], []
@@ -152,6 +162,35 @@ def main():
             if not (stem == kb or stem.startswith(kb + "-")):
                 kind_bad.append((r, kind, kb))
 
+    # Check 9: Talos machine-config patch dirs (talos*/ at the repo root) —
+    # kebab-case names, one YAML document per file, intent naming (no -patch
+    # suffix, not led by a document kind).
+    talos_multi, talos_kind_bad = [], []
+    for talos_dir in sorted(d for d in os.listdir(ROOT)
+                            if d.startswith("talos") and os.path.isdir(os.path.join(ROOT, d))):
+        for dirpath, dirnames, filenames in os.walk(os.path.join(ROOT, talos_dir)):
+            for dn in dirnames:
+                if not KEBAB.match(dn):
+                    bad_dirs.append(rel(os.path.join(dirpath, dn)))
+            for fn in filenames:
+                if not fn.endswith((".yaml", ".yml")):
+                    continue
+                path = os.path.join(dirpath, fn)
+                r = rel(path)
+                stem = fn.rsplit(".", 1)[0]
+                if not KEBAB.match(stem):
+                    bad_dirs.append(r)
+                if stem.endswith("-patch"):
+                    patch_suffix.append(r)
+                if count_docs(path) > 1:
+                    talos_multi.append((r, count_docs(path)))
+                    continue
+                docs = docs_with_kind(path)
+                if len(docs) == 1:
+                    kb = kebab(docs[0][1])
+                    if stem == kb or stem.startswith(kb + "-"):
+                        talos_kind_bad.append((r, docs[0][1], kb))
+
     # Check 6: a folder grouping >=2 instances of one non-workload Kind is a CR
     # folder and must be named the kebab-cased plural of that Kind.
     for folder, kinds in folder_kinds.items():
@@ -168,7 +207,7 @@ def main():
             cr_name_bad.append((rfolder, kind, expected))
 
     groups = [
-        ("Directories not kebab-case", bad_dirs, lambda x: x),
+        ("Directories or filenames not kebab-case", bad_dirs, lambda x: x),
         ("Files with more than one resource", multi, lambda x: f"{x[0]}  ->  {x[1]}"),
         ("Flux Kustomization CRs not named flux-kustomization*.yaml", flux_bad, lambda x: x),
         ("Kustomize build files not named kustomization.yaml", build_bad, lambda x: x),
@@ -181,6 +220,10 @@ def main():
         ("Patch filenames with redundant -patch suffix", patch_suffix,
          lambda x: f"{x}  (the patches/ folder already marks it; name by intent)"),
         ("Patch filename leads with the patched Kind instead of intent", patch_kind_bad,
+         lambda x: f"{x[0]}  (kind {x[1]} -> name it <verb>-<purpose>.yaml, not {x[2]}-*)"),
+        ("Talos patch files with more than one YAML document", talos_multi,
+         lambda x: f"{x[0]}  ({x[1]} documents -> split, one per file)"),
+        ("Talos patch filename leads with the document kind instead of intent", talos_kind_bad,
          lambda x: f"{x[0]}  (kind {x[1]} -> name it <verb>-<purpose>.yaml, not {x[2]}-*)"),
     ]
     problems = sum(len(items) for _, items, _ in groups)

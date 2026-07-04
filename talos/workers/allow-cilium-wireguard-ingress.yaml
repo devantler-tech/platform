@@ -1,0 +1,14 @@
+# Cilium WireGuard transparent encryption (encryption.type: wireguard).
+# Tunnels VXLAN-encapsulated pod traffic between nodes through cilium_wg0.
+# Default port is UDP 51871; Talos's NetworkDefaultActionConfig: block
+# would otherwise drop inter-node WireGuard packets and break pod-to-pod
+# traffic the moment encryption is enabled.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: cilium-wireguard-ingress
+portSelector:
+  ports:
+    - 51871
+  protocol: udp
+ingress:
+  - subnet: 10.0.0.0/16

@@ -1,0 +1,15 @@
+# apid (50000) open to all on worker nodes — KSail manages workers via
+# public IPs. Pairs with cluster/block-ingress-by-default.yaml.
+# Keep the rule COUNT low — consolidate ports into an existing rule when the
+# subnet set matches (see the ENOBUFS note in
+# ../control-planes/allow-public-ingress.yaml).
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: apid-ingress
+portSelector:
+  ports:
+    - 50000
+  protocol: tcp
+ingress:
+  - subnet: 0.0.0.0/0
+  - subnet: ::/0

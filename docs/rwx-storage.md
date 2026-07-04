@@ -70,11 +70,11 @@ hcloud volume create \
   --server <worker-server-name>
 ```
 
-The Talos machine config patch (`talos/workers/longhorn.yaml`) handles mounting `/dev/sdb` at `/var/lib/longhorn`.
+The Talos machine config patch (`talos/workers/mount-longhorn-data.yaml`) handles mounting `/dev/sdb` at `/var/lib/longhorn`.
 
 > **Verify the device path** after attaching: on Hetzner Cloud, the first attached volume
 > consistently appears as `/dev/sdb`. Confirm with `talosctl disks --nodes <worker-ip>`.
-> If the volume shows a different path, update `talos/workers/longhorn.yaml` accordingly.
+> If the volume shows a different path, update `talos/workers/mount-longhorn-data.yaml` accordingly.
 
 ## StorageClasses
 

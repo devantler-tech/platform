@@ -1,0 +1,11 @@
+# Cilium VXLAN (8472) cluster-internal only on worker nodes. Pairs with
+# cluster/block-ingress-by-default.yaml.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: cni-vxlan-ingress
+portSelector:
+  ports:
+    - 8472
+  protocol: udp
+ingress:
+  - subnet: 10.0.0.0/16

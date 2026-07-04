@@ -206,7 +206,7 @@ You **cannot** decrypt existing secrets without the proper Age keys. For local d
 - **Never commit plaintext secrets** — all secrets must be SOPS-encrypted with the `.enc.yaml` suffix.
 - **Base files are immutable** — use Kustomize `patches:` in overlays; never edit `k8s/bases/` directly from a provider or cluster overlay.
 - **Flux dependency order** — `bootstrap` → `infrastructure-controllers` → `infrastructure` → `apps`. One prod-only side layer hangs off `infrastructure` without gating `apps`: `infrastructure-overprovisioning` (apply-only autoscaler buffer). Declarative GitHub org management runs as a normal **app** (`github-config`) consuming the `devantler-tech/.github` artifact, with its Crossplane provider in the `infrastructure` layer — see [`docs/github-management.md`](docs/github-management.md).
-- **File & directory naming** — kebab-case folders, one resource per file, and filenames led by the resource Kind (CR folders and `patches/` excepted — both name files by intent); Talos machine-config patches (`talos/`, `talos-local/`) are fully exempt. Enforced by the `naming` CI job. See [File and Directory Naming Conventions](#file-and-directory-naming-conventions) below.
+- **File & directory naming** — kebab-case folders, one resource per file, and filenames led by the resource Kind (CR folders and `patches/` excepted — both name files by intent). Talos machine-config patches (`talos/`, `talos-local/`) also hold one document per file with intent names; only the k8s-manifest-specific rules don't apply to them. Enforced by the `naming` CI job. See [File and Directory Naming Conventions](#file-and-directory-naming-conventions) below.
 
 ### File and Directory Naming Conventions
 
@@ -218,7 +218,7 @@ Enforced in CI by [`scripts/validate-naming.py`](scripts/validate-naming.py) (th
 - **CR-folder files** omit the folder-implied Kind and are named `‹verb›-‹purpose›.yaml` (e.g. `restrict-tenant-secret-stores.yaml`).
 - A **Flux `Kustomization` CR** (`kustomize.toolkit.fluxcd.io`) is named `flux-kustomization*.yaml`; the `flux-` prefix disambiguates it from the kustomize **build** file, which must stay exactly `kustomization.yaml` (`kustomize.config.k8s.io`).
 - **Patch fragments** are overlay inputs, not deployed resources. They live under a `patches/` directory (a `*-patch.yaml` loose next to a kustomization is flagged as misplaced) and follow the **CR-folder naming convention**: an intent-describing `‹verb›-‹purpose›.yaml` (e.g. `enable-oidc.yaml`, `store-spire-data-on-hcloud.yaml`) that neither leads with the patched Kind nor carries a `-patch` suffix — the folder already says it's a patch. One-resource-per-file applies to them too; a patch on a Flux `Kustomization` CR keeps the `flux-kustomization` prefix (e.g. `flux-kustomization-protect-wedding-db.yaml`).
-- **Talos machine-config patches** (`talos/`, `talos-local/`) are **exempt from all naming and file-structure conventions** — they are Talos config fragments, not Kubernetes manifests, and keep upstream Talos' file style.
+- **Talos machine-config patches** (`talos/`, `talos-local/`) follow the same spirit: **one YAML document per file** and intent-describing `‹verb›-‹purpose›.yaml` names (e.g. `enable-apparmor.yaml`, `block-ingress-by-default.yaml`, `allow-kubelet-ingress.yaml`). They are Talos config fragments, not Kubernetes manifests, so the k8s-specific rules — Kind-led filenames, `patches/` placement, the `flux-kustomization` prefix — are the only parts that don't apply. Ingress-firewall rule files stay **one `NetworkRuleConfig` per file**, but keep the rule *count* low by consolidating ports into an existing rule when protocol + subnets match (see the ENOBUFS note in `talos/control-planes/allow-public-ingress.yaml`).
 
 ### Infrastructure File Structure Convention
 
@@ -256,7 +256,7 @@ The platform uses a hierarchical kustomization structure: **base** configuration
 - **Workaround:** fork the repository and use your own Age keys; re-encrypt every `*.enc.yaml` with your key.
 
 ### CNI Configuration
-- The Talos cluster starts with its default CNI disabled (via `talos-local/cluster/cni.yaml`).
+- The Talos cluster starts with its default CNI disabled (via `talos-local/cluster/disable-default-cni-and-kube-proxy.yaml`).
 - Nodes stay `NotReady` until Cilium is installed by KSail.
 - This is expected — KSail handles CNI installation automatically.
 

@@ -125,7 +125,7 @@ SVIDs, or it deadlocks. Options, hardest constraint first:
   single most important safety prerequisite and **must land and be verified before
   any replica/datastore change.** (It is purely additive — safe to ship ahead.)
 - **Talos node firewall** already allows the SPIRE mesh-auth port 4250
-  node-to-node (`talos/{workers,control-planes}/ingress-firewall.yaml`). Postgres
+  node-to-node (`talos/workers/allow-cilium-mutual-auth-ingress.yaml`, `talos/control-planes/allow-internal-node-ingress.yaml`). Postgres
   :5432 between nodes is intra-cluster pod traffic over the CNI, not a host port,
   so no Talos firewall change is expected — **verify** spire-db instances and
   spire-server can co-locate or cross nodes without a host-firewall drop.

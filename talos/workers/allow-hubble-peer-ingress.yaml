@@ -1,0 +1,12 @@
+# Hubble peer service (4244) reachable from the node CIDR and the pod CIDR
+# on worker nodes. Pairs with cluster/block-ingress-by-default.yaml.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: hubble-peer-ingress
+portSelector:
+  ports:
+    - 4244
+  protocol: tcp
+ingress:
+  - subnet: 10.0.0.0/16
+  - subnet: 10.244.0.0/16

@@ -19,7 +19,7 @@
 #
 # cluster.* config only takes effect on control-plane nodes (where
 # kube-controller-manager runs), so this lives in talos/cluster/ alongside the
-# other control-plane component tuning (see audit-logging.yaml).
+# other control-plane component tuning (see enable-audit-logging.yaml).
 #
 # Reference: https://kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/#pod-garbage-collection
 cluster:

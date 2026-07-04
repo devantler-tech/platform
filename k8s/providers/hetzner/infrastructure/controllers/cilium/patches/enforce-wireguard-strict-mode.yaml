@@ -81,7 +81,7 @@ spec:
     # connection (cilium-agent -> peer cilium-agent on 4250) dials the peer's
     # PRIMARY (public) IP. The Talos ingress firewall only admits 4240/4250/8472
     # from the private node CIDR (10.0.0.0/16, see
-    # talos/workers/ingress-firewall.yaml), so the public-sourced 4250 handshake
+    # talos/workers/allow-cilium-mutual-auth-ingress.yaml), so the public-sourced 4250 handshake
     # is dropped (`dial <public-ip>:4250: i/o timeout`) and Cilium black-holes every
     # cross-node pod flow the hetzner require-mutual-auth policy marks
     # `authentication.mode: required` once its auth-cache entry lapses. Observed

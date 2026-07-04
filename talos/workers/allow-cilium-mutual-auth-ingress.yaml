@@ -1,0 +1,22 @@
+# Cilium SPIRE mutual authentication (authentication.mutual.spire.enabled in
+# the cilium HelmRelease). cilium-agents perform the agent-to-agent mTLS
+# handshake on TCP 4250 (the mesh-auth listener) for every pod-to-pod flow
+# the hetzner require-mutual-auth CiliumClusterwideNetworkPolicy marks
+# `authentication.mode: required`. The source is the peer node's
+# host-network cilium-agent, so the traffic arrives from the node CIDR.
+# NetworkDefaultActionConfig: block drops inbound 4250 unless allowed here;
+# without this rule the cross-node handshake times out
+# (`dial tcp 10.0.1.x:4250: i/o timeout`) and Cilium black-holes the
+# authenticated flow. That silently broke the coroot-heartbeat dead-man's
+# switch: its coroot-prometheus health-gate only succeeded when the CronJob
+# happened to land on Prometheus's node, so the external healthchecks.io
+# ping was suppressed almost every minute.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: cilium-mutual-auth-ingress
+portSelector:
+  ports:
+    - 4250
+  protocol: tcp
+ingress:
+  - subnet: 10.0.0.0/16
