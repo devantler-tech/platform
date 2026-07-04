@@ -92,9 +92,19 @@ spec:
                     value: max-age=63072000; includeSubDomains; preload
     envVars:
       - name: CLIENT_ID
+        # Public GitHub App identifier, not a credential — safe as a plain value.
         value: ${github_app_client_id}
       - name: CLIENT_SECRET
-        value: ${github_app_client_secret}
+        # Sourced from a Secret rather than a plaintext env value so the real
+        # GitHub OAuth client secret never lands in the Deployment PodSpec
+        # (readable by anyone with get pods/deployments here, stored unencrypted
+        # in the object). Materialized from OpenBao by external-secret.yaml.
+        # Removing the former `value: ${github_app_client_secret}` is what clears
+        # Kubescape C-0012 for the dex workload.
+        valueFrom:
+          secretKeyRef:
+            name: dex-github-connector
+            key: client-secret
     config:
       issuer: https://dex.${domain}
       oauth2:

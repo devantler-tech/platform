@@ -5,4 +5,5 @@ resources:
   - namespace.yaml
   - helm-release.yaml
   - helm-repository.yaml
+  - external-secret.yaml
   - cilium-network-policy.yaml
