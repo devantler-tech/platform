@@ -2,8 +2,10 @@
 # Grants the Kubescape posture scanner (`kubescape` ServiceAccount) read access to the
 # SecurityException / ClusterSecurityException CRDs.
 #
-# The scanner's CRD exceptions getter (kubescape image >= v4.0.9, see the HelmRelease
-# `kubescape.image.tag` override) LISTs these CRDs to apply posture exceptions. But the
+# The scanner's CRD exceptions getter (present since kubescape image v4.0.9, but only
+# functional from v4.0.10 — v4.0.9 LISTed the CRDs at the wrong apiVersion; see the
+# HelmRelease `kubescape.image.tag` override) LISTs these CRDs to apply posture
+# exceptions at the v1beta1 apiVersion. But the
 # kubescape-operator chart (<= 1.40.2) only grants this RBAC to the operator + kubevuln
 # components — never to the posture scanner SA. Without it the getter's List() is
 # forbidden; the scanner's merged exceptions getter swallows that error and falls back to

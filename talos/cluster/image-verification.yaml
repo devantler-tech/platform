@@ -13,9 +13,11 @@
 #      ksail's OWN release pipeline (devantler-tech/ksail .github/workflows/
 #      cd.yaml; see that repo's GoReleaser `docker_signs` step).
 #   2. the app images (wedding-app, ascoachingogvaner, …) are signed by the
-#      shared reusable workflow reusable-workflows/.github/workflows/
-#      publish-app.yaml — the SAME identity their Flux OCIRepository verify
-#      blocks already pin.
+#      shared publish-app.yaml workflow — now in devantler-tech/actions
+#      (moved from reusable-workflows, actions#425); both identities stay
+#      accepted until every app has published a fresh actions-signed image —
+#      the SAME transition alternation their Flux OCIRepository verify blocks
+#      and the verify-app-images ImageValidatingPolicy already pin.
 # Talos evaluates rules in order, first match wins, so the specific ksail rule
 # MUST precede the ghcr.io/devantler-tech/* catch-all.
 #
@@ -60,8 +62,16 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@.+$
-  # First-party APP images signed by reusable-workflows/publish-app.yaml.
+  # First-party APP images signed by the shared publish-app.yaml workflow.
+  # publish-app.yaml moved from devantler-tech/reusable-workflows into
+  # devantler-tech/actions (actions#425): images published after the move
+  # carry the actions identity, which this rule's old reusable-workflows-only
+  # regex rejected at the node pull layer (ImagePullBackOff on every new app
+  # release). Accept BOTH identities until every app has published a fresh
+  # actions-signed image, then narrow to actions-only — the same transition
+  # alternation as the apps' Flux OCIRepository verify blocks and the
+  # verify-app-images ImageValidatingPolicy.
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-app\.yaml@.+$
+      subjectRegex: ^https://github\.com/devantler-tech/(actions|reusable-workflows)/\.github/workflows/publish-app\.yaml@.+$
