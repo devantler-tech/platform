@@ -35,9 +35,8 @@ spec:
           # and failed the wedding-app health check on 2026-06-19, requiring a
           # manual PVC re-bootstrap). This is a platform-storage concern (it
           # mitigates longhorn/instance-manager churn), so it is patched here.
-          # `dataDurability:
-          # preferred` relaxes to async if BOTH standbys are unavailable, so the
-          # DB stays writable instead of blocking commits.
+          # `dataDurability: preferred` relaxes to async if BOTH standbys are
+          # unavailable, so the DB stays writable instead of blocking commits.
           postgresql:
             synchronous:
               method: any
