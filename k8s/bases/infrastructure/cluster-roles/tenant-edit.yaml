@@ -1,0 +1,37 @@
+# The role a self-service tenant's ServiceAccount is bound to (via the tenant
+# RGD and each tenant's registration RoleBinding). Flux's kustomize-controller
+# IMPERSONATES this SA (`spec.serviceAccountName`) to reconcile the tenant's
+# manifests, so this role is the tenant's entire in-namespace capability.
+#
+# It is an AGGREGATED role — the same mechanism the built-in `edit` uses — so
+# tenant capability is composed from small, purpose-scoped pieces carrying the
+# `devantler.tech/aggregate-to-tenant-edit` label:
+#   - tenant-base-edit          — core namespaced-admin (workloads, config,
+#                                 secrets, networking) WITHOUT pods/exec
+#   - cilium-tenant-edit        — CiliumNetworkPolicy
+#   - cnpg-tenant-edit          — CloudNativePG Cluster/backups/…
+#   - external-secrets-tenant-edit — SecretStore/ExternalSecret/…
+#   - gateway-tenant-edit       — HTTPRoute/ReferenceGrant/…
+#   - cert-manager-tenant-edit  — Certificate/Issuer
+# A tenant that needs a new CRD gets a new `*-tenant-edit` piece — the existing
+# opt-in pattern — instead of the whole cluster's `edit` surface.
+#
+# WHY this exists instead of binding tenants to the built-in `edit`: `edit`
+# grants `create pods/exec` (+ attach/portforward/proxy), which a Flux
+# reconciliation identity never uses, and which Kubescape flags as C-0002
+# ("Prevent containers from allowing command execution"). Dropping the exec
+# subresources here removes that finding at the ROOT for every tenant rather than
+# suppressing it. `edit` also dynamically aggregates unrelated operator CRDs
+# (KubeVirt, CDI, Kyverno, Flux, …) that tenants have no reason to manage; this
+# role grants only the pieces above.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenant-edit
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        devantler.tech/aggregate-to-tenant-edit: "true"
+# `rules` is intentionally OMITTED: the ClusterRole aggregation controller owns
+# and populates it from the labelled pieces. Declaring `rules: []` here would make
+# Flux's server-side apply fight the controller for that field on every reconcile.
