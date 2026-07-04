@@ -95,7 +95,7 @@ data:
         "actions": [
           "alertOnly"
         ],
-        "reason": "Infra controllers (Velero, CloudNativePG, Flux helm-controller and flux-operator) legitimately hold pods/exec by design; matched by kind+name on the RBAC binding so C-0002 still catches new exec grants. Tenant SAs are scoped at the root instead, not excepted here.",
+        "reason": "Infra controllers (Velero, CloudNativePG, Flux kustomize-/helm-controller and flux-operator) legitimately hold pods/exec by design; matched by kind+name on the RBAC binding so C-0002 still catches new exec grants. Tenant SAs are scoped at the root instead, not excepted here.",
         "resources": [
           {
             "designatorType": "Attributes",
