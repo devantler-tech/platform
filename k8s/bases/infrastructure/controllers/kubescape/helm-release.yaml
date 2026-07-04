@@ -83,6 +83,27 @@ spec:
       # keepLocal:true are already set), restoring posture scanning + findings.
       # Vulnerability scanning (kubevuln) is unaffected — it never gated on the
       # cloud submit.
+      #
+      # IMPORTANT: capabilities.kubescapeOffline ALONE does NOT keep the posture
+      # SCAN local on chart 1.40.2. This flag only (a) toggles the scanner's
+      # config.json mountPath and (b) sets clusterData.keepLocal — neither of
+      # which reaches the scanner's per-scan Submit path. The scanner still
+      # resolves a cloud report URL (api.armosec.io) and, with an empty account,
+      # forces Submit=true, so every scheduled scan tries to generate+write an
+      # account ID to /home/nonroot/.kubescape/config.json. On chart 1.40.2 that
+      # path is an emptyDir subPath the kubelet materialises as a DIRECTORY (an
+      # upstream mount bug), so the write fails "is a directory" and the scan
+      # ABORTS before persisting fresh WorkloadConfigurationScan CRs — freezing
+      # the Kubescape dashboard on stale results (surfaced under scanner v4.0.9,
+      # which treats the account-ID write as terminal). Upstream fixes this by
+      # injecting scanV1.keepLocal:true into the scan-scheduler request body for
+      # offline installs (helm-charts#857 / PR #862, merged, UNRELEASED — chart
+      # is still 1.40.2). We apply that same fix now via the request-body
+      # override below; keepLocal makes the scanner run local-only (Submit=false,
+      # no cloud call, no account-ID write, no config.json touch), so the scan
+      # completes and persists CRs each run — and the config.json mount bug is
+      # never reached. Drop the override once the chart releases the fix past
+      # 1.40.2.
       kubescapeOffline: enable
     hostScanner:
       enabled: true
@@ -135,6 +156,24 @@ spec:
         # the scanner to >= v4.0.10 AND grants it the securityexceptions RBAC. (Same
         # component-image-ahead-of-chart pattern as the nodeAgent override above.)
         tag: v4.0.10
+    # Force the scheduled posture scan to run LOCAL-ONLY. Chart 1.40.2 renders
+    # the scan-scheduler ConfigMap request-body verbatim from this value, and
+    # the scanner maps scanV1.keepLocal -> scanInfo.Local, which forces
+    # Submit=false (no cloud submit, no account-ID generation, no config.json
+    # write). This is what actually unblocks in-cluster persistence under
+    # kubescapeOffline (see the long note on capabilities.kubescapeOffline
+    # above) and it mirrors upstream helm-charts PR #862 exactly. The rest of
+    # this block reproduces the chart 1.40.2 default request-body unchanged
+    # (this value fully replaces the default, so it must be complete). Drop the
+    # whole override once the chart releases the offline keepLocal fix past
+    # 1.40.2.
+    kubescapeScheduler:
+      requestBody:
+        commands:
+          - CommandName: "kubescapeScan"
+            args:
+              scanV1:
+                keepLocal: true
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.
     persistence:
