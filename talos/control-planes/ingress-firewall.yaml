@@ -16,9 +16,11 @@
 # memory pressure. See google/nftables#103 and #235; the real upstream fix is
 # Talos tuning the conn (SetReadBuffer / NoENOBUFS).
 #
-# Effective access is IDENTICAL to the previous per-port form — only the rule
-# COUNT changes (12 -> 4). Port map (unchanged):
+# Effective access matches the per-port form — only the rule COUNT matters. The
+# consolidation took it 12 -> 4; the WireGuard server below adds one world-
+# reachable UDP rule (5 total — still far under the ENOBUFS threshold). Port map:
 #   world (ext. mgmt):        apid 50000, kube-api 6443
+#   world (udp):              WireGuard server 51820
 #   node CIDR + pod CIDR:     kubelet 10250, hubble-peer 4244, node-exporter 9100
 #   node CIDR only (tcp):     etcd 2379-2380, cilium-health 4240,
 #                             cilium-mutual-auth 4250, trustd 50001,
@@ -97,3 +99,18 @@ portSelector:
   protocol: udp
 ingress:
   - subnet: 10.0.0.0/16
+---
+# World-reachable WireGuard server (51820/udp). The home UniFi gateway dials in
+# from a dynamic residential IP, so the source can't be pinned — but WireGuard
+# never replies to an unauthenticated packet, so an open source is safe (the
+# port is invisible to scanners). See talos/control-planes/wireguard.yaml.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: control-plane-wireguard-server-ingress
+portSelector:
+  ports:
+    - 51820
+  protocol: udp
+ingress:
+  - subnet: 0.0.0.0/0
+  - subnet: ::/0
