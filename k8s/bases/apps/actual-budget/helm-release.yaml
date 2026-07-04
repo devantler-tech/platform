@@ -187,7 +187,14 @@ spec:
       runAsUser: 1001
       runAsGroup: 1001
     securityContext:
-      readOnlyRootFilesystem: false
+      # Kubescape C-0017 (immutable container filesystem). The chart already
+      # mounts the only two paths actual-server writes to — the `tmp` emptyDir at
+      # /tmp (scratch/uploads) and the `data` PVC at /data (ACTUAL_DATA_DIR:
+      # account.sqlite, server-files/, user-files/) — so a read-only root FS needs
+      # no extra volumes here. Proven safe by the enablebanking-seed sidecar above,
+      # which runs the SAME actual-server image via node with
+      # readOnlyRootFilesystem: true and only /data + /tmp, healthy in prod.
+      readOnlyRootFilesystem: true
       runAsUser: 1001
       runAsGroup: 1001
     ingress:

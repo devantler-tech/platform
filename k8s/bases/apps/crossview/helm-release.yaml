@@ -17,6 +17,81 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: crossview
+  # Harden against Kubescape C-0017 (immutable container filesystem). The chart
+  # exposes app/database.containerSecurityContext but NO extraVolumes/
+  # extraVolumeMounts knob, and it hardcodes only /app/logs (app) and
+  # /var/run/postgresql (postgres) as emptyDir volumes — so both the
+  # readOnlyRootFilesystem flip AND the extra writable mounts postgres needs are
+  # applied here as a post-render kustomize patch (strategic-merge merges the
+  # named containers/volumes additively; every other securityContext field —
+  # capabilities.drop, runAsUser, seccompProfile — is preserved).
+  postRenderers:
+    - kustomize:
+        patches:
+          # App (Go server) + wait-for-db init — flip root FS read-only. The
+          # crossview binary is a static CGO-free Go server that writes NOTHING to
+          # the filesystem at runtime (state lives in Postgres; sessions are a
+          # signed cookie, no server-side session files), so no extra writable
+          # mount is needed — the chart's hardcoded /app/logs emptyDir already
+          # covers the one path it mounts. The wait-for-db init only runs
+          # `psql -c "SELECT 1"` over TCP, so it is read-only-safe too.
+          - target:
+              kind: Deployment
+              name: crossview
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: crossview
+              spec:
+                template:
+                  spec:
+                    initContainers:
+                      - name: wait-for-db
+                        securityContext:
+                          readOnlyRootFilesystem: true
+                    containers:
+                      - name: crossview
+                        securityContext:
+                          readOnlyRootFilesystem: true
+          # Bundled Postgres (postgres:18.4, persistence disabled → data dir is an
+          # emptyDir). Flip the root FS read-only and add the writable mounts the
+          # postgres entrypoint genuinely needs:
+          #   /var/lib/postgresql  the image VOLUME. PG18 initdb writes the fresh
+          #                        cluster to PGDATA=/var/lib/postgresql/18/docker;
+          #                        with persistence off the chart mounts nothing
+          #                        here, so it must be a writable emptyDir. This is
+          #                        the ephemeral data dir — losing it on restart is
+          #                        by design (SSO-fronted read-only dashboard).
+          #   /tmp                 the entrypoint mktemp's the initdb pwfile here.
+          # /var/run/postgresql (the socket dir) is already a chart emptyDir.
+          - target:
+              kind: Deployment
+              name: crossview-postgres
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: crossview-postgres
+              spec:
+                template:
+                  spec:
+                    containers:
+                      - name: postgres
+                        securityContext:
+                          readOnlyRootFilesystem: true
+                        volumeMounts:
+                          - name: postgres-data
+                            mountPath: /var/lib/postgresql
+                          - name: tmp
+                            mountPath: /tmp
+                    volumes:
+                      - name: postgres-data
+                        emptyDir:
+                          sizeLimit: 2Gi
+                      - name: tmp
+                        emptyDir:
+                          sizeLimit: 128Mi
   # https://github.com/crossplane-contrib/crossview/blob/main/helm/crossview/values.yaml
   values:
     global:
