@@ -4,23 +4,40 @@
 # - readOnlyRootFilesystem: true (C-0017)
 # - drop ALL capabilities (C-0055)
 # - runAsNonRoot: true (C-0013) — pod + container
-# - runAsGroup: 1000 (C-0013 non-root group) — pod level only
+# - runAsUser: 1000 + runAsGroup: 1000 (C-0013/C-0211 non-root user+group) — pod level
+# - fsGroup: 1000 + fsGroupChangePolicy: OnRootMismatch (C-0211) — pod level
+# - seLinuxOptions: {level: s0} (C-0211 CIS-5.7.3) — containers + initContainers
 #
-# runAsGroup is injected at the POD level (not the container level): kubescape's
-# C-0013 "non-root-containers" rule requires a non-zero runAsGroup, and a pod-level
-# value satisfies it without overriding any container-level value a chart may set
-# (the earlier concern was specifically about clobbering container inheritance).
-# It sets the process primary GID only — runAsUser and fsGroup are deliberately NOT
-# injected, so image-baked UIDs and volume ownership are left untouched. Verified
-# with kubescape: pod-level runAsGroup alone flips C-0013 to pass with no fsGroup
-# or runAsUser, and every PVC-mounting workload in scope already self-sets fsGroup,
-# so no volume is chowned. The one caveat is images with NO baked-in UID (e.g.
-# tofu-controller's tf-runner, which expects runAsUser from its runnerPodTemplate):
-# a pod-level runAsGroup with no runAsUser yields the OCI user string ":1000", which
-# containerd rejects ("user group \"1000\" is specified without user") so the sandbox
-# never starts. The add-pod-security-context rule therefore excludes tofu-controller
-# runner pods — they self-harden via their runnerPodTemplate (runAsNonRoot + seccomp)
-# and the container-level rule still applies.
+# Together these complete the security context kubescape's CIS-5.7.3 (C-0211) checks
+# (non-root-containers, set-fsgroup-value, set-fsgroupchangepolicy-value,
+# set-seLinuxOptions). Why each is safe to inject cluster-wide:
+# - runAsUser and runAsGroup are injected TOGETHER at the POD level, and only there.
+#   A pod-level runAsGroup with NO runAsUser yields the OCI user string ":1000",
+#   which containerd rejects ("user group \"1000\" is specified without user") so the
+#   pod sandbox never starts. Injecting runAsGroup alone did exactly that to homepage
+#   (its chart sets runAsUser only at the CONTAINER level) and to tofu-controller's
+#   tf-runner. Pairing a matching runAsUser:1000 keeps the pod-level user+group
+#   complete so the sandbox always builds. Both use +(key) conditional anchors: a
+#   chart that sets its own pod-level value keeps it, and a container that sets its
+#   own runAsUser still overrides this pod-level default for that container (so e.g.
+#   homepage's container keeps runAsUser:1000, auth-proxy keeps 65532, etc.).
+# - EXEMPTIONS — images with a baked-in non-1000 UID and no chart-set runAsUser must
+#   NOT be forced to 1000 (cert-manager / trust-manager / origin-ca-issuer = 65532,
+#   keda = 65532, opencost = 1001; tofu-controller tf-runner takes its UID from its
+#   runnerPodTemplate). They are excluded from add-pod-security-context and handled by
+#   add-imageuid-pod-security-context below, which supplies pod-level seccomp,
+#   runAsNonRoot, fsGroup and fsGroupChangePolicy but NEITHER runAsUser NOR runAsGroup
+#   — so they keep their image UID and their sandbox still builds (no group without
+#   user). Add a namespace here only when a workload genuinely cannot run as 1000;
+#   the default (forced 1000:1000) is the more hardened posture.
+# - fsGroup uses a conditional anchor, so any workload that sets its own (every
+#   PVC-mounting workload in scope does) keeps it; only stateless pods get the
+#   default, where it governs emptyDir/projected-volume ownership harmlessly.
+# - seLinuxOptions is a no-op on this AppArmor cluster — runc ignores SELinux labels
+#   when SELinux isn't the active LSM (verified: Cilium already ships one and a probe
+#   pod ran fine) — but CIS-5.7.3 requires it and it is correct defense-in-depth on
+#   any SELinux node. level: s0 is the default non-privileged MCS level (not Cilium's
+#   spc_t, which is for privileged pods).
 #
 # Uses +(key) to never overwrite values explicitly set by Helm charts.
 # Excluded namespaces require elevated privileges by design.
@@ -70,11 +87,19 @@ spec:
                 - observability
                 - velero
                 - chaos-mesh
-          # tofu-controller runner pods ship no image-baked UID, so a pod-level
-          # runAsGroup with no runAsUser breaks containerd sandbox creation (see
-          # the header comment). They are hardened by their own runnerPodTemplate
-          # and the add-container-security-context rule, so exclude them from the
-          # pod-level runAsGroup injection only.
+          # Workloads with an image-baked non-1000 UID and no chart-set runAsUser
+          # (cert-manager/trust-manager/origin-ca-issuer = 65532, keda = 65532,
+          # opencost = 1001). Forcing pod-level runAsUser:1000 would override their
+          # image UID; instead they are handled by add-imageuid-pod-security-context
+          # below, which omits runAsUser/runAsGroup so they keep their UID and the
+          # sandbox still builds.
+          - resources:
+              namespaces:
+                - cert-manager
+                - keda
+                - opencost
+          # tofu-controller runner pods take their UID from their runnerPodTemplate
+          # and ship no image-baked UID; same handling as the namespaces above.
           - resources:
               selector:
                 matchLabels:
@@ -86,7 +111,10 @@ spec:
               +(seccompProfile):
                 type: RuntimeDefault
               +(runAsNonRoot): true
+              +(runAsUser): 1000
               +(runAsGroup): 1000
+              +(fsGroup): 1000
+              +(fsGroupChangePolicy): OnRootMismatch
     - name: add-container-security-context
       match:
         any:
@@ -128,6 +156,8 @@ spec:
                           - ALL
                       +(seccompProfile):
                         type: RuntimeDefault
+                      +(seLinuxOptions):
+                        level: s0
           - list: "request.object.spec.initContainers[]"
             patchStrategicMerge:
               spec:
@@ -142,17 +172,19 @@ spec:
                           - ALL
                       +(seccompProfile):
                         type: RuntimeDefault
-    # tofu-controller runner pods are EXCLUDED from add-pod-security-context above
-    # (a pod-level runAsGroup with no runAsUser yields the OCI user string ":1000",
-    # which containerd rejects so the sandbox never starts — see the header). They
-    # still must satisfy the require-seccomp-profile validate rule, and
-    # tofu-controller does NOT propagate the runnerPodTemplate's pod-level
-    # securityContext to the created runner pod, so the mutate must supply it. This
-    # rule re-applies the SAFE subset for runner pods only — seccompProfile +
-    # runAsNonRoot, i.e. everything the pod rule injects EXCEPT the runAsGroup that
-    # breaks sandbox creation. The container-level rule already hardens their
-    # containers; this closes the pod-level seccomp gap that excluding them opened.
-    - name: add-tofu-runner-pod-security-context
+                      +(seLinuxOptions):
+                        level: s0
+    # Pods exempt from the pod-level runAsUser/runAsGroup injection in
+    # add-pod-security-context (image-baked non-1000 UIDs: cert-manager, keda,
+    # opencost; and tofu-controller runner pods) still must satisfy the rest of
+    # C-0211 at the pod level. tofu-controller does NOT propagate its
+    # runnerPodTemplate's pod-level securityContext to the created runner pod, and
+    # the excluded namespaces' charts do not all set these either, so re-supply them
+    # here — everything the pod rule injects EXCEPT the sandbox-sensitive
+    # runAsUser/runAsGroup: seccompProfile + runAsNonRoot + fsGroup +
+    # fsGroupChangePolicy. These pods keep their image UID; the sandbox builds because
+    # neither runAsUser nor runAsGroup is set at the pod level (no group without user).
+    - name: add-imageuid-pod-security-context
       match:
         any:
           - resources:
@@ -164,6 +196,15 @@ spec:
               selector:
                 matchLabels:
                   app.kubernetes.io/created-by: tofu-controller
+          - resources:
+              kinds:
+                - Pod
+              operations:
+                - CREATE
+              namespaces:
+                - cert-manager
+                - keda
+                - opencost
       mutate:
         patchStrategicMerge:
           spec:
@@ -171,3 +212,5 @@ spec:
               +(seccompProfile):
                 type: RuntimeDefault
               +(runAsNonRoot): true
+              +(fsGroup): 1000
+              +(fsGroupChangePolicy): OnRootMismatch

@@ -25,7 +25,7 @@ contents, and Postgres data.
 ```
 
 Credentials are SOPS-encrypted per environment in the cluster secret
-(`k8s/clusters/<env>/bootstrap/variables-cluster-secret.enc.yaml`), seeded
+(`k8s/clusters/<env>/bootstrap/secret.enc.yaml`), seeded
 into OpenBao at `infrastructure/backup/r2` by the `seed-r2-credentials`
 PushSecret, and materialised into the Velero and CNPG namespaces by
 ExternalSecrets.
@@ -110,10 +110,10 @@ CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
   `barmanObjectStore.s3Credentials` can only reference a Secret there. The
   earlier reusable `cnpg-r2-credentials` Secret in `cnpg-system` was removed:
   no `Cluster` could reference it across namespaces.
-- Live example: `umami-db` — `k8s/bases/apps/umami/db-backup-external-secret.yaml`
+- Live example: `umami-db` — `k8s/bases/apps/umami/external-secret-db-backup.yaml`
   projects `umami-db-backup-r2`, which the `Cluster` in
-  `k8s/bases/apps/umami/postgres-cluster.yaml` references (with a
-  `ScheduledBackup` in `db-scheduled-backup.yaml`).
+  `k8s/bases/apps/umami/cluster.yaml` references (with a
+  `ScheduledBackup` in `scheduled-backup.yaml`).
 - When the next CNPG-backed app lands, copy the umami ExternalSecret next to
   its `Cluster` and point `barmanObjectStore.destinationPath` at a distinct
   `s3://${r2_bucket}/cnpg/<app>` prefix.
@@ -187,16 +187,16 @@ etc.) see [`runbook.md`](./runbook.md).
 ## Credential rotation
 
 Stored per environment in
-`k8s/clusters/<env>/bootstrap/variables-cluster-secret.enc.yaml`. Rotation
+`k8s/clusters/<env>/bootstrap/secret.enc.yaml`. Rotation
 flow (see also runbook.md Scenario 7):
 
 ```bash
 # 1. Mint a new R2 token in Cloudflare; revoke the old one only after step 4.
 # 2. Update both keys in-place with sops:
 sops --set '["stringData"]["r2_access_key_id"] "<new-id>"' \
-  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/secret.enc.yaml
 sops --set '["stringData"]["r2_secret_access_key"] "<new-secret>"' \
-  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/secret.enc.yaml
 # 3. PR + merge -> Flux reconciles the new Secret -> the hourly
 #    seed-r2-credentials PushSecret refreshes OpenBao -> the Velero/CNPG
 #    ExternalSecrets re-sync within their refresh interval.

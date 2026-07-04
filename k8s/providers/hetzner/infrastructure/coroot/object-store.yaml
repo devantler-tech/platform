@@ -1,0 +1,33 @@
+# Barman Cloud Plugin ObjectStore for coroot-db — the plugin-based replacement
+# for the in-tree spec.backup.barmanObjectStore (deprecated in CNPG 1.26,
+# removed in 1.30; plugin installed in infrastructure/controllers/plugin-barman-cloud).
+# Mirrors umami's object-store.yaml: same R2 destination shape, same
+# `coroot-db-backup-r2` credentials (external-secret-db-backup.yaml), same gzip
+# compression. The Cluster opts in via spec.plugins (cluster.yaml); the
+# daily base backup is driven by db-scheduled-backup.yaml. r2_* are
+# Flux-substituted from the bootstrap variables ConfigMaps. Egress to R2 is
+# opened in networkpolicy.yaml.
+apiVersion: barmancloud.cnpg.io/v1
+kind: ObjectStore
+metadata:
+  name: coroot-db
+  namespace: observability
+spec:
+  retentionPolicy: 30d
+  configuration:
+    destinationPath: s3://${r2_bucket}/cnpg/coroot-db
+    endpointURL: ${r2_endpoint}
+    s3Credentials:
+      accessKeyId:
+        name: coroot-db-backup-r2
+        key: ACCESS_KEY_ID
+      secretAccessKey:
+        name: coroot-db-backup-r2
+        key: SECRET_ACCESS_KEY
+      region:
+        name: coroot-db-backup-r2
+        key: REGION
+    wal:
+      compression: gzip
+    data:
+      compression: gzip

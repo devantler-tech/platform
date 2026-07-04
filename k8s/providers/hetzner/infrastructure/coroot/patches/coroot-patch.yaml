@@ -17,7 +17,7 @@ spec:
   # pod-disruption-budget.yaml and spec.affinity (below).
   replicas: 2
   # External Postgres datastore = the precondition for replicas > 1. Points at
-  # the CloudNativePG cluster in postgres-cluster.yaml; CNPG owns the `coroot`
+  # the CloudNativePG cluster in cluster.yaml; CNPG owns the `coroot`
   # role's password and publishes it (with host/port/dbname) in the
   # auto-generated coroot-db-app Secret, which the operator consumes via
   # passwordSecret -> PG_PASSWORD + PG_CONNECTION_STRING (controller/postgres.go).
@@ -149,6 +149,38 @@ spec:
             name: coroot-api-key
             key: key
           description: bundled node-agent + cluster-agent
+      # Mute Slack INCIDENTS for Coroot's synthesised host pseudo-apps. The eBPF
+      # node-agent buckets every process it sees but cannot map to a Kubernetes
+      # object into per-node apps under the `_` namespace (`_/runtime` = the
+      # Talos container runtime/containerd, `_/kubelet`, `_/init`,
+      # `_/extensions` = the system-extension group, …). These are NOT
+      # deployable workloads, and Coroot computes a default availability SLO on
+      # the eBPF-observed request flows anyway. For `_/runtime` those "requests"
+      # are containerd's outbound image pulls to ghcr.io / registry-1.docker.io /
+      # auth.docker.io: a handful of transient registry connection resets at a
+      # very low, bursty rate (≈0.008 req/s) push the error *ratio* over the SLO,
+      # so the incident flaps CRITICAL→resolved every few minutes and spammed
+      # #notifications all evening (2026-06-29) with no actionable cause — image
+      # pulls succeed on kubelet retry and pods run. A genuine host/storage fault
+      # still surfaces on the real workloads' SLOs and Longhorn volume health
+      # (same rationale as the alert-autosuppressor's `_:Unknown:*` entries), so
+      # the least-actionable place to lose signal is these synthesised host apps.
+      # Keep them fully visible in the Coroot UI (this only drops the Slack
+      # fan-out, mirroring the integration-wide alerts:false posture below); flip
+      # incidents back on if a host pseudo-app ever warrants paging.
+      applicationCategories:
+        - name: host-runtime
+          customPatterns:
+            - "_/*"
+          notificationSettings:
+            incidents:
+              enabled: false
+              webhook:
+                enabled: false
+            deployments:
+              enabled: false
+            alerts:
+              enabled: false
       notificationIntegrations:
         # Required by the Coroot CRD whenever any notificationIntegrations are
         # set (`spec.projects[].notificationIntegrations.baseURL`, pattern
@@ -160,8 +192,22 @@ spec:
         baseURL: https://observability.${domain}
         webhook:
           url: ${alertmanager_webhook_url:=https://example.invalid/no-slack-configured}
+          # Route only INCIDENTS (SLO/availability breaches -> :fire:) to Slack;
+          # keep Coroot's built-in inspection ALERTS in the UI only (alerts: false).
+          # Background: the #notifications channel was carrying ~250+ [warning]
+          # alerts per window with effectively zero incidents — dominated by
+          # transient "Kubernetes events" (Unhealthy / Longhorn Faulted during node
+          # rolls / VPA ResizeError) and "Network connectivity" flaps (the Cilium +
+          # SPIRE mutual-auth first-packet race documented on the coroot CronJobs)
+          # that fire and resolve on their own. That volume is alert fatigue: it
+          # buries the actionable :fire: incidents and desensitizes responders.
+          # The built-in alerts stay fully visible in the Coroot UI for
+          # investigation; only the Slack fan-out is muted. The alert-autosuppressor
+          # CronJob still trims specific by-design alerts in the UI — it is just no
+          # longer the only thing between the inspection noise and Slack. Flip back
+          # to true if a future check warrants paging on warnings directly.
           incidents: true
-          alerts: true
+          alerts: false
           # Slack-mrkdwn payloads. `json` (json.Marshal) escapes each
           # interpolated field so quotes/newlines can't break the JSON body.
           incidentTemplate: |

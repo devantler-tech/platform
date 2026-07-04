@@ -72,7 +72,7 @@ Keep the existing `readinessProbe.path`, the `unseal-keys` volume + `postStart`
 auto-unseal hook (it covers all 3 pods), `dataStorage` (now one RWO PVC per
 replica: `data-openbao-0/1/2`), and `auditStorage`. The hetzner overlay's
 `storageClass: hcloud` patch still applies. Set `openbao_replicas: "3"` in
-`k8s/clusters/prod/bootstrap/variables-cluster-config-map.yaml` (and remove
+`k8s/clusters/prod/bootstrap/config-map.yaml` (and remove
 `openbao` from the `validate-replica-floor` namespace exemptions) **as the last
 step**, once the cluster is healthy.
 

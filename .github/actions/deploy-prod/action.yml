@@ -37,7 +37,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.84.1"
+        KSAIL_VERSION: "7.135.0"
       run: |
         curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
         tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -229,7 +229,7 @@ runs:
       # artifact); the SBOM is attested to the registry in the next step.
       env:
         # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-        SYFT_VERSION: "1.45.1"
+        SYFT_VERSION: "1.46.0"
       uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
       with:
         image: ghcr.io/devantler-tech/platform/manifests@${{ steps.cosign-sign.outputs.digest }}
@@ -289,41 +289,14 @@ runs:
 
     - name: 🩺 Diagnose Flux on failure
       if: failure() && steps.reconcile.outcome == 'failure'
-      shell: bash
-      env:
-        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-      run: |
-        set +e
-        echo "::group::Flux Kustomizations"
-        kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o wide
-        echo "::endgroup::"
-        echo "::group::Flux HelmReleases"
-        kubectl get helmreleases.helm.toolkit.fluxcd.io -A -o wide
-        echo "::endgroup::"
-        echo "::group::Flux OCIRepositories"
-        kubectl get ocirepositories.source.toolkit.fluxcd.io -A -o wide
-        echo "::endgroup::"
-        echo "::group::Failing Kustomizations describe"
-        for k in infrastructure-controllers infrastructure apps; do
-          echo "--- $k ---"
-          kubectl describe kustomizations.kustomize.toolkit.fluxcd.io "$k" -n flux-system 2>&1 | tail -60
-        done
-        echo "::endgroup::"
-        echo "::group::Flux controller pods"
-        kubectl get pods -n flux-system -o wide
-        echo "::endgroup::"
-        echo "::group::kustomize-controller logs"
-        kubectl logs -n flux-system -l app=kustomize-controller --tail=200
-        echo "::endgroup::"
-        echo "::group::helm-controller logs"
-        kubectl logs -n flux-system -l app=helm-controller --tail=200
-        echo "::endgroup::"
-        echo "::group::source-controller logs"
-        kubectl logs -n flux-system -l app=source-controller --tail=100
-        echo "::endgroup::"
-        echo "::group::Recent events (warnings)"
-        kubectl get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -50
-        echo "::endgroup::"
+      # Shared composite (extracted from the richest platform-template variant,
+      # devantler-tech/actions#367). Its default `kustomizations` input is
+      # `infrastructure-controllers infrastructure apps` — identical to the list
+      # this callsite previously hard-coded — so this is behaviour-preserving for
+      # the describe loop and a strict diagnostics upgrade otherwise (Nodes,
+      # all-pods, failing/CrashLooping pod logs, Job logs, failing-Job describes,
+      # larger --tail values). Failure-path-only: it cannot affect a green deploy.
+      uses: devantler-tech/actions/diagnose-flux@e182f2207fb386ef827f48b3cc9b7deac873046a # v7.1.0
 
     - name: 🔄 Update cluster (Talos machine config)
       # Runs LAST, after manifest delivery, so an unreachable control-plane

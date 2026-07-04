@@ -68,10 +68,10 @@ kubectl -n <ns> rollout restart deployment/<name>
 ## Scenario 2 — Planned rolling Talos / Kubernetes upgrade
 
 Talos OS and Kubernetes upgrades are driven by the **version pins**, not by the
-ISO. Bump `spec.cluster.talos.version` (Renovate bumps it together with the
-matching `machine.install.image` installer tag in
-[`talos/cluster/install-image.yaml`](../../talos/cluster/install-image.yaml))
-and/or `spec.cluster.kubernetesVersion`, then re-run `ksail cluster update`.
+ISO. Bump `spec.cluster.talos.version` (Renovate bumps this pin in
+`ksail.prod.yaml`; KSail derives the matching `machine.install.image` installer
+from it plus `spec.cluster.talos.extensions`) and/or
+`spec.cluster.kubernetesVersion`, then re-run `ksail cluster update`.
 KSail performs an **in-place rolling upgrade** — one node at a time, workers
 first, rebooting each node into the new installer image (Kubernetes upgrades
 roll the static control-plane pods and kubelets); PDBs and `maxUnavailable: 0`
@@ -108,9 +108,10 @@ before upgrading.
 > upgrading each stuck node directly, one at a time, preserving etcd quorum:
 >
 > ```bash
-> # <schematic-id>:<version> is the installer image from talos/cluster/install-image.yaml
-> talosctl --nodes <node-ip> upgrade \
->   --image factory.talos.dev/installer/<schematic-id>:<version>
+> # Read the installer image KSail derived (from spec.cluster.talos.version +
+> # .extensions) off a healthy, already-upgraded node, then reuse it:
+> IMAGE=$(talosctl --nodes <healthy-ip> get machineconfig -o jsonpath='{.spec.machine.install.image}')
+> talosctl --nodes <node-ip> upgrade --image "$IMAGE"
 > ```
 >
 > Once the platform tracks a KSail release containing the fix, `cluster update`
@@ -162,8 +163,8 @@ flux get kustomizations -A
 
 # 4b. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
 #     in R2 — the vault came up fresh): re-feed the user-fed secrets that
-#     SOPS deliberately does not seed (see the header of
-#     k8s/bases/infrastructure/vault-seed/push-secrets.yaml). Until then,
+#     SOPS deliberately does not seed (see the push-secret-seed-* files in
+#     k8s/bases/infrastructure/vault-seed/). Until then,
 #     cert-manager DNS01, external-dns, and fleetdm stay pending:
 kubectl -n openbao exec openbao-0 -- \
   bao kv put secret/infrastructure/dns/cloudflare api_token=<cloudflare-token>
@@ -311,9 +312,9 @@ find . -name '*.enc.yaml' -print0 | xargs -0 -n1 sops updatekeys --yes
 # 2. Update the encrypted secret in-place. The R2 keys are per-environment
 #    and live in the CLUSTER secret (variables-cluster), not the shared base.
 sops --set '["stringData"]["r2_access_key_id"] "<new-id>"' \
-  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/secret.enc.yaml
 sops --set '["stringData"]["r2_secret_access_key"] "<new-secret>"' \
-  k8s/clusters/prod/bootstrap/variables-cluster-secret.enc.yaml
+  k8s/clusters/prod/bootstrap/secret.enc.yaml
 # (repeat for k8s/clusters/local/bootstrap/ if rotating the local creds)
 
 # 3. PR + merge. Flux propagates within one reconciliation cycle, and the

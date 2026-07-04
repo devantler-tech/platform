@@ -150,7 +150,7 @@ spec:
             listener "tcp" {
               address         = "0.0.0.0:8200"
               # Raft peers gossip on the cluster port (8201). The openbao
-              # CiliumNetworkPolicy opens 8201 pod-to-pod (networkpolicy.yaml).
+              # CiliumNetworkPolicy opens 8201 pod-to-pod (cilium-network-policy.yaml).
               cluster_address = "0.0.0.0:8201"
               tls_disable     = 1
             }

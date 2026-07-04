@@ -1,0 +1,31 @@
+# Extra permissions for Kyverno's background controller (prod/hetzner only).
+#
+# The drain-autoscale-node-storage ClusterPolicy (hetzner cluster-policies/,
+# the next Flux layer — the mutate-existing retrofit half of
+# restrict-storage-to-baseline-workers) uses mutateExisting to force
+# allowScheduling=false + evictionRequested=true onto the Longhorn Node CRs of
+# autoscaler-provisioned nodes (autoscale-*), including the ones that already
+# exist when the policy lands. Kyverno checks this grant at policy admission
+# and rejects the policy without it, so — like the base
+# kyverno:background-controller:mutate-deployments grant — it ships here, one
+# layer earlier (infrastructure-controllers) than the policy (infrastructure),
+# ensuring it is live and aggregated before the policy is admitted. It lives
+# in the longhorn controller folder (not the base kyverno one) because the
+# resource it grants and the policy consuming it are both Hetzner-only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kyverno:background-controller:mutate-longhorn-nodes
+  labels:
+    rbac.kyverno.io/aggregate-to-background-controller: "true"
+rules:
+  - apiGroups:
+      - longhorn.io
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
+      - update
+      - patch

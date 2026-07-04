@@ -1,11 +1,20 @@
 # TODO: Upstream `auto-vpa.yaml` to Kyverno policies repository.
 #
-# kube-system is intentionally NOT excluded: its controllers (cilium,
-# cilium-envoy, spire-agent, coredns, metrics-server, hubble, hcloud
-# ccm/csi, tetragon, cluster-autoscaler) carry ~10Gi of hand-tuned request
-# floors that VPA can right-size to observed usage instead. Static
-# control-plane pods (kube-apiserver/etcd/scheduler/controller-manager) are
-# bare Pods, not Deployment/StatefulSet/DaemonSet, so they never match.
+# kube-system is intentionally NOT excluded by THIS policy's match rules — but
+# be aware Kyverno's GLOBAL resourceFilters (`[*/*,kube-system,*]` and
+# `[*/*,kyverno,*]` in the kyverno ConfigMap) exclude kube-system and kyverno
+# from ALL Kyverno processing, so THIS policy never generates a VPA there.
+# Because VPA right-sizing IS wanted for those controllers (cilium, cilium-envoy,
+# spire-agent, coredns, metrics-server, hubble, hcloud ccm/csi, tetragon,
+# cluster-autoscaler, the kyverno controllers), prod ships equivalent STATIC VPAs
+# (same policy as below) in k8s/providers/hetzner/infrastructure/vertical-pod-autoscalers/,
+# which bypass Kyverno entirely; their CPU/memory burst *limits* are seeded by
+# the LimitRanges in k8s/bases/infrastructure/limit-ranges/ (CPU there, plus a
+# generous prod memory `default` patched on in the hetzner overlay) for VPA to
+# scale ratio-preserving. Static control-plane pods (kube-apiserver/etcd/
+# scheduler/controller-manager) are bare mirror Pods, not Deployment/StatefulSet/
+# DaemonSet, so they match neither this policy nor the static VPAs, and bypass
+# the LimitRange too.
 #
 # IN-PLACE RESIZE (no eviction) is active. InPlacePodVerticalScaling went GA
 # in k8s 1.35 (KEP-1287) and prod runs v1.35.5; VPA is 1.6 (its own
@@ -179,36 +188,36 @@ spec:
             resourcePolicy:
               containerPolicies:
                 - containerName: "*"
-                  controlledResources: ["cpu", "memory"]
-                  # RequestsAndLimits (not RequestsOnly): VPA also scales each
-                  # container's limit in proportion to the request it sets,
-                  # preserving the authored limit:request ratio. Under
-                  # RequestsOnly the limit stayed fixed, so any workload whose
-                  # VPA target outgrew its static memory limit was capped below
-                  # its known need and OOMKilled (e.g. a metrics/log store whose
-                  # target outgrew its static limit). The request is bounded by maxAllowed
-                  # below; CPU limits only loosen (less throttling, no OOM).
+                  # CPU ONLY for DaemonSets — VPA must not manage DaemonSet
+                  # MEMORY. VPA keeps ONE usage histogram per container across
+                  # ALL pods of a DaemonSet, so it sizes EVERY node's agent to
+                  # the single busiest node's peak (+15% margin), and that
+                  # request is then multiplied by the node count. On 2026-06-30
+                  # this inflated the per-node agent stack (coroot-node-agent
+                  # 826Mi, kubescape node-agent 523Mi, longhorn-manager 456Mi,
+                  # ...) to ~3.5Gi — exactly 50% of a cx33's allocatable, which
+                  # is the cluster-autoscaler's scale-down utilization
+                  # threshold. Result: every autoscale-cx33 node was
+                  # unremovable EVEN WHEN EMPTY of movable pods (CA counts
+                  # DaemonSet requests in node utilization and KSail exposes no
+                  # ignore-daemonsets-utilization / threshold knob), so any
+                  # transient demand burst minted a permanent node — a one-way
+                  # ratchet (4 stuck autoscale nodes, 2026-06-30). With memory
+                  # uncontrolled here, DaemonSet memory comes from authored
+                  # chart/CR values (the heavy agents author explicit
+                  # request+limit: coroot-node-agent in coroot.yaml, kubescape
+                  # node-agent in its HelmRelease, cilium in its HelmRelease)
+                  # or the namespace LimitRange defaults for the small ones.
+                  # CPU stays VPA-managed (compressible, no OOM risk).
+                  controlledResources: ["cpu"]
+                  # RequestsAndLimits: scales the CPU limit in proportion to
+                  # the request (see the Deployment rule for the rationale).
                   controlledValues: RequestsAndLimits
                   minAllowed:
-                    # CPU floor raised 15m->50m for cold-start headroom. 15m was
-                    # right-sized to STEADY-STATE usage (avg 4.4m), but with
-                    # RequestsAndLimits it also pinned the LIMIT low (e.g. wedding-app
-                    # at 15m req -> 60m limit, authored 4:1 ratio), which throttled
-                    # COLD START: Node/Next.js apps couldn't boot fast enough to pass
-                    # their liveness probe and crashlooped. Only FRESH starts were hit
-                    # — already-running pods, resized in place, kept serving — so it
-                    # surfaced only on a new ReplicaSet. 50m req -> ~200m limit restores
-                    # the headroom the old pods originally cold-started under. Costs
-                    # ~3 cores of (compressible) CPU requests vs 15m; VPA still
-                    # right-sizes above the floor for steady-state. Memory floor kept
-                    # at 64Mi (memory runs ~89% hot).
+                    # CPU floor: see the Deployment rule (cold-start headroom).
                     cpu: "50m"
-                    memory: "64Mi"
                   # Lower upper bound than Deployments/StatefulSets: a DaemonSet
                   # pod must schedule on EVERY node, including autoscale-cx23
-                  # workers (2 vCPU / 4 GB). Bound it to fit a cx23 next to
-                  # the other per-node agents; this still covers the heaviest
-                  # auto-VPA'd DaemonSet observed (kubescape node-agent ~0.7Gi).
+                  # workers (2 vCPU / 4 GB).
                   maxAllowed:
                     cpu: "1"
-                    memory: "1Gi"

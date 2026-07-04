@@ -7,10 +7,13 @@ resources:
   # namespaces) that a tenant's `edit` role cannot self-grant. The matching
   # CiliumNetworkPolicies (networkpolicy.yaml, external-dns-networkpolicy.yaml)
   # and the namespaced SecretStore now live in the tenant repo's deploy/.
-  - external-dns-rbac.yaml
-  - ghcr-auth-externalsecret.yaml
+  - role-binding-external-dns.yaml
+  - role-binding-external-dns-kube-system.yaml
+  - cluster-role-binding.yaml
+  - external-secret.yaml
   - namespace.yaml
-  - default-deny-networkpolicy.yaml
-  - rolebinding.yaml
-  - serviceaccount.yaml
-  - sync.yaml
+  - network-policy.yaml
+  - role-binding-ascoachingogvaner.yaml
+  - service-account.yaml
+  - oci-repository.yaml
+  - flux-kustomization.yaml

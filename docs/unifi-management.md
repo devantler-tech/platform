@@ -85,10 +85,10 @@ Bring the live network under management without risk:
 
 - **Runner ↔ controller mTLS.** Cluster-wide `require-mutual-auth` (SPIRE) applies
   to the tofu-controller ↔ tf-runner gRPC (:30000). Cilium auto-issues SPIFFE
-  identities to pods, so the L3/L4 allow in `unifi/networkpolicy.yaml` should
+  identities to pods, so the L3/L4 allow in `unifi/cilium-network-policy.yaml` should
   suffice — verify the runner connects.
 - **Runner PSS.** The namespace enforces `restricted`. If the upstream tf-runner
   image cannot run non-root, either rely on the platform's Kyverno securityContext
   mutation or relax the namespace to `baseline`.
-- **Egress.** `networkpolicy.yaml` allows `world:443,8443`; tighten to the
+- **Egress.** `cilium-network-policy.yaml` allows `world:443,8443`; tighten to the
   controller address + the OpenTofu registry FQDNs once known.

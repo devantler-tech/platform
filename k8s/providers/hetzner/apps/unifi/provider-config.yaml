@@ -1,0 +1,22 @@
+# Namespaced ProviderConfig (Crossplane v2): authenticates provider-upjet-unifi
+# against the UniFi controller. Referenced by the namespaced Client/TrafficRoute/
+# Record managed resources in this namespace (providerConfigRef name: default).
+# Applied by the platform's `apps` Kustomization (flux-system), alongside the
+# credential ExternalSecrets — not by the tenant SA, which only applies the
+# managed resources from the devantler-tech/unifi repo.
+#
+# spec.credentials.secretRef.namespace is a REQUIRED field (the CRD enforces it
+# even for a namespaced ProviderConfig) and is a value, not the resource
+# namespace, so it is set explicitly to where the credentials Secret lives.
+apiVersion: unifi.m.crossplane.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: default
+  namespace: unifi
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: unifi
+      name: unifi-controller-credentials
+      key: credentials

@@ -62,9 +62,6 @@ This is faster than a full cluster test and catches YAML errors, missing fields,
 
 ## Clusters
 
-> [!TIP]
-> All clusters allow scheduling of workloads on control plane nodes. For homelab purposes, this is fine, but for enterprise use, it is recommended to separate control plane and worker nodes to ensure high availability and reliability.
-
 ### Local
 
 Local development cluster running on Docker via KSail. Uses Talos with the Docker provider. A small, thin manual test-bed (see [Usage](#usage)) — bring up a component, try it, then promote it to prod.

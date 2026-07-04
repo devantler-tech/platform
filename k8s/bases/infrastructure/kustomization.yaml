@@ -2,7 +2,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - certificates/
   - cluster-policies/
   - cluster-role-bindings/
   - cluster-roles/
@@ -11,6 +10,11 @@ resources:
   - external-secrets/
   - flagger/
   - gateway/
+  # CPU-only LimitRanges for the namespaces no Kyverno resource policy can reach
+  # (kube-system + kyverno are in Kyverno's global resourceFilters, so they get
+  # no limit seed and no auto-VPA). Restores a CPU limit so their pods pass
+  # kubescape C-0270. See limit-ranges/kustomization.yaml for the full writeup.
+  - limit-ranges/
   # OpenCost lives in the `infrastructure` layer (not `controllers`) because it
   # hard-fails at startup unless it can query Coroot's bundled Prometheus
   # (coroot-prometheus.observability.svc:9090), which the operator only builds from the
@@ -18,11 +22,16 @@ resources:
   # that layer's health check would wait for OpenCost to become Ready, but the CR
   # that produces its Prometheus can't be applied until the layer is Ready.
   - opencost/
+  # Kyverno Policy Reporter (core + UI + kyverno-plugin) visualises the
+  # PolicyReport / ClusterPolicyReport CRs Kyverno emits. In the `infrastructure`
+  # layer (not `controllers`) so it lands a layer after Kyverno, which installs
+  # the wgpolicyk8s.io CRDs it watches.
+  - policy-reporter/
   # KRO RGDs (Tenant #1932 / WebApp #1933) + their aggregated KRO
   # ClusterRoles. In `infrastructure` (not `infrastructure-controllers`) so the
   # RGD CRs land a layer after the KRO controller that installs the RGD CRD.
   - resource-graph-definitions/
-  - security-exceptions/
+  - cluster-security-exceptions/
   - tracing-policies/
   - vault-config/
   - vault-backup/

@@ -5,5 +5,27 @@ resources:
   - namespace.yaml
   - helm-repository.yaml
   - helm-release.yaml
-  - networkpolicy.yaml
-  - httproute.yaml
+  # Default WaitForFirstConsumer StorageClass (see storage-class-longhorn-wffc.yaml);
+  # the chart's `longhorn` class is demoted to non-default in helm-release.yaml.
+  - storage-class-longhorn-wffc.yaml
+  - cilium-network-policy.yaml
+  - http-route.yaml
+  # CPU-only LimitRange: restores a CPU limit (dropped when longhorn-system was
+  # excluded from the Kyverno limit policies on 2026-06-20) so longhorn pods pass
+  # kubescape C-0270, while keeping the memory limit unset to preserve the
+  # instance-manager OOM-cascade safeguard. See limit-range.yaml for details.
+  - limit-range.yaml
+  # Kyverno background-controller + reports-controller grants for the
+  # restrict-storage-to-baseline-workers / drain-autoscale-node-storage
+  # policies (hetzner cluster-policies/, next Flux layer) — must be live
+  # before the policies are admitted.
+  - cluster-role-kyverno-mutate-longhorn-nodes.yaml
+  - cluster-role-kyverno-reports-longhorn-nodes.yaml
+  # Self-healing cleanup of orphaned Longhorn Node CRs left by autoscaler
+  # scale-downs (Longhorn never auto-deletes them). See #2024.
+  - service-account-stale-node-cleanup.yaml
+  - cluster-role-stale-node-cleanup.yaml
+  - cluster-role-binding-stale-node-cleanup.yaml
+  - role-stale-node-cleanup.yaml
+  - role-binding-stale-node-cleanup.yaml
+  - cron-job-stale-node-cleanup.yaml

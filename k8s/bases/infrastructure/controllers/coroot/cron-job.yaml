@@ -1,0 +1,96 @@
+# Cluster-level dead-man's-switch. Every 5 minutes a pod pings the external
+# heartbeat monitor (${alertmanager_heartbeat_url}, e.g. healthchecks.io);
+# the monitor alerts out-of-band when the pings STOP. A successful ping
+# proves the cluster as a whole is alive — a node, the scheduler, kubelet,
+# the CNI, DNS and egress all worked — which is the one failure in-cluster
+# alerting can never report about itself.
+#
+# The ping is deliberately UNCONDITIONAL. It is NOT gated on any component
+# (it used to require Coroot's bundled Prometheus to answer /-/healthy):
+# component health is alerted on in-cluster by Coroot's own notification
+# integrations and is checked by connecting to the cluster — gating the
+# ping on a component conflates a component outage with "the cluster is
+# down", which is the only thing this switch exists to signal.
+#
+# Cadence: the documented external check is a ~5 min period / ~10 min grace
+# (docs/dr/alerting.md), and a dead-man monitor alarms on period+grace
+# elapsing since the LAST ping — pinging more often than the period cannot
+# detect an outage any faster. */5 matches the check while avoiding a
+# pod-churn every minute (each run costs scheduling, admission webhooks, a
+# Cilium endpoint and a SPIRE identity; 1440 pods/day at the old cadence).
+#
+# Lives in the observability namespace to reuse the allow-coroot
+# CiliumNetworkPolicy's world:443 + DNS egress; it does not depend on
+# Coroot itself.
+#
+# The URL is injected by Flux substitution from the per-cluster SOPS
+# secret; unset (local/CI) it defaults to an invalid URL so the ping
+# reaches nowhere. `|| true` keeps the Job from flapping into a failed
+# state when the monitor is unset/unreachable — the alarm signal is the
+# *absence* of pings, observed externally, never the Job's exit code.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cluster-heartbeat
+  namespace: observability
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 30
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Headroom for a slow tick: pod scheduling + Cilium's L7 DNS proxy
+      # resolving the external host + curl's own --retry budget (below) can
+      # exceed a tight 30s, which marks the Job Failed (reason: DeadlineExceeded)
+      # even though `|| true` swallowed curl's exit code -- a false failure event.
+      # 120s sits well above the worst case (4 attempts x --max-time 10 + delays)
+      # and far below the */5 schedule, so a genuinely-down cluster still stops
+      # pinging within one period.
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            app: cluster-heartbeat
+        spec:
+          restartPolicy: Never
+          # curl-only heartbeat; it never calls the Kubernetes API, so no
+          # ServiceAccount token is mounted (kubescape C-0034).
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: heartbeat
+              image: docker.io/curlimages/curl:8.21.0@sha256:7c12af72ceb38b7432ab85e1a265cff6ae58e06f95539d539b654f2cfa64bb13
+              command:
+                - /bin/sh
+                - -c
+                - >-
+                  curl -sf --max-time 10
+                  --retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused
+                  "${alertmanager_heartbeat_url:=https://example.invalid/no-heartbeat-configured}"
+                  || true
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                # Non-root identity at the container level (kubescape C-0013).
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 16Mi
+                limits:
+                  # CPU limit set for kubescape C-0270; generous (10x request) so
+                  # the short-lived curl never throttles.
+                  cpu: 50m
+                  memory: 32Mi

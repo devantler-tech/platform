@@ -1,0 +1,75 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: policy-reporter
+  namespace: policy-reporter
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  # Kyverno (infrastructure-controllers layer) installs the wgpolicyk8s.io
+  # PolicyReport/ClusterPolicyReport CRDs this app watches; the infrastructure
+  # layer already waits for infrastructure-controllers, and this dependsOn makes
+  # the ordering explicit so the core never starts before Kyverno is Ready.
+  dependsOn:
+    - name: kyverno
+      namespace: kyverno
+  interval: 10m
+  timeout: 10m
+  chart:
+    spec:
+      chart: policy-reporter
+      version: 3.7.4
+      sourceRef:
+        kind: HelmRepository
+        name: policy-reporter
+  # https://github.com/kyverno/policy-reporter/blob/3.7.4/charts/policy-reporter/values.yaml
+  values:
+    # The UI reaches the core over its REST API; it is off by default and the UI
+    # is useless without it. The chart auto-wires the UI's default cluster to
+    # http://policy-reporter:8080 (+ the kyverno plugin) so no clusters config is
+    # needed here.
+    rest:
+      enabled: true
+
+    # Expose Prometheus policy-result metrics on :8080/metrics for Coroot's
+    # node-agent to scrape. `simple` mode keeps label cardinality bounded. No
+    # prometheus-operator here, so the ServiceMonitor sub-chart stays disabled
+    # (see monitoring below) -- same as opencost.
+    metrics:
+      enabled: true
+      mode: simple
+
+    # Explicit cold-start floor; auto-vpa right-sizes at steady state. CPU limit
+    # intentionally unset (compressible) per the house pattern.
+    resources:
+      requests:
+        cpu: 10m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+
+    ui:
+      enabled: true
+      resources:
+        requests:
+          cpu: 10m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
+
+    plugin:
+      kyverno:
+        # Surfaces Kyverno policy details, sources and (optionally) exceptions in
+        # the UI; the UI auto-discovers it at http://policy-reporter-kyverno-plugin:8080.
+        enabled: true
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            memory: 128Mi
+
+    # No prometheus-operator in the cluster, so skip the ServiceMonitor the
+    # monitoring sub-chart would create (matches opencost's metrics wiring).
+    monitoring:
+      enabled: false

@@ -1,0 +1,23 @@
+# Namespaced ProviderConfig (Crossplane v2): authenticates the upbound AWS
+# family providers (provider-aws-iam today, EKS later) with the bootstrap IAM
+# access key. Referenced by the namespaced AWS managed resources in this
+# namespace (providerConfigRef name: default) once platform#2326 activates the
+# IAM kinds. Applied by the platform's `apps` Kustomization (flux-system),
+# alongside the credential ExternalSecret — not by the tenant SA, which will
+# only apply the managed resources from the devantler-tech/aws repo.
+#
+# spec.credentials.secretRef.namespace is a REQUIRED field (the CRD enforces it
+# even for a namespaced ProviderConfig) and is a value, not the resource
+# namespace, so it is set explicitly to where the credentials Secret lives.
+apiVersion: aws.m.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: default
+  namespace: aws
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: aws
+      name: aws-bootstrap-credentials
+      key: credentials

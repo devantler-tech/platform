@@ -25,39 +25,30 @@ The installer image also includes one additional recommended extension:
 - `siderolabs/util-linux-tools` — **required** by Longhorn for `fstrim` volume trimming
 - `siderolabs/qemu-guest-agent` — **recommended** for Hetzner Cloud VM integration (not required by Longhorn)
 
-The extensions are configured via [Talos Image Factory](https://factory.talos.dev).
-A schematic ID encodes the set of extensions; it is referenced in
-`talos/cluster/install-image.yaml` as `machine.install.image`. Nodes boot
-from the standard Hetzner Talos ISO but install the custom image (with
-extensions) to disk during first boot or upgrade.
+The extensions are configured declaratively in `ksail.prod.yaml` as
+`spec.cluster.talos.extensions`. KSail computes the [Talos Image
+Factory](https://factory.talos.dev) schematic ID from that list during config
+generation and sets `machine.install.image` automatically (the same schematic
+also backs the Hetzner snapshot the Cluster Autoscaler boots new nodes from) —
+there is no hand-maintained installer-image patch. Nodes boot from the standard
+Hetzner Talos ISO but install the custom image (with extensions) to disk during
+first boot or upgrade.
 
-To **regenerate the schematic** (e.g. when adding more extensions or bumping
-the Talos version):
+To **change the extension set** (or bump the Talos version), edit
+`spec.cluster.talos.extensions` (or `spec.cluster.talos.version`) in
+`ksail.prod.yaml` and re-run `ksail cluster update`; KSail recomputes the
+schematic and rolls the new installer image to the nodes. You never derive or
+paste a schematic ID by hand.
 
-```bash
-# Create a new schematic via the Image Factory API
-curl -s -X POST https://factory.talos.dev/schematics \
-  -H 'Content-Type: application/yaml' -d '
-customization:
-  systemExtensions:
-    officialExtensions:
-      - siderolabs/iscsi-tools
-      - siderolabs/util-linux-tools
-      - siderolabs/qemu-guest-agent
-'
-# → {"id":"<SCHEMATIC_ID>"}
-
-# Update talos/cluster/install-image.yaml:
-#   machine.install.image: factory.talos.dev/installer/<SCHEMATIC_ID>:v<TALOS_VERSION>
-```
-
-To **apply the new image to existing nodes**:
+To **apply the image to a single node manually** (e.g. recovering a node that
+fell behind a roll), read the derived installer image off a healthy node and
+reuse it:
 
 ```bash
-talosctl upgrade \
-  --nodes <IP> \
-  --image factory.talos.dev/installer/<SCHEMATIC_ID>:v<TALOS_VERSION> \
-  --preserve
+# The installer image KSail derived for the cluster
+IMAGE=$(talosctl --nodes <healthy-IP> get machineconfig -o jsonpath='{.spec.machine.install.image}')
+
+talosctl upgrade --nodes <IP> --image "$IMAGE" --preserve
 ```
 
 ### 2. Hetzner Cloud Volumes for workers
@@ -126,7 +117,7 @@ spec:
 
 ## Tunable variables
 
-These variables can be overridden per environment in `k8s/clusters/<env>/bootstrap/variables-cluster-config-map.yaml`:
+These variables can be overridden per environment in `k8s/clusters/<env>/bootstrap/config-map.yaml`:
 
 | Variable | Default | Description |
 |---|---|---|

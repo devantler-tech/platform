@@ -1,0 +1,50 @@
+# Expose the Policy Reporter UI behind oauth2-proxy SSO (the same forward-auth
+# pattern as the Coroot / OpenCost UIs): the route backends to the oauth2-proxy
+# Service; after authentication oauth2-proxy forwards to auth-proxy, which routes
+# policy-reporter.${domain} by Host to the policy-reporter-ui Service (see
+# auth-proxy config-map.yaml). Policy Reporter UI has no native SSO, so this is
+# how access is gated. The UI serves on port 8080.
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: policy-reporter
+  namespace: policy-reporter
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Policy Reporter
+    gethomepage.dev/description: Kyverno PolicyReport dashboards and analytics.
+    gethomepage.dev/group: Security
+    # Policy Reporter isn't in the dashboard-icons/selfh.st sets Homepage
+    # resolves, so point at the upstream Kyverno brand logo (same upstream-URL
+    # pattern the Coroot / Cilium / OpenBao routes use). Homepage fetches icons
+    # client-side, so the cluster egress NetworkPolicy doesn't block it.
+    gethomepage.dev/icon: https://raw.githubusercontent.com/kyverno/kyverno/main/img/logo.png
+    # Status dot: key on the UI pod. app.kubernetes.io/instance=policy-reporter is
+    # shared by the core and kyverno-plugin pods too, so target the UI explicitly
+    # via app.kubernetes.io/name=policy-reporter-ui (same reason coroot/opencost
+    # pin a specific selector).
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=policy-reporter-ui
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - policy-reporter.${domain}
+  rules:
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://policy-reporter.${domain}/
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80

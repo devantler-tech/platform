@@ -45,8 +45,13 @@ spec:
       #     installed by the flagger HelmRelease at runtime and are not in the
       #     catalog, so the MetricTemplates and the onboarded Canaries (umami,
       #     homepage, opencost) can't be schema-checked offline.
+      #   - Tenant (kro.run/v1alpha1): the CRD is generated at runtime by the
+      #     KRO controller from the tenant ResourceGraphDefinition (#1932), so
+      #     no static schema exists in any catalog (same class as the Flagger
+      #     runtime CRDs).
       skipKinds:
         - Coroot
         - MetricTemplate
         - Canary
+        - Tenant
 

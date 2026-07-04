@@ -11,7 +11,7 @@
 #
 # ⚠️ NAMED-PORT RISK: Headlamp's OpenCost plugin reaches the cost API via the
 # kube-apiserver service proxy using the `opencost:http-ui` *named* port (see
-# opencost/networkpolicy.yaml). Flagger regenerates the Services; portDiscovery
+# opencost/cilium-network-policy.yaml). Flagger regenerates the Services; portDiscovery
 # copies the container ports but may not preserve the `http-ui` port NAME. If the
 # Headlamp cost panel breaks after this lands, this is the cause — revert this
 # Canary or pin the port name.

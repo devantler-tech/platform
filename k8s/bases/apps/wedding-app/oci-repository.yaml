@@ -1,0 +1,27 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: ksail
+  name: wedding-app
+  namespace: wedding-app
+spec:
+  interval: 1m
+  ref:
+    semver: ">=1.0.0"
+  url: oci://ghcr.io/devantler-tech/wedding-app/manifests
+  secretRef:
+    name: ghcr-auth
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      # publish-app.yaml is moving from devantler-tech/reusable-workflows into
+      # devantler-tech/actions (actions#425 consumer repoint); both repo
+      # subjects are accepted via ONE regex-alternated entry — cosign's keyless
+      # attestation verification rejects MULTIPLE identity entries outright
+      # ("unsupported: multiple identities are not supported at this time").
+      # Narrow the alternation to actions-only once the first actions-signed
+      # artifact has been published and verified.
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/devantler-tech/(reusable-workflows|actions)/\.github/workflows/publish-app\.yaml@.+$'

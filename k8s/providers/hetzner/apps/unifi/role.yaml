@@ -1,0 +1,37 @@
+---
+# Least-privilege RBAC for the unifi app's ServiceAccount: a dedicated namespaced
+# Role granting full verbs over the namespaced provider-upjet-unifi
+# managed-resource API groups, and only within the unifi namespace. The app's
+# Flux Kustomization applies the Managed Resources from devantler-tech/unifi AS
+# this SA, so it needs no more than this — the ProviderConfig + credential
+# ExternalSecrets are platform-applied (flux-system), not by this SA. Because the
+# managed resources are namespaced (Crossplane v2 `*.unifi.m.crossplane.io`), a
+# plain Role + RoleBinding suffices — no ClusterRole, no cluster RBAC. Widen
+# apiGroups/resources here only as new UniFi MR kinds are activated in the
+# ManagedResourceActivationPolicy (resources are enumerated, not "*", to keep
+# the grant least-privilege — the policy currently activates only clients,
+# trafficroutes, and records).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: unifi-managed-resources
+  namespace: unifi
+  labels:
+    app.kubernetes.io/managed-by: ksail
+rules:
+  - apiGroups:
+      - vpn.unifi.m.crossplane.io
+      - route.unifi.m.crossplane.io
+      - dns.unifi.m.crossplane.io
+    resources:
+      - clients
+      - trafficroutes
+      - records
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete

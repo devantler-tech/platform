@@ -5,5 +5,6 @@ resources:
   - namespace.yaml
   - helm-release.yaml
   - helm-repository.yaml
-  - networkpolicy.yaml
-  - background-controller-rbac.yaml
+  - cilium-network-policy.yaml
+  - cluster-role.yaml
+  - cluster-role-reports-controller-read-keda.yaml

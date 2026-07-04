@@ -108,7 +108,7 @@ spec:
       # External-PostgreSQL path pointed at the CloudNativePG cluster in
       # postgres-cluster.yaml. The password is OWNED AND ROTATED by OpenBao's
       # Database secrets engine (7-day static role — see vault-config), surfaced
-      # by db-rotated-external-secret.yaml as the `umami-db-rotated` Secret
+      # by external-secret-db-rotated.yaml as the `umami-db-rotated` Secret
       # (not CNPG's static umami-db-app). Mirrors the fleetdm MySQL rotation.
       external:
         host: umami-db-rw.umami.svc.cluster.local
@@ -121,7 +121,7 @@ spec:
       # Service port 80 -> container port 3000 (named `http`).
       port: 80
     # Routing, ingress and NetworkPolicy are handled by the platform's own
-    # resources (canary.yaml's Flagger-generated HTTPRoute + networkpolicy.yaml),
+    # resources (canary.yaml's Flagger-generated HTTPRoute + cilium-network-policy.yaml),
     # not the chart.
     gatewayAPI:
       enabled: false

@@ -5,4 +5,7 @@ resources:
   - namespace.yaml
   - helm-release.yaml
   - helm-repository.yaml
-  - networkpolicy.yaml
+  - cilium-network-policy.yaml
+  - cluster-role.yaml
+  - cluster-role-binding.yaml
+  - config-map-headlamp-exceptions.yaml

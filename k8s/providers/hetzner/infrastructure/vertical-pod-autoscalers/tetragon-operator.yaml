@@ -1,0 +1,13 @@
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: tetragon-operator
+  namespace: kube-system
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: tetragon-operator
+# --- DaemonSets (vpa-tier: daemonset → tighter maxAllowed so a per-node pod
+#     still fits the smallest autoscale-cx23 worker) ---

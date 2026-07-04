@@ -1,0 +1,18 @@
+# Default-deny NetworkPolicy mirroring the runtime Kyverno-generated
+# CiliumNetworkPolicy (cluster-policies/best-practices/add-default-deny.yaml), so
+# the static Kubescape scan sees this namespace as network-restricted (C-0054).
+# It is behaviourally redundant with the runtime default-deny this namespace
+# already runs under. The aws tenant runs NO pods — the Crossplane provider runs
+# in crossplane-system, Flux in flux-system, ESO in external-secrets — so the
+# namespace holds only managed resources, the ProviderConfig, and credential
+# Secrets, and needs no per-workload allow policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: aws
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress

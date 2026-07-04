@@ -1,0 +1,13 @@
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: hcloud-csi-node
+  namespace: kube-system
+  labels:
+    vpa-tier: daemonset
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: DaemonSet
+    name: hcloud-csi-node

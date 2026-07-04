@@ -26,28 +26,38 @@ resources:
   # the hetzner overlay because autoscaling is Hetzner/prod-only; see the file
   # header for the `ksail.io/autoscaled` node-label contract it depends on.
   - cluster-policies/prefer-baseline-nodes.yaml
+  # Prod-only: enforce the compute-only contract for autoscaler nodes at the
+  # Longhorn layer — autoscale-* nodes inherit the storage label from the
+  # shared Talos worker config, so without this Longhorn schedules volume
+  # replicas onto ephemeral nodes (durability risk) and those replicas pin
+  # the node against autoscaler scale-down. Two policies (admission half +
+  # mutate-existing retrofit half) because Kyverno rejects a single policy
+  # mixing an admission mutate rule with mutateExistingOnPolicyUpdate — see
+  # the file headers.
+  - cluster-policies/restrict-storage-to-baseline-workers.yaml
+  - cluster-policies/drain-autoscale-node-storage.yaml
   # Prod-only: reconcile Coroot's node Custom Cloud Pricing to Hetzner rates
   # (Coroot otherwise prices non-AWS/GCP/Azure nodes at the GCP-C4 fallback,
   # ~16x the real bill). Lives in this `infrastructure` layer because it targets
   # the `platform` project the coroot-patch below adds to the Coroot CR.
-  - coroot/custom-cloud-pricing-cronjob.yaml
+  - coroot/cron-job-custom-cloud-pricing.yaml
   # Re-asserts narrow suppressions for genuinely by-design Coroot alerts (the KEDA
   # external.metrics GC reflector noise on kube-controller-manager, and the benign
   # empty-AAAA DNS noise on tofu-controller) via the API on a schedule, since
   # Coroot has no declarative per-alert exemption. See the file header for the
   # exemption list + why each is by-design.
-  - coroot/alert-autosuppressor.yaml
+  - coroot/cron-job-alert-autosuppressor.yaml
   # Prod-only: the CloudNativePG datastore + backup wiring that lets the Coroot
   # SERVER run HA (replicas: 2 — set in the coroot-patch below). The operator
   # only honours replicas > 1 when spec.postgres is set, so this Postgres is the
   # precondition for a non-singleton Coroot server. CNPG/hcloud are prod-only, so
   # (like umami-db) these live in this overlay, not the shared base. The
   # drain-safe PDB for the operator-built server StatefulSet ships here too.
-  - coroot/postgres-cluster.yaml
-  - coroot/db-backup-external-secret.yaml
-  - coroot/db-object-store.yaml
-  - coroot/db-scheduled-backup.yaml
-  - coroot/networkpolicy.yaml
+  - coroot/cluster.yaml
+  - coroot/external-secret.yaml
+  - coroot/object-store.yaml
+  - coroot/scheduled-backup.yaml
+  - coroot/cilium-network-policy.yaml
   - coroot/pod-disruption-budget.yaml
   # Prod-only safety-net alerting: a Flux notification-controller Provider + Alert
   # that posts Kustomization reconciliation errors to the SAME Slack webhook the
@@ -84,6 +94,12 @@ resources:
   # TEMPORARILY DISABLED 2026-06-16..#2097 while the pin still read 7.58.3, which
   # predated #5277; the old balloon-pod buffer was already removed in #2087.)
   - overprovisioning/
+  # Prod-only: static VerticalPodAutoscalers for kube-system + kyverno. auto-vpa
+  # (Kyverno) can't reach these namespaces (global resourceFilters), so VPA is
+  # supplied as plain manifests here. Pairs with the LimitRange memory-seed
+  # patches below — together VPA right-sizes requests down while keeping a
+  # generous, no-OOM burst limit. See vertical-pod-autoscalers/kustomization.yaml.
+  - vertical-pod-autoscalers/
   #
   # NOTE: tenant-owned custom-domain TLS (the ascoachingogvaner.dk Certificate +
   # its simply.com DNS01 solver credential) is NOT a platform resource at all —
@@ -123,4 +139,30 @@ patches:
   # (see the file header). Self-identifies via PersistentVolumeClaim/openbao/
   # vault-snapshots, so no explicit target is needed.
   - path: vault-snapshots-hcloud-patch.yaml
+  # Prod-only: add a generous memory `default` to the kube-system / kyverno
+  # LimitRanges (which are CPU-only in the base). This seeds the memory limit the
+  # vertical-pod-autoscalers/ VPAs scale ratio-preserving, so VPA right-sizes the memory
+  # REQUEST down to real usage while the limit stays a generous multiple (no OOM
+  # — the seed is far above every workload's real peak). kube-system 4Gi gives
+  # cilium (512Mi req) ~8:1 and smaller add-ons far more; kyverno 2Gi gives its
+  # 128Mi controllers ~16:1. Kept here (not the base) so the base stays CPU-only
+  # and the memory limit is scoped to prod, where the VPAs that manage it live.
+  - target:
+      version: v1
+      kind: LimitRange
+      name: default-limitrange
+      namespace: kube-system
+    patch: |
+      - op: add
+        path: /spec/limits/0/default/memory
+        value: 4Gi
+  - target:
+      version: v1
+      kind: LimitRange
+      name: default-limitrange
+      namespace: kyverno
+    patch: |
+      - op: add
+        path: /spec/limits/0/default/memory
+        value: 2Gi
 

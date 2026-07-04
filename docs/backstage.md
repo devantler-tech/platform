@@ -17,7 +17,7 @@ CloudNativePG database and fronted by the platform's SSO.
 |---|---|
 | App | `backstage` Helm chart (`backstage.github.io/charts`), image `ghcr.io/backstage/backstage:1.52.0` (demo), 1 replica (single-pod — Backstage runs DB migrations on startup) |
 | Database | CloudNativePG `backstage-db` (2 instances, longhorn, synchronous). Backstage uses the generated `backstage-db-app` Secret and one DB with a schema per plugin (`pluginDivisionMode: schema`) |
-| Backend secret | Generated once by an External Secrets `Password` generator (`backend-secret.yaml`), never rotated |
+| Backend secret | Generated once by an External Secrets `Password` generator (`password.yaml` + `external-secret.yaml`), never rotated |
 | SSO | **oauth2-proxy forward-auth** (Dex) — the route backends to oauth2-proxy, which hands authenticated requests to the auth-proxy (Traefik) → the `backstage` Service. The demo image has no native OIDC |
 | Ingress | `HTTPRoute` for `backstage.${domain}` on the shared Gateway |
 | Isolation | default-deny + `allow-backstage` CiliumNetworkPolicy; restricted PSS |
@@ -62,7 +62,7 @@ built — as a **tenant repo** (see [TENANTS.md](TENANTS.md)):
    - set `auth.providers.oidc` + a sign-in resolver in app-config.
 4. **Kubernetes plugin**: add a read-only ServiceAccount + ClusterRole and feed
    its token; **GitHub discovery**: add an `api.github.com` egress to
-   `networkpolicy.yaml` and a GitHub App token via OpenBao.
+   `cilium-network-policy.yaml` and a GitHub App token via OpenBao.
 
 Each step is independent and incremental — the scaffold here is designed so none
 of it requires re-plumbing the database, ingress or SSO transport.

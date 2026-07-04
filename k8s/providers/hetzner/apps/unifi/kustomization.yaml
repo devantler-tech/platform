@@ -3,9 +3,13 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - namespace.yaml
-  - serviceaccount.yaml
-  - rbac.yaml
-  - networkpolicy.yaml
-  - gitrepository.yaml
-  - credentials-external-secret.yaml
-  - terraform.yaml
+  - service-account.yaml
+  - role.yaml
+  - role-binding.yaml
+  - network-policy.yaml
+  - secret-store.yaml
+  - provider-config.yaml
+  - external-secret.yaml
+  - external-secret-wireguard.yaml
+  - git-repository.yaml
+  - flux-kustomization.yaml

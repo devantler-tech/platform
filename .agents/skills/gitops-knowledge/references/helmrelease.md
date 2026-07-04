@@ -5,6 +5,8 @@
 HelmRelease installs, upgrades, tests, and manages Helm releases with drift detection
 and automated remediation.
 
+**Contents:** [Canonical YAML — Chart from HTTPS Repo](#canonical-yaml--chart-from-https-repo) | [Canonical YAML — Chart from OCI Registry (Recommended)](#canonical-yaml--chart-from-oci-registry-recommended) | [Chart Source — Mutual Exclusivity](#chart-source--mutual-exclusivity) | [Key Spec Fields](#key-spec-fields) | [Values](#values) | [Install and Upgrade Strategy](#install-and-upgrade-strategy) | [Drift Detection](#drift-detection) | [Post-Renderers](#post-renderers) | [Test Configuration](#test-configuration) | [Dependencies](#dependencies) | [Health Check Expressions](#health-check-expressions) | [Remote Cluster Deployment](#remote-cluster-deployment) | [CRD Lifecycle](#crd-lifecycle) | [Uninstall Configuration](#uninstall-configuration) | [Status](#status)
+
 ## Canonical YAML — Chart from HTTPS Repo
 
 ```yaml
@@ -104,9 +106,10 @@ These are **mutually exclusive** — use one or the other, never both.
 |-------|------|----------|-------------|
 | `interval` | duration | yes | Reconciliation interval |
 | `releaseName` | string | no | Helm release name (defaults to `metadata.name`) |
-| `targetNamespace` | string | no | Namespace for the Helm release |
+| `targetNamespace` | string | no | Namespace for the Helm release. Prefer deploying into `metadata.namespace` and creating that namespace in the parent Kustomization/ResourceSet (see best-practices.md); if set, also set `storageNamespace` to match so the Helm release storage lives with the workloads |
 | `serviceAccountName` | string | no | Service account for impersonation |
 | `timeout` | duration | no | Timeout for Helm operations |
+| `waitStrategy.name` | string | no | Readiness wait engine: `poller` (default, uses kstatus polling) or `legacy` (Helm v3 waiting logic) |
 | `suspend` | bool | no | Pause reconciliation |
 
 ## Values
@@ -132,6 +135,20 @@ spec:
       name: app-secrets
       valuesKey: db-password
       targetPath: database.password
+```
+
+**Literal values (`helm --set-literal`):** set `literal: true` together with `targetPath`
+to merge the referenced value verbatim, without interpreting Helm's `--set` syntax (commas,
+brackets, dots, equal signs). Use this when a value contains characters Helm would otherwise
+split, such as a JSON blob or a comma-separated string:
+```yaml
+spec:
+  valuesFrom:
+    - kind: ConfigMap
+      name: app-config
+      valuesKey: allowed-origins   # e.g. "https://a.com,https://b.com"
+      targetPath: cors.origins
+      literal: true                # merged as a single literal string
 ```
 
 Merge order: `valuesFrom` entries are merged in order, then `values` inline is merged on top.
@@ -216,6 +233,19 @@ spec:
 ```
 
 Post-renderers are applied in order. Each renderer's output feeds into the next.
+
+**Hook handling (`postRenderStrategy`):** controls whether Helm hooks are passed through
+the post-renderers. This matters for Helm 4, where hooks are rendered alongside templates:
+
+```yaml
+spec:
+  postRenderStrategy: combined   # nohooks | combined | separate
+```
+
+- `combined` (default) — hooks and templates are sent to post-renderers together (Helm CLI default)
+- `nohooks` — hooks are NOT sent to post-renderers (Helm 3 behavior; also the default when the
+  `UseHelm3Defaults` feature gate is enabled)
+- `separate` — hooks and templates are sent in separate streams
 
 ## Test Configuration
 

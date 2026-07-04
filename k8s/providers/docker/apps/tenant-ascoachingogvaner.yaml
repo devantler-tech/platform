@@ -1,0 +1,28 @@
+---
+# Tenant RGD local-first pilot (#1932 step 3): the typed `Tenant` declaration
+# that — once proven — replaces ascoachingogvaner's ~10-file control-plane
+# skeleton (k8s/bases/apps/ascoachingogvaner/). The KRO controller expands it
+# into the identical skeleton: Namespace (restricted PSS), Flux-impersonated
+# `edit` SA + RoleBinding, ghcr-auth ExternalSecret, default-deny
+# NetworkPolicy, cosign-verified OCIRepository, impersonating Kustomization,
+# and (externalDns: true) the three tenant-external-dns bindings.
+#
+# OPT-IN like every local app (see kustomization.yaml) — not referenced by
+# default, so both cluster renders are unchanged until a pilot session enables
+# it. The instance is namespaced (KRO v1alpha1 generates namespace-scoped
+# CRDs); it lives in flux-system as platform control-plane state, while its
+# children land in the tenant namespace via the RGD's explicit namespace
+# templating. The tenant's own app still needs GHCR credentials seeded in the
+# local OpenBao (infrastructure/ghcr/auth) before its OCIRepository can pull —
+# without them the expansion itself still validates (the pilot's purpose), but
+# the tenant Kustomization stays not-ready and the apps layer reports Failed.
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata:
+  name: ascoachingogvaner
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  name: ascoachingogvaner
+  externalDns: true
