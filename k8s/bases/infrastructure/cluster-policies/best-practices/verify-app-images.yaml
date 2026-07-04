@@ -1,7 +1,8 @@
 ---
 # First-party APP images (wedding-app, ascoachingogvaner, …) — signed by the
-# shared reusable-workflows/publish-app.yaml identity, the same one their
-# Flux OCIRepository verify blocks pin. The match EXCLUDES ksail images:
+# shared publish-app.yaml workflow (in actions, or reusable-workflows before it
+# was archived into actions), the same identity their Flux OCIRepository verify
+# blocks pin. The match EXCLUDES ksail images:
 # a matched image is verified by this policy's attestor before the CEL
 # expression runs, so letting ksail images match here would fail them
 # against the wrong identity.
@@ -49,7 +50,14 @@ spec:
     - name: publishapp
       cosign:
         keyless:
+          # The publish-app workflow moved from reusable-workflows into the
+          # actions monorepo (reusable-workflows is being archived); both
+          # identities are accepted during the transition so images signed by
+          # either repo's publish-app.yaml admit. Identities within one attestor
+          # are OR'd, so a match against either satisfies verification.
           identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@.+$
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/reusable-workflows/\.github/workflows/publish-app\.yaml@.+$
     # Crossplane provider packages (provider-upjet-*): the crossplane-contrib
@@ -79,7 +87,7 @@ spec:
         .all(e, e > 0)
       message: >-
         first-party app image is not signed by the publish-app release
-        pipeline (keyless cosign, reusable-workflows publish-app.yaml
+        pipeline (keyless cosign, actions/reusable-workflows publish-app.yaml
         identity)
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
