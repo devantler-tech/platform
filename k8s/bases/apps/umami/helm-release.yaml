@@ -160,9 +160,11 @@ spec:
     # so the read-only build artifacts in the rest of /app/.next stay intact.
     extraVolumes:
       - name: next-cache
-        emptyDir: {}
+        emptyDir:
+          sizeLimit: 512Mi
       - name: tmp
-        emptyDir: {}
+        emptyDir:
+          sizeLimit: 128Mi
     extraVolumeMounts:
       - name: next-cache
         mountPath: /app/.next/cache

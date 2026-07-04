@@ -68,8 +68,11 @@ spec:
                       mountPath: /var/run
               volumes:
                 - name: tmp
-                  emptyDir: {}
+                  emptyDir:
+                    sizeLimit: 256Mi
                 - name: nginx-cache
-                  emptyDir: {}
+                  emptyDir:
+                    sizeLimit: 256Mi
                 - name: nginx-run
-                  emptyDir: {}
+                  emptyDir:
+                    sizeLimit: 64Mi

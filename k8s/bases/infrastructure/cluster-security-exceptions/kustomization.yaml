@@ -12,6 +12,7 @@ resources:
   - helm-chart-metadata.yaml
   - image-verification.yaml
   - infrastructure-privileged.yaml
+  - kubescape-privileged.yaml
   - pod-security-mutations.yaml
   - readonly-rootfs-pending.yaml
   - service-account-tokens.yaml

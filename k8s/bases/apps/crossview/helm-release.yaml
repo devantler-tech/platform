@@ -87,9 +87,11 @@ spec:
                             mountPath: /tmp
                     volumes:
                       - name: postgres-data
-                        emptyDir: {}
+                        emptyDir:
+                          sizeLimit: 2Gi
                       - name: tmp
-                        emptyDir: {}
+                        emptyDir:
+                          sizeLimit: 128Mi
   # https://github.com/crossplane-contrib/crossview/blob/main/helm/crossview/values.yaml
   values:
     global:

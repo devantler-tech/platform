@@ -7,9 +7,10 @@
 # SPIRE agent (identity) needs: hostPath, hostPID
 # KubeVirt (VM hosting) needs: privileged, hostPath, hostPID, NET_ADMIN
 # CDI (container disk images) needs: privileged for disk operations
-# Kubescape node-agent (runtime detection) needs: privileged, hostPath, hostPID for eBPF;
-#   the storage aggregated-APIserver writes its backing store at runtime — neither can
-#   run a read-only root or drop host access.
+# Kubescape's node-agent/storage are NOT exempted here by namespace — the kubescape
+#   namespace also hosts the operator, kubevuln, and the kubescape scheduler, which
+#   need no host access; they get a workload-scoped exception instead
+#   (kubescape-privileged.yaml).
 apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
@@ -18,8 +19,8 @@ spec:
   reason: >-
     CNI (Cilium), distributed storage (Longhorn), node telemetry
     (Coroot node-agent), identity (SPIRE agent), backup
-    (Velero node-agent), runtime security (Kubescape node-agent + storage), and
-    virtualisation (KubeVirt, CDI) require host-level access by design.
+    (Velero node-agent), and virtualisation (KubeVirt, CDI) require host-level
+    access by design.
   posture:
     - controlID: C-0057
       action: ignore
@@ -55,4 +56,3 @@ spec:
             - velero
             - kubevirt
             - cdi
-            - kubescape

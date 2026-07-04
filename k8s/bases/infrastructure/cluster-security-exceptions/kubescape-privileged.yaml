@@ -1,0 +1,53 @@
+---
+# Workload-scoped privileged exception for the two Kubescape components that
+# genuinely need host access — deliberately NOT a namespace exception, because the
+# kubescape namespace also hosts the operator, kubevuln, and the scheduler, which
+# run fine hardened and must stay visible to these controls.
+#   - node-agent (DaemonSet): eBPF runtime detection — privileged, hostPath, hostPID.
+#   - storage (Deployment): the aggregated APIserver writes its backing store at
+#     runtime, so it cannot run a read-only root.
+# The CSE resources match is kind+name only (no namespace field in the CRD); both
+# names are unique among non-exempted namespaces — every other similarly-named
+# workload (e.g. Coroot's node agent) lives in a namespace already covered by
+# infrastructure-privileged.yaml.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: kubescape-privileged
+spec:
+  reason: >-
+    Kubescape's node-agent needs privileged host access (eBPF runtime detection)
+    and the storage aggregated APIserver writes its backing store at runtime;
+    scoped to those two workloads so the operator, kubevuln, and scheduler in the
+    same namespace stay subject to these controls.
+  posture:
+    - controlID: C-0057
+      action: ignore
+    - controlID: C-0048
+      action: ignore
+    - controlID: C-0045
+      action: ignore
+    - controlID: C-0041
+      action: ignore
+    - controlID: C-0038
+      action: ignore
+    - controlID: C-0044
+      action: ignore
+    - controlID: C-0046
+      action: ignore
+    - controlID: C-0016
+      action: ignore
+    - controlID: C-0013
+      action: ignore
+    - controlID: C-0017
+      action: ignore
+    - controlID: C-0055
+      action: ignore
+  match:
+    resources:
+      - apiGroup: apps
+        kind: DaemonSet
+        name: node-agent
+      - apiGroup: apps
+        kind: Deployment
+        name: storage
