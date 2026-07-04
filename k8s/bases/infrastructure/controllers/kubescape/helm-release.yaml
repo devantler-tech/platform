@@ -142,3 +142,38 @@ spec:
         limits:
           cpu: 500m
           memory: 1Gi
+  # Fix the scanner's config.json mount so posture scans actually persist.
+  # In OFFLINE mode (kubescapeOffline: enable) the chart mounts the writable
+  # `kubescape-volume` emptyDir at the FILE path /home/nonroot/.kubescape/config.json
+  # with `subPath: config.json`. An emptyDir + subPath makes Kubernetes create the
+  # subPath as a DIRECTORY, so config.json is a directory, not a file. The old
+  # v4.0.8 scanner never wrote it; v4.0.9 (pinned above for the CRD-exceptions
+  # getter) does — it writes a generated account ID there — so every scan now
+  # aborts with `open /home/nonroot/.kubescape/config.json: is a directory` BEFORE
+  # any WorkloadConfigurationScan result is persisted. Result: posture data goes
+  # stale and ClusterSecurityException posture exceptions are never evaluated.
+  # Mount the emptyDir at the .kubescape DIRECTORY instead (no subPath) — the same
+  # writable layout the chart's ONLINE branch uses — so the scanner can create
+  # config.json as a file; host-scanner.yaml stays a nested read-only mount.
+  # Drop once the chart fixes the offline mount upstream (kubescape/helm-charts).
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: kubescape
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: kubescape
+              spec:
+                template:
+                  spec:
+                    containers:
+                      - name: kubescape
+                        volumeMounts:
+                          - mountPath: /home/nonroot/.kubescape/config.json
+                            $patch: delete
+                          - name: kubescape-volume
+                            mountPath: /home/nonroot/.kubescape
