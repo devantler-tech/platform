@@ -21,3 +21,55 @@ spec:
     kind: OCIRepository
     name: ascoachingogvaner
   targetNamespace: ascoachingogvaner
+  patches:
+    # Kubescape C-0017 (immutable container filesystem): harden the app
+    # container to readOnlyRootFilesystem: true. The app image is
+    # nginxinc/nginx-unprivileged (a static Astro/adapter-static site on :8080,
+    # served as uid 1000), so this is patched platform-side rather than in the
+    # env-agnostic OCI artifact — it is a universal security control, not a
+    # provider-specific override, so it lives in the base (applies to every
+    # render). Pinned to name: ascoachingogvaner so it never touches the
+    # external-dns Deployment the same OCIRepository also delivers.
+    #
+    # nginx-unprivileged writes to a small set of paths at runtime; with a
+    # read-only root it needs those backed by writable emptyDir volumes or it
+    # crashes on startup ("mkdir ... Read-only file system"). Verified against
+    # the live pod's effective config (nginx -T):
+    #   * /tmp            REQUIRED — pid (/tmp/nginx.pid) + all temp paths
+    #                     (client_body/proxy/fastcgi/uwsgi/scgi_temp) resolve here.
+    #   * /var/cache/nginx  defensive — present in the base image; unused by this
+    #                     purely-static config today, mounted to stay robust if a
+    #                     future nginx/proxy_cache directive starts writing here.
+    #   * /var/run        defensive — symlink to /run; nginx-unprivileged's
+    #                     canonical writable set. Access + error logs already go
+    #                     to /dev/stdout + /dev/stderr, so no /var/log mount is
+    #                     needed. Docroot /usr/share/nginx/html stays read-only.
+    - target:
+        kind: Deployment
+        name: ascoachingogvaner
+      patch: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: ascoachingogvaner
+        spec:
+          template:
+            spec:
+              containers:
+                - name: ascoachingogvaner
+                  securityContext:
+                    readOnlyRootFilesystem: true
+                  volumeMounts:
+                    - name: tmp
+                      mountPath: /tmp
+                    - name: nginx-cache
+                      mountPath: /var/cache/nginx
+                    - name: nginx-run
+                      mountPath: /var/run
+              volumes:
+                - name: tmp
+                  emptyDir: {}
+                - name: nginx-cache
+                  emptyDir: {}
+                - name: nginx-run
+                  emptyDir: {}

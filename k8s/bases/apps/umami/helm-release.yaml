@@ -144,9 +144,30 @@ spec:
       capabilities:
         drop:
           - ALL
-      # Next.js (standalone) writes its cache under /app/.next, so the root
-      # filesystem cannot be read-only.
-      readOnlyRootFilesystem: false
+      # Kubescape C-0017 (immutable container filesystem). The Umami image is a
+      # plain Next.js standalone server (start-docker runs check-db →
+      # update-tracker → `node server.js`, with NO runtime build), so the root FS
+      # can be read-only now that the two dirs the server writes at runtime —
+      # /app/.next/cache (fetch/ISR data cache + optimized images) and /tmp — are
+      # backed by the writable emptyDirs below (extraVolumes/extraVolumeMounts).
+      readOnlyRootFilesystem: true
+    # Writable emptyDir mounts so readOnlyRootFilesystem: true does not crash the
+    # app. The chart appends extraVolumes to the pod spec.volumes and
+    # extraVolumeMounts to the umami container. Both dirs are owned/writable by
+    # the nextjs user (uid/gid 1001 = podSecurityContext.fsGroup/runAsUser), so no
+    # extra ownership fix is needed — the same read-only-root pattern the fleetdm
+    # HelmRelease uses. Only /app/.next/cache is mounted (not all of /app/.next),
+    # so the read-only build artifacts in the rest of /app/.next stay intact.
+    extraVolumes:
+      - name: next-cache
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+    extraVolumeMounts:
+      - name: next-cache
+        mountPath: /app/.next/cache
+      - name: tmp
+        mountPath: /tmp
     resources:
       requests:
         cpu: 50m
