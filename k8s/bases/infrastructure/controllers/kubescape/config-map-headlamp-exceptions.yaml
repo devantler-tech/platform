@@ -732,28 +732,28 @@ data:
             "designatorType": "Attributes",
             "attributes": {
               "kind": "^ClusterRole$",
-              "name": "^crossplane:provider:provider-aws-iam-ae66959c4138:system$"
+              "name": "^crossplane:provider:provider-aws-iam-[0-9a-f]+:system$"
             }
           },
           {
             "designatorType": "Attributes",
             "attributes": {
               "kind": "^ClusterRole$",
-              "name": "^crossplane:provider:provider-family-aws-1bcdce25f1e9:system$"
+              "name": "^crossplane:provider:provider-family-aws-[0-9a-f]+:system$"
             }
           },
           {
             "designatorType": "Attributes",
             "attributes": {
               "kind": "^ClusterRole$",
-              "name": "^crossplane:provider:provider-upjet-github-04d509bb9f6f:system$"
+              "name": "^crossplane:provider:provider-upjet-github-[0-9a-f]+:system$"
             }
           },
           {
             "designatorType": "Attributes",
             "attributes": {
               "kind": "^ClusterRole$",
-              "name": "^crossplane:provider:provider-upjet-unifi-553bd95aeec2:system$"
+              "name": "^crossplane:provider:provider-upjet-unifi-[0-9a-f]+:system$"
             }
           },
           {
