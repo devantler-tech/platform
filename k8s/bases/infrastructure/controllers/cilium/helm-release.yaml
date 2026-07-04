@@ -109,6 +109,36 @@ spec:
       replicas: ${cilium_replicas:=2}
       # Restart on cilium-config changes (same rationale as rollOutCiliumPods).
       rollOutPods: true
+      # Non-root securityContext for the cilium-OPERATOR only (Kubescape
+      # C-0013). The operator-generic image ships no USER, so it runs as root
+      # by default; but it is a pure control-plane controller (reads a
+      # read-only config-map and the read-only SPIRE agent socket, no host FS,
+      # binds only high ports), so it runs fine as non-root. This ONLY touches
+      # the cilium-operator Deployment — the agent, envoy, hubble, clustermesh
+      # and spire securityContexts (privileged by design) are untouched.
+      #
+      # NOTE: the chart's `cilium.operator.securityContext` helper REPLACES the
+      # container securityContext wholesale (it is not a deep-merge), so the
+      # chart-default `capabilities.drop: [ALL]` and
+      # `allowPrivilegeEscalation: false` must be re-stated here or they are
+      # lost. readOnlyRootFilesystem is intentionally omitted (unverified for
+      # the distroless operator image; an operator crash-loop would degrade the
+      # CNI control plane and the SPIRE identity resync that gates pod-to-pod
+      # mTLS in this cluster).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+      podSecurityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       # memory 256Mi -> 128Mi: live prod usage is 36-77Mi across both
       # replicas (2026-06-03). 128Mi keeps the operator in Burstable QoS
       # (request > 0 -- the BestEffort escape that matters) with ~1.7x
