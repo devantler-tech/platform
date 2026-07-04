@@ -15,12 +15,12 @@
 #
 # Deliberately explicit (one entry per binding) so C-0007 still flags any NEW or
 # accidental delete-capable grant elsewhere — that residual signal is wanted.
-# Two entries are known-fragile and may need a periodic refresh (documented
-# inline): the Crossplane provider CRB embeds a provider-revision hash that
-# changes on provider re-install, and the tofu-controller `tf-runner` RoleBinding
-# is created on demand per Terraform apply. Keep this list reconciled against a
-# fresh scan (it can only be re-verified live once the scanner mount fix lands —
-# see the kubescape HelmRelease postRenderer / helm-charts#862).
+# Names are regex-compared, so the one revision-hashed entry (the Crossplane
+# provider CRB) matches by pattern and survives provider re-installs; the
+# tofu-controller `tf-runner` RoleBinding is created on demand per Terraform
+# apply (the exception no-ops while it is absent). Keep this list reconciled
+# against a fresh scan (it can only be re-verified live once the scanner mount
+# fix lands — see the kubescape HelmRelease postRenderer / helm-charts#862).
 apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
@@ -70,10 +70,11 @@ spec:
         name: crossplane-admin                           # Crossplane core (Group crossplane-masters)
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        # FRAGILE: the trailing hash is the provider revision; it changes on
-        # provider re-install. Refresh this name if the crossplane provider CRB
-        # churns (or replace with an objectSelector if the CSE schema gains one).
-        name: "crossplane:provider:provider-upjet-github-04d509bb9f6f:system"
+        # The trailing hash is the provider-revision hash, rewritten on every
+        # provider re-install, so match it by pattern — exception name matching
+        # is regex-based (kubescape/opa-utils exceptions comparator regexCompare),
+        # the same mechanism that lets the literal names above match.
+        name: "^crossplane:provider:provider-upjet-github-[0-9a-f]+:system$"
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
         name: flagger                                    # progressive delivery
