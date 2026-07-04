@@ -23,8 +23,6 @@ spec:
   posture:
     - controlID: C-0053
       action: ignore
-    - controlID: C-0015
-      action: ignore
     - controlID: C-0007
       action: ignore
     - controlID: C-0037
@@ -37,13 +35,18 @@ spec:
       action: ignore
     - controlID: C-0035
       action: ignore
-    # NOTE: C-0187 (wildcard RBAC, CIS-5.1.3) is handled in wildcard-rbac.yaml,
-    # not here — a namespaceSelector exception does not suppress RBAC findings
-    # (Kubescape keys them on the Role/ClusterRole/binding object, so a namespace
-    # match never applies; proven: the namespaced velero-server Role kept failing
-    # despite `velero` being listed below). Headlamp is fixed at the root (SA
-    # scoped to read-only cluster-reader); Flux and Velero are exempted by-design
-    # in wildcard-rbac.yaml via an explicit kind+name resources match.
+    # NOTE: RBAC controls are NOT suppressed by this namespaceSelector — Kubescape
+    # keys them on the Role/ClusterRole/binding object, so a namespace match never
+    # applies (proven: the namespaced velero-server Role kept failing despite
+    # `velero` being listed below). They are handled by an explicit kind+name
+    # `match.resources` in a sibling CR instead:
+    #   - C-0187 (wildcard RBAC, CIS-5.1.3)      → wildcard-rbac.yaml
+    #   - C-0015 (list Kubernetes secrets)        → secret-reader-rbac.yaml
+    # Headlamp is fixed at the root (SA scoped to read-only cluster-reader); Flux
+    # and Velero are exempted by-design in wildcard-rbac.yaml.
+    # The other RBAC controls still listed here (C-0053, C-0007, C-0037, C-0031,
+    # C-0002, C-0063, C-0035, C-0188) have the same namespaceSelector limitation and
+    # should migrate to kind+name matching too — tracked separately.
     - controlID: C-0188
       action: ignore
   match:
