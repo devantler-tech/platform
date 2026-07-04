@@ -64,31 +64,37 @@ Two more constraints shape every option:
 ## Viable approaches
 
 ### A — Reuse the gateway's private IP (`10.0.1.7`) + CP tunnel forwarding
+
 - Admin DNS (UniFi split-horizon, already in unifi#9) → **`10.0.1.7`** (in the
   tunnel's `10.0.0.0/16` route). The CP node forwards the tunnel packet out `eth1`
   → Hetzner LB (private) → envoy → backend.
 - **Needs:** `net.ipv4.ip_forward=1` + an nftables masquerade rule for `wg0`↔`eth1`
   on the control planes (a Talos machine-config addition), and the return path to
   hold under `externalTrafficPolicy: Cluster`.
-- **VPN-only:** remove the admin hostnames from **Cloudflare/public DNS**; keep Dex
-  public. Optionally also drop admin routes from the public listener.
+- **VPN-only:** drop the admin routes from the **public gateway listener**
+  (mandatory — DNS removal alone leaves the shared LB serving those hostnames to
+  anyone who sends the SNI/Host directly) **and** remove them from
+  **Cloudflare/public DNS**; keep Dex public.
 - **Pro:** reuses the gateway + LB; no Cilium `devices` change. **Con:** a hairpin
   (tunnel→CP→LB→node→envoy); forwarding+masquerade must be exactly right; still
-  depends on closing public DNS.
+  depends on closing the public listener + DNS.
 
 ### B — Host-network reverse proxy on the CPs, bound to `wg0:443` *(recommended)*
+
 - A control-plane-only `hostNetwork` DaemonSet (envoy/nginx) binding
   **`10.200.0.1:443`**, TLS-passthrough or SNI-routing to the admin backends (or to
   the gateway ClusterIP). Binds the `wg0` socket directly, so it **sidesteps both**
   the Cilium device-pinning and the masquerade problem.
-- Admin DNS → `10.200.0.1`; only the tunnel routes it → **VPN-only by
-  reachability** (unroutable off the tunnel — no public path to close at the LB,
-  though public DNS should still drop the admin names).
+- Admin DNS → `10.200.0.1`; only the tunnel routes it — the `wg0` path itself is
+  unreachable off the tunnel. **True VPN-only still requires dropping the admin
+  routes from the public gateway listener** (which otherwise keeps serving those
+  hostnames via the LB) and removing the public DNS names.
 - **Pro:** explicit, predictable datapath; **no core Cilium change**; cleanest
   VPN-only property. **Con:** a new component to run on the CPs; must forward TLS to
   the existing gateway (passthrough) so it doesn't re-implement certs/oauth2-proxy.
 
 ### C — Add `wg0` to Cilium `devices` + a dedicated internal Gateway
+
 - Put `wg0` in Cilium `devices` (tunnel enters the BPF datapath), add a second
   `Gateway platform-internal` with an LB-IPAM pool on the tunnel subnet, move admin
   routes there.
@@ -101,9 +107,9 @@ Two more constraints shape every option:
 1. **Datapath reachability.** With the tunnel up: can a home client reach the
    gateway at `10.0.1.7` (A) or a `wg0`-bound proxy (B)? Observe the source IP a
    backend sees, the return path, and whether forwarding/masquerade is needed.
-2. **Public-exposure closure.** Confirm that removing the admin hostnames from
-   **Cloudflare** DNS (and/or the public gateway listener) fully closes external
-   access while Dex stays reachable for the OIDC redirect.
+2. **Public-exposure closure.** Confirm that removing the admin routes from the
+   **public gateway listener** and the hostnames from **Cloudflare** DNS together
+   fully close external access while Dex stays reachable for the OIDC redirect.
 
 Neither can be answered until the listener (#2462) is applied and the tunnel is up
 — hence design-first.
