@@ -70,6 +70,15 @@ spec:
         - ports:
             - port: "8000"
               protocol: TCP
+    # Policy Reporter UI upstream (policy-reporter-ui Service :8080). Prod-only;
+    # inert on local/CI where the policy-reporter namespace has no pods.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: policy-reporter
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:
