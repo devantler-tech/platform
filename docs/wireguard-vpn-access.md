@@ -28,7 +28,7 @@ Talos control planes run a WireGuard **server** (`wg0` = `10.200.0.1/24`,
 | --- | --- | --- |
 | Gateway | single Cilium `Gateway platform` (kube-system), HTTPS:443, wildcard `gateway-tls` | `k8s/bases/infrastructure/gateway/` |
 | Admin routes | all 7 HTTPRoutes bind that Gateway, `allowedRoutes.from: All` | per-controller `http-route.yaml` |
-| LB | `cilium-gateway-platform` Service `type=LoadBalancer` → **Hetzner Cloud LB** | `gateway-patch.yaml` (hcloud annotations) |
+| LB | `cilium-gateway-platform` Service `type=LoadBalancer` → **Hetzner Cloud LB** | `patches/attach-hcloud-load-balancer.yaml` (hcloud annotations) |
 | LB IPs | public `49.12.20.241` (+ IPv6) **and private `10.0.1.7`**; ports 80/443 (nodePorts 32269/30755); `externalTrafficPolicy: Cluster` | live `svc` status |
 | Public DNS | admin hostnames → **Cloudflare** (`188.114.96/97.1`) → proxied to the LB origin | `dig` |
 | Cilium | `kube-proxy-replacement=true`, `routing-mode=tunnel/vxlan`, `enable-ipv4-masquerade=true`, LB-IPAM enabled **but no `CiliumLoadBalancerIPPool`**, **`devices = enp7s0 eth1`** | live `cilium-config` |

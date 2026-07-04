@@ -264,7 +264,7 @@ spec:
               #
               # The datastore StorageClass is intentionally NOT set here. On
               # hetzner it is pinned to hcloud-csi by the prod overlay
-              # (providers/hetzner/.../cilium/patches/spire-datastorage-patch.yaml)
+              # (providers/hetzner/.../cilium/patches/store-spire-data-on-hcloud.yaml)
               # — NOT the cluster-default longhorn. The reason is a circular
               # dependency: Longhorn's own control plane is pod-to-pod traffic
               # behind this very mTLS gate, so binding spire-server's PVC to

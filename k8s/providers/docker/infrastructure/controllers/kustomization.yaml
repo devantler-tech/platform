@@ -75,10 +75,10 @@ components:
 # enough — no redundant `target:` selector. Matches the path-only style used by
 # the hetzner overlays.
 patches:
-  - path: cilium/patches/helm-release-patch.yaml
-  - path: metrics-server/patches/helm-release-patch.yaml
-  - path: flux-operator/patches/helm-release-patch.yaml
+  - path: cilium/patches/disable-encryption-and-mutual-auth.yaml
+  - path: metrics-server/patches/allow-insecure-kubelet-tls.yaml
+  - path: flux-operator/patches/trust-platform-ca.yaml
   # Opt-in patches — uncomment alongside the matching controller above:
-  #   - path: kubescape/patches/helm-release-patch.yaml
-  #   - path: tetragon/patches/helm-release-patch.yaml
-  #   - path: kubevirt/patches/kubevirt-cr-patch.yaml
+  #   - path: kubescape/patches/disable-heavy-capabilities.yaml
+  #   - path: tetragon/patches/disable-helm-wait.yaml
+  #   - path: kubevirt/patches/enable-software-emulation.yaml

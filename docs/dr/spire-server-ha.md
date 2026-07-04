@@ -39,7 +39,7 @@ Three independent blockers, each fatal to a blind change:
    i.e. **behind the very gate SPIRE bootstraps**. SPIRE down → its Postgres
    unreachable/uncertifiable → SPIRE can't start → loop. This is precisely the
    SPIRE↔Longhorn deadlock the prod overlay already engineered around by moving
-   the datastore to hcloud-csi (`cilium/patches/spire-datastorage-patch.yaml`,
+   the datastore to hcloud-csi (`cilium/patches/store-spire-data-on-hcloud.yaml`,
    2026-06-06 prod outage), but Postgres is a *busier, multi-pod, multi-node*
    dependency than a single attached block device, so it is strictly harder to
    make safe.

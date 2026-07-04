@@ -13,11 +13,23 @@ Exits non-zero (and prints a grouped report) on any violation. Checks:
   4. Kustomize build files (kustomize.config.k8s.io) live only in kustomization.yaml.
   5. In a component folder, a single-resource file's name leads with the
      kebab-cased Kind (<kind>.yaml or <kind>-<purpose>.yaml). CR folders, patch
-     fragments (under patches/ or *-patch.yaml) and kustomization.yaml are exempt.
+     fragments (under patches/) and kustomization.yaml are exempt.
   6. A folder that groups multiple instances of a single (non-workload) Kind is a
      CR folder and must be named the kebab-cased plural of that Kind
      (e.g. VerticalPodAutoscaler -> vertical-pod-autoscalers/). Organizational
      subfolders inside a known CR folder are exempt.
+  7. Patch fragments live under a patches/ directory and never carry a
+     redundant -patch suffix (the directory already marks them): a -patch stem
+     inside patches/ is redundant, and one outside patches/ is a misplaced
+     fragment.
+  8. Files under patches/ follow the CR-folder naming convention — an
+     intent-describing <verb>-<purpose>.yaml — and must not lead with the
+     patched resource's Kind (a Flux Kustomization CR patch keeps the
+     flux-kustomization prefix per check 3).
+
+Talos machine-config patches (talos/, talos-local/) are exempt from all naming
+and file-structure conventions; the walk covers k8s/ only, keeping them out of
+scope by design.
 """
 import os, re, sys
 
@@ -78,7 +90,7 @@ def in_cr(r):
     return any(r == d or r.startswith(d + "/") for d in CR_DIR_PATHS)
 
 def is_patch(r):
-    return "/patches/" in r or os.path.basename(r).endswith("-patch.yaml")
+    return "/patches/" in r
 
 def docs_with_kind(path):
     """Return [(apiVersion, kind)] for every top-level document declaring a kind."""
@@ -98,6 +110,7 @@ def docs_with_kind(path):
 
 def main():
     bad_dirs, multi, flux_bad, build_bad, kind_bad, cr_name_bad = [], [], [], [], [], []
+    patch_suffix, patch_misplaced, patch_kind_bad = [], [], []
     folder_kinds = {}  # dirpath -> [kind, ...] for real single-resource files
 
     for dirpath, dirnames, filenames in os.walk(K8S):
@@ -108,9 +121,12 @@ def main():
             if not fn.endswith((".yaml", ".yml")):
                 continue
             r = rel(os.path.join(dirpath, fn))
+            stem = fn[:-9] if fn.endswith(".enc.yaml") else fn.rsplit(".", 1)[0]
+            if stem.endswith("-patch"):
+                (patch_suffix if is_patch(r) else patch_misplaced).append(r)
             docs = docs_with_kind(os.path.join(dirpath, fn))
             if len(docs) == 0:
-                continue  # patch fragment / non-resource
+                continue  # JSON6902 patch fragment / non-resource
             if len(docs) > 1:
                 if r not in ONE_RESOURCE_EXEMPT:
                     multi.append((r, [k for _, k in docs]))
@@ -118,7 +134,6 @@ def main():
             api, kind = docs[0]
             if fn != "kustomization.yaml" and not is_patch(r):
                 folder_kinds.setdefault(dirpath, []).append(kind)
-            stem = fn[:-9] if fn.endswith(".enc.yaml") else fn.rsplit(".", 1)[0]
             if kind == "Kustomization" and api.startswith("kustomize.toolkit.fluxcd.io"):
                 if not fn.startswith("flux-kustomization"):
                     flux_bad.append(r)
@@ -127,9 +142,13 @@ def main():
                 if fn != "kustomization.yaml":
                     build_bad.append(r)
                 continue
-            if fn == "kustomization.yaml" or in_cr(r) or is_patch(r):
+            if fn == "kustomization.yaml" or in_cr(r):
                 continue
             kb = kebab(kind)
+            if is_patch(r):
+                if stem == kb or stem.startswith(kb + "-"):
+                    patch_kind_bad.append((r, kind, kb))
+                continue
             if not (stem == kb or stem.startswith(kb + "-")):
                 kind_bad.append((r, kind, kb))
 
@@ -157,6 +176,12 @@ def main():
          lambda x: f"{x[0]}  (kind {x[1]} -> expected {x[2]}.yaml or {x[2]}-<purpose>.yaml)"),
         ("CR-grouping folder not named by Kind plural", cr_name_bad,
          lambda x: f"{x[0]}  ({x[1]} grouping -> expected folder '{x[2]}/')"),
+        ("Patch fragments outside a patches/ directory", patch_misplaced,
+         lambda x: f"{x}  (move into a patches/ folder and drop the -patch suffix)"),
+        ("Patch filenames with redundant -patch suffix", patch_suffix,
+         lambda x: f"{x}  (the patches/ folder already marks it; name by intent)"),
+        ("Patch filename leads with the patched Kind instead of intent", patch_kind_bad,
+         lambda x: f"{x[0]}  (kind {x[1]} -> name it <verb>-<purpose>.yaml, not {x[2]}-*)"),
     ]
     problems = sum(len(items) for _, items, _ in groups)
     for title, items, fmt in groups:

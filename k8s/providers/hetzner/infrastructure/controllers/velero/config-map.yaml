@@ -1,6 +1,6 @@
 # Velero Volume Policy (prod/hetzner only) — routes each PVC to the right backup
 # method by StorageClass. Referenced by name from the daily-full schedule's
-# spec.resourcePolicy (see patches/helm-release-patch.yaml).
+# spec.resourcePolicy (see patches/enable-csi-snapshots.yaml).
 #
 # Why a policy instead of per-pod annotations: it is declarative (by
 # StorageClass, not volume name), and fail-safe — any volume that does NOT match

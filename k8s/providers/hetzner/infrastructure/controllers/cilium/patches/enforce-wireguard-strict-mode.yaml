@@ -98,7 +98,7 @@ spec:
     # Safe on this topology (all verified live, 2026-06-19):
     #   - Ingress: the Hetzner LB reaches nodes on their PRIVATE IPs
     #     (load-balancer.hetzner.cloud/use-private-ip: "true", see
-    #     ../../../gateway-patch.yaml) and clients hit the LB's public IP, not
+    #     ../../../patches/attach-hcloud-load-balancer.yaml) and clients hit the LB's public IP, not
     #     node public IPs. The private NIC stays a Cilium device, so the LB's
     #     NodePort BPF is unaffected; only unused public-NIC NodePort BPF is shed.
     #   - Egress: pod -> internet masquerade is the device-AGNOSTIC iptables rule

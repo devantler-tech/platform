@@ -9,7 +9,7 @@
 # server at an external Postgres is therefore the ONLY supported way to run more
 # than one Coroot server pod — so this Cluster is what makes coroot-coroot HA.
 # spec.postgres + spec.replicas: 2 + the spread affinity live in
-# patches/coroot-patch.yaml (this same hetzner overlay).
+# patches/enable-ha.yaml (this same hetzner overlay).
 #
 # PROD-ONLY (lives in the hetzner overlay, not the shared base): the base Coroot
 # CR stays single-replica SQLite for local/CI, which have no CloudNativePG

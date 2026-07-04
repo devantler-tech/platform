@@ -33,7 +33,7 @@ pressure (the operator only exposes `priorityClassName` on the node-agent).
 Local/CI (docker provider) runs the same CR on the cluster's default storage
 class (ephemeral — losing telemetry on a restart is fine there). The `hcloud`
 PVC overrides and longer retention live in the hetzner overlay
-(`k8s/providers/hetzner/infrastructure/controllers/coroot/patches/`), the same
+(`k8s/providers/hetzner/infrastructure/coroot/patches/`), the same
 way OpenBao gets block storage.
 
 ## SSO

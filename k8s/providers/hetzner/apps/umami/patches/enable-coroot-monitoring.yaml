@@ -1,7 +1,7 @@
 # Prod-only Coroot Postgres integration for umami-db (strategic merge onto the
 # base Cluster). Coroot/SPIRE run only on Hetzner, so this lives in the hetzner
 # overlay alongside umami's other prod-only wiring. The pg_monitor grant on the
-# `umami` role is a separate JSON6902 patch (grant-pg-monitor-patch.yaml) so it
+# `umami` role is a separate JSON6902 patch (grant-pg-monitor.yaml) so it
 # appends to the existing managed role instead of replacing the list.
 #
 #   inheritedMetadata.annotations — CNPG propagates these to the DB instance
