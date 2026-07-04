@@ -1,0 +1,66 @@
+---
+# Kubescape control C-0026 "Kubernetes CronJob" is a MANUAL-APPROVAL control: it
+# lists every CronJob in the cluster so an operator can confirm each is legitimate
+# (remediation: "Watch Kubernetes CronJobs and make sure they are legitimate"). It
+# has no hardening remedy — a CronJob cannot be configured to "pass" it — so the
+# only way to clear a reviewed, legitimate CronJob from the posture dashboard is a
+# ClusterSecurityException.
+#
+# Every CronJob on this cluster is declared in this GitOps repo (or an upstream
+# Helm chart it deploys) and reaches the cluster only through Flux after pull-request
+# review — so the PR review IS the C-0026 "approve" step. The current CronJobs and
+# why each is legitimate:
+#   * kube-system/hubble-generate-certs           — Cilium Hubble mTLS cert rotation (Cilium chart)
+#   * kubescape/kubescape-scheduler               — Kubescape posture-scan scheduler (Kubescape chart)
+#   * kubescape/kubevuln-scheduler                — Kubescape image-vuln-scan scheduler (Kubescape chart)
+#   * longhorn-system/longhorn-stale-node-cleanup — prunes stale Longhorn node objects for gone
+#                                                   autoscaled nodes (platform)
+#   * observability/cluster-heartbeat             — external-uptime heartbeat ping (platform)
+#   * observability/coroot-alert-autosuppressor   — re-asserts by-design Coroot alert suppressions (platform)
+#   * observability/coroot-custom-cloud-pricing   — applies Hetzner per-unit pricing to Coroot (platform)
+#   * openbao/vault-snapshot                      — OpenBao raft-snapshot backup (platform)
+#   * umami/umami-provision-tenants               — provisions Umami tenant websites (platform)
+# The fleetdm namespace is pre-listed too: the app is disabled on prod today (its
+# namespace does not exist), but its Helm chart ships a `fleet-vulnprocessing`
+# CronJob, so listing it now means re-enabling fleetdm won't silently re-trip
+# C-0026 — same convention the sibling service-account-tokens.yaml uses for it.
+#
+# SCOPE — deliberately namespace-scoped, NOT cluster-wide. C-0026 is a "watch for
+# unexpected CronJobs" control, so it is exempted ONLY in the platform-infrastructure
+# namespaces that legitimately run CronJobs today. A CronJob appearing in any OTHER
+# namespace (an app / tenant namespace, or somewhere it has no business being) still
+# fails C-0026 and surfaces on the dashboard for review — the watch signal is
+# preserved. Add a namespace here only when it legitimately gains a GitOps-managed
+# CronJob (same accepted pattern as service-account-tokens.yaml).
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: gitops-managed-cronjobs
+spec:
+  reason: >-
+    C-0026 lists every CronJob for manual approval and has no hardening remedy.
+    All CronJobs on this cluster are GitOps-managed platform components delivered
+    by Flux after PR review (the review is the approval): Cilium Hubble cert
+    rotation, the Kubescape scan schedulers, Longhorn stale-node cleanup, the
+    observability heartbeat / Coroot alert-autosuppressor / Coroot cloud-pricing
+    jobs, the OpenBao raft-snapshot backup, and Umami tenant provisioning.
+    Namespace-scoped to the infrastructure namespaces that run these, so a CronJob
+    in any unexpected namespace still surfaces for review.
+  posture:
+    - controlID: C-0026
+      action: ignore
+  match:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - kube-system
+            - kubescape
+            - longhorn-system
+            - observability
+            - openbao
+            - umami
+            # Disabled on prod today, but its chart ships a fleet-vulnprocessing
+            # CronJob — pre-listed so re-enabling fleetdm won't re-trip C-0026.
+            - fleetdm
