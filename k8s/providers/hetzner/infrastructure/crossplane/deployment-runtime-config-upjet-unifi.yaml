@@ -14,9 +14,36 @@ spec:
         spec:
           containers:
             - name: package-runtime
+              # Kubescape C-0017 (immutable container filesystem) + the hardening
+              # set Kyverno injects at admission (Kubescape scans this stored spec,
+              # not the live pod). This provider (devantler-tech provider-upjet-unifi
+              # v0.1.0, older upjet) DOES write Terraform workspaces to /tmp/<uuid>,
+              # so a read-only root with no writable /tmp breaks EVERY managed
+              # resource — it is failing right now (cluster-wireguard SYNCED=False:
+              # "mkdir /tmp/<uuid>: read-only file system"). Kyverno already forces
+              # the pod read-only with no /tmp mount, so this DRC adds the writable
+              # /tmp emptyDir that both fixes reconciliation and makes the read-only
+              # root safe. runAsUser/runAsGroup left to Crossplane's default (2000).
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: RuntimeDefault
+                seLinuxOptions:
+                  level: s0
               resources:
                 requests:
                   cpu: 10m
                   memory: 128Mi
                 limits:
                   memory: 512Mi
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
