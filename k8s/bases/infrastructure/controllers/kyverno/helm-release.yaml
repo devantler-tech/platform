@@ -87,6 +87,28 @@ spec:
     # so we must set pod-level seccompProfile + runAsNonRoot via chart values.
     admissionController:
       replicas: ${kyverno_admission_replicas:=2}
+      container:
+        # Raise the global webhook timeout from the chart/Kyverno default 10s to
+        # the maximum allowed 30s. The fail-closed image-verification policies
+        # (verify-app-images / verify-ksail-images, both failurePolicy: Fail) do a
+        # keyless cosign verification at Pod admission that reaches ghcr.io + the
+        # Sigstore TUF CDN; a COLD verify (a first-seen image digest, e.g. a fresh
+        # app release) under load can exceed 10s and return
+        # "context deadline exceeded", which — because the webhook is fail-closed —
+        # DENIES a legitimate first-party pod. During a deploy-prod merge_group run
+        # that stalls the `apps` health check and evicts the whole merge queue
+        # (observed 2026-07-04: wedding-app RS FailedCreate x19 over ~4h; #2431).
+        # This is the ONLY working lever in Kyverno v1.18.1: a PER-POLICY
+        # spec.webhookConfiguration.timeoutSeconds is intentionally NOT set on the
+        # IVPOLs because it switches Kyverno to finegrained per-policy webhooks,
+        # which are broken for multiple IVPOLs in v1.18.1 (see the note in
+        # cluster-policies/best-practices/verify-ksail-images.yaml). The image
+        # verification result cache (imageVerifyCacheEnabled, default on, TTL 60m)
+        # already fast-paths REPEAT admissions of an already-verified digest; this
+        # only widens the window for the first COLD verify to complete. Security
+        # posture is unchanged: still fail-closed, just given time to succeed.
+        extraArgs:
+          webhookTimeout: 30
       # Explicit resources = the COLD-START FLOOR. Kyverno's global resourceFilters
       # exclude ns/kyverno from auto-vpa, so the admission controller was long left
       # on the chart-default limits.memory: 384Mi, which OOMKilled (exit 137) under
