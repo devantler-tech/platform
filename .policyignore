@@ -1,45 +1,14 @@
-*.chainsaw-test*
-*.kyverno-test
-*artifact-hub.y*ml
-*artifacthub-pkg.y*ml
-*kustomization.yaml
-*README.md
-_step-templates*
-argo*
-aws*
-best-practices-cel*
-best-practices*
+# Allowlist: ignore EVERYTHING from upstream kyverno/policies, then re-include
+# only the policies this platform vendors (each also referenced from
+# k8s/bases/infrastructure/cluster-policies/kustomization.yaml).
+#
+# The sync filter (actions' sync-cluster-policies.yaml) evaluates every file
+# against these patterns in order, last match wins, `!` re-includes — so a new
+# upstream top-level category can never leak into a sync PR again (the old
+# blocklist broke exactly that way when upstream added job-timeout-enforcer/).
+# To adopt a new upstream policy, add a `!<category>/<policy>/<policy>.yaml`
+# line here and reference it from the kustomization.
+*
 !best-practices/add-ns-quota/add-ns-quota.yaml
-castai*
-cert-manager*
-cleanup*
-consul*
-cost-optimization*
-external-secret-operator*
-flux-cel*
-flux*
-istio*
-karpenter*
-kasten*
-kubecost-cel*
-kubecost*
-kubeops*
-kubevirt*
-linkerd*
-nginx*
-openshift*
-other-cel*
-other*
 !other/create-pod-antiaffinity/create-pod-antiaffinity.yaml
 !other/spread-pods-across-topology/spread-pods-across-topology.yaml
-pod-security-cel*
-pod-security*
-psa-cel*
-psa*
-psp-migration-cel*
-psp-migration*
-tekton*
-traefik-cel*
-traefik*
-velero*
-windows-security*
