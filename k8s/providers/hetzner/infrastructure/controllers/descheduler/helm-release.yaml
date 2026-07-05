@@ -1,0 +1,92 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: descheduler
+  namespace: kube-system
+  labels:
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 10m
+  timeout: 10m
+  chart:
+    spec:
+      chart: descheduler
+      # appVersion 0.36.0. Renovate tracks the chart version.
+      version: 0.36.0
+      sourceRef:
+        kind: HelmRepository
+        name: descheduler
+  # https://artifacthub.io/packages/helm/descheduler/descheduler
+  #
+  # WHY: Karpenter has no Hetzner provider, so its consolidation behaviour is
+  # rebuilt from the Hetzner-native pair — the Cluster Autoscaler
+  # (provision/deprovision, installed by ksail.prod.yaml autoscaler.node.*)
+  # plus this descheduler (rebalance/consolidate running pods, which the
+  # autoscaler never moves). See #2468 and docs/node-autoscaling.md.
+  values:
+    # Long-running Deployment (not the default CronJob): a continuous
+    # descheduling loop, and a stable target for the static VPA
+    # (../../vertical-pod-autoscalers/descheduler.yaml) to observe/right-size.
+    kind: Deployment
+    deschedulingInterval: 30m
+    replicas: 1
+    deschedulerPolicy:
+      # Blast-radius caps: one cycle may move at most 2 pods per node and 2 per
+      # namespace, so a misjudged policy degrades slowly and visibly (evictions
+      # are Events, ingested by Coroot) instead of storming the cluster.
+      maxNoOfPodsToEvictPerNode: 2
+      maxNoOfPodsToEvictPerNamespace: 2
+      profiles:
+        - name: rebalance
+          pluginConfig:
+            - name: DefaultEvictor
+              args:
+                # Only evict a pod that provably fits on another node.
+                nodeFit: true
+                podProtections:
+                  # All default protections stay ON (DaemonSet, mirror/static,
+                  # terminating, system-critical, local-storage, failed bare
+                  # pods). The eviction API additionally honors PDBs.
+                  extraEnabled:
+                    # Never touch PVC-backed pods: CNPG clusters, Longhorn
+                    # attachments, openbao, spire-server, clickhouse-keeper.
+                    # Stateful moves stay deliberate operations with their own
+                    # runbooks (see docs/dr/), never background churn.
+                    - PodsWithPVC
+            - name: RemovePodsViolatingNodeAffinity
+              args:
+                nodeAffinityType:
+                  - requiredDuringSchedulingIgnoredDuringExecution
+            - name: RemovePodsViolatingNodeTaints
+            - name: RemovePodsViolatingInterPodAntiAffinity
+            # Hard (DoNotSchedule) constraints only — the plugin default. Soft
+            # ScheduleAnyway spreads (the platform's usual pattern) are left to
+            # the scheduler so this never fights a deliberate soft placement.
+            - name: RemovePodsViolatingTopologySpreadConstraint
+            - name: RemoveDuplicates
+            - name: HighNodeUtilization
+              args:
+                # Consolidation seed: only nearly-empty nodes (< 15% requested
+                # cpu AND memory) are drained toward the rest of the cluster,
+                # so a lingering autoscale-cx* node empties and the Cluster
+                # Autoscaler reclaims it (scaleDownUnneededTime: 10m). The
+                # threshold is deliberately LOW: with the default scheduler
+                # scoring, evicted pods gravitate back to empty-ish nodes
+                # (including the overprovisioning warm spare) — full
+                # Karpenter-style packing needs MostAllocated scoring, tracked
+                # in #2471; raise this threshold when that lands.
+                thresholds:
+                  cpu: 15
+                  memory: 15
+          plugins:
+            deschedule:
+              enabled:
+                - RemovePodsViolatingNodeAffinity
+                - RemovePodsViolatingNodeTaints
+                - RemovePodsViolatingInterPodAntiAffinity
+            balance:
+              enabled:
+                - RemoveDuplicates
+                - RemovePodsViolatingTopologySpreadConstraint
+                - HighNodeUtilization

@@ -24,6 +24,7 @@ and [openbao.md](openbao.md) (OpenBao-specific DR).
 | **cosign signing identity**| sign the platform OCI artifact published to GHCR                   | publish artifacts the cluster will trust as ours             | re-sign on next CI run (no on-disk key — see below)               |
 | **Hetzner Cloud token**    | provision / destroy nodes; reconfigure Cloud LB and firewall       | destroy infrastructure; pivot via the LB                     | mint a new one in the Hetzner console; rotate `HCLOUD_TOKEN`      |
 | **Cloudflare API token**   | manage DNS for the platform domain                                 | redirect prod traffic; mint Origin CA certs                  | mint a new one in the Cloudflare dashboard                        |
+| **Actual Budget E2EE password** | client-side key to encrypt/decrypt an Actual budget file      | decrypt that budget's financial data                        | the budget is **permanently unrecoverable** — the server never held the key |
 
 The rest of this document walks each row in detail.
 
@@ -217,6 +218,49 @@ recipient.
 
 The reference architecture for keyless cosign verification is documented
 upstream at <https://docs.sigstore.dev/cosign/verifying/verify/>.
+
+---
+
+## Actual Budget end-to-end-encryption password
+
+**What:** a user-chosen password from which the Actual Budget **client** derives
+the key that encrypts a budget file. It is a fundamentally different kind of
+secret from the rest of this document: it is **not** a platform-managed key and
+the sync-server never possesses it. When E2EE is enabled, the client derives the
+key locally, re-encrypts the budget, and uploads only ciphertext plus non-secret
+metadata (`keyId`, `keySalt`, an encrypted `testContent`) — so the server holds
+no material that can decrypt the data. That is what makes it *end-to-end*, and
+it is also why there is no declarative "enable encryption" switch: turning it on
+is a one-time client action (see the
+[actual-budget app README](../../k8s/bases/apps/actual-budget/README.md)).
+
+**Where it lives:** OpenBao at `apps/actual-budget/encryption` (property
+`password`), seeded create-only with a placeholder by
+`push-secret-seed-actual-budget-encryption.yaml`. Unlike every other secret in
+this platform, **nothing in-cluster reads it back** — no ExternalSecret
+materialises it — because only a client can use it. OpenBao is purely the
+durable record so the password is not lost.
+
+### Custody recommendations
+
+Treat it like the SOPS Age keys: a primary copy in OpenBao, plus at least one
+off-cluster copy in a password manager you actually use. It is short (a
+human-typed passphrase), so a printed cold backup is trivial.
+
+### What to do if it leaks
+
+Rotate it: in the Actual UI, disable then re-enable encryption with a new
+password (this re-encrypts the file), and update the OpenBao entry. Anyone who
+captured the old ciphertext *and* the old password could decrypt the data as it
+was, so also consider the exposed transactions compromised.
+
+### What to do if it is *lost* (no copies remaining)
+
+The budget file's server-side data is **permanently unrecoverable** — there is
+no reset, no recovery, no operator override, because the platform never held the
+key. The only fallback is an *unencrypted* copy of the budget that predates
+encryption (a local device that still has it, or a pre-E2EE export). This is the
+strongest reason to keep the OpenBao entry backed up.
 
 ---
 

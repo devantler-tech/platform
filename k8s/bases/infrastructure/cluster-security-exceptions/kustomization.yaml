@@ -6,13 +6,17 @@ resources:
   - batch-workloads.yaml
   - cilium-network-policies.yaml
   - controller-rbac.yaml
+  - delete-rbac.yaml
   - exec-into-container-rbac.yaml
   - gitops-managed-cronjobs.yaml
   - health-probes.yaml
   - helm-chart-metadata.yaml
   - image-verification.yaml
   - infrastructure-privileged.yaml
+  - kubescape-privileged.yaml
   - pod-security-mutations.yaml
+  - readonly-rootfs-pending.yaml
+  - secret-reader-rbac.yaml
   - service-account-tokens.yaml
   - talos-cis-control-plane-false-positives.yaml
   - talos-cis-worker-false-positives.yaml

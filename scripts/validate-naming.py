@@ -115,7 +115,7 @@ def count_docs(path):
         text = f.read()
     return sum(
         1 for chunk in re.split(r"(?m)^---[ \t]*$", text)
-        if any(l.strip() and not l.lstrip().startswith("#") for l in chunk.splitlines())
+        if any(line.strip() and not line.lstrip().startswith("#") for line in chunk.splitlines())
     )
 
 def main():

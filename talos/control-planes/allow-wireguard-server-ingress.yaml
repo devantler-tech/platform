@@ -1,0 +1,14 @@
+# World-reachable WireGuard server (51820/udp). The home UniFi gateway dials in
+# from a dynamic residential IP, so the source can't be pinned — but WireGuard
+# never replies to an unauthenticated packet, so an open source is safe (the
+# port is invisible to scanners). See talos/control-planes/wireguard.yaml.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: control-plane-wireguard-server-ingress
+portSelector:
+  ports:
+    - 51820
+  protocol: udp
+ingress:
+  - subnet: 0.0.0.0/0
+  - subnet: ::/0

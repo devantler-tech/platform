@@ -1,0 +1,36 @@
+# Applies the AWS desired state from the devantler-tech/aws OCI artifact into
+# this namespace, AS the namespace-scoped `aws` ServiceAccount — so once
+# platform#2326 activates the IAM managed-resource kinds, the MRs are created
+# with only the authority a namespaced Role grants that SA (none is bound yet:
+# the artifact is an empty scaffold today, and RBAC is widened strictly
+# alongside ManagedResourceActivationPolicy entries, mirroring unifi). It is
+# itself applied by the `apps` Flux Kustomization; it must NOT dependsOn it
+# (deadlock) — it retries benignly until the provider (infrastructure layer)
+# has established the namespaced aws CRDs.
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: aws
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+  annotations:
+    ksail.devantler.tech/reconcile-exclude: "true"
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  path: .
+  prune: true
+  wait: true
+  # No force: these are Crossplane managed resources with the default
+  # deletionPolicy: Delete, so a force delete/recreate on immutable-field drift
+  # would cascade into deleting the backing AWS object. Handle a genuine
+  # immutable conflict per-resource with the
+  # kustomize.toolkit.fluxcd.io/force: enabled annotation instead.
+  serviceAccountName: aws
+  sourceRef:
+    kind: OCIRepository
+    name: aws
+  targetNamespace: aws

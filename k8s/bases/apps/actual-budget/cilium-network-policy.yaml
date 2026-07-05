@@ -23,6 +23,18 @@ spec:
         - ports:
             - port: "443"
               protocol: TCP
+    # Enable Banking bank-sync API. The sync-server calls this host server-side
+    # (GET /aspsps to list a country's banks, then auth/sessions/accounts);
+    # BASE_URL is https://api.enablebanking.com in actual-server. Without this
+    # allow, the default-deny egress drops the ASPSP-list request and the
+    # "Choose your bank" dropdown is empty. Pinned by FQDN (same rationale as
+    # dex above) so a compromised pod cannot exfiltrate elsewhere.
+    - toFQDNs:
+        - matchName: "api.enablebanking.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
     # DNS resolution. rules.dns engages Cilium's L7 DNS proxy so the toFQDNs
     # allow-list above can be enforced; matchPattern "*" leaves resolution
     # itself unrestricted (the FQDN list constrains where traffic may go).

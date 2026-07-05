@@ -11,9 +11,35 @@ spec:
         spec:
           containers:
             - name: package-runtime
+              # Kubescape C-0017 (immutable container filesystem) + the hardening
+              # set Kyverno injects at admission (Kubescape scans this stored spec,
+              # not the live pod). The upjet runtime writes Terraform workspaces to
+              # /tmp/<uuid>; this provider has no managed resources today so a
+              # read-only root does not break it yet, but the writable /tmp emptyDir
+              # is added defensively (same code path as provider-upjet-unifi, which
+              # is actively failing on a read-only /tmp) so a future managed resource
+              # cannot silently fail to reconcile. runAsUser/runAsGroup left to
+              # Crossplane's package-manager default (2000).
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: RuntimeDefault
+                seLinuxOptions:
+                  level: s0
               resources:
                 requests:
                   cpu: 10m
                   memory: 128Mi
                 limits:
                   memory: 512Mi
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}

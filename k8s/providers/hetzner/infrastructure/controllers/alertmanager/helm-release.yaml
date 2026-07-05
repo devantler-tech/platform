@@ -1,0 +1,120 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: alertmanager
+  namespace: kubescape
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  # WHY THIS EXISTS (prod-only). The platform's general alerting was migrated off
+  # the kube-prometheus-stack onto Coroot (docs/dr/alerting.md), so there is no
+  # Alertmanager in the cluster. But the Kubescape node-agent's runtime-detection
+  # alerts have exactly one first-class dashboard — the Headlamp Kubescape
+  # plugin's "Runtime Detection > Alerts" tab — and that tab reads ONLY from a
+  # Prometheus Alertmanager `GET /api/v2/alerts` (filtered on
+  # alertname="KubescapeRuleViolated"); it cannot read Kubescape storage CRs and
+  # cannot query Coroot's Prometheus (a metrics store, not an Alertmanager). So a
+  # single, minimal Alertmanager is reintroduced here — scoped to the kubescape
+  # namespace and to runtime alerts only, NOT a general re-adoption of the
+  # Prometheus stack. One instance both RECEIVES the node-agent's pushed alerts
+  # (POST /api/v2/alerts, wired via the nodeAgent.config.alertManagerExporterUrls
+  # patch in ../kubescape/patches/) and SERVES them to the Headlamp plugin (GET),
+  # and routes them to Slack (slack_configs → the shared incoming-webhook). The
+  # third destination, Coroot, is fed independently by the node-agent's stdout
+  # exporter (Coroot's eBPF log capture surfaces the alerts in its Logs view;
+  # Coroot CE has no inbound alert receiver). Prod-only because runtimeDetection
+  # is disabled on the docker/local overlay and Slack is a prod-only concern.
+  interval: 10m
+  timeout: 10m
+  chart:
+    spec:
+      chart: alertmanager
+      version: 1.40.1
+      sourceRef:
+        kind: HelmRepository
+        name: prometheus-community
+  # https://github.com/prometheus-community/helm-charts/blob/main/charts/alertmanager/values.yaml
+  values:
+    # Deterministic in-cluster name so the node-agent exporter target and the
+    # Headlamp plugin setting can hard-code it: Service = alertmanager.kubescape.svc:9093.
+    fullnameOverride: alertmanager
+    replicaCount: 1
+    # This Alertmanager never calls the Kubernetes API — don't mount the SA
+    # token (chart default is true).
+    automountServiceAccountToken: false
+    # Ephemeral by design: this Alertmanager only relays transient runtime alerts
+    # (no silences or gossip cluster worth persisting), so drop the chart's PVC
+    # and back /alertmanager with an emptyDir. Keeps it a zero-storage add-on.
+    persistence:
+      enabled: false
+    # Grossly-overprovisioned chart default is `resources: {}`; the kubescape
+    # namespace is excluded from auto-vpa, so pin an explicit, tiny block.
+    resources:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+    # The kubescape namespace is excluded from the platform's add-security-context
+    # mutation and the enforced PSS-restricted policy, so harden the container
+    # here instead of relying on Kyverno. readOnlyRootFilesystem is safe: the only
+    # path Alertmanager writes is --storage.path=/alertmanager, mounted as the
+    # emptyDir above; config + the webhook secret are read-only mounts.
+    podSecurityContext:
+      fsGroup: 65534
+      runAsNonRoot: true
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65534
+      runAsGroup: 65534
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
+    # Mount the Slack incoming-webhook from a Secret so it never lands in the
+    # rendered alertmanager.yml ConfigMap; referenced below via slack_configs.api_url_file.
+    # Sibling path (NOT under /etc/alertmanager, which the chart already mounts
+    # the config ConfigMap onto) to avoid a nested volume mount.
+    extraSecretMounts:
+      - name: slack-webhook
+        mountPath: /etc/alertmanager-secrets
+        secretName: alertmanager-slack-webhook
+        readOnly: true
+    config:
+      enabled: true
+      global:
+        resolve_timeout: 5m
+      route:
+        receiver: slack
+        # The node-agent labels every alert with alertname
+        # (KubescapeRuleViolated / KubescapeMalwareDetected) + host, so group
+        # per rule per node. A single catch-all route sends everything to Slack.
+        group_by:
+          - alertname
+          - host
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 4h
+      receivers:
+        - name: slack
+          slack_configs:
+            # api_url_file reads the webhook from the mounted Secret (above),
+            # keeping it out of the ConfigMap. The path MUST match the Secret's
+            # key name (slack-webhook-url in secret.yaml) — they are coupled.
+            - api_url_file: /etc/alertmanager-secrets/slack-webhook-url
+              # channel is optional for an incoming webhook (the channel is baked
+              # into the webhook URL); set here only for clarity in the UI.
+              channel: "#platform-alerts"
+              send_resolved: true
+              title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} on {{ .CommonLabels.host }}'
+              # Render every annotation the node-agent attaches (keys vary by
+              # rule), one per line, for each grouped alert.
+              text: |-
+                {{ range .Alerts }}{{ range .Annotations.SortedPairs }}*{{ .Name }}:* {{ .Value }}
+                {{ end }}{{ end }}

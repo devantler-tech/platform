@@ -1,0 +1,31 @@
+# The aws tenant's source — the same delivery pattern as github-config
+# (cosign-verified OCI artifact → namespace-scoped Kustomization), carrying the
+# devantler-tech/aws repo's deploy/ artifact: the declarative AWS state
+# (Crossplane managed resources; IAM kinds arrive with platform#2326). The
+# artifact is published as a signed OCI image by that repo's cd.yaml on v* tags.
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: aws
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  interval: 1m
+  ref:
+    semver: ">=1.0.0"
+  # No secretRef: the package is public (non-secret desired-state config, no
+  # credentials — those live in OpenBao), so it is pulled anonymously.
+  url: oci://ghcr.io/devantler-tech/aws/manifests
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      # Keyless-signed by the shared publish-manifests reusable workflow that
+      # aws's cd.yaml calls. Signing runs INSIDE that reusable workflow, so the
+      # cosign OIDC subject is the reusable workflow's path, NOT aws's own
+      # cd.yaml. Unlike the older tenants there is no reusable-workflows
+      # alternation here: the aws repo was scaffolded after the actions#425
+      # repoint, so every artifact it has ever published is actions-signed.
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@.+$'
