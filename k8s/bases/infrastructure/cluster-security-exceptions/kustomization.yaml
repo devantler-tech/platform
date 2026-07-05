@@ -6,6 +6,7 @@ resources:
   - batch-workloads.yaml
   - cilium-network-policies.yaml
   - controller-rbac.yaml
+  - delete-rbac.yaml
   - exec-into-container-rbac.yaml
   - gitops-managed-cronjobs.yaml
   - health-probes.yaml

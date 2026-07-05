@@ -74,9 +74,6 @@ data:
             "controlID": "^C-0053$"
           },
           {
-            "controlID": "^C-0007$"
-          },
-          {
             "controlID": "^C-0037$"
           },
           {
@@ -147,6 +144,42 @@ data:
         "posturePolicies": [
           {
             "controlID": "^C-0002$"
+          }
+        ]
+      },
+      {
+        "name": "delete-capable-rbac-by-design",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "reason": "Controllers, operators and tenant deployers require delete permissions by design (C-0007). Mirrors the operator CSE (delete-rbac.yaml) by kind+name: C-0007 findings terminate on the RBAC binding objects themselves (19 of 26 on cluster-scoped ClusterRoleBindings whose namespace is empty), so a namespace designator can never cover them.",
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^(cdi-sa|cert-manager-controller-(issuers|clusterissuers|certificates|challenges)|cloudnative-pg|cluster-reconciler-flux-system|flux-operator|coroot-operator|crossplane-admin|crossplane:provider:provider-upjet-github-[0-9a-f]+:system|flagger|kro:controller|ksail-operator|kube-prometheus-stack-operator|kubevirt-apiserver|kubevirt-controller|longhorn-bind|reloader-reloader-role-binding)$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^(ascoachingogvaner|kyverno:admission-controller|kyverno:cleanup-controller|longhorn|tf-runner|velero-server|wedding-app)$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Group$",
+              "name": "^crossplane-masters$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0007$"
           }
         ]
       },
