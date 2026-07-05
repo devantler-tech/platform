@@ -200,13 +200,14 @@ jobs:
             # Every ${VAR} referenced by the overlay's patches must be set and
             # non-empty here — an empty expansion is exactly the class of
             # failure that evicted #2462 from the merge queue.
-            local vars v
-            vars=$(grep -rhoE '[$][{][A-Z_][A-Z0-9_]*[}]' "$dir" | sort -u | tr -d '{}$') || true
+            local vars v fmt=""
+            vars=$(grep -rhoE '[$][{][A-Za-z_][A-Za-z0-9_]*[}]' "$dir" | sort -u | tr -d '{}$') || true
             for v in $vars; do
               if [ -z "${!v:-}" ]; then
                 echo "::error::${dir}: \${${v}} is referenced by a patch but unset/empty — deploy would render an invalid machine config"
                 exit 1
               fi
+              fmt="${fmt}\${${v}} "
             done
 
             local out; out=$(mktemp -d)
@@ -225,8 +226,15 @@ jobs:
               for f in "${dir}"/cluster/*.yaml "${dir}/${role}"/*.yaml; do
                 [ -f "${f}" ] || continue
                 expanded="${out}/$(echo "${f}" | tr '/' '_')"
-                envsubst < "${f}" > "${expanded}"
-                if grep -qE '[$][{][A-Z_][A-Z0-9_]*[}]' "${expanded}"; then
+                # Allowlist-scoped substitution: only the pre-checked vars are
+                # expanded, so an unexpected placeholder shape survives for the
+                # post-check below instead of being silently cleared.
+                if [ -n "${fmt}" ]; then
+                  envsubst "${fmt}" < "${f}" > "${expanded}"
+                else
+                  cp "${f}" "${expanded}"
+                fi
+                if grep -qE '[$][{][A-Za-z_][A-Za-z0-9_]*[}]' "${expanded}"; then
                   echo "::error::${f}: unexpanded \${VAR} after substitution"
                   exit 1
                 fi
