@@ -7,3 +7,5 @@ resources:
   - helm-release.yaml
   - external-secret.yaml
   - cilium-network-policy.yaml
+  - role.yaml
+  - role-binding.yaml

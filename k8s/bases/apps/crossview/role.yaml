@@ -1,0 +1,24 @@
+---
+# Least-privilege RBAC for opening Crossview through Headlamp: since the
+# public route was dropped (Crossview 4.5.0 re-embed), the Headlamp plugin's
+# port-forward is the ONLY entry point, and Headlamp's port-forward handler
+# authorizes it against the signed-in user's own RBAC (`create` on
+# `pods/portforward`). The OIDC identity is deliberately read-only cluster-wide
+# (see k8s/bases/infrastructure/cluster-role-bindings/oidc-view.yaml), and a
+# port-forward tunnel to the dashboard pod mutates nothing — so the write-verb
+# grant is scoped to exactly this namespace instead of widening the cluster
+# roles.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: crossview-portforward
+  namespace: crossview
+  labels:
+    app.kubernetes.io/managed-by: ksail
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - pods/portforward
+    verbs:
+      - create
