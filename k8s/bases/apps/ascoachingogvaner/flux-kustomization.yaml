@@ -6,11 +6,6 @@ metadata:
     app.kubernetes.io/managed-by: ksail
   annotations:
     ksail.devantler.tech/reconcile-exclude: "true"
-    # Phase A of the skeleton->Tenant-CR handover (#1932/#2486): when the KRO
-    # swap de-inventories this object from the `apps` Kustomization, Flux must
-    # NOT garbage-collect it — kro adopts it in place. Also guards against
-    # accidental skeleton deletion meanwhile. Remove after Phase C.
-    kustomize.toolkit.fluxcd.io/prune: disabled
   name: ascoachingogvaner
   namespace: ascoachingogvaner
 spec:

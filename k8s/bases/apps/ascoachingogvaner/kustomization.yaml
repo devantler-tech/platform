@@ -1,6 +1,16 @@
 ---
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# Phase A of the skeleton->Tenant-CR handover (#1932/#2486): when the KRO swap
+# de-inventories these objects from the `apps` Kustomization, Flux must NOT
+# garbage-collect them — kro adopts them in place (the tenant namespace holds
+# the live database; the tenant Kustomization's finalizer would GC the whole
+# app). Applied once here rather than per file so it also covers any object
+# added to the skeleton before Phase B; none of these resources carries a pod
+# template, so the annotation propagates to top-level metadata only. The whole
+# directory is deleted at Phase B.
+commonAnnotations:
+  kustomize.toolkit.fluxcd.io/prune: disabled
 resources:
   # external-dns-rbac stays platform-side: it grants the tenant's external-dns
   # SA privileged cross-namespace reads (the kube-system Gateway, cluster-wide
