@@ -54,22 +54,22 @@ spec:
       # Velero — namespaced binding + Role, and the cluster-admin CRB
       - apiGroup: rbac.authorization.k8s.io
         kind: RoleBinding
-        name: velero-server
+        name: ^velero-server$
       - apiGroup: rbac.authorization.k8s.io
         kind: Role
-        name: velero-server
+        name: ^velero-server$
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: velero-server
+        name: ^velero-server$
       # CloudNativePG — CRB whose ClusterRole explicitly grants pods/exec
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: cloudnative-pg
+        name: ^cloudnative-pg$
       # Flux kustomize-/helm-controller — cluster-admin via cluster-reconciler CRB
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: cluster-reconciler-flux-system
+        name: ^cluster-reconciler-flux-system$
       # Flux operator — cluster-admin CRB
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: flux-operator
+        name: ^flux-operator$

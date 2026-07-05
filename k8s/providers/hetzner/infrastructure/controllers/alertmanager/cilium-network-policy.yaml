@@ -1,0 +1,57 @@
+# Adds the Alertmanager-specific flows on top of the namespace-wide
+# `allow-kubescape` policy (bases/infrastructure/controllers/kubescape/) and the
+# Kyverno-generated default-deny. Cilium composes policies ADDITIVELY (the
+# effective allow-set is the UNION across every policy selecting the endpoint), so
+# this only needs to add what the base does not already grant the Alertmanager pod:
+#   * the node-agent → Alertmanager:9093 push is intra-namespace, already allowed
+#     by allow-kubescape's intra-namespace rules — not repeated here;
+#   * DNS egress is already granted to every kubescape pod by allow-kubescape.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-alertmanager
+  namespace: kubescape
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: alertmanager
+  ingress:
+    # The Headlamp Kubescape plugin reads GET /api/v2/alerts through the
+    # Kubernetes API server's Service proxy (/api/v1/namespaces/kubescape/
+    # services/alertmanager:9093/proxy/...), so the connection to :9093
+    # originates from the API server. Mirror the entity set the base
+    # allow-kubescape policy uses for the webhook/host-scanner ports.
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "9093"
+              protocol: TCP
+  egress:
+    # Post alert notifications to the Slack incoming-webhook. Pinned by FQDN
+    # (not world:443) so a compromised pod cannot exfiltrate elsewhere — the same
+    # lockdown posture as allow-kubescape's toFQDNs list.
+    - toFQDNs:
+        - matchName: "hooks.slack.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    # DNS resolution, so Cilium's L7 DNS proxy can learn hooks.slack.com's IPs and
+    # enforce the toFQDNs allow above (the base policy engages the proxy too, but
+    # keep this self-contained).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchPattern: "*"

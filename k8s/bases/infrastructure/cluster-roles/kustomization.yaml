@@ -3,9 +3,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - cluster-reader.yaml
+  - cert-manager-tenant-edit.yaml
   - cilium-tenant-edit.yaml
   - cnpg-tenant-edit.yaml
   - external-secrets-tenant-edit.yaml
   - gateway-tenant-edit.yaml
+  - tenant-base-edit.yaml
+  - tenant-edit.yaml
   - tenant-external-dns.yaml
   - tenant-external-dns-global.yaml
