@@ -68,6 +68,8 @@ spec:
       # whose profile is complete; partial-profile workloads still get a VEX
       # shell, which fills in as their pods naturally roll. Feeds the
       # reachable-CVE CI gate (#2149) a machine-readable suppression source.
+      # Upstream marks the capability experimental — the VEX CRs are advisory
+      # data only, so a regression cannot break scanning itself.
       vexGeneration: enable
       runtimeDetection: enable
       # Enables Kubescape's risk-acceptance feature, so the operator/kubevuln process
