@@ -40,6 +40,7 @@ jobs:
               - 'talos-local/**'
               - 'talos/**'
               - 'scripts/validate-naming.py'
+              - 'scripts/validate-embedded-json.py'
               - '.github/workflows/ci.yaml'
             talos:
               - 'talos/**'
@@ -63,6 +64,16 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: 🧩 Validate embedded JSON blobs
+        # ConfigMaps that embed whole JSON documents as block scalars (e.g. the
+        # Headlamp Kubescape exceptions ConfigMap's exceptionPolicies) are opaque
+        # strings to schema validation, so a stray comma ships silently and only
+        # surfaces at consumption time — where an empty exceptions view reads
+        # identical to a clean posture. Pure Python stdlib, runs in under a
+        # second, so it goes first — before the ksail download. See
+        # scripts/validate-embedded-json.py (#2480).
+        run: python3 scripts/validate-embedded-json.py
 
       - name: ⚙️ Setup KSail
         # Renovate-managed (datasource github-releases; grouped 'ksail' with the
