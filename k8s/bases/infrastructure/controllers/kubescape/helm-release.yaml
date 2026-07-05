@@ -61,6 +61,16 @@ spec:
       # upstream propagates keepLocal into the continuous-scan command path.
       continuousScan: disable
       vulnerabilityScan: enable
+      # kubevuln emits an OpenVEX document per scanned image (stored in-cluster
+      # as OpenVulnerabilityExchangeContainer CRs), marking CVEs not_affected
+      # when the workload's ApplicationProfile shows the vulnerable component
+      # is never loaded. Documents only carry relevancy verdicts for workloads
+      # whose profile is complete; partial-profile workloads still get a VEX
+      # shell, which fills in as their pods naturally roll. Feeds the
+      # reachable-CVE CI gate (#2149) a machine-readable suppression source.
+      # Upstream marks the capability experimental — the VEX CRs are advisory
+      # data only, so a regression cannot break scanning itself.
+      vexGeneration: enable
       runtimeDetection: enable
       # Enables Kubescape's risk-acceptance feature, so the operator/kubevuln process
       # the in-cluster SecurityException / ClusterSecurityException CRDs
