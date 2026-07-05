@@ -66,10 +66,6 @@ data:
       # landing focus.
       Internal Developer Platform:
         icon: mdi-developer-board
-      # Infrastructure as Code: Crossplane and its tooling. Crossview surfaces the
-      # Crossplane resource graph; sits between the IDP and Kubernetes groups.
-      Infrastructure as Code:
-        icon: mdi-cube-outline
       Kubernetes:
         icon: si-talos-#FF7300
       Observability:
