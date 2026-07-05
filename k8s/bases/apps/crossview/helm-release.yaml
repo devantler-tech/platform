@@ -11,9 +11,10 @@ spec:
   chart:
     spec:
       chart: crossview
-      # 4.5.0-rc.1 is the latest published tag but a release candidate; pin the
-      # latest stable.
-      version: 4.4.0
+      # 4.5.0 carries the upstream OIDC fix this deployment depends on: an empty
+      # `issuer` now skips discovery entirely, so the explicit split-horizon
+      # endpoints below are used verbatim (see config.sso.oidc).
+      version: 4.5.0
       sourceRef:
         kind: HelmRepository
         name: crossview
@@ -137,9 +138,11 @@ spec:
         # Crossview keys several behaviours off NODE_ENV (lib/env.go ->
         # Environment): with it set to `production` the session-cookie middleware
         # marks the cookie Secure (api/middlewares/session.go), CORS debug logging
-        # is off, and gin runs in release mode. Crossview is always served over
-        # HTTPS (crossview.${domain}), local included, so a Secure cookie is safe
-        # in every environment.
+        # is off, and gin runs in release mode. Crossview is reached over the
+        # Headlamp plugin's port-forward at http://localhost:<port>, and
+        # Chromium-based browsers treat localhost as a trustworthy origin, so
+        # the Secure cookie still sticks there (Safari does not — use Chrome,
+        # same as the existing Headlamp-OIDC guidance).
         - name: NODE_ENV
           value: "production"
     # The chart bundles a Postgres for session/user state. Run it ephemeral (no
@@ -201,14 +204,15 @@ spec:
     config:
       server:
         cors:
-          # The public URL Crossview is served at (crossview.${domain}) — a
-          # standalone, top-level dashboard. It is the post-login redirect target
-          # (must be the public URL, or users bounce to localhost after
-          # authenticating).
-          origin: https://crossview.${domain}
-        # Crossview does its OWN authentication now — there is no oauth2-proxy in
-        # front of it (http-route.yaml routes crossview.${domain} straight to
-        # crossview-service). Mode `session` is mandatory for the OIDC flow below:
+          # Crossview has NO public route anymore: it is surfaced exclusively
+          # inside Headlamp via the crossview-headlamp plugin, whose resolver
+          # falls through to a Headlamp-managed port-forward of
+          # crossview-service (target port 3001) bound on 127.0.0.1 — so the
+          # browser-facing origin, and the post-login redirect target, is the
+          # forwarded localhost URL.
+          origin: http://localhost:3001
+        # Crossview does its OWN authentication (no oauth2-proxy hop — and no
+        # gateway route at all). Mode `session` is mandatory for the OIDC flow below:
         # the SessionAuthMiddleware gates the /api/kubernetes/* data routes on a
         # signed session cookie, the cookie store is ONLY wired up when
         # AUTH_MODE=session (api/middlewares/session.go), and the boot-time admin
@@ -233,29 +237,32 @@ spec:
       #     server-side calls from the Crossview pod, which cannot resolve
       #     dex.${domain} on the local/docker cluster and should not hairpin the
       #     LoadBalancer in prod.
-      # WORKAROUND (upstream gap): Crossview's SSO code (services/sso_service.go)
-      # runs OIDC discovery whenever `issuer` is non-empty and lets a successful
-      # discovery OVERRIDE the explicit endpoints below — and the chart's configmap
-      # forces a non-empty issuer (it `default`s an unset value to a localhost URL).
-      # There is no skip-discovery / explicit-endpoint-precedence knob, so to keep
-      # the split we rely on the chart's localhost default being unreachable
-      # in-cluster: the discovery GET is refused instantly, discovery fails closed,
-      # and the split URLs below are used verbatim on every cluster. Revisit if the
-      # chart gains a discovery toggle or if discovery ever becomes fatal (it would
-      # crash-loop the pod). Crossview validates the user via the userinfo endpoint,
-      # not the id_token, so no JWKS/issuer match is required.
+      # The split works because `issuer` is explicitly EMPTY: since crossview
+      # v4.5.0 an empty issuer SKIPS OIDC discovery entirely (fixed upstream for
+      # exactly this split-horizon shape), so the explicit endpoints below are
+      # used verbatim. Before 4.5.0 the chart forced a non-empty issuer and a
+      # successful discovery overrode these endpoints — the old fail-closed
+      # localhost-issuer workaround that used to be documented here is obsolete.
+      # Crossview validates the user via the userinfo endpoint, not the
+      # id_token, so no JWKS/issuer match is required.
       #
-      # SECURITY NOTE: removing oauth2-proxy drops its allowed_groups gate
-      # (devantler-tech:platform team). Crossview does not gate on OIDC groups, so
-      # the effective gate widens to any devantler-tech ORG member that Dex
-      # authenticates (its github connector is org-scoped). They land as a
-      # non-admin `user` on a read-only dashboard (the first login is the
-      # break-glass `admin` seeded at boot, so SSO users are never `admin`).
+      # SECURITY NOTE: crossview has no oauth2-proxy allowed_groups gate, so the
+      # effective gate is any devantler-tech ORG member that Dex authenticates
+      # (its github connector is org-scoped). They land as a non-admin `user` on
+      # a read-only dashboard (the first login is the break-glass `admin` seeded
+      # at boot, so SSO users are never `admin`). With the public route gone the
+      # practical surface shrinks further: reaching the login page at all now
+      # requires a kube-API port-forward (the Headlamp plugin path).
       sso:
         oidc:
           enabled: true
           clientId: public-client
+          issuer: ""
           authorizationURL: https://dex.${domain}/auth
           tokenURL: http://dex.dex.svc.cluster.local:5556/token
           userInfoURL: http://dex.dex.svc.cluster.local:5556/userinfo
-          callbackURL: https://crossview.${domain}/api/auth/oidc/callback
+          # The browser-facing callback on the Headlamp-managed port-forward
+          # (registered on the shared Dex client — controllers/dex/
+          # helm-release.yaml). The plugin forwards crossview-service to a local
+          # port; 3001 mirrors the service target port the forward requests.
+          callbackURL: http://localhost:3001/api/auth/oidc/callback
