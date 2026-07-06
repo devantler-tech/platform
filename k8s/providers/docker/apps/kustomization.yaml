@@ -22,12 +22,12 @@ kind: Kustomization
 #         kind: HelmRelease
 #         name: actual-budget
 #         namespace: actual-budget
-#       path: actual-budget/patches/helm-release-patch.yaml
+#       path: actual-budget/patches/shrink-persistence.yaml
 #     - target:
 #         kind: HelmRelease
 #         name: headlamp
 #         namespace: headlamp
-#       path: headlamp/patches/helm-release-patch.yaml
+#       path: headlamp/patches/trust-platform-ca.yaml
 #
 # Tenant RGD pilot (#1932 step 3) — opt-in like the apps above. Enabling it has
 # the KRO controller expand ascoachingogvaner's full control-plane skeleton from

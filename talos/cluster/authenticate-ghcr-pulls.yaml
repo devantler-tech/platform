@@ -1,6 +1,6 @@
 # Node-level ghcr.io registry auth for first-party image-signature verification.
 #
-# talos/cluster/image-verification.yaml (ImageVerificationConfig) verifies the
+# talos/cluster/verify-first-party-images.yaml (ImageVerificationConfig) verifies the
 # cosign signature of every ghcr.io/devantler-tech/* image at the containerd
 # PULL layer. That signature is a separate artifact stored in the SAME package
 # as the image, and Talos fetches it using THIS machine.registries config —

@@ -109,7 +109,7 @@ resources:
   # seeds apps/ascoachingogvaner/simply in OpenBao; keeping it in the tenant means
   # only the (isolated) tenant Kustomization is affected, never this `wait: true`
   # layer. The platform keeps only the shared Gateway HTTPS listener patch
-  # (ascoachingogvaner-dk-listeners-patch.yaml, below), which references the
+  # (patches/add-ascoachingogvaner-dk-listeners.yaml, below), which references the
   # tenant Secret cross-namespace and stays Ready (Gateway Programmed) regardless.
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
@@ -120,11 +120,11 @@ components:
 patches:
   # gateway-patch self-identifies (Gateway/platform/kube-system), so a path is
   # enough — no explicit target, matching the coroot patch below.
-  - path: gateway-patch.yaml
+  - path: patches/attach-hcloud-load-balancer.yaml
   # JSON6902 patches don't self-identify, so this one needs an explicit
   # target. Adds HTTPS listeners for the tenant-owned ascoachingogvaner.dk
   # domain — see the file header.
-  - path: ascoachingogvaner-dk-listeners-patch.yaml
+  - path: patches/add-ascoachingogvaner-dk-listeners.yaml
     target:
       group: gateway.networking.k8s.io
       kind: Gateway
@@ -133,12 +133,12 @@ patches:
   # wiring. The CR it patches comes from ../../../bases/infrastructure/coroot/
   # (the `infrastructure` layer); the strategic-merge patch matches on the
   # embedded coroot.com/v1 Coroot/coroot identity, so no explicit target.
-  - path: coroot/patches/coroot-patch.yaml
+  - path: coroot/patches/enable-ha.yaml
   # Prod-only: migrate the OpenBao raft-snapshot PVC from the default longhorn
   # StorageClass to hcloud so node-mobile snapshot Jobs can attach it reliably
   # (see the file header). Self-identifies via PersistentVolumeClaim/openbao/
   # vault-snapshots, so no explicit target is needed.
-  - path: vault-snapshots-hcloud-patch.yaml
+  - path: patches/store-vault-snapshots-on-hcloud.yaml
   # Prod-only: add a generous memory `default` to the kube-system / kyverno
   # LimitRanges (which are CPU-only in the base). This seeds the memory limit the
   # vertical-pod-autoscalers/ VPAs scale ratio-preserving, so VPA right-sizes the memory

@@ -1,0 +1,16 @@
+# kubelet (10250) cluster-internal only on worker nodes. Pairs with
+# cluster/block-ingress-by-default.yaml.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: kubelet-ingress
+portSelector:
+  ports:
+    - 10250
+  protocol: tcp
+ingress:
+  # Node CIDR covers cross-node scrapes: Cilium masquerades pod->node-IP
+  # traffic to the source node IP. Same-node scrapes (e.g. the local
+  # metrics-server replica hitting its own kubelet) are NOT masqueraded, so
+  # the kubelet sees the raw pod IP and the pod CIDR must be allowed too.
+  - subnet: 10.0.0.0/16
+  - subnet: 10.244.0.0/16

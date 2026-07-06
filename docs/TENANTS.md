@@ -191,7 +191,7 @@ Open the change as a PR; once merged, Flux reconciles the new tenant.
 
 A tenant's manifests ship from its own OCI artifact, but the **prod (hetzner) overlay** can
 layer a `Kustomization` `spec.patches` onto the tenant's platform-side Flux `Kustomization`
-at `k8s/providers/hetzner/apps/<tenant>/patches/kustomization-patch.yaml`, which Flux then
+at `k8s/providers/hetzner/apps/<tenant>/patches/flux-kustomization-<purpose>.yaml`, which Flux then
 applies to the tenant's resources *after* pulling the artifact. This is a **narrow escape
 hatch**, not a place for tenant config.
 

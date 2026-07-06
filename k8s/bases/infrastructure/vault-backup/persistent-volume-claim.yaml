@@ -1,7 +1,7 @@
 # Dedicated volume for OpenBao raft snapshots (written by the
 # vault-snapshot CronJob, newest 14 retained). Uses the cluster's default
 # StorageClass (the hetzner overlay pins it to hcloud — see
-# k8s/providers/hetzner/infrastructure/vault-snapshots-hcloud-patch.yaml).
+# k8s/providers/hetzner/infrastructure/patches/store-vault-snapshots-on-hcloud.yaml).
 # Snapshots on this PVC are the first-line restore source after OpenBao data
 # loss: the vault-config Job restores from the newest one automatically when
 # it finds an uninitialized cluster alongside a surviving openbao-unseal

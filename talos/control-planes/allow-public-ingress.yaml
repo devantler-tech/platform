@@ -1,0 +1,27 @@
+# World-reachable management endpoints on control-plane nodes:
+# Kubernetes API (6443) + apid (50000). Pairs with
+# cluster/block-ingress-by-default.yaml (NetworkDefaultActionConfig: block).
+#
+# Rules are CONSOLIDATED by protocol + subnet-set (all ports in one rule) on
+# purpose — ADD PORTS TO THE MATCHING RULE, DON'T ADD NEW RULES. Talos
+# programs rules through a bare, un-tuned netlink conn (google/nftables
+# v0.3.0), and a large rule count makes conn.Flush() fail with ENOBUFS; the
+# NfTablesChainController then loops forever and the node hangs in STAGE
+# "Booting" — apid/etcd/kubelet never start. Control planes carry the most
+# rules and hit the threshold first: this bricked prod-control-plane-1 during
+# the Talos v1.13.4 in-place upgrade. See google/nftables#103 and #235.
+#
+# Cluster network CIDR: 10.0.0.0/16 (from ksail.prod.yaml networkCidr)
+# Pod CIDR: 10.244.0.0/16
+# Reference: https://docs.siderolabs.com/talos/v1.12/networking/ingress-firewall
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: control-plane-public-ingress
+portSelector:
+  ports:
+    - 6443
+    - 50000
+  protocol: tcp
+ingress:
+  - subnet: 0.0.0.0/0
+  - subnet: ::/0

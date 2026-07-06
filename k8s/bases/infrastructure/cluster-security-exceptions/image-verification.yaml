@@ -3,7 +3,7 @@
 # First-party images (ghcr.io/devantler-tech/*) ARE cosign-signed and verified
 # — by Flux on the OCI manifest artifacts (apps' oci-repository.yaml verify.provider:
 # cosign) and, at the node pull layer, by Talos ImageVerificationConfig
-# (talos/cluster/image-verification.yaml). But third-party chart images
+# (talos/cluster/verify-first-party-images.yaml). But third-party chart images
 # (Cilium, Longhorn, Coroot, registry.k8s.io, …) are not all signed, and there
 # is no admission-layer signature enforcement, so this cluster-wide control —
 # which scans every workload image ref — remains exempted.

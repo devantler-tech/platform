@@ -8,9 +8,9 @@
 # volumes and break any PVC backed by hcloud-csi.
 #
 # NOTE: node-labels for Longhorn (node.longhorn.io/create-default-disk=true)
-# are set in node-labels.yaml. Talos strategic merge overwrites map keys,
+# are set in label-nodes.yaml. Talos strategic merge overwrites map keys,
 # so all kubelet.extraArgs.node-labels values must live in a single patch
-# file — see node-labels.yaml.
+# file — see label-nodes.yaml.
 machine:
   kubelet:
     extraMounts:

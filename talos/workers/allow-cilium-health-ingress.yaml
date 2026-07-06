@@ -1,0 +1,11 @@
+# Cilium health checks (4240) cluster-internal only on worker nodes. Pairs
+# with cluster/block-ingress-by-default.yaml.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: cilium-health-ingress
+portSelector:
+  ports:
+    - 4240
+  protocol: tcp
+ingress:
+  - subnet: 10.0.0.0/16

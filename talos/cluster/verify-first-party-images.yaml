@@ -33,7 +33,7 @@
 # omitted for now and can be added later once the first-party rules are proven.
 #
 # This does NOT satisfy kubescape C-0237 (see
-# k8s/bases/infrastructure/security-exceptions/image-verification.yaml): that
+# k8s/bases/infrastructure/cluster-security-exceptions/image-verification.yaml): that
 # control scans workload image refs at the cluster layer, cannot observe Talos
 # node-level verification, and still fails while unsigned third-party images run.
 #

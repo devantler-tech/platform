@@ -2,7 +2,7 @@
 # CloudNativePG instances on 5432 for the declarative Postgres integration —
 # the cluster-agent discovers the DB pods via the coroot.com/postgres-scrape
 # annotations the Cluster's inheritedMetadata stamps onto them, then connects to
-# scrape pg_stat_* (see patches/postgres-cluster-patch.yaml).
+# scrape pg_stat_* (see patches/enable-coroot-monitoring.yaml).
 #
 # ADDITIVE, not a replacement for allow-umami: Cilium unions the ingress allows
 # across every policy selecting an endpoint, so this standalone policy only adds
