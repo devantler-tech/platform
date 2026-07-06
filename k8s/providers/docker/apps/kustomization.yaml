@@ -36,6 +36,14 @@ kind: Kustomization
 #   resources:
 #     - tenant-ascoachingogvaner.yaml
 #
+# WebApp RGD pilot (#1933 pilot migration) — opt-in like the Tenant pilot above.
+# Enabling it has the KRO controller expand wedding-app's Deployment + Service +
+# HTTPRoute skeleton from the one typed declaration in webapp-wedding-app.yaml
+# (see that file's header for what to expect without locally-seeded GHCR
+# credentials):
+#   resources:
+#     - webapp-wedding-app.yaml
+#
 # Not available on the local cluster (intentionally excluded):
 #   wedding-app, ascoachingogvaner — prod-only tenants (need GHCR, CNPG, longhorn)
 #   umami                          — CNPG-backed Postgres pinned to longhorn
