@@ -119,7 +119,7 @@ declarative/Helm way to seed it — [headlamp#3979](https://github.com/kubernete
 Each operator sets it **once** in Headlamp → *Settings → Plugins → Kubescape*,
 in the `namespace/service:port` form the plugin validates:
 
-```
+```text
 kubescape/alertmanager:9093
 ```
 
