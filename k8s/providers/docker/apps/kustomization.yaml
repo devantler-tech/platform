@@ -37,15 +37,19 @@ kind: Kustomization
 #     - tenant-ascoachingogvaner.yaml
 #
 # WebApp RGD pilot (#1933 pilot migration) — opt-in like the Tenant pilot above.
-# Enabling it has the KRO controller expand wedding-app's Deployment + Service +
-# HTTPRoute skeleton from the one typed declaration in webapp-wedding-app.yaml
+# Enabling it has the KRO controller expand a Deployment + Service + HTTPRoute
+# skeleton from the one typed `WebApp` declaration in web-app-wedding-app.yaml
 # (see that file's header for what to expect without locally-seeded GHCR
-# credentials):
+# credentials). NB: that WebApp CR is named `wedding-app` only as the RGD's
+# example — it is a validate-only skeleton pilot, NOT the prod `wedding-app`
+# tenant deployment listed as excluded below:
 #   resources:
-#     - webapp-wedding-app.yaml
+#     - web-app-wedding-app.yaml
 #
 # Not available on the local cluster (intentionally excluded):
-#   wedding-app, ascoachingogvaner — prod-only tenants (need GHCR, CNPG, longhorn)
+#   wedding-app, ascoachingogvaner — prod-only tenant deployments (need GHCR,
+#                                    CNPG, longhorn); distinct from the opt-in
+#                                    WebApp/Tenant pilot CRs of the same names
 #   umami                          — CNPG-backed Postgres pinned to longhorn
 #                                    storage (prod-only)
 #   fleetdm                        — heavy app (MySQL + Redis + migration) kept
