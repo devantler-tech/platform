@@ -1,0 +1,37 @@
+---
+# WebApp RGD local-first pilot (#1933 pilot migration): the typed `WebApp`
+# declaration that — once proven — replaces a web app's hand-copied
+# Deployment + Service + Gateway-API HTTPRoute skeleton with one ~7-line CR.
+# The KRO controller expands it into that identical skeleton in the
+# `${spec.name}` namespace, attaching the route to the central Cilium
+# `platform` gateway in kube-system.
+#
+# Sibling to the Tenant RGD pilot (tenant-ascoachingogvaner.yaml): a *Tenant*
+# provisions the namespace/isolation/sync; a *WebApp* defines the application
+# that runs inside it. This instance uses wedding-app (the RGD's documented
+# example) to exercise the V1 skeleton scope (workload + service + route);
+# app-specific extensions (secret-backed env, KEDA scale-to-zero, the
+# www→apex redirect, OIDC) stay in the tenant artifact until they land in the
+# RGD incrementally.
+#
+# OPT-IN like every local app (see kustomization.yaml) — NOT referenced by
+# default, so both cluster renders are unchanged until a pilot session enables
+# it. The instance is namespaced (KRO v1alpha1 generates namespace-scoped
+# CRDs) and lives in flux-system as platform control-plane state, while its
+# children land in the wedding-app namespace via the RGD's explicit namespace
+# templating. Enabling it locally needs GHCR credentials seeded in the local
+# OpenBao before the image can pull — without them the RGD expansion itself
+# still validates (the pilot's purpose), but the workload stays not-ready.
+apiVersion: kro.run/v1alpha1
+kind: WebApp
+metadata:
+  name: wedding-app
+  namespace: flux-system
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  name: wedding-app
+  image: ghcr.io/devantler-tech/wedding-app:latest
+  host: wedding.platform.lan
+  port: 3000
+  probePath: /login
