@@ -27,6 +27,7 @@ resources:
   - metrics-server/
   - oauth2-proxy/
   - openbao/
+  - openfeature-operator/
   - reloader/
   - tetragon/
   - trust-manager/

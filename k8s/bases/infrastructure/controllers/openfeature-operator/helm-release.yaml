@@ -1,0 +1,60 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: open-feature-operator
+  namespace: open-feature-operator-system
+  labels:
+    # The chart ships the FeatureFlag / FeatureFlagSource / InProcessConfiguration
+    # / Flagd CRDs (core.openfeature.dev/v1beta1); let Flux manage their lifecycle
+    # (install/upgrade crds: CreateReplace below). The helm-release-install-crds
+    # Kyverno policy turns this label into that behaviour across all HelmReleases.
+    helm.toolkit.fluxcd.io/crds: enabled
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  # The operator's admission webhooks are served over TLS provisioned by
+  # cert-manager (the chart renders an Issuer + Certificates), so cert-manager
+  # must be healthy first — mirrors plugin-barman-cloud.
+  dependsOn:
+    - name: cert-manager
+      namespace: cert-manager
+  interval: 10m0s
+  timeout: 10m
+  install:
+    crds: CreateReplace
+  upgrade:
+    crds: CreateReplace
+  chart:
+    spec:
+      chart: open-feature-operator
+      version: v0.9.2
+      sourceRef:
+        kind: HelmRepository
+        name: open-feature-operator
+  # https://openfeature.dev — the OpenFeature Operator is the platform's
+  # RUNTIME per-request feature-flag layer (Part of #2510 / monorepo#2059).
+  # This release installs the CONTROLLER + CRDs ONLY, landed default-OFF: no
+  # workload consumes a flag yet, so no flagd sidecar is injected and no
+  # flagd-proxy is created. Flag definitions live in Git as FeatureFlag CRs
+  # (core.openfeature.dev/v1beta1) that land LATER in the `infrastructure` layer
+  # (dependsOn infrastructure-controllers) — a CR of an operator-installed kind
+  # cannot share a Flux Kustomization with the controller that installs its CRD
+  # (the server-side-dry-run deadlock the Coroot/Tenant CRs document).
+  #
+  # Intended sync mode is flagd-proxy (a single gRPC pub/sub hub the operator
+  # creates lazily on the first `provider: flagd-proxy` FeatureFlagSource), so
+  # consuming pods need NO cluster-wide API RBAC. Until a workload opts in, the
+  # operator never mutates the `open-feature-operator-flagd-kubernetes-sync`
+  # ClusterRoleBinding, so there is no Flux-vs-operator drift on that object yet
+  # (revisit if a `provider: kubernetes` source is ever added).
+  values:
+    # This namespace is owned by namespace.yaml (with its documented PSA posture),
+    # so the chart must not also emit a Namespace object (double-owner drift).
+    namespace:
+      create: false
+    controllerManager:
+      # HA to match the operator tier: the manager runs with --leader-elect, so
+      # 2 replicas = one active reconciler + a warm standby that takes over on a
+      # node drain/failure (not double-reconciliation). Drain safety comes from
+      # the standalone maxUnavailable: 1 PDB (pod-disruption-budget.yaml).
+      replicas: 2

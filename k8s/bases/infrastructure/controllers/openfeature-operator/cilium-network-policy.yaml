@@ -1,0 +1,44 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-open-feature-operator
+  namespace: open-feature-operator-system
+spec:
+  endpointSelector: {}
+  ingress:
+    # Admission-webhook traffic from kube-apiserver (hostNetwork on the control
+    # plane nodes) to the operator's mutating/validating webhook on 9443.
+    - fromEntities:
+        - kube-apiserver
+        - remote-node
+        - host
+      toPorts:
+        - ports:
+            - port: "9443"
+              protocol: TCP
+    # Intra-namespace (the two HA replicas; leader-election peers).
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: open-feature-operator-system
+  egress:
+    # Intra-namespace.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: open-feature-operator-system
+    # Kube API. The operator reconciles FeatureFlag/FeatureFlagSource CRs, writes
+    # its leader-election Lease, and reads the cert-manager-issued webhook cert
+    # Secret — all through the apiserver. It needs NO world/external egress: it
+    # never pulls charts or images itself (kubelet pulls the injected sidecars).
+    - toEntities:
+        - kube-apiserver
+    # DNS resolution.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
