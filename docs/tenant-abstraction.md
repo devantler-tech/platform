@@ -11,9 +11,16 @@
 Every tenant duplicates a near-identical control-plane skeleton under `k8s/bases/apps/<tenant>/`
 (namespace, Flux-impersonated `edit` ServiceAccount + RoleBinding, a cosign-verified `OCIRepository`
 + Flux `Kustomization`, a `ghcr-auth` `ExternalSecret`, and a `NetworkPolicy`), plus a provider
-patch — `wedding-app` adds a `SecretStore` + SOPS block. The skeletons differ only by
-name/namespace/OCI URL (and the SOPS block) and have already begun to drift (inconsistent
-`app.kubernetes.io/managed-by` labels). Onboarding a tenant is a ~7-file copy.
+patch. On top of that common core, tenants carry **optional branches** that the abstraction must
+model as toggles rather than assume away:
+
+- **external-dns** (tenant-owned domains) — `ascoachingogvaner` adds `role-binding-external-dns.yaml`
+  + `role-binding-external-dns-kube-system.yaml` and a `cluster-role-binding.yaml`.
+- **SOPS-encrypted secrets** — `wedding-app` adds a `SecretStore` + SOPS block (and its own
+  `object-store` / db-backup `ExternalSecret`s).
+
+The skeletons otherwise differ only by name/namespace/OCI URL and have already begun to drift
+(inconsistent `app.kubernetes.io/managed-by` labels). Onboarding a tenant is a ~7-file copy.
 
 The goal is **one declaration (~5 lines) per tenant** instead of the copy. Two hard constraints shape
 the choice:
@@ -88,7 +95,13 @@ chart's `values.schema.json`, not a CRD OpenAPI + admission); `ksail workload va
 templated `HelmRelease` (it already validates HelmReleases); and the sibling **WebApp** archetype
 should *compose with* this chart, not duplicate it.
 
+**Chart scope** — the library chart templates the common core and gates each optional branch behind a
+values toggle: `externalDns.enabled` (the tenant-owned-domain RoleBindings) and `sops.enabled` (the
+`SecretStore` + SOPS-sourced secrets). Neither branch is a pilot afterthought — `ascoachingogvaner`
+already exercises the external-dns branch, so the pilot must preserve it.
+
 **Follow-ups (subsequent children of #1932)** — (a) build the `tenant` library chart + its
-`values.schema.json`; (b) pilot-migrate one tenant (`ascoachingogvaner`, no SOPS) behavior-preservingly
-(render-diff + `ksail workload validate` unchanged vs baseline) — AC #2; (c) migrate `wedding-app`
-(adds the SOPS block); (d) document the ~5-line onboarding in [`TENANTS.md`](./TENANTS.md).
+`values.schema.json` (common core + `externalDns`/`sops` toggles); (b) pilot-migrate one tenant
+(`ascoachingogvaner` — external-dns on, SOPS off) behavior-preservingly (render-diff +
+`ksail workload validate` unchanged vs baseline) — AC #2; (c) migrate `wedding-app` (exercises the SOPS
+branch); (d) document the ~5-line onboarding in [`TENANTS.md`](./TENANTS.md).
