@@ -107,15 +107,15 @@ spec:
     # Pin Kubernetes deliberately so 'ksail cluster update' doesn't roll nodes
     # to ksail's newer default when that default outruns what the pinned Talos
     # version supports (rejected with "kubelet image is not valid: version of
-    # Kubernetes ... is too new"). Talos v1.12.4 supports Kubernetes 1.30-1.35;
+    # Kubernetes ... is too new"). Talos v1.13.5 supports Kubernetes 1.31-1.36;
     # bump in lockstep with Talos rather than letting the default drift.
     #
     # In-place Pod resize (InPlacePodVerticalScaling, beta and ON by default
     # from k8s 1.33) lets VPA -- already 1.6 with updateMode InPlaceOrRecreate
     # -- resize pods, including the kube-system datapath now under auto-vpa, in
     # place instead of evicting them. Upgraded one minor at a time
-    # (1.32 -> 1.33 -> 1.34); landed on 1.34 because 1.33 reaches EOL
-    # 2026-06-28. Talos v1.12.4's ceiling is Kubernetes 1.35.
+    # (1.32 -> 1.33 -> 1.34 -> 1.35 -> 1.36); now on 1.36.2. Talos v1.13.5's
+    # ceiling is Kubernetes 1.36.
     kubernetesVersion: v1.36.2
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
