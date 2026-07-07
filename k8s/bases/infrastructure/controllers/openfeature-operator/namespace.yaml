@@ -1,0 +1,16 @@
+# PSA enforce label intentionally NOT set on the open-feature-operator namespace.
+#
+# The OpenFeature Operator chart (v0.9.2) ships only a PARTIAL container
+# securityContext (allowPrivilegeEscalation: false + runAsNonRoot: true) and
+# exposes NO securityContext value to complete it — it is missing
+# seccompProfile: RuntimeDefault and capabilities.drop: [ALL]. With an explicit
+# pod-security.kubernetes.io/enforce: restricted label, kube-apiserver's PSA
+# validator would reject the operator (and its lazily-created flagd-proxy) before
+# Kyverno's add-security-context mutating webhook can fill in the missing fields,
+# so admission fails on cold bootstrap. Same trade-off as keda / ksail-operator:
+# skip the native PSA label and let the Kyverno validate-pod-security
+# ClusterPolicy (Enforce) enforce restricted at the webhook layer as the backstop.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: open-feature-operator-system

@@ -1,0 +1,16 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: open-feature-operator
+  namespace: open-feature-operator-system
+spec:
+  # Drain-safe PDB (#1880/#1882): maxUnavailable: 1 keeps the node drainable at
+  # any replica count, unlike minAvailable: 1 which deadlocks a drain when only
+  # 1 replica is ready. The chart ships no PDB knob, so this is a standalone
+  # manifest (same approach as kro / ksail-operator). Pairs with
+  # controllerManager.replicas: 2 in helm-release.yaml — the operator is
+  # leader-elected, so the standby keeps reconciliation available during a drain.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: open-feature-operator
