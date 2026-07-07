@@ -1,107 +1,107 @@
-# ADR: Generalize the Tenant abstraction — Capsule vs KRO vs Helm library chart
+# ADR: The Tenant abstraction is KRO
 
-- **Status:** Proposed
-- **Decision:** Adopt a **Helm library chart** as the Tenant abstraction now; keep a
-  **KRO `Tenant` RGD** as the typed end-state to revisit at KRO GA; **reject Capsule**.
+- **Status:** Accepted — records a decision already made and implemented.
+- **Decision:** **KRO** (`ResourceGraphDefinition` + typed CRs) is the platform's Tenant/WebApp
+  abstraction. The `Tenant` and `WebApp` RGDs are live; the remaining work under #1932 is to
+  **enhance those KRO CRs to cover all tenant and platform needs**, not to switch technology.
 - **Tracks:** [#1932](https://github.com/devantler-tech/platform/issues/1932) (AC #1). Follows the
   incremental DRY pass (#1927–#1931).
 
 ## Context
 
-Every tenant duplicates a near-identical control-plane skeleton under `k8s/bases/apps/<tenant>/`
+Every tenant used to duplicate a near-identical control-plane skeleton under `k8s/bases/apps/<tenant>/`
 (namespace, Flux-impersonated `edit` ServiceAccount + RoleBinding, a cosign-verified `OCIRepository`
-+ Flux `Kustomization`, a `ghcr-auth` `ExternalSecret`, and a `NetworkPolicy`), plus a provider
-patch. On top of that common core, tenants carry **optional branches** that the abstraction must
-model as toggles rather than assume away:
++ Flux `Kustomization`, a `ghcr-auth` `ExternalSecret`, and a `NetworkPolicy`), plus a provider patch,
+with optional per-tenant branches (external-dns RBAC, SOPS-decrypted secrets). Onboarding a tenant was
+a ~7-file copy, and the skeletons had begun to drift.
 
-- **external-dns** (tenant-owned domains) — `ascoachingogvaner` adds `role-binding-external-dns.yaml`
-  + `role-binding-external-dns-kube-system.yaml` and a `cluster-role-binding.yaml`.
-- **SOPS-encrypted secrets** — `wedding-app` adds a `SecretStore` + SOPS block (and its own
-  `object-store` / db-backup `ExternalSecret`s).
+The platform has **already adopted KRO** to collapse that copy into one small typed declaration:
 
-The skeletons otherwise differ only by name/namespace/OCI URL and have already begun to drift
-(inconsistent `app.kubernetes.io/managed-by` labels). Onboarding a tenant is a ~7-file copy.
+- `k8s/bases/infrastructure/controllers/kro/` installs the KRO controller.
+- `k8s/bases/infrastructure/resource-graph-definitions/tenant/` defines the `Tenant` RGD — the core
+  skeleton plus `externalDns` and `sops` `includeWhen` toggles.
+- `k8s/bases/infrastructure/resource-graph-definitions/webapp/` defines the `WebApp` RGD (Deployment +
+  Service + HTTPRoute, with replicas/probe/resource inputs) that composes onto a `Tenant` namespace.
+- `k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml` and `.../web-app-wedding-app.yaml` are the
+  live tenant/app instances.
 
-The goal is **one declaration (~5 lines) per tenant** instead of the copy. Two hard constraints shape
-the choice:
+Onboarding is now a ~5-line CR:
 
-1. **No new Kustomize overlay/component stacking.** "Overlays on overlays" is the readability problem
-   we are trying to escape — the reason we reach for an archetype at all.
-2. **The `infrastructure-controllers` layer is the platform's chokepoint.** Our incident history
-   (CRD-before-CR ordering, controller-availability wedges, merge-queue deploy-prod stalls) is
-   concentrated there. Anything that adds a controller/CRD lands in exactly that layer.
+```yaml
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata: { name: ascoachingogvaner }
+spec:
+  name: ascoachingogvaner
+  externalDns: true
+```
 
-Any solution must also preserve the isolation posture verbatim: cosign-verified OCI, the
-Flux-impersonated namespaced `edit` SA, the Kyverno-restricted namespaced Vault `SecretStore`, the
-default-deny network floor, and ESO/SOPS-sourced secrets (never inlined into a tenant spec). It must
-satisfy `enforce-flux-best-practices` (Enforce) — any templated `HelmRelease`/`Kustomization` carries
-`interval`/`timeout`/retries — and stay validatable by `ksail workload validate` (which builds every
-kustomization standalone).
+This ADR records **why KRO** (over the alternatives that were weighed) and frames the remaining #1932
+work as enhancing the KRO CRs. It does **not** reopen the technology choice.
 
-## Options considered
+Any enhancement must preserve the isolation posture verbatim: cosign-verified OCI, the
+Flux-impersonated namespaced `tenant-edit` SA (aggregated `edit`-minus-`pods/exec`, so tenants do not
+trip Kubescape C-0002), the Kyverno-restricted namespaced Vault `SecretStore`, the default-deny
+network floor, and ESO/SOPS-sourced secrets (never inlined into a Tenant spec). It must satisfy
+`enforce-flux-best-practices` (Enforce) and stay validatable by `ksail workload validate`.
 
-### 1. Capsule (buy) — CNCF multi-tenancy operator — **rejected**
+## Options considered (historical — the decision is KRO)
+
+### KRO `Tenant`/`WebApp` RGDs (typed, build) — **adopted**
+
+A KRO `ResourceGraphDefinition` is a typed, `kubectl`-native abstraction and matches the platform's
+standing preference for **CRD + controller over Helm** for in-cluster composition. It expands a small
+typed CR into the full resource graph, with `includeWhen` toggles for the optional branches — no Kustomize
+overlay/component stacking. The pre-1.0 (`v1alpha1`) maturity is a known trade-off, managed by keeping
+the RGDs render-diffable and the controller in the `infrastructure-controllers` layer with explicit
+CRD-before-CR ordering (the `infrastructure` Kustomization `dependsOn` the controllers layer).
+
+### Capsule (buy) — CNCF multi-tenancy operator — **rejected**
 
 Capsule's `Tenant` CRD groups namespaces under an owner and auto-inherits ResourceQuota, LimitRange,
-NetworkPolicy, and RBAC, with namespace self-provisioning. It is mature and purpose-built.
+NetworkPolicy, and RBAC. It targets **owner-based, multi-namespace, self-service** tenancy; our tenants
+are **single-namespace, machine-onboarded, Flux-impersonation-driven**. Capsule does not manage Flux
+sources, so the two resources that carry most of the archetype's value *and* its security posture — the
+cosign-verified `OCIRepository` and the impersonating Flux `Kustomization` — would stay hand-written
+regardless, while Capsule adds a second controller and a policy model overlapping the existing Kyverno
+`restrict-tenant-secret-stores` policy and the OpenBao role. Wrong model fit.
 
-It is the wrong model fit here. Capsule targets **owner-based, multi-namespace, self-service**
-tenancy; our tenants are **single-namespace, machine-onboarded, Flux-impersonation-driven**. Capsule
-does not manage Flux sources, so the two resources that carry most of the archetype's value *and* its
-security posture — the **cosign-verified `OCIRepository`** and the impersonating Flux `Kustomization` —
-stay hand-written regardless. Capsule would own only namespace + RBAC + netpol + quota (a minority of
-the ~7 files), while **adding a controller to the `infrastructure-controllers` chokepoint** and a
-second policy model that overlaps the existing Kyverno `restrict-tenant-secret-stores` policy and the
-OpenBao role. Cost outweighs benefit.
+### Helm library chart (build, simplest) — **considered, not chosen**
 
-### 2. KRO `Tenant` RGD (build, typed) — **deferred to KRO GA**
-
-A KRO `ResourceGraphDefinition` is the ideal typed, `kubectl`-native abstraction and matches the
-platform's standing preference for **CRD + controller over Helm** for in-cluster composition. But KRO
-is **pre-1.0 (`v1alpha1`)**: adopting it means a new alpha controller plus dynamic CRDs in the exact
-`infrastructure-controllers` layer that keeps wedging. The maturity/risk is not justified for the
-first cut of a foundational archetype. This remains the intended end-state — **revisit once KRO ships
-a stable (≥ v1 / GA) release**.
-
-### 3. Helm library chart (build, simplest) — **adopted**
-
-A `tenant` [library chart](https://helm.sh/docs/topics/library_charts/) templates the ~7 resources
-behind one `HelmRelease` per tenant, driven by a ~5-line values block
-(name / namespace / OCI URL / optional SOPS). It:
-
-- stays **100% inside the existing Flux → HelmRelease reconcile/prune model** — **no new controller**
-  in the chokepoint;
-- adds **no** Kustomize overlay/component stacking — it *replaces* the per-tenant kustomize copy with
-  one HelmRelease (constraint 1 satisfied);
-- **preserves the isolation posture verbatim** (cosign OCI, Flux impersonation, Vault scoping,
-  default-deny netpol, ESO/SOPS secrets) because it templates the same resources unchanged;
-- satisfies `enforce-flux-best-practices` (the templated resources carry interval/timeout/retries);
-- is **reversible** and **forward-compatible with KRO** — the same declarative inputs map onto an RGD
-  schema later, so choosing it now does not foreclose the typed end-state.
+A `tenant` Helm library chart templating the same resources behind one `HelmRelease` per tenant was a
+lower-ceremony option that stays inside the Flux→HelmRelease model with no new controller. It was **not
+chosen**: the platform has already committed to KRO as the typed abstraction, and a library chart would
+be a technology switch *away* from that already-implemented choice — trading the typed
+CRD/`kubectl`-native model (and the CRD OpenAPI + admission validation it enables) for JSON-schema on a
+chart's `values`. KRO is the intended end-state and it is already live, so there is no reason to detour
+through Helm.
 
 ## Decision
 
-**Adopt the Helm library chart** as the Tenant abstraction. It is the lowest-risk path that meets the
-goal and both hard constraints today, while keeping the door open to the typed KRO end-state.
+**KRO is the Tenant/WebApp abstraction.** The `Tenant` and `WebApp` RGDs are the chosen, implemented
+approach. The remaining #1932 work is to **enhance the KRO CRs to cover all tenant and platform
+needs**, not to reconsider the technology.
 
 ## Consequences
 
-**Positive** — onboarding a tenant becomes one small `HelmRelease`; the drift disappears; no new
-controller or CRD enters the chokepoint; the full isolation posture is preserved; the change is
-reversible; and the inputs stay KRO-compatible.
+**Positive** — onboarding a tenant is one small typed CR; the drift is gone; the abstraction is typed
+and `kubectl`-native with CRD-schema validation; no Helm/overlay stacking; the isolation posture is
+templated verbatim.
 
-**Trade-offs** — a library chart is less "typed" than a CRD (input validation is JSON-schema on the
-chart's `values.schema.json`, not a CRD OpenAPI + admission); `ksail workload validate` must render the
-templated `HelmRelease` (it already validates HelmReleases); and the sibling **WebApp** archetype
-should *compose with* this chart, not duplicate it.
+**Trade-offs** — KRO is pre-1.0 (`v1alpha1`), so the RGDs stay render-diffable and the controller sits
+in the platform chokepoint with explicit ordering; a CR of an RGD-defined kind cannot share a Flux
+Kustomization with the controller that installs its CRD (already handled by the layer split).
 
-**Chart scope** — the library chart templates the common core and gates each optional branch behind a
-values toggle: `externalDns.enabled` (the tenant-owned-domain RoleBindings) and `sops.enabled` (the
-`SecretStore` + SOPS-sourced secrets). Neither branch is a pilot afterthought — `ascoachingogvaner`
-already exercises the external-dns branch, so the pilot must preserve it.
+**Follow-ups — enhance the KRO CRs (subsequent children of #1932).** Candidate gaps to close so the
+`Tenant`/`WebApp` archetypes cover *all* tenant and platform needs (each to be filed and prioritised as
+its own issue, behaviour-preservingly, render-diffed vs the current instances):
 
-**Follow-ups (subsequent children of #1932)** — (a) build the `tenant` library chart + its
-`values.schema.json` (common core + `externalDns`/`sops` toggles); (b) pilot-migrate one tenant
-(`ascoachingogvaner` — external-dns on, SOPS off) behavior-preservingly (render-diff +
-`ksail workload validate` unchanged vs baseline) — AC #2; (c) migrate `wedding-app` (exercises the SOPS
-branch); (d) document the ~5-line onboarding in [`TENANTS.md`](./TENANTS.md).
+- **Arbitrary per-tenant `ExternalSecret`s beyond `ghcr-auth`** — e.g. `wedding-app`'s object-store /
+  db-backup secrets — via a typed `secrets` list on the `Tenant` schema, so no tenant hand-writes an
+  ExternalSecret.
+- **Namespace `ResourceQuota` / `LimitRange`** — a standard multi-tenancy guardrail the RGD does not yet
+  emit; add as an optional typed input.
+- **Stateful `WebApp` shapes** — CNPG-backed apps (e.g. `wedding-db`) so the `WebApp` archetype covers
+  database-backed workloads, not only stateless Deployments.
+- **Onboarding docs** — keep [`TENANTS.md`](./TENANTS.md) in sync with the ~5-line CR onboarding as the
+  schema grows.
