@@ -1,0 +1,58 @@
+# WireGuard server (wg0) on the control planes — the dial-in endpoint a home
+# UniFi gateway (and later CI) connects to, so cluster access rides an encrypted
+# tunnel instead of being exposed publicly.
+#
+# Pairs with the `devantler-tech/unifi` tenant's `unifi_network.cluster_wireguard`
+# (PR #9), which configures the UniFi gateway as the WireGuard CLIENT. The home
+# side initiates the tunnel, so the dynamic residential IP never matters (no DDNS).
+#
+# KEY MATERIAL (env-expanded by ksail at load time — never committed):
+#   ${WG_SERVER_PRIVATE_KEY}  the server's own private key, from the `prod`
+#                             environment secret of the same name (threaded to
+#                             `ksail cluster create/update` by the deploy-prod
+#                             composite and dr-rebuild). Generate a key pair
+#                             (`wg genkey | tee priv | wg pubkey`); set the
+#                             PRIVATE half as the WG_SERVER_PRIVATE_KEY secret,
+#                             and put the PUBLIC half in the tenant's
+#                             `cluster_wg_peer_public_key`.
+#
+# PHASE SPLIT — the LISTENER ships first, the gateway PEER follows (#2473):
+# the gateway's key pair does not exist until provider-upjet-unifi applies the
+# tenant's `cluster_wireguard` resource (gated on the provider fix + unpausing
+# the tenant, which itself waits for this server to land — a deadlock if the
+# peer were required here). So this patch brings up wg0 with NO peers: the
+# port listens, WireGuard answers no unauthenticated packet, nothing can
+# connect yet. Once the tenant applies and outputs
+# `cluster_wireguard_gateway_public_key`, a follow-up adds the peer block
+# (publicKey + allowedIPs 10.200.0.2/32) fed by a WG_GATEWAY_PUBLIC_KEY secret.
+#
+# SCOPE: this patch is the LISTENER only. Routing tunnel traffic onward to
+# other cluster networks / the internal admin gateway VIP is follow-on datapath
+# work (forwarding + masquerade or VIP announcement), tracked separately — it
+# is NOT solved by this interface patch alone.
+#
+# CAVEAT — applying to EXISTING nodes: ksail's `cluster update` diff only tracks
+# node count / Talos version / ISO, so a machine-config-only change like this is
+# NOT pushed to already-running nodes (it reports "No changes detected"). This
+# patch makes every node correct-by-construction on create/recreate; to apply it
+# to nodes that are already up, patch them once out-of-band (wireguard is a
+# no-reboot field):
+#   talosctl --nodes <control-plane-ips> patch mc \
+#     --patch @<this file, ${WG_SERVER_PRIVATE_KEY} filled>
+# See docs/dr/runbook.md.
+#
+# The same identity is intentionally placed on all three control planes: if one
+# dies, repoint the gateway's peer endpoint to another and the tunnel just works.
+#
+# Reference:
+#   https://docs.siderolabs.com/talos/v1.13/reference/configuration/network/deviceconfig/
+machine:
+  network:
+    interfaces:
+      - interface: wg0
+        addresses:
+          - 10.200.0.1/24
+        mtu: 1420
+        wireguard:
+          privateKey: ${WG_SERVER_PRIVATE_KEY}
+          listenPort: 51820

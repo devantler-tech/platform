@@ -22,15 +22,34 @@ kind: Kustomization
 #         kind: HelmRelease
 #         name: actual-budget
 #         namespace: actual-budget
-#       path: actual-budget/patches/helm-release-patch.yaml
+#       path: actual-budget/patches/shrink-persistence.yaml
 #     - target:
 #         kind: HelmRelease
 #         name: headlamp
 #         namespace: headlamp
-#       path: headlamp/patches/helm-release-patch.yaml
+#       path: headlamp/patches/trust-platform-ca.yaml
+#
+# Tenant RGD pilot (#1932 step 3) — opt-in like the apps above. Enabling it has
+# the KRO controller expand ascoachingogvaner's full control-plane skeleton from
+# the one typed declaration in tenant-ascoachingogvaner.yaml (see that file's
+# header for what to expect without locally-seeded GHCR credentials):
+#   resources:
+#     - tenant-ascoachingogvaner.yaml
+#
+# WebApp RGD pilot (#1933 pilot migration) — opt-in like the Tenant pilot above.
+# Enabling it has the KRO controller expand a Deployment + Service + HTTPRoute
+# skeleton from the one typed `WebApp` declaration in web-app-wedding-app.yaml
+# (see that file's header for what to expect without locally-seeded GHCR
+# credentials). NB: that WebApp CR is named `wedding-app` only as the RGD's
+# example — it is a validate-only skeleton pilot, NOT the prod `wedding-app`
+# tenant deployment listed as excluded below:
+#   resources:
+#     - web-app-wedding-app.yaml
 #
 # Not available on the local cluster (intentionally excluded):
-#   wedding-app, ascoachingogvaner — prod-only tenants (need GHCR, CNPG, longhorn)
+#   wedding-app, ascoachingogvaner — prod-only tenant deployments (need GHCR,
+#                                    CNPG, longhorn); distinct from the opt-in
+#                                    WebApp/Tenant pilot CRs of the same names
 #   umami                          — CNPG-backed Postgres pinned to longhorn
 #                                    storage (prod-only)
 #   fleetdm                        — heavy app (MySQL + Redis + migration) kept

@@ -1,0 +1,118 @@
+---
+# Prod-only: fail-closed WireGuard encryption (egress strict mode).
+#
+# The base HelmRelease enables WireGuard transparent encryption
+# (encryption.enabled: true, type: wireguard, nodeEncryption: true), but
+# WireGuard is fail-OPEN: while a node's WireGuard tunnel to a peer is not yet
+# established (a new/rebooted node joining, a cilium-agent restart, key
+# propagation lag) pod traffic to that peer can briefly egress in CLEARTEXT.
+# Strict mode makes it fail-CLOSED — such traffic is dropped rather than sent
+# unencrypted.
+#
+# egress.cidr is the cluster pod CIDR (Talos default 10.244.0.0/16; Cilium
+# allocates per-node pod ranges from it via ipam.mode: kubernetes). Strict
+# mode only enforces encryption for traffic exiting a node to this CIDR — i.e.
+# pod-to-pod across nodes, exactly what WireGuard already encrypts. Same-node
+# pod traffic (never leaves the host) and pod->node-IP / pod->internet traffic
+# (destinations outside the pod CIDR) are unaffected and not dropped.
+#
+# allowRemoteNodeIdentities is set true because this cluster runs in tunnel
+# (VXLAN) routing mode (routing-mode: tunnel). Cilium REQUIRES it whenever
+# tunneling is used — node-identity (IPCache) propagation is only eventually
+# consistent, so during the convergence window after a node joins/reboots
+# (constant here: the Hetzner autoscaler churns cattle workers) the source node
+# may not yet know a peer's identity. Left false, strict mode fails CLOSED on
+# that node-identity traffic too, dropping the cilium-agent SPIRE mutual-auth
+# handshake (TCP 4250) and cilium-health host probes (TCP 4240) to the
+# not-yet-propagated peer. That black-holes the mTLS the hetzner
+# require-mutual-auth policy demands, so every auth-gated cross-node pod flow
+# to/from a freshly churned node stalls (observed: KEDA http-add-on scaler
+# CrashLoopBackOff, Longhorn replica-rebuild storms, the umami provisioner and
+# coroot-heartbeat failing, cilium-health "2/9 reachable"). true exempts only
+# node-IDENTITY traffic from the strict drop (it may briefly ride unencrypted
+# during that window, then converges to WireGuard); pod-to-pod traffic across
+# the egress CIDR below stays fail-closed. The earlier "CIDRs don't overlap so
+# it isn't required" reasoning was wrong: the Cilium rule is "tunneling is used
+# OR (direct routing AND CIDR overlap)", so tunneling alone makes it mandatory.
+#
+# Uses the non-deprecated encryption.strictMode.egress.* keys (the top-level
+# encryption.strictMode.{enabled,cidr} keys are deprecated as of Cilium 1.19).
+# Pods are single-stack IPv4 here, so strict mode's documented IPv6 limitation
+# ("IPv6 traffic is not protected under strict mode") does not apply.
+#
+# Ingress strict mode (encryption.strictMode.ingress.enabled — drops ALL
+# unencrypted overlay ingress) is a further fail-closed layer left OFF for
+# now; consider adding it once egress strict mode is confirmed healthy live.
+#
+# PROD/HETZNER ONLY: encryption is disabled in the docker overlay (local has
+# no node-to-node wire), so strict mode would only drop local pod traffic for
+# no gain. It therefore lives in this hetzner patch, not the base.
+# ⚠️  Fail-closed + prod-only ⇒ the local docker cluster does NOT exercise
+#     this (and CI no longer boots a cluster). Validate on the first prod
+#     reconcile (pod-to-pod connectivity + cilium-agent logs) and be ready to
+#     revert if legitimate traffic drops.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  values:
+    encryption:
+      strictMode:
+        egress:
+          enabled: true
+          cidr: 10.244.0.0/16
+          # Required in tunnel routing mode (see header): exempts node-identity
+          # traffic from the strict drop so the SPIRE mutual-auth handshake and
+          # cilium-health host probes survive the IPCache propagation window
+          # during node churn. Pod-to-pod across the CIDR above stays fail-closed.
+          allowRemoteNodeIdentities: true
+    # Pin the eBPF datapath to the PRIVATE-network NICs so every node uses its
+    # private IP (10.0.1.x) as its primary node address for agent-to-agent
+    # control traffic — specifically the SPIRE mutual-auth handshake (TCP 4250).
+    #
+    # Hetzner nodes are dual-homed: a public NIC carrying the default route
+    # (workers enp1s0 / control-planes eth0) and the private-network NIC
+    # (workers enp7s0 / control-planes eth1). With devices unset, Cilium probes
+    # and attaches to BOTH, then takes the default-route (public) NIC's IP as the
+    # node's PRIMARY address. cilium-health (4240) and the VXLAN/WireGuard tunnel
+    # ride the private "Direct Routing" NIC and work — but the mutual-auth control
+    # connection (cilium-agent -> peer cilium-agent on 4250) dials the peer's
+    # PRIMARY (public) IP. The Talos ingress firewall only admits 4240/4250/8472
+    # from the private node CIDR (10.0.0.0/16, see
+    # talos/workers/allow-cilium-mutual-auth-ingress.yaml), so the public-sourced 4250 handshake
+    # is dropped (`dial <public-ip>:4250: i/o timeout`) and Cilium black-holes every
+    # cross-node pod flow the hetzner require-mutual-auth policy marks
+    # `authentication.mode: required` once its auth-cache entry lapses. Observed
+    # live (2026-06-19): the Crossview dashboard was unreachable — authenticated
+    # oauth2-proxy/auth-proxy -> crossview:3001 SYNs returned `policy-verdict:
+    # none ... Policy denied DROPPED` (the spire AUTH TYPE on that policy entry
+    # never completed its handshake) — while older dashboards limped on still-
+    # cached auth entries. Failures spanned all three workers, dialing each
+    # other's public IPs on 4250.
+    #
+    # Listing the private NICs makes the private IP each node's primary address,
+    # so the 4250 handshake uses 10.0.1.x and the firewall admits it.
+    #
+    # Safe on this topology (all verified live, 2026-06-19):
+    #   - Ingress: the Hetzner LB reaches nodes on their PRIVATE IPs
+    #     (load-balancer.hetzner.cloud/use-private-ip: "true", see
+    #     ../../../patches/attach-hcloud-load-balancer.yaml) and clients hit the LB's public IP, not
+    #     node public IPs. The private NIC stays a Cilium device, so the LB's
+    #     NodePort BPF is unaffected; only unused public-NIC NodePort BPF is shed.
+    #   - Egress: pod -> internet masquerade is the device-AGNOSTIC iptables rule
+    #     (-s podCIDR ! -d podCIDR ! -o cilium_+ -j MASQUERADE), not scoped to
+    #     this devices list, so pods still SNAT out the public NIC. (Masquerading
+    #     is iptables here; bpf.masquerade is off.)
+    #   - cilium-health / VXLAN / WireGuard already used the private NIC.
+    #
+    # WARNING: hard-codes the private-NIC names. Today every worker is enp7s0 and
+    # every control-plane is eth1 (verified on all 6 nodes). An autoscaler worker
+    # brought up on a server type whose private NIC is named differently would
+    # lose Cilium networking until its name is added here — keep this in sync with
+    # the node pool's machine type.
+    #
+    # PROD/HETZNER ONLY: the docker/local provider is single-NIC, so device
+    # autodetection is correct there. This pin lives in the hetzner overlay.
+    devices: "enp7s0 eth1"

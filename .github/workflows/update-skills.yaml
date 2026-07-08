@@ -15,7 +15,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: devantler-tech/reusable-workflows/.github/workflows/update-agent-skills.yaml@c830916321473ec23bb612e41de963b9b01af897 # v5.6.6
+    uses: devantler-tech/actions/.github/workflows/update-agent-skills.yaml@b69839ba2debe04a46321b7698b6daf57667d4e7 # v9.0.2
     with:
       dir: .agents/skills
       # Create the update PR with a GitHub App token so it triggers this

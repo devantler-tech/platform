@@ -127,10 +127,32 @@ spec:
             - ALL
         seccompProfile:
           type: RuntimeDefault
-        # Backstage writes to /app and /tmp at runtime; a read-only root would
-        # need writable volume mounts. PSS-restricted does not require it here
-        # (validate-pod-security explicitly does not check readOnlyRootFilesystem).
-        readOnlyRootFilesystem: false
+        # Immutable root FS (Kubescape C-0017). Verified against the live 1.52.0
+        # demo image: the backend (`node packages/backend`) writes NOTHING to the
+        # image FS at runtime (an exercised backend — health, catalog, frontend
+        # `/`, /api/app/config — produced zero writes). The classic read-only-root
+        # break (frontend config injected into packages/app/dist/static/
+        # module-backstage.<hash>.js — backstage#4135) does NOT occur here: this
+        # version serves frontend config from memory. The only runtime-writable
+        # path the backend can need is the OS temp-dir — the scaffolder's
+        # backend.workingDirectory and TechDocs prepare/generate default to /tmp —
+        # so we make just /tmp writable (extraVolumes below) and keep the rest
+        # read-only. /app is deliberately NOT made writable: an emptyDir over it
+        # would clobber the app bundle and nothing writes there at runtime.
+        readOnlyRootFilesystem: true
+
+      # Writable scratch for the read-only root FS above. Only /tmp is needed
+      # (scaffolder working dir + TechDocs prepare/generate + transient Node
+      # scratch). Disk-backed emptyDir (NOT medium: Memory) so a large scaffolder
+      # clone / generated docs don't count against the 1Gi memory limit and OOM
+      # the backend; sizeLimit caps runaway growth (evicted, not OOM-killed).
+      extraVolumeMounts:
+        - name: tmp
+          mountPath: /tmp
+      extraVolumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi
 
       extraEnvVars:
         # Backstage reads APP_CONFIG_<dotted_path> env keys as config overrides at

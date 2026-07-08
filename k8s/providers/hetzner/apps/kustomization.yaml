@@ -9,6 +9,12 @@ resources:
   # API it reaches are Hetzner-only — on local/CI clusters the Terraform CRD is
   # absent. Reconciled by the shared `apps` Flux Kustomization like any tenant.
   - unifi/
+  # Prod-only tenant: AWS-as-code via the upbound Crossplane family providers
+  # (providers/hetzner/apps/aws/ — platform#2325). Credential plumbing only for
+  # now (namespace, SecretStore, bootstrap-IAM ExternalSecret, ProviderConfig);
+  # the devantler-tech/aws repo sync lands in a follow-up increment. Hetzner-only
+  # because Crossplane (and the provider packages) are prod-only.
+  - aws/
   # Prod-only Coroot Postgres integration for the platform-owned CNPG DBs:
   # additive CiliumNetworkPolicies that let the observability cluster-agent
   # scrape each on 5432 (the Cluster patches below stamp the
@@ -34,13 +40,12 @@ patches:
   # removed with the app: an unreferenced patch fragment is schema-validated
   # standalone by `ksail workload validate`, and a partial HelmRelease (no
   # spec.interval) fails. Restore the patch from git history if re-enabling.
-  - path: headlamp/patches/helm-release-patch.yaml
-  - path: wedding-app/patches/flux-kustomization-patch.yaml
+  - path: wedding-app/patches/flux-kustomization-protect-wedding-db.yaml
   # Prod-only Coroot Postgres integration for the in-repo CNPG DBs (strategic
   # merge: inheritedMetadata scrape annotations + pg_stat_statements params, plus
   # for backstage a pg_monitor managed role). These self-identify, so no target.
-  - path: umami/patches/postgres-cluster-patch.yaml
-  - path: backstage/patches/postgres-cluster-patch.yaml
+  - path: umami/patches/enable-coroot-monitoring.yaml
+  - path: backstage/patches/enable-coroot-monitoring.yaml
   # umami's pg_monitor grant is a JSON6902 append onto its EXISTING managed role
   # (so it doesn't replace the list / desync the OpenBao-rotation enforcer); a
   # JSON6902 patch has no embedded identity, so it keeps an explicit target.
@@ -50,7 +55,7 @@ patches:
       kind: Cluster
       name: umami-db
       namespace: umami
-    path: umami/patches/grant-pg-monitor-patch.yaml
+    path: umami/patches/grant-pg-monitor.yaml
   # User namespaces (hostUsers: false) — prod-only; see each patch file for the
   # full rationale. JSON6902 patches (a list of ops) have no embedded identity,
   # so they must keep an explicit target. whoami is the proven stateless canary
@@ -60,9 +65,9 @@ patches:
       kind: HelmRelease
       name: whoami
       namespace: whoami
-    path: whoami/patches/helm-release-patch.yaml
+    path: whoami/patches/enable-user-namespaces.yaml
   - target:
       kind: HelmRelease
       name: homepage
       namespace: homepage
-    path: homepage/patches/helm-release-patch.yaml
+    path: homepage/patches/enable-user-namespaces.yaml

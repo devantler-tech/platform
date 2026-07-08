@@ -33,7 +33,7 @@ pressure (the operator only exposes `priorityClassName` on the node-agent).
 Local/CI (docker provider) runs the same CR on the cluster's default storage
 class (ephemeral — losing telemetry on a restart is fine there). The `hcloud`
 PVC overrides and longer retention live in the hetzner overlay
-(`k8s/providers/hetzner/infrastructure/controllers/coroot/patches/`), the same
+(`k8s/providers/hetzner/infrastructure/coroot/patches/`), the same
 way OpenBao gets block storage.
 
 ## SSO
@@ -89,6 +89,45 @@ stays quiet by design, exactly as the old Alertmanager did.
 - **kube-apiserver audit-log retention is gone.** Coroot's node-agent ingests
   container logs/traces, not host audit-log files, so the previous
   alloy-audit → Loki pipeline was removed.
+
+## Kubescape runtime-detection alerts
+
+The Kubescape node-agent's **runtime-detection** alerts (rule violations,
+malware) are the one signal that does **not** fit the Coroot model, because their
+only first-class dashboard — the **Headlamp Kubescape plugin's "Runtime
+Detection → Alerts" tab** — reads exclusively from a Prometheus **Alertmanager**
+(`GET /api/v2/alerts`, filtered on `alertname="KubescapeRuleViolated"`). It
+cannot read Kubescape's storage CRs and cannot query Coroot's Prometheus (a
+metrics store, not an Alertmanager). So a **single, minimal Alertmanager** is
+reintroduced *scoped to Kubescape* — not a re-adoption of the Prometheus stack.
+It lives in the `kubescape` namespace, prod-only
+(`providers/hetzner/infrastructure/controllers/alertmanager/`), ~10m CPU / 32Mi
+RAM, ephemeral (no PVC).
+
+The node-agent fans each alert out to **all three destinations** (wired in
+`providers/hetzner/infrastructure/controllers/kubescape/patches/`):
+
+| Destination | Path |
+| --- | --- |
+| **Headlamp plugin** | `nodeAgent.config.alertManagerExporterUrls` → the Alertmanager, which the plugin queries. |
+| **Slack** | the Alertmanager's `slack_configs` receiver → the shared `${alertmanager_webhook_url}` incoming-webhook (same channel as Coroot/Flux). |
+| **Coroot** | `nodeAgent.config.stdoutExporter` (on by default) → Coroot's eBPF log capture surfaces the alert in the **Logs** view (Coroot CE has no inbound alert receiver). |
+
+**One manual step (Headlamp).** The plugin's Alertmanager address is a
+**per-user, per-browser** setting (stored in `localStorage`; there is no
+declarative/Helm way to seed it — [headlamp#3979](https://github.com/kubernetes-sigs/headlamp/issues/3979)).
+Each operator sets it **once** in Headlamp → *Settings → Plugins → Kubescape*,
+in the `namespace/service:port` form the plugin validates:
+
+```text
+kubescape/alertmanager:9093
+```
+
+The plugin reaches it through the Kubernetes API server's Service proxy, so the
+logged-in user needs `get`/`create` on `services/proxy` in the `kubescape`
+namespace (satisfied by the admin binding). Until it is set, the tab shows
+"Alertmanager URL is not configured" — the data source now exists, only the
+per-user pointer is manual.
 
 ## Dead-man's-switch (off-cluster heartbeat)
 

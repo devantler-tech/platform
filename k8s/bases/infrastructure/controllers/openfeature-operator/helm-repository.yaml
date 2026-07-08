@@ -1,0 +1,10 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: HelmRepository
+metadata:
+  name: open-feature-operator
+  namespace: open-feature-operator-system
+spec:
+  # The OpenFeature Operator publishes its chart to a traditional Helm HTTP
+  # repository (gh-pages index.yaml), NOT an OCI artifact.
+  url: https://open-feature.github.io/open-feature-operator/

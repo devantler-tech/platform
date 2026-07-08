@@ -1,25 +1,31 @@
 ---
-# Exempt pod-level security context controls cluster-wide.
-# Kyverno ClusterPolicy "add-security-context" enforces these at pod
-# admission time (seccompProfile, allowPrivilegeEscalation: false,
-# readOnlyRootFilesystem: true, drop ALL capabilities). However, kubescape
-# scans the Deployment/StatefulSet spec where these fields are absent.
+# Exempt the pod-level security-context controls that Kyverno's
+# "add-security-context" ClusterPolicy injects at pod admission (seccompProfile,
+# allowPrivilegeEscalation: false, drop ALL capabilities, runAsNonRoot). Kubescape
+# scans the stored Deployment/StatefulSet spec — where these Kyverno-injected
+# fields are absent — so they are exempted cluster-wide.
+#
+# NOTE: readOnlyRootFilesystem (C-0017) is deliberately NOT exempted here anymore.
+# It is now set GENUINELY in each workload's own spec wherever the app tolerates a
+# read-only root (see the app HelmReleases + the Crossplane DeploymentRuntimeConfigs),
+# so the control truly passes rather than being suppressed. The privileged infra
+# namespaces keep their C-0017 exemption in infrastructure-privileged.yaml, and the
+# small remainder that cannot yet run read-only is scoped in readonly-rootfs-pending.yaml.
 apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
   name: pod-security-mutations
 spec:
   reason: >-
-    Kyverno mutate policy "add-security-context" enforces these controls at
-    pod admission. The Deployment spec does not contain these fields because
-    they are injected by Kyverno when pods are created. Kubescape scans the
-    stored spec, not the live pod.
+    Kyverno mutate policy "add-security-context" injects these controls
+    (seccompProfile, allowPrivilegeEscalation: false, drop ALL capabilities,
+    runAsNonRoot) at pod admission. The Deployment spec does not contain them
+    and Kubescape scans the stored spec, not the live pod. readOnlyRootFilesystem
+    (C-0017) is handled separately — set in-spec per workload.
   posture:
     - controlID: C-0211
       action: ignore
     - controlID: C-0016
-      action: ignore
-    - controlID: C-0017
       action: ignore
     - controlID: C-0055
       action: ignore

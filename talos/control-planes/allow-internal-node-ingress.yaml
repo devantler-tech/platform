@@ -1,0 +1,26 @@
+# Cluster-internal TCP reachable from the node CIDR only on control-plane
+# nodes. Pairs with cluster/block-ingress-by-default.yaml.
+#   etcd 2379-2380, cilium-health 4240, cilium-mutual-auth 4250,
+#   trustd 50001, NodePort range 30000-32767
+# cilium-mutual-auth 4250: cilium-agent agent-to-agent mTLS handshake for flows
+# the require-mutual-auth CiliumClusterwideNetworkPolicy marks
+# authentication.mode: required; the source is the peer node's host-network
+# cilium-agent, i.e. the node CIDR. Without it the cross-node handshake times
+# out and Cilium black-holes the authenticated flow cluster-wide.
+#
+# Keep the rule COUNT low — add ports to this rule when the subnet set
+# matches, don't add new rules (see the ENOBUFS note in
+# allow-public-ingress.yaml).
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: control-plane-internal-node-ingress
+portSelector:
+  ports:
+    - 2379-2380
+    - 4240
+    - 4250
+    - 30000-32767
+    - 50001
+  protocol: tcp
+ingress:
+  - subnet: 10.0.0.0/16

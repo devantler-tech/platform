@@ -46,6 +46,7 @@ resources:
   - cilium.yaml
   - cluster-autoscaler-hetzner-cluster-autoscaler.yaml
   - coredns.yaml
+  - descheduler.yaml
   - hcloud-cloud-controller-manager.yaml
   - hcloud-csi-controller.yaml
   - hcloud-csi-node.yaml

@@ -1,0 +1,20 @@
+# Cluster-internal UDP reachable from the node CIDR only on control-plane
+# nodes. Pairs with cluster/block-ingress-by-default.yaml.
+#   Cilium VXLAN 8472, Cilium WireGuard 51871
+# WireGuard transparent encryption (encryption.type: wireguard) tunnels
+# VXLAN-encapsulated pod traffic between nodes through cilium_wg0; the default
+# block would otherwise drop inter-node WireGuard and break pod-to-pod traffic.
+#
+# Keep the rule COUNT low — add ports to this rule when the subnet set
+# matches, don't add new rules (see the ENOBUFS note in
+# allow-public-ingress.yaml).
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: control-plane-internal-udp-ingress
+portSelector:
+  ports:
+    - 8472
+    - 51871
+  protocol: udp
+ingress:
+  - subnet: 10.0.0.0/16

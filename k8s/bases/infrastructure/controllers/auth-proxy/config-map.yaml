@@ -47,6 +47,14 @@ data:
           rule: "Host(`backstage.${domain}`)"
           entryPoints: ["web"]
           service: backstage
+        # Kyverno Policy Reporter UI. Prod-only (the app lives in the
+        # `infrastructure` layer, pulled in full only by the hetzner overlay), so
+        # this router is inert on local/CI -- no HTTPRoute sends
+        # policy-reporter.${domain} to oauth2-proxy there (same as coroot/opencost).
+        policy-reporter:
+          rule: "Host(`policy-reporter.${domain}`)"
+          entryPoints: ["web"]
+          service: policy-reporter
       services:
         homepage:
           loadBalancer:
@@ -74,3 +82,9 @@ data:
           loadBalancer:
             servers:
               - url: "http://backstage.backstage.svc.cluster.local:7007"
+        # Policy Reporter UI (policy-reporter-ui Service :8080). Prod-only and
+        # inert on local (the policy-reporter namespace has no pods there).
+        policy-reporter:
+          loadBalancer:
+            servers:
+              - url: "http://policy-reporter-ui.policy-reporter.svc.cluster.local:8080"

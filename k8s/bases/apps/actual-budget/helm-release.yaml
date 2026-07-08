@@ -15,12 +15,6 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: actual-budget
-  valuesFrom:
-    - kind: Secret
-      name: actual-budget-oidc
-      valuesKey: client-secret
-      targetPath: login.openid.clientSecret
-      optional: true
   postRenderers:
     - kustomize:
         patches:
@@ -187,7 +181,14 @@ spec:
       runAsUser: 1001
       runAsGroup: 1001
     securityContext:
-      readOnlyRootFilesystem: false
+      # Kubescape C-0017 (immutable container filesystem). The chart already
+      # mounts the only two paths actual-server writes to — the `tmp` emptyDir at
+      # /tmp (scratch/uploads) and the `data` PVC at /data (ACTUAL_DATA_DIR:
+      # account.sqlite, server-files/, user-files/) — so a read-only root FS needs
+      # no extra volumes here. Proven safe by the enablebanking-seed sidecar above,
+      # which runs the SAME actual-server image via node with
+      # readOnlyRootFilesystem: true and only /data + /tmp, healthy in prod.
+      readOnlyRootFilesystem: true
       runAsUser: 1001
       runAsGroup: 1001
     ingress:
@@ -203,8 +204,15 @@ spec:
     # (disabled here), so they are inert at runtime. The active OpenID config is
     # the ACTUAL_OPENID_* env injected by the postRenderer above. Do NOT remove
     # this block: dropping it fails the chart schema and wedges the apps
-    # Kustomization (the helm upgrade never succeeds). clientSecret comes from the
-    # ESO-synced `actual-budget-oidc` Secret via `valuesFrom` above.
+    # Kustomization (the helm upgrade never succeeds).
+    #
+    # Schema-satisfaction uses the oneOf's `existingSecret` branch (discoveryUrl +
+    # existingSecret), which resolves STATICALLY — so an offline render (ksail's
+    # in-process Helm validate) and a live upgrade both match exactly one branch.
+    # The empty `clientSecret` keeps the inline-secret branch unmatched, so
+    # exactly one branch matches. Do NOT re-introduce a `clientSecret` /
+    # `valuesFrom` injection: with both a clientSecret and existingSecret present,
+    # TWO branches match and the oneOf's "exactly one" fails, wedging the upgrade.
     login:
       method: "openid"
       openid:
@@ -214,3 +222,6 @@ spec:
         clientId: "public-client"
         authMethod: "openid"
         tokenExpiration: "never"
+        existingSecret:
+          name: actual-budget-oidc
+          clientSecretKey: client-secret

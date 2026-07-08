@@ -44,3 +44,4 @@ jobs:
           talos-config: ${{ secrets.TALOS_CONFIG }}
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+          wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}

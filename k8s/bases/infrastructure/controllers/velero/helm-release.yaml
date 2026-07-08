@@ -11,7 +11,7 @@ spec:
   chart:
     spec:
       chart: velero
-      version: 12.0.3
+      version: 12.1.0
       sourceRef:
         kind: HelmRepository
         name: vmware-tanzu
@@ -43,11 +43,59 @@ spec:
         # Upstream fix (skip the header when no tags are configured) is open
         # but unreleased: velero-io/velero-plugin-for-aws#299 / #303.
         # Safe to bump again once a release ships one of those PRs.
-        image: velero/velero-plugin-for-aws:v1.14.0
+        image: velero/velero-plugin-for-aws:v1.14.2
         imagePullPolicy: IfNotPresent
+        # Non-root hardening for the plugin-copy initContainer (Kubescape
+        # C-0013). It only copies the AWS plugin binary into the shared
+        # `plugins` emptyDir, so it needs neither root nor a writable root FS —
+        # readOnlyRootFilesystem is safe here (unlike the main server below).
+        # UID 65532 matches this image's baked nonroot user.
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault
         volumeMounts:
           - mountPath: /target
             name: plugins
+
+    # Non-root securityContext for the velero SERVER (Kubescape C-0013 non-root
+    # containers, plus C-0016 no-privilege-escalation and C-0055 drop-ALL).
+    # The velero namespace is excluded from the cluster-wide
+    # add-security-context Kyverno mutation (its node-agent DaemonSet needs
+    # host access), so the server Deployment must declare its own — pod- and
+    # container-level runAsNonRoot + runAsUser:65532 is exactly what C-0013
+    # inspects on the rendered Deployment template.
+    #
+    # readOnlyRootFilesystem is deliberately LEFT FALSE on the server: velero
+    # writes to the ROOT filesystem at /tmp — /tmp/credentials/<ns>, /tmp/udmrepo
+    # (Kopia config when $HOME is unset) and the go-plugin unix socket — and the
+    # chart mounts no emptyDir at /tmp, so a read-only root would break every
+    # backup. C-0017 stays covered by the velero infrastructure-privileged /
+    # pod-security-mutations ClusterSecurityException. (The plugin-copy
+    # initContainer above CAN use readOnlyRootFilesystem:true.)
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      runAsGroup: 65532
+      fsGroup: 65532
+      seccompProfile:
+        type: RuntimeDefault
+    containerSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: false
+      capabilities:
+        drop:
+          - ALL
+      seccompProfile:
+        type: RuntimeDefault
 
     # Mount our SOPS-derived R2 credentials secret instead of the chart's
     # generated one. The chart only consults it; it never writes to it.

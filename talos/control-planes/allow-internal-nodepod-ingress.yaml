@@ -1,0 +1,22 @@
+# Cluster-internal TCP reachable from the node CIDR AND the pod CIDR on
+# control-plane nodes. Pairs with cluster/block-ingress-by-default.yaml.
+# The node CIDR covers cross-node scrapes (Cilium masquerades pod->node-IP to
+# the source node IP); same-node scrapes are NOT masqueraded, so kubelet /
+# node-exporter see the raw pod IP and the pod CIDR must be allowed too.
+#   kubelet 10250, hubble-peer 4244, node-exporter 9100
+#
+# Keep the rule COUNT low — add ports to this rule when the subnet set
+# matches, don't add new rules (see the ENOBUFS note in
+# allow-public-ingress.yaml).
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: control-plane-internal-nodepod-ingress
+portSelector:
+  ports:
+    - 4244
+    - 9100
+    - 10250
+  protocol: tcp
+ingress:
+  - subnet: 10.0.0.0/16
+  - subnet: 10.244.0.0/16

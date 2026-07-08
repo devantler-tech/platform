@@ -46,25 +46,53 @@ spec:
     clusterName: ${cluster_name}
     capabilities:
       configurationScan: enable
-      continuousScan: enable
+      # Chart default (disable) — deliberately NOT enabled on this air-gapped
+      # install. With continuousScan enabled the operator's continuous-scanning
+      # service fires a `kubescapeScan` command per watched-resource event, and
+      # that request path never carries `scanV1.keepLocal` (upstream's offline
+      # fix, helm-charts#862, only patched the scheduler CronJob request body —
+      # see kubescapeScheduler.requestBody below). Offline, every such scan runs
+      # Submit-mode, dies at cloud account-ID generation ("chmod
+      # /home/nonroot/.kubescape: read-only file system"), persists NO
+      # workloadconfigurationscan CRs, and the ~1-per-36s retry flood keeps the
+      # scan queue permanently backlogged — starving the daily keepLocal
+      # scheduler scan that DOES work (observed live 2026-07-04, issue #2463).
+      # Posture freshness offline = the daily scheduler scan. Re-enable only if
+      # upstream propagates keepLocal into the continuous-scan command path.
+      continuousScan: disable
       vulnerabilityScan: enable
+      # kubevuln emits an OpenVEX document per scanned image (stored in-cluster
+      # as OpenVulnerabilityExchangeContainer CRs), marking CVEs not_affected
+      # when the workload's ApplicationProfile shows the vulnerable component
+      # is never loaded. Documents only carry relevancy verdicts for workloads
+      # whose profile is complete; partial-profile workloads still get a VEX
+      # shell, which fills in as their pods naturally roll. Feeds the
+      # reachable-CVE CI gate (#2149) a machine-readable suppression source.
+      # Upstream marks the capability experimental — the VEX CRs are advisory
+      # data only, so a regression cannot break scanning itself.
+      vexGeneration: enable
       runtimeDetection: enable
       # Enables Kubescape's risk-acceptance feature, so the operator/kubevuln process
       # the in-cluster SecurityException / ClusterSecurityException CRDs
       # (k8s/bases/infrastructure/cluster-security-exceptions/) and emit posture-exception
       # match events (kubescape#2291). IMPORTANT: this flag alone does NOT make POSTURE
-      # exceptions apply — that needs TWO more things the chart (<= 1.40.2) does not give us:
+      # exceptions apply — that needs THREE more things the chart (<= 1.40.2) does not give us:
       #   (1) the posture scanner reads those CRDs via a CRD exceptions getter that only
-      #       exists in kubescape image >= v4.0.9 (kubescape#2322); chart 1.40.2 still pins
-      #       the scanner to v4.0.8 → see the `kubescape.image.tag` override below; and
-      #   (2) the scanner ServiceAccount needs RBAC to `list` those CRDs, which NO chart
+      #       exists in kubescape image >= v4.0.9 (kubescape#2291/#2322); chart 1.40.2 still
+      #       pins the scanner to v4.0.8 → see the `kubescape.image.tag` override below;
+      #   (2) that getter must LIST the CRDs at the apiVersion the chart serves — v4.0.9
+      #       hard-coded kubescape.io/v1 while the chart's CRDs serve ONLY v1beta1, so its
+      #       List() 404s and (being the secondary/merged source) is silently swallowed →
+      #       still zero exceptions. kubescape#2366 (image >= v4.0.10) switches the getter to
+      #       v1beta1, so the override below is at v4.0.10 for this reason; and
+      #   (3) the scanner ServiceAccount needs RBAC to `list` those CRDs, which NO chart
       #       version grants it (only operator/kubevuln get it) → see `cluster-role.yaml`
       #       + `cluster-role-binding.yaml`.
-      # With v4.0.8 + no RBAC the scanner silently loads zero exceptions (its merged getter
-      # swallows the missing/forbidden CRD source and falls back to the offline = empty
-      # primary), so the dashboard reads "excluding 0 controls" even though the CRs are
-      # deployed and schema-valid. Exemptions stay a LAST RESORT behind real fixes — keep
-      # the cluster-security-exceptions set minimal and irreducible.
+      # Missing any one of the three → the scanner silently loads zero exceptions (its merged
+      # getter swallows the missing/forbidden/wrong-version CRD source and falls back to the
+      # offline = empty primary), so the dashboard reads "excluding 0 controls" even though
+      # the CRs are deployed and schema-valid. Exemptions stay a LAST RESORT behind real
+      # fixes — keep the cluster-security-exceptions set minimal and irreducible.
       riskAcceptance: enable
       # Run posture/config scanning OFFLINE (air-gapped). This cluster has no
       # ARMO SaaS account, but the chart defaults to submit-mode: the scanner
@@ -78,6 +106,27 @@ spec:
       # keepLocal:true are already set), restoring posture scanning + findings.
       # Vulnerability scanning (kubevuln) is unaffected — it never gated on the
       # cloud submit.
+      #
+      # IMPORTANT: capabilities.kubescapeOffline ALONE does NOT keep the posture
+      # SCAN local on chart 1.40.2. This flag only (a) toggles the scanner's
+      # config.json mountPath and (b) sets clusterData.keepLocal — neither of
+      # which reaches the scanner's per-scan Submit path. The scanner still
+      # resolves a cloud report URL (api.armosec.io) and, with an empty account,
+      # forces Submit=true, so every scheduled scan tries to generate+write an
+      # account ID to /home/nonroot/.kubescape/config.json. On chart 1.40.2 that
+      # path is an emptyDir subPath the kubelet materialises as a DIRECTORY (an
+      # upstream mount bug), so the write fails "is a directory" and the scan
+      # ABORTS before persisting fresh WorkloadConfigurationScan CRs — freezing
+      # the Kubescape dashboard on stale results (surfaced under scanner v4.0.9,
+      # which treats the account-ID write as terminal). Upstream fixes this by
+      # injecting scanV1.keepLocal:true into the scan-scheduler request body for
+      # offline installs (helm-charts#857 / PR #862, merged, UNRELEASED — chart
+      # is still 1.40.2). We apply that same fix now via the request-body
+      # override below; keepLocal makes the scanner run local-only (Submit=false,
+      # no cloud call, no account-ID write, no config.json touch), so the scan
+      # completes and persists CRs each run — and the config.json mount bug is
+      # never reached. Drop the override once the chart releases the fix past
+      # 1.40.2.
       kubescapeOffline: enable
     hostScanner:
       enabled: true
@@ -114,19 +163,40 @@ spec:
           memory: 1Gi
     kubescape:
       image:
-        # The posture scanner applies the SecurityException / ClusterSecurityException
-        # CRDs via its CRD exceptions getter, added in kubescape v4.0.9
-        # (kubescape#2291 + #2322). Chart 1.40.2 still pins the scanner to v4.0.8, which
-        # has NO such getter, so posture exceptions are silently ignored no matter how the
-        # CRs are authored or what RBAC exists. Override to v4.0.9 so the getter is present;
-        # it is paired with `cluster-role.yaml` + `cluster-role-binding.yaml`, which grant
-        # the scanner SA the `list`
-        # RBAC the getter needs (the chart never grants it). The v4.0.9 merged getter still
-        # swallows a missing-RBAC/CRD source, so this bump cannot break scans on its own.
-        # Drop both once the chart bumps the scanner past v4.0.9 AND grants it the
-        # securityexceptions RBAC. (Same component-image-ahead-of-chart pattern as the
-        # nodeAgent override above.)
-        tag: v4.0.9
+        # The posture scanner applies the SecurityException / ClusterSecurityException CRDs
+        # via its CRD exceptions getter (added in kubescape v4.0.9, kubescape#2291 + #2322).
+        # Chart 1.40.2 pins the scanner to v4.0.8, which has NO such getter, so posture
+        # exceptions are silently ignored no matter how the CRs are authored or what RBAC
+        # exists. But v4.0.9's getter hard-coded the CRD apiVersion to kubescape.io/v1 while
+        # the chart serves ONLY kubescape.io/v1beta1 — so its List() 404s and, as the
+        # secondary/merged source, is silently swallowed → still ZERO exceptions applied
+        # (dashboard "excluding 0 controls"). kubescape#2366 (first shipped in image v4.0.10)
+        # switches the getter to v1beta1, so v4.0.10 is the first scanner that actually reads
+        # our CRs offline. Paired with `cluster-role.yaml` + `cluster-role-binding.yaml`,
+        # which grant the scanner SA the `list` RBAC the getter needs (the chart never grants
+        # it). The merged getter still swallows a missing-RBAC/CRD source, so this bump cannot
+        # break scans on its own. Drop this override + the reader RBAC once the chart bumps
+        # the scanner to >= v4.0.10 AND grants it the securityexceptions RBAC. (Same
+        # component-image-ahead-of-chart pattern as the nodeAgent override above.)
+        tag: v4.0.10
+    # Force the scheduled posture scan to run LOCAL-ONLY. Chart 1.40.2 renders
+    # the scan-scheduler ConfigMap request-body verbatim from this value, and
+    # the scanner maps scanV1.keepLocal -> scanInfo.Local, which forces
+    # Submit=false (no cloud submit, no account-ID generation, no config.json
+    # write). This is what actually unblocks in-cluster persistence under
+    # kubescapeOffline (see the long note on capabilities.kubescapeOffline
+    # above) and it mirrors upstream helm-charts PR #862 exactly. The rest of
+    # this block reproduces the chart 1.40.2 default request-body unchanged
+    # (this value fully replaces the default, so it must be complete). Drop the
+    # whole override once the chart releases the offline keepLocal fix past
+    # 1.40.2.
+    kubescapeScheduler:
+      requestBody:
+        commands:
+          - CommandName: "kubescapeScan"
+            args:
+              scanV1:
+                keepLocal: true
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.
     persistence:

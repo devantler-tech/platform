@@ -1,13 +1,13 @@
 ---
-compatibility: Requires awk, git, kustomize, kubeconform, flux, yq
+compatibility: Requires flux, flux-schema, and kustomize or kubectl
 description: |
     Audit and validate Flux CD GitOps repositories by scanning local repo files (not live clusters) — runs Kubernetes schema validation, detects deprecated Flux APIs, reviews RBAC/multi-tenancy/secrets management, and produces a prioritized GitOps report. Use when users ask to audit, analyze, validate, review, or security-check a GitOps repo.
 license: Apache-2.0
 metadata:
     github-path: skills/gitops-repo-audit
-    github-ref: refs/tags/v0.0.4
+    github-ref: refs/tags/v0.1.0
     github-repo: https://github.com/fluxcd/agent-skills
-    github-tree-sha: f1974c94903b38c0756041d9ee9bf84cdfb997f6
+    github-tree-sha: 9ba3f6d5e5a59e7b882a2af0086cd745bfcbc025
 name: gitops-repo-audit
 ---
 # GitOps Repository Auditor
@@ -31,18 +31,35 @@ Understand the repository before diving into specifics.
    ```bash
    scripts/discover.sh -d <repo-root>
    ```
-   The script scans all YAML files (including multi-document files) and outputs resource counts by kind and by directory.
+   The script wraps `flux-schema discover` and outputs JSON with a top-level `inventory`
+   object (alongside `kind`/`apiVersion`/`$schema`) containing: a `summary` (file, resource,
+   and line counts), a `directories` map classifying each directory as `kubernetes-manifests`,
+   `kustomize-overlay`, `helm-chart`, or `terraform`, a `resources` map with counts keyed by
+   `group/version/Kind`, and a `flux` map listing every Flux resource per file. Read the fields
+   under `.inventory`. Multi-document files are handled.
 2. Classify the repository pattern by reading [repo-patterns.md](references/repo-patterns.md) and matching against the heuristics table
 3. Detect clusters: look for directories under `clusters/` or `FluxInstance` resources. Read the FluxInstance to understand how the clusters are configured.
 4. Check for `gotk-sync.yaml` under `flux-system/` — its presence indicates `flux bootstrap` was used. Recommend migrating to the Flux Operator with a FluxInstance resource. Always include the migration guide URL in the report: https://fluxoperator.dev/docs/guides/migration/
 
 ### Phase 2: Manifest Validation
 
-Run the bundled validation script to check YAML syntax, Kubernetes schemas, and Kustomize builds.
+Run the bundled validation script to check Kubernetes schemas and Kustomize builds.
+Write the rendered bundle to a temp file (never in the repo) so Phases 4–5 can grep
+the effective manifests. Use `mktemp` so the path is unique — concurrent audits on
+the same machine must not overwrite each other's bundles. If tmp is not writable,
+`mktemp` fails and the script runs without the bundle:
 
 ```bash
-scripts/validate.sh -d <repo-root>
+bundle="$(mktemp "${TMPDIR:-/tmp}/flux-audit-bundle.XXXXXX" 2>/dev/null || true)"
+scripts/validate.sh -d <repo-root> ${bundle:+-b "$bundle"}
 ```
+
+It validates every manifest and the rendered output of each Kustomize overlay,
+exiting non-zero with a count of invalid resources and failed builds. Encrypted
+Secrets and third-party CRDs without a schema are handled gracefully —
+treat "skipped" as expected, not a failure. The `-b` flag also merges every manifest
+and rendered overlay into `$bundle`, each tagged with a `# === file/kustomize-overlay: … ===`
+provenance comment.
 
 Use `-e <dir>` to exclude additional directories from validation.
 
@@ -73,6 +90,7 @@ Focus on the categories most relevant to what you found in discovery:
 - Has HelmReleases? Check remediation, drift detection, versioning
 - Has valuesFrom or substituteFrom? Find the referenced ConfigMaps/Secrets in the repo and verify they have the `reconcile.fluxcd.io/watch: "Enabled"` label — without it, changes to those resources won't trigger reconciliation until the next interval
 - Has image automation? Check ImagePolicy semver ranges, update paths
+- Has Kustomize overlays? Grep `$bundle` (if written) to see resources in rendered form — an overlay `patch`/`images` can change the effective manifest; cite line numbers from the raw file
 
 Also check for **consistency** across similar resources. For example, if some
 HelmReleases use the modern `install.strategy` pattern while others use legacy
@@ -98,6 +116,7 @@ Focus on the categories most relevant to what you found in discovery:
 - Multi-tenant? Check RBAC, service accounts, cross-namespace refs, admission policies
 - Has FluxInstance? Check operator security settings (multitenant, network policies)
 - Has image automation? Check push credential separation and branch isolation
+- Has Kustomize overlays? Grep `$bundle` (if written) for post-render security fields — e.g. a `securityContext` weakened or image retagged by an overlay patch, which the base files won't show
 
 ### Phase 6: Report
 
@@ -152,10 +171,10 @@ Load reference files when you need deeper information:
 
 - **Not a Flux repo**: If no Flux CRDs are found, say so clearly. The repo might use ArgoCD, plain kubectl, or another tool. Don't force-fit Flux analysis.
 - **Mixed tooling**: Some repos combine Flux with CI workflows and Terraform. Analyze the Flux parts and note the other tools.
-- **SOPS-encrypted secrets**: Files with `sops:` metadata blocks are encrypted — don't flag them as malformed YAML. The validation script already skips Secrets.
+- **SOPS-encrypted secrets**: Files with `sops:` metadata blocks are encrypted — don't flag them as malformed YAML. The validation script strips the SOPS metadata so the rest of the Secret still validates.
 - **Generated manifests**: The `flux-system/gotk-components.yaml` is auto-generated by Flux bootstrap. Don't analyze it for best practices — it's managed by Flux itself.
 - **Repos without kustomization.yaml**: Some repos use plain YAML directories without Kustomize. Flux can reconcile these directly. Don't flag the absence of kustomization.yaml as an error.
 - **Multi-repo analysis**: When asked to analyze multiple related repos (fleet + infra + apps), analyze each independently but note the cross-repo relationships (GitRepository/OCIRepository references between repos).
 - **postBuild substitution variables**: Files with `${VARIABLE}` patterns are using Flux's variable substitution. Don't flag these as broken YAML — they're resolved at reconciliation time.
-- **Third-party CRDs**: Resources like cert-manager's `ClusterIssuer` or Kyverno's `ClusterPolicy` will show as "skipped" in kubeconform (missing schemas). This is expected — only Flux CRD schemas are downloaded. Don't flag these as validation failures.
+- **Third-party CRDs**: Resources without a catalog schema (e.g. cert-manager `ClusterIssuer`) show as "skipped" — expected, not a validation failure.
 - **Kustomize build files**: `kustomization.yaml` files with `apiVersion: kustomize.config.k8s.io/v1beta1` are Kustomize build configs, not Flux CRDs.

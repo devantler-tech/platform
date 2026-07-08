@@ -11,11 +11,15 @@
 # "No data to be shown" and its compliance view recomputes scores client-side
 # with zero exceptions, so every control the CRs except still renders as failing.
 #
-# The CRs remain the source of truth (they drive the kubescape operator posture
-# report and are what `ksail workload scan` should consume via #2264). This file
-# is a presentation-layer mirror for the Headlamp dashboard ONLY; keep it in sync
-# by hand when the CRs change, and DELETE it once the plugin is bumped to a release
-# that reads the CRDs natively.
+# The CRs remain the source of truth. With the scanner at kubescape >= v4.0.10
+# (see the HelmRelease `kubescape.image.tag` override) the operator now applies the
+# CRs at scan time and writes status=passed/subStatus=w-exceptions into the stored
+# workloadconfigurationscansummaries — which the plugin renders directly, so once a
+# post-bump scan has run this mirror is redundant even without a group selection.
+# This file is a presentation-layer FALLBACK for the Headlamp dashboard ONLY; keep
+# it in sync by hand while it lives, and DELETE it (plus the manual step below) once
+# the v4.0.10 scanner is confirmed marking excepted controls in prod, OR once the
+# plugin is bumped to a release that reads the CRDs natively — whichever lands first.
 #
 # NOTE: the plugin only evaluates workload posture scans, so the two host/CIS
 # false-positive CRs (talos-cis-control-plane-false-positives,
@@ -28,9 +32,12 @@
 # regex matches the workload's kind/name/namespace. Values are JS RegExp, anchored
 # here for exactness. `namespace: ".*"` mirrors a cluster-wide (unscoped) CR.
 #
-# IMPORTANT (manual step): the plugin applies ONE selected group at a time. On the
-# plugin's Compliance page, pick the "platform-exceptions" group from the
-# exceptions selector for these to take effect in the view.
+# IMPORTANT (interim manual step, needed ONLY until a v4.0.10 scan has run): the
+# v0.11.2 plugin applies ONE selected group at a time and recomputes scores
+# client-side, so before the scanner marks the stored summaries a viewer must pick
+# the "platform-exceptions" group from the Compliance page's exceptions selector for
+# these to take effect. Once the v4.0.10 scanner writes the exception status this is
+# no longer required (the plugin renders the summary status directly).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -67,19 +74,10 @@ data:
             "controlID": "^C-0053$"
           },
           {
-            "controlID": "^C-0015$"
-          },
-          {
-            "controlID": "^C-0007$"
-          },
-          {
             "controlID": "^C-0037$"
           },
           {
             "controlID": "^C-0031$"
-          },
-          {
-            "controlID": "^C-0002$"
           },
           {
             "controlID": "^C-0063$"
@@ -89,6 +87,99 @@ data:
           },
           {
             "controlID": "^C-0188$"
+          }
+        ]
+      },
+      {
+        "name": "exec-into-container-rbac",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "reason": "Infra controllers (Velero, CloudNativePG, Flux kustomize-/helm-controller and flux-operator) legitimately hold pods/exec by design; matched by kind+name on the RBAC binding so C-0002 still catches new exec grants. Tenant SAs are scoped at the root instead, not excepted here.",
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^velero-server$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^velero-server$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^velero-server$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cloudnative-pg$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cluster-reconciler-flux-system$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^flux-operator$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0002$"
+          }
+        ]
+      },
+      {
+        "name": "delete-capable-rbac-by-design",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "reason": "Controllers, operators and tenant deployers require delete permissions by design (C-0007). Mirrors the operator CSE (delete-rbac.yaml) by kind+name: C-0007 findings terminate on the RBAC binding objects themselves (19 of 26 on cluster-scoped ClusterRoleBindings whose namespace is empty), so a namespace designator can never cover them.",
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^(cdi-sa|cert-manager-controller-(issuers|clusterissuers|certificates|challenges)|cloudnative-pg|cluster-reconciler-flux-system|flux-operator|coroot-operator|crossplane-admin|crossplane:provider:provider-upjet-github-[0-9a-f]+:system|flagger|kro:controller|ksail-operator|kube-prometheus-stack-operator|kubevirt-apiserver|kubevirt-controller|longhorn-bind|reloader-reloader-role-binding)$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^(ascoachingogvaner|kyverno:admission-controller|kyverno:cleanup-controller|longhorn|tf-runner|velero-server|wedding-app)$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Group$",
+              "name": "^crossplane-masters$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0007$"
           }
         ]
       },
@@ -104,6 +195,30 @@ data:
             "designatorType": "Attributes",
             "attributes": {
               "namespace": "^(flux-system|kyverno|cert-manager|cnpg-system|velero|keda|observability|kubescape|vertical-pod-autoscaler|longhorn-system|kube-system|reloader|external-dns|kubelet-serving-cert-approver|opencost|headlamp|kubevirt|cdi|dex|oauth2-proxy|homepage|external-secrets|crossplane-system)$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0018$"
+          },
+          {
+            "controlID": "^C-0056$"
+          }
+        ]
+      },
+      {
+        "name": "batch-workloads",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "reason": "Readiness/liveness probes are inapplicable to run-to-completion Jobs/CronJobs; matched by workload kind so long-running workloads still require probes.",
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^(Job|CronJob)$"
             }
           }
         ],
@@ -200,6 +315,27 @@ data:
           },
           {
             "controlID": "^C-0190$"
+          }
+        ]
+      },
+      {
+        "name": "gitops-managed-cronjobs",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "reason": "C-0026 lists every CronJob for manual approval and has no hardening remedy; all CronJobs are GitOps-managed platform components delivered by Flux after PR review (the review is the approval). Namespace-scoped so a CronJob in any unexpected namespace still surfaces for review. fleetdm is pre-listed (disabled on prod, but its chart ships a fleet-vulnprocessing CronJob).",
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "namespace": "^(kube-system|kubescape|longhorn-system|observability|openbao|umami|fleetdm)$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0026$"
           }
         ]
       },
@@ -432,6 +568,476 @@ data:
         "posturePolicies": [
           {
             "controlID": "^C-0187$"
+          }
+        ]
+      },
+      {
+        "name": "secret-reader-rbac",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "reason": "Controllers, operators and databases that read Secrets by design; matched by RBAC object (Role/ClusterRole, or binding for cluster-admin holders) so a new secret-reader still trips C-0015. Unused tenant edit SAs, crossview wildcard read, and the cluster-admin/crossplane admin groups are intentionally left flagged.",
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^crd-controller-flux-system$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^tf-runner-role$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^tofu-cluster-reconciler-role$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^tofu-manager-role$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cluster-reconciler-flux-system$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^flux-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^velero-server$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^cert-manager-cainjector$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^cert-manager-controller-certificates$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^cert-manager-controller-challenges$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^cert-manager-controller-clusterissuers$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^cert-manager-controller-issuers$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^cert-manager-controller-orders$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^origin-ca-issuer-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^simply-dns-webhook:secret-access$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^cert-manager-webhook:dynamic-serving$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^trust-manager$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^cloudnative-pg$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^plugin-barman-cloud$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^backstage-db$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^coroot-db$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^coroot-db-barman-cloud$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^umami-db$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^umami-db-barman-cloud$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^wedding-db$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^wedding-db-barman-cloud$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^external-secrets-cert-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^external-secrets-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^crossplane$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^crossplane:provider:provider-aws-iam-[0-9a-f]+:system$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^crossplane:provider:provider-family-aws-[0-9a-f]+:system$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^crossplane:provider:provider-upjet-github-[0-9a-f]+:system$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^crossplane:provider:provider-upjet-unifi-[0-9a-f]+:system$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^kyverno:admission-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^kyverno:background-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^kyverno:cleanup-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^kyverno:reports-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^coroot-cluster-agent$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^coroot-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^kube-prometheus-stack-grafana-clusterrole$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^kube-prometheus-stack-kube-state-metrics$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^kube-prometheus-stack-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^hcloud-csi-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^longhorn-role$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^longhorn$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^cilium-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^cilium-gateway-secrets$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^cilium-tlsinterception-secrets$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^hubble-generate-certs$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^keda-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^keda-operator-certs$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^system:controller:generic-garbage-collector$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^system:controller:namespace-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^system:controller:resourcequota-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^system:kube-controller-manager$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^system:controller:bootstrap-signer$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^system:controller:token-cleaner$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^kubescape$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^flagger$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^ksail-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRole$",
+              "name": "^reloader-reloader-role$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^vault-config$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^velero-server$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0015$"
           }
         ]
       }

@@ -19,6 +19,7 @@ jobs:
       pull-requests: read # detect changed files
     outputs:
       k8s: ${{ steps.filter.outputs.k8s }}
+      talos: ${{ steps.filter.outputs.talos }}
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -39,6 +40,11 @@ jobs:
               - 'talos-local/**'
               - 'talos/**'
               - 'scripts/validate-naming.py'
+              - 'scripts/validate-embedded-json.py'
+              - '.github/workflows/ci.yaml'
+            talos:
+              - 'talos/**'
+              - 'talos-local/**'
               - '.github/workflows/ci.yaml'
 
   validate:
@@ -59,6 +65,16 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: 🧩 Validate embedded JSON blobs
+        # ConfigMaps that embed whole JSON documents as block scalars (e.g. the
+        # Headlamp Kubescape exceptions ConfigMap's exceptionPolicies) are opaque
+        # strings to schema validation, so a stray comma ships silently and only
+        # surfaces at consumption time — where an empty exceptions view reads
+        # identical to a clean posture. Pure Python stdlib, runs in under a
+        # second, so it goes first — before the ksail download. See
+        # scripts/validate-embedded-json.py (#2480).
+        run: python3 scripts/validate-embedded-json.py
+
       - name: ⚙️ Setup KSail
         # Renovate-managed (datasource github-releases; grouped 'ksail' with the
         # deploy-prod / dr-rebuild pins). The validate step below renders
@@ -76,7 +92,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.114.0"
+          KSAIL_VERSION: "7.159.1"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -140,6 +156,111 @@ jobs:
       - name: 🏷️ Validate naming conventions
         run: python3 scripts/validate-naming.py
 
+  validate-talos:
+    name: 🧪 Validate Talos Machine Config
+    needs: [changes]
+    # Renders the Talos machine config with every talos/ (prod) and talos-local/
+    # patch applied and runs `talosctl validate` on the result — on the PR
+    # event, so a broken patch (or an env expansion that would render empty,
+    # like #2462's ${WG_SERVER_PRIVATE_KEY}) fails the PR instead of surfacing
+    # in the merge group's deploy and evicting the queued PR. Placeholder key
+    # material stands in for the env-expanded secrets, so this needs no real
+    # secrets and runs on fork PRs too (issue #2477).
+    if: github.event_name == 'pull_request' && needs.changes.outputs.talos == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup talosctl
+        env:
+          # Keep in step with the Talos version the prod cluster runs (ksail's
+          # node image pin — see ksail DefaultTalosImage).
+          # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
+          TALOS_VERSION: "1.13.5"
+        run: |
+          curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
+          sudo install /tmp/talosctl /usr/local/bin/talosctl
+          talosctl version --client
+
+      - name: ✅ Render + validate patched machine configs
+        run: |
+          set -euo pipefail
+
+          # Placeholder key material for env-expanded patch values (ksail
+          # expands these from environment secrets at deploy time — see
+          # talos/control-planes/wireguard.yaml and talos/cluster/registry-auth.yaml).
+          # Real-format but throwaway, so validation exercises the expansion
+          # path without any real secret on the PR event.
+          WG_SERVER_PRIVATE_KEY="$(openssl rand -base64 32)"
+          GHCR_TOKEN="placeholder-ghcr-token"
+          export WG_SERVER_PRIVATE_KEY GHCR_TOKEN
+
+          validate_overlay() {
+            local dir="$1" mode="$2"
+            echo "::group::${dir} (${mode})"
+
+            # Every ${VAR} referenced by the overlay's patches must be set and
+            # non-empty here — an empty expansion is exactly the class of
+            # failure that evicted #2462 from the merge queue.
+            local vars v fmt=""
+            vars=$(grep -rhoE '[$][{][A-Za-z_][A-Za-z0-9_]*[}]' "$dir" | sort -u | tr -d '{}$') || true
+            for v in $vars; do
+              if [ -z "${!v:-}" ]; then
+                echo "::error::${dir}: \${${v}} is referenced by a patch but unset/empty — deploy would render an invalid machine config"
+                exit 1
+              fi
+              fmt="${fmt}\${${v}} "
+            done
+
+            local out; out=$(mktemp -d)
+            talosctl gen config ci-validate https://192.0.2.1:6443 --output-dir "${out}" >/dev/null
+
+            # Mirror ksail's patch layering: cluster/ applies to every node,
+            # control-planes/ and workers/ to their role. Expand env per patch
+            # and fail on any token that survives substitution.
+            local role base patches f expanded
+            for role in control-planes workers; do
+              case "${role}" in
+                control-planes) base="${out}/controlplane.yaml" ;;
+                workers) base="${out}/worker.yaml" ;;
+              esac
+              patches=()
+              for f in "${dir}"/cluster/*.yaml "${dir}/${role}"/*.yaml; do
+                [ -f "${f}" ] || continue
+                expanded="${out}/$(echo "${f}" | tr '/' '_')"
+                # Allowlist-scoped substitution: only the pre-checked vars are
+                # expanded, so an unexpected placeholder shape survives for the
+                # post-check below instead of being silently cleared.
+                if [ -n "${fmt}" ]; then
+                  envsubst "${fmt}" < "${f}" > "${expanded}"
+                else
+                  cp "${f}" "${expanded}"
+                fi
+                if grep -qE '[$][{][A-Za-z_][A-Za-z0-9_]*[}]' "${expanded}"; then
+                  echo "::error::${f}: unexpanded \${VAR} after substitution"
+                  exit 1
+                fi
+                patches+=("--patch" "@${expanded}")
+              done
+              if [ "${#patches[@]}" -gt 0 ]; then
+                talosctl machineconfig patch "${base}" "${patches[@]}" -o "${out}/${role}-patched.yaml"
+              else
+                cp "${base}" "${out}/${role}-patched.yaml"
+              fi
+              talosctl validate -c "${out}/${role}-patched.yaml" -m "${mode}" >/dev/null
+              echo "${dir}/${role}: rendered + validated (${mode})"
+            done
+            echo "::endgroup::"
+          }
+
+          validate_overlay talos cloud          # prod (Hetzner)
+          validate_overlay talos-local container # local Docker test-bed
+
   deploy-prod:
     name: 🚀 Deploy to Prod
     needs: [changes]
@@ -173,6 +294,7 @@ jobs:
           talos-config: ${{ secrets.TALOS_CONFIG }}
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+          wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
   heal-prod-on-failure:
     name: 🩹 Heal Prod (restore main on merge-group failure)
@@ -229,19 +351,21 @@ jobs:
           talos-config: ${{ secrets.TALOS_CONFIG }}
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+          wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [changes, validate, naming, deploy-prod]
+    needs: [changes, validate, naming, validate-talos, deploy-prod]
     if: always()
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@6a2f24aa5a859f7d0de66f9d0bde52254adba641 # v7.1.3
+        uses: devantler-tech/actions/aggregate-job-checks@b69839ba2debe04a46321b7698b6daf57667d4e7 # v9.0.2
         with:
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.validate.result }}
             ${{ needs.naming.result }}
+            ${{ needs.validate-talos.result }}
             ${{ needs.deploy-prod.result }}

@@ -1,0 +1,17 @@
+# Node exporter (9100) cluster-internal only on worker nodes (Prometheus
+# scraping). Pairs with cluster/block-ingress-by-default.yaml.
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: node-exporter-ingress
+portSelector:
+  ports:
+    - 9100
+  protocol: tcp
+ingress:
+  # Node CIDR covers cross-node scrapes: Cilium masquerades pod->node-IP
+  # traffic to the source node IP. Same-node scrapes (the Prometheus pod
+  # hitting the hostNetwork node-exporter on its own node) are NOT
+  # masqueraded, so node-exporter sees the raw pod IP and the pod CIDR must
+  # be allowed too.
+  - subnet: 10.0.0.0/16
+  - subnet: 10.244.0.0/16

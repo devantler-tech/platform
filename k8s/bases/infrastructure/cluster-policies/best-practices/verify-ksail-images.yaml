@@ -3,7 +3,7 @@
 # (ghcr.io/devantler-tech/*) — the third verification layer, complementing:
 #   1. Flux OCI *manifest* verification (apps' oci-repository.yaml verify.provider:
 #      cosign) — gates the GitOps artifacts, not container images.
-#   2. Talos ImageVerificationConfig (talos/cluster/image-verification.yaml)
+#   2. Talos ImageVerificationConfig (talos/cluster/verify-first-party-images.yaml)
 #      — gates the image bytes containerd pulls, with the SAME two signing
 #      identities as below. Keep both files in sync when identities change.
 # This layer rejects a Pod spec referencing an unsigned/tampered first-party

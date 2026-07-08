@@ -4,7 +4,7 @@
 # nodes (autoscaler nodes are compute-only)").
 #
 # WHY THIS EXISTS: autoscaler nodes boot from the SAME Talos worker config as
-# the static workers (talos/workers/node-labels.yaml), so they inherit the
+# the static workers (talos/workers/label-nodes.yaml), so they inherit the
 # node.longhorn.io/create-default-disk=true kubelet label. With
 # createDefaultDiskOnLabeledNodesOnly Longhorn then treats every autoscale
 # node as a storage node: it creates a default disk, and replicaAutoBalance:
@@ -25,21 +25,23 @@
 # autoscale-<pool>-<id>, and Longhorn mirrors the Kubernetes node name into
 # its nodes.longhorn.io CR name.
 #
-# MECHANISM: two mutations set the same two fields —
+# MECHANISM: two POLICIES set the same two fields on autoscale Node CRs —
 #   * allowScheduling: false  → no NEW replica is ever scheduled to the node
 #     (node-level gate; overrides every per-disk allowScheduling);
 #   * evictionRequested: true → belt-and-braces: any replica that slipped on
 #     (e.g. landed before this policy deployed) is actively rebuilt onto a
 #     baseline worker (rebuild completes BEFORE removal — no redundancy loss)
 #     and removed. A no-op on nodes with zero replicas.
-# Rule 1 mutates at ADMISSION, catching every future autoscale Node CR the
-# moment longhorn-manager creates it. Rule 2 is a mutate-EXISTING rule
-# (mutateExistingOnPolicyUpdate), so deploying/updating this policy also
-# retro-patches CRs that predate it — the 4 replica-hosting autoscale nodes
-# of 2026-06-30 are drained by the policy itself, no manual kubectl needed.
-# It requires the kyverno:background-controller:mutate-longhorn-nodes grant
-# (controllers/longhorn/, one Flux layer earlier — Kyverno rejects the policy
-# at admission if the grant is missing).
+# THIS policy is the ADMISSION half: it patches every future autoscale Node
+# CR the moment longhorn-manager creates it. The retrofit of Node CRs that
+# ALREADY exist lives in the sibling drain-autoscale-node-storage.yaml (a
+# mutate-existing policy). They MUST be two separate ClusterPolicies: Kyverno
+# requires EVERY mutate rule to declare mutate.targets when
+# spec.mutateExistingOnPolicyUpdate is set, and an admission rule has none —
+# the combined single-policy form was rejected by the validate-policy
+# webhook at apply time ("rules[0].mutate.targets has to be specified when
+# mutateExistingOnPolicyUpdate is set"), which froze the whole
+# `infrastructure` Flux layer (observed live 2026-07-02).
 # Longhorn only ever sets these two fields from user action (UI/API), so the
 # mutation fights no controller. Engine instance-managers still run on
 # autoscale nodes while a Longhorn-volume-mounting pod runs there — that is
@@ -60,9 +62,10 @@ metadata:
       storage label from the shared Talos worker config but are ephemeral
       compute-only capacity. Keeps volume data on the static baseline
       workers so the cluster-autoscaler can reclaim idle nodes and no
-      replica lives on a node that may be deleted at any time.
+      replica lives on a node that may be deleted at any time. Admission
+      half; the retrofit of pre-existing Node CRs is
+      drain-autoscale-node-storage.
 spec:
-  mutateExistingOnPolicyUpdate: true
   rules:
     # Admission path: every future autoscale Node CR is patched as it is
     # created (or on any later spec update that slips through).
@@ -75,34 +78,6 @@ spec:
               names:
                 - "autoscale-*"
       mutate:
-        patchStrategicMerge:
-          spec:
-            allowScheduling: false
-            evictionRequested: true
-    # Background path: retro-patch the autoscale Node CRs that already exist
-    # when this policy lands (mutateExistingOnPolicyUpdate above). The trigger
-    # is restricted to CREATE so Longhorn's steady Node-CR update churn does
-    # not re-enqueue background UpdateRequests for already-patched nodes —
-    # after the retrofit, this rule only fires again when a NEW autoscale
-    # node registers (rare, and a cheap re-assert of all targets). Manual UI
-    # flips are still healed by Kyverno's periodic background scan (hourly by
-    # default), which runs for mutate-existing rules regardless of triggers.
-    - name: drain-existing-autoscale-nodes
-      match:
-        any:
-          - resources:
-              kinds:
-                - longhorn.io/v1beta2/Node
-              names:
-                - "autoscale-*"
-              operations:
-                - CREATE
-      mutate:
-        targets:
-          - apiVersion: longhorn.io/v1beta2
-            kind: Node
-            namespace: longhorn-system
-            name: "autoscale-*"
         patchStrategicMerge:
           spec:
             allowScheduling: false

@@ -78,7 +78,7 @@ jobs:
         # pin current in both places.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.114.0"
+          KSAIL_VERSION: "7.159.1"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -104,6 +104,10 @@ jobs:
         env:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          # ksail env-expands ${WG_SERVER_PRIVATE_KEY} in the talos patches at
+          # load time (talos/control-planes/wireguard.yaml); an unset var
+          # renders an empty key and Talos rejects the whole machine config.
+          WG_SERVER_PRIVATE_KEY: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.prod.yaml workload push

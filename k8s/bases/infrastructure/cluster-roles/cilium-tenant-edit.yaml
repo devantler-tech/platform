@@ -21,6 +21,7 @@ metadata:
   name: cilium-tenant-edit
   labels:
     rbac.authorization.k8s.io/aggregate-to-edit: "true"
+    devantler.tech/aggregate-to-tenant-edit: "true"
 rules:
   - apiGroups: ["cilium.io"]
     resources:

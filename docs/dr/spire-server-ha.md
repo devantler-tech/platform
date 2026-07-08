@@ -39,7 +39,7 @@ Three independent blockers, each fatal to a blind change:
    i.e. **behind the very gate SPIRE bootstraps**. SPIRE down → its Postgres
    unreachable/uncertifiable → SPIRE can't start → loop. This is precisely the
    SPIRE↔Longhorn deadlock the prod overlay already engineered around by moving
-   the datastore to hcloud-csi (`cilium/patches/spire-datastorage-patch.yaml`,
+   the datastore to hcloud-csi (`cilium/patches/store-spire-data-on-hcloud.yaml`,
    2026-06-06 prod outage), but Postgres is a *busier, multi-pod, multi-node*
    dependency than a single attached block device, so it is strictly harder to
    make safe.
@@ -125,7 +125,7 @@ SVIDs, or it deadlocks. Options, hardest constraint first:
   single most important safety prerequisite and **must land and be verified before
   any replica/datastore change.** (It is purely additive — safe to ship ahead.)
 - **Talos node firewall** already allows the SPIRE mesh-auth port 4250
-  node-to-node (`talos/{workers,control-planes}/ingress-firewall.yaml`). Postgres
+  node-to-node (`talos/workers/allow-cilium-mutual-auth-ingress.yaml`, `talos/control-planes/allow-internal-node-ingress.yaml`). Postgres
   :5432 between nodes is intra-cluster pod traffic over the CNI, not a host port,
   so no Talos firewall change is expected — **verify** spire-db instances and
   spire-server can co-locate or cross nodes without a host-firewall drop.

@@ -1,0 +1,75 @@
+---
+# Exec-into-container exception (Kubescape C-0002, "Prevent containers from
+# allowing command execution") for the infrastructure controllers that
+# legitimately hold `pods/exec` BY DESIGN.
+#
+# Why this is a kind+name `match.resources` CR and NOT a `namespaceSelector`
+# entry in controller-rbac.yaml: C-0002 is an RBAC-review control — Kubescape
+# anchors the finding on the RBAC *binding* object (the WorkloadConfigurationScan
+# is stored under the RoleBinding/ClusterRoleBinding WLID, kind `ServiceAccount`
+# is only the reported subject), NOT on a namespaced workload. A namespaceSelector
+# therefore never applies (identical to C-0187 — see wildcard-rbac.yaml — where
+# the namespaced velero-server binding kept failing despite `velero` being listed
+# in controller-rbac.yaml's selector). Matching the specific binding objects by
+# kind+name is the mechanism that actually suppresses these findings.
+#
+# Deliberately MINIMAL scope — the bindings are matched individually so C-0002
+# still flags any *new*/accidental exec grant elsewhere. The shared roles
+# (`cluster-admin`, `crd-controller-flux-system`, built-in `edit`) are NOT
+# matched by name: doing so would blanket-except C-0002 for every subject bound
+# to them (including future grants), the exact over-suppression this scoping
+# avoids.
+#
+# Covered (each genuinely requires pods/exec and cannot be scoped away):
+#   - Velero — namespaced velero-server RoleBinding/Role (all-or-nothing chart
+#     RBAC) plus its cluster-admin ClusterRoleBinding; restore must exec/patch
+#     arbitrary kinds.
+#   - CloudNativePG — its ClusterRole explicitly grants `create pods/exec` to
+#     manage/inspect Postgres instances.
+#   - Flux — kustomize-controller and helm-controller (both bound via
+#     cluster-reconciler-flux-system) and flux-operator hold cluster-admin;
+#     arbitrary-manifest reconciliation is the GitOps trust model.
+#
+# NOT covered (intentionally): the two tenant Flux-impersonation SAs
+# (wedding-app, ascoachingogvaner) inherit pods/exec only via the built-in `edit`
+# ClusterRole. That is a fixable over-grant, not a by-design need — it is removed
+# at the ROOT by scoping the tenant reconciler role, not suppressed here.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: exec-into-container-rbac
+spec:
+  reason: >-
+    Velero (all-or-nothing backup/restore RBAC + cluster-admin), CloudNativePG
+    (operator execs into Postgres pods — explicit pods/exec grant), and the Flux
+    GitOps reconcilers kustomize-controller, helm-controller (both via the
+    cluster-reconciler-flux-system binding), and flux-operator (cluster-admin
+    trust model) legitimately hold pods/exec by design. The specific RBAC bindings are
+    matched by kind+name so C-0002 still catches any new exec grant.
+  posture:
+    - controlID: C-0002
+      action: ignore
+  match:
+    resources:
+      # Velero — namespaced binding + Role, and the cluster-admin CRB
+      - apiGroup: rbac.authorization.k8s.io
+        kind: RoleBinding
+        name: ^velero-server$
+      - apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: ^velero-server$
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: ^velero-server$
+      # CloudNativePG — CRB whose ClusterRole explicitly grants pods/exec
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: ^cloudnative-pg$
+      # Flux kustomize-/helm-controller — cluster-admin via cluster-reconciler CRB
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: ^cluster-reconciler-flux-system$
+      # Flux operator — cluster-admin CRB
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: ^flux-operator$

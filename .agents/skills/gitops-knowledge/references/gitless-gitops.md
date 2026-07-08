@@ -7,7 +7,12 @@ pushes them to a container registry, and Flux pulls from the registry using
 
 Use this reference when users ask about Flux OCI artifacts, `flux push artifact`,
 GitHub Actions publishing, artifact signing, registry-based promotion, or running Flux in
-clusters that should not access Git.
+clusters that should not access Git. For automatically upgrading workloads when new
+image tags are published (registry scanning), load
+`references/gitless-image-automation.md` instead — this file covers the publish/consume
+pipeline for rendered manifests.
+
+**Contents:** [Why Gitless GitOps](#why-gitless-gitops) | [Artifact Types](#artifact-types) | [Validating Manifests with `flux schema`](#validating-manifests-with-flux-schema) | [Publishing Manifests with `flux push artifact`](#publishing-manifests-with-flux-push-artifact) | [GitHub Actions Publisher](#github-actions-publisher) | [Consuming Manifest Artifacts](#consuming-manifest-artifacts) | [FluxInstance OCI Sync](#fluxinstance-oci-sync) | [Authentication](#authentication) | [Signing and Verification](#signing-and-verification) | [Promotion Patterns](#promotion-patterns) | [Observability and Tracing](#observability-and-tracing)
 
 ## Why Gitless GitOps
 
@@ -58,6 +63,33 @@ spec:
     mediaType: "application/vnd.cncf.helm.chart.content.v1.tar+gzip"
     operation: copy
 ```
+
+## Validating Manifests with `flux schema`
+
+Validate the rendered manifests before packaging them as an OCI artifact:
+
+```bash
+# Install the schema plugin
+flux plugin install schema
+
+# Validate a directory of manifests against the default catalog
+flux schema validate ./deploy/production --verbose --skip-missing-schemas
+
+# Validate the output of a build step (Kustomize overlay, ResourceSet, etc.)
+kustomize build ./deploy/production | flux schema validate
+```
+
+Important flags:
+
+| Flag                     | Purpose                                                                                                                                                                            |
+|--------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `--schema-location`      | Add a schema source (repeatable); `default` keeps the built-in catalog, then append a URL e.g. `https://raw.githubusercontent.com/datreeio/CRDs-catalog/main` for out-of-tree CRDs |
+| `--skip-missing-schemas` | Skip documents whose schema isn't in the catalog instead of failing (tolerates third-party CRDs without wiring up a schema source)                                                 |
+| `--skip-json-path`       | Strip a field before validation, e.g. `--skip-json-path v1/Secret:/sops` for SOPS metadata Flux removes at apply time                                                              |
+
+In CI, run the same check as a gate ahead of `flux push artifact`. The GitHub Actions
+workflow below does this with the `fluxcd/flux-schema/actions/validate` action so the
+artifact is only published when every manifest is schema-valid.
 
 ## Publishing Manifests with `flux push artifact`
 
@@ -127,7 +159,8 @@ Prefer these conventions:
 
 ## GitHub Actions Publisher
 
-Example workflow that packages Kubernetes manifests and signs the OCI artifact with keyless Cosign.
+Example workflow that validates the Kubernetes manifests with Flux Schema plugin,
+packages and signs the OCI artifact with keyless Cosign.
 
 ```yaml
 name: publish
@@ -149,11 +182,18 @@ jobs:
       id-token: write # for signing
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Flux CLI
-        uses: fluxcd/flux2/action@main
+        uses: actions/checkout@v7
       - name: Setup cosign
         uses: sigstore/cosign-installer@main
+      - name: Setup Flux CLI with plugins
+        uses: fluxcd/flux2/action@main
+        with:
+          plugins: |
+            schema
+      - name: Validate manifests
+        uses: fluxcd/flux-schema/actions/validate@main
+        with:
+          path: "."
       - name: Prepare tags
         id: prep
         run: |
@@ -166,7 +206,7 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -201,30 +241,30 @@ Use `OCIRepository` as the source and point `Kustomization` at it:
 apiVersion: source.toolkit.fluxcd.io/v1
 kind: OCIRepository
 metadata:
-  name: podinfo
+  name: apps
   namespace: flux-system
 spec:
   interval: 5m
-  url: oci://ghcr.io/org/k8s-infra
+  url: oci://ghcr.io/org/k8s-apps
   ref:
     tag: latest
   verify:
     provider: cosign
     matchOIDCIdentity:
       - issuer: ^https://token\.actions\.githubusercontent\.com$
-        subject: ^https://github\.com/org/k8s-infra/\.github/workflows/publish\.yaml@refs/heads/main$
+        subject: ^https://github\.com/org/k8s-apps/\.github/workflows/publish\.yaml@refs/heads/main$
 ---
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:
-  name: podinfo
+  name: infra
   namespace: flux-system
 spec:
   interval: 10m
   retryInterval: 2m
   sourceRef:
     kind: OCIRepository
-    name: podinfo
+    name: apps
   path: ./
   prune: true
   wait: true

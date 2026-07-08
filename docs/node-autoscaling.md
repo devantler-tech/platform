@@ -17,8 +17,6 @@ KSail (static baseline)
 └── 3 static workers (cx33, 4 vCPU / 8 GB, guaranteed minimum, Longhorn storage nodes)
 
 Cluster Autoscaler (dynamic workers, managed by KSail)
-├── Pool: autoscale-cx23 → 0-4 × CX23 (2 vCPU, 4 GB)
-├── Pool: autoscale-cx33 → 0-4 × CX33 (4 vCPU, 8 GB)
 ├── Pool: autoscale-cx43 → 0-4 × CX43 (8 vCPU, 16 GB)
 ├── Pool: autoscale-cx53 → 0-4 × CX53 (16 vCPU, 32 GB)
 ├── maxNodesTotal: 10 (total cluster nodes incl. baseline: 6 static + 4 autoscaler)
@@ -75,16 +73,6 @@ spec:
         maxNodesTotal: 10
         scaleDownUnneededTime: "10m"
         pools:
-          - name: autoscale-cx23
-            serverType: cx23
-            location: fsn1
-            min: 0
-            max: 4
-          - name: autoscale-cx33
-            serverType: cx33
-            location: fsn1
-            min: 0
-            max: 4
           - name: autoscale-cx43
             serverType: cx43
             location: fsn1
@@ -140,6 +128,54 @@ spec:
 
 Add a new entry to the `pools` list in `ksail.prod.yaml` and run
 `ksail cluster update`. KSail updates the Helm release automatically.
+
+---
+
+## Pod rebalancing & consolidation (descheduler)
+
+The Cluster Autoscaler only ever **adds or removes nodes** — it never moves a
+running pod. Over time placement degrades (replica clumps after a node failure,
+pods left on nodes that now violate their affinity, half-empty `autoscale-cx*`
+nodes the autoscaler can't drain because one pod is stuck there). On clouds with
+Karpenter that gap is closed by its *consolidation* feature, but **Karpenter has
+no Hetzner provider** — so the platform pairs the autoscaler with the
+[Kubernetes SIG Descheduler](https://github.com/kubernetes-sigs/descheduler)
+instead: the descheduler evicts misplaced pods (the scheduler re-places them),
+and the autoscaler reclaims any node that empties out
+(`scaleDownUnneededTime: 10m`).
+
+It runs as a `HelmRelease` in `kube-system`
+(`k8s/providers/hetzner/infrastructure/controllers/descheduler/`), as a
+single-replica Deployment on a 30-minute descheduling loop. Enabled strategies:
+
+- **Placement repair** — `RemovePodsViolatingNodeAffinity` (required affinity),
+  `RemovePodsViolatingNodeTaints`, `RemovePodsViolatingInterPodAntiAffinity`,
+  `RemovePodsViolatingTopologySpreadConstraint` (hard constraints only), and
+  `RemoveDuplicates` (re-spread replica clumps after node churn).
+- **Consolidation** — `HighNodeUtilization` drains nearly-empty nodes
+  (< 15% requested CPU **and** memory) toward the rest of the cluster so the
+  autoscaler can delete them. The threshold is deliberately low: with the
+  default scheduler scoring, evicted pods gravitate back toward empty-ish nodes
+  (including the over-provisioning warm spare), so aggressive packing needs the
+  `MostAllocated` scoring strategy first — tracked in
+  [#2471](https://github.com/devantler-tech/platform/issues/2471).
+
+Guardrails (all in the `HelmRelease` values):
+
+- Evictions go through the **eviction API**, so PodDisruptionBudgets are always
+  honored.
+- **PVC-backed pods are never evicted** (`PodsWithPVC` protection): CNPG
+  clusters, Longhorn-attached workloads, openbao, spire-server. Stateful moves
+  stay deliberate runbook operations (see `docs/dr/`).
+- All default protections stay on: DaemonSet, mirror/static, system-critical,
+  terminating, local-storage, and failed bare pods are untouchable.
+- `nodeFit: true` — a pod is only evicted if it provably fits on another node.
+- Blast-radius caps: at most **2 evictions per node and 2 per namespace** per
+  30-minute cycle.
+
+Evictions surface as Kubernetes Events (visible in Coroot); watch for pods
+bouncing between nodes every cycle — that's the signal a threshold is fighting
+the scheduler and should be tuned down.
 
 ---
 

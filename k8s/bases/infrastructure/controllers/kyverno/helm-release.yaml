@@ -67,6 +67,22 @@ spec:
         - "[ClusterAdmissionReport,*,*]"
         - "[BackgroundScanReport,*,*]"
         - "[ClusterBackgroundScanReport,*,*]"
+      # Subtractive (chart drops these entries from its default resourceFilters).
+      # Resource filters match on the KIND STRING alone -- no API group -- so the
+      # default `[Node,*,*]` entry also swallowed Longhorn's nodes.longhorn.io
+      # "Node" CRs and silently disabled BOTH halves of the autoscale-node
+      # storage drain (restrict-storage-to-baseline-workers admission rule +
+      # drain-autoscale-node-storage retrofit): the background controller
+      # enumerated the autoscale Node CRs and tried to create retrofit URs, but
+      # rejected every one at engine/internal/match.go with "configuration
+      # resource filters doesn't match resource" (observed live 2026-07-02 at
+      # -v=4; #2392). Dropping the entry is safe: no policy in this repo matches
+      # core v1 Nodes (the longhorn policies match group-qualified
+      # longhorn.io/v1beta2/Node, names autoscale-*), so neither the admission
+      # webhooks nor background-scan reports gain any core-Node volume, and the
+      # subresource filter `[Node/?*,*,*]` is untouched.
+      resourceFiltersExclude:
+        - "[Node,*,*]"
     # Restricted PSS baseline: kyverno's mutation policies exclude the kyverno namespace,
     # so we must set pod-level seccompProfile + runAsNonRoot via chart values.
     admissionController:
