@@ -44,6 +44,33 @@ spec:
   schema:
     apiVersion: v1alpha1
     kind: Tenant
+    # Nested types for the optional multi-tenancy guardrails (#2522). Each
+    # carries its own `enabled` toggle rather than relying on CEL `has()`
+    # presence-detection on the parent object — this mirrors the RGD's own
+    # already-live `externalDns`/`sops` boolean-toggle pattern (and kro's own
+    # documented convention, e.g. `schema.spec.ingress.enabled`) instead of an
+    # unproven pattern, since KRO's structural-schema defaulting is guaranteed
+    # to materialise a nested boolean default even when the tenant omits the
+    # parent field entirely, but `has()` on a whole optional object is not
+    # exercised anywhere else in this file.
+    types:
+      TenantResourceQuota:
+        enabled: boolean | default=false
+        # Total across all pods in the namespace (both request AND limit —
+        # kept as one pair per field to keep the CR small; split into
+        # separate requests/limits inputs only if a tenant needs the nuance).
+        cpu: string | default="4"
+        memory: string | default="4Gi"
+        pods: string | default="20"
+      TenantLimitRange:
+        enabled: boolean | default=false
+        # Per-container defaults applied to any Pod that does not set its own
+        # requests/limits — the standard Kubernetes LimitRange `default` /
+        # `defaultRequest` pair.
+        defaultCPU: string | default="500m"
+        defaultMemory: string | default="512Mi"
+        defaultRequestCPU: string | default="100m"
+        defaultRequestMemory: string | default="128Mi"
     spec:
       # Tenant name — used verbatim as the namespace, ServiceAccount,
       # OCIRepository/Kustomization name, and ghcr-auth target. Required.
@@ -57,6 +84,12 @@ spec:
       # tenant namespace, applied separately — secret material is NEVER inlined
       # into a Tenant spec.
       sops: boolean | default=false
+      # Standard multi-tenancy guardrails (#1932 follow-up #2522): a
+      # namespace-wide ResourceQuota and a per-container default LimitRange.
+      # Both default to `enabled: false` — no behaviour change for existing
+      # tenants until a tenant opts in.
+      resourceQuota: TenantResourceQuota
+      limitRange: TenantLimitRange
   resources:
     # --- Core skeleton (always rendered) ---------------------------------
     - id: tenantNamespace
@@ -151,6 +184,52 @@ spec:
           policyTypes:
             - Ingress
             - Egress
+    # --- Optional multi-tenancy guardrails (#2522) -------------------------
+    # Namespace-wide ResourceQuota, gated on `resourceQuota.enabled` (default
+    # false — omitted ⇒ no behaviour change for existing tenants). Combines
+    # requests and limits into one value per resource so the CR stays small;
+    # split into separate inputs only if a tenant needs the extra nuance.
+    - id: resourceQuota
+      includeWhen:
+        - ${schema.spec.resourceQuota.enabled}
+      template:
+        apiVersion: v1
+        kind: ResourceQuota
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${tenantNamespace.metadata.name}
+          labels:
+            app.kubernetes.io/managed-by: ksail
+        spec:
+          hard:
+            requests.cpu: ${schema.spec.resourceQuota.cpu}
+            requests.memory: ${schema.spec.resourceQuota.memory}
+            limits.cpu: ${schema.spec.resourceQuota.cpu}
+            limits.memory: ${schema.spec.resourceQuota.memory}
+            pods: ${schema.spec.resourceQuota.pods}
+    # Per-container default requests/limits, gated on `limitRange.enabled`
+    # (default false). Applies only to a Container that omits its own
+    # requests/limits — an explicit workload spec always wins.
+    - id: limitRange
+      includeWhen:
+        - ${schema.spec.limitRange.enabled}
+      template:
+        apiVersion: v1
+        kind: LimitRange
+        metadata:
+          name: ${schema.spec.name}
+          namespace: ${tenantNamespace.metadata.name}
+          labels:
+            app.kubernetes.io/managed-by: ksail
+        spec:
+          limits:
+            - type: Container
+              default:
+                cpu: ${schema.spec.limitRange.defaultCPU}
+                memory: ${schema.spec.limitRange.defaultMemory}
+              defaultRequest:
+                cpu: ${schema.spec.limitRange.defaultRequestCPU}
+                memory: ${schema.spec.limitRange.defaultRequestMemory}
     - id: ociRepository
       template:
         apiVersion: source.toolkit.fluxcd.io/v1
