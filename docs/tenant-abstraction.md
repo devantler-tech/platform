@@ -98,10 +98,15 @@ its own issue, behaviour-preservingly, render-diffed vs the current instances):
 
 - **Arbitrary per-tenant `ExternalSecret`s beyond `ghcr-auth`** — e.g. `wedding-app`'s object-store /
   db-backup secrets — via a typed `secrets` list on the `Tenant` schema, so no tenant hand-writes an
-  ExternalSecret.
-- **Namespace `ResourceQuota` / `LimitRange`** — a standard multi-tenancy guardrail the RGD does not yet
-  emit; add as an optional typed input.
+  ExternalSecret. Needs kro's `forEach` collections (one `ExternalSecret` per declared entry) plus a
+  nested CEL `.map()` to build each one's `data:` list — kro has no offline CEL validator, so this
+  needs a live-cluster verification pass before it ships (parked on #2521).
+- ~~**Namespace `ResourceQuota` / `LimitRange`**~~ — **done** (#2522): optional `resourceQuota` /
+  `limitRange` inputs, each with its own `enabled` toggle (mirrors the existing `externalDns`/`sops`
+  boolean pattern — no `forEach`/CEL `.map()` needed, so this one *is* safely static-validatable).
+  Default `enabled: false` on both ⇒ no behaviour change for existing tenants.
 - **Stateful `WebApp` shapes** — CNPG-backed apps (e.g. `wedding-db`) so the `WebApp` archetype covers
-  database-backed workloads, not only stateless Deployments.
+  database-backed workloads, not only stateless Deployments (#2523).
 - **Onboarding docs** — keep [`TENANTS.md`](./TENANTS.md) in sync with the ~5-line CR onboarding as the
-  schema grows.
+  schema grows. `TENANTS.md` still documents only the pre-KRO hand-copy flow — reconciling it with the
+  KRO `Tenant`/`WebApp` CR path (this ADR) is itself an open follow-up.

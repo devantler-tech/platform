@@ -6,6 +6,15 @@ Kubernetes manifests (`deploy/`) as a **signed OCI artifact** to GHCR; the
 platform pulls that artifact with a Flux `OCIRepository` + `Kustomization` and
 runs it in a dedicated, locked-down namespace.
 
+> **KRO `Tenant` CR fast path.** The platform-registration half below (step 2)
+> is the original hand-copied skeleton. A local-first pilot now generates that
+> same skeleton from a small typed `Tenant` custom resource via
+> [kro](https://kro.run) — see [`tenant-abstraction.md`](./tenant-abstraction.md)
+> (the ADR, including the opt-in `resourceQuota`/`limitRange` guardrails) and
+> the live examples under
+> [`k8s/providers/docker/apps/`](../k8s/providers/docker/apps). This file still
+> documents the pre-KRO flow in full; reconciling the two is an open follow-up.
+
 There are two halves to onboarding, in two repos:
 
 1. **The tenant repo** — created from the
