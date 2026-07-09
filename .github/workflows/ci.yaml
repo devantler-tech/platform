@@ -98,10 +98,26 @@ jobs:
           sudo install /tmp/ksail /usr/local/bin/ksail
           ksail --version
 
+      - name: 📥 Restore kubeconform schema cache
+        # ksail's kubeconform client fetches JSON schemas from
+        # raw.githubusercontent.com/yannh/kubernetes-json-schema on every cold run
+        # and has nowhere to persist them across ephemeral CI runners — heavy,
+        # repeated traffic across every PR is what tripped upstream 429
+        # rate-limiting portfolio-wide (2026-07-09). This restores (and, at job
+        # end, re-saves) the local cache dir the client already builds internally
+        # (`validator.Opts.Cache`); no ksail-side change needed.
+        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        with:
+          path: ~/.cache/ksail/kubeconform
+          key: kubeconform-schema-cache-v1-${{ github.run_id }}
+          restore-keys: |
+            kubeconform-schema-cache-v1-
+
       - name: ✅ Validate manifests (local + prod overlays)
         # Schema-aware kubeconform validation with Flux variable substitution,
         # building both cluster overlays. Fully static: no cluster, no SOPS key
-        # (Secrets are skipped), no network (offline schema cache).
+        # (Secrets are skipped); schema fetches are cached by the step above so
+        # repeat runs make no network calls for already-seen schemas.
         #
         # --skip-helm-render: INTERIM workaround for the still-open ksail#5362 —
         # the default in-process Helm render is non-deterministic (concurrent
