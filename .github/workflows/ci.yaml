@@ -84,11 +84,11 @@ jobs:
         # resources aliasing the reused bufio.Scanner buffer, parsed concurrently
         # with the producer's next Scan()) corrupted the validated stream on the
         # >4MB HelmRelease-dense overlays (ksail#5362) — and was worked around with
-        # --skip-helm-render (platform PR #2270). Fixed upstream in
-        # yannh/kubeconform#363 and picked up via ksail's kubeconform bump, so the
-        # workaround is removed below and full-render validation is restored.
-        # TRIPWIRE: if validate/scan starts swinging run-to-run again, re-add
-        # --skip-helm-render and reopen ksail#5362.
+        # --skip-helm-render (platform PR #2270). This PR removes the
+        # workaround only after yannh/kubeconform#363 is fixed upstream and picked
+        # up by a ksail bump; until CI is stable green with that fix, keep this
+        # branch parked. TRIPWIRE: if validate/scan swing run-to-run after that,
+        # re-add --skip-helm-render and reopen ksail#5362.
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
