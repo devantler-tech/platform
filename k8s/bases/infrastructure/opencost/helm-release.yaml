@@ -88,6 +88,14 @@ spec:
                           preStop:
                             sleep:
                               seconds: 15
+                      # Chart 2.5.26 exposes timeoutSeconds only for the
+                      # exporter probes. Patch the UI probes until the chart
+                      # has matching values for opencost-ui.
+                      - name: opencost-ui
+                        livenessProbe:
+                          timeoutSeconds: 5
+                        readinessProbe:
+                          timeoutSeconds: 5
   # https://github.com/opencost/opencost-helm-chart/blob/main/charts/opencost/values.yaml
   #
   # Lightweight FinOps cost allocation. Points at Coroot's bundled Prometheus
