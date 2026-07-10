@@ -35,15 +35,19 @@ spec:
       repository: velero/velero
     initContainers:
       - name: velero-plugin-for-aws
-        # PINNED at v1.14.0 — do NOT bump to v1.14.1. Its AWS SDK update
+        # PINNED at v1.14.0 — do NOT bump until a release is explicitly verified
+        # to include the R2 tagging fix. The AWS SDK update in v1.14.1
         # serializes the always-set-but-empty PutObject Tagging field as a
         # literal empty `x-amz-tagging` header, and Cloudflare R2 rejects any
         # tagging header with `501 NotImplemented` — every backup then fails
-        # at the final metadata upload ("error putting object .../velero-backup.json").
+        # at the final metadata upload
+        # ("error putting object .../velero-backup.json").
         # Upstream fix (skip the header when no tags are configured) is open
         # but unreleased: velero-io/velero-plugin-for-aws#299 / #303.
-        # Safe to bump again once a release ships one of those PRs.
-        image: velero/velero-plugin-for-aws:v1.14.2
+        # v1.14.2 was deployed on 2026-07-04 without that fix and broke every
+        # nightly backup, so Renovate is hard-pinned too. Safe to relax only
+        # after a release ships one of those PRs and succeeds against R2.
+        image: velero/velero-plugin-for-aws:v1.14.0
         imagePullPolicy: IfNotPresent
         # Non-root hardening for the plugin-copy initContainer (Kubescape
         # C-0013). It only copies the AWS plugin binary into the shared
@@ -73,10 +77,10 @@ spec:
     # inspects on the rendered Deployment template.
     #
     # readOnlyRootFilesystem is deliberately LEFT FALSE on the server: velero
-    # writes to the ROOT filesystem at /tmp — /tmp/credentials/<ns>, /tmp/udmrepo
-    # (Kopia config when $HOME is unset) and the go-plugin unix socket — and the
-    # chart mounts no emptyDir at /tmp, so a read-only root would break every
-    # backup. C-0017 stays covered by the velero infrastructure-privileged /
+    # writes credentials and the go-plugin unix socket under /tmp, and the chart
+    # mounts no emptyDir there. Kopia uses /scratch/udmrepo through HOME below,
+    # but a read-only root would still break the other write paths. C-0017 stays
+    # covered by the velero infrastructure-privileged /
     # pod-security-mutations ClusterSecurityException. (The plugin-copy
     # initContainer above CAN use readOnlyRootFilesystem:true.)
     podSecurityContext:
@@ -106,6 +110,15 @@ spec:
     # Cloudflare R2 backup target. Bucket + endpoint come from the shared
     # variables-base ConfigMap; prefix is reused per consumer (PR #3).
     configuration:
+      # The server and its generated repository-maintenance Jobs run as UID
+      # 65532. That image user has no passwd-backed home, so Kopia otherwise
+      # resolves its config directory to root-owned /udmrepo and maintenance
+      # fails with permission denied. Repository-maintenance Jobs inherit the
+      # deployment environment; point HOME at the existing writable /scratch
+      # emptyDir so both paths use /scratch/udmrepo without weakening non-root.
+      extraEnvVars:
+        - name: HOME
+          value: /scratch
       backupStorageLocation:
         - name: default
           provider: aws
