@@ -30,7 +30,9 @@
 #     replicas: 1, no leader election), flux controllers and coroot
 #     (observability), and kubescape (the operator + kubescape/kubevuln/storage/
 #     gateway scanner control-plane are all single-replica by design, off every
-#     serving path; the node-agent is a DaemonSet the floor never matches);
+#     serving path; the node-agent is a DaemonSet the floor never matches), plus
+#     crossplane-system (external-state single-writer controllers whose provider
+#     Deployment names carry changing ProviderRevision hashes);
 #   * single-replica-only controllers: external-dns (chart has no replicaCount;
 #     >1 = duplicate Cloudflare writes), origin-ca-issuer (disabled) and
 #     flagger-loadtester (ephemeral per-canary test helper);
