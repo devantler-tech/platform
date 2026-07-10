@@ -4,6 +4,8 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - service-account.yaml
+  - role.yaml
+  - role-binding.yaml
   - network-policy.yaml
   - secret-store.yaml
   - provider-config.yaml

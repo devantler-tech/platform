@@ -1,8 +1,9 @@
-# provider-aws-iam — the IAM family member, the only one needed now (EKS =
-# provider-aws-eks, added as a sibling member when the EKS-test identity work
-# needs it, platform#2326). Its package version must match provider-family-aws
-# (see provider-family-aws.yaml). Resource-bounded via
-# deployment-runtime-config-aws-iam.yaml.
+# provider-aws-iam — the IAM family member and the only one needed for the EKS
+# CI identity (platform#2326). The workflow creates its ephemeral cluster with
+# eksctl, so no Crossplane EKS family member is required. Its package version
+# must match provider-family-aws (see provider-family-aws.yaml).
+# Resource-bounded via deployment-runtime-config-aws-iam.yaml.
+---
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
 metadata:

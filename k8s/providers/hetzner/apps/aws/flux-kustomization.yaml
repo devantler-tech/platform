@@ -1,9 +1,9 @@
 # Applies the AWS desired state from the devantler-tech/aws OCI artifact into
-# this namespace, AS the namespace-scoped `aws` ServiceAccount — so once
-# platform#2326 activates the IAM managed-resource kinds, the MRs are created
-# with only the authority a namespaced Role grants that SA (none is bound yet:
-# the artifact is an empty scaffold today, and RBAC is widened strictly
-# alongside ManagedResourceActivationPolicy entries, mirroring unifi). It is
+# this namespace, AS the namespace-scoped `aws` ServiceAccount. The dedicated
+# Role grants only the namespaced IAM kinds activated by platform#2564; the
+# artifact remains empty until the follow-up identity slice, so this capability
+# lands without creating AWS resources. RBAC is widened only alongside explicit
+# ManagedResourceActivationPolicy entries, mirroring unifi. It is
 # itself applied by the `apps` Flux Kustomization; it must NOT dependsOn it
 # (deadlock) — it retries benignly until the provider (infrastructure layer)
 # has established the namespaced aws CRDs.
