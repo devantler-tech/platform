@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+reviews:
+  pre_merge_checks:
+    docstrings:
+      # Non-blocking: CodeRabbit's docstring metric under-counts any PR that
+      # modifies already-documented code (the existing docstring is outside the
+      # diff hunk, so it earns no credit), which makes documented changes score
+      # far below the 80% threshold and permanently blocks draft promotion —
+      # and most of this repo is YAML manifests, where docstring coverage does
+      # not apply. Keep the signal visible but non-blocking rather than wedging
+      # the review gate (same rationale as ksail's .coderabbit.yaml).
+      mode: warning
