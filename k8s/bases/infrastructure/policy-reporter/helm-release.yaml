@@ -39,6 +39,29 @@ spec:
       enabled: true
       mode: simple
 
+    # HA floor (#2572): two replicas per component, like every other
+    # single-point-of-failure workload under validate-replica-floor. The chart
+    # auto-enables core leader election at replicaCount > 1, so only the leader
+    # pushes results to targets while both replicas serve the REST API.
+    replicaCount: 2
+
+    # Drain-safe PDB pattern (#1880/#1882): the chart's default minAvailable: 1
+    # would block the last voluntary eviction at 2 replicas; maxUnavailable: 1
+    # keeps one pod up through a drain without wedging it. The two are mutually
+    # exclusive, so minAvailable must be explicitly nulled.
+    podDisruptionBudget:
+      minAvailable: null
+      maxUnavailable: 1
+
+    # Prefer spreading across hostnames without hard-failing scheduling.
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/name: policy-reporter
+
     # Explicit cold-start floor; auto-vpa right-sizes at steady state. CPU limit
     # intentionally unset (compressible) per the house pattern.
     resources:
@@ -50,6 +73,18 @@ spec:
 
     ui:
       enabled: true
+      # Stateless web frontend; no leader election needed (#2572).
+      replicaCount: 2
+      podDisruptionBudget:
+        minAvailable: null
+        maxUnavailable: 1
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: policy-reporter-ui
       resources:
         requests:
           cpu: 10m
@@ -62,6 +97,20 @@ spec:
         # Surfaces Kyverno policy details, sources and (optionally) exceptions in
         # the UI; the UI auto-discovers it at http://policy-reporter-kyverno-plugin:8080.
         enabled: true
+        # Read-only API for the UI: blockReports stays disabled, so the plugin
+        # processes no reports (the chart auto-disables its leader election) and
+        # scaling it cannot duplicate work (#2572).
+        replicaCount: 2
+        podDisruptionBudget:
+          minAvailable: null
+          maxUnavailable: 1
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: ScheduleAnyway
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: policy-reporter-kyverno-plugin
         resources:
           requests:
             cpu: 10m
