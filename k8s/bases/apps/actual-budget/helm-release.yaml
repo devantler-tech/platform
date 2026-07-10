@@ -115,7 +115,7 @@ spec:
     # better-sqlite3 so it is version-insensitive — keep it roughly in sync on bumps.
     extraContainers:
       - name: enablebanking-seed
-        image: docker.io/actualbudget/actual-server:26.6.0
+        image: docker.io/actualbudget/actual-server:26.7.0
         imagePullPolicy: IfNotPresent
         # `args` (not `command`) so the image's tini ENTRYPOINT is preserved —
         # proper PID-1 signal forwarding/zombie reaping, and no dependency on the
