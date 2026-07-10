@@ -1,38 +1,12 @@
-# Run homepage inside a private user namespace.
-#
-# Sets `hostUsers: false` on the homepage pod (KEP-127, GA in Kubernetes 1.36;
-# beta and on-by-default since 1.30). The container's UID/GID is mapped to an
-# unprivileged subordinate range on the host, so a container-runtime escape
-# lands as a non-root, capability-less host user — defence in depth on top of
-# the restricted securityContext already set by the chart and the cluster's
-# restricted PSS / Kubescape / Tetragon / SPIRE mTLS stack.
-#
-# Why prod-only (hetzner overlay) rather than the base: prod nodes run Talos on
-# real Hetzner kernels where user namespaces and idmap mounts are supported,
-# whereas the local Docker provider runs Talos nested inside Docker where userns
-# support is not guaranteed. This mirrors the whoami pilot (whoami/patches/),
-# the stateless canary that proved the pattern (#1808). homepage is the next
-# step in #1807: it is the apex dashboard (always-on) and its only volume is the
-# read-only `homepage-config` configMap (subPath mounts) — configMap volumes are
-# tmpfs-backed and need no idmap support, so there are no idmap-volume
-# constraints to hit. Stateful workloads (Longhorn/CNPG/OpenBao), which DO need
-# idmap-volume support, are deliberately left for last and are not touched here.
-#
-# Flagger note: the chart's Canary (canary.yaml) copies this source Deployment's
-# pod template wholesale to the homepage-primary Deployment, so `hostUsers:
-# false` propagates to the primary it manages.
-#
-# Mechanism: an RFC 6902 `add` that APPENDS (`/-`) to the base HelmRelease's
-# existing postRenderers[0].kustomize.patches list, so the base's probe/strategy/
-# lifecycle and Service post-render patches are preserved rather than replaced (a
-# strategic-merge patch on the list would replace it).
-- op: add
-  path: /spec/postRenderers/0/kustomize/patches/-
-  value:
-    target:
-      kind: Deployment
-      name: homepage
-    patch: |
-      - op: add
-        path: /spec/template/spec/hostUsers
-        value: false
+# Opt homepage into the label-gated `add-user-namespaces` Kyverno rule. This
+# remains Hetzner-only: the app has run successfully with hostUsers:false on
+# real Talos kernels, while the nested local Docker provider is deliberately
+# kept default-off. Homepage is stateless apart from read-only ConfigMap mounts,
+# so it has no idmapped-volume dependency.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: homepage
+  labels:
+    pod-security.devantler.tech/user-namespaces: enabled

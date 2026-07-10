@@ -32,7 +32,7 @@ components:
   - ../../../bases/components/helmrelease-flux-defaults
 # Strategic-merge patch files self-identify (apiVersion/kind/name/namespace), so
 # they need only a path — no redundant `target:` selector. JSON6902 patches have
-# no embedded identity and keep an explicit target (see whoami below).
+# no embedded identity and keep an explicit target.
 patches:
   # fleetdm disabled 2026-06-03 (see bases/apps/kustomization.yaml). Its
   # prod-only HelmRelease patch (timeout + MySQL primary service address +
@@ -56,18 +56,8 @@ patches:
       name: umami-db
       namespace: umami
     path: umami/patches/grant-pg-monitor.yaml
-  # User namespaces (hostUsers: false) — prod-only; see each patch file for the
-  # full rationale. JSON6902 patches (a list of ops) have no embedded identity,
-  # so they must keep an explicit target. whoami is the proven stateless canary
-  # (#1808); homepage is the next step (#1807) — apex dashboard, configMap-only
-  # volumes, so no idmap-volume constraints.
-  - target:
-      kind: HelmRelease
-      name: whoami
-      namespace: whoami
-    path: whoami/patches/enable-user-namespaces.yaml
-  - target:
-      kind: HelmRelease
-      name: homepage
-      namespace: homepage
-    path: homepage/patches/enable-user-namespaces.yaml
+  # User namespaces (hostUsers: false) — prod-only and default-off. These
+  # namespace-label patches opt the two proven stateless workloads into the
+  # add-security-context Kyverno rule. Local/CI and stateful workloads stay out.
+  - path: whoami/patches/enable-user-namespaces.yaml
+  - path: homepage/patches/enable-user-namespaces.yaml

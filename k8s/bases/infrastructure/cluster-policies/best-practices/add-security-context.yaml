@@ -7,6 +7,8 @@
 # - runAsUser: 1000 + runAsGroup: 1000 (C-0013/C-0211 non-root user+group) — pod level
 # - fsGroup: 1000 + fsGroupChangePolicy: OnRootMismatch (C-0211) — pod level
 # - seLinuxOptions: {level: s0} (C-0211 CIS-5.7.3) — containers + initContainers
+# - hostUsers: false — only in namespaces that explicitly opt in after userns
+#   validation
 #
 # Together these complete the security context kubescape's CIS-5.7.3 (C-0211) checks
 # (non-root-containers, set-fsgroup-value, set-fsgroupchangepolicy-value,
@@ -55,6 +57,26 @@ metadata:
       conditional anchors so explicit chart values are never overwritten.
 spec:
   rules:
+    # User namespaces are default-off and enabled per namespace only after the
+    # workload and its volume types have been validated on the real-kernel
+    # Hetzner provider. The local Docker provider stays opted out because Talos
+    # runs nested there and idmapped-mount support is not guaranteed. A
+    # conditional anchor preserves an explicit workload choice.
+    - name: add-user-namespaces
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              operations:
+                - CREATE
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/user-namespaces: enabled
+      mutate:
+        patchStrategicMerge:
+          spec:
+            +(hostUsers): false
     - name: add-pod-security-context
       match:
         any:
