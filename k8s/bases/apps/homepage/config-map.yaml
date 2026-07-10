@@ -164,6 +164,9 @@ data:
         - Codecov:
             - icon: si-codecov-#F01F7A
               href: https://app.codecov.io
+        - CodeRabbit:
+            - icon: si-coderabbit-#FF570A
+              href: https://app.coderabbit.ai
         - Enable Banking:
             - icon: mdi-bank-outline
               href: https://enablebanking.com
