@@ -13,7 +13,14 @@
 # workloads in Kyverno's PolicyReports for a human to raise (or exempt)
 # deliberately.
 #
-# Exemptions (a replica floor is *wrong*, not missing, for these):
+# Exemptions (a replica floor is *wrong*, not missing, for these) are expressed
+# as preconditions rather than rule excludes. A false precondition emits a
+# current `skip` PolicyReport result; an exclude emits no replacement result and
+# can leave an older `fail` result behind after the exemption is added (#2573).
+# This keeps Policy Reporter current without deleting or patching shared
+# reports. See docs/policy-reports.md for the regression test and rollout check.
+#
+# Exemption categories:
 #   * the opt-out label platform.devantler.tech/replica-floor: exempt on the
 #     workload OR its pod template -- the durable, self-documenting escape hatch
 #     for any new singleton / scale-to-zero / operator-managed workload;
@@ -61,147 +68,80 @@ spec:
               kinds:
                 - Deployment
                 - StatefulSet
-      exclude:
-        any:
-          # Durable opt-out: label the workload itself.
-          - resources:
-              selector:
-                matchLabels:
-                  platform.devantler.tech/replica-floor: exempt
-          # Namespaces whose workloads genuinely can't run 2: velero (no leader
-          # election, chart hardcodes replicas: 1), flux controllers and coroot
-          # (observability), kubescape (operator + scanner control-plane are
-          # single-replica by design; node-agent is a DaemonSet), and
-          # crossplane-system. The latter holds only Crossplane control-plane
-          # components -- core, rbac-manager and the provider pods (e.g.
-          # provider-upjet-github) -- all controller-managed external-state
-          # reconcilers that run a single replica by design (see
-          # controllers/crossplane/helm-release.yaml: "must run on exactly one
-          # always-on cluster", the same external-single-writer reasoning as
-          # external-dns). Exempt by NAMESPACE, not name, because Crossplane names
-          # each provider Deployment after its ProviderRevision hash
-          # (provider-upjet-github-<hash>), so a name match silently stops matching
-          # on every provider upgrade.
-          - resources:
-              namespaces:
-                - velero
-                - flux-system
-                - observability
-                - kubescape
-                - crossplane-system
-          # Two kinds of legitimate sub-floor workloads are exempt here:
-          #   * Flagger-managed (a controller owns the replica count, not declared
-          #     statically): the *-primary Deployments run the HA replicas, while
-          #     the canary SOURCES (homepage, umami-umami, opencost) are paused at
-          #     0 between rollouts.
-          #   * Single-replica-by-design UIs (formerly KEDA scale-to-zero, now
-          #     static single replicas -- the HTTPScaledObjects were removed):
-          #     actual-budget (SQLite single-writer on an RWO PVC), headlamp (OIDC
-          #     login state in-memory per pod), hubble-ui (per-pod streaming
-          #     connection state), longhorn-ui (single admin dashboard) and whoami
-          #     (diagnostic echo). fleet is disabled in prod (single on re-enable).
-          - resources:
-              names:
-                - "?*-primary"
-                - actual-budget-actualbudget
-                - fleet
-                - headlamp
-                - whoami
-                - hubble-ui
-                - longhorn-ui
-                - homepage
-                - umami-umami
-                - opencost
-          # Single-replica-only by design: external-dns (chart has no
-          # replicaCount; >1 replica = duplicate Cloudflare writes + throttling),
-          # origin-ca-issuer (disabled, 0 replicas) and flagger-loadtester
-          # (ephemeral per-canary test helper, not a served workload).
-          - resources:
-              names:
-                - external-dns
-                - origin-ca-issuer
-                - flagger-loadtester
-          # Lean leader-election controllers off every serving path: exempt so
-          # the resource-lean single-replica default is allowed (a SPOF here only
-          # delays reconciliation/reporting, never user traffic). Prod bumps them
-          # to 2 (active + warm standby) via cluster config, but the floor must
-          # not force it everywhere.
-          - resources:
-              names:
-                - vertical-pod-autoscaler-vpa-recommender
-                - vertical-pod-autoscaler-vpa-updater
-                - kyverno-reports-controller
-                - kyverno-cleanup-controller
-          # Triaged 2026-06-16 (interactive prod sweep): controller-managed or
-          # single-by-design controllers a floor of 3 is *wrong* for, and that
-          # this memory-saturated cluster can't absorb tripling. Each is a SPOF
-          # only for its own idempotent, retried control loop -- never a
-          # request-serving path:
-          #   * Longhorn-owned: longhorn-driver-deployer, csi-snapshotter
-          #     (longhorn-manager / the chart owns their replica count).
-          #   * single-controller operators (leader election makes >1 a hot
-          #     standby at best, all off the serving path): cluster-autoscaler.
-          #     (ksail-operator + tetragon-operator were promoted OUT of this
-          #     exemption -- they now run HA: 2 leader-elected replicas + a
-          #     drain-safe maxUnavailable: 1 PDB + topology spread, so they meet
-          #     the floor like the rest of the operator tier. Coroot had flagged
-          #     them "single instance - not resilient to node failure".)
-          #   * single-by-design adapters/approvers: keda-operator-metrics-
-          #     apiserver (KEDA's standard 1-replica metrics adapter).
-          #     (kubelet-serving-cert-approver was also promoted OUT -- switched
-          #     to upstream's ha-install.yaml: 2 replicas, --enable-leader-election
-          #     + leases RBAC + required hostname anti-affinity + a drain-safe PDB.)
-          #   * spire-server: HA needs a shared external datastore, not just
-          #     replicas (its StatefulSet uses the built-in datastore) -- a
-          #     deliberate single-node posture; revisit for HA separately.
-          # Left flagged ON PURPOSE (real signal, not exempted): the cert-manager
-          # simply-dns-webhook, part of the in-flight tenant-TLS rework. (flagger
-          # was previously flagged here too: flagger_replicas was set but wired to
-          # the chart's non-existent top-level replicaCount, so it silently ran 1;
-          # fixed by wiring it to leaderElection.replicaCount, so flagger now meets
-          # the floor and is no longer a real signal.)
-          - resources:
-              names:
-                - cluster-autoscaler-hetzner-cluster-autoscaler
-                - keda-operator-metrics-apiserver
-                - longhorn-driver-deployer
-                - csi-snapshotter
-                - spire-server
-          # plugin-barman-cloud (cnpg-system): the CNPG-I backup plugin hardcodes
-          # --leader-elect and opens its operator-facing gRPC on :9090 only on the
-          # active leader -- exactly what its tcp-socket :9090 readiness probe
-          # checks. A 2nd replica can never go ready (it blocks acquiring the
-          # lease), which sticks the Deployment at 1/2 and loops the HelmRelease
-          # upgrade health gate, so it is pinned to a single replica (see
-          # controllers/plugin-barman-cloud/helm-release.yaml) and the chart
-          # exposes no pod-label value to carry the exempt opt-out. A node failure
-          # only reschedules the one replica; CNPG retries the gRPC across the gap.
-          # Same leader-only-:9090 shape as Flux source-controller.
-          - resources:
-              names:
-                - plugin-barman-cloud
-          # crossview (apps/crossview): a deliberately non-HA, SSO-fronted,
-          # read-only Crossplane resource dashboard. Its bundled Postgres
-          # (crossview-postgres) runs with persistence DISABLED -- a single
-          # ephemeral session/user store whose loss on restart the chart values
-          # explicitly accept -- so it genuinely cannot run 2, and the upstream
-          # crossview chart exposes no pod-label value to carry the exempt
-          # opt-out (same constraint as plugin-barman-cloud). The frontend shares
-          # that single ephemeral store, so a 2nd app replica adds no real HA
-          # while the DB stays a SPOF. Exempt both by name (both names stable;
-          # no ProviderRevision-style hash suffix). Promote to HA later only if
-          # the bundled Postgres is moved to a replicated store (e.g. CNPG).
-          - resources:
-              names:
-                - crossview
-                - crossview-postgres
       preconditions:
         all:
-          # Durable opt-out on the pod template (charts expose podLabels more
-          # widely than top-level workload labels).
-          - key: "{{ request.object.spec.template.metadata.labels.\"platform.devantler.tech/replica-floor\" || '' }}"
+          # Durable opt-out on the workload itself. Keep exemptions here, not in
+          # rule.exclude, so a background scan records a fresh `skip` result.
+          - key: >-
+              {{ request.object.metadata.labels."platform.devantler.tech/replica-floor"
+              || '' }}
             operator: NotEquals
             value: exempt
+          # Durable opt-out on the pod template (charts expose podLabels more
+          # widely than top-level workload labels).
+          - key: >-
+              {{ request.object.spec.template.metadata.labels."platform.devantler.tech/replica-floor"
+              || '' }}
+            operator: NotEquals
+            value: exempt
+          # Whole namespaces whose controllers are intentionally singleton or
+          # controller-managed: Velero has no leader election; Flux, Coroot and
+          # Kubescape controllers sit off serving paths; Crossplane reconcilers
+          # are external-state single writers. Crossplane is exempt by namespace
+          # because provider Deployment names include a changing revision hash.
+          - key: "{{ request.object.metadata.namespace || '' }}"
+            operator: AnyNotIn
+            value:
+              - velero
+              - flux-system
+              - observability
+              - kubescape
+              - crossplane-system
+          # Flagger owns replica counts for generated *-primary Deployments.
+          - key: "{{ request.object.metadata.name || '' }}"
+            operator: NotEquals
+            value: "?*-primary"
+          # Stable-name exemptions documented above. A false precondition emits
+          # `skip`, which supersedes any older failure for this policy and rule.
+          - key: "{{ request.object.metadata.name || '' }}"
+            operator: AnyNotIn
+            value:
+              # Single-replica apps/UIs and paused Flagger canary sources.
+              - actual-budget-actualbudget
+              - fleet
+              - headlamp
+              - whoami
+              - hubble-ui
+              - longhorn-ui
+              - homepage
+              - umami-umami
+              - opencost
+              # Single-writer or ephemeral controllers with no useful second
+              # replica: DNS, disabled issuer and the canary load generator.
+              - external-dns
+              - origin-ca-issuer
+              - flagger-loadtester
+              # Lean leader-election controllers whose outage delays only an
+              # idempotent control loop. Production may still opt them into HA.
+              - vertical-pod-autoscaler-vpa-recommender
+              - vertical-pod-autoscaler-vpa-updater
+              - kyverno-reports-controller
+              - kyverno-cleanup-controller
+              # Controller-owned or single-by-design components triaged in the
+              # June 2026 HA sweep. SPIRE needs an external datastore for real
+              # HA.
+              - cluster-autoscaler-hetzner-cluster-autoscaler
+              - keda-operator-metrics-apiserver
+              - longhorn-driver-deployer
+              - csi-snapshotter
+              - spire-server
+              # CNPG-I exposes its gRPC readiness endpoint only on the elected
+              # leader, so a second replica can never become Ready.
+              - plugin-barman-cloud
+              # Crossview and its ephemeral bundled Postgres intentionally form
+              # one non-HA unit until the datastore is replaced.
+              - crossview
+              - crossview-postgres
       validate:
         message: >-
           {{ request.object.kind }} '{{ request.object.metadata.name }}' runs
