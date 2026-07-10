@@ -1,0 +1,26 @@
+---
+# Least-privilege RBAC for the aws tenant ServiceAccount. The tenant artifact
+# is applied as this ServiceAccount, so it receives namespace-local authority
+# over exactly the namespaced provider-aws-iam kinds activated for the EKS CI
+# identity. ProviderConfig and credential resources remain platform-owned.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aws-managed-resources
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+rules:
+  - apiGroups:
+      - iam.aws.m.upbound.io
+    resources:
+      - openidconnectproviders
+      - roles
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
