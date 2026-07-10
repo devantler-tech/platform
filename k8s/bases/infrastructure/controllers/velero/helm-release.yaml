@@ -77,10 +77,10 @@ spec:
     # inspects on the rendered Deployment template.
     #
     # readOnlyRootFilesystem is deliberately LEFT FALSE on the server: velero
-    # writes to the ROOT filesystem at /tmp — /tmp/credentials/<ns>, /tmp/udmrepo
-    # (Kopia config when $HOME is unset) and the go-plugin unix socket — and the
-    # chart mounts no emptyDir at /tmp, so a read-only root would break every
-    # backup. C-0017 stays covered by the velero infrastructure-privileged /
+    # writes credentials and the go-plugin unix socket under /tmp, and the chart
+    # mounts no emptyDir there. Kopia uses /scratch/udmrepo through HOME below,
+    # but a read-only root would still break the other write paths. C-0017 stays
+    # covered by the velero infrastructure-privileged /
     # pod-security-mutations ClusterSecurityException. (The plugin-copy
     # initContainer above CAN use readOnlyRootFilesystem:true.)
     podSecurityContext:
