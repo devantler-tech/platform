@@ -101,7 +101,11 @@ def convert_resources(resources, path, name):
     """
     designators = []
     for entry in resources:
-        unknown = set(entry) - {"apiGroup", "kind", "name", "namespace"}
+        # The CRD's match.resources[] schema allows exactly apiGroup, kind and
+        # name — a namespace key would be dropped in-cluster, so accepting it
+        # here would let the CI exception diverge from what the operator
+        # applies. Fail closed on it like any other unknown key.
+        unknown = set(entry) - {"apiGroup", "kind", "name"}
         if unknown:
             fail(path, name, f"unsupported match.resources keys {sorted(unknown)}")
         if "kind" not in entry:
@@ -109,12 +113,29 @@ def convert_resources(resources, path, name):
         attributes = {"kind": anchor(entry["kind"], path, name)}
         if "name" in entry:
             attributes["name"] = anchor(entry["name"], path, name)
-        if "namespace" in entry:
-            attributes["namespace"] = anchor(entry["namespace"], path, name)
         designators.append(
             {"designatorType": "Attributes", "attributes": attributes}
         )
     return designators
+
+
+def resolve_match(match, path, name):
+    """Map `spec.match` to designators (resources / namespaceSelector / all)."""
+    unknown = set(match) - {"resources", "namespaceSelector"}
+    if unknown:
+        fail(path, name, f"unsupported match keys {sorted(unknown)}")
+    if "resources" in match and "namespaceSelector" in match:
+        fail(path, name, "both match.resources and match.namespaceSelector set")
+    if "resources" in match:
+        if not match["resources"]:
+            fail(path, name, "match.resources is empty")
+        return convert_resources(match["resources"], path, name)
+    if "namespaceSelector" in match:
+        if not match["namespaceSelector"]:
+            fail(path, name, "match.namespaceSelector is empty")
+        return convert_namespace_selector(match["namespaceSelector"], path, name)
+    # No match => the exception applies cluster-wide for its controls.
+    return [{"designatorType": "Attributes", "attributes": {"namespace": ".*"}}]
 
 
 def convert_document(doc, path):
@@ -139,27 +160,7 @@ def convert_document(doc, path):
             fail(path, name, "posture entry without a controlID")
         policies.append({"controlID": anchor(control_id, path, name)})
 
-    match = spec.get("match") or {}
-    unknown = set(match) - {"resources", "namespaceSelector"}
-    if unknown:
-        fail(path, name, f"unsupported match keys {sorted(unknown)}")
-    if "resources" in match and "namespaceSelector" in match:
-        fail(path, name, "both match.resources and match.namespaceSelector set")
-    if "resources" in match:
-        if not match["resources"]:
-            fail(path, name, "match.resources is empty")
-        resources = convert_resources(match["resources"], path, name)
-    elif "namespaceSelector" in match:
-        if not match["namespaceSelector"]:
-            fail(path, name, "match.namespaceSelector is empty")
-        resources = convert_namespace_selector(
-            match["namespaceSelector"], path, name
-        )
-    else:
-        # No match => the exception applies cluster-wide for its controls.
-        resources = [
-            {"designatorType": "Attributes", "attributes": {"namespace": ".*"}}
-        ]
+    resources = resolve_match(spec.get("match") or {}, path, name)
 
     policy = {
         "name": name,

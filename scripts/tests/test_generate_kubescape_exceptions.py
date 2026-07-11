@@ -155,6 +155,14 @@ class ConvertDocumentTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             mod.convert_document(cse("bad", IGNORE, match), "f")
 
+    def test_resource_namespace_key_fails_closed(self):
+        """The CRD's match.resources[] has no namespace field, so a namespace
+        key aborts instead of generating a CI exception the in-cluster
+        operator would not apply."""
+        match = {"resources": [{"kind": "Job", "namespace": "velero"}]}
+        with self.assertRaises(SystemExit):
+            mod.convert_document(cse("bad", IGNORE, match), "f")
+
     def test_both_match_shapes_fails_closed(self):
         """Setting both match.resources and match.namespaceSelector aborts."""
         match = {
