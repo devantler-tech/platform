@@ -1,0 +1,136 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: normal-singleton
+  namespace: test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: normal-singleton
+  template:
+    metadata:
+      labels:
+        app: normal-singleton
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.29.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: normal-ha
+  namespace: test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: normal-ha
+  template:
+    metadata:
+      labels:
+        app: normal-ha
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.29.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workload-label-exempt
+  namespace: test
+  labels:
+    platform.devantler.tech/replica-floor: exempt
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: workload-label-exempt
+  template:
+    metadata:
+      labels:
+        app: workload-label-exempt
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.29.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pod-label-exempt
+  namespace: test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pod-label-exempt
+  template:
+    metadata:
+      labels:
+        app: pod-label-exempt
+        platform.devantler.tech/replica-floor: exempt
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.29.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: namespace-exempt
+  namespace: velero
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: namespace-exempt
+  template:
+    metadata:
+      labels:
+        app: namespace-exempt
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.29.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: keda-operator-metrics-apiserver
+  namespace: keda
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: exact-name-exempt
+  template:
+    metadata:
+      labels:
+        app: exact-name-exempt
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.29.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo-primary
+  namespace: test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo-primary
+  template:
+    metadata:
+      labels:
+        app: demo-primary
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.29.0

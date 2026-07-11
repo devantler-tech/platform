@@ -1,0 +1,33 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: validate-replica-floor-report-results
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/validate-replica-floor.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: validate-replica-floor
+    rule: require-replica-floor
+    resources:
+      - normal-singleton
+    kind: Deployment
+    result: fail
+  - policy: validate-replica-floor
+    rule: require-replica-floor
+    resources:
+      - normal-ha
+    kind: Deployment
+    result: pass
+  - policy: validate-replica-floor
+    rule: require-replica-floor
+    resources:
+      - workload-label-exempt
+      - pod-label-exempt
+      - namespace-exempt
+      - keda-operator-metrics-apiserver
+      - demo-primary
+    kind: Deployment
+    result: skip
