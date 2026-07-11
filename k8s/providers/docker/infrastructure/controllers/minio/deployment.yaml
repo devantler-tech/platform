@@ -54,9 +54,15 @@ spec:
             readOnlyRootFilesystem: true
           env:
             - name: MINIO_ROOT_USER
-              value: minio
+              valueFrom:
+                secretKeyRef:
+                  name: minio-root-credentials
+                  key: rootUser
             - name: MINIO_ROOT_PASSWORD
-              value: minio-local-development-only
+              valueFrom:
+                secretKeyRef:
+                  name: minio-root-credentials
+                  key: rootPassword
           ports:
             - name: api
               containerPort: 9000
