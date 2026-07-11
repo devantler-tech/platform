@@ -179,7 +179,7 @@ jobs:
         # lower it.
         run: |
           python3 scripts/generate-kubescape-exceptions.py -o /tmp/kubescape-exceptions.json
-          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 85
+          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 100
 
   naming:
     name: 🏷️ Validate Naming Conventions
