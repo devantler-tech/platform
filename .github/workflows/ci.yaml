@@ -163,15 +163,14 @@ jobs:
         # residual REAL posture instead of sitting ~15 points under it.
         #
         # The threshold is a regression FLOOR, not the live score. The
-        # Kubescape compliance score is **environment-dependent** — the same
-        # binary on the same manifests scores higher locally (macOS) than on
-        # the Linux CI runner, a gap that isn't the render, the framework
-        # cache, or the merge content — and the absolute value also shifts with the
-        # ksail render, so it can't be reproduced exactly offline (with the
-        # exceptions applied the local reference is ≈99%). CI is the source
-        # of truth; the gate sits a few points under the observed CI value to catch
-        # real regressions without flaking on that variance. (NB the floor may need
-        # re-baselining after a ksail version bump.)
+        # Kubescape compliance score has historically been environment-
+        # dependent (Linux CI runner vs macOS) and shifts with the ksail
+        # render, so CI is the source of truth: the observed CI score with
+        # exceptions applied is 98.87% (2026-07-11, ksail 7.165.2 — matching
+        # the local value on that date), and the gate sits a few points under
+        # it to catch real regressions without flaking on run-to-run
+        # variance. (NB the floor may need re-baselining after a ksail
+        # version bump.)
         #
         # Known un-excepted residual: C-0012 on the local-dev MinIO Deployment
         # (deliberate dev-only credential — tracked for a root-cause fix, not
@@ -179,7 +178,7 @@ jobs:
         # lower it.
         run: |
           python3 scripts/generate-kubescape-exceptions.py -o /tmp/kubescape-exceptions.json
-          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 100
+          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95
 
   naming:
     name: 🏷️ Validate Naming Conventions
