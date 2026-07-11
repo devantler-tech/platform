@@ -47,20 +47,26 @@ DEFAULT_DIR = os.path.join(
 NAMESPACE_NAME_KEY = "kubernetes.io/metadata.name"
 
 
-def anchor(value):
+def anchor(value, path, name):
     """Anchor a plain value into an exact-match regex; keep explicit regexes.
 
     CR authors write resource `name` fields as anchored regexes already
     (`^velero-server$`) but plain `kind`/controlID values; Kubescape treats
     every designator attribute and controlID as a regex, so an unanchored
     plain value would substring-match (C-0002 would also match C-0020).
+    A value anchored on only one end (`^foo` or `foo$`) is still
+    substring-matchable at the open end, so it fails closed instead of
+    passing through unescaped.
     """
-    if value.startswith("^") or value.endswith("$"):
+    if value.startswith("^") and value.endswith("$"):
         return value
+    if value.startswith("^") or value.endswith("$"):
+        fail(path, name, f"partially anchored regex value {value!r}")
     return f"^{re.escape(value)}$"
 
 
 def fail(path, name, message):
+    """Abort the run with a non-zero exit naming the offending CR."""
     sys.exit(f"{path}: ClusterSecurityException {name!r}: {message}")
 
 
@@ -100,11 +106,11 @@ def convert_resources(resources, path, name):
             fail(path, name, f"unsupported match.resources keys {sorted(unknown)}")
         if "kind" not in entry:
             fail(path, name, "match.resources entry without a kind")
-        attributes = {"kind": anchor(entry["kind"])}
+        attributes = {"kind": anchor(entry["kind"], path, name)}
         if "name" in entry:
-            attributes["name"] = anchor(entry["name"])
+            attributes["name"] = anchor(entry["name"], path, name)
         if "namespace" in entry:
-            attributes["namespace"] = anchor(entry["namespace"])
+            attributes["namespace"] = anchor(entry["namespace"], path, name)
         designators.append(
             {"designatorType": "Attributes", "attributes": attributes}
         )
@@ -131,7 +137,7 @@ def convert_document(doc, path):
         control_id = control.get("controlID")
         if not control_id:
             fail(path, name, "posture entry without a controlID")
-        policies.append({"controlID": anchor(control_id)})
+        policies.append({"controlID": anchor(control_id, path, name)})
 
     match = spec.get("match") or {}
     unknown = set(match) - {"resources", "namespaceSelector"}
@@ -139,9 +145,13 @@ def convert_document(doc, path):
         fail(path, name, f"unsupported match keys {sorted(unknown)}")
     if "resources" in match and "namespaceSelector" in match:
         fail(path, name, "both match.resources and match.namespaceSelector set")
-    if match.get("resources"):
+    if "resources" in match:
+        if not match["resources"]:
+            fail(path, name, "match.resources is empty")
         resources = convert_resources(match["resources"], path, name)
-    elif match.get("namespaceSelector"):
+    elif "namespaceSelector" in match:
+        if not match["namespaceSelector"]:
+            fail(path, name, "match.namespaceSelector is empty")
         resources = convert_namespace_selector(
             match["namespaceSelector"], path, name
         )
@@ -164,6 +174,7 @@ def convert_document(doc, path):
 
 
 def generate(directory):
+    """Convert every CSE document under `directory` into sorted policies."""
     policies = []
     seen = set()
     for filename in sorted(os.listdir(directory)):
@@ -186,6 +197,7 @@ def generate(directory):
 
 
 def main():
+    """Parse CLI arguments and write the generated exceptions file."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "directory",
