@@ -89,13 +89,14 @@ stays quiet by design, exactly as the old Alertmanager did.
 - **kube-apiserver audit logs are searchable in Coroot again.** Coroot's
   node-agent ingests container logs/traces, not host audit-log files, so the
   previous alloy-audit → Loki pipeline was removed with the migration. The
-  `audit-log-forwarder` (`bases/infrastructure/controllers/audit-log-forwarder/`,
+  `audit-log-forwarder` (`bases/infrastructure/audit-log-forwarder/`,
   a control-plane-only OpenTelemetry Collector DaemonSet) re-introduces that
   capability against Coroot: it tails `/var/log/audit/kube/audit.log` and ships
   it to the Coroot OTLP logs endpoint as the `kube-apiserver-audit` application.
-  Retention in Coroot follows the Coroot CR's `logsTTL` (3d); the on-node file
-  backend (`talos/cluster/enable-audit-logging.yaml`, 30-day rotation) remains
-  the resilient primary for forensics beyond that window.
+  Retention in Coroot follows the Coroot CR's `logsTTL` (3d in the base, 7d in
+  prod); the on-node file backend (`talos/cluster/enable-audit-logging.yaml`,
+  30-day rotation) remains the resilient primary for forensics beyond that
+  window.
 
 ## Kubescape runtime-detection alerts
 

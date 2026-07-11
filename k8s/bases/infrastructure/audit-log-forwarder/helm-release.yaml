@@ -37,6 +37,10 @@ spec:
   values:
     mode: daemonset
     fullnameOverride: audit-log-forwarder
+    serviceAccount:
+      # The collector only reads a host file and exports logs; it never calls
+      # the Kubernetes API, so do not expose a bearer token to this root pod.
+      automountServiceAccountToken: false
     image:
       # The -k8s distribution carries exactly the components used below
       # (filelog receiver, file_storage extension, otlphttp exporter).

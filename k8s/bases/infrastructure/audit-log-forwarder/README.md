@@ -17,3 +17,8 @@ needs, and the existing `allow-coroot` CiliumNetworkPolicy covers the
 intra-namespace push to `coroot-coroot:8080`. The on-node audit file (30-day
 rotation) remains the resilient primary; Coroot holds the searchable copy for
 its `logsTTL` window.
+
+The Hetzner overlay includes this base in the `infrastructure` layer, alongside
+the Coroot CR that creates `coroot-api-key`. Keeping it out of the earlier
+wait-gated controller layer avoids a fresh-bootstrap dependency cycle and keeps
+the key-dependent forwarder prod-only.
