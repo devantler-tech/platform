@@ -33,6 +33,16 @@ spec:
           env:
             - name: MC_CONFIG_DIR
               value: /tmp/.mc
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: minio-root-credentials
+                  key: rootUser
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: minio-root-credentials
+                  key: rootPassword
           resources:
             requests:
               cpu: 10m
@@ -49,7 +59,7 @@ spec:
             - |
               set -e
               until mc alias set local http://minio.minio.svc.cluster.local:9000 \
-                    minio minio-local-development-only; do
+                    "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD"; do
                 sleep 2
               done
               mc mb --ignore-existing local/platform-backups
