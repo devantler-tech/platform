@@ -41,6 +41,7 @@ jobs:
               - 'talos/**'
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
+              - 'scripts/generate-kubescape-exceptions.py'
               - '.github/workflows/ci.yaml'
             talos:
               - 'talos/**'
@@ -152,25 +153,33 @@ jobs:
         # FAILS if a change drops the posture below the threshold, so new
         # findings must be fixed (or justified) before merge.
         #
-        # The threshold (85) is a regression FLOOR, not the live score. The
+        # The scan consumes the platform's justified exceptions: the
+        # ClusterSecurityException CRs (k8s/bases/infrastructure/
+        # cluster-security-exceptions/ — the single source of truth, also
+        # consumed in-cluster by the kubescape-operator) are converted at scan
+        # time into Kubescape's native exceptions format by
+        # scripts/generate-kubescape-exceptions.py (#2264). With runtime-
+        # enforced and except-only findings suppressed, the threshold gates the
+        # residual REAL posture instead of sitting ~15 points under it.
+        #
+        # The threshold is a regression FLOOR, not the live score. The
         # Kubescape compliance score is **environment-dependent** — the same
-        # binary on the same manifests scores higher locally (macOS, ≈94%) than on
-        # the Linux CI runner (≈87%), a gap that isn't the render, the framework
+        # binary on the same manifests scores higher locally (macOS) than on
+        # the Linux CI runner, a gap that isn't the render, the framework
         # cache, or the merge content — and the absolute value also shifts with the
-        # ksail render, so it can't be reproduced exactly offline. CI is the source
+        # ksail render, so it can't be reproduced exactly offline (with the
+        # exceptions applied the local reference is ≈99%). CI is the source
         # of truth; the gate sits a few points under the observed CI value to catch
         # real regressions without flaking on that variance. (NB the floor may need
         # re-baselining after a ksail version bump.)
         #
-        # It is not higher because the residual findings are either runtime-
-        # enforced (Kyverno securityContext/limits, CiliumNetworkPolicy) or
-        # genuinely unfixable — notably C-0002, the KubeVirt operator's pods/exec
-        # RBAC, which it needs to manage VMs and can only be excepted. Native scan
-        # exceptions have now shipped (devantler-tech/ksail#5369); wiring the
-        # platform's ClusterSecurityException CRs into the scan and ratcheting the
-        # threshold toward 100 is tracked in #2264. Until then, ratchet up as
-        # genuine gaps are fixed; never lower it.
-        run: ksail workload scan --framework nsa --compliance-threshold 85
+        # Known un-excepted residual: C-0012 on the local-dev MinIO Deployment
+        # (deliberate dev-only credential — tracked for a root-cause fix, not
+        # an exception). Ratchet the floor up as genuine gaps close; never
+        # lower it.
+        run: |
+          python3 scripts/generate-kubescape-exceptions.py -o /tmp/kubescape-exceptions.json
+          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 85
 
   naming:
     name: 🏷️ Validate Naming Conventions
