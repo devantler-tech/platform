@@ -98,7 +98,12 @@ spec:
         readOnly: true
       - name: checkpoints
         mountPath: /var/lib/audit-log-forwarder
-    # Root read access to the 0600 root-owned audit file; everything else
+    # kube-apiserver writes /var/log/audit/kube as UID 65534 with 0700/0600
+    # modes (live-verified on the prod Talos v1.13.5 nodes), so a plain UID 0
+    # reader with all capabilities dropped gets permission denied and the
+    # filelog receiver forwards nothing. Per Sidero's v1.13 audit-log example,
+    # hostPath readers retain exactly DAC_READ_SEARCH (read/traverse only —
+    # never DAC_OVERRIDE) to bypass the file's DAC check; everything else
     # stays locked down.
     securityContext:
       runAsUser: 0
@@ -108,6 +113,8 @@ spec:
       capabilities:
         drop:
           - ALL
+        add:
+          - DAC_READ_SEARCH
       seccompProfile:
         type: RuntimeDefault
     resources:
