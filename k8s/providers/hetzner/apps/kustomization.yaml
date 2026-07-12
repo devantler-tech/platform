@@ -57,7 +57,11 @@ patches:
       namespace: umami
     path: umami/patches/grant-pg-monitor.yaml
   # User namespaces (hostUsers: false) — prod-only and default-off. These
-  # namespace-label patches opt the two proven stateless workloads into the
-  # add-security-context Kyverno rule. Local/CI and stateful workloads stay out.
+  # namespace-label patches opt proven-stateless workloads into the
+  # add-security-context Kyverno rule. Local/CI and stateful workloads stay
+  # out; in mixed namespaces (umami, backstage) the rule itself excludes the
+  # CNPG database pods via their cnpg.io/cluster label.
   - path: whoami/patches/enable-user-namespaces.yaml
   - path: homepage/patches/enable-user-namespaces.yaml
+  - path: umami/patches/enable-user-namespaces.yaml
+  - path: backstage/patches/enable-user-namespaces.yaml
