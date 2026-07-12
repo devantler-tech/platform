@@ -15,10 +15,7 @@ COMPONENT = (
     / "k8s/providers/hetzner/infrastructure/controllers/cilium/components"
     / "bandwidth-manager-bbr"
 )
-BASE_CILIUM = ROOT / "k8s/bases/infrastructure/controllers/cilium"
 PROD_CONTROLLERS = ROOT / "k8s/providers/hetzner/infrastructure/controllers"
-PROD_CILIUM = PROD_CONTROLLERS / "cilium"
-STRICT_MODE_PATCH = PROD_CILIUM / "patches/enforce-wireguard-strict-mode.yaml"
 
 
 def render(path, unrestricted=False):
@@ -58,15 +55,13 @@ class CiliumBandwidthManagerComponentTests(unittest.TestCase):
             "\n  - cilium/components/bandwidth-manager-bbr/",
             parent,
         )
-        self.assertNotIn("bandwidthManager:", cilium_release(render(BASE_CILIUM)))
+        self.assertNotIn("bandwidthManager:", cilium_release(render(PROD_CONTROLLERS)))
 
     def test_opt_in_render_enables_bbr_and_preserves_wireguard(self):
         self.assertTrue(COMPONENT.is_dir(), f"missing component: {COMPONENT}")
         with tempfile.TemporaryDirectory(prefix=".platform-cilium-bbr-", dir=ROOT) as tmp:
-            base = os.path.relpath(BASE_CILIUM, tmp)
-            provider = os.path.relpath(PROD_CILIUM, tmp)
+            base = os.path.relpath(PROD_CONTROLLERS, tmp)
             component = os.path.relpath(COMPONENT, tmp)
-            strict_mode_patch = os.path.relpath(STRICT_MODE_PATCH, tmp)
             pathlib.Path(tmp, "kustomization.yaml").write_text(
                 textwrap.dedent(
                     f"""\
@@ -75,18 +70,22 @@ class CiliumBandwidthManagerComponentTests(unittest.TestCase):
                     kind: Kustomization
                     resources:
                       - {base}
-                      - {provider}
                     components:
                       - {component}
-                    patches:
-                      - path: {strict_mode_patch}
                     """
                 ),
                 encoding="utf-8",
             )
             release = cilium_release(render(tmp, unrestricted=True))
 
-        self.assertIn("bandwidthManager:\n      bbr: true\n      enabled: true", release)
+        self.assertIn(
+            "bandwidthManager:\n"
+            "      bbr: true\n"
+            "      bbrHostNamespaceOnly: true\n"
+            "      enabled: true",
+            release,
+        )
+        self.assertNotIn("bpf:\n      masquerade: true", release)
         self.assertIn("encryption:\n      enabled: true\n      nodeEncryption: false", release)
         self.assertIn("type: wireguard", release)
 

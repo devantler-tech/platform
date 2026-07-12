@@ -7,7 +7,19 @@
 # Hetzner-only because that is the production path where egress traverses the
 # node datapath and where WireGuard is enabled.
 #
-# SAFETY: do not reference this component until the activation/soak follow-up.
+# HOST-NAMESPACE GUARD: pod BBR also requires eBPF host routing. The current
+# tunnel-mode datapath intentionally keeps bpf.masquerade off, so
+# bbrHostNamespaceOnly stays true and limits BBR to hostNetwork workloads.
+# Do not remove that guard until #2609 has merged and completed its own soak.
+#
+# DEVICE GUARD: production currently pins two heterogeneous private-NIC names
+# (`enp7s0` on workers, `eth1` on control planes). Cilium requires every
+# manually listed bandwidth-manager device name on every managed node. Do not
+# activate this component until #2610 provides a homogeneous selection while
+# preserving the private-NIC WireGuard and mutual-auth path.
+#
+# SAFETY: this component is staged, not activation-ready. Keep it unreferenced
+# until both #2609 and #2610 are complete, then use a separate activation/soak.
 # `rollOutCiliumPods: true` means enabling it rolls every Cilium agent one node
 # at a time and replaces the node qdisc. Activate only in a low-traffic window;
 # verify `cilium status --verbose` and unexpected Hubble drops after the roll.
@@ -36,3 +48,4 @@ patches:
           bandwidthManager:
             enabled: true
             bbr: true
+            bbrHostNamespaceOnly: true
