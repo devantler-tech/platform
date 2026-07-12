@@ -15,6 +15,11 @@ resources:
   # the devantler-tech/aws repo sync lands in a follow-up increment. Hetzner-only
   # because Crossplane (and the provider packages) are prod-only.
   - aws/
+  # Default-off disposable proof for user namespaces + Longhorn idmapped mounts
+  # (platform#2599). Activate in a short-lived PR by uncommenting this resource,
+  # capture the completed Job's logs, then remove it again so its generic
+  # ephemeral PVC and Longhorn volume are garbage-collected.
+  # - userns-longhorn-smoke/
   # Prod-only Coroot Postgres integration for the platform-owned CNPG DBs:
   # additive CiliumNetworkPolicies that let the observability cluster-agent
   # scrape each on 5432 (the Cluster patches below stamp the
