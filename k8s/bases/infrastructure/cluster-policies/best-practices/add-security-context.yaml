@@ -84,8 +84,9 @@ spec:
               kinds:
                 - Pod
               selector:
-                matchLabels:
-                  cnpg.io/cluster: "*"
+                matchExpressions:
+                  - key: cnpg.io/cluster
+                    operator: Exists
       mutate:
         patchStrategicMerge:
           spec:
