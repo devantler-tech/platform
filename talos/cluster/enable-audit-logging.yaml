@@ -86,3 +86,12 @@ cluster:
       - hostPath: /var/etc/kubernetes/audit
         mountPath: /etc/kubernetes/audit
         readonly: true
+      # Write-through for the audit log itself: without this volume the API
+      # server writes audit-log-path inside its own container filesystem and
+      # the log never reaches the host's EPHEMERAL partition — host-side
+      # consumers (the observability audit-log forwarder DaemonSet) then find
+      # no /var/log/audit/kube directory at all. Matches Sidero's documented
+      # audit-log pattern (writable hostPath mounted at the same path).
+      - hostPath: /var/log/audit/kube
+        mountPath: /var/log/audit/kube
+        readonly: false
