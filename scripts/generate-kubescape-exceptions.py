@@ -160,7 +160,12 @@ def convert_document(doc, path):
             fail(path, name, "posture entry without a controlID")
         policies.append({"controlID": anchor(control_id, path, name)})
 
-    resources = resolve_match(spec.get("match") or {}, path, name)
+    match = spec.get("match")
+    if match is not None and (not isinstance(match, dict) or not match):
+        # Fail closed: an explicit-but-malformed match ([], "", false, {})
+        # must never be coerced into the cluster-wide default.
+        fail(path, name, f"spec.match must be a non-empty mapping, got {match!r}")
+    resources = resolve_match(match or {}, path, name)
 
     policy = {
         "name": name,

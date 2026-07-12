@@ -163,6 +163,18 @@ class ConvertDocumentTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             mod.convert_document(cse("bad", IGNORE, match), "f")
 
+    def test_malformed_match_fails_closed(self):
+        """An explicit-but-malformed match must not widen to cluster-wide.
+
+        `match: []` / `""` / `false` / `{}` are falsey but explicit — coercing
+        them into the no-match default would silently grant the cluster-wide
+        `.*` namespace designator.
+        """
+        for malformed in ([], "", False, {}, 0, "resources"):
+            with self.subTest(match=malformed):
+                with self.assertRaises(SystemExit):
+                    mod.convert_document(cse("bad", IGNORE, match=malformed), "f")
+
     def test_both_match_shapes_fails_closed(self):
         """Setting both match.resources and match.namespaceSelector aborts."""
         match = {
@@ -293,6 +305,14 @@ class GenerateTests(unittest.TestCase):
         policies = mod.generate(mod.DEFAULT_DIR)
         names = {p["name"] for p in policies}
         self.assertIn("exec-into-container-rbac", names)
+        exec_policy = next(p for p in policies if p["name"] == "exec-into-container-rbac")
+        self.assertIn(
+            {
+                "designatorType": "Attributes",
+                "attributes": {"kind": "^ClusterRoleBinding$", "name": "^kubevirt-operator$"},
+            },
+            exec_policy["resources"],
+        )
         for policy in policies:
             self.assertTrue(policy["resources"])
             self.assertTrue(policy["posturePolicies"])
