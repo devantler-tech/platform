@@ -66,6 +66,10 @@ components:
   # silently-broken keda external-scaler and homepage Deployments.
   - ../../../../bases/components/helmrelease-drift-detection
   - ../../../../bases/components/helmrelease-flux-defaults
+  # Default-off Cilium bandwidth-manager + BBR staging component (#2607).
+  # Enabling it replaces the node qdisc and rolls every Cilium agent; uncomment
+  # only in the separate low-traffic activation/soak PR. Rollback = re-comment.
+  # - cilium/components/bandwidth-manager-bbr/
 patches:
   - path: openbao/patches/store-data-on-hcloud.yaml
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
