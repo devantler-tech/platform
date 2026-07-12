@@ -65,3 +65,4 @@ patches:
   - path: homepage/patches/enable-user-namespaces.yaml
   - path: umami/patches/enable-user-namespaces.yaml
   - path: backstage/patches/enable-user-namespaces.yaml
+  - path: crossview/patches/enable-user-namespaces.yaml
