@@ -85,13 +85,23 @@ spec:
       - name: audit-log
         hostPath:
           path: /var/log/audit/kube
-          type: Directory
-      # Filelog checkpoint dir so a pod restart resumes at the last-read
-      # offset instead of re-ingesting or skipping.
+          # Deliberately no hostPath type: on Talos the kubelet runs in its own
+          # mount namespace that maps only /var/lib/{kubelet,containerd} and
+          # /var/log/{pods,containers}, so a `Directory` type check stats a path
+          # the kubelet cannot see and fails with "is not a directory" even
+          # though the directory exists on the host (live-verified via the
+          # kubelet's /proc/<pid>/mountinfo). The CRI resolves the path in the
+          # host namespace, where it exists — Talos itself mounts this same
+          # directory into kube-apiserver with an unset type for that reason.
+      # Filelog checkpoint store so container restarts resume at the last-read
+      # offset. emptyDir (not hostPath): it lives under /var/lib/kubelet, the
+      # one writable path the Talos kubelet namespace shares with the host, and
+      # it keeps a second hostPath out of the privileged exception. A pod
+      # *re-creation* (DaemonSet update) loses the offset and re-ingests the
+      # current audit.log once — same as the deliberate start_at: beginning
+      # initial ingest; the on-node file remains the resilient primary.
       - name: checkpoints
-        hostPath:
-          path: /var/lib/audit-log-forwarder
-          type: DirectoryOrCreate
+        emptyDir: {}
     extraVolumeMounts:
       - name: audit-log
         mountPath: /var/log/audit/kube
