@@ -16,6 +16,15 @@ ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / "scripts" / "refresh-flux-ghcr-auth.sh"
 ACTION = ROOT / ".github" / "actions" / "deploy-prod" / "action.yml"
 DR_REBUILD = ROOT / ".github" / "workflows" / "dr-rebuild.yaml"
+PROVIDER_UPJET_UNIFI = (
+    ROOT
+    / "k8s"
+    / "providers"
+    / "hetzner"
+    / "infrastructure"
+    / "crossplane"
+    / "provider-upjet-unifi.yaml"
+)
 
 
 class RefreshFluxGhcrAuthTests(unittest.TestCase):
@@ -115,11 +124,13 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               exit 0
             fi
 
-            repository="${url#https://ghcr.io/v2/}"
-            repository="${repository%/manifests/latest}"
-            test "$repository" != "$url"
+            manifest_path="${url#https://ghcr.io/v2/}"
+            repository="${manifest_path%/manifests/*}"
+            reference="${manifest_path##*/manifests/}"
+            test "$repository" != "$manifest_path"
+            test "$reference" != "$manifest_path"
             grep -q 'Authorization: Bearer fixture-registry-token' "$config"
-            printf '%s\n' "$repository" >> "$REGISTRY_READ_LOG"
+            printf '%s:%s\n' "$repository" "$reference" >> "$REGISTRY_READ_LOG"
             if [[ "$repository" == "${FAKE_CURL_DENY_REPOSITORY:-disabled}" ]]; then
               printf '403'
             else
@@ -149,6 +160,16 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             done
             test -n "$namespace"
             touch "$KUBECTL_CALLED"
+
+            if [[ "$arguments" == *" api-resources "* ]]; then
+              [[ "$arguments" == *" --api-group=external-secrets.io "* ]]
+              if [[ "${FAKE_FANOUT_CRDS_ABSENT:-false}" != true ]]; then
+                printf '%s\n' \
+                  'externalsecrets.external-secrets.io' \
+                  'pushsecrets.external-secrets.io'
+              fi
+              exit 0
+            fi
 
             if [[ "$arguments" == *" patch secret ksail-registry-credentials "* ]]; then
               [[ "$arguments" == *" --type=merge "* ]]
@@ -188,23 +209,48 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               name=ghcr-auth
             fi
 
+            if [[ -n "$kind" && "$arguments" == *" get $kind $name "* \
+              && "$arguments" == *" --ignore-not-found "* ]]; then
+              resource="$kind/$namespace/$name"
+              if [[ "$resource" != "${FAKE_MISSING_FANOUT_RESOURCE:-disabled}" ]]; then
+                echo "$kind/$name"
+              fi
+              exit 0
+            fi
+
+            if [[ -n "$kind" \
+              && "$kind/$namespace/$name" == "${FAKE_MISSING_FANOUT_RESOURCE:-disabled}" ]]; then
+              echo "$kind/$name not found" >&2
+              exit 44
+            fi
+
             if [[ -n "$kind" && "$arguments" == *" get $kind $name "* ]]; then
               marker="$FAKE_SYNC_STATE_DIR/${kind}-${namespace}-${name}"
+              annotated_marker="${marker}-annotated"
               refresh_time=2026-07-13T00:00:00Z
-              if [[ -f "$marker" ]]; then
+              resource_version=1
+              if [[ -f "$annotated_marker" ]]; then
+                resource_version=2
+              fi
+              if [[ -f "$marker" && "${FAKE_SYNC_SAME_REFRESH_TIME:-false}" != true ]]; then
                 refresh_time=2026-07-13T00:00:01Z
               fi
-              printf '{"status":{"refreshTime":"%s","conditions":[{"type":"Ready","status":"True"}]}}\n' "$refresh_time"
+              if [[ -f "$marker" ]]; then
+                resource_version=3
+              fi
+              printf '{"metadata":{"resourceVersion":"%s"},"status":{"refreshTime":"%s","conditions":[{"type":"Ready","status":"True"}]}}\n' "$resource_version" "$refresh_time"
               exit 0
             fi
 
             if [[ -n "$kind" && "$arguments" == *" annotate $kind $name "* ]]; then
               resource="$kind/$namespace/$name"
               printf '%s\n' "$resource" >> "$FANOUT_LOG"
+              marker="$FAKE_SYNC_STATE_DIR/${kind}-${namespace}-${name}"
+              touch "${marker}-annotated"
               if [[ "$resource" != "${FAKE_SYNC_STALL_RESOURCE:-disabled}" ]]; then
-                touch "$FAKE_SYNC_STATE_DIR/${kind}-${namespace}-${name}"
+                touch "$marker"
               fi
-              echo "$kind/$name annotated"
+              printf '{"metadata":{"resourceVersion":"2"}}\n'
               exit 0
             fi
 
@@ -304,12 +350,13 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertEqual(
             self.registry_read_log.read_text(encoding="utf-8").splitlines(),
             [
-                "devantler-tech/platform/manifests",
-                "devantler-tech/wedding-app/manifests",
-                "devantler-tech/ascoachingogvaner/manifests",
-                "devantler-tech/wedding-app",
-                "devantler-tech/ascoachingogvaner",
-                "devantler-tech/ksail",
+                "devantler-tech/platform/manifests:latest",
+                "devantler-tech/wedding-app/manifests:latest",
+                "devantler-tech/ascoachingogvaner/manifests:latest",
+                "devantler-tech/wedding-app:latest",
+                "devantler-tech/ascoachingogvaner:latest",
+                "devantler-tech/ksail:latest",
+                "devantler-tech/provider-upjet-unifi:v0.1.0",
             ],
         )
         self.assertEqual(
@@ -405,12 +452,68 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
 
     def test_fresh_cluster_without_variables_base_skips_existing_fanout(self) -> None:
         result = self._run_helper(
-            self._valid_config(), FAKE_VARIABLES_BASE_ABSENT="true"
+            self._valid_config(),
+            ("--allow-incomplete-fanout",),
+            FAKE_VARIABLES_BASE_ABSENT="true",
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.patch_capture.exists())
         self.assertFalse(self.variables_patch_capture.exists())
+        self.assertFalse(self.fanout_log.exists())
+
+    def test_missing_variables_base_fails_closed_without_bootstrap_mode(self) -> None:
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_VARIABLES_BASE_ABSENT="true",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.patch_capture.exists())
+
+    def test_partial_bootstrap_repairs_root_without_forcing_missing_fanout(
+        self,
+    ) -> None:
+        missing_resources = [
+            "pushsecret/flux-system/seed-ghcr",
+            "externalsecret/wedding-app/ghcr-auth",
+            "externalsecret/ascoachingogvaner/ghcr-auth",
+            "externalsecret/kyverno/ghcr-auth",
+        ]
+        for resource in missing_resources:
+            with self.subTest(resource=resource):
+                result = self._run_helper(
+                    self._valid_config(),
+                    ("--allow-incomplete-fanout",),
+                    FAKE_MISSING_FANOUT_RESOURCE=resource,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(self.variables_patch_capture.exists())
+                self.assertTrue(self.patch_capture.exists())
+                self.assertFalse(self.fanout_log.exists())
+                self.assertIn("first reconcile will complete", result.stdout)
+
+    def test_partial_fanout_fails_closed_without_bootstrap_mode(self) -> None:
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_MISSING_FANOUT_RESOURCE="externalsecret/kyverno/ghcr-auth",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.patch_capture.exists())
+        self.assertFalse(self.fanout_log.exists())
+
+    def test_partial_bootstrap_without_eso_crds_repairs_root(self) -> None:
+        result = self._run_helper(
+            self._valid_config(),
+            ("--allow-incomplete-fanout",),
+            FAKE_FANOUT_CRDS_ABSENT="true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.variables_patch_capture.exists())
+        self.assertTrue(self.patch_capture.exists())
         self.assertFalse(self.fanout_log.exists())
 
     def test_pushsecret_sync_failure_is_not_hidden(self) -> None:
@@ -426,6 +529,15 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         )
         self.assertTrue(self.variables_patch_capture.exists())
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
+
+    def test_same_second_sync_accepts_controller_resource_version_edge(self) -> None:
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_SYNC_SAME_REFRESH_TIME="true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.patch_capture.exists())
 
     def test_materialised_consumer_mismatch_is_not_hidden(self) -> None:
         result = self._run_helper(
@@ -448,12 +560,14 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
 class DeployActionOrderingTests(unittest.TestCase):
     """Keep credential refreshes on both sides of KSail-owned mutations."""
 
-    def test_refresh_precedes_reconcile_and_is_reasserted_after_update(self) -> None:
+    def test_consumer_staging_precedes_publish_and_is_reasserted_after_update(
+        self,
+    ) -> None:
         action = ACTION.read_text(encoding="utf-8")
 
-        first_refresh = action.index("id: preflight_flux_ghcr_auth")
+        first_refresh = action.index("id: stage_flux_ghcr_auth")
         push = action.index("run: ksail --config ksail.prod.yaml workload push")
-        post_push_refresh = action.index("id: reassert_flux_ghcr_auth_after_push")
+        post_push_refresh = action.index("id: verify_flux_ghcr_auth_after_push")
         reconcile = action.index("id: reconcile")
         cluster_update = action.index(
             "run: ksail --config ksail.prod.yaml cluster update"
@@ -466,13 +580,21 @@ class DeployActionOrderingTests(unittest.TestCase):
         self.assertLess(reconcile, cluster_update)
         self.assertLess(cluster_update, final_refresh)
         self.assertIn(
+            "run: ./scripts/refresh-flux-ghcr-auth.sh\n",
+            action[first_refresh:push],
+        )
+        self.assertNotIn(
+            "--check-only",
+            action[first_refresh:push],
+        )
+        self.assertIn(
             "run: ./scripts/refresh-flux-ghcr-auth.sh --check-only",
-            action,
+            action[post_push_refresh:reconcile],
         )
         final_refresh_step = action[final_refresh:]
         self.assertIn("always() &&", final_refresh_step)
         self.assertIn(
-            "steps.reassert_flux_ghcr_auth_after_push.outcome == 'success'",
+            "steps.verify_flux_ghcr_auth_after_push.outcome == 'success'",
             final_refresh_step,
         )
         self.assertIn(
@@ -481,7 +603,7 @@ class DeployActionOrderingTests(unittest.TestCase):
         )
         self.assertEqual(action.count("scripts/refresh-flux-ghcr-auth.sh"), 3)
 
-    def test_disaster_rebuild_preflights_before_mutation_and_refreshes_before_reconcile(
+    def test_disaster_rebuild_preflights_then_stages_before_publish(
         self,
     ) -> None:
         workflow = DR_REBUILD.read_text(encoding="utf-8")
@@ -492,19 +614,50 @@ class DeployActionOrderingTests(unittest.TestCase):
         cluster_create = workflow.index(
             "run: ksail --config ksail.prod.yaml cluster create"
         )
+        stage = workflow.index("id: stage_flux_ghcr_auth")
         push = workflow.index("run: ksail --config ksail.prod.yaml workload push")
-        refresh = workflow.index(
-            "run: ./scripts/refresh-flux-ghcr-auth.sh\n"
-        )
+        verify = workflow.index("id: verify_flux_ghcr_auth_after_push")
+        fanout_verify = workflow.index("id: verify_flux_ghcr_fanout")
         reconcile = workflow.index(
             "run: ksail --config ksail.prod.yaml workload reconcile"
         )
 
         self.assertLess(preflight, cluster_create)
-        self.assertLess(cluster_create, push)
-        self.assertLess(push, refresh)
-        self.assertLess(refresh, reconcile)
-        self.assertEqual(workflow.count("scripts/refresh-flux-ghcr-auth.sh"), 2)
+        self.assertLess(cluster_create, stage)
+        self.assertLess(stage, push)
+        self.assertLess(push, verify)
+        self.assertLess(verify, reconcile)
+        self.assertLess(reconcile, fanout_verify)
+        self.assertIn(
+            "run: ./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout",
+            workflow[stage:push],
+        )
+        self.assertIn(
+            "run: ./scripts/refresh-flux-ghcr-auth.sh --check-only",
+            workflow[verify:reconcile],
+        )
+        self.assertIn(
+            "run: ./scripts/refresh-flux-ghcr-auth.sh\n",
+            workflow[fanout_verify:],
+        )
+        self.assertEqual(workflow.count("scripts/refresh-flux-ghcr-auth.sh"), 4)
+
+
+class RequiredPackageCoverageTests(unittest.TestCase):
+    """Keep pinned private provider references in the live GHCR preflight."""
+
+    def test_provider_upjet_unifi_reference_is_preflighted(self) -> None:
+        manifest = PROVIDER_UPJET_UNIFI.read_text(encoding="utf-8")
+        helper = HELPER.read_text(encoding="utf-8")
+
+        package_line = next(
+            line.strip()
+            for line in manifest.splitlines()
+            if line.strip().startswith("package: ghcr.io/")
+        )
+        package_reference = package_line.removeprefix("package: ghcr.io/")
+
+        self.assertIn(f'"{package_reference}"', helper)
 
 
 if __name__ == "__main__":

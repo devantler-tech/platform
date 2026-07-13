@@ -505,20 +505,22 @@ single-source consolidation stays tracked by #2613.
 The production deploy closes the bootstrap loop in this order:
 
 1. Decrypt only `ghcr_dockerconfigjson` and perform real OCI manifest reads for
-   all six private consumers: Platform manifests, both tenant manifest
-   artifacts, both tenant application images, and the KSail package used by
-   Kyverno signature verification. This happens before changing a mutable
-   `latest` tag (and before infrastructure creation during DR), and does not
-   mutate the cluster.
-2. Push and sign the new artifact with `GHCR_TOKEN`, then revalidate the SOPS
-   credential against the newly-published artifact. On an existing cluster,
-   patch `variables-base`; force-sync `seed-ghcr` into OpenBao; force-sync the
-   tenant/Kyverno ExternalSecrets; verify every materialised `ghcr-auth`
-   payload matches Git/SOPS; and only then patch
-   `flux-system/ksail-registry-credentials`.
-3. Reconcile Flux only after that synchronous fan-out succeeds. A fresh DR
-   cluster has no fan-out resources yet, so the bridge patches root auth first
-   and its first reconcile creates the entire chain from the same artifact.
+   all seven private consumers: Platform manifests, both tenant manifest
+   artifacts, both tenant application images, and the KSail plus
+   provider-upjet-unifi packages used by Kyverno verification. During DR, a
+   read-only `--check-only` pass happens before infrastructure creation.
+2. Before changing mutable `latest`, patch `variables-base`; force-sync
+   `seed-ghcr` into OpenBao; force-sync the tenant/Kyverno ExternalSecrets;
+   verify every materialised `ghcr-auth` payload matches Git/SOPS; and only then
+   patch `flux-system/ksail-registry-credentials`. A fresh or partial DR
+   bootstrap may have no ESO CRDs/resources yet; explicit
+   `--allow-incomplete-fanout` mode stages `variables-base` and repairs root auth
+   so the first reconcile can create the chain. Normal mode fails closed on any
+   missing fan-out resource.
+3. Push and sign the artifact with `GHCR_TOKEN`, revalidate the newly-published
+   artifact with `--check-only`, and only then explicitly reconcile Flux. DR
+   runs the full bridge again after every Flux Kustomization is Ready, proving
+   that bootstrap mode completed the entire fan-out.
 4. Re-run the bridge after `cluster update`, because KSail can rewrite its
    managed root Secret when another cluster setting changes; the bridge also
    re-verifies the downstream fan-out.

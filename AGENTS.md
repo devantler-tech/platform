@@ -144,10 +144,11 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 2. The `deploy-prod` composite action (shared by both paths) uses `ksail --config ksail.prod.yaml` to target the committed prod config.
 3. `ksail.prod.yaml` has `kustomizationFile: clusters/prod`, so KSail/Flux use `k8s/clusters/prod/kustomization.yaml` as the entry point — no root `k8s/kustomization.yaml` or file rewriting is needed.
 4. `ksail --config ksail.prod.yaml cluster create` (first run) or `cluster update` (subsequent runs) provisions / reconciles the Hetzner servers, Talos, CCM, and CSI.
-5. `scripts/refresh-flux-ghcr-auth.sh --check-only` decrypts only the Git/SOPS pull credential and performs real OCI manifest reads for all six private consumers (the Platform and tenant manifest artifacts, both tenant application images, and the KSail package used by Kyverno signature verification) before a mutable `latest` tag is published; the DR workflow also runs it before creating infrastructure. It does not mutate the cluster.
+5. The bridge decrypts only the Git/SOPS pull credential, performs real OCI manifest reads for all seven private consumers (the Platform and tenant manifest artifacts, both tenant application images, and the KSail plus provider-upjet-unifi packages used by Kyverno verification), updates `variables-base`, force-syncs and verifies the PushSecret plus tenant/Kyverno ExternalSecrets, and only then reasserts root auth — all before a mutable `latest` tag is published. The DR workflow first runs `--check-only` before creating infrastructure, then uses explicit `--allow-incomplete-fanout` bootstrap mode after cluster creation and requires a full bridge pass after Flux converges.
 6. `ksail --config ksail.prod.yaml workload push` packages manifests and pushes them to GHCR.
-7. The bridge revalidates the newly-published artifact, updates `variables-base`, force-syncs and verifies the PushSecret plus tenant/Kyverno ExternalSecrets, and only then reasserts root auth before reconciliation. A fresh cluster without the fan-out resources repairs root auth first so Flux can bootstrap them.
+7. `scripts/refresh-flux-ghcr-auth.sh --check-only` revalidates the newly-published artifact without mutating the cluster.
 8. `ksail --config ksail.prod.yaml workload reconcile` triggers Flux to sync from the OCI artifact.
+9. After `cluster update`, the full bridge reasserts the Git/SOPS credential in case KSail rewrote its managed root Secret.
 
 **Key differences from local:**
 
@@ -165,7 +166,7 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 
 - **`ci.yaml`** — runs on `pull_request` (static manifest validation + Kubescape scan, no cluster) and `merge_group` (deploys prod via the Hetzner provider). Concurrency is shared with `cd.yaml` so a manual deploy and a merge-queue deploy can never run against the prod cluster at the same time.
 - **`cd.yaml`** — runs on `workflow_dispatch` (manual). Deploys to the production Hetzner cluster using `ksail --config ksail.prod.yaml`. Covers direct pushes to `main`, which bypass the merge queue and so are not deployed by `ci.yaml`.
-- **`.github/actions/deploy-prod`** — the composite action both deploy paths call (preflight root GHCR auth → push → cosign-sign → attest SBOM + SLSA provenance → revalidate/stage consumers/patch root auth → Flux reconcile → Talos `cluster update` → final reassert), so the merge-queue and manual deploys can never drift. Secrets are passed as inputs because composite actions cannot read `secrets`.
+- **`.github/actions/deploy-prod`** — the composite action both deploy paths call (stage/verify all GHCR pull consumers → push → cosign-sign → attest SBOM + SLSA provenance → revalidate published artifact → Flux reconcile → Talos `cluster update` → final reassert), so the merge-queue and manual deploys can never drift. Secrets are passed as inputs because composite actions cannot read `secrets`.
 
 **Required GitHub Secrets:**
 
@@ -178,11 +179,12 @@ The authoritative **Flux and tenant** GHCR pull credential is
 `k8s/bases/bootstrap/secret.enc.yaml`. The deploy bridge refreshes
 `flux-system/ksail-registry-credentials` from that value before Flux must fetch
 the artifact and reasserts it after `cluster update` in case KSail rewrites its
-managed Secret. On existing clusters the bridge first updates `variables-base`,
+managed Secret. Before publish on existing clusters, the bridge updates `variables-base`,
 force-syncs `seed-ghcr` into OpenBao, force-syncs the tenant/Kyverno
 ExternalSecrets, and verifies their materialised `ghcr-auth` payloads before
-switching root Flux auth. A fresh cluster repairs root auth first because the
-fan-out resources do not exist until Flux can fetch the initial artifact.
+switching root Flux auth. Only explicit DR bootstrap mode may repair root auth
+after staging `variables-base` while the fan-out is incomplete; DR must run the
+full verifier after Flux converges.
 apps reconcile. A direct credential commit to `main` still needs a
 manual `CD` workflow dispatch because direct pushes bypass the merge-queue deploy.
 Talos node registry auth still derives from `GHCR_TOKEN`; consolidating that

@@ -8,29 +8,34 @@
 set -euo pipefail
 
 check_only=false
+allow_incomplete_fanout=false
 if (($# > 1)); then
-  echo "Usage: $0 [--check-only]" >&2
+  echo "Usage: $0 [--check-only|--allow-incomplete-fanout]" >&2
   exit 64
 fi
 if (($# == 1)); then
-  if [[ "$1" != "--check-only" ]]; then
-    echo "Usage: $0 [--check-only]" >&2
-    exit 64
-  fi
-  check_only=true
+  case "$1" in
+    --check-only) check_only=true ;;
+    --allow-incomplete-fanout) allow_incomplete_fanout=true ;;
+    *)
+      echo "Usage: $0 [--check-only|--allow-incomplete-fanout]" >&2
+      exit 64
+      ;;
+  esac
 fi
 
 readonly SECRET_FILE="${FLUX_GHCR_SECRET_FILE:-k8s/bases/bootstrap/secret.enc.yaml}"
 readonly KUBE_CONTEXT="${KUBE_CONTEXT:-admin@prod}"
 readonly SYNC_ATTEMPTS="${FLUX_GHCR_SYNC_ATTEMPTS:-60}"
 readonly SYNC_INTERVAL="${FLUX_GHCR_SYNC_INTERVAL:-2}"
-readonly -a REQUIRED_PULL_REPOSITORIES=(
-  "devantler-tech/platform/manifests"
-  "devantler-tech/wedding-app/manifests"
-  "devantler-tech/ascoachingogvaner/manifests"
-  "devantler-tech/wedding-app"
-  "devantler-tech/ascoachingogvaner"
-  "devantler-tech/ksail"
+readonly -a REQUIRED_PULL_TARGETS=(
+  "devantler-tech/platform/manifests:latest"
+  "devantler-tech/wedding-app/manifests:latest"
+  "devantler-tech/ascoachingogvaner/manifests:latest"
+  "devantler-tech/wedding-app:latest"
+  "devantler-tech/ascoachingogvaner:latest"
+  "devantler-tech/ksail:latest"
+  "devantler-tech/provider-upjet-unifi:v0.1.0"
 )
 readonly -a FANOUT_NAMESPACES=(
   "wedding-app"
@@ -56,14 +61,17 @@ token_response="${work_dir}/token.json"
 patch_file="${work_dir}/patch.json"
 variables_patch_file="${work_dir}/variables-patch.json"
 expected_normalized="${work_dir}/expected-normalized.json"
+fanout_api_resources="${work_dir}/fanout-api-resources.txt"
 
 force_sync_resource() {
   local kind="$1"
   local namespace="$2"
   local name="$3"
   local before_file="${work_dir}/${kind}-${namespace}-${name}-before.json"
+  local annotated_file="${work_dir}/${kind}-${namespace}-${name}-annotated.json"
   local current_file="${work_dir}/${kind}-${namespace}-${name}-current.json"
   local before_refresh
+  local annotated_resource_version
   local attempt
   local stamp
 
@@ -82,7 +90,10 @@ force_sync_resource() {
     annotate "${kind}" "${name}" \
     "force-sync=${stamp}" \
     --overwrite \
-    >/dev/null
+    -o json \
+    > "${annotated_file}"
+  annotated_resource_version="$(jq -er '.metadata.resourceVersion' \
+    "${annotated_file}")"
 
   for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
     kubectl \
@@ -91,9 +102,13 @@ force_sync_resource() {
       get "${kind}" "${name}" \
       -o json \
       > "${current_file}"
-    if jq -e --arg before "${before_refresh}" '
+    if jq -e \
+      --arg before "${before_refresh}" \
+      --arg annotated_resource_version "${annotated_resource_version}" '
       (.status.refreshTime // "") as $refresh
-      | ($refresh != "" and $refresh != $before)
+      | (($refresh != "" and $refresh != $before)
+          or ((.metadata.resourceVersion // "") != ""
+            and .metadata.resourceVersion != $annotated_resource_version))
         and any(.status.conditions[]?;
           .type == "Ready" and .status == "True")
     ' "${current_file}" >/dev/null; then
@@ -190,7 +205,9 @@ chmod 600 "${basic_curl_config}"
 # then perform a real registry manifest GET for every package. Both credentials
 # stay in mode-0600 files. --disable must remain curl's first argument so an
 # ambient ~/.curlrc cannot enable tracing, add URLs, or otherwise expose auth.
-for repository in "${REQUIRED_PULL_REPOSITORIES[@]}"; do
+for target in "${REQUIRED_PULL_TARGETS[@]}"; do
+  repository="${target%:*}"
+  reference="${target##*:}"
   if ! http_status="$(curl --disable \
     --config "${basic_curl_config}" \
     --silent \
@@ -225,12 +242,12 @@ for repository in "${REQUIRED_PULL_REPOSITORIES[@]}"; do
     --output /dev/null \
     --write-out '%{http_code}' \
     --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
-    "https://ghcr.io/v2/${repository}/manifests/latest")"; then
-    echo "::error::Could not read the GHCR manifest for ${repository}; the root Flux Secret was not changed."
+    "https://ghcr.io/v2/${repository}/manifests/${reference}")"; then
+    echo "::error::Could not read the GHCR manifest for ${target}; the root Flux Secret was not changed."
     exit 1
   fi
   if [[ "${http_status}" != "200" ]]; then
-    echo "::error::The SOPS GHCR pull credential cannot read ${repository}:latest (GHCR HTTP ${http_status}); the root Flux Secret was not changed."
+    echo "::error::The SOPS GHCR pull credential cannot read ${target} (GHCR HTTP ${http_status}); the root Flux Secret was not changed."
     exit 1
   fi
 done
@@ -269,6 +286,10 @@ if ! variables_base_name="$(kubectl \
   exit 1
 fi
 if [[ -z "${variables_base_name}" ]]; then
+  if [[ "${allow_incomplete_fanout}" != "true" ]]; then
+    echo "::error::The GHCR fan-out is not initialized; root Flux auth was not changed. Use --allow-incomplete-fanout only during the DR bootstrap, then run the full verifier after reconciliation."
+    exit 1
+  fi
   patch_root_secret
   echo "✅ Refreshed root Flux GHCR auth; the first reconcile will create the downstream fan-out."
   exit 0
@@ -287,6 +308,65 @@ kubectl \
   patch secret variables-base \
   --type=merge \
   --patch-file="${variables_patch_file}"
+
+# A partially-bootstrapped DR cluster can already have variables-base while ESO
+# CRDs or individual fan-out objects do not exist yet. That state still needs
+# root auth so Flux can fetch the artifact that completes the chain. Distinguish
+# an absent API/resource from a failed lookup, and never force-sync a partial set.
+if ! kubectl \
+  --context "${KUBE_CONTEXT}" \
+  --namespace flux-system \
+  api-resources \
+  --api-group=external-secrets.io \
+  -o name \
+  > "${fanout_api_resources}"; then
+  echo "::error::Could not inspect the External Secrets API; refusing to change root Flux auth."
+  exit 1
+fi
+
+fanout_complete=true
+if ! grep -qx 'pushsecrets.external-secrets.io' "${fanout_api_resources}" \
+  || ! grep -qx 'externalsecrets.external-secrets.io' "${fanout_api_resources}"; then
+  fanout_complete=false
+else
+  if ! pushsecret_name="$(kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get pushsecret seed-ghcr \
+    --ignore-not-found \
+    -o name)"; then
+    echo "::error::Could not determine whether PushSecret flux-system/seed-ghcr exists; refusing to change root Flux auth."
+    exit 1
+  fi
+  if [[ -z "${pushsecret_name}" ]]; then
+    fanout_complete=false
+  fi
+
+  for namespace in "${FANOUT_NAMESPACES[@]}"; do
+    if ! externalsecret_name="$(kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace "${namespace}" \
+      get externalsecret ghcr-auth \
+      --ignore-not-found \
+      -o name)"; then
+      echo "::error::Could not determine whether ExternalSecret ${namespace}/ghcr-auth exists; refusing to change root Flux auth."
+      exit 1
+    fi
+    if [[ -z "${externalsecret_name}" ]]; then
+      fanout_complete=false
+    fi
+  done
+fi
+
+if [[ "${fanout_complete}" != "true" ]]; then
+  if [[ "${allow_incomplete_fanout}" != "true" ]]; then
+    echo "::error::The GHCR fan-out is incomplete; root Flux auth was not changed. Use --allow-incomplete-fanout only during the DR bootstrap, then run the full verifier after reconciliation."
+    exit 1
+  fi
+  patch_root_secret
+  echo "✅ Staged the Git/SOPS credential and refreshed root Flux auth; the first reconcile will complete the missing downstream fan-out."
+  exit 0
+fi
 
 force_sync_resource pushsecret flux-system seed-ghcr
 for namespace in "${FANOUT_NAMESPACES[@]}"; do

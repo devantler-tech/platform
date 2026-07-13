@@ -114,6 +114,14 @@ jobs:
           # renders an empty key and Talos rejects the whole machine config.
           WG_SERVER_PRIVATE_KEY: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
+      - name: 🔑 Stage Flux and consumer GHCR pull credential
+        id: stage_flux_ghcr_auth
+        # cluster create bootstraps with GHCR_TOKEN for KSail compatibility.
+        # Make Git/SOPS authoritative before the mutable tag is published. A
+        # partial bootstrap may have variables-base but no ESO resources yet;
+        # the bridge safely repairs root auth so Flux can create them.
+        run: ./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
+
       - name: 📦 Push manifests to GHCR
         run: ksail --config ksail.prod.yaml workload push
         env:
@@ -121,11 +129,11 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
-      - name: 🔑 Refresh Flux GHCR pull credential
-        # cluster create bootstraps with GHCR_TOKEN for KSail compatibility,
-        # then this bridge makes the Git/SOPS pull credential authoritative
-        # before Flux performs its first artifact fetch.
-        run: ./scripts/refresh-flux-ghcr-auth.sh
+      - name: 🔎 Verify Flux GHCR pull credential after publish
+        id: verify_flux_ghcr_auth_after_push
+        # Prove the newly-published artifact is readable before reconciliation;
+        # every available consumer was already staged before push.
+        run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
 
       - name: 🔁 Trigger Flux reconciliation
         run: ksail --config ksail.prod.yaml workload reconcile
@@ -142,6 +150,13 @@ jobs:
               --for=condition=Ready --timeout=20m
           done
           echo "✅ All Flux Kustomizations Ready — fresh platform converged."
+
+      - name: 🔑 Verify completed GHCR credential fan-out
+        id: verify_flux_ghcr_fanout
+        # Bootstrap mode may repair only root auth when ESO is not installed
+        # yet. After Flux converges, require the complete PushSecret /
+        # ExternalSecret transaction and exact consumer payload verification.
+        run: ./scripts/refresh-flux-ghcr-auth.sh
 
       - name: 💾 Velero resource restore (newest Completed backup)
         if: ${{ inputs.restore }}
