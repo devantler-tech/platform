@@ -184,9 +184,9 @@ force-syncs `seed-ghcr` into OpenBao, force-syncs the tenant/Kyverno
 ExternalSecrets, and verifies their materialised `ghcr-auth` payloads before
 switching root Flux auth. Only explicit DR bootstrap mode may repair root auth
 after staging `variables-base` while the fan-out is incomplete; DR must run the
-full verifier after Flux converges.
-apps reconcile. A direct credential commit to `main` still needs a
-manual `CD` workflow dispatch because direct pushes bypass the merge-queue deploy.
+full verifier after Flux converges. A direct credential commit to `main` still
+needs a manual `CD` workflow dispatch because direct pushes bypass the merge-queue
+deploy.
 Talos node registry auth still derives from `GHCR_TOKEN`; consolidating that
 remaining pull path stays tracked by #2613 and the KSail credential work.
 
