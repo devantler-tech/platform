@@ -112,7 +112,7 @@ jobs:
         # a save gated on job success would then never persist the schemas it did
         # manage to fetch, and every retry would cold-start again.
         id: kubeconform-cache
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ksail/kubeconform
           key: kubeconform-schema-cache-v1-${{ github.run_id }}
