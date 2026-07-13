@@ -108,24 +108,24 @@ func extractMultilineCondition(job string) (string, bool) {
 }
 
 func run(workflowPath string, stdout io.Writer, stderr io.Writer) int {
-	workflow, err := os.ReadFile(workflowPath)
+	workflow, err := os.ReadFile(workflowPath) //nolint:gosec // The explicit CLI path is the validator input.
 	if err != nil {
-		fmt.Fprintf(stderr, "merge-group heal contract: read workflow: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "merge-group heal contract: read workflow: %v\n", err)
 		return 1
 	}
 
 	if err := validateWorkflowContract(string(workflow)); err != nil {
-		fmt.Fprintf(stderr, "merge-group heal contract: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "merge-group heal contract: %v\n", err)
 		return 1
 	}
 
-	fmt.Fprintln(stdout, "Merge-group heal workflow contract passed.")
+	_, _ = fmt.Fprintln(stdout, "Merge-group heal workflow contract passed.")
 	return 0
 }
 
 func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) != 1 {
-		fmt.Fprintln(stderr, "usage: validate-merge-group-heal <workflow-path>")
+		_, _ = fmt.Fprintln(stderr, "usage: validate-merge-group-heal <workflow-path>")
 		return 2
 	}
 	return run(args[0], stdout, stderr)
