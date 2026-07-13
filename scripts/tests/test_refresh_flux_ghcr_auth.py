@@ -31,6 +31,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.patch_capture = self.workspace / "patch.json"
         self.kubectl_called = self.workspace / "kubectl-called"
         self.output_path_log = self.workspace / "ksail-output-path"
+        self.curl_scope_log = self.workspace / "curl-scopes"
 
         self._write_executable(
             "ksail",
@@ -74,6 +75,36 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             """,
         )
         self._write_executable(
+            "curl",
+            """
+            #!/usr/bin/env bash
+            set -euo pipefail
+            config=""
+            scope=""
+            while (($#)); do
+              case "$1" in
+                --config)
+                  config="$2"
+                  shift 2
+                  ;;
+                --data-urlencode)
+                  case "$2" in scope=*) scope="${2#scope=}" ;; esac
+                  shift 2
+                  ;;
+                *) shift ;;
+              esac
+            done
+            test -f "$config"
+            test -n "$scope"
+            printf '%s\n' "$scope" >> "$CURL_SCOPE_LOG"
+            if [[ "$scope" == *"${FAKE_CURL_DENY_REPOSITORY:-disabled}"* ]]; then
+              printf '403'
+            else
+              printf '200'
+            fi
+            """,
+        )
+        self._write_executable(
             "kubectl",
             """
             #!/usr/bin/env bash
@@ -106,10 +137,18 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         path.chmod(0o755)
 
     def _run_helper(
-        self, config: object, **environment_overrides: str
+        self,
+        config: object,
+        helper_args: tuple[str, ...] = (),
+        **environment_overrides: str,
     ) -> subprocess.CompletedProcess[str]:
         self.decrypted_config.write_text(json.dumps(config), encoding="utf-8")
-        for marker in (self.patch_capture, self.kubectl_called, self.output_path_log):
+        for marker in (
+            self.patch_capture,
+            self.kubectl_called,
+            self.output_path_log,
+            self.curl_scope_log,
+        ):
             marker.unlink(missing_ok=True)
         environment = os.environ.copy()
         environment.update(
@@ -119,11 +158,12 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "PATCH_CAPTURE": str(self.patch_capture),
                 "KUBECTL_CALLED": str(self.kubectl_called),
                 "KSAIL_OUTPUT_PATH_LOG": str(self.output_path_log),
+                "CURL_SCOPE_LOG": str(self.curl_scope_log),
             }
         )
         environment.update(environment_overrides)
         return subprocess.run(
-            [str(HELPER)],
+            [str(HELPER), *helper_args],
             cwd=ROOT,
             env=environment,
             text=True,
@@ -155,11 +195,38 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         temporary_config = Path(self.output_path_log.read_text(encoding="utf-8"))
         self.assertFalse(temporary_config.exists())
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
+        self.assertEqual(
+            self.curl_scope_log.read_text(encoding="utf-8").splitlines(),
+            [
+                "repository:devantler-tech/platform/manifests:pull",
+                "repository:devantler-tech/wedding-app/manifests:pull",
+                "repository:devantler-tech/ascoachingogvaner/manifests:pull",
+            ],
+        )
+
+    def test_accepts_standard_auth_only_docker_config(self) -> None:
+        auth = base64.b64encode(b"devantler:fixture-secret-token").decode()
+        config = {"auths": {"ghcr.io": {"auth": auth}}}
+
+        result = self._run_helper(config)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        patch = json.loads(self.patch_capture.read_text(encoding="utf-8"))
+        encoded = patch["data"][".dockerconfigjson"]
+        self.assertEqual(json.loads(base64.b64decode(encoded)), config)
+
+    def test_check_only_preflights_without_patching(self) -> None:
+        result = self._run_helper(self._valid_config(), ("--check-only",))
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.kubectl_called.exists())
+        self.assertFalse(self.patch_capture.exists())
 
     def test_missing_or_malformed_registry_auth_fails_closed(self) -> None:
         invalid_configs: list[object] = [
             {"auths": {"ghcr.io": {"username": "devantler"}}},
             {"auths": {"ghcr.io": {"username": "", "password": "token"}}},
+            {"auths": {"ghcr.io": {"auth": "not-base64"}}},
             {"auths": {}},
             "not-a-docker-config",
         ]
@@ -172,6 +239,15 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
 
     def test_registry_denial_prevents_cluster_patch(self) -> None:
         result = self._run_helper(self._valid_config(), FAKE_DOCKER_FAIL="true")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.kubectl_called.exists())
+
+    def test_tenant_package_denial_prevents_cluster_patch(self) -> None:
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_CURL_DENY_REPOSITORY="devantler-tech/wedding-app/manifests",
+        )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.kubectl_called.exists())
@@ -189,21 +265,29 @@ class DeployActionOrderingTests(unittest.TestCase):
     def test_refresh_precedes_reconcile_and_is_reasserted_after_update(self) -> None:
         action = ACTION.read_text(encoding="utf-8")
 
-        first_refresh = action.index("id: refresh_flux_ghcr_auth")
+        first_refresh = action.index("id: preflight_flux_ghcr_auth")
+        push = action.index("run: ksail --config ksail.prod.yaml workload push")
+        post_push_refresh = action.index("id: reassert_flux_ghcr_auth_after_push")
         reconcile = action.index("id: reconcile")
         cluster_update = action.index(
             "run: ksail --config ksail.prod.yaml cluster update"
         )
-        final_refresh = action.index("id: reassert_flux_ghcr_auth")
+        final_refresh = action.index("id: reassert_flux_ghcr_auth\n")
 
-        self.assertLess(first_refresh, reconcile)
+        self.assertLess(first_refresh, push)
+        self.assertLess(push, post_push_refresh)
+        self.assertLess(post_push_refresh, reconcile)
         self.assertLess(reconcile, cluster_update)
         self.assertLess(cluster_update, final_refresh)
         self.assertIn(
-            "if: always() && steps.refresh_flux_ghcr_auth.outcome == 'success'",
+            "run: ./scripts/refresh-flux-ghcr-auth.sh --check-only",
             action,
         )
-        self.assertEqual(action.count("scripts/refresh-flux-ghcr-auth.sh"), 2)
+        self.assertIn(
+            "if: always() && steps.preflight_flux_ghcr_auth.outcome == 'success'",
+            action,
+        )
+        self.assertEqual(action.count("scripts/refresh-flux-ghcr-auth.sh"), 3)
 
     def test_disaster_rebuild_refreshes_root_auth_before_reconcile(self) -> None:
         workflow = DR_REBUILD.read_text(encoding="utf-8")

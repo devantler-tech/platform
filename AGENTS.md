@@ -144,9 +144,10 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 2. The `deploy-prod` composite action (shared by both paths) uses `ksail --config ksail.prod.yaml` to target the committed prod config.
 3. `ksail.prod.yaml` has `kustomizationFile: clusters/prod`, so KSail/Flux use `k8s/clusters/prod/kustomization.yaml` as the entry point — no root `k8s/kustomization.yaml` or file rewriting is needed.
 4. `ksail --config ksail.prod.yaml cluster create` (first run) or `cluster update` (subsequent runs) provisions / reconciles the Hetzner servers, Talos, CCM, and CSI.
-5. `ksail --config ksail.prod.yaml workload push` packages manifests and pushes them to GHCR.
-6. `scripts/refresh-flux-ghcr-auth.sh` decrypts only the Git/SOPS pull credential, proves it can read the artifact, and refreshes the KSail-managed root Flux Secret before reconciliation.
-7. `ksail --config ksail.prod.yaml workload reconcile` triggers Flux to sync from the OCI artifact.
+5. `scripts/refresh-flux-ghcr-auth.sh --check-only` decrypts only the Git/SOPS pull credential and proves it can read Platform plus both private tenant packages before the mutable `latest` tag is published; it does not mutate the cluster.
+6. `ksail --config ksail.prod.yaml workload push` packages manifests and pushes them to GHCR.
+7. The bridge revalidates the newly-published artifact and reasserts root auth before reconciliation.
+8. `ksail --config ksail.prod.yaml workload reconcile` triggers Flux to sync from the OCI artifact.
 
 **Key differences from local:**
 
@@ -164,7 +165,7 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 
 - **`ci.yaml`** — runs on `pull_request` (static manifest validation + Kubescape scan, no cluster) and `merge_group` (deploys prod via the Hetzner provider). Concurrency is shared with `cd.yaml` so a manual deploy and a merge-queue deploy can never run against the prod cluster at the same time.
 - **`cd.yaml`** — runs on `workflow_dispatch` (manual). Deploys to the production Hetzner cluster using `ksail --config ksail.prod.yaml`. Covers direct pushes to `main`, which bypass the merge queue and so are not deployed by `ci.yaml`.
-- **`.github/actions/deploy-prod`** — the composite action both deploy paths call (push → cosign-sign → attest SBOM + SLSA provenance → refresh root GHCR auth → Flux reconcile → Talos `cluster update` → reassert root GHCR auth), so the merge-queue and manual deploys can never drift. Secrets are passed as inputs because composite actions cannot read `secrets`.
+- **`.github/actions/deploy-prod`** — the composite action both deploy paths call (preflight root GHCR auth → push → cosign-sign → attest SBOM + SLSA provenance → revalidate/patch root auth → Flux reconcile → Talos `cluster update` → final reassert), so the merge-queue and manual deploys can never drift. Secrets are passed as inputs because composite actions cannot read `secrets`.
 
 **Required GitHub Secrets:**
 

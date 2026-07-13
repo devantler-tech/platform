@@ -500,9 +500,12 @@ single-source consolidation stays tracked by #2613.
 
 The production deploy closes the bootstrap loop in this order:
 
-1. Push and sign the new artifact with `GHCR_TOKEN`.
-2. Decrypt only `ghcr_dockerconfigjson`, verify it can pull the production
-   artifact, and patch `flux-system/ksail-registry-credentials`.
+1. Decrypt only `ghcr_dockerconfigjson` and verify it can pull Platform plus both
+   private tenant packages before changing the mutable `latest` tag; this
+   preflight does not mutate the cluster.
+2. Push and sign the new artifact with `GHCR_TOKEN`, then revalidate the SOPS
+   credential against the newly-published artifact and patch
+   `flux-system/ksail-registry-credentials`.
 3. Reconcile Flux. The bootstrap Kustomization applies the same value to
    `variables-base`; `seed-ghcr` pushes it to OpenBao and tenant ExternalSecrets
    fan it out as `ghcr-auth`.
