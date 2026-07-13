@@ -420,7 +420,10 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertTrue(self.patch_capture.exists())
+        self.assertFalse(
+            self.patch_capture.exists(),
+            "root Flux auth must remain unchanged until fan-out verifies",
+        )
         self.assertTrue(self.variables_patch_capture.exists())
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
 
@@ -434,6 +437,10 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertIn(
             "wedding-app/ghcr-auth did not materialise",
             result.stdout + result.stderr,
+        )
+        self.assertFalse(
+            self.patch_capture.exists(),
+            "root Flux auth must remain unchanged until consumers match",
         )
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
 

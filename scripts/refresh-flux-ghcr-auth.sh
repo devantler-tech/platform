@@ -247,12 +247,14 @@ base64 < "${docker_config}" \
   | jq -Rs '{data: {".dockerconfigjson": .}}' \
   > "${patch_file}"
 
-kubectl \
-  --context "${KUBE_CONTEXT}" \
-  --namespace flux-system \
-  patch secret ksail-registry-credentials \
-  --type=merge \
-  --patch-file="${patch_file}"
+patch_root_secret() {
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    patch secret ksail-registry-credentials \
+    --type=merge \
+    --patch-file="${patch_file}"
+}
 
 # A fresh DR cluster does not have variables-base or the ESO fan-out resources
 # until its first Flux reconcile. In that case the current artifact creates the
@@ -267,14 +269,15 @@ if ! variables_base_name="$(kubectl \
   exit 1
 fi
 if [[ -z "${variables_base_name}" ]]; then
+  patch_root_secret
   echo "✅ Refreshed root Flux GHCR auth; the first reconcile will create the downstream fan-out."
   exit 0
 fi
 
-# Existing clusters must update the whole SOPS -> variables-base -> PushSecret
-# -> OpenBao -> ExternalSecret chain before apps reconcile. Otherwise the root
-# source recovers while tenant OCI/image pulls keep the revoked credential for
-# up to their one-hour refresh interval.
+# Existing clusters must update and verify the whole SOPS -> variables-base ->
+# PushSecret -> OpenBao -> ExternalSecret chain before switching root Flux auth.
+# Otherwise a failed fan-out can still let normal root-source polling apply the
+# newly-published artifact while tenant OCI/image pulls keep stale credentials.
 jq '{data: {ghcr_dockerconfigjson: .data[".dockerconfigjson"]}}' \
   "${patch_file}" \
   > "${variables_patch_file}"
@@ -291,4 +294,6 @@ for namespace in "${FANOUT_NAMESPACES[@]}"; do
   verify_consumer_secret "${namespace}"
 done
 
-echo "✅ Refreshed root Flux GHCR auth and synchronised every existing consumer from Git/SOPS."
+patch_root_secret
+
+echo "✅ Synchronised every existing consumer and refreshed root Flux GHCR auth from Git/SOPS."

@@ -295,10 +295,11 @@ runs:
 
     - name: 🔑 Reassert Flux GHCR pull credential after publish
       id: reassert_flux_ghcr_auth_after_push
-      # Revalidate the newly-published artifact, reassert root auth, and force
-      # the variables-base -> OpenBao -> tenant/Kyverno fan-out before apps
-      # reconcile. The initial preflight closed the mutable-tag failure window;
-      # this check proves the new tag and every private consumer are readable.
+      # Revalidate the newly-published artifact, force and verify the
+      # variables-base -> OpenBao -> tenant/Kyverno fan-out, and only then
+      # reassert root auth before apps reconcile. The initial preflight closed
+      # the mutable-tag failure window; this check proves the new tag and every
+      # private consumer are readable without exposing a partial fan-out.
       shell: bash
       run: ./scripts/refresh-flux-ghcr-auth.sh
 
@@ -343,7 +344,7 @@ runs:
     - name: 🔑 Reassert Flux and consumer GHCR pull credential
       id: reassert_flux_ghcr_auth
       # cluster update can rewrite KSail's root Secret from GHCR_TOKEN when an
-      # unrelated configuration change triggers setup. Reassert Git/SOPS and
+      # unrelated configuration change triggers setup. Reassert Git/SOPS after
       # its synchronous consumer fan-out when that update fails part-way, but
       # only after the publish, signing, attestation, post-publish auth refresh,
       # and Flux reconcile all succeeded. A failed delivery must never expose a
