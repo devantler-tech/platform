@@ -31,7 +31,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.patch_capture = self.workspace / "patch.json"
         self.kubectl_called = self.workspace / "kubectl-called"
         self.output_path_log = self.workspace / "ksail-output-path"
-        self.curl_scope_log = self.workspace / "curl-scopes"
+        self.registry_read_log = self.workspace / "registry-reads"
 
         self._write_executable(
             "ksail",
@@ -59,45 +59,64 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             """,
         )
         self._write_executable(
-            "docker",
-            """
-            #!/usr/bin/env bash
-            set -euo pipefail
-            test "$1" = buildx
-            test "$2" = imagetools
-            test "$3" = inspect
-            test "$4" = ghcr.io/devantler-tech/platform/manifests:latest
-            test -f "$DOCKER_CONFIG/config.json"
-            if [[ "${FAKE_DOCKER_FAIL:-false}" == true ]]; then
-              echo 'registry pull preflight denied' >&2
-              exit 42
-            fi
-            """,
-        )
-        self._write_executable(
             "curl",
             """
             #!/usr/bin/env bash
             set -euo pipefail
+            test "$1" = --disable
+            shift
             config=""
+            output=""
             scope=""
+            url=""
             while (($#)); do
               case "$1" in
                 --config)
                   config="$2"
                   shift 2
                   ;;
+                --output)
+                  output="$2"
+                  shift 2
+                  ;;
                 --data-urlencode)
                   case "$2" in scope=*) scope="${2#scope=}" ;; esac
                   shift 2
                   ;;
-                *) shift ;;
+                --write-out|--header)
+                  shift 2
+                  ;;
+                --silent|--show-error|--get)
+                  shift
+                  ;;
+                https://*)
+                  url="$1"
+                  shift
+                  ;;
+                *)
+                  echo "unexpected curl argument: $1" >&2
+                  exit 90
+                  ;;
               esac
             done
             test -f "$config"
-            test -n "$scope"
-            printf '%s\n' "$scope" >> "$CURL_SCOPE_LOG"
-            if [[ "$scope" == *"${FAKE_CURL_DENY_REPOSITORY:-disabled}"* ]]; then
+            test -n "$output"
+            test -n "$url"
+
+            if [[ "$url" == https://ghcr.io/token ]]; then
+              test -n "$scope"
+              grep -q '^user = ' "$config"
+              printf '{"token":"fixture-registry-token"}' > "$output"
+              printf '200'
+              exit 0
+            fi
+
+            repository="${url#https://ghcr.io/v2/}"
+            repository="${repository%/manifests/latest}"
+            test "$repository" != "$url"
+            grep -q 'Authorization: Bearer fixture-registry-token' "$config"
+            printf '%s\n' "$repository" >> "$REGISTRY_READ_LOG"
+            if [[ "$repository" == "${FAKE_CURL_DENY_REPOSITORY:-disabled}" ]]; then
               printf '403'
             else
               printf '200'
@@ -147,7 +166,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             self.patch_capture,
             self.kubectl_called,
             self.output_path_log,
-            self.curl_scope_log,
+            self.registry_read_log,
         ):
             marker.unlink(missing_ok=True)
         environment = os.environ.copy()
@@ -158,7 +177,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "PATCH_CAPTURE": str(self.patch_capture),
                 "KUBECTL_CALLED": str(self.kubectl_called),
                 "KSAIL_OUTPUT_PATH_LOG": str(self.output_path_log),
-                "CURL_SCOPE_LOG": str(self.curl_scope_log),
+                "REGISTRY_READ_LOG": str(self.registry_read_log),
             }
         )
         environment.update(environment_overrides)
@@ -196,11 +215,13 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertFalse(temporary_config.exists())
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
         self.assertEqual(
-            self.curl_scope_log.read_text(encoding="utf-8").splitlines(),
+            self.registry_read_log.read_text(encoding="utf-8").splitlines(),
             [
-                "repository:devantler-tech/platform/manifests:pull",
-                "repository:devantler-tech/wedding-app/manifests:pull",
-                "repository:devantler-tech/ascoachingogvaner/manifests:pull",
+                "devantler-tech/platform/manifests",
+                "devantler-tech/wedding-app/manifests",
+                "devantler-tech/ascoachingogvaner/manifests",
+                "devantler-tech/wedding-app",
+                "devantler-tech/ascoachingogvaner",
             ],
         )
 
@@ -238,15 +259,20 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 self.assertFalse(self.kubectl_called.exists())
 
     def test_registry_denial_prevents_cluster_patch(self) -> None:
-        result = self._run_helper(self._valid_config(), FAKE_DOCKER_FAIL="true")
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_CURL_DENY_REPOSITORY="devantler-tech/platform/manifests",
+        )
 
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.kubectl_called.exists())
 
-    def test_tenant_package_denial_prevents_cluster_patch(self) -> None:
+    def test_token_success_without_registry_read_access_prevents_cluster_patch(
+        self,
+    ) -> None:
         result = self._run_helper(
             self._valid_config(),
-            FAKE_CURL_DENY_REPOSITORY="devantler-tech/wedding-app/manifests",
+            FAKE_CURL_DENY_REPOSITORY="devantler-tech/wedding-app",
         )
 
         self.assertNotEqual(result.returncode, 0)
@@ -289,15 +315,30 @@ class DeployActionOrderingTests(unittest.TestCase):
         )
         self.assertEqual(action.count("scripts/refresh-flux-ghcr-auth.sh"), 3)
 
-    def test_disaster_rebuild_refreshes_root_auth_before_reconcile(self) -> None:
+    def test_disaster_rebuild_preflights_before_mutation_and_refreshes_before_reconcile(
+        self,
+    ) -> None:
         workflow = DR_REBUILD.read_text(encoding="utf-8")
 
-        refresh = workflow.index("scripts/refresh-flux-ghcr-auth.sh")
+        preflight = workflow.index(
+            "run: ./scripts/refresh-flux-ghcr-auth.sh --check-only"
+        )
+        cluster_create = workflow.index(
+            "run: ksail --config ksail.prod.yaml cluster create"
+        )
+        push = workflow.index("run: ksail --config ksail.prod.yaml workload push")
+        refresh = workflow.index(
+            "run: ./scripts/refresh-flux-ghcr-auth.sh\n"
+        )
         reconcile = workflow.index(
             "run: ksail --config ksail.prod.yaml workload reconcile"
         )
 
+        self.assertLess(preflight, cluster_create)
+        self.assertLess(cluster_create, push)
+        self.assertLess(push, refresh)
         self.assertLess(refresh, reconcile)
+        self.assertEqual(workflow.count("scripts/refresh-flux-ghcr-auth.sh"), 2)
 
 
 if __name__ == "__main__":

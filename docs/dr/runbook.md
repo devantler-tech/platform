@@ -159,15 +159,19 @@ export HCLOUD_TOKEN=<hetzner-cloud-api-token>
 export GHCR_TOKEN=<ghcr-pat-with-packages-read-write>
 export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt  # points at the env's Age key
 
-# 2. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
+# 2. Prove the Git/SOPS pull credential can read every private package before
+#    creating infrastructure or publishing a mutable latest tag
+./scripts/refresh-flux-ghcr-auth.sh --check-only
+
+# 3. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
 ksail --config ksail.prod.yaml cluster create
 
-# 3. Bootstrap Flux from this repo
+# 4. Bootstrap Flux from this repo
 ksail --config ksail.prod.yaml workload push       # packages -> GHCR
 ./scripts/refresh-flux-ghcr-auth.sh                 # Git/SOPS -> root Flux auth
 ksail --config ksail.prod.yaml workload reconcile  # Flux pulls and applies
 
-# 4. Wait for Flux to settle
+# 5. Wait for Flux to settle
 flux get kustomizations -A
 # Re-run if any are NotReady; expect convergence in 10-15 minutes
 
@@ -500,9 +504,11 @@ single-source consolidation stays tracked by #2613.
 
 The production deploy closes the bootstrap loop in this order:
 
-1. Decrypt only `ghcr_dockerconfigjson` and verify it can pull Platform plus both
-   private tenant packages before changing the mutable `latest` tag; this
-   preflight does not mutate the cluster.
+1. Decrypt only `ghcr_dockerconfigjson` and perform real OCI manifest reads for
+   all five private consumers: Platform manifests, both tenant manifest
+   artifacts, and both tenant application images. This happens before changing
+   a mutable `latest` tag (and before infrastructure creation during DR), and
+   does not mutate the cluster.
 2. Push and sign the new artifact with `GHCR_TOKEN`, then revalidate the SOPS
    credential against the newly-published artifact and patch
    `flux-system/ksail-registry-credentials`.

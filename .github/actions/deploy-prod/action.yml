@@ -128,9 +128,10 @@ runs:
 
     - name: 🔎 Preflight Flux GHCR pull credential
       id: preflight_flux_ghcr_auth
-      # Validate every shared pull scope BEFORE publishing latest. Do not patch
-      # yet: the matching artifact has not been published. This prevents a bad
-      # SOPS rotation from being discovered only after the mutable tag changes.
+      # Perform a real OCI read for all five packages served by this credential
+      # BEFORE publishing latest. Do not patch yet: the matching artifact has
+      # not been published. This prevents a bad SOPS rotation from being
+      # discovered only after the mutable tag changes.
       shell: bash
       run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
 

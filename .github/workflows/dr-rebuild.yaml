@@ -94,6 +94,11 @@ jobs:
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
 
+      - name: 🔎 Preflight Flux GHCR pull credential
+        # Validate every package served by the shared Git/SOPS credential
+        # before creating infrastructure or publishing a mutable latest tag.
+        run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
+
       - name: 🏗️ Create cluster
         # From-zero provisioning: Hetzner servers, Talos boot, CCM, CSI. Writes
         # a fresh kubeconfig (~/.kube/config, context admin@prod) and
