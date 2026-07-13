@@ -28,7 +28,9 @@ jobs:
           fetch-depth: 0
 
       - name: 🩹 Validate merge-group heal contract
-        run: python3 scripts/validate-merge-group-heal.py
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+          python3 scripts/validate-merge-group-heal.py
 
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
