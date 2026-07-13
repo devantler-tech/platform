@@ -164,6 +164,7 @@ ksail --config ksail.prod.yaml cluster create
 
 # 3. Bootstrap Flux from this repo
 ksail --config ksail.prod.yaml workload push       # packages -> GHCR
+./scripts/refresh-flux-ghcr-auth.sh                 # Git/SOPS -> root Flux auth
 ksail --config ksail.prod.yaml workload reconcile  # Flux pulls and applies
 
 # 4. Wait for Flux to settle
@@ -484,6 +485,62 @@ gh secret set TALOS_CONFIG --env prod --repo devantler-tech/platform < ~/.talos/
 > baseline — tracked in devantler-tech/ksail#4868 and #4869. The preflight
 > step in the deploy workflows is the local guard against that behaviour until
 > those land.
+
+## Scenario 10 — Flux/tenant GHCR pull credential rotation or denial
+
+The authoritative Flux and tenant pull credential is the SOPS-encrypted
+`stringData.ghcr_dockerconfigjson` value in
+`k8s/bases/bootstrap/secret.enc.yaml`. It is deliberately separate from the
+GitHub `prod` environment's `GHCR_TOKEN`, which pushes/signs the artifact and is
+still passed to KSail/Talos for compatibility.
+
+Talos node registry auth still derives from `GHCR_TOKEN`; this recovery path
+does not rotate existing node machine configuration. That remaining
+single-source consolidation stays tracked by #2613.
+
+The production deploy closes the bootstrap loop in this order:
+
+1. Push and sign the new artifact with `GHCR_TOKEN`.
+2. Decrypt only `ghcr_dockerconfigjson`, verify it can pull the production
+   artifact, and patch `flux-system/ksail-registry-credentials`.
+3. Reconcile Flux. The bootstrap Kustomization applies the same value to
+   `variables-base`; `seed-ghcr` pushes it to OpenBao and tenant ExternalSecrets
+   fan it out as `ghcr-auth`.
+4. Reassert the root Secret after `cluster update`, because KSail can rewrite its
+   managed Secret when another cluster setting changes.
+
+For a normal rotation, update the encrypted value through a PR and let the merge
+queue deploy it. If the encrypted file was pushed directly to `main`, manually
+dispatch the `CD` workflow: direct pushes do not run the production deploy.
+
+For an already-denied root source, run the same secret-safe bridge from a clean
+`main` checkout with the production Age key and `admin@prod` kube context, then
+reconcile the source:
+
+```bash
+./scripts/refresh-flux-ghcr-auth.sh
+flux reconcile source oci flux-system -n flux-system --context admin@prod
+flux reconcile kustomization flux-system -n flux-system --context admin@prod
+```
+
+If tenant sources still show `DENIED`, force the existing fan-out after
+`variables-base` has converged:
+
+```bash
+stamp=$(date +%s)
+kubectl --context admin@prod -n flux-system annotate pushsecret seed-ghcr \
+  force-sync="$stamp" --overwrite
+for namespace in wedding-app ascoachingogvaner kyverno; do
+  kubectl --context admin@prod -n "$namespace" annotate externalsecret ghcr-auth \
+    force-sync="$stamp" --overwrite
+done
+flux get sources oci -A --context admin@prod
+```
+
+Do not replace this bridge with only a root ExternalSecret: Flux needs valid root
+auth to fetch the artifact that installs/updates External Secrets, while OpenBao
+receives this rotated value only through a downstream PushSecret. That circular
+dependency cannot recover a stale root credential by itself.
 
 ---
 

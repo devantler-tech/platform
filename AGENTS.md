@@ -145,7 +145,8 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 3. `ksail.prod.yaml` has `kustomizationFile: clusters/prod`, so KSail/Flux use `k8s/clusters/prod/kustomization.yaml` as the entry point — no root `k8s/kustomization.yaml` or file rewriting is needed.
 4. `ksail --config ksail.prod.yaml cluster create` (first run) or `cluster update` (subsequent runs) provisions / reconciles the Hetzner servers, Talos, CCM, and CSI.
 5. `ksail --config ksail.prod.yaml workload push` packages manifests and pushes them to GHCR.
-6. `ksail --config ksail.prod.yaml workload reconcile` triggers Flux to sync from the OCI artifact.
+6. `scripts/refresh-flux-ghcr-auth.sh` decrypts only the Git/SOPS pull credential, proves it can read the artifact, and refreshes the KSail-managed root Flux Secret before reconciliation.
+7. `ksail --config ksail.prod.yaml workload reconcile` triggers Flux to sync from the OCI artifact.
 
 **Key differences from local:**
 
@@ -163,13 +164,25 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 
 - **`ci.yaml`** — runs on `pull_request` (static manifest validation + Kubescape scan, no cluster) and `merge_group` (deploys prod via the Hetzner provider). Concurrency is shared with `cd.yaml` so a manual deploy and a merge-queue deploy can never run against the prod cluster at the same time.
 - **`cd.yaml`** — runs on `workflow_dispatch` (manual). Deploys to the production Hetzner cluster using `ksail --config ksail.prod.yaml`. Covers direct pushes to `main`, which bypass the merge queue and so are not deployed by `ci.yaml`.
-- **`.github/actions/deploy-prod`** — the composite action both deploy paths call (push → cosign-sign → attest SBOM + SLSA provenance → Flux reconcile → Talos `cluster update`), so the merge-queue and manual deploys can never drift. Secrets are passed as inputs because composite actions cannot read `secrets`.
+- **`.github/actions/deploy-prod`** — the composite action both deploy paths call (push → cosign-sign → attest SBOM + SLSA provenance → refresh root GHCR auth → Flux reconcile → Talos `cluster update` → reassert root GHCR auth), so the merge-queue and manual deploys can never drift. Secrets are passed as inputs because composite actions cannot read `secrets`.
 
 **Required GitHub Secrets:**
 
-- `GHCR_TOKEN` — long-lived PAT (owner: `devantler`) with `write:packages` scope, used for GHCR push/pull authentication.
+- `GHCR_TOKEN` — long-lived PAT (owner: `devantler`) with `write:packages` scope, used for OCI push/signing and retained for KSail/Talos compatibility. It is **not** the authoritative Flux pull credential.
 - `SOPS_AGE_KEY` — Age private key for SOPS secret decryption.
 - `HCLOUD_TOKEN` — Hetzner Cloud API token (read/write), used by the KSail Hetzner provider and by the Hetzner CCM / CSI at runtime.
+
+The authoritative **Flux and tenant** GHCR pull credential is
+`stringData.ghcr_dockerconfigjson` in
+`k8s/bases/bootstrap/secret.enc.yaml`. The deploy bridge refreshes
+`flux-system/ksail-registry-credentials` from that value before Flux must fetch
+the artifact and reasserts it after `cluster update` in case KSail rewrites its
+managed Secret. Flux then applies the same SOPS value to `variables-base`; the
+`seed-ghcr` PushSecret fans it into OpenBao and tenant ExternalSecrets materialise
+their `ghcr-auth` copies. A direct credential commit to `main` still needs a
+manual `CD` workflow dispatch because direct pushes bypass the merge-queue deploy.
+Talos node registry auth still derives from `GHCR_TOKEN`; consolidating that
+remaining pull path stays tracked by #2613 and the KSail credential work.
 
 **Required GitHub Variables:** none.
 

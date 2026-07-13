@@ -19,7 +19,7 @@ inputs:
     description: talosconfig for the prod cluster (secrets.TALOS_CONFIG) used by `ksail cluster update`.
     required: true
   ghcr-token:
-    description: GHCR PAT with write:packages (secrets.GHCR_TOKEN) for OCI push/pull and cosign auth.
+    description: GHCR PAT with write:packages (secrets.GHCR_TOKEN) for OCI push, signing, and Talos/KSail compatibility; Flux pulls use the Git/SOPS credential.
     required: true
   hcloud-token:
     description: Hetzner Cloud API token (secrets.HCLOUD_TOKEN) used by the KSail Hetzner provider and CCM/CSI.
@@ -284,6 +284,14 @@ runs:
         push-to-registry: true
         create-storage-record: false
 
+    - name: 🔑 Refresh Flux GHCR pull credential
+      id: refresh_flux_ghcr_auth
+      # Git/SOPS is authoritative for pulls. Refresh the KSail-managed root
+      # Secret before reconciliation so a rotation cannot deadlock Flux on the
+      # stale credential it needs to fetch the artifact containing the new one.
+      shell: bash
+      run: ./scripts/refresh-flux-ghcr-auth.sh
+
     - name: 🔁 Trigger Flux reconciliation
       id: reconcile
       shell: bash
@@ -321,3 +329,13 @@ runs:
         # whole machine config ('private key is invalid: wrong key "" length: 0').
         WG_SERVER_PRIVATE_KEY: ${{ inputs.wg-server-private-key }}
       run: ksail --config ksail.prod.yaml cluster update
+
+    - name: 🔑 Reassert Flux GHCR pull credential
+      id: reassert_flux_ghcr_auth
+      # cluster update can rewrite KSail's root Secret from GHCR_TOKEN when an
+      # unrelated configuration change triggers setup. Reassert Git/SOPS even
+      # when that update fails part-way, provided the source was already proven
+      # valid by the first refresh.
+      if: always() && steps.refresh_flux_ghcr_auth.outcome == 'success'
+      shell: bash
+      run: ./scripts/refresh-flux-ghcr-auth.sh

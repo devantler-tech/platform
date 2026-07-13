@@ -41,6 +41,10 @@ jobs:
               - 'talos/**'
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
+              - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/tests/test_refresh_flux_ghcr_auth.py'
+              - '.github/actions/deploy-prod/**'
+              - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/ci.yaml'
             talos:
               - 'talos/**'
@@ -64,6 +68,13 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: 🔐 Validate Flux GHCR credential bridge
+        # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
+        # registry credential, cluster access, or network is used.
+        run: |
+          bash -n scripts/refresh-flux-ghcr-auth.sh
+          python3 -m unittest scripts.tests.test_refresh_flux_ghcr_auth
 
       - name: 🧩 Validate embedded JSON blobs
         # ConfigMaps that embed whole JSON documents as block scalars (e.g. the

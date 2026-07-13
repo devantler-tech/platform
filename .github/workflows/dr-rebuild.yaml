@@ -116,6 +116,12 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
+      - name: 🔑 Refresh Flux GHCR pull credential
+        # cluster create bootstraps with GHCR_TOKEN for KSail compatibility,
+        # then this bridge makes the Git/SOPS pull credential authoritative
+        # before Flux performs its first artifact fetch.
+        run: ./scripts/refresh-flux-ghcr-auth.sh
+
       - name: 🔁 Trigger Flux reconciliation
         run: ksail --config ksail.prod.yaml workload reconcile
         env:
