@@ -63,6 +63,7 @@ variables_patch_file="${work_dir}/variables-patch.json"
 expected_normalized="${work_dir}/expected-normalized.json"
 fanout_api_resources="${work_dir}/fanout-api-resources.txt"
 
+# Force an ESO resource to reconcile and observe a post-annotation Ready edge.
 force_sync_resource() {
   local kind="$1"
   local namespace="$2"
@@ -121,6 +122,7 @@ force_sync_resource() {
   return 1
 }
 
+# Verify that a namespace's materialized GHCR Secret matches the SOPS source.
 verify_consumer_secret() {
   local namespace="$1"
   local secret_file="${work_dir}/consumer-${namespace}.json"
@@ -264,6 +266,7 @@ base64 < "${docker_config}" \
   | jq -Rs '{data: {".dockerconfigjson": .}}' \
   > "${patch_file}"
 
+# Patch only the root Flux Secret payload, preserving KSail ownership metadata.
 patch_root_secret() {
   kubectl \
     --context "${KUBE_CONTEXT}" \

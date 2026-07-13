@@ -31,6 +31,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
     """Exercise the helper with fake external commands and no real secrets."""
 
     def setUp(self) -> None:
+        """Create isolated command fakes and capture files for each test."""
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
         self.workspace = Path(self.temp_dir.name)
@@ -270,6 +271,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         )
 
     def _write_executable(self, name: str, body: str) -> None:
+        """Install an executable command fake in the isolated test PATH."""
         path = self.bin_dir / name
         path.write_text(textwrap.dedent(body).lstrip(), encoding="utf-8")
         path.chmod(0o755)
@@ -280,6 +282,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         helper_args: tuple[str, ...] = (),
         **environment_overrides: str,
     ) -> subprocess.CompletedProcess[str]:
+        """Run the credential bridge against a supplied Docker config fixture."""
         self.decrypted_config.write_text(json.dumps(config), encoding="utf-8")
         for marker in (
             self.patch_capture,
@@ -320,6 +323,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
 
     @staticmethod
     def _valid_config() -> dict[str, object]:
+        """Return a valid explicit GHCR Docker authentication fixture."""
         return {
             "auths": {
                 "ghcr.io": {
@@ -330,6 +334,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         }
 
     def test_refreshes_root_and_fanout_without_leaking_plaintext(self) -> None:
+        """Refresh every credential consumer without exposing the pull token."""
         config = self._valid_config()
 
         result = self._run_helper(config)
@@ -370,6 +375,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         )
 
     def test_accepts_standard_auth_only_docker_config(self) -> None:
+        """Accept Docker configs that store only the standard encoded auth field."""
         auth = base64.b64encode(b"devantler:fixture-secret-token").decode()
         config = {"auths": {"ghcr.io": {"auth": auth}}}
 
@@ -381,6 +387,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertEqual(json.loads(base64.b64decode(encoded)), config)
 
     def test_accepts_matching_explicit_and_encoded_auth(self) -> None:
+        """Accept matching explicit and encoded GHCR credentials."""
         config = self._valid_config()
         registry_auth = config["auths"]["ghcr.io"]
         registry_auth["auth"] = base64.b64encode(
@@ -392,6 +399,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_check_only_preflights_without_patching(self) -> None:
+        """Keep registry preflight mode free of Kubernetes mutations."""
         result = self._run_helper(self._valid_config(), ("--check-only",))
 
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -399,6 +407,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertFalse(self.patch_capture.exists())
 
     def test_missing_or_malformed_registry_auth_fails_closed(self) -> None:
+        """Reject missing, malformed, empty, or contradictory GHCR credentials."""
         invalid_configs: list[object] = [
             {"auths": {"ghcr.io": {"username": "devantler"}}},
             {"auths": {"ghcr.io": {"username": "", "password": "token"}}},
@@ -425,6 +434,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 self.assertFalse(self.kubectl_called.exists())
 
     def test_registry_denial_prevents_cluster_patch(self) -> None:
+        """Leave cluster credentials untouched when GHCR denies a manifest read."""
         result = self._run_helper(
             self._valid_config(),
             FAKE_CURL_DENY_REPOSITORY="devantler-tech/platform/manifests",
@@ -436,6 +446,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
     def test_token_success_without_registry_read_access_prevents_cluster_patch(
         self,
     ) -> None:
+        """Require package read access even when the token exchange succeeds."""
         result = self._run_helper(
             self._valid_config(),
             FAKE_CURL_DENY_REPOSITORY="devantler-tech/wedding-app",
@@ -445,12 +456,14 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertFalse(self.kubectl_called.exists())
 
     def test_cluster_patch_failure_is_not_hidden(self) -> None:
+        """Propagate a failure to patch the root Flux pull Secret."""
         result = self._run_helper(self._valid_config(), FAKE_KUBECTL_FAIL="true")
 
         self.assertEqual(result.returncode, 43)
         self.assertTrue(self.kubectl_called.exists())
 
     def test_fresh_cluster_without_variables_base_skips_existing_fanout(self) -> None:
+        """Bootstrap only root auth before a fresh cluster creates its fan-out."""
         result = self._run_helper(
             self._valid_config(),
             ("--allow-incomplete-fanout",),
@@ -463,6 +476,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertFalse(self.fanout_log.exists())
 
     def test_missing_variables_base_fails_closed_without_bootstrap_mode(self) -> None:
+        """Require the explicit DR flag when the credential fan-out is absent."""
         result = self._run_helper(
             self._valid_config(),
             FAKE_VARIABLES_BASE_ABSENT="true",
@@ -474,6 +488,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
     def test_partial_bootstrap_repairs_root_without_forcing_missing_fanout(
         self,
     ) -> None:
+        """Stage DR root auth without force-syncing an incomplete fan-out."""
         missing_resources = [
             "pushsecret/flux-system/seed-ghcr",
             "externalsecret/wedding-app/ghcr-auth",
@@ -495,6 +510,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 self.assertIn("first reconcile will complete", result.stdout)
 
     def test_partial_fanout_fails_closed_without_bootstrap_mode(self) -> None:
+        """Reject a partial fan-out during a normal production deployment."""
         result = self._run_helper(
             self._valid_config(),
             FAKE_MISSING_FANOUT_RESOURCE="externalsecret/kyverno/ghcr-auth",
@@ -505,6 +521,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertFalse(self.fanout_log.exists())
 
     def test_partial_bootstrap_without_eso_crds_repairs_root(self) -> None:
+        """Permit DR root repair before External Secrets CRDs exist."""
         result = self._run_helper(
             self._valid_config(),
             ("--allow-incomplete-fanout",),
@@ -517,6 +534,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertFalse(self.fanout_log.exists())
 
     def test_pushsecret_sync_failure_is_not_hidden(self) -> None:
+        """Keep root auth unchanged when the OpenBao seed does not reconcile."""
         result = self._run_helper(
             self._valid_config(),
             FAKE_SYNC_STALL_RESOURCE="pushsecret/flux-system/seed-ghcr",
@@ -531,6 +549,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
 
     def test_same_second_sync_accepts_controller_resource_version_edge(self) -> None:
+        """Accept a controller update when refreshTime has one-second precision."""
         result = self._run_helper(
             self._valid_config(),
             FAKE_SYNC_SAME_REFRESH_TIME="true",
@@ -540,6 +559,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertTrue(self.patch_capture.exists())
 
     def test_materialised_consumer_mismatch_is_not_hidden(self) -> None:
+        """Reject fan-out completion when a workload Secret has stale content."""
         result = self._run_helper(
             self._valid_config(),
             FAKE_CONSUMER_MISMATCH_NAMESPACE="wedding-app",
@@ -563,6 +583,7 @@ class DeployActionOrderingTests(unittest.TestCase):
     def test_consumer_staging_precedes_publish_and_is_reasserted_after_update(
         self,
     ) -> None:
+        """Keep full credential staging before publish and after cluster update."""
         action = ACTION.read_text(encoding="utf-8")
 
         first_refresh = action.index("id: stage_flux_ghcr_auth")
@@ -606,6 +627,7 @@ class DeployActionOrderingTests(unittest.TestCase):
     def test_disaster_rebuild_preflights_then_stages_before_publish(
         self,
     ) -> None:
+        """Keep DR credential checks around publish and OpenBao restoration."""
         workflow = DR_REBUILD.read_text(encoding="utf-8")
 
         preflight = workflow.index(
@@ -659,6 +681,7 @@ class RequiredPackageCoverageTests(unittest.TestCase):
     """Keep pinned private provider references in the live GHCR preflight."""
 
     def test_provider_upjet_unifi_reference_is_preflighted(self) -> None:
+        """Require the live private provider package in the GHCR preflight."""
         manifest = PROVIDER_UPJET_UNIFI.read_text(encoding="utf-8")
         helper = HELPER.read_text(encoding="utf-8")
 
