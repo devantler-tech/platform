@@ -309,9 +309,15 @@ class DeployActionOrderingTests(unittest.TestCase):
             "run: ./scripts/refresh-flux-ghcr-auth.sh --check-only",
             action,
         )
+        final_refresh_step = action[final_refresh:]
+        self.assertIn("always() &&", final_refresh_step)
         self.assertIn(
-            "if: always() && steps.preflight_flux_ghcr_auth.outcome == 'success'",
-            action,
+            "steps.reassert_flux_ghcr_auth_after_push.outcome == 'success'",
+            final_refresh_step,
+        )
+        self.assertIn(
+            "steps.reconcile.outcome == 'success'",
+            final_refresh_step,
         )
         self.assertEqual(action.count("scripts/refresh-flux-ghcr-auth.sh"), 3)
 

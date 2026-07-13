@@ -342,9 +342,14 @@ runs:
     - name: 🔑 Reassert Flux GHCR pull credential
       id: reassert_flux_ghcr_auth
       # cluster update can rewrite KSail's root Secret from GHCR_TOKEN when an
-      # unrelated configuration change triggers setup. Reassert Git/SOPS even
-      # when that update fails part-way, provided the source was already proven
-      # valid by the first refresh.
-      if: always() && steps.preflight_flux_ghcr_auth.outcome == 'success'
+      # unrelated configuration change triggers setup. Reassert Git/SOPS when
+      # that update fails part-way, but only after the publish, signing,
+      # attestation, post-publish auth refresh, and Flux reconcile all
+      # succeeded. A failed delivery must never expose a partial latest tag to
+      # Flux's normal polling loop.
+      if: >-
+        always() &&
+        steps.reassert_flux_ghcr_auth_after_push.outcome == 'success' &&
+        steps.reconcile.outcome == 'success'
       shell: bash
       run: ./scripts/refresh-flux-ghcr-auth.sh
