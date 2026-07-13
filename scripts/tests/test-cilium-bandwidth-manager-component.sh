@@ -21,10 +21,9 @@ extract_cilium_release() {
     }
 
     function emit_if_cilium() {
-      if (is_helm_release && is_cilium) {
+      if (!found && is_helm_release && is_cilium) {
         printf "%s", document
         found = 1
-        exit
       }
       reset_document()
     }
@@ -32,18 +31,19 @@ extract_cilium_release() {
     BEGIN { reset_document() }
     /^---[[:space:]]*$/ { emit_if_cilium(); next }
     {
-      document = document $0 ORS
-      if ($0 ~ /^kind:[[:space:]]*HelmRelease[[:space:]]*$/) {
-        is_helm_release = 1
-      }
-      if ($0 ~ /^  name:[[:space:]]*cilium[[:space:]]*$/) {
-        is_cilium = 1
+      if (!found) {
+        document = document $0 ORS
+        if ($0 ~ /^kind:[[:space:]]*HelmRelease[[:space:]]*$/) {
+          is_helm_release = 1
+        }
+        if ($0 ~ /^  name:[[:space:]]*cilium[[:space:]]*$/) {
+          is_cilium = 1
+        }
       }
     }
     END {
-      if (!found && is_helm_release && is_cilium) {
-        printf "%s", document
-        found = 1
+      if (!found) {
+        emit_if_cilium()
       }
       if (!found) {
         exit 1
@@ -69,6 +69,24 @@ reject_text() {
     fail "${description}"
   fi
 }
+
+extractor_probe="$(
+  {
+    printf '%s\n' \
+      'apiVersion: helm.toolkit.fluxcd.io/v2' \
+      'kind: HelmRelease' \
+      'metadata:' \
+      '  name: cilium' \
+      '---'
+    for ((line = 0; line < 10000; line++)); do
+      printf '# trailing render content %05d\n' "${line}"
+    done
+  } | extract_cilium_release
+)" || fail 'the Cilium release extractor must consume the complete render stream'
+require_text \
+  "${extractor_probe}" \
+  'kind: HelmRelease' \
+  'the Cilium release extractor must return the matching document'
 
 readonly controllers_kustomization="${controllers_dir}/kustomization.yaml"
 grep -Fxq '  # - cilium/components/bandwidth-manager-bbr/' "${controllers_kustomization}" ||
