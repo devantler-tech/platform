@@ -618,6 +618,12 @@ class DeployActionOrderingTests(unittest.TestCase):
         push = workflow.index("run: ksail --config ksail.prod.yaml workload push")
         verify = workflow.index("id: verify_flux_ghcr_auth_after_push")
         fanout_verify = workflow.index("id: verify_flux_ghcr_fanout")
+        openbao_restore = workflow.index(
+            "name: 🔐 Restore OpenBao from the R2 snapshot mirror"
+        )
+        post_restore_verify = workflow.index(
+            "id: reassert_flux_ghcr_after_restore"
+        )
         reconcile = workflow.index(
             "run: ksail --config ksail.prod.yaml workload reconcile"
         )
@@ -628,6 +634,8 @@ class DeployActionOrderingTests(unittest.TestCase):
         self.assertLess(push, verify)
         self.assertLess(verify, reconcile)
         self.assertLess(reconcile, fanout_verify)
+        self.assertLess(fanout_verify, openbao_restore)
+        self.assertLess(openbao_restore, post_restore_verify)
         self.assertIn(
             "run: ./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout",
             workflow[stage:push],
@@ -640,7 +648,11 @@ class DeployActionOrderingTests(unittest.TestCase):
             "run: ./scripts/refresh-flux-ghcr-auth.sh\n",
             workflow[fanout_verify:],
         )
-        self.assertEqual(workflow.count("scripts/refresh-flux-ghcr-auth.sh"), 4)
+        self.assertIn(
+            "if: ${{ inputs.restore }}",
+            workflow[post_restore_verify:],
+        )
+        self.assertEqual(workflow.count("scripts/refresh-flux-ghcr-auth.sh"), 5)
 
 
 class RequiredPackageCoverageTests(unittest.TestCase):

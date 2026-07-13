@@ -520,7 +520,8 @@ The production deploy closes the bootstrap loop in this order:
 3. Push and sign the artifact with `GHCR_TOKEN`, revalidate the newly-published
    artifact with `--check-only`, and only then explicitly reconcile Flux. DR
    runs the full bridge again after every Flux Kustomization is Ready, proving
-   that bootstrap mode completed the entire fan-out.
+   that bootstrap mode completed the entire fan-out, and once more after an
+   OpenBao raft restore so a snapshot cannot rematerialise an older credential.
 4. Re-run the bridge after `cluster update`, because KSail can rewrite its
    managed root Secret when another cluster setting changes; the bridge also
    re-verifies the downstream fan-out.

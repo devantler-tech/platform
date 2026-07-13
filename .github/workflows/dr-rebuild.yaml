@@ -398,6 +398,14 @@ jobs:
           echo "::endgroup::"
           echo "✅ OpenBao restored from the raft snapshot mirror."
 
+      - name: 🔑 Reassert GHCR credential after OpenBao restore
+        id: reassert_flux_ghcr_after_restore
+        if: ${{ inputs.restore }}
+        # The raft snapshot may contain an older infrastructure/ghcr/auth value.
+        # Re-stage Git/SOPS in PushSecret-first order, wait for every consumer,
+        # compare the materialized payloads, and only then reassert root auth.
+        run: ./scripts/refresh-flux-ghcr-auth.sh
+
       - name: 🔑 Refresh CI deploy credentials (KUBE_CONFIG / TALOS_CONFIG)
         env:
           DR_GH_ADMIN_TOKEN: ${{ secrets.DR_GH_ADMIN_TOKEN }}

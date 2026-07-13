@@ -148,7 +148,7 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 6. `ksail --config ksail.prod.yaml workload push` packages manifests and pushes them to GHCR.
 7. `scripts/refresh-flux-ghcr-auth.sh --check-only` revalidates the newly-published artifact without mutating the cluster.
 8. `ksail --config ksail.prod.yaml workload reconcile` triggers Flux to sync from the OCI artifact.
-9. After `cluster update`, the full bridge reasserts the Git/SOPS credential in case KSail rewrote its managed root Secret.
+9. After `cluster update`, the full bridge reasserts the Git/SOPS credential in case KSail rewrote its managed root Secret. DR also runs it after an OpenBao raft restore because the snapshot may contain an older GHCR value.
 
 **Key differences from local:**
 
