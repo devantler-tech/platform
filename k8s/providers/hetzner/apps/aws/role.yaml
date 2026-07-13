@@ -15,6 +15,7 @@ rules:
       - iam.aws.m.upbound.io
     resources:
       - openidconnectproviders
+      - policies
       - roles
     verbs:
       - get
