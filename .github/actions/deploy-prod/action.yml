@@ -128,7 +128,7 @@ runs:
 
     - name: 🔎 Preflight Flux GHCR pull credential
       id: preflight_flux_ghcr_auth
-      # Perform a real OCI read for all five packages served by this credential
+      # Perform a real OCI read for all six packages served by this credential
       # BEFORE publishing latest. Do not patch yet: the matching artifact has
       # not been published. This prevents a bad SOPS rotation from being
       # discovered only after the mutable tag changes.
@@ -295,9 +295,10 @@ runs:
 
     - name: 🔑 Reassert Flux GHCR pull credential after publish
       id: reassert_flux_ghcr_auth_after_push
-      # Revalidate the newly-published artifact and reassert Git/SOPS before
-      # reconciliation. The initial preflight closed the mutable-tag failure
-      # window; this check proves the new tag is readable too.
+      # Revalidate the newly-published artifact, reassert root auth, and force
+      # the variables-base -> OpenBao -> tenant/Kyverno fan-out before apps
+      # reconcile. The initial preflight closed the mutable-tag failure window;
+      # this check proves the new tag and every private consumer are readable.
       shell: bash
       run: ./scripts/refresh-flux-ghcr-auth.sh
 
@@ -339,14 +340,14 @@ runs:
         WG_SERVER_PRIVATE_KEY: ${{ inputs.wg-server-private-key }}
       run: ksail --config ksail.prod.yaml cluster update
 
-    - name: 🔑 Reassert Flux GHCR pull credential
+    - name: 🔑 Reassert Flux and consumer GHCR pull credential
       id: reassert_flux_ghcr_auth
       # cluster update can rewrite KSail's root Secret from GHCR_TOKEN when an
-      # unrelated configuration change triggers setup. Reassert Git/SOPS when
-      # that update fails part-way, but only after the publish, signing,
-      # attestation, post-publish auth refresh, and Flux reconcile all
-      # succeeded. A failed delivery must never expose a partial latest tag to
-      # Flux's normal polling loop.
+      # unrelated configuration change triggers setup. Reassert Git/SOPS and
+      # its synchronous consumer fan-out when that update fails part-way, but
+      # only after the publish, signing, attestation, post-publish auth refresh,
+      # and Flux reconcile all succeeded. A failed delivery must never expose a
+      # partial latest tag to Flux's normal polling loop.
       if: >-
         always() &&
         steps.reassert_flux_ghcr_auth_after_push.outcome == 'success' &&

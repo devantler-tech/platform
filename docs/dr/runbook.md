@@ -168,7 +168,7 @@ ksail --config ksail.prod.yaml cluster create
 
 # 4. Bootstrap Flux from this repo
 ksail --config ksail.prod.yaml workload push       # packages -> GHCR
-./scripts/refresh-flux-ghcr-auth.sh                 # Git/SOPS -> root Flux auth
+./scripts/refresh-flux-ghcr-auth.sh                 # Git/SOPS -> root + existing fan-out
 ksail --config ksail.prod.yaml workload reconcile  # Flux pulls and applies
 
 # 5. Wait for Flux to settle
@@ -505,18 +505,23 @@ single-source consolidation stays tracked by #2613.
 The production deploy closes the bootstrap loop in this order:
 
 1. Decrypt only `ghcr_dockerconfigjson` and perform real OCI manifest reads for
-   all five private consumers: Platform manifests, both tenant manifest
-   artifacts, and both tenant application images. This happens before changing
-   a mutable `latest` tag (and before infrastructure creation during DR), and
-   does not mutate the cluster.
+   all six private consumers: Platform manifests, both tenant manifest
+   artifacts, both tenant application images, and the KSail package used by
+   Kyverno signature verification. This happens before changing a mutable
+   `latest` tag (and before infrastructure creation during DR), and does not
+   mutate the cluster.
 2. Push and sign the new artifact with `GHCR_TOKEN`, then revalidate the SOPS
-   credential against the newly-published artifact and patch
-   `flux-system/ksail-registry-credentials`.
-3. Reconcile Flux. The bootstrap Kustomization applies the same value to
-   `variables-base`; `seed-ghcr` pushes it to OpenBao and tenant ExternalSecrets
-   fan it out as `ghcr-auth`.
-4. Reassert the root Secret after `cluster update`, because KSail can rewrite its
-   managed Secret when another cluster setting changes.
+   credential against the newly-published artifact. Patch
+   `flux-system/ksail-registry-credentials` and, on an existing cluster,
+   `variables-base`; force-sync `seed-ghcr` into OpenBao; force-sync the
+   tenant/Kyverno ExternalSecrets; and verify every materialised `ghcr-auth`
+   payload matches Git/SOPS.
+3. Reconcile Flux only after that synchronous fan-out succeeds. A fresh DR
+   cluster has no fan-out resources yet, so its first reconcile creates the
+   entire chain directly from the same current artifact.
+4. Re-run the bridge after `cluster update`, because KSail can rewrite its
+   managed root Secret when another cluster setting changes; the bridge also
+   re-verifies the downstream fan-out.
 
 For a normal rotation, update the encrypted value through a PR and let the merge
 queue deploy it. If the encrypted file was pushed directly to `main`, manually
@@ -532,8 +537,8 @@ flux reconcile source oci flux-system -n flux-system --context admin@prod
 flux reconcile kustomization flux-system -n flux-system --context admin@prod
 ```
 
-If tenant sources still show `DENIED`, force the existing fan-out after
-`variables-base` has converged:
+If tenant sources still show `DENIED` after an older/manual recovery path, force
+the existing fan-out after `variables-base` has converged:
 
 ```bash
 stamp=$(date +%s)

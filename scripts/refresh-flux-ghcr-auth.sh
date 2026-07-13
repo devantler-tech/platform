@@ -22,13 +22,27 @@ fi
 
 readonly SECRET_FILE="${FLUX_GHCR_SECRET_FILE:-k8s/bases/bootstrap/secret.enc.yaml}"
 readonly KUBE_CONTEXT="${KUBE_CONTEXT:-admin@prod}"
+readonly SYNC_ATTEMPTS="${FLUX_GHCR_SYNC_ATTEMPTS:-60}"
+readonly SYNC_INTERVAL="${FLUX_GHCR_SYNC_INTERVAL:-2}"
 readonly -a REQUIRED_PULL_REPOSITORIES=(
   "devantler-tech/platform/manifests"
   "devantler-tech/wedding-app/manifests"
   "devantler-tech/ascoachingogvaner/manifests"
   "devantler-tech/wedding-app"
   "devantler-tech/ascoachingogvaner"
+  "devantler-tech/ksail"
 )
+readonly -a FANOUT_NAMESPACES=(
+  "wedding-app"
+  "ascoachingogvaner"
+  "kyverno"
+)
+
+if ! [[ "${SYNC_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] \
+  || ! [[ "${SYNC_INTERVAL}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS and FLUX_GHCR_SYNC_INTERVAL must be non-negative numbers, with at least one attempt."
+  exit 64
+fi
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
@@ -40,6 +54,79 @@ basic_curl_config="${work_dir}/curl-basic.config"
 bearer_curl_config="${work_dir}/curl-bearer.config"
 token_response="${work_dir}/token.json"
 patch_file="${work_dir}/patch.json"
+variables_patch_file="${work_dir}/variables-patch.json"
+expected_normalized="${work_dir}/expected-normalized.json"
+
+force_sync_resource() {
+  local kind="$1"
+  local namespace="$2"
+  local name="$3"
+  local before_file="${work_dir}/${kind}-${namespace}-${name}-before.json"
+  local current_file="${work_dir}/${kind}-${namespace}-${name}-current.json"
+  local before_refresh
+  local attempt
+  local stamp
+
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace "${namespace}" \
+    get "${kind}" "${name}" \
+    -o json \
+    > "${before_file}"
+  before_refresh="$(jq -r '.status.refreshTime // ""' "${before_file}")"
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}"
+
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace "${namespace}" \
+    annotate "${kind}" "${name}" \
+    "force-sync=${stamp}" \
+    --overwrite \
+    >/dev/null
+
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace "${namespace}" \
+      get "${kind}" "${name}" \
+      -o json \
+      > "${current_file}"
+    if jq -e --arg before "${before_refresh}" '
+      (.status.refreshTime // "") as $refresh
+      | ($refresh != "" and $refresh != $before)
+        and any(.status.conditions[]?;
+          .type == "Ready" and .status == "True")
+    ' "${current_file}" >/dev/null; then
+      return 0
+    fi
+    sleep "${SYNC_INTERVAL}"
+  done
+
+  echo "::error::Timed out waiting for ${kind}/${namespace}/${name} to complete the forced GHCR credential sync."
+  return 1
+}
+
+verify_consumer_secret() {
+  local namespace="$1"
+  local secret_file="${work_dir}/consumer-${namespace}.json"
+  local decoded_file="${work_dir}/consumer-${namespace}-decoded.json"
+  local normalized_file="${work_dir}/consumer-${namespace}-normalized.json"
+
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace "${namespace}" \
+    get secret ghcr-auth \
+    -o json \
+    > "${secret_file}"
+  if ! jq -er '.data[".dockerconfigjson"] | @base64d' \
+    "${secret_file}" \
+    > "${decoded_file}" 2>/dev/null \
+    || ! jq -S -c . "${decoded_file}" > "${normalized_file}" 2>/dev/null \
+    || ! cmp -s "${expected_normalized}" "${normalized_file}"; then
+    echo "::error::ExternalSecret ${namespace}/ghcr-auth did not materialise the Git/SOPS GHCR credential."
+    return 1
+  fi
+}
 
 # KSail embeds SOPS, so the deploy uses the same pinned toolchain as workload
 # reconciliation. Decrypt only the Docker config scalar and never emit it to
@@ -54,22 +141,32 @@ chmod 600 "${docker_config}"
 if ! jq -e '
   def non_empty_string: type == "string" and length > 0;
   (.auths["ghcr.io"] // {}) as $auth
-  | (
-      (($auth.username | non_empty_string)
-        and ($auth.password | non_empty_string))
-      or
-      (try (
+  | ((($auth | has("username")) or ($auth | has("password"))))
+      as $explicit_present
+  | (($auth.username | non_empty_string)
+      and ($auth.password | non_empty_string)) as $explicit_valid
+  | ($auth | has("auth")) as $encoded_present
+  | (if $encoded_present then
+      try (
         $auth.auth
         | @base64d
         | capture("^(?<username>[^:]+):(?<password>.+)$")
-        | ((.username | non_empty_string)
-          and (.password | non_empty_string))
-      ) catch false)
-    )
+      ) catch null
+    else null end) as $decoded
+  | (($decoded != null)
+      and ($decoded.username | non_empty_string)
+      and ($decoded.password | non_empty_string)) as $encoded_valid
+  | ((($explicit_present | not) or $explicit_valid)
+      and (($encoded_present | not) or $encoded_valid)
+      and ($explicit_valid or $encoded_valid)
+      and (((($explicit_present and $encoded_present) | not))
+        or (($auth.username == $decoded.username)
+          and ($auth.password == $decoded.password))))
 ' "${docker_config}" >/dev/null; then
-  echo "::error::The SOPS GHCR pull credential is not a valid Docker config with non-empty ghcr.io username/password or auth fields."
+  echo "::error::The SOPS GHCR pull credential is not a valid Docker config with non-empty, consistent ghcr.io username/password and auth fields."
   exit 1
 fi
+jq -S -c . "${docker_config}" > "${expected_normalized}"
 
 # Build curl's Basic-auth config without putting the credential in argv or
 # stdout. Support both Docker config representations used in this repository:
@@ -143,9 +240,8 @@ if [[ "${check_only}" == "true" ]]; then
   exit 0
 fi
 
-# Merge only the Secret data field so KSail's ownership label and any unrelated
-# metadata survive. The sensitive payload stays in the pipe/temp file and never
-# appears in argv or logs.
+# Merge only Secret data fields so ownership metadata survives. The sensitive
+# payload stays in pipes/temp files and never appears in argv or logs.
 base64 < "${docker_config}" \
   | tr -d '\r\n' \
   | jq -Rs '{data: {".dockerconfigjson": .}}' \
@@ -158,4 +254,41 @@ kubectl \
   --type=merge \
   --patch-file="${patch_file}"
 
-echo "✅ Refreshed the root Flux GHCR pull credential from Git/SOPS."
+# A fresh DR cluster does not have variables-base or the ESO fan-out resources
+# until its first Flux reconcile. In that case the current artifact creates the
+# chain from the same SOPS value, so only the root bootstrap patch is needed.
+if ! variables_base_name="$(kubectl \
+  --context "${KUBE_CONTEXT}" \
+  --namespace flux-system \
+  get secret variables-base \
+  --ignore-not-found \
+  -o name)"; then
+  echo "::error::Could not determine whether the GHCR fan-out exists; refusing to reconcile with an unverified tenant credential path."
+  exit 1
+fi
+if [[ -z "${variables_base_name}" ]]; then
+  echo "✅ Refreshed root Flux GHCR auth; the first reconcile will create the downstream fan-out."
+  exit 0
+fi
+
+# Existing clusters must update the whole SOPS -> variables-base -> PushSecret
+# -> OpenBao -> ExternalSecret chain before apps reconcile. Otherwise the root
+# source recovers while tenant OCI/image pulls keep the revoked credential for
+# up to their one-hour refresh interval.
+jq '{data: {ghcr_dockerconfigjson: .data[".dockerconfigjson"]}}' \
+  "${patch_file}" \
+  > "${variables_patch_file}"
+kubectl \
+  --context "${KUBE_CONTEXT}" \
+  --namespace flux-system \
+  patch secret variables-base \
+  --type=merge \
+  --patch-file="${variables_patch_file}"
+
+force_sync_resource pushsecret flux-system seed-ghcr
+for namespace in "${FANOUT_NAMESPACES[@]}"; do
+  force_sync_resource externalsecret "${namespace}" ghcr-auth
+  verify_consumer_secret "${namespace}"
+done
+
+echo "✅ Refreshed root Flux GHCR auth and synchronised every existing consumer from Git/SOPS."

@@ -29,9 +29,13 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.bin_dir.mkdir()
         self.decrypted_config = self.workspace / "decrypted-config.json"
         self.patch_capture = self.workspace / "patch.json"
+        self.variables_patch_capture = self.workspace / "variables-patch.json"
         self.kubectl_called = self.workspace / "kubectl-called"
         self.output_path_log = self.workspace / "ksail-output-path"
         self.registry_read_log = self.workspace / "registry-reads"
+        self.fanout_log = self.workspace / "fanout-log"
+        self.sync_state_dir = self.workspace / "sync-state"
+        self.sync_state_dir.mkdir()
 
         self._write_executable(
             "ksail",
@@ -130,23 +134,92 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             set -euo pipefail
             arguments=" $* "
             [[ "$arguments" == *" --context admin@prod "* ]]
-            [[ "$arguments" == *" --namespace flux-system "* ]]
-            [[ "$arguments" == *" patch secret ksail-registry-credentials "* ]]
-            [[ "$arguments" == *" --type=merge "* ]]
+            namespace=""
             patch_file=""
+            previous=""
             for argument in "$@"; do
+              if [[ "$previous" == --namespace ]]; then
+                namespace="$argument"
+              fi
               case "$argument" in
+                --namespace=*) namespace="${argument#*=}" ;;
                 --patch-file=*) patch_file="${argument#*=}" ;;
               esac
+              previous="$argument"
             done
-            test -n "$patch_file"
+            test -n "$namespace"
             touch "$KUBECTL_CALLED"
-            cp "$patch_file" "$PATCH_CAPTURE"
-            if [[ "${FAKE_KUBECTL_FAIL:-false}" == true ]]; then
-              echo 'cluster patch failed' >&2
-              exit 43
+
+            if [[ "$arguments" == *" patch secret ksail-registry-credentials "* ]]; then
+              [[ "$arguments" == *" --type=merge "* ]]
+              test -n "$patch_file"
+              cp "$patch_file" "$PATCH_CAPTURE"
+              if [[ "${FAKE_KUBECTL_FAIL:-false}" == true ]]; then
+                echo 'cluster patch failed' >&2
+                exit 43
+              fi
+              echo 'secret/ksail-registry-credentials patched'
+              exit 0
             fi
-            echo 'secret/ksail-registry-credentials patched'
+
+            if [[ "$arguments" == *" get secret variables-base "* ]]; then
+              [[ "$arguments" == *" --ignore-not-found "* ]]
+              if [[ "${FAKE_VARIABLES_BASE_ABSENT:-false}" != true ]]; then
+                echo 'secret/variables-base'
+              fi
+              exit 0
+            fi
+
+            if [[ "$arguments" == *" patch secret variables-base "* ]]; then
+              [[ "$arguments" == *" --type=merge "* ]]
+              test -n "$patch_file"
+              cp "$patch_file" "$VARIABLES_PATCH_CAPTURE"
+              echo 'secret/variables-base patched'
+              exit 0
+            fi
+
+            kind=""
+            name=""
+            if [[ "$arguments" == *" pushsecret seed-ghcr "* ]]; then
+              kind=pushsecret
+              name=seed-ghcr
+            elif [[ "$arguments" == *" externalsecret ghcr-auth "* ]]; then
+              kind=externalsecret
+              name=ghcr-auth
+            fi
+
+            if [[ -n "$kind" && "$arguments" == *" get $kind $name "* ]]; then
+              marker="$FAKE_SYNC_STATE_DIR/${kind}-${namespace}-${name}"
+              refresh_time=2026-07-13T00:00:00Z
+              if [[ -f "$marker" ]]; then
+                refresh_time=2026-07-13T00:00:01Z
+              fi
+              printf '{"status":{"refreshTime":"%s","conditions":[{"type":"Ready","status":"True"}]}}\n' "$refresh_time"
+              exit 0
+            fi
+
+            if [[ -n "$kind" && "$arguments" == *" annotate $kind $name "* ]]; then
+              resource="$kind/$namespace/$name"
+              printf '%s\n' "$resource" >> "$FANOUT_LOG"
+              if [[ "$resource" != "${FAKE_SYNC_STALL_RESOURCE:-disabled}" ]]; then
+                touch "$FAKE_SYNC_STATE_DIR/${kind}-${namespace}-${name}"
+              fi
+              echo "$kind/$name annotated"
+              exit 0
+            fi
+
+            if [[ "$arguments" == *" get secret ghcr-auth "* ]]; then
+              if [[ "$namespace" == "${FAKE_CONSUMER_MISMATCH_NAMESPACE:-disabled}" ]]; then
+                encoded=$(printf '%s' '{"auths":{}}' | base64 | tr -d '\r\n')
+              else
+                encoded=$(jq -r '.data.ghcr_dockerconfigjson' "$VARIABLES_PATCH_CAPTURE")
+              fi
+              jq -n --arg encoded "$encoded" '{data:{".dockerconfigjson":$encoded}}'
+              exit 0
+            fi
+
+            echo "unexpected kubectl invocation: $arguments" >&2
+            exit 91
             """,
         )
 
@@ -164,20 +237,29 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.decrypted_config.write_text(json.dumps(config), encoding="utf-8")
         for marker in (
             self.patch_capture,
+            self.variables_patch_capture,
             self.kubectl_called,
             self.output_path_log,
             self.registry_read_log,
+            self.fanout_log,
         ):
             marker.unlink(missing_ok=True)
+        for marker in self.sync_state_dir.iterdir():
+            marker.unlink()
         environment = os.environ.copy()
         environment.update(
             {
                 "PATH": f"{self.bin_dir}:{environment['PATH']}",
                 "FAKE_DECRYPTED_CONFIG": str(self.decrypted_config),
                 "PATCH_CAPTURE": str(self.patch_capture),
+                "VARIABLES_PATCH_CAPTURE": str(self.variables_patch_capture),
                 "KUBECTL_CALLED": str(self.kubectl_called),
                 "KSAIL_OUTPUT_PATH_LOG": str(self.output_path_log),
                 "REGISTRY_READ_LOG": str(self.registry_read_log),
+                "FANOUT_LOG": str(self.fanout_log),
+                "FAKE_SYNC_STATE_DIR": str(self.sync_state_dir),
+                "FLUX_GHCR_SYNC_ATTEMPTS": "2",
+                "FLUX_GHCR_SYNC_INTERVAL": "0",
             }
         )
         environment.update(environment_overrides)
@@ -201,7 +283,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             }
         }
 
-    def test_refreshes_only_the_root_secret_and_cleans_plaintext(self) -> None:
+    def test_refreshes_root_and_fanout_without_leaking_plaintext(self) -> None:
         config = self._valid_config()
 
         result = self._run_helper(config)
@@ -211,6 +293,11 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         encoded = patch["data"][".dockerconfigjson"]
 
         self.assertEqual(json.loads(base64.b64decode(encoded)), config)
+        variables_patch = json.loads(
+            self.variables_patch_capture.read_text(encoding="utf-8")
+        )
+        variables_encoded = variables_patch["data"]["ghcr_dockerconfigjson"]
+        self.assertEqual(json.loads(base64.b64decode(variables_encoded)), config)
         temporary_config = Path(self.output_path_log.read_text(encoding="utf-8"))
         self.assertFalse(temporary_config.exists())
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
@@ -222,6 +309,16 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "devantler-tech/ascoachingogvaner/manifests",
                 "devantler-tech/wedding-app",
                 "devantler-tech/ascoachingogvaner",
+                "devantler-tech/ksail",
+            ],
+        )
+        self.assertEqual(
+            self.fanout_log.read_text(encoding="utf-8").splitlines(),
+            [
+                "pushsecret/flux-system/seed-ghcr",
+                "externalsecret/wedding-app/ghcr-auth",
+                "externalsecret/ascoachingogvaner/ghcr-auth",
+                "externalsecret/kyverno/ghcr-auth",
             ],
         )
 
@@ -236,6 +333,17 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         encoded = patch["data"][".dockerconfigjson"]
         self.assertEqual(json.loads(base64.b64decode(encoded)), config)
 
+    def test_accepts_matching_explicit_and_encoded_auth(self) -> None:
+        config = self._valid_config()
+        registry_auth = config["auths"]["ghcr.io"]
+        registry_auth["auth"] = base64.b64encode(
+            b"devantler:fixture-secret-token"
+        ).decode()
+
+        result = self._run_helper(config)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_check_only_preflights_without_patching(self) -> None:
         result = self._run_helper(self._valid_config(), ("--check-only",))
 
@@ -248,6 +356,17 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             {"auths": {"ghcr.io": {"username": "devantler"}}},
             {"auths": {"ghcr.io": {"username": "", "password": "token"}}},
             {"auths": {"ghcr.io": {"auth": "not-base64"}}},
+            {
+                "auths": {
+                    "ghcr.io": {
+                        "username": "devantler",
+                        "password": "fixture-secret-token",
+                        "auth": base64.b64encode(
+                            b"devantler:different-token"
+                        ).decode(),
+                    }
+                }
+            },
             {"auths": {}},
             "not-a-docker-config",
         ]
@@ -283,6 +402,40 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 43)
         self.assertTrue(self.kubectl_called.exists())
+
+    def test_fresh_cluster_without_variables_base_skips_existing_fanout(self) -> None:
+        result = self._run_helper(
+            self._valid_config(), FAKE_VARIABLES_BASE_ABSENT="true"
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.patch_capture.exists())
+        self.assertFalse(self.variables_patch_capture.exists())
+        self.assertFalse(self.fanout_log.exists())
+
+    def test_pushsecret_sync_failure_is_not_hidden(self) -> None:
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_SYNC_STALL_RESOURCE="pushsecret/flux-system/seed-ghcr",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(self.patch_capture.exists())
+        self.assertTrue(self.variables_patch_capture.exists())
+        self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
+
+    def test_materialised_consumer_mismatch_is_not_hidden(self) -> None:
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_CONSUMER_MISMATCH_NAMESPACE="wedding-app",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "wedding-app/ghcr-auth did not materialise",
+            result.stdout + result.stderr,
+        )
+        self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
 
 
 class DeployActionOrderingTests(unittest.TestCase):

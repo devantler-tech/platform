@@ -144,9 +144,9 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 2. The `deploy-prod` composite action (shared by both paths) uses `ksail --config ksail.prod.yaml` to target the committed prod config.
 3. `ksail.prod.yaml` has `kustomizationFile: clusters/prod`, so KSail/Flux use `k8s/clusters/prod/kustomization.yaml` as the entry point — no root `k8s/kustomization.yaml` or file rewriting is needed.
 4. `ksail --config ksail.prod.yaml cluster create` (first run) or `cluster update` (subsequent runs) provisions / reconciles the Hetzner servers, Talos, CCM, and CSI.
-5. `scripts/refresh-flux-ghcr-auth.sh --check-only` decrypts only the Git/SOPS pull credential and performs real OCI manifest reads for all five private consumers (the Platform and tenant manifest artifacts plus both tenant application images) before a mutable `latest` tag is published; the DR workflow also runs it before creating infrastructure. It does not mutate the cluster.
+5. `scripts/refresh-flux-ghcr-auth.sh --check-only` decrypts only the Git/SOPS pull credential and performs real OCI manifest reads for all six private consumers (the Platform and tenant manifest artifacts, both tenant application images, and the KSail package used by Kyverno signature verification) before a mutable `latest` tag is published; the DR workflow also runs it before creating infrastructure. It does not mutate the cluster.
 6. `ksail --config ksail.prod.yaml workload push` packages manifests and pushes them to GHCR.
-7. The bridge revalidates the newly-published artifact and reasserts root auth before reconciliation.
+7. The bridge revalidates the newly-published artifact, reasserts root auth, updates `variables-base`, and force-syncs the PushSecret plus tenant/Kyverno ExternalSecrets before reconciliation.
 8. `ksail --config ksail.prod.yaml workload reconcile` triggers Flux to sync from the OCI artifact.
 
 **Key differences from local:**
@@ -178,9 +178,10 @@ The authoritative **Flux and tenant** GHCR pull credential is
 `k8s/bases/bootstrap/secret.enc.yaml`. The deploy bridge refreshes
 `flux-system/ksail-registry-credentials` from that value before Flux must fetch
 the artifact and reasserts it after `cluster update` in case KSail rewrites its
-managed Secret. Flux then applies the same SOPS value to `variables-base`; the
-`seed-ghcr` PushSecret fans it into OpenBao and tenant ExternalSecrets materialise
-their `ghcr-auth` copies. A direct credential commit to `main` still needs a
+managed Secret. On existing clusters the bridge also updates `variables-base`,
+force-syncs `seed-ghcr` into OpenBao, force-syncs the tenant/Kyverno
+ExternalSecrets, and verifies their materialised `ghcr-auth` payloads before
+apps reconcile. A direct credential commit to `main` still needs a
 manual `CD` workflow dispatch because direct pushes bypass the merge-queue deploy.
 Talos node registry auth still derives from `GHCR_TOKEN`; consolidating that
 remaining pull path stays tracked by #2613 and the KSail credential work.
