@@ -30,6 +30,11 @@ KSAIL_OPERATOR_HELM_RELEASE = (
     / "ksail-operator"
     / "helm-release.yaml"
 )
+KSAIL_OPERATOR_VERSION = next(
+    line.split(":", 1)[1].strip()
+    for line in KSAIL_OPERATOR_HELM_RELEASE.read_text(encoding="utf-8").splitlines()
+    if line.strip().startswith("version:")
+)
 PROVIDER_UPJET_UNIFI = (
     ROOT
     / "k8s"
@@ -701,7 +706,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "devantler-tech/ascoachingogvaner/manifests:latest",
                 "devantler-tech/wedding-app:latest",
                 "devantler-tech/ascoachingogvaner:latest",
-                "devantler-tech/ksail:v7.167.0",
+                f"devantler-tech/ksail:v{KSAIL_OPERATOR_VERSION}",
                 "devantler-tech/provider-upjet-unifi:v0.1.0",
             ],
         )
@@ -787,8 +792,10 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertEqual(
             pulls,
             [
-                "talos-pull:10.0.0.2:ghcr.io/devantler-tech/ksail:v7.167.0",
-                "talos-pull:10.0.0.1:ghcr.io/devantler-tech/ksail:v7.167.0",
+                "talos-pull:10.0.0.2:ghcr.io/devantler-tech/ksail:"
+                f"v{KSAIL_OPERATOR_VERSION}",
+                "talos-pull:10.0.0.1:ghcr.io/devantler-tech/ksail:"
+                f"v{KSAIL_OPERATOR_VERSION}",
             ],
         )
 
@@ -1463,6 +1470,56 @@ class DeployActionOrderingTests(unittest.TestCase):
         )
         self.assertIn("- 'docs/dr/runbook.md'", ci_workflow)
 
+    def test_bridge_docs_and_tests_validate_without_deploying(self) -> None:
+        """Keep validation-only bridge changes out of production deploys."""
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        filters = workflow[
+            workflow.index("          filters: |") : workflow.index("\n  validate:")
+        ]
+        k8s_filter = filters[
+            filters.index("            k8s:") : filters.index(
+                "            bridge_validation:"
+            )
+        ]
+        bridge_filter = filters[
+            filters.index("            bridge_validation:") : filters.index(
+                "            talos:"
+            )
+        ]
+
+        for validation_only_path in (
+            "scripts/tests/test_refresh_flux_ghcr_auth.py",
+            "docs/dr/runbook.md",
+        ):
+            with self.subTest(path=validation_only_path):
+                quoted_path = f"- '{validation_only_path}'"
+                self.assertNotIn(quoted_path, k8s_filter)
+                self.assertIn(quoted_path, bridge_filter)
+
+        self.assertIn(
+            "bridge_validation: ${{ steps.filter.outputs.bridge_validation }}",
+            workflow,
+        )
+        validate = workflow[
+            workflow.index("  validate:") : workflow.index("  naming:")
+        ]
+        self.assertIn(
+            "needs.changes.outputs.bridge_validation == 'true'", validate
+        )
+        deploy = workflow[
+            workflow.index("  deploy-prod:") : workflow.index(
+                "  heal-prod-on-failure:"
+            )
+        ]
+        heal = workflow[
+            workflow.index("  heal-prod-on-failure:") : workflow.index(
+                "  ci-required-checks:"
+            )
+        ]
+        for production_job in (deploy, heal):
+            self.assertIn("needs.changes.outputs.k8s == 'true'", production_job)
+            self.assertNotIn("bridge_validation", production_job)
+
 
 class RequiredPackageCoverageTests(unittest.TestCase):
     """Keep pinned private provider references in the live GHCR preflight."""
@@ -1483,20 +1540,13 @@ class RequiredPackageCoverageTests(unittest.TestCase):
 
     def test_exact_declared_ksail_operator_image_is_preflighted(self) -> None:
         """Bind the GHCR preflight to the chart's exact KSail image version."""
-        release = KSAIL_OPERATOR_HELM_RELEASE.read_text(encoding="utf-8")
         helper = HELPER.read_text(encoding="utf-8")
-
-        version = next(
-            line.split(":", 1)[1].strip()
-            for line in release.splitlines()
-            if line.strip().startswith("version:")
-        )
 
         self.assertIn(
             '"devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"', helper
         )
         self.assertIn(".spec.chart.spec.version", helper)
-        self.assertEqual(version, "7.167.0")
+        self.assertTrue(KSAIL_OPERATOR_VERSION)
 
 
 class TalosRegistryAuthConfigTests(unittest.TestCase):

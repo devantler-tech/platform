@@ -19,6 +19,7 @@ jobs:
       pull-requests: read # detect changed files
     outputs:
       k8s: ${{ steps.filter.outputs.k8s }}
+      bridge_validation: ${{ steps.filter.outputs.bridge_validation }}
       talos: ${{ steps.filter.outputs.talos }}
     steps:
       - name: 📑 Checkout
@@ -44,6 +45,13 @@ jobs:
               - 'scripts/refresh-flux-ghcr-auth.sh'
               - 'scripts/ghcr-auth-lib.sh'
               - 'scripts/run-ksail-prod-with-pull-auth.sh'
+              - '.github/actions/deploy-prod/**'
+              - '.github/workflows/dr-rebuild.yaml'
+              - '.github/workflows/ci.yaml'
+            bridge_validation:
+              - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/ghcr-auth-lib.sh'
+              - 'scripts/run-ksail-prod-with-pull-auth.sh'
               - 'scripts/tests/test_refresh_flux_ghcr_auth.py'
               - 'docs/dr/runbook.md'
               - '.github/actions/deploy-prod/**'
@@ -62,7 +70,10 @@ jobs:
     # longer boots it; instead it schema-validates and security-scans the
     # manifests. This needs no secrets, so — unlike the old system test — it also
     # runs on fork PRs.
-    if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
+    if: >-
+      github.event_name == 'pull_request' &&
+      (needs.changes.outputs.k8s == 'true' ||
+      needs.changes.outputs.bridge_validation == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
