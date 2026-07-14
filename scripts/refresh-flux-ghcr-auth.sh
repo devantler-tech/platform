@@ -165,6 +165,18 @@ verify_consumer_secret() {
   fi
 }
 
+# Talos returns gRPC NotFound with the exact image reference when that image is
+# already absent from the selected runtime namespace. Match both so transport,
+# authorization, and unrelated removal failures remain fatal.
+talos_image_remove_reports_absent() {
+  local result_file="$1"
+  local operator_image="$2"
+
+  LC_ALL=C grep -Fq -- \
+    "rpc error: code = NotFound desc = image ${operator_image} not found" \
+    "${result_file}"
+}
+
 # Apply Git/SOPS auth to stale Talos nodes, prove an uncached pull of the
 # declared incoming image, and only then record its non-secret revision+image
 # proof markers so either credential or target changes trigger verification.
@@ -261,8 +273,11 @@ sync_talos_registry_auth() {
       image remove "${operator_image}" \
       --namespace cri \
       >"${talos_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} could not remove the cached incoming KSail image before GHCR verification."
-      return 1
+      if ! talos_image_remove_reports_absent \
+        "${talos_result_file}" "${operator_image}"; then
+        echo "::error::Talos node ${node_name} could not remove the cached incoming KSail image before GHCR verification."
+        return 1
+      fi
     fi
     if ! talosctl \
       --nodes "${node_ip}" \
