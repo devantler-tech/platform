@@ -18,6 +18,7 @@ HELPER = ROOT / "scripts" / "refresh-flux-ghcr-auth.sh"
 KSAIL_PULL_WRAPPER = ROOT / "scripts" / "run-ksail-prod-with-pull-auth.sh"
 ACTION = ROOT / ".github" / "actions" / "deploy-prod" / "action.yml"
 DR_REBUILD = ROOT / ".github" / "workflows" / "dr-rebuild.yaml"
+DR_RUNBOOK = ROOT / "docs" / "dr" / "runbook.md"
 KSAIL_OPERATOR_HELM_RELEASE = (
     ROOT
     / "k8s"
@@ -1086,8 +1087,20 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         )
 
         self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.variables_patch_capture.exists())
         self.assertFalse(self.patch_capture.exists())
         self.assertFalse(self.fanout_log.exists())
+
+    def test_missing_eso_crds_fails_without_staging_variables(self) -> None:
+        """Leave the fan-out source unchanged when normal mode is incomplete."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_FANOUT_CRDS_ABSENT="true",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.variables_patch_capture.exists())
+        self.assertFalse(self.patch_capture.exists())
 
     def test_partial_bootstrap_without_eso_crds_repairs_root(self) -> None:
         """Permit DR root repair before External Secrets CRDs exist."""
@@ -1314,6 +1327,31 @@ class DeployActionOrderingTests(unittest.TestCase):
             workflow[post_restore_verify:],
         )
         self.assertEqual(workflow.count("scripts/refresh-flux-ghcr-auth.sh"), 5)
+
+    def test_manual_dr_waits_for_flux_before_full_bridge(self) -> None:
+        """Keep bootstrap mode until every first-reconcile layer is Ready."""
+        runbook = DR_RUNBOOK.read_text(encoding="utf-8")
+        manual = runbook[
+            runbook.index("# 2. Prove the Git/SOPS pull credential") :
+            runbook.index("# 6. ONLY if the OpenBao raft-snapshot")
+        ]
+
+        bootstrap = manual.index(
+            "./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout"
+        )
+        reconcile = manual.index(
+            "./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile"
+        )
+        wait = manual.index(
+            "kubectl --context admin@prod -n flux-system wait"
+        )
+        full_bridge = manual.index(
+            "./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out"
+        )
+
+        self.assertLess(bootstrap, reconcile)
+        self.assertLess(reconcile, wait)
+        self.assertLess(wait, full_bridge)
 
 
 class RequiredPackageCoverageTests(unittest.TestCase):

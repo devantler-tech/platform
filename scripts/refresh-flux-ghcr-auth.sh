@@ -411,6 +411,15 @@ patch_root_secret() {
     --patch-file="${patch_file}"
 }
 
+patch_variables_base() {
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    patch secret variables-base \
+    --type=merge \
+    --patch-file="${variables_patch_file}"
+}
+
 # A fresh DR cluster does not have variables-base or the ESO fan-out resources
 # until its first Flux reconcile. In that case the current artifact creates the
 # chain from the same SOPS value, so only the root bootstrap patch is needed.
@@ -433,19 +442,13 @@ if [[ -z "${variables_base_name}" ]]; then
   exit 0
 fi
 
-# Existing clusters must update and verify the whole SOPS -> variables-base ->
-# PushSecret -> OpenBao -> ExternalSecret chain before switching root Flux auth.
-# Otherwise a failed fan-out can still let normal root-source polling apply the
-# newly-published artifact while tenant OCI/image pulls keep stale credentials.
+# Prepare the variables-base payload locally, but do not mutate its live Secret
+# until normal mode has proved the complete fan-out exists. Otherwise a failed
+# normal deploy could leave PushSecret free to propagate an unmerged credential
+# even though root Flux auth stayed unchanged.
 jq '{data: {ghcr_dockerconfigjson: .data[".dockerconfigjson"]}}' \
   "${patch_file}" \
   > "${variables_patch_file}"
-kubectl \
-  --context "${KUBE_CONTEXT}" \
-  --namespace flux-system \
-  patch secret variables-base \
-  --type=merge \
-  --patch-file="${variables_patch_file}"
 
 # A partially-bootstrapped DR cluster can already have variables-base while ESO
 # CRDs or individual fan-out objects do not exist yet. That state still needs
@@ -501,11 +504,15 @@ if [[ "${fanout_complete}" != "true" ]]; then
     echo "::error::The GHCR fan-out is incomplete; root Flux auth was not changed. Use --allow-incomplete-fanout only during the DR bootstrap, then run the full verifier after reconciliation."
     exit 1
   fi
+  patch_variables_base
   patch_root_secret
   echo "✅ Staged the Git/SOPS credential and refreshed root Flux auth; the first reconcile will complete the missing downstream fan-out."
   exit 0
 fi
 
+# Existing clusters update and verify the whole SOPS -> variables-base ->
+# PushSecret -> OpenBao -> ExternalSecret chain before switching root Flux auth.
+patch_variables_base
 force_sync_resource pushsecret flux-system seed-ghcr
 for namespace in "${FANOUT_NAMESPACES[@]}"; do
   force_sync_resource externalsecret "${namespace}" ghcr-auth

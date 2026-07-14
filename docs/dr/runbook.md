@@ -184,8 +184,10 @@ talosctl version --client  # must be installed; use the prod-pinned v1.13.5
 ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
 
 # 5. Wait for Flux to settle
-flux get kustomizations -A
-# Re-run if any are NotReady; expect convergence in 10-15 minutes
+for k in bootstrap infrastructure-controllers infrastructure apps; do
+  kubectl --context admin@prod -n flux-system wait "kustomization/${k}" \
+    --for=condition=Ready --timeout=20m
+done
 ./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out + every stale node
 
 # 6. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
