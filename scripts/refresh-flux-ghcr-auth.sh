@@ -271,6 +271,9 @@ sync_talos_registry_auth() {
 
   : > "${talos_result_file}"
   chmod 600 "${talos_result_file}"
+  # Targets are pre-sorted workers-first, and this loop is strictly sequential,
+  # so the reboot below rolls one node at a time and control planes go last —
+  # etcd keeps quorum throughout.
   while IFS=$'\t' read -r _node_role node_name node_ip; do
     if ! talosctl \
       --nodes "${node_ip}" \
@@ -281,6 +284,49 @@ sync_talos_registry_auth() {
       echo "::error::Talos node ${node_name} did not accept the Git/SOPS GHCR registry auth."
       return 1
     fi
+
+    # Writing the credential is NOT enough to make a running node use it, and
+    # this is the step whose absence caused the 2026-07-14 outage.
+    #
+    # containerd reads registry auth from its STATIC config
+    # (plugins.'io.containerd.cri.v1.images'.registry.configs.'ghcr.io'.auth),
+    # which it loads ONCE at process start. Talos re-renders that file
+    # (/etc/cri/conf.d/01-registries.part) immediately on a config change, but
+    # it does not restart containerd — and it refuses to let us either:
+    #
+    #   $ talosctl service cri restart
+    #   error: service "cri" doesn't support restart operation via API
+    #
+    # So after a --mode=no-reboot patch the new credential sits on disk,
+    # correct and INERT, while the running containerd keeps presenting the old
+    # one. A REBOOT is the only supported way to make it adopt the new auth.
+    #
+    # Do not be tempted to drop this and trust the `image pull` check below:
+    # that check goes through the TALOS image API, which builds its auth from
+    # the machine config we just wrote, NOT from containerd's CRI plugin. It
+    # therefore passes on a node whose kubelet pulls are still failing 403 —
+    # which is exactly what happened: every node was annotated
+    # ghcr-pull-verified-revision while every ksail-operator pod sat in
+    # ImagePullBackOff, and prod stayed four releases behind for over a day.
+    # The pull check proves the CREDENTIAL is good; only the reboot proves
+    # CONTAINERD is using it.
+    if ! talosctl --nodes "${node_ip}" reboot >"${talos_result_file}" 2>&1; then
+      echo "::error::Talos node ${node_name} did not reboot to load the refreshed GHCR registry auth."
+      return 1
+    fi
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      wait \
+      --for=condition=Ready \
+      "node/${node_name}" \
+      --timeout=10m \
+      >"${talos_result_file}" 2>&1; then
+      echo "::error::Talos node ${node_name} did not return Ready after its GHCR auth reboot; refusing to roll the next node."
+      return 1
+    fi
+
+    # Credential validity against GHCR (see the caveat above: this is not, on
+    # its own, proof that containerd is using it — the reboot is).
     if ! talosctl \
       --nodes "${node_ip}" \
       image pull "${operator_image}" \
@@ -289,6 +335,10 @@ sync_talos_registry_auth() {
       echo "::error::Talos node ${node_name} could not pull the exact live KSail image after its auth refresh."
       return 1
     fi
+
+    # Recorded LAST, and only now: the marker means "this node's containerd has
+    # provably loaded this credential revision", so it must not be written
+    # before the reboot that makes that true.
     if ! talosctl \
       --nodes "${node_ip}" \
       patch machineconfig \

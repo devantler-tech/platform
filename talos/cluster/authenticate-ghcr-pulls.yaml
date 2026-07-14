@@ -32,8 +32,26 @@
 # talos-local/.
 #
 # Existing nodes are synchronized separately by refresh-flux-ghcr-auth.sh using
-# this same RegistryAuthConfig shape, one node at a time in no-reboot mode, and
+# this same RegistryAuthConfig shape, one node at a time (workers first), and
 # each node must then pull the exact live ksail-operator image successfully.
+#
+# That sync REBOOTS each stale node, and must: containerd loads registry auth
+# from its static config once, at process start. Writing a new credential — even
+# though Talos re-renders /etc/cri/conf.d/01-registries.part immediately — does
+# not reach the running containerd, and Talos refuses to restart it
+# (`talosctl service cri restart` → "service 'cri' doesn't support restart
+# operation via API"). So on a running node a rotated token is inert until the
+# node reboots, and every ghcr.io pull keeps failing with the OLD credential.
+#
+# It fails SILENTLY, which is why this bit is easy to get wrong: images already
+# cached on a node are never re-pulled, so running workloads stay up and the
+# cluster looks green — only a FRESH pull (i.e. an upgrade) breaks, and Helm
+# then times out and rolls back, deleting the evidence. (2026-07-14: the
+# ksail-operator sat four releases behind for over a day this way.)
+#
+# Note also that a REVOKED credential is worse than none: ghcr.io answers bad
+# basic-auth with 403 DENIED on the token exchange instead of falling back to
+# anonymous, so a stale token breaks pulls of PUBLIC packages too.
 #
 # Reference:
 #   https://docs.siderolabs.com/talos/v1.13/reference/configuration/cri/registryauthconfig

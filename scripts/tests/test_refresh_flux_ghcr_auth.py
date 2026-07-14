@@ -199,6 +199,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               fi
 
               test -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
+              test -f "$FAKE_SYNC_STATE_DIR/talos-reboot-${node}"
               test -f "$FAKE_SYNC_STATE_DIR/talos-pull-${node}"
               jq -e --arg revision "$EXPECTED_GHCR_REVISION" '
                 .machine.nodeAnnotations[
@@ -216,8 +217,27 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               exit 0
             fi
 
+            # A running containerd only adopts new registry auth by restarting,
+            # and Talos refuses `service cri restart`, so the node must reboot.
+            # The auth patch must already have landed.
+            if [[ "$arguments" == *" reboot "* ]]; then
+              test -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
+              printf 'talos-reboot:%s\n' "$node" >> "$TALOS_LOG"
+              printf 'talos-reboot:%s\n' "$node" >> "$OPERATION_LOG"
+              if [[ "$node" == "${FAKE_TALOS_FAIL_NODE:-disabled}" \
+                && "${FAKE_TALOS_FAIL_OPERATION:-auth}" == reboot ]]; then
+                echo "talos reboot failed" >&2
+                exit 49
+              fi
+              touch "$FAKE_SYNC_STATE_DIR/talos-reboot-${node}"
+              exit 0
+            fi
+
             if [[ "$arguments" == *" image pull "* ]]; then
               test -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
+              # The pull check is only meaningful once containerd has actually
+              # reloaded the credential, i.e. after the reboot.
+              test -f "$FAKE_SYNC_STATE_DIR/talos-reboot-${node}"
               [[ "$arguments" == *" --namespace cri "* ]]
               image=""
               previous=""
@@ -385,6 +405,25 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                     ] = $revision
                   else . end
               '
+              exit 0
+            fi
+
+            # Node readiness gate after a GHCR-auth reboot. Cluster-scoped, so it
+            # must be handled before the namespace guard below.
+            if [[ "$arguments" == *" wait "* ]]; then
+              [[ "$arguments" == *" --for=condition=Ready "* ]]
+              node_target=""
+              for argument in "$@"; do
+                case "$argument" in
+                  node/*) node_target="${argument#node/}" ;;
+                esac
+              done
+              test -n "$node_target"
+              printf 'node-ready:%s\n' "$node_target" >> "$OPERATION_LOG"
+              if [[ "$node_target" == "${FAKE_NODE_READY_FAIL_NODE:-disabled}" ]]; then
+                echo 'node did not become ready' >&2
+                exit 50
+              fi
               exit 0
             fi
 
@@ -725,15 +764,24 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         )
 
     def test_refreshes_talos_auth_before_kubernetes_credential_consumers(self) -> None:
-        """Patch nodes serially and pull the exact live operator image first."""
+        """Patch, REBOOT, then pull the exact live operator image, workers first.
+
+        The reboot is load-bearing: containerd reads registry auth from its
+        static config only at process start, and Talos refuses
+        `service cri restart`, so a --mode=no-reboot patch leaves the running
+        containerd on the OLD credential. Without the reboot every ghcr.io pull
+        on the node keeps failing 403 while the node still reports "verified".
+        """
         result = self._run_helper(self._valid_config())
 
         self.assertEqual(result.returncode, 0, result.stderr)
         expected_talos_operations = [
             "talos-auth:10.0.0.2",
+            "talos-reboot:10.0.0.2",
             "talos-pull:10.0.0.2:ghcr.io/devantler-tech/ksail:v7.169.0",
             "talos-revision:10.0.0.2",
             "talos-auth:10.0.0.1",
+            "talos-reboot:10.0.0.1",
             "talos-pull:10.0.0.1:ghcr.io/devantler-tech/ksail:v7.169.0",
             "talos-revision:10.0.0.1",
         ]
@@ -741,9 +789,22 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             self.talos_log.read_text(encoding="utf-8").splitlines(),
             expected_talos_operations,
         )
+        # Each node is drained through the full sequence, and readiness is
+        # awaited after its reboot, before the next node is touched.
         self.assertEqual(
-            self.operation_log.read_text(encoding="utf-8").splitlines()[:6],
-            expected_talos_operations,
+            self.operation_log.read_text(encoding="utf-8").splitlines()[:10],
+            [
+                "talos-auth:10.0.0.2",
+                "talos-reboot:10.0.0.2",
+                "node-ready:prod-worker-1",
+                "talos-pull:10.0.0.2:ghcr.io/devantler-tech/ksail:v7.169.0",
+                "talos-revision:10.0.0.2",
+                "talos-auth:10.0.0.1",
+                "talos-reboot:10.0.0.1",
+                "node-ready:prod-control-plane-1",
+                "talos-pull:10.0.0.1:ghcr.io/devantler-tech/ksail:v7.169.0",
+                "talos-revision:10.0.0.1",
+            ],
         )
         temporary_patch = Path(
             self.talos_patch_path_log.read_text(encoding="utf-8")
@@ -751,9 +812,32 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertFalse(temporary_patch.exists())
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
 
+    def test_unready_node_after_reboot_stops_the_roll(self) -> None:
+        """Never roll the next node while the rebooted one is still down."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_NODE_READY_FAIL_NODE="prod-worker-1",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        # The worker rebooted but never came back, so the control plane is left
+        # alone and no Kubernetes credential consumer is mutated.
+        self.assertEqual(
+            operations,
+            [
+                "talos-auth:10.0.0.2",
+                "talos-reboot:10.0.0.2",
+                "node-ready:prod-worker-1",
+            ],
+        )
+        self.assertNotIn("talos-revision:10.0.0.2", operations)
+        self.assertNotIn("root-patch", operations)
+        self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
+
     def test_talos_failure_prevents_kubernetes_credential_mutation(self) -> None:
         """Stop before Flux fan-out when any node cannot accept or use auth."""
-        for operation in ("auth", "pull", "revision"):
+        for operation in ("auth", "reboot", "pull", "revision"):
             with self.subTest(operation=operation):
                 result = self._run_helper(
                     self._valid_config(),
