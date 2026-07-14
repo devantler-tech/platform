@@ -487,6 +487,86 @@ gh secret set TALOS_CONFIG --env prod --repo devantler-tech/platform < ~/.talos/
 
 ---
 
+## Scenario 10 — GHCR pull-credential rotation
+
+The ghcr.io pull credential lives in **two places that behave very differently**,
+and the node one is the trap:
+
+| Copy | Consumer | Picks up a new token… |
+|---|---|---|
+| OpenBao `infrastructure/ghcr/auth` → `ghcr-auth` / `ksail-registry-credentials` Secrets | Flux (OCI artifacts), per-pod `imagePullSecrets`, Kyverno | automatically, on ExternalSecret re-sync |
+| Talos `machine.registries` / `RegistryAuthConfig` → containerd | **every node-level image pull** | **only when the node REBOOTS** |
+
+containerd loads registry auth from its static config **once, at process start**.
+Talos re-renders `/etc/cri/conf.d/01-registries.part` the moment the config
+changes, but it does not restart containerd — and it will not let you:
+
+```console
+$ talosctl service cri restart
+error: service "cri" doesn't support restart operation via API
+```
+
+So after a rotation the new token is on disk, correct and **inert**, while the
+running containerd keeps presenting the revoked one.
+
+**Why this is a silent, delayed outage.** A revoked credential is *worse than no
+credential*: ghcr.io answers bad basic-auth with `403 DENIED` on the token
+exchange instead of falling back to anonymous, so even **public** packages stop
+pulling. But images already cached on a node are never re-pulled — so every
+running workload stays up and the cluster looks green. Only a **fresh** pull
+fails, i.e. an upgrade, and Helm then times out and **rolls back**, deleting the
+failed pods. (2026-07-14: `ksail-operator` sat four releases behind for over a
+day, every ReplicaSet since v7.168.0 at 0 replicas, with no alert.)
+
+```bash
+# 1. Mint the new PAT (classic, scope: read:packages only). Do NOT revoke the
+#    old one yet -- both must work during the roll.
+
+# 2. Update the single source of truth + the org secret used by the deploy.
+kubectl -n openbao exec openbao-0 -- \
+  bao kv put secret/infrastructure/ghcr/auth username=<user> password=<new-pat>
+gh secret set GHCR_TOKEN --org devantler-tech --body '<new-pat>'
+
+# 3. Let the deploy (`ksail cluster update`) push the new token into each node's
+#    machine config, then confirm it actually landed on disk:
+talosctl --nodes <node-ip> read /etc/cri/conf.d/01-registries.part   # new token?
+
+# 4. THE OPERATIVE STEP -- roll a reboot so containerd reloads it. One node at a
+#    time; workers first, then control planes (watch etcd quorum between each).
+talosctl --nodes <node-ip> reboot
+kubectl get node <name> -w                       # wait Ready before the next
+talosctl --nodes <node-ip> service cri           # PID/uptime must have reset
+
+# 5. Verify a REAL pull end-to-end (static config being correct proves nothing --
+#    it was correct throughout the incident). Force a fresh pull of an image that
+#    is NOT cached on that node and confirm it starts:
+kubectl -n <ns> rollout restart deploy/<some-first-party-deploy>
+kubectl get pods -A | grep -E 'ImagePullBackOff|ErrImagePull'   # expect none
+
+# 6. Only now revoke the old PAT in GitHub.
+```
+
+**Verifying whether nodes are currently stale** (do this after any rotation, and
+first whenever an upgrade mysteriously rolls back):
+
+```bash
+# Does the token containerd actually holds still work?
+TOK=$(talosctl --nodes <node-ip> read /etc/cri/conf.d/01-registries.part \
+        | grep -oE 'ghp_[A-Za-z0-9]+' | head -1)
+curl -s -o /dev/null -w '%{http_code}\n' -u "<user>:$TOK" \
+  'https://ghcr.io/token?service=ghcr.io&scope=repository:devantler-tech/ksail:pull'
+# 200 = good. 403 = revoked credential -> that node cannot pull ANY ghcr.io image.
+
+# A containerd older than the last rotation is a stale node, by definition:
+talosctl --nodes <node-ip> service cri | grep Process   # started ... ago
+```
+
+> Node **creation** is unaffected: a freshly booted node (including an
+> autoscaled one) reads the current config at start, so scale-out and node
+> replacement always get the right token. Only **long-running** nodes go stale.
+
+---
+
 ## Related documents
 
 - [Cryptographic custody](./crypto-custody.md) — per-artifact threat model for SOPS keys, Talos PKI, OpenBao seal, cosign identity

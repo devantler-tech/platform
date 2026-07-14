@@ -31,15 +31,40 @@
 # ksail.prod.yaml; local/CI uses talos-local/, which carries no
 # ImageVerificationConfig.
 #
-# CAVEAT — applying to EXISTING nodes: ksail's `cluster update` diff only tracks
-# node count / Talos version / ISO, so a machine-config-only change like this is
-# NOT pushed to already-running nodes (it reports "No changes detected"). This
-# patch makes every node correct-by-construction on create/recreate (and the
-# autoscaler's rendered worker config); to apply it to nodes that are already up,
-# patch them once out-of-band, e.g.:
-#   talosctl --nodes <node-ips> patch mc --patch @<this file, ${GHCR_TOKEN} filled>
-# (registries is a no-reboot field), then restart any pod stuck in
-# ImagePullBackOff. See docs/dr/runbook.md.
+# CAVEAT — ROTATING this credential requires a ROLLING NODE REBOOT. Writing the
+# new token to a node's machine config is NOT enough, and patching pods is
+# useless. containerd reads registry auth
+# (plugins.'io.containerd.cri.v1.images'.registry.configs.'ghcr.io'.auth) from
+# its STATIC config, which it loads ONCE at process start. Talos re-renders that
+# file (/etc/cri/conf.d/01-registries.part) as soon as the config changes, but it
+# will NOT restart containerd for you — and it refuses to let you do it either:
+#   $ talosctl service cri restart
+#   error: service "cri" doesn't support restart operation via API
+# So a rotated token sits on disk, correct and inert, while the running containerd
+# keeps presenting the OLD one until the node reboots.
+#
+# This is worse than it sounds, because a REVOKED credential is worse than NO
+# credential: ghcr.io answers bad basic-auth with 403 DENIED on the token
+# exchange rather than falling back to anonymous, so a stale token breaks pulls of
+# PUBLIC packages too (ghcr.io/devantler-tech/ksail is public) — every ghcr.io
+# pull on that node fails:
+#   failed to authorize: failed to fetch oauth token: unexpected status from GET
+#   request to https://ghcr.io/token?...&service=ghcr.io: 403 Forbidden
+#
+# And it fails SILENTLY: images already cached on a node are never re-pulled, so
+# every running workload stays up and the cluster looks green. Only a FRESH pull
+# breaks — i.e. an upgrade — and Helm then times out and rolls back, restoring the
+# last-good release and deleting the evidence. The 2026-07-14 incident: the
+# ksail-operator sat four releases behind (v7.167.0 while v7.169.2 was current)
+# with every ReplicaSet since v7.168.0 at 0 replicas, for over a day, with no
+# alert.
+#
+# To rotate: see "Scenario 10 — GHCR pull-credential rotation" in
+# docs/dr/runbook.md. The short version is that the reboot is the operative step.
+#
+# NOTE — on create/recreate (and for the autoscaler's rendered worker config) a
+# node is correct-by-construction: it boots with the current token, so scale-out
+# and node replacement are unaffected. Only LONG-RUNNING nodes go stale.
 #
 # Reference:
 #   https://docs.siderolabs.com/talos/v1.13/reference/configuration/network/registriesconfig/

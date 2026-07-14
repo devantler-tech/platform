@@ -5,15 +5,31 @@
 # server-side apply, an unresolved dependency, or a child resource that never
 # goes Ready under a wait:true Kustomization.
 #
-# Watching every Kustomization at error severity catches the whole class: the
+# Watching every Kustomization at error severity catches most of the class: the
 # four top-level health gates (bootstrap → infrastructure-controllers →
-# infrastructure → apps) wait on their children, so a failed controller / app /
-# HelmRelease surfaces as its parent Kustomization going NotReady → an error
-# event here → Slack. Event-driven (no polling pod, so nothing for the kubescape
-# scan to flag) and posting to the same channel as the Coroot alerts.
+# infrastructure → apps) wait on their children, so a failed controller / app
+# surfaces as its parent Kustomization going NotReady → an error event here →
+# Slack. Event-driven (no polling pod, so nothing for the kubescape scan to
+# flag) and posting to the same channel as the Coroot alerts.
+#
+# HelmRelease is watched DIRECTLY, and not left to that parent-Kustomization
+# gate, because a failing HelmRelease can stay INVISIBLE to it. With Helm
+# remediation enabled, a failed upgrade is ROLLED BACK to the last-good release
+# — after which the HelmRelease is legitimately Ready again, its parent
+# Kustomization stays healthy, and nothing ever pages. The release simply stops
+# advancing, silently, forever.
+#
+# That is not hypothetical: on 2026-07-14 the ksail-operator HelmRelease failed
+# its upgrade and rolled back on every attempt for over a day (stuck four
+# releases behind, every ReplicaSet since v7.168.0 at 0 replicas, because the
+# nodes' ghcr.io credential was stale — see
+# talos/cluster/authenticate-ghcr-pulls.yaml). Prod looked green the whole time
+# and no alert fired. Watching HelmRelease routes helm-controller's own error
+# events (upgrade failed / retries exhausted / rollback) instead of depending on
+# a health gate that a successful rollback deliberately satisfies.
 #
 # notification-controller dedupes + rate-limits, so a persistently-failing
-# Kustomization pages once, not every reconcile.
+# resource pages once, not every reconcile.
 apiVersion: notification.toolkit.fluxcd.io/v1beta3
 kind: Alert
 metadata:
@@ -25,5 +41,7 @@ spec:
   eventSeverity: error
   eventSources:
     - kind: Kustomization
+      name: "*"
+    - kind: HelmRelease
       name: "*"
   summary: "Flux reconciliation error — prod platform"
