@@ -113,7 +113,8 @@ spec:
 	}
 }
 
-// TestGenerateNoMatchIsClusterWide verifies an omitted match targets every namespace.
+// TestGenerateNoMatchIsClusterWide verifies an omitted match targets every
+// resource, including cluster-scoped resources that have no namespace.
 func TestGenerateNoMatchIsClusterWide(t *testing.T) {
 	dir := writeCSE(t, `
 kind: ClusterSecurityException
@@ -130,8 +131,49 @@ spec:
 		t.Fatalf("generate: %v", err)
 	}
 
-	if got := policies[0].Resources[0].Attributes["namespace"]; got != ".*" {
-		t.Errorf("namespace = %q, want .* (cluster-wide default)", got)
+	attributes := policies[0].Resources[0].Attributes
+	if got := attributes["kind"]; got != ".*" {
+		t.Errorf("kind = %q, want .* (resource-wide default)", got)
+	}
+
+	if _, ok := attributes["namespace"]; ok {
+		t.Error("cluster-wide default must not require a namespace")
+	}
+}
+
+// TestGenerateFrameworkScopedPosture verifies a CSE framework constraint is
+// preserved in Kubescape's native posture policy instead of being widened.
+func TestGenerateFrameworkScopedPosture(t *testing.T) {
+	dir := writeCSE(t, `
+kind: ClusterSecurityException
+metadata:
+  name: nsa-only
+spec:
+  posture:
+    - frameworkName: NSA
+      controlID: C-0030
+      action: ignore
+`)
+
+	policies, err := generate(dir)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	rendered, err := render(policies)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	var got []struct {
+		PosturePolicies []map[string]string `json:"posturePolicies"`
+	}
+	if err := json.Unmarshal(rendered, &got); err != nil {
+		t.Fatalf("unmarshal rendered policy: %v", err)
+	}
+
+	if framework := got[0].PosturePolicies[0]["frameworkName"]; framework != "^NSA$" {
+		t.Errorf("frameworkName = %q, want ^NSA$", framework)
 	}
 }
 
@@ -201,6 +243,16 @@ spec:
   posture: [{controlID: C-0002, action: alert}]
 `,
 			want: "unsupported posture action",
+		},
+		"expiration cannot be silently dropped": {
+			body: `
+kind: ClusterSecurityException
+metadata: {name: temporary}
+spec:
+  expiresAt: "2026-12-01T00:00:00Z"
+  posture: [{controlID: C-0002, action: ignore}]
+`,
+			want: "spec.expiresAt cannot be preserved",
 		},
 		"unknown match key": {
 			body: `

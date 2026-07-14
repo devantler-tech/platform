@@ -51,7 +51,8 @@ type designator struct {
 
 // posturePolicy identifies one Kubescape control excluded by a policy.
 type posturePolicy struct {
-	ControlID string `json:"controlID"`
+	ControlID     string `json:"controlID"`
+	FrameworkName string `json:"frameworkName,omitempty"`
 }
 
 // policy is Kubescape's native PostureExceptionPolicy representation.
@@ -283,10 +284,12 @@ func resolveMatch(match map[string]any, path, name string) ([]designator, error)
 		return convertNamespaceSelector(selector, path, name)
 	}
 
-	// No match => the exception applies cluster-wide for its controls.
+	// No match => the exception applies to every resource for its controls.
+	// Matching on kind, which every Kubernetes resource has, also covers
+	// cluster-scoped resources that do not carry a namespace.
 	return []designator{{
 		DesignatorType: designatorTypeAttr,
-		Attributes:     map[string]string{"namespace": ".*"},
+		Attributes:     map[string]string{"kind": ".*"},
 	}}, nil
 }
 
@@ -305,6 +308,9 @@ func convertDocument(doc any, path string) (*policy, error) {
 	}
 
 	spec, _ := document["spec"].(map[string]any)
+	if _, ok := spec["expiresAt"]; ok {
+		return nil, cseErrorf(path, name, "spec.expiresAt cannot be preserved in Kubescape exceptions")
+	}
 
 	posture, err := asMapSlice(spec["posture"], path, name, "spec.posture")
 	if err != nil || len(posture) == 0 {
@@ -328,7 +334,21 @@ func convertDocument(doc any, path string) (*policy, error) {
 			return nil, err
 		}
 
-		policies = append(policies, posturePolicy{ControlID: anchored})
+		converted := posturePolicy{ControlID: anchored}
+
+		if _, ok := control["frameworkName"]; ok {
+			frameworkName, err := stringField(control, "frameworkName", path, name)
+			if err != nil {
+				return nil, err
+			}
+
+			converted.FrameworkName, err = anchor(frameworkName, path, name)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		policies = append(policies, converted)
 	}
 
 	match := map[string]any{}
