@@ -29,7 +29,7 @@ jobs:
           fetch-depth: 0
 
       - name: ⚙️ Setup Go
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
@@ -169,7 +169,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.167.0"
+          KSAIL_VERSION: "7.169.2"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp

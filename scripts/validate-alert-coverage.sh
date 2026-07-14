@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Fail if a HelmRelease lives in a namespace the reconciliation Alert does not watch.
+# Fail if a Flux HelmRelease or Kustomization lives in a namespace the reconciliation
+# Alert does not watch.
 #
 # notification-controller has NO namespace wildcard: it defaults an omitted
 # eventSources[].namespace to the Alert's own namespace and then matches on strict
@@ -8,11 +9,12 @@
 #   if source.Namespace == "" { source.Namespace = alert.Namespace }
 #   if event.InvolvedObject.Namespace != source.Namespace || ... { return false }
 #
-# `name: "*"` wildcards the NAME only. So every namespace holding a HelmRelease has
-# to be listed explicitly in the Alert, and that list drifts the moment someone adds
-# a HelmRelease in a new namespace.
+# `name: "*"` wildcards the NAME only. So every namespace holding a watched resource
+# has to be listed explicitly in the Alert, and that list drifts the moment someone
+# adds one in a new namespace. This applies to BOTH kinds: the cluster Kustomizations
+# live in flux-system, but each tenant has its own Kustomization in its own namespace.
 #
-# An uncovered namespace is invisible: the HelmRelease reconciles, fails, rolls back,
+# An uncovered namespace is invisible: the resource reconciles, fails, rolls back,
 # reports Ready — and no alert ever fires. That silent-rollback blindness is exactly
 # what the Alert exists to prevent (2026-07-14: ksail-operator sat four releases
 # behind for over a day with prod looking green), so drift is a CI failure, not a
@@ -22,6 +24,10 @@ set -euo pipefail
 
 readonly ALERT_FILE="k8s/providers/hetzner/infrastructure/flux-notifications/alert.yaml"
 readonly LAYERS=(
+  # The cluster overlay: it is where the four Flux Kustomizations that drive every
+  # other layer are declared, so leaving it out would make flux-system look like a
+  # namespace holding no Kustomization at all.
+  "k8s/clusters/prod"
   "k8s/providers/hetzner/bootstrap"
   "k8s/providers/hetzner/infrastructure/controllers"
   "k8s/providers/hetzner/infrastructure"
@@ -41,41 +47,59 @@ done
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
-declared="${work_dir}/declared.txt"
-watched="${work_dir}/watched.txt"
+rendered="${work_dir}/rendered.yaml"
 
-# Every namespace that actually contains a HelmRelease, rendered from Git.
+# Render every layer once; both kinds are then read from the same output.
 for layer in "${LAYERS[@]}"; do
   [[ -f "${layer}/kustomization.yaml" ]] || continue
-  kubectl kustomize "${layer}" 2>/dev/null \
-    | yq ea 'select(.kind == "HelmRelease") | .metadata.namespace' - 2>/dev/null
-done | grep -vE '^null$|^---$|^$' | LC_ALL=C sort -u > "${declared}"
+  kubectl kustomize "${layer}" 2>/dev/null || true
+  echo '---'
+done > "${rendered}"
 
-if [[ ! -s "${declared}" ]]; then
-  echo "::error::Rendered no HelmReleases at all — the overlays failed to build, so coverage cannot be proven. Failing closed."
-  exit 1
-fi
+for kind in HelmRelease Kustomization; do
+  declared="${work_dir}/declared-${kind}.txt"
+  watched="${work_dir}/watched-${kind}.txt"
 
-# Every namespace the Alert watches for HelmRelease events.
-yq e '.spec.eventSources[] | select(.kind == "HelmRelease") | .namespace' "${ALERT_FILE}" \
-  | grep -vE '^null$|^$' | LC_ALL=C sort -u > "${watched}"
+  # Only the Flux kinds count. A `kind: Kustomization` in the kustomize.config.k8s.io
+  # API group is a build input, not a Flux resource — never alert on it.
+  case "${kind}" in
+    HelmRelease) group="helm.toolkit.fluxcd.io" ;;
+    Kustomization) group="kustomize.toolkit.fluxcd.io" ;;
+    *)
+      echo "::error::Unknown watched kind ${kind}."
+      exit 64
+      ;;
+  esac
 
-uncovered="$(comm -23 "${declared}" "${watched}")"
-if [[ -n "${uncovered}" ]]; then
-  echo "::error::The reconciliation Alert does not watch every namespace holding a HelmRelease."
-  echo "A HelmRelease in an unwatched namespace can fail, roll back and report Ready — silently, with no alert."
-  echo "Add a HelmRelease eventSource for each namespace below to ${ALERT_FILE}:"
-  while read -r ns; do
-    [[ -n "${ns}" ]] && printf '    - kind: HelmRelease\n      name: "*"\n      namespace: %s\n' "${ns}"
-  done <<< "${uncovered}"
-  exit 1
-fi
+  yq ea "select(.kind == \"${kind}\" and (.apiVersion | test(\"^${group}/\"))) | .metadata.namespace" \
+    "${rendered}" 2>/dev/null \
+    | grep -vE '^null$|^---$|^$' | LC_ALL=C sort -u > "${declared}"
 
-# A listed-but-empty namespace never matches anything: harmless, but it is dead
-# config, so say so without failing the build.
-stale="$(comm -13 "${declared}" "${watched}" || true)"
-if [[ -n "${stale}" ]]; then
-  echo "::warning::The Alert watches namespaces that hold no HelmRelease (dead entries): $(echo "${stale}" | tr '\n' ' ')"
-fi
+  if [[ ! -s "${declared}" ]]; then
+    echo "::error::Rendered no ${kind}s at all — the overlays failed to build, so coverage cannot be proven. Failing closed."
+    exit 1
+  fi
 
-echo "✅ Alert covers all $(wc -l < "${declared}" | tr -d ' ') namespaces holding a HelmRelease."
+  yq e ".spec.eventSources[] | select(.kind == \"${kind}\") | .namespace" "${ALERT_FILE}" \
+    | grep -vE '^null$|^$' | LC_ALL=C sort -u > "${watched}"
+
+  uncovered="$(comm -23 "${declared}" "${watched}")"
+  if [[ -n "${uncovered}" ]]; then
+    echo "::error::The reconciliation Alert does not watch every namespace holding a ${kind}."
+    echo "A ${kind} in an unwatched namespace can fail, roll back and report Ready — silently, with no alert."
+    echo "Add a ${kind} eventSource for each namespace below to ${ALERT_FILE}:"
+    while read -r ns; do
+      [[ -n "${ns}" ]] && printf '    - kind: %s\n      name: "*"\n      namespace: %s\n' "${kind}" "${ns}"
+    done <<< "${uncovered}"
+    exit 1
+  fi
+
+  # A listed-but-empty namespace never matches anything: harmless, but it is dead
+  # config, so say so without failing the build.
+  stale="$(comm -13 "${declared}" "${watched}" || true)"
+  if [[ -n "${stale}" ]]; then
+    echo "::warning::The Alert watches namespaces that hold no ${kind} (dead entries): $(echo "${stale}" | tr '\n' ' ')"
+  fi
+
+  echo "✅ Alert covers all $(wc -l < "${declared}" | tr -d ' ') namespaces holding a ${kind}."
+done

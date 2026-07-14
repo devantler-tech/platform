@@ -38,6 +38,7 @@ readonly SYNC_INTERVAL="${FLUX_GHCR_SYNC_INTERVAL:-2}"
 KSAIL_OPERATOR_VERSION="$(yq -er '.spec.chart.spec.version' \
   k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml)"
 readonly KSAIL_OPERATOR_VERSION
+readonly KSAIL_OPERATOR_IMAGE="ghcr.io/devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
 # Both tenant release workflows create/update latest alongside every semver
 # artifact and image tag. Flux still selects the signed semver artifact; latest
 # is the stable read-permission/existence probe for the same private packages.
@@ -81,7 +82,6 @@ talos_revision_patch_file="${work_dir}/talos-registry-revision.json"
 talos_result_file="${work_dir}/talos-result.txt"
 talos_nodes_file="${work_dir}/talos-nodes.json"
 talos_node_targets="${work_dir}/talos-node-targets.tsv"
-ksail_operator_deployment="${work_dir}/ksail-operator-deployment.json"
 
 # Force an ESO resource to reconcile and observe a post-annotation Ready edge.
 force_sync_resource() {
@@ -168,9 +168,23 @@ verify_consumer_secret() {
 # Every control plane OTHER than the named one must be Ready before we take it
 # down. etcd tolerates exactly one member down in a 3-member cluster, so rebooting
 # a second one drops quorum and takes the API server with it.
+#
+# The readiness snapshot is re-taken per node, not read from the one captured
+# before the roll started: an earlier node's reboot can leave a peer NotReady
+# while it settles, and a stale snapshot would wave that through.
 other_control_planes_ready() {
   local rebooting="$1"
   local unready
+  local live_nodes_file="${work_dir}/control-plane-health-${rebooting}.json"
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get nodes \
+    --output json \
+    >"${live_nodes_file}" 2>/dev/null; then
+    echo "Could not re-read node health before rebooting ${rebooting}."
+    return 1
+  fi
 
   unready="$(jq -r --arg rebooting "${rebooting}" '
     .items[]
@@ -183,7 +197,7 @@ other_control_planes_ready() {
           | length == 0
       )
     | .metadata.name
-  ' "${talos_nodes_file}")"
+  ' "${live_nodes_file}")"
 
   if [[ -n "${unready}" ]]; then
     echo "Control planes not Ready: $(echo "${unready}" | tr '\n' ' ')"
@@ -191,12 +205,38 @@ other_control_planes_ready() {
   fi
 }
 
-# Apply Git/SOPS auth to stale Talos nodes, prove an exact image pull, and only
-# then record the non-secret revision marker that makes the operation retryable.
+# True when the node is already cordoned. `talosctl reboot --drain` cordons and
+# drains, then UNCORDONS on the way out (Talos defers uncordonNodes), so a node
+# an operator had deliberately cordoned would come back schedulable. Remember the
+# pre-existing cordon and restore it after the reboot.
+node_is_cordoned() {
+  local node_name="$1"
+
+  [[ "$(kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get node "${node_name}" \
+    --output jsonpath='{.spec.unschedulable}' 2>/dev/null)" == "true" ]]
+}
+
+# Talos returns gRPC NotFound with the exact image reference when that image is
+# already absent from the selected runtime namespace. Match both so transport,
+# authorization, and unrelated removal failures remain fatal.
+talos_image_remove_reports_absent() {
+  local result_file="$1"
+  local operator_image="$2"
+
+  LC_ALL=C grep -Fq -- \
+    "rpc error: code = NotFound desc = image ${operator_image} not found" \
+    "${result_file}"
+}
+
+# Apply Git/SOPS auth to stale Talos nodes, reboot them so containerd actually
+# adopts the credential, prove an uncached pull of the declared incoming image,
+# and only then record its non-secret revision+image proof markers so either
+# credential or target changes trigger verification.
 sync_talos_registry_auth() {
   local desired_revision="$1"
-  local operator_image="ghcr.io/devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
-  local image_reference
+  local operator_image="$2"
   local node_name
   local node_ip
   local node_role
@@ -231,13 +271,19 @@ sync_talos_registry_auth() {
     return 1
   fi
 
-  if ! jq -r --arg revision "${desired_revision}" '
+  if ! jq -r \
+    --arg revision "${desired_revision}" \
+    --arg image "${operator_image}" '
     .items[]
     | select(
         (.metadata.annotations[
           "platform.devantler.tech/ghcr-pull-verified-revision"
         ] // "")
           != $revision
+        or (.metadata.annotations[
+          "platform.devantler.tech/ghcr-pull-verified-image"
+        ] // "")
+          != $image
       )
     | (.metadata.labels // {}) as $labels
     | [
@@ -263,40 +309,6 @@ sync_talos_registry_auth() {
   # current ciphertext revision has been proved on every node.
   if [[ ! -s "${talos_node_targets}" ]]; then
     return 0
-  fi
-
-  if ! kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace ksail-operator \
-    get deployment ksail-operator \
-    --ignore-not-found \
-    -o json \
-    > "${ksail_operator_deployment}"; then
-    echo "::error::Could not determine the exact live KSail operator image."
-    return 1
-  fi
-  if [[ -s "${ksail_operator_deployment}" ]]; then
-    if ! operator_image="$(jq -er '
-      [.spec.template.spec.containers[]? | select(.name == "operator") | .image]
-      | if length == 1 then .[0] else error("expected one operator image") end
-    ' "${ksail_operator_deployment}")"; then
-      echo "::error::The live ksail-operator Deployment does not expose one expected first-party image."
-      return 1
-    fi
-  elif [[ "${allow_incomplete_fanout}" != "true" ]]; then
-    echo "::error::The live ksail-operator Deployment is absent outside explicit DR bootstrap mode."
-    return 1
-  fi
-
-  if [[ "${operator_image}" == ghcr.io/devantler-tech/ksail:* ]]; then
-    image_reference="${operator_image##*:}"
-    if [[ -z "${image_reference}" || "${image_reference}" == "latest" ]]; then
-      echo "::error::The KSail operator verification image must use an exact non-latest tag or digest."
-      return 1
-    fi
-  elif ! [[ "${operator_image}" =~ ^ghcr\.io/devantler-tech/ksail@sha256:[0-9a-f]{64}$ ]]; then
-    echo "::error::The KSail operator verification image must be the expected first-party package."
-    return 1
   fi
 
   : > "${talos_result_file}"
@@ -365,12 +377,23 @@ sync_talos_registry_auth() {
     #
     # etcd tolerates exactly one control plane down in a 3-member cluster. This
     # loop is serial and control planes sort last, but a control plane that was
-    # ALREADY unhealthy before this run would make our reboot the second one down
-    # and drop quorum. Prove the others are Ready first.
+    # ALREADY unhealthy before this run — or one left NotReady by the reboot of
+    # an earlier node in this very loop — would make our reboot the second one
+    # down and drop quorum. Prove the others are Ready first, against a freshly
+    # re-read snapshot.
     if [[ "${node_role}" == "1" ]] \
       && ! other_control_planes_ready "${node_name}"; then
       echo "::error::Refusing to reboot control plane ${node_name} for the GHCR auth refresh: another control plane is not Ready, so rebooting this one risks etcd quorum."
       return 1
+    fi
+
+    # `reboot --drain` cordons, drains, and then UNCORDONS the node on the way
+    # out. A node an operator had already cordoned (maintenance, investigation,
+    # autoscaler scale-down) must not silently come back schedulable because we
+    # rebooted it for a credential refresh — remember the cordon and restore it.
+    local was_cordoned=0
+    if node_is_cordoned "${node_name}"; then
+      was_cordoned=1
     fi
 
     # --drain cordons the node and evicts its pods under PodDisruptionBudget
@@ -394,6 +417,32 @@ sync_talos_registry_auth() {
       return 1
     fi
 
+    if [[ "${was_cordoned}" == "1" ]]; then
+      if ! kubectl \
+        --context "${KUBE_CONTEXT}" \
+        cordon "${node_name}" \
+        >"${talos_result_file}" 2>&1; then
+        echo "::error::Talos node ${node_name} was cordoned before its GHCR auth reboot but could not be re-cordoned afterwards."
+        return 1
+      fi
+      echo "Restored the pre-existing cordon on ${node_name}."
+    fi
+
+    # A cached image can make a pull look healthy without proving that the
+    # node's runtime can authenticate to GHCR. Remove the incoming exact target
+    # first so the following pull must complete a registry round-trip.
+    if ! talosctl \
+      --nodes "${node_ip}" \
+      image remove "${operator_image}" \
+      --namespace cri \
+      >"${talos_result_file}" 2>&1; then
+      if ! talos_image_remove_reports_absent \
+        "${talos_result_file}" "${operator_image}"; then
+        echo "::error::Talos node ${node_name} could not remove the cached incoming KSail image before GHCR verification."
+        return 1
+      fi
+    fi
+
     # Credential validity against GHCR (see the caveat above: this is not, on
     # its own, proof that containerd is using it — the reboot is).
     if ! talosctl \
@@ -401,7 +450,7 @@ sync_talos_registry_auth() {
       image pull "${operator_image}" \
       --namespace cri \
       >"${talos_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} could not pull the exact live KSail image after its auth refresh."
+      echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image after its auth refresh."
       return 1
     fi
 
@@ -509,17 +558,20 @@ jq '
 ' "${credentials_file}" > "${talos_auth_patch_file}"
 pull_revision="$(flux_ghcr_revision "${SECRET_FILE}")"
 readonly pull_revision
-jq -n --arg revision "${pull_revision}" '
+jq -n \
+  --arg revision "${pull_revision}" \
+  --arg image "${KSAIL_OPERATOR_IMAGE}" '
   {
     machine: {
       nodeAnnotations: {
-        "platform.devantler.tech/ghcr-pull-verified-revision": $revision
+        "platform.devantler.tech/ghcr-pull-verified-revision": $revision,
+        "platform.devantler.tech/ghcr-pull-verified-image": $image
       }
     }
   }
 ' > "${talos_revision_patch_file}"
 chmod 600 "${talos_auth_patch_file}" "${talos_revision_patch_file}"
-sync_talos_registry_auth "${pull_revision}"
+sync_talos_registry_auth "${pull_revision}" "${KSAIL_OPERATOR_IMAGE}"
 
 # Merge only Secret data fields so ownership metadata survives. The sensitive
 # payload stays in pipes/temp files and never appears in argv or logs.

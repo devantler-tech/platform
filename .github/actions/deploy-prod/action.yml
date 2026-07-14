@@ -43,7 +43,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.167.0"
+        KSAIL_VERSION: "7.169.2"
       run: |
         curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
         tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -141,10 +141,11 @@ runs:
 
     - name: 🔑 Stage Flux and consumer GHCR pull credential
       id: stage_flux_ghcr_auth
-      # Validate all seven packages, synchronize and prove the exact live image
-      # pull on every stale Talos node, then stage and verify the Kubernetes fan-out
-      # BEFORE publishing latest. Every pull consumer has one known-readable
-      # credential before the mutable tag can be observed.
+      # Validate all seven packages, synchronize and prove an uncached pull of
+      # the declared incoming image on every stale Talos node, then stage and
+      # verify the Kubernetes fan-out BEFORE publishing latest. Every pull
+      # consumer has one known-readable credential before the mutable tag can
+      # be observed.
       shell: bash
       run: ./scripts/refresh-flux-ghcr-auth.sh
 

@@ -38,12 +38,18 @@
 # name: "*"` on this flux-system Alert would watch ONLY the 2 HelmReleases in
 # flux-system and miss the other 43 — including ksail-operator, the one that
 # caused the outage. Every namespace holding a HelmRelease must therefore be
-# listed. (Kustomization needs no list: all four Flux Kustomizations live in
-# flux-system, this Alert's own namespace.)
+# listed.
+#
+# The SAME defaulting applies to Kustomization, so it needs the same list: the
+# cluster Kustomizations live in flux-system, but every TENANT has its own
+# Kustomization in its own namespace (wedding-app, ascoachingogvaner,
+# github-config, unifi, aws). A bare `kind: Kustomization, name: "*"` would have
+# watched only flux-system and let a failing tenant reconcile pass silently —
+# exactly the failure mode this alert exists to catch.
 #
 # Enumeration drifts, and a silently-uncovered namespace is the very bug this
 # alert exists to prevent — so scripts/validate-alert-coverage.sh fails CI if a
-# HelmRelease appears in a namespace not listed below.
+# HelmRelease *or a Kustomization* appears in a namespace not listed below.
 #
 # notification-controller dedupes + rate-limits, so a persistently-failing
 # resource pages once, not every reconcile.
@@ -59,6 +65,22 @@ spec:
   eventSources:
     - kind: Kustomization
       name: "*"
+      namespace: flux-system
+    - kind: Kustomization
+      name: "*"
+      namespace: ascoachingogvaner
+    - kind: Kustomization
+      name: "*"
+      namespace: aws
+    - kind: Kustomization
+      name: "*"
+      namespace: github-config
+    - kind: Kustomization
+      name: "*"
+      namespace: unifi
+    - kind: Kustomization
+      name: "*"
+      namespace: wedding-app
     - kind: HelmRelease
       name: "*"
       namespace: actual-budget
