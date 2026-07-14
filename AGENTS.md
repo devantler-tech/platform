@@ -143,12 +143,12 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 1. Merging a PR through the merge queue runs the `deploy-prod` job in `ci.yaml` (the normal path). A direct push to `main` bypasses the queue, so deploy it manually by running the `CD` workflow (`cd.yaml`, `workflow_dispatch`). Both run the same `ksail` steps below.
 2. The `deploy-prod` composite action (shared by both paths) uses `ksail --config ksail.prod.yaml` to target the committed prod config.
 3. `ksail.prod.yaml` has `kustomizationFile: clusters/prod`, so KSail/Flux use `k8s/clusters/prod/kustomization.yaml` as the entry point — no root `k8s/kustomization.yaml` or file rewriting is needed.
-4. `ksail --config ksail.prod.yaml cluster create` (first run) or `cluster update` (subsequent runs) provisions / reconciles the Hetzner servers, Talos, CCM, and CSI.
-5. The bridge decrypts only the Git/SOPS pull credential, performs real OCI manifest reads for all seven private consumers (the Platform and tenant manifest artifacts, both tenant application images, and the KSail plus provider-upjet-unifi packages used by Kyverno verification), updates `variables-base`, force-syncs and verifies the PushSecret plus tenant/Kyverno ExternalSecrets, and only then reasserts root auth — all before a mutable `latest` tag is published. The DR workflow first runs `--check-only` before creating infrastructure, then uses explicit `--allow-incomplete-fanout` bootstrap mode after cluster creation and requires a full bridge pass after Flux converges.
-6. `ksail --config ksail.prod.yaml workload push` packages manifests and pushes them to GHCR.
+4. `scripts/run-ksail-prod-with-pull-auth.sh cluster create|update` provisions / reconciles the Hetzner servers, Talos, CCM, and CSI with the Git/SOPS pull credential; the wrapper also passes a SOPS-ciphertext revision so token-only rotations refresh the Cluster Autoscaler machine template.
+5. The bridge decrypts only the Git/SOPS pull credential and performs real OCI manifest reads for all seven private consumers (the Platform and tenant manifest artifacts, both tenant application images, and the KSail plus provider-upjet-unifi packages used by Kyverno verification). On nodes whose verified revision is stale, it applies Talos `RegistryAuthConfig` workers-first, proves the exact private KSail image pull, and only then records the verified revision. It then updates `variables-base`, force-syncs and verifies the PushSecret plus tenant/Kyverno ExternalSecrets, and finally reasserts root auth — all before a mutable `latest` tag is published. The DR workflow first runs `--check-only` before creating infrastructure, then uses explicit `--allow-incomplete-fanout` bootstrap mode after cluster creation and requires a full bridge pass after Flux converges.
+6. `scripts/run-ksail-prod-with-pull-auth.sh workload push` packages manifests and pushes them with the separate Actions write token.
 7. `scripts/refresh-flux-ghcr-auth.sh --check-only` revalidates the newly-published artifact without mutating the cluster.
-8. `ksail --config ksail.prod.yaml workload reconcile` triggers Flux to sync from the OCI artifact.
-9. After `cluster update`, the full bridge reasserts the Git/SOPS credential in case KSail rewrote its managed root Secret. DR also runs it after an OpenBao raft restore because the snapshot may contain an older GHCR value.
+8. `scripts/run-ksail-prod-with-pull-auth.sh workload reconcile` triggers Flux with Git/SOPS pull auth.
+9. After `cluster update`, the full bridge reasserts every pull path in case a partial update or older managed state was applied. DR also runs it after an OpenBao raft restore because the snapshot may contain an older GHCR value.
 
 **Key differences from local:**
 
@@ -160,7 +160,7 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 ### Dual-Provider Model
 
 - **Local / CI:** `ksail cluster create` → Talos + Docker provider → local OCI registry → `ksail workload push` / `reconcile`.
-- **Production:** `ksail --config ksail.prod.yaml cluster create|update` → Talos + Hetzner provider → Hetzner CCM + CSI installed by KSail → `ksail --config ksail.prod.yaml workload push` to GHCR → `workload reconcile`.
+- **Production:** `scripts/run-ksail-prod-with-pull-auth.sh cluster create|update` → Talos + Hetzner provider → Hetzner CCM + CSI installed by KSail → the same wrapper's `workload push` to GHCR → `workload reconcile`.
 
 ## CI/CD Pipelines
 
@@ -170,11 +170,12 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 
 **Required GitHub Secrets:**
 
-- `GHCR_TOKEN` — long-lived PAT (owner: `devantler`) with `write:packages` scope, used for OCI push/signing and retained for KSail/Talos compatibility. It is **not** the authoritative Flux pull credential.
+- `GHCR_TOKEN` — long-lived PAT (owner: `devantler`) with `write:packages` scope, used only for OCI push/signing. It is **not** a pull credential.
 - `SOPS_AGE_KEY` — Age private key for SOPS secret decryption.
 - `HCLOUD_TOKEN` — Hetzner Cloud API token (read/write), used by the KSail Hetzner provider and by the Hetzner CCM / CSI at runtime.
 
-The authoritative **Flux and tenant** GHCR pull credential is
+The authoritative **production pull** credential for Flux, tenants, Kyverno,
+and Talos hosts is
 `stringData.ghcr_dockerconfigjson` in
 `k8s/bases/bootstrap/secret.enc.yaml`. The deploy bridge refreshes
 `flux-system/ksail-registry-credentials` from that value before Flux must fetch
@@ -187,8 +188,10 @@ after staging `variables-base` while the fan-out is incomplete; DR must run the
 full verifier after Flux converges. A direct credential commit to `main` still
 needs a manual `CD` workflow dispatch because direct pushes bypass the merge-queue
 deploy.
-Talos node registry auth still derives from `GHCR_TOKEN`; consolidating that
-remaining pull path stays tracked by #2613 and the KSail credential work.
+The lifecycle wrapper injects the same username/token into KSail's local
+registry and Talos patches. A non-secret hash of the committed SOPS ciphertext
+is the desired machine-template revision; the bridge stores a separate verified
+revision on each existing node only after an exact image pull succeeds.
 
 **Required GitHub Variables:** none.
 
@@ -323,10 +326,14 @@ With the KSail Hetzner provider the cluster is cattle — rebuild it in place:
 
 ```bash
 export HCLOUD_TOKEN=...
-ksail --config ksail.prod.yaml cluster update   # scales / re-provisions missing nodes
+export WG_SERVER_PRIVATE_KEY=...
+export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt
+export GHCR_TOKEN=...  # publication only
+export GITHUB_ACTOR=devantler
+./scripts/run-ksail-prod-with-pull-auth.sh cluster update
 # For a full rebuild from zero, see docs/dr/runbook.md scenario 4.
-ksail --config ksail.prod.yaml workload push
-ksail --config ksail.prod.yaml workload reconcile
+./scripts/run-ksail-prod-with-pull-auth.sh workload push
+./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
 ```
 
 ### Tool Reinstallation

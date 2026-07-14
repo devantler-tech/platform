@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,8 +15,18 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / "scripts" / "refresh-flux-ghcr-auth.sh"
+KSAIL_PULL_WRAPPER = ROOT / "scripts" / "run-ksail-prod-with-pull-auth.sh"
 ACTION = ROOT / ".github" / "actions" / "deploy-prod" / "action.yml"
 DR_REBUILD = ROOT / ".github" / "workflows" / "dr-rebuild.yaml"
+KSAIL_OPERATOR_HELM_RELEASE = (
+    ROOT
+    / "k8s"
+    / "bases"
+    / "infrastructure"
+    / "controllers"
+    / "ksail-operator"
+    / "helm-release.yaml"
+)
 PROVIDER_UPJET_UNIFI = (
     ROOT
     / "k8s"
@@ -24,6 +35,10 @@ PROVIDER_UPJET_UNIFI = (
     / "infrastructure"
     / "crossplane"
     / "provider-upjet-unifi.yaml"
+)
+TALOS_GHCR_AUTH = ROOT / "talos" / "cluster" / "authenticate-ghcr-pulls.yaml"
+TALOS_GHCR_REVISION = (
+    ROOT / "talos" / "cluster" / "mark-ghcr-pull-revision.yaml"
 )
 
 
@@ -38,14 +53,23 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.bin_dir = self.workspace / "bin"
         self.bin_dir.mkdir()
         self.decrypted_config = self.workspace / "decrypted-config.json"
+        self.encrypted_secret = self.workspace / "secret.enc.yaml"
         self.patch_capture = self.workspace / "patch.json"
         self.variables_patch_capture = self.workspace / "variables-patch.json"
         self.kubectl_called = self.workspace / "kubectl-called"
         self.output_path_log = self.workspace / "ksail-output-path"
         self.registry_read_log = self.workspace / "registry-reads"
         self.fanout_log = self.workspace / "fanout-log"
+        self.talos_log = self.workspace / "talos-log"
+        self.talos_patch_path_log = self.workspace / "talos-patch-path"
+        self.operation_log = self.workspace / "operation-log"
+        self.ksail_token_capture = self.workspace / "ksail-token"
+        self.ksail_username_capture = self.workspace / "ksail-username"
+        self.ksail_revision_capture = self.workspace / "ksail-revision"
+        self.ksail_command_capture = self.workspace / "ksail-command"
         self.sync_state_dir = self.workspace / "sync-state"
         self.sync_state_dir.mkdir()
+        self._write_encrypted_secret("ENC[AES256_GCM,data:fixture-one]")
 
         self._write_executable(
             "ksail",
@@ -53,23 +77,133 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             #!/usr/bin/env bash
             set -euo pipefail
             arguments=" $* "
-            secret_file='k8s/bases/bootstrap/secret.enc.yaml'
             selector='["stringData"]["ghcr_dockerconfigjson"]'
-            [[ "$arguments" == *" workload cipher decrypt $secret_file "* ]]
-            [[ "$arguments" == *" --extract $selector "* ]]
-            output=""
-            while (($#)); do
-              case "$1" in
-                --output)
-                  output="$2"
-                  shift 2
-                  ;;
-                *) shift ;;
+            if [[ "$arguments" == *" workload cipher decrypt "* ]]; then
+              [[ "$arguments" == *" --extract $selector "* ]]
+              output=""
+              while (($#)); do
+                case "$1" in
+                  --output)
+                    output="$2"
+                    shift 2
+                    ;;
+                  *) shift ;;
+                esac
+              done
+              test -n "$output"
+              printf '%s' "$output" > "$KSAIL_OUTPUT_PATH_LOG"
+              cp "$FAKE_DECRYPTED_CONFIG" "$output"
+              exit 0
+            fi
+
+            if [[ "$arguments" == *" --config ksail.prod.yaml cluster create "* \
+              || "$arguments" == *" --config ksail.prod.yaml cluster update "* \
+              || "$arguments" == *" --config ksail.prod.yaml workload push "* \
+              || "$arguments" == *" --config ksail.prod.yaml workload reconcile "* ]]; then
+              test -n "${GHCR_TOKEN:-}"
+              test -n "${GHCR_USERNAME:-}"
+              test "${GHCR_PULL_REVISION:-}" != ""
+              printf '%s' "$GHCR_TOKEN" > "$KSAIL_TOKEN_CAPTURE"
+              printf '%s' "$GHCR_USERNAME" > "$KSAIL_USERNAME_CAPTURE"
+              printf '%s' "$GHCR_PULL_REVISION" > "$KSAIL_REVISION_CAPTURE"
+              printf '%s\n' "$*" > "$KSAIL_COMMAND_CAPTURE"
+              exit 0
+            fi
+
+            echo "unexpected ksail invocation" >&2
+            exit 92
+            """,
+        )
+        self._write_executable(
+            "talosctl",
+            """
+            #!/usr/bin/env bash
+            set -euo pipefail
+            arguments=" $* "
+            node=""
+            patch_file=""
+            previous=""
+            for argument in "$@"; do
+              if [[ "$previous" == --nodes ]]; then
+                node="$argument"
+              fi
+              case "$argument" in
+                --nodes=*) node="${argument#*=}" ;;
+                --patch-file=*) patch_file="${argument#*=}" ;;
               esac
+              previous="$argument"
             done
-            test -n "$output"
-            printf '%s' "$output" > "$KSAIL_OUTPUT_PATH_LOG"
-            cp "$FAKE_DECRYPTED_CONFIG" "$output"
+            test -n "$node"
+
+            if [[ "$arguments" == *" patch machineconfig "* ]]; then
+              [[ "$arguments" == *" --mode=no-reboot "* ]]
+              test -f "$patch_file"
+              printf '%s' "$patch_file" > "$TALOS_PATCH_PATH_LOG"
+              if jq -e '.kind == "RegistryAuthConfig"' "$patch_file" >/dev/null; then
+                jq -e \
+                  --arg username "$EXPECTED_PULL_USERNAME" \
+                  --arg token "$EXPECTED_PULL_TOKEN" '
+                  .apiVersion == "v1alpha1"
+                  and .kind == "RegistryAuthConfig"
+                  and .name == "ghcr.io"
+                  and .username == $username
+                  and .password == $token
+                ' "$patch_file" >/dev/null
+                printf 'talos-auth:%s\n' "$node" >> "$TALOS_LOG"
+                printf 'talos-auth:%s\n' "$node" >> "$OPERATION_LOG"
+                if [[ "$node" == "${FAKE_TALOS_FAIL_NODE:-disabled}" \
+                  && "${FAKE_TALOS_FAIL_OPERATION:-auth}" == auth ]]; then
+                  echo "talos auth failed with $EXPECTED_PULL_TOKEN" >&2
+                  exit 45
+                fi
+                touch "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
+                exit 0
+              fi
+
+              test -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
+              test -f "$FAKE_SYNC_STATE_DIR/talos-pull-${node}"
+              jq -e --arg revision "$EXPECTED_GHCR_REVISION" '
+                .machine.nodeAnnotations[
+                  "platform.devantler.tech/ghcr-pull-verified-revision"
+                ] == $revision
+              ' "$patch_file" >/dev/null
+              printf 'talos-revision:%s\n' "$node" >> "$TALOS_LOG"
+              printf 'talos-revision:%s\n' "$node" >> "$OPERATION_LOG"
+              if [[ "$node" == "${FAKE_TALOS_FAIL_NODE:-disabled}" \
+                && "${FAKE_TALOS_FAIL_OPERATION:-auth}" == revision ]]; then
+                echo "talos revision failed" >&2
+                exit 48
+              fi
+              touch "$FAKE_SYNC_STATE_DIR/talos-revision-${node}"
+              exit 0
+            fi
+
+            if [[ "$arguments" == *" image pull "* ]]; then
+              test -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
+              [[ "$arguments" == *" --namespace cri "* ]]
+              image=""
+              previous=""
+              for argument in "$@"; do
+                if [[ "$previous" == pull ]]; then
+                  image="$argument"
+                  break
+                fi
+                previous="$argument"
+              done
+              test -n "$image"
+              printf 'talos-pull:%s:%s\n' "$node" "$image" >> "$TALOS_LOG"
+              printf 'talos-pull:%s:%s\n' "$node" "$image" >> "$OPERATION_LOG"
+              if [[ "$node" == "${FAKE_TALOS_FAIL_NODE:-disabled}" \
+                && "${FAKE_TALOS_FAIL_OPERATION:-auth}" == pull ]]; then
+                echo "talos pull failed with $EXPECTED_PULL_TOKEN" >&2
+                exit 47
+              fi
+              touch "$FAKE_SYNC_STATE_DIR/talos-pull-${node}"
+              exit 0
+            fi
+
+            echo "unexpected talosctl invocation" >&2
+            exit 93
             """,
         )
         self._write_executable(
@@ -159,8 +293,72 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               esac
               previous="$argument"
             done
-            test -n "$namespace"
             touch "$KUBECTL_CALLED"
+
+            if [[ "$arguments" == *" get nodes "* ]]; then
+              if [[ "${FAKE_NODE_DISCOVERY_FAIL:-false}" == true ]]; then
+                echo 'node discovery failed' >&2
+                exit 46
+              fi
+              if [[ -n "${FAKE_NODE_JSON:-}" ]]; then
+                printf '%s\n' "$FAKE_NODE_JSON"
+                exit 0
+              fi
+              jq -n \
+                --arg revision "$EXPECTED_GHCR_REVISION" \
+                --arg current "${FAKE_TALOS_NODES_CURRENT:-false}" '
+                {
+                  items: [
+                    {
+                      metadata: {
+                        name: "prod-worker-1",
+                        labels: {},
+                        annotations: {
+                          "platform.devantler.tech/ghcr-pull-desired-revision":
+                            $revision
+                        }
+                      },
+                      status: {addresses: [
+                        {type: "InternalIP", address: "10.0.0.2"}
+                      ]}
+                    },
+                    {
+                      metadata: {
+                        name: "prod-control-plane-1",
+                        labels: {
+                          "node-role.kubernetes.io/control-plane": ""
+                        },
+                        annotations: {
+                          "platform.devantler.tech/ghcr-pull-desired-revision":
+                            $revision
+                        }
+                      },
+                      status: {addresses: [
+                        {type: "InternalIP", address: "10.0.0.1"}
+                      ]}
+                    }
+                  ]
+                }
+                | if $current == "true" then
+                    .items[].metadata.annotations[
+                      "platform.devantler.tech/ghcr-pull-verified-revision"
+                    ] = $revision
+                  else . end
+              '
+              exit 0
+            fi
+
+            test -n "$namespace"
+
+            if [[ "$arguments" == *" get deployment ksail-operator "* ]]; then
+              test "$namespace" = ksail-operator
+              if [[ "${FAKE_KSAIL_OPERATOR_DEPLOYMENT_ABSENT:-false}" == true ]]; then
+                exit 0
+              fi
+              printf '{"spec":{"template":{"spec":{"containers":[{"name":"sidecar","image":"public.example/sidecar:latest"},{"name":"operator","image":"%s"}]}}}}\n' \
+                "${FAKE_KSAIL_OPERATOR_IMAGE:-ghcr.io/devantler-tech/ksail:v7.169.0}"
+              exit 0
+            fi
 
             if [[ "$arguments" == *" api-resources "* ]]; then
               [[ "$arguments" == *" --api-group=external-secrets.io "* ]]
@@ -176,6 +374,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               [[ "$arguments" == *" --type=merge "* ]]
               test -n "$patch_file"
               cp "$patch_file" "$PATCH_CAPTURE"
+              printf 'root-patch\n' >> "$OPERATION_LOG"
               if [[ "${FAKE_KUBECTL_FAIL:-false}" == true ]]; then
                 echo 'cluster patch failed' >&2
                 exit 43
@@ -196,6 +395,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               [[ "$arguments" == *" --type=merge "* ]]
               test -n "$patch_file"
               cp "$patch_file" "$VARIABLES_PATCH_CAPTURE"
+              printf 'variables-patch\n' >> "$OPERATION_LOG"
               echo 'secret/variables-base patched'
               exit 0
             fi
@@ -246,6 +446,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             if [[ -n "$kind" && "$arguments" == *" annotate $kind $name "* ]]; then
               resource="$kind/$namespace/$name"
               printf '%s\n' "$resource" >> "$FANOUT_LOG"
+              printf 'fanout:%s\n' "$resource" >> "$OPERATION_LOG"
               marker="$FAKE_SYNC_STATE_DIR/${kind}-${namespace}-${name}"
               touch "${marker}-annotated"
               if [[ "$resource" != "${FAKE_SYNC_STALL_RESOURCE:-disabled}" ]]; then
@@ -276,6 +477,37 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         path.write_text(textwrap.dedent(body).lstrip(), encoding="utf-8")
         path.chmod(0o755)
 
+    def _write_encrypted_secret(self, ciphertext: str) -> None:
+        """Write a non-secret SOPS ciphertext fixture for revision tests."""
+        self.encrypted_ciphertext = ciphertext
+        self.encrypted_secret.write_text(
+            json.dumps(
+                {"stringData": {"ghcr_dockerconfigjson": ciphertext}}
+            ),
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _expected_credentials(config: object) -> tuple[str, str]:
+        """Extract expected credentials from a valid Docker config fixture."""
+        try:
+            registry = config["auths"]["ghcr.io"]  # type: ignore[index]
+            username = registry.get("username")
+            password = registry.get("password")
+            if username and password:
+                return str(username), str(password)
+            decoded = base64.b64decode(registry["auth"]).decode()
+            decoded_username, decoded_password = decoded.split(":", 1)
+            return decoded_username, decoded_password
+        except (KeyError, TypeError, ValueError):
+            return "unused", "unused"
+
+    def _expected_revision(self) -> str:
+        """Match the helper's SHA-256 of the yq-emitted ciphertext scalar."""
+        return hashlib.sha256(
+            f"{self.encrypted_ciphertext}\n".encode()
+        ).hexdigest()
+
     def _run_helper(
         self,
         config: object,
@@ -291,21 +523,40 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             self.output_path_log,
             self.registry_read_log,
             self.fanout_log,
+            self.talos_log,
+            self.talos_patch_path_log,
+            self.operation_log,
+            self.ksail_token_capture,
+            self.ksail_username_capture,
+            self.ksail_revision_capture,
+            self.ksail_command_capture,
         ):
             marker.unlink(missing_ok=True)
         for marker in self.sync_state_dir.iterdir():
             marker.unlink()
+        expected_username, expected_token = self._expected_credentials(config)
         environment = os.environ.copy()
         environment.update(
             {
                 "PATH": f"{self.bin_dir}:{environment['PATH']}",
                 "FAKE_DECRYPTED_CONFIG": str(self.decrypted_config),
+                "FLUX_GHCR_SECRET_FILE": str(self.encrypted_secret),
                 "PATCH_CAPTURE": str(self.patch_capture),
                 "VARIABLES_PATCH_CAPTURE": str(self.variables_patch_capture),
                 "KUBECTL_CALLED": str(self.kubectl_called),
                 "KSAIL_OUTPUT_PATH_LOG": str(self.output_path_log),
                 "REGISTRY_READ_LOG": str(self.registry_read_log),
                 "FANOUT_LOG": str(self.fanout_log),
+                "TALOS_LOG": str(self.talos_log),
+                "TALOS_PATCH_PATH_LOG": str(self.talos_patch_path_log),
+                "OPERATION_LOG": str(self.operation_log),
+                "KSAIL_TOKEN_CAPTURE": str(self.ksail_token_capture),
+                "KSAIL_USERNAME_CAPTURE": str(self.ksail_username_capture),
+                "KSAIL_REVISION_CAPTURE": str(self.ksail_revision_capture),
+                "KSAIL_COMMAND_CAPTURE": str(self.ksail_command_capture),
+                "EXPECTED_PULL_USERNAME": expected_username,
+                "EXPECTED_PULL_TOKEN": expected_token,
+                "EXPECTED_GHCR_REVISION": self._expected_revision(),
                 "FAKE_SYNC_STATE_DIR": str(self.sync_state_dir),
                 "FLUX_GHCR_SYNC_ATTEMPTS": "2",
                 "FLUX_GHCR_SYNC_INTERVAL": "0",
@@ -314,6 +565,49 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         environment.update(environment_overrides)
         return subprocess.run(
             [str(HELPER), *helper_args],
+            cwd=ROOT,
+            env=environment,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def _run_ksail_pull_wrapper(
+        self,
+        config: object,
+        command: tuple[str, ...],
+        **environment_overrides: str,
+    ) -> subprocess.CompletedProcess[str]:
+        """Run a production KSail command through the SOPS pull-auth wrapper."""
+        self.decrypted_config.write_text(json.dumps(config), encoding="utf-8")
+        for marker in (
+            self.output_path_log,
+            self.ksail_token_capture,
+            self.ksail_username_capture,
+            self.ksail_revision_capture,
+            self.ksail_command_capture,
+        ):
+            marker.unlink(missing_ok=True)
+        expected_username, expected_token = self._expected_credentials(config)
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PATH": f"{self.bin_dir}:{environment['PATH']}",
+                "FAKE_DECRYPTED_CONFIG": str(self.decrypted_config),
+                "FLUX_GHCR_SECRET_FILE": str(self.encrypted_secret),
+                "KSAIL_OUTPUT_PATH_LOG": str(self.output_path_log),
+                "KSAIL_TOKEN_CAPTURE": str(self.ksail_token_capture),
+                "KSAIL_USERNAME_CAPTURE": str(self.ksail_username_capture),
+                "KSAIL_REVISION_CAPTURE": str(self.ksail_revision_capture),
+                "KSAIL_COMMAND_CAPTURE": str(self.ksail_command_capture),
+                "EXPECTED_PULL_USERNAME": expected_username,
+                "EXPECTED_PULL_TOKEN": expected_token,
+                "EXPECTED_GHCR_REVISION": self._expected_revision(),
+            }
+        )
+        environment.update(environment_overrides)
+        return subprocess.run(
+            [str(KSAIL_PULL_WRAPPER), *command],
             cwd=ROOT,
             env=environment,
             text=True,
@@ -360,7 +654,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "devantler-tech/ascoachingogvaner/manifests:latest",
                 "devantler-tech/wedding-app:latest",
                 "devantler-tech/ascoachingogvaner:latest",
-                "devantler-tech/ksail:latest",
+                "devantler-tech/ksail:v7.167.0",
                 "devantler-tech/provider-upjet-unifi:v0.1.0",
             ],
         )
@@ -373,6 +667,281 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "externalsecret/kyverno/ghcr-auth",
             ],
         )
+
+    def test_refreshes_talos_auth_before_kubernetes_credential_consumers(self) -> None:
+        """Patch nodes serially and pull the exact live operator image first."""
+        result = self._run_helper(self._valid_config())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected_talos_operations = [
+            "talos-auth:10.0.0.2",
+            "talos-pull:10.0.0.2:ghcr.io/devantler-tech/ksail:v7.169.0",
+            "talos-revision:10.0.0.2",
+            "talos-auth:10.0.0.1",
+            "talos-pull:10.0.0.1:ghcr.io/devantler-tech/ksail:v7.169.0",
+            "talos-revision:10.0.0.1",
+        ]
+        self.assertEqual(
+            self.talos_log.read_text(encoding="utf-8").splitlines(),
+            expected_talos_operations,
+        )
+        self.assertEqual(
+            self.operation_log.read_text(encoding="utf-8").splitlines()[:6],
+            expected_talos_operations,
+        )
+        temporary_patch = Path(
+            self.talos_patch_path_log.read_text(encoding="utf-8")
+        )
+        self.assertFalse(temporary_patch.exists())
+        self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
+
+    def test_talos_failure_prevents_kubernetes_credential_mutation(self) -> None:
+        """Stop before Flux fan-out when any node cannot accept or use auth."""
+        for operation in ("auth", "pull", "revision"):
+            with self.subTest(operation=operation):
+                result = self._run_helper(
+                    self._valid_config(),
+                    FAKE_TALOS_FAIL_NODE="10.0.0.2",
+                    FAKE_TALOS_FAIL_OPERATION=operation,
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.variables_patch_capture.exists())
+                self.assertFalse(self.patch_capture.exists())
+                self.assertFalse(self.fanout_log.exists())
+                self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
+
+    def test_current_talos_nodes_skip_talos_api(self) -> None:
+        """Avoid a Talos availability dependency after this revision is proved."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_TALOS_NODES_CURRENT="true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(self.talos_log.exists())
+        self.assertTrue(self.patch_capture.exists())
+
+    def test_dr_without_operator_uses_exact_declared_image(self) -> None:
+        """Verify stale bootstrap nodes before the operator Deployment exists."""
+        result = self._run_helper(
+            self._valid_config(),
+            ("--allow-incomplete-fanout",),
+            FAKE_KSAIL_OPERATOR_DEPLOYMENT_ABSENT="true",
+            FAKE_VARIABLES_BASE_ABSENT="true",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        pulls = [
+            line
+            for line in self.talos_log.read_text(encoding="utf-8").splitlines()
+            if line.startswith("talos-pull:")
+        ]
+        self.assertEqual(
+            pulls,
+            [
+                "talos-pull:10.0.0.2:ghcr.io/devantler-tech/ksail:v7.167.0",
+                "talos-pull:10.0.0.1:ghcr.io/devantler-tech/ksail:v7.167.0",
+            ],
+        )
+
+    def test_invalid_node_inventory_fails_closed(self) -> None:
+        """Reject empty, duplicate, and ambiguous Talos node InternalIPs."""
+        invalid_inventories = [
+            {"items": []},
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "one"},
+                        "status": {"addresses": []},
+                    }
+                ]
+            },
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "one"},
+                        "status": {
+                            "addresses": [
+                                {"type": "InternalIP", "address": "10.0.0.1"},
+                                {"type": "InternalIP", "address": "10.0.0.2"},
+                            ]
+                        },
+                    }
+                ]
+            },
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "one"},
+                        "status": {"addresses": [
+                            {"type": "InternalIP", "address": "10.0.0.1"}
+                        ]},
+                    },
+                    {
+                        "metadata": {"name": "two"},
+                        "status": {"addresses": [
+                            {"type": "InternalIP", "address": "10.0.0.1"}
+                        ]},
+                    },
+                ]
+            },
+        ]
+        for inventory in invalid_inventories:
+            with self.subTest(inventory=inventory):
+                result = self._run_helper(
+                    self._valid_config(),
+                    FAKE_NODE_JSON=json.dumps(inventory),
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse(self.talos_log.exists())
+                self.assertFalse(self.patch_capture.exists())
+
+    def test_node_discovery_failure_prevents_kubernetes_credential_mutation(self) -> None:
+        """Fail closed before mutation when production nodes cannot be listed."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_NODE_DISCOVERY_FAIL="true",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.talos_log.exists())
+        self.assertFalse(self.variables_patch_capture.exists())
+        self.assertFalse(self.patch_capture.exists())
+
+    def test_ksail_lifecycle_wrapper_uses_only_sops_pull_token(self) -> None:
+        """Run create, reconcile, and update with the decrypted pull token."""
+        self.assertTrue(KSAIL_PULL_WRAPPER.is_file())
+        for command in (
+            ("cluster", "create"),
+            ("workload", "reconcile"),
+            ("cluster", "update"),
+        ):
+            with self.subTest(command=command):
+                result = self._run_ksail_pull_wrapper(self._valid_config(), command)
+
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    self.ksail_token_capture.read_text(encoding="utf-8"),
+                    "fixture-secret-token",
+                )
+                self.assertEqual(
+                    self.ksail_username_capture.read_text(encoding="utf-8"),
+                    "devantler",
+                )
+                self.assertEqual(
+                    self.ksail_command_capture.read_text(encoding="utf-8").strip(),
+                    f"--config ksail.prod.yaml {' '.join(command)}",
+                )
+                self.assertRegex(
+                    self.ksail_revision_capture.read_text(encoding="utf-8"),
+                    r"^[0-9a-f]{64}$",
+                )
+                self.assertNotIn(
+                    "fixture-secret-token",
+                    result.stdout + result.stderr,
+                )
+                temporary_config = Path(
+                    self.output_path_log.read_text(encoding="utf-8")
+                )
+                self.assertFalse(temporary_config.exists())
+
+    def test_ksail_publish_wrapper_preserves_actions_write_token(self) -> None:
+        """Inject only the SOPS revision while preserving publication auth."""
+        result = self._run_ksail_pull_wrapper(
+            self._valid_config(),
+            ("workload", "push"),
+            GITHUB_ACTOR="fixture-publisher",
+            GHCR_TOKEN="fixture-actions-write-token",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.ksail_token_capture.read_text(encoding="utf-8"),
+            "fixture-actions-write-token",
+        )
+        self.assertEqual(
+            self.ksail_username_capture.read_text(encoding="utf-8"),
+            "fixture-publisher",
+        )
+        self.assertRegex(
+            self.ksail_revision_capture.read_text(encoding="utf-8"),
+            r"^[0-9a-f]{64}$",
+        )
+        self.assertNotIn(
+            "fixture-actions-write-token",
+            result.stdout + result.stderr,
+        )
+        self.assertFalse(
+            self.output_path_log.exists(),
+            "publication needs the ciphertext revision but not decryption",
+        )
+
+    def test_lifecycle_preserves_username_from_sops_docker_config(self) -> None:
+        """Avoid hard-coding the pull credential's registry username."""
+        config = self._valid_config()
+        config["auths"]["ghcr.io"]["username"] = "pull-robot"  # type: ignore[index]
+
+        result = self._run_ksail_pull_wrapper(
+            config,
+            ("cluster", "update"),
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            self.ksail_username_capture.read_text(encoding="utf-8"),
+            "pull-robot",
+        )
+
+    def test_ciphertext_rotation_changes_revision_without_hashing_token(self) -> None:
+        """Drive template drift from SOPS ciphertext rather than plaintext auth."""
+        first = self._run_ksail_pull_wrapper(
+            self._valid_config(),
+            ("cluster", "update"),
+        )
+        self.assertEqual(first.returncode, 0, first.stderr)
+        first_revision = self.ksail_revision_capture.read_text(encoding="utf-8")
+
+        self._write_encrypted_secret("ENC[AES256_GCM,data:fixture-two]")
+        second = self._run_ksail_pull_wrapper(
+            self._valid_config(),
+            ("cluster", "update"),
+        )
+        self.assertEqual(second.returncode, 0, second.stderr)
+        second_revision = self.ksail_revision_capture.read_text(encoding="utf-8")
+
+        normalized_plaintext = json.dumps(
+            self._valid_config(), sort_keys=True, separators=(",", ":")
+        )
+        plaintext_hash = hashlib.sha256(
+            f"{normalized_plaintext}\n".encode()
+        ).hexdigest()
+        self.assertNotEqual(first_revision, second_revision)
+        self.assertNotEqual(first_revision, plaintext_hash)
+        self.assertNotEqual(second_revision, plaintext_hash)
+
+    def test_wrapper_rejects_arbitrary_commands(self) -> None:
+        """Never pass the decrypted pull credential to an arbitrary process."""
+        result = self._run_ksail_pull_wrapper(
+            self._valid_config(),
+            ("workload", "delete"),
+        )
+
+        self.assertEqual(result.returncode, 64)
+        self.assertFalse(self.ksail_token_capture.exists())
+
+    def test_plaintext_revision_source_fails_closed(self) -> None:
+        """Refuse to hash a source value that is not SOPS ciphertext."""
+        self._write_encrypted_secret("accidentally-plaintext")
+
+        result = self._run_ksail_pull_wrapper(
+            self._valid_config(),
+            ("cluster", "update"),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.ksail_token_capture.exists())
 
     def test_accepts_standard_auth_only_docker_config(self) -> None:
         """Accept Docker configs that store only the standard encoded auth field."""
@@ -580,19 +1149,92 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
 class DeployActionOrderingTests(unittest.TestCase):
     """Keep credential refreshes on both sides of KSail-owned mutations."""
 
+    def test_cluster_lifecycle_uses_sops_auth_but_publish_keeps_actions_token(
+        self,
+    ) -> None:
+        """Separate KSail pull lifecycle auth from the Actions publish token."""
+        action = ACTION.read_text(encoding="utf-8")
+        workflow = DR_REBUILD.read_text(encoding="utf-8")
+        wrapper = "./scripts/run-ksail-prod-with-pull-auth.sh"
+
+        action_reconcile = action.index("id: reconcile")
+        action_update = action.index("name: 🔄 Update cluster")
+        action_reassert = action.index("id: reassert_flux_ghcr_auth")
+        self.assertIn(
+            f"run: {wrapper} workload reconcile",
+            action[action_reconcile:action_update],
+        )
+        self.assertNotIn("GHCR_TOKEN:", action[action_reconcile:action_update])
+        self.assertIn(
+            f"run: {wrapper} cluster update",
+            action[action_update:action_reassert],
+        )
+        self.assertNotIn("GHCR_TOKEN:", action[action_update:action_reassert])
+
+        action_push = action.index("name: 📦 Push manifests to GHCR")
+        action_sign = action.index("name: ⚙️ Install cosign")
+        self.assertIn(
+            f"run: {wrapper} workload push",
+            action[action_push:action_sign],
+        )
+        self.assertIn(
+            "GHCR_TOKEN: ${{ inputs.ghcr-token }}",
+            action[action_push:action_sign],
+        )
+
+        dr_create = workflow.index("name: 🏗️ Create cluster")
+        dr_stage = workflow.index("id: stage_flux_ghcr_auth")
+        self.assertIn(
+            f"run: {wrapper} cluster create",
+            workflow[dr_create:dr_stage],
+        )
+        self.assertNotIn("GHCR_TOKEN:", workflow[dr_create:dr_stage])
+
+        dr_push = workflow.index("name: 📦 Push manifests to GHCR")
+        dr_verify = workflow.index("id: verify_flux_ghcr_auth_after_push")
+        self.assertIn(
+            f"run: {wrapper} workload push",
+            workflow[dr_push:dr_verify],
+        )
+        self.assertIn(
+            "GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}",
+            workflow[dr_push:dr_verify],
+        )
+
+        dr_reconcile = workflow.index("name: 🔁 Trigger Flux reconciliation")
+        dr_wait = workflow.index("name: ⏳ Wait for Flux to settle")
+        self.assertIn(
+            f"run: {wrapper} workload reconcile",
+            workflow[dr_reconcile:dr_wait],
+        )
+        self.assertNotIn("GHCR_TOKEN:", workflow[dr_reconcile:dr_wait])
+
+    def test_talosctl_is_installed_before_any_mutating_bridge(self) -> None:
+        """Ensure both isolated Actions jobs can execute node synchronization."""
+        action = ACTION.read_text(encoding="utf-8")
+        workflow = DR_REBUILD.read_text(encoding="utf-8")
+
+        for document in (action, workflow):
+            with self.subTest(document=document[:40]):
+                setup = document.index("name: ⚙️ Setup talosctl")
+                stage = document.index("id: stage_flux_ghcr_auth")
+                self.assertLess(setup, stage)
+                setup_step = document[setup:stage]
+                self.assertIn("TALOS_VERSION: \"1.13.5\"", setup_step)
+                self.assertIn("talosctl-linux-amd64", setup_step)
+
     def test_consumer_staging_precedes_publish_and_is_reasserted_after_update(
         self,
     ) -> None:
         """Keep full credential staging before publish and after cluster update."""
         action = ACTION.read_text(encoding="utf-8")
+        wrapper = "./scripts/run-ksail-prod-with-pull-auth.sh"
 
         first_refresh = action.index("id: stage_flux_ghcr_auth")
-        push = action.index("run: ksail --config ksail.prod.yaml workload push")
+        push = action.index(f"run: {wrapper} workload push")
         post_push_refresh = action.index("id: verify_flux_ghcr_auth_after_push")
         reconcile = action.index("id: reconcile")
-        cluster_update = action.index(
-            "run: ksail --config ksail.prod.yaml cluster update"
-        )
+        cluster_update = action.index(f"run: {wrapper} cluster update")
         final_refresh = action.index("id: reassert_flux_ghcr_auth\n")
 
         self.assertLess(first_refresh, push)
@@ -629,15 +1271,14 @@ class DeployActionOrderingTests(unittest.TestCase):
     ) -> None:
         """Keep DR credential checks around publish and OpenBao restoration."""
         workflow = DR_REBUILD.read_text(encoding="utf-8")
+        wrapper = "./scripts/run-ksail-prod-with-pull-auth.sh"
 
         preflight = workflow.index(
             "run: ./scripts/refresh-flux-ghcr-auth.sh --check-only"
         )
-        cluster_create = workflow.index(
-            "run: ksail --config ksail.prod.yaml cluster create"
-        )
+        cluster_create = workflow.index(f"run: {wrapper} cluster create")
         stage = workflow.index("id: stage_flux_ghcr_auth")
-        push = workflow.index("run: ksail --config ksail.prod.yaml workload push")
+        push = workflow.index(f"run: {wrapper} workload push")
         verify = workflow.index("id: verify_flux_ghcr_auth_after_push")
         fanout_verify = workflow.index("id: verify_flux_ghcr_fanout")
         openbao_restore = workflow.index(
@@ -646,9 +1287,7 @@ class DeployActionOrderingTests(unittest.TestCase):
         post_restore_verify = workflow.index(
             "id: reassert_flux_ghcr_after_restore"
         )
-        reconcile = workflow.index(
-            "run: ksail --config ksail.prod.yaml workload reconcile"
-        )
+        reconcile = workflow.index(f"run: {wrapper} workload reconcile")
 
         self.assertLess(preflight, cluster_create)
         self.assertLess(cluster_create, stage)
@@ -693,6 +1332,51 @@ class RequiredPackageCoverageTests(unittest.TestCase):
         package_reference = package_line.removeprefix("package: ghcr.io/")
 
         self.assertIn(f'"{package_reference}"', helper)
+
+    def test_exact_declared_ksail_operator_image_is_preflighted(self) -> None:
+        """Bind the GHCR preflight to the chart's exact KSail image version."""
+        release = KSAIL_OPERATOR_HELM_RELEASE.read_text(encoding="utf-8")
+        helper = HELPER.read_text(encoding="utf-8")
+
+        version = next(
+            line.split(":", 1)[1].strip()
+            for line in release.splitlines()
+            if line.strip().startswith("version:")
+        )
+
+        self.assertIn(
+            '"devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"', helper
+        )
+        self.assertIn(".spec.chart.spec.version", helper)
+        self.assertEqual(version, "7.167.0")
+
+
+class TalosRegistryAuthConfigTests(unittest.TestCase):
+    """Keep lifecycle drift and post-pull verification states distinct."""
+
+    def test_static_desired_revision_cannot_claim_verified_pull(self) -> None:
+        """Require helper proof before a new Talos node is considered current."""
+        static_revision = TALOS_GHCR_REVISION.read_text(encoding="utf-8")
+        static_config = "\n".join(
+            line
+            for line in static_revision.splitlines()
+            if not line.lstrip().startswith("#")
+        )
+        helper = HELPER.read_text(encoding="utf-8")
+
+        self.assertIn("ghcr-pull-desired-revision", static_config)
+        self.assertNotIn("ghcr-pull-verified-revision", static_config)
+        self.assertIn("ghcr-pull-verified-revision", helper)
+
+    def test_registry_auth_uses_supported_talos_document(self) -> None:
+        """Use one standalone RegistryAuthConfig document with variable auth."""
+        registry_auth = TALOS_GHCR_AUTH.read_text(encoding="utf-8")
+
+        self.assertIn("kind: RegistryAuthConfig", registry_auth)
+        self.assertIn("username: ${GHCR_USERNAME}", registry_auth)
+        self.assertIn("password: ${GHCR_TOKEN}", registry_auth)
+        self.assertNotIn("machine:\n", registry_auth)
+        self.assertNotIn("\n---\n", registry_auth)
 
 
 if __name__ == "__main__":

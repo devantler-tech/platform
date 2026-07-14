@@ -42,6 +42,8 @@ jobs:
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
               - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/ghcr-auth-lib.sh'
+              - 'scripts/run-ksail-prod-with-pull-auth.sh'
               - 'scripts/tests/test_refresh_flux_ghcr_auth.py'
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
@@ -73,7 +75,14 @@ jobs:
         # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
         # registry credential, cluster access, or network is used.
         run: |
-          bash -n scripts/refresh-flux-ghcr-auth.sh
+          bash -n \
+            scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth.sh \
+            scripts/run-ksail-prod-with-pull-auth.sh
+          shellcheck \
+            scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth.sh \
+            scripts/run-ksail-prod-with-pull-auth.sh
           python3 -m unittest scripts.tests.test_refresh_flux_ghcr_auth
 
       - name: 🧩 Validate embedded JSON blobs
@@ -241,12 +250,16 @@ jobs:
 
           # Placeholder key material for env-expanded patch values (ksail
           # expands these from environment secrets at deploy time — see
-          # talos/control-planes/wireguard.yaml and talos/cluster/registry-auth.yaml).
+          # talos/control-planes/wireguard.yaml and
+          # talos/cluster/authenticate-ghcr-pulls.yaml and
+          # talos/cluster/mark-ghcr-pull-revision.yaml).
           # Real-format but throwaway, so validation exercises the expansion
           # path without any real secret on the PR event.
           WG_SERVER_PRIVATE_KEY="$(openssl rand -base64 32)"
+          GHCR_USERNAME="placeholder-ghcr-user"
           GHCR_TOKEN="placeholder-ghcr-token"
-          export WG_SERVER_PRIVATE_KEY GHCR_TOKEN
+          GHCR_PULL_REVISION="$(printf '%s\n' 'ENC[ci-placeholder-ciphertext]' | shasum -a 256 | awk '{print $1}')"
+          export WG_SERVER_PRIVATE_KEY GHCR_USERNAME GHCR_TOKEN GHCR_PULL_REVISION
 
           validate_overlay() {
             local dir="$1" mode="$2"

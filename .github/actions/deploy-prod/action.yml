@@ -19,7 +19,7 @@ inputs:
     description: talosconfig for the prod cluster (secrets.TALOS_CONFIG) used by `ksail cluster update`.
     required: true
   ghcr-token:
-    description: GHCR PAT with write:packages (secrets.GHCR_TOKEN) for OCI push, signing, and Talos/KSail compatibility; Flux pulls use the Git/SOPS credential.
+    description: GHCR PAT with write:packages (secrets.GHCR_TOKEN) for OCI push and signing; every pull path uses the Git/SOPS credential.
     required: true
   hcloud-token:
     description: Hetzner Cloud API token (secrets.HCLOUD_TOKEN) used by the KSail Hetzner provider and CCM/CSI.
@@ -49,6 +49,19 @@ runs:
         tar -xzf /tmp/ksail.tar.gz -C /tmp
         sudo install /tmp/ksail /usr/local/bin/ksail
         ksail --version
+
+    - name: ⚙️ Setup talosctl
+      # refresh-flux-ghcr-auth.sh uses the host API for a secret-safe,
+      # per-node RegistryAuthConfig patch and exact image-pull proof.
+      shell: bash
+      env:
+        # Keep in step with spec.cluster.talos.version in ksail.prod.yaml.
+        # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
+        TALOS_VERSION: "1.13.5"
+      run: |
+        curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
+        sudo install /tmp/talosctl /usr/local/bin/talosctl
+        talosctl version --client
 
     - name: 🔐 Create SOPS Age key
       shell: bash
@@ -128,10 +141,10 @@ runs:
 
     - name: 🔑 Stage Flux and consumer GHCR pull credential
       id: stage_flux_ghcr_auth
-      # Validate all seven packages, then synchronously stage and verify the whole
-      # pull-credential fan-out BEFORE publishing latest. If the mutable tag is
-      # observed by Flux immediately after push, every consumer already has the
-      # same known-readable credential.
+      # Validate all seven packages, synchronize and prove the exact live image
+      # pull on every stale Talos node, then stage and verify the Kubernetes fan-out
+      # BEFORE publishing latest. Every pull consumer has one known-readable
+      # credential before the mutable tag can be observed.
       shell: bash
       run: ./scripts/refresh-flux-ghcr-auth.sh
 
@@ -148,7 +161,7 @@ runs:
         GITHUB_ACTOR: ${{ github.actor }}
         GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-      run: ksail --config ksail.prod.yaml workload push
+      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push
 
     - name: ⚙️ Install cosign
       # sigstore/cosign-installer is the official installer action — it
@@ -305,9 +318,8 @@ runs:
       shell: bash
       env:
         GITHUB_ACTOR: ${{ github.actor }}
-        GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-      run: ksail --config ksail.prod.yaml workload reconcile
+      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
 
     - name: 🩺 Diagnose Flux on failure
       if: failure() && steps.reconcile.outcome == 'failure'
@@ -330,18 +342,17 @@ runs:
       # release).
       shell: bash
       env:
-        GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
         # ksail env-expands ${WG_SERVER_PRIVATE_KEY} in the talos patches at
         # load time; an unset var renders an empty key and Talos rejects the
         # whole machine config ('private key is invalid: wrong key "" length: 0').
         WG_SERVER_PRIVATE_KEY: ${{ inputs.wg-server-private-key }}
-      run: ksail --config ksail.prod.yaml cluster update
+      run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update
 
     - name: 🔑 Reassert Flux and consumer GHCR pull credential
       id: reassert_flux_ghcr_auth
-      # cluster update can rewrite KSail's root Secret from GHCR_TOKEN when an
-      # unrelated configuration change triggers setup. Reassert Git/SOPS after
+      # cluster update is already wrapped with Git/SOPS auth, but reassert the
+      # full transaction afterward in case KSail fails part-way. Reassert after
       # its synchronous consumer fan-out when that update fails part-way, but
       # only after the publish, signing, attestation, post-publish auth check,
       # and Flux reconcile all succeeded. Never mutate auth as cleanup for a

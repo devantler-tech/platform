@@ -48,6 +48,14 @@ these simultaneously and you cannot recover.
 > and updating the unifi tenant's `cluster_wg_peer_public_key` to the new
 > public half.
 
+> **Manual production lifecycle prerequisite:** use
+> `scripts/run-ksail-prod-with-pull-auth.sh`, never a bare
+> `ksail --config ksail.prod.yaml` create/update/push/reconcile command. The
+> wrapper injects the authoritative SOPS pull credential and its rotation
+> marker. Export `HCLOUD_TOKEN`, `WG_SERVER_PRIVATE_KEY`, and a usable SOPS Age
+> key for create/update; publication additionally needs `GHCR_TOKEN` and
+> `GITHUB_ACTOR`.
+
 ---
 
 ## Scenario 1 — Single node loss
@@ -62,7 +70,7 @@ kubectl get pods -A --field-selector=status.phase!=Running
 kubectl get pdb -A    # all should show ALLOWED-DISRUPTIONS=1
 
 # Replace the failed node (re-runs Hetzner provisioning for missing members)
-ksail --config ksail.prod.yaml cluster update
+./scripts/run-ksail-prod-with-pull-auth.sh cluster update
 ```
 
 If any workload is stuck in Pending because all replicas were on the dead
@@ -101,7 +109,7 @@ kubectl get pdb -A
 kubectl get deploy -A -o jsonpath='{range .items[*]}{.metadata.namespace}/{.metadata.name}\t{.spec.strategy.rollingUpdate.maxUnavailable}{"\n"}{end}'
 
 # Apply the upgrade (in-place rolling Talos OS + Kubernetes upgrade)
-ksail --config ksail.prod.yaml cluster update
+./scripts/run-ksail-prod-with-pull-auth.sh cluster update
 ```
 
 If anything reports `maxUnavailable` other than `0`, that workload was
@@ -156,26 +164,31 @@ Flux reconciliation.
 ```bash
 # 1. Set credentials locally
 export HCLOUD_TOKEN=<hetzner-cloud-api-token>
+export WG_SERVER_PRIVATE_KEY=<wireguard-server-private-key>
 export GHCR_TOKEN=<ghcr-pat-with-packages-read-write>
+export GITHUB_ACTOR=devantler
 export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt  # points at the env's Age key
+talosctl version --client  # must be installed; use the prod-pinned v1.13.5
 
 # 2. Prove the Git/SOPS pull credential can read every private package before
 #    creating infrastructure or publishing a mutable latest tag
 ./scripts/refresh-flux-ghcr-auth.sh --check-only
 
 # 3. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
-ksail --config ksail.prod.yaml cluster create
+./scripts/run-ksail-prod-with-pull-auth.sh cluster create
 
 # 4. Bootstrap Flux from this repo
-ksail --config ksail.prod.yaml workload push       # packages -> GHCR
-./scripts/refresh-flux-ghcr-auth.sh                 # Git/SOPS -> root + existing fan-out
-ksail --config ksail.prod.yaml workload reconcile  # Flux pulls and applies
+./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
+./scripts/run-ksail-prod-with-pull-auth.sh workload push
+./scripts/refresh-flux-ghcr-auth.sh --check-only
+./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
 
 # 5. Wait for Flux to settle
 flux get kustomizations -A
 # Re-run if any are NotReady; expect convergence in 10-15 minutes
+./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out + every stale node
 
-# 4b. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
+# 6. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
 #     in R2 — the vault came up fresh): re-feed the user-fed secrets that
 #     SOPS deliberately does not seed (see the push-secret-seed-* files in
 #     k8s/bases/infrastructure/vault-seed/). Until then,
@@ -412,7 +425,7 @@ kubectl -n kube-system get cm cluster-autoscaler-status -o yaml
 
 Common causes:
 - Pool `maxSize` reached — increase `max` under the relevant pool in `ksail.prod.yaml`, then run
-  `ksail --config ksail.prod.yaml cluster update`
+  `./scripts/run-ksail-prod-with-pull-auth.sh cluster update`
 - `HCLOUD_TOKEN` expired — rotate in SOPS secrets and GitHub environment secrets
 
 ### Orphaned autoscaler nodes after cluster delete
@@ -435,7 +448,7 @@ hcloud server list
 # If the server exists but node doesn't appear in kubectl:
 # The worker machine config may be invalid or stale.
 # Re-run cluster update to regenerate worker config and re-apply:
-ksail --config ksail.prod.yaml cluster update
+./scripts/run-ksail-prod-with-pull-auth.sh cluster update
 ```
 
 ---
@@ -490,17 +503,17 @@ gh secret set TALOS_CONFIG --env prod --repo devantler-tech/platform < ~/.talos/
 > step in the deploy workflows is the local guard against that behaviour until
 > those land.
 
-## Scenario 10 — Flux/tenant GHCR pull credential rotation or denial
+## Scenario 10 — production GHCR pull credential rotation or denial
 
-The authoritative Flux and tenant pull credential is the SOPS-encrypted
+The authoritative Flux, tenant, Kyverno, and Talos-host pull credential is the
+SOPS-encrypted
 `stringData.ghcr_dockerconfigjson` value in
 `k8s/bases/bootstrap/secret.enc.yaml`. It is deliberately separate from the
-GitHub `prod` environment's `GHCR_TOKEN`, which pushes/signs the artifact and is
-still passed to KSail/Talos for compatibility.
-
-Talos node registry auth still derives from `GHCR_TOKEN`; this recovery path
-does not rotate existing node machine configuration. That remaining
-single-source consolidation stays tracked by #2613.
+GitHub `prod` environment's `GHCR_TOKEN`, which only pushes/signs artifacts.
+Production KSail lifecycle commands run through
+`scripts/run-ksail-prod-with-pull-auth.sh`, which derives username/token from
+Git/SOPS and supplies a non-secret SOPS-ciphertext revision to the Talos
+machine/autoscaler template.
 
 The production deploy closes the bootstrap loop in this order:
 
@@ -509,7 +522,14 @@ The production deploy closes the bootstrap loop in this order:
    artifacts, both tenant application images, and the KSail plus
    provider-upjet-unifi packages used by Kyverno verification. During DR, a
    read-only `--check-only` pass happens before infrastructure creation.
-2. Before changing mutable `latest`, patch `variables-base`; force-sync
+2. Before changing mutable `latest`, list every Kubernetes Node (including
+   NotReady/autoscaled nodes). For each node whose **verified** ciphertext
+   revision is stale, apply the supported Talos `RegistryAuthConfig` in
+   no-reboot mode, workers before control planes; pull the exact live KSail
+   operator image through the Talos CRI; and only then record the verified
+   revision. A distinct desired revision in the committed Talos configuration
+   refreshes future Cluster Autoscaler templates but never counts as proof.
+3. Patch `variables-base`; force-sync
    `seed-ghcr` into OpenBao; force-sync the tenant/Kyverno ExternalSecrets;
    verify every materialised `ghcr-auth` payload matches Git/SOPS; and only then
    patch `flux-system/ksail-registry-credentials`. A fresh or partial DR
@@ -517,14 +537,15 @@ The production deploy closes the bootstrap loop in this order:
    `--allow-incomplete-fanout` mode stages `variables-base` and repairs root auth
    so the first reconcile can create the chain. Normal mode fails closed on any
    missing fan-out resource.
-3. Push and sign the artifact with `GHCR_TOKEN`, revalidate the newly-published
+4. Push and sign the artifact with `GHCR_TOKEN`, revalidate the newly-published
    artifact with `--check-only`, and only then explicitly reconcile Flux. DR
    runs the full bridge again after every Flux Kustomization is Ready, proving
    that bootstrap mode completed the entire fan-out, and once more after an
    OpenBao raft restore so a snapshot cannot rematerialise an older credential.
-4. Re-run the bridge after `cluster update`, because KSail can rewrite its
-   managed root Secret when another cluster setting changes; the bridge also
-   re-verifies the downstream fan-out.
+5. Re-run the bridge after `cluster update`; it repairs any node left stale by
+   a partial lifecycle operation and re-verifies the root plus downstream
+   fan-out. Nodes already carrying the verified revision skip Talos API calls,
+   so an ordinary deploy does not depend on every Talos endpoint.
 
 For a normal rotation, update the encrypted value through a PR and let the merge
 queue deploy it. If the encrypted file was pushed directly to `main`, manually

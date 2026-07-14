@@ -6,6 +6,12 @@
 # repair that bootstrap edge before asking Flux to reconcile.
 
 set -euo pipefail
+set +x
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+# shellcheck source=scripts/ghcr-auth-lib.sh
+source "${SCRIPT_DIR}/ghcr-auth-lib.sh"
 
 check_only=false
 allow_incomplete_fanout=false
@@ -28,13 +34,16 @@ readonly SECRET_FILE="${FLUX_GHCR_SECRET_FILE:-k8s/bases/bootstrap/secret.enc.ya
 readonly KUBE_CONTEXT="${KUBE_CONTEXT:-admin@prod}"
 readonly SYNC_ATTEMPTS="${FLUX_GHCR_SYNC_ATTEMPTS:-60}"
 readonly SYNC_INTERVAL="${FLUX_GHCR_SYNC_INTERVAL:-2}"
+KSAIL_OPERATOR_VERSION="$(yq -er '.spec.chart.spec.version' \
+  k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml)"
+readonly KSAIL_OPERATOR_VERSION
 readonly -a REQUIRED_PULL_TARGETS=(
   "devantler-tech/platform/manifests:latest"
   "devantler-tech/wedding-app/manifests:latest"
   "devantler-tech/ascoachingogvaner/manifests:latest"
   "devantler-tech/wedding-app:latest"
   "devantler-tech/ascoachingogvaner:latest"
-  "devantler-tech/ksail:latest"
+  "devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
   "devantler-tech/provider-upjet-unifi:v0.1.0"
 )
 readonly -a FANOUT_NAMESPACES=(
@@ -55,6 +64,7 @@ chmod 700 "${work_dir}"
 umask 077
 
 docker_config="${work_dir}/config.json"
+credentials_file="${work_dir}/credentials.json"
 basic_curl_config="${work_dir}/curl-basic.config"
 bearer_curl_config="${work_dir}/curl-bearer.config"
 token_response="${work_dir}/token.json"
@@ -62,6 +72,12 @@ patch_file="${work_dir}/patch.json"
 variables_patch_file="${work_dir}/variables-patch.json"
 expected_normalized="${work_dir}/expected-normalized.json"
 fanout_api_resources="${work_dir}/fanout-api-resources.txt"
+talos_auth_patch_file="${work_dir}/talos-registry-auth.json"
+talos_revision_patch_file="${work_dir}/talos-registry-revision.json"
+talos_result_file="${work_dir}/talos-result.txt"
+talos_nodes_file="${work_dir}/talos-nodes.json"
+talos_node_targets="${work_dir}/talos-node-targets.tsv"
+ksail_operator_deployment="${work_dir}/ksail-operator-deployment.json"
 
 # Force an ESO resource to reconcile and observe a post-annotation Ready edge.
 force_sync_resource() {
@@ -145,59 +161,151 @@ verify_consumer_secret() {
   fi
 }
 
+# Apply Git/SOPS auth to stale Talos nodes, prove an exact image pull, and only
+# then record the non-secret revision marker that makes the operation retryable.
+sync_talos_registry_auth() {
+  local desired_revision="$1"
+  local operator_image="ghcr.io/devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
+  local image_reference
+  local node_name
+  local node_ip
+  local _node_role
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get nodes \
+    -o json \
+    > "${talos_nodes_file}"; then
+    echo "::error::Could not list Talos nodes; refusing to mutate any Kubernetes credential consumers."
+    return 1
+  fi
+  if ! jq -e '
+    (.items | length) > 0
+    and all(.items[];
+      ([.status.addresses[]? | select(.type == "InternalIP") | .address]
+        | length) == 1
+      and (([.status.addresses[]?
+        | select(.type == "InternalIP") | .address][0])
+        | type == "string" and length > 0))
+    and (([.items[]
+      | [.status.addresses[]?
+        | select(.type == "InternalIP") | .address][0]]
+      | unique | length) == (.items | length))
+  ' "${talos_nodes_file}" >/dev/null; then
+    echo "::error::Every Talos node must expose exactly one non-empty, unique InternalIP before GHCR auth can be synchronized."
+    return 1
+  fi
+
+  if ! jq -r --arg revision "${desired_revision}" '
+    .items[]
+    | select(
+        (.metadata.annotations[
+          "platform.devantler.tech/ghcr-pull-verified-revision"
+        ] // "")
+          != $revision
+      )
+    | (.metadata.labels // {}) as $labels
+    | [
+        (if (($labels | has("node-role.kubernetes.io/control-plane"))
+          or ($labels | has("node-role.kubernetes.io/master")))
+          then "1" else "0" end),
+        .metadata.name,
+        ([.status.addresses[]
+          | select(.type == "InternalIP") | .address][0])
+      ]
+    | @tsv
+  ' "${talos_nodes_file}" \
+    | LC_ALL=C sort -k1,1 -k2,2 \
+    > "${talos_node_targets}"; then
+    echo "::error::Could not select Talos nodes requiring the GHCR auth revision."
+    return 1
+  fi
+
+  # Normal deploys should not regain an all-node Talos API dependency once the
+  # current ciphertext revision has been proved on every node.
+  if [[ ! -s "${talos_node_targets}" ]]; then
+    return 0
+  fi
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace ksail-operator \
+    get deployment ksail-operator \
+    --ignore-not-found \
+    -o json \
+    > "${ksail_operator_deployment}"; then
+    echo "::error::Could not determine the exact live KSail operator image."
+    return 1
+  fi
+  if [[ -s "${ksail_operator_deployment}" ]]; then
+    if ! operator_image="$(jq -er '
+      [.spec.template.spec.containers[]? | select(.name == "operator") | .image]
+      | if length == 1 then .[0] else error("expected one operator image") end
+    ' "${ksail_operator_deployment}")"; then
+      echo "::error::The live ksail-operator Deployment does not expose one expected first-party image."
+      return 1
+    fi
+  elif [[ "${allow_incomplete_fanout}" != "true" ]]; then
+    echo "::error::The live ksail-operator Deployment is absent outside explicit DR bootstrap mode."
+    return 1
+  fi
+
+  if [[ "${operator_image}" == ghcr.io/devantler-tech/ksail:* ]]; then
+    image_reference="${operator_image##*:}"
+    if [[ -z "${image_reference}" || "${image_reference}" == "latest" ]]; then
+      echo "::error::The KSail operator verification image must use an exact non-latest tag or digest."
+      return 1
+    fi
+  elif ! [[ "${operator_image}" =~ ^ghcr\.io/devantler-tech/ksail@sha256:[0-9a-f]{64}$ ]]; then
+    echo "::error::The KSail operator verification image must be the expected first-party package."
+    return 1
+  fi
+
+  : > "${talos_result_file}"
+  chmod 600 "${talos_result_file}"
+  while IFS=$'\t' read -r _node_role node_name node_ip; do
+    if ! talosctl \
+      --nodes "${node_ip}" \
+      patch machineconfig \
+      --mode=no-reboot \
+      --patch-file="${talos_auth_patch_file}" \
+      >"${talos_result_file}" 2>&1; then
+      echo "::error::Talos node ${node_name} did not accept the Git/SOPS GHCR registry auth."
+      return 1
+    fi
+    if ! talosctl \
+      --nodes "${node_ip}" \
+      image pull "${operator_image}" \
+      --namespace cri \
+      >"${talos_result_file}" 2>&1; then
+      echo "::error::Talos node ${node_name} could not pull the exact live KSail image after its auth refresh."
+      return 1
+    fi
+    if ! talosctl \
+      --nodes "${node_ip}" \
+      patch machineconfig \
+      --mode=no-reboot \
+      --patch-file="${talos_revision_patch_file}" \
+      >"${talos_result_file}" 2>&1; then
+      echo "::error::Talos node ${node_name} proved GHCR access but could not record the synchronized credential revision."
+      return 1
+    fi
+  done < "${talos_node_targets}"
+}
+
 # KSail embeds SOPS, so the deploy uses the same pinned toolchain as workload
 # reconciliation. Decrypt only the Docker config scalar and never emit it to
 # stdout or place its plaintext/base64 representation in an argument.
-ksail workload cipher decrypt \
-  "${SECRET_FILE}" \
-  --extract '["stringData"]["ghcr_dockerconfigjson"]' \
-  --output "${docker_config}" \
-  >/dev/null
-chmod 600 "${docker_config}"
-
-if ! jq -e '
-  def non_empty_string: type == "string" and length > 0;
-  (.auths["ghcr.io"] // {}) as $auth
-  | ((($auth | has("username")) or ($auth | has("password"))))
-      as $explicit_present
-  | (($auth.username | non_empty_string)
-      and ($auth.password | non_empty_string)) as $explicit_valid
-  | ($auth | has("auth")) as $encoded_present
-  | (if $encoded_present then
-      try (
-        $auth.auth
-        | @base64d
-        | capture("^(?<username>[^:]+):(?<password>.+)$")
-      ) catch null
-    else null end) as $decoded
-  | (($decoded != null)
-      and ($decoded.username | non_empty_string)
-      and ($decoded.password | non_empty_string)) as $encoded_valid
-  | ((($explicit_present | not) or $explicit_valid)
-      and (($encoded_present | not) or $encoded_valid)
-      and ($explicit_valid or $encoded_valid)
-      and (((($explicit_present and $encoded_present) | not))
-        or (($auth.username == $decoded.username)
-          and ($auth.password == $decoded.password))))
-' "${docker_config}" >/dev/null; then
-  echo "::error::The SOPS GHCR pull credential is not a valid Docker config with non-empty, consistent ghcr.io username/password and auth fields."
-  exit 1
-fi
+decrypt_flux_ghcr_docker_config "${docker_config}" "${SECRET_FILE}"
+write_flux_ghcr_credentials "${docker_config}" "${credentials_file}"
 jq -S -c . "${docker_config}" > "${expected_normalized}"
 
 # Build curl's Basic-auth config without putting the credential in argv or
 # stdout. Support both Docker config representations used in this repository:
 # explicit username/password and base64(username:password) in auth.
 jq -r '
-  def non_empty_string: type == "string" and length > 0;
-  (.auths["ghcr.io"] // {}) as $auth
-  | if (($auth.username | non_empty_string)
-      and ($auth.password | non_empty_string)) then
-      "user = " + (($auth.username + ":" + $auth.password) | @json)
-    else
-      "user = " + (($auth.auth | @base64d) | @json)
-    end
-' "${docker_config}" > "${basic_curl_config}"
+  "user = " + ((.username + ":" + .password) | @json)
+' "${credentials_file}" > "${basic_curl_config}"
 chmod 600 "${basic_curl_config}"
 
 # The same pull credential fans out to Flux OCI sources and private tenant
@@ -258,6 +366,33 @@ if [[ "${check_only}" == "true" ]]; then
   echo "✅ Validated every required GHCR package pull from Git/SOPS."
   exit 0
 fi
+
+# Talos image verification resolves cosign artifacts with host registry auth;
+# pod imagePullSecrets cannot satisfy that request. Use the supported v1.13
+# RegistryAuthConfig document and a file-backed patch so credentials never
+# enter argv. Synchronize and verify nodes before touching Kubernetes Secrets.
+jq '
+  {
+    apiVersion: "v1alpha1",
+    kind: "RegistryAuthConfig",
+    name: "ghcr.io",
+    username: .username,
+    password: .password
+  }
+' "${credentials_file}" > "${talos_auth_patch_file}"
+pull_revision="$(flux_ghcr_revision "${SECRET_FILE}")"
+readonly pull_revision
+jq -n --arg revision "${pull_revision}" '
+  {
+    machine: {
+      nodeAnnotations: {
+        "platform.devantler.tech/ghcr-pull-verified-revision": $revision
+      }
+    }
+  }
+' > "${talos_revision_patch_file}"
+chmod 600 "${talos_auth_patch_file}" "${talos_revision_patch_file}"
+sync_talos_registry_auth "${pull_revision}"
 
 # Merge only Secret data fields so ownership metadata survives. The sensitive
 # payload stays in pipes/temp files and never appears in argv or logs.
