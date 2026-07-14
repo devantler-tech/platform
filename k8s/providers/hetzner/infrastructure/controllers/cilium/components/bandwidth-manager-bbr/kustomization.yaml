@@ -1,0 +1,51 @@
+---
+# Default-off staging component for platform#2029 / platform#2607.
+#
+# Cilium's bandwidth manager installs fq qdiscs and EDT pacing, while BBR
+# selects BBR congestion control for eligible egress traffic. The Talos 6.x
+# kernel is newer than Cilium's Linux 5.18 minimum for BBR. This component is
+# Hetzner-only because that is the production path where egress traverses the
+# node datapath and where WireGuard is enabled.
+#
+# HOST-NAMESPACE GUARD: pod BBR also requires eBPF host routing. The current
+# tunnel-mode datapath intentionally keeps bpf.masquerade off, so
+# bbrHostNamespaceOnly stays true and limits BBR to hostNetwork workloads.
+# Do not remove that guard until #2609 has merged and completed its own soak.
+#
+# DEVICE GUARD: production currently pins two heterogeneous private-NIC names
+# (`enp7s0` on workers, `eth1` on control planes). Cilium requires every
+# manually listed bandwidth-manager device name on every managed node. Do not
+# activate this component until #2610 provides a homogeneous selection while
+# preserving the private-NIC WireGuard and mutual-auth path.
+#
+# SAFETY: this component is staged, not activation-ready. Keep it unreferenced
+# until both #2609 and #2610 are complete, then use a separate activation/soak.
+# `rollOutCiliumPods: true` means enabling it rolls every Cilium agent one node
+# at a time and replaces the node qdisc. Activate only in a low-traffic window;
+# verify `cilium status --verbose` and unexpected Hubble drops after the roll.
+# Roll back by removing the component reference, which restores the chart
+# defaults in the next one-node-at-a-time roll.
+#
+# bpf.masquerade and netkit are deliberately out of scope and require their own
+# independently validated slices.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: cilium
+      namespace: kube-system
+    patch: |
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: cilium
+        namespace: kube-system
+      spec:
+        values:
+          bandwidthManager:
+            enabled: true
+            bbr: true
+            bbrHostNamespaceOnly: true
