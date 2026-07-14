@@ -141,10 +141,11 @@ runs:
 
     - name: 🔑 Stage Flux and consumer GHCR pull credential
       id: stage_flux_ghcr_auth
-      # Validate all seven packages, synchronize and prove the exact live image
-      # pull on every stale Talos node, then stage and verify the Kubernetes fan-out
-      # BEFORE publishing latest. Every pull consumer has one known-readable
-      # credential before the mutable tag can be observed.
+      # Validate all seven packages, synchronize and prove an uncached pull of
+      # the declared incoming image on every stale Talos node, then stage and
+      # verify the Kubernetes fan-out BEFORE publishing latest. Every pull
+      # consumer has one known-readable credential before the mutable tag can
+      # be observed.
       shell: bash
       run: ./scripts/refresh-flux-ghcr-auth.sh
 

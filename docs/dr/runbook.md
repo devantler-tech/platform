@@ -528,10 +528,11 @@ The production deploy closes the bootstrap loop in this order:
    read-only `--check-only` pass happens before infrastructure creation.
 2. Before changing mutable `latest`, list every Kubernetes Node (including
    NotReady/autoscaled nodes). For each node whose **verified** ciphertext
-   revision is stale, apply the supported Talos `RegistryAuthConfig` in
-   no-reboot mode, workers before control planes; pull the exact live KSail
-   operator image through the Talos CRI; and only then record the verified
-   revision. A distinct desired revision in the committed Talos configuration
+   revision or verified image differs from the declared incoming KSail image,
+   apply the supported Talos `RegistryAuthConfig` in no-reboot mode, workers
+   before control planes; remove that exact target from the Talos CRI cache;
+   pull it again to force a registry round-trip; and only then record both proof
+   markers. A distinct desired revision in the committed Talos configuration
    refreshes future Cluster Autoscaler templates but never counts as proof.
 3. Patch `variables-base`; force-sync
    `seed-ghcr` into OpenBao; force-sync the tenant/Kyverno ExternalSecrets;
@@ -548,8 +549,9 @@ The production deploy closes the bootstrap loop in this order:
    OpenBao raft restore so a snapshot cannot rematerialise an older credential.
 5. Re-run the bridge after `cluster update`; it repairs any node left stale by
    a partial lifecycle operation and re-verifies the root plus downstream
-   fan-out. Nodes already carrying the verified revision skip Talos API calls,
-   so an ordinary deploy does not depend on every Talos endpoint.
+   fan-out. Nodes carrying proof for both the current credential revision and
+   declared image skip Talos API calls, so an ordinary deploy does not depend
+   on every Talos endpoint.
 
 For a normal rotation, update the encrypted value through a PR and let the merge
 queue deploy it. If the encrypted file was pushed directly to `main`, manually

@@ -199,11 +199,17 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               fi
 
               test -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
+              test -f "$FAKE_SYNC_STATE_DIR/talos-remove-${node}"
               test -f "$FAKE_SYNC_STATE_DIR/talos-pull-${node}"
               jq -e --arg revision "$EXPECTED_GHCR_REVISION" '
                 .machine.nodeAnnotations[
                   "platform.devantler.tech/ghcr-pull-verified-revision"
                 ] == $revision
+              ' "$patch_file" >/dev/null
+              jq -e --arg image "$EXPECTED_KSAIL_TARGET_IMAGE" '
+                .machine.nodeAnnotations[
+                  "platform.devantler.tech/ghcr-pull-verified-image"
+                ] == $image
               ' "$patch_file" >/dev/null
               printf 'talos-revision:%s\n' "$node" >> "$TALOS_LOG"
               printf 'talos-revision:%s\n' "$node" >> "$OPERATION_LOG"
@@ -216,8 +222,38 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               exit 0
             fi
 
+            if [[ "$arguments" == *" image remove "* ]]; then
+              test -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
+              [[ "$arguments" == *" --namespace cri "* ]]
+              image=""
+              previous=""
+              for argument in "$@"; do
+                if [[ "$previous" == remove ]]; then
+                  image="$argument"
+                  break
+                fi
+                previous="$argument"
+              done
+              test -n "$image"
+              printf 'talos-remove:%s:%s\n' "$node" "$image" >> "$TALOS_LOG"
+              printf 'talos-remove:%s:%s\n' "$node" "$image" >> "$OPERATION_LOG"
+              if [[ "$node" == "${FAKE_TALOS_IMAGE_ABSENT_NODE:-disabled}" ]]; then
+                touch "$FAKE_SYNC_STATE_DIR/talos-remove-${node}"
+                echo "rpc error: code = NotFound desc = image ${image} not found" >&2
+                exit 1
+              fi
+              if [[ "$node" == "${FAKE_TALOS_FAIL_NODE:-disabled}" \
+                && "${FAKE_TALOS_FAIL_OPERATION:-auth}" == remove ]]; then
+                echo "talos remove failed" >&2
+                exit 49
+              fi
+              touch "$FAKE_SYNC_STATE_DIR/talos-remove-${node}"
+              exit 0
+            fi
+
             if [[ "$arguments" == *" image pull "* ]]; then
               test -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
+              test -f "$FAKE_SYNC_STATE_DIR/talos-remove-${node}"
               [[ "$arguments" == *" --namespace cri "* ]]
               image=""
               previous=""
@@ -344,7 +380,9 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               fi
               jq -n \
                 --arg revision "$EXPECTED_GHCR_REVISION" \
-                --arg current "${FAKE_TALOS_NODES_CURRENT:-false}" '
+                --arg current "${FAKE_TALOS_NODES_CURRENT:-false}" \
+                --arg verified_image \
+                  "${FAKE_TALOS_VERIFIED_IMAGE:-$EXPECTED_KSAIL_TARGET_IMAGE}" '
                 {
                   items: [
                     {
@@ -383,22 +421,15 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                     .items[].metadata.annotations[
                       "platform.devantler.tech/ghcr-pull-verified-revision"
                     ] = $revision
+                    | .items[].metadata.annotations[
+                      "platform.devantler.tech/ghcr-pull-verified-image"
+                    ] = $verified_image
                   else . end
               '
               exit 0
             fi
 
             test -n "$namespace"
-
-            if [[ "$arguments" == *" get deployment ksail-operator "* ]]; then
-              test "$namespace" = ksail-operator
-              if [[ "${FAKE_KSAIL_OPERATOR_DEPLOYMENT_ABSENT:-false}" == true ]]; then
-                exit 0
-              fi
-              printf '{"spec":{"template":{"spec":{"containers":[{"name":"sidecar","image":"public.example/sidecar:latest"},{"name":"operator","image":"%s"}]}}}}\n' \
-                "${FAKE_KSAIL_OPERATOR_IMAGE:-ghcr.io/devantler-tech/ksail:v7.169.0}"
-              exit 0
-            fi
 
             if [[ "$arguments" == *" api-resources "* ]]; then
               [[ "$arguments" == *" --api-group=external-secrets.io "* ]]
@@ -605,6 +636,10 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "EXPECTED_PULL_USERNAME": expected_username,
                 "EXPECTED_PULL_TOKEN": expected_token,
                 "EXPECTED_GHCR_REVISION": self._expected_revision(),
+                "EXPECTED_KSAIL_TARGET_IMAGE": (
+                    "ghcr.io/devantler-tech/ksail:"
+                    f"v{KSAIL_OPERATOR_VERSION}"
+                ),
                 "FAKE_SYNC_STATE_DIR": str(self.sync_state_dir),
                 "FLUX_GHCR_SYNC_ATTEMPTS": "2",
                 "FLUX_GHCR_SYNC_INTERVAL": "0",
@@ -725,16 +760,22 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         )
 
     def test_refreshes_talos_auth_before_kubernetes_credential_consumers(self) -> None:
-        """Patch nodes serially and pull the exact live operator image first."""
+        """Patch nodes and prove the uncached incoming operator image first."""
         result = self._run_helper(self._valid_config())
 
         self.assertEqual(result.returncode, 0, result.stderr)
         expected_talos_operations = [
             "talos-auth:10.0.0.2",
-            "talos-pull:10.0.0.2:ghcr.io/devantler-tech/ksail:v7.169.0",
+            "talos-remove:10.0.0.2:ghcr.io/devantler-tech/ksail:"
+            f"v{KSAIL_OPERATOR_VERSION}",
+            "talos-pull:10.0.0.2:ghcr.io/devantler-tech/ksail:"
+            f"v{KSAIL_OPERATOR_VERSION}",
             "talos-revision:10.0.0.2",
             "talos-auth:10.0.0.1",
-            "talos-pull:10.0.0.1:ghcr.io/devantler-tech/ksail:v7.169.0",
+            "talos-remove:10.0.0.1:ghcr.io/devantler-tech/ksail:"
+            f"v{KSAIL_OPERATOR_VERSION}",
+            "talos-pull:10.0.0.1:ghcr.io/devantler-tech/ksail:"
+            f"v{KSAIL_OPERATOR_VERSION}",
             "talos-revision:10.0.0.1",
         ]
         self.assertEqual(
@@ -742,7 +783,9 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             expected_talos_operations,
         )
         self.assertEqual(
-            self.operation_log.read_text(encoding="utf-8").splitlines()[:6],
+            self.operation_log.read_text(encoding="utf-8").splitlines()[
+                : len(expected_talos_operations)
+            ],
             expected_talos_operations,
         )
         temporary_patch = Path(
@@ -753,7 +796,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
 
     def test_talos_failure_prevents_kubernetes_credential_mutation(self) -> None:
         """Stop before Flux fan-out when any node cannot accept or use auth."""
-        for operation in ("auth", "pull", "revision"):
+        for operation in ("auth", "remove", "pull", "revision"):
             with self.subTest(operation=operation):
                 result = self._run_helper(
                     self._valid_config(),
@@ -767,8 +810,27 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 self.assertFalse(self.fanout_log.exists())
                 self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
 
+    def test_missing_cached_image_still_pulls_and_records_revision(self) -> None:
+        """Treat a confirmed absent cache entry as ready for pull proof."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_TALOS_IMAGE_ABSENT_NODE="10.0.0.2",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        target_image = (
+            "ghcr.io/devantler-tech/ksail:"
+            f"v{KSAIL_OPERATOR_VERSION}"
+        )
+        operations = self.talos_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn(f"talos-remove:10.0.0.2:{target_image}", operations)
+        self.assertIn(f"talos-pull:10.0.0.2:{target_image}", operations)
+        self.assertIn("talos-revision:10.0.0.2", operations)
+        self.assertTrue(self.patch_capture.exists())
+        self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
+
     def test_current_talos_nodes_skip_talos_api(self) -> None:
-        """Avoid a Talos availability dependency after this revision is proved."""
+        """Skip Talos only after this revision and target image are proved."""
         result = self._run_helper(
             self._valid_config(),
             FAKE_TALOS_NODES_CURRENT="true",
@@ -778,12 +840,46 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertFalse(self.talos_log.exists())
         self.assertTrue(self.patch_capture.exists())
 
+    def test_matching_revision_revalidates_changed_declared_image(self) -> None:
+        """Do not trust a current credential marker for a new target image."""
+        previous_image = "ghcr.io/devantler-tech/ksail:v7.166.0"
+        target_image = (
+            "ghcr.io/devantler-tech/ksail:"
+            f"v{KSAIL_OPERATOR_VERSION}"
+        )
+
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_TALOS_NODES_CURRENT="true",
+            FAKE_TALOS_VERIFIED_IMAGE=previous_image,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(
+            self.talos_log.exists(),
+            "matching credential revision incorrectly skipped target-image proof",
+        )
+        operations = self.talos_log.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(
+            operations,
+            [
+                "talos-auth:10.0.0.2",
+                f"talos-remove:10.0.0.2:{target_image}",
+                f"talos-pull:10.0.0.2:{target_image}",
+                "talos-revision:10.0.0.2",
+                "talos-auth:10.0.0.1",
+                f"talos-remove:10.0.0.1:{target_image}",
+                f"talos-pull:10.0.0.1:{target_image}",
+                "talos-revision:10.0.0.1",
+            ],
+        )
+        self.assertNotIn(previous_image, "\n".join(operations))
+
     def test_dr_without_operator_uses_exact_declared_image(self) -> None:
-        """Verify stale bootstrap nodes before the operator Deployment exists."""
+        """Verify stale bootstrap nodes with the declared incoming image."""
         result = self._run_helper(
             self._valid_config(),
             ("--allow-incomplete-fanout",),
-            FAKE_KSAIL_OPERATOR_DEPLOYMENT_ABSENT="true",
             FAKE_VARIABLES_BASE_ABSENT="true",
         )
 
