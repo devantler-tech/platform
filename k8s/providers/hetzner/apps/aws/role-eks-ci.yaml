@@ -213,6 +213,18 @@ spec:
                 "Resource": "arn:aws:iam::939001610192:oidc-provider/oidc.eks.*"
               },
               {
+                "Sid": "IamScopedPolicyLifecycle",
+                "Effect": "Allow",
+                "Action": [
+                  "iam:CreatePolicy",
+                  "iam:DeletePolicy",
+                  "iam:CreatePolicyVersion",
+                  "iam:DeletePolicyVersion",
+                  "iam:ListPolicyVersions"
+                ],
+                "Resource": "arn:aws:iam::939001610192:policy/eksctl-*"
+              },
+              {
                 "Sid": "IamReadForEksctl",
                 "Effect": "Allow",
                 "Action": [
