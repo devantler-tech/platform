@@ -53,6 +53,8 @@ jobs:
               - 'talos/**'
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
+              - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
+              - 'tests/cilium-bandwidth-manager-bbr/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
               - 'scripts/ghcr-auth-lib.sh'
               - 'scripts/run-ksail-prod-with-pull-auth.sh'
@@ -117,6 +119,14 @@ jobs:
         # second, so it goes first — before the ksail download. See
         # scripts/validate-embedded-json.py (#2480).
         run: python3 scripts/validate-embedded-json.py
+
+      - name: 🚦 Validate default-off Cilium bandwidth manager
+        if: needs.changes.outputs.k8s == 'true'
+        # Render the committed and temporary opt-in states so the staged
+        # bandwidth-manager + BBR component cannot silently become active or
+        # regress the Hetzner WireGuard settings. Bash plus the kubectl bundled
+        # on the GitHub-hosted runner; no cluster or secrets required.
+        run: bash scripts/tests/test-cilium-bandwidth-manager-component.sh
 
       - name: ⚙️ Setup KSail
         # Renovate-managed (datasource github-releases; grouped 'ksail' with the
