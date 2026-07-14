@@ -159,6 +159,7 @@ spec:
                   "iam:GetRole",
                   "iam:TagRole",
                   "iam:UntagRole",
+                  "iam:UpdateAssumeRolePolicy",
                   "iam:AttachRolePolicy",
                   "iam:DetachRolePolicy",
                   "iam:PutRolePolicy",
