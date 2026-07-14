@@ -53,6 +53,9 @@ jobs:
               - 'talos/**'
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
+              - 'scripts/generate-kubescape-exceptions/**'
+              - 'go.mod'
+              - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'tests/cilium-bandwidth-manager-bbr/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
@@ -95,6 +98,14 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        # Needed by the Kubescape exceptions generator below (Go, per the
+        # bash-or-Go scripting standard) — the scan step shells out to it.
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
 
       - name: 🔐 Validate Flux GHCR credential bridge
         # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
@@ -205,25 +216,33 @@ jobs:
         # FAILS if a change drops the posture below the threshold, so new
         # findings must be fixed (or justified) before merge.
         #
-        # The threshold (85) is a regression FLOOR, not the live score. The
-        # Kubescape compliance score is **environment-dependent** — the same
-        # binary on the same manifests scores higher locally (macOS, ≈94%) than on
-        # the Linux CI runner (≈87%), a gap that isn't the render, the framework
-        # cache, or the merge content — and the absolute value also shifts with the
-        # ksail render, so it can't be reproduced exactly offline. CI is the source
-        # of truth; the gate sits a few points under the observed CI value to catch
-        # real regressions without flaking on that variance. (NB the floor may need
-        # re-baselining after a ksail version bump.)
+        # The scan consumes the platform's justified exceptions: the
+        # ClusterSecurityException CRs (k8s/bases/infrastructure/
+        # cluster-security-exceptions/ — the single source of truth, also
+        # consumed in-cluster by the kubescape-operator) are converted at scan
+        # time into Kubescape's native exceptions format by
+        # scripts/generate-kubescape-exceptions (#2264). With runtime-
+        # enforced and except-only findings suppressed, the threshold gates the
+        # residual REAL posture instead of sitting ~15 points under it.
         #
-        # It is not higher because the residual findings are either runtime-
-        # enforced (Kyverno securityContext/limits, CiliumNetworkPolicy) or
-        # genuinely unfixable — notably C-0002, the KubeVirt operator's pods/exec
-        # RBAC, which it needs to manage VMs and can only be excepted. Native scan
-        # exceptions have now shipped (devantler-tech/ksail#5369); wiring the
-        # platform's ClusterSecurityException CRs into the scan and ratcheting the
-        # threshold toward 100 is tracked in #2264. Until then, ratchet up as
-        # genuine gaps are fixed; never lower it.
-        run: ksail workload scan --framework nsa --compliance-threshold 85
+        # The threshold is a regression FLOOR, not the live score. The
+        # Kubescape compliance score has historically been environment-
+        # dependent (Linux CI runner vs macOS) and shifts with the ksail
+        # render, so CI is the source of truth: the observed CI score with
+        # exceptions applied is 98.87% (2026-07-11, ksail 7.165.2 — matching
+        # the local value on that date), and the gate sits a few points under
+        # it to catch real regressions without flaking on run-to-run
+        # variance. (NB the floor may need re-baselining after a ksail
+        # version bump.)
+        #
+        # Known un-excepted residual: C-0012 on the local-dev MinIO Deployment
+        # (deliberate dev-only credential — tracked for a root-cause fix, not
+        # an exception). Ratchet the floor up as genuine gaps close; never
+        # lower it.
+        run: |
+          go test ./scripts/generate-kubescape-exceptions
+          go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
+          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95
 
   naming:
     name: 🏷️ Validate Naming Conventions
