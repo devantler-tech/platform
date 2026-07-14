@@ -20,6 +20,7 @@ func writeCSE(t *testing.T, body string) string {
 	return dir
 }
 
+// TestGenerateResourcesMatch verifies resource matches become anchored designators.
 func TestGenerateResourcesMatch(t *testing.T) {
 	dir := writeCSE(t, `
 apiVersion: security.devantler.tech/v1alpha1
@@ -83,6 +84,7 @@ spec:
 	}
 }
 
+// TestGenerateNamespaceSelector verifies namespace values become one exact-match regex.
 func TestGenerateNamespaceSelector(t *testing.T) {
 	dir := writeCSE(t, `
 kind: ClusterSecurityException
@@ -111,6 +113,7 @@ spec:
 	}
 }
 
+// TestGenerateNoMatchIsClusterWide verifies an omitted match targets every namespace.
 func TestGenerateNoMatchIsClusterWide(t *testing.T) {
 	dir := writeCSE(t, `
 kind: ClusterSecurityException
@@ -132,6 +135,7 @@ spec:
 	}
 }
 
+// TestGenerateSkipsNonExceptionDocumentsAndSorts verifies filtering and deterministic order.
 func TestGenerateSkipsNonExceptionDocumentsAndSorts(t *testing.T) {
 	dir := writeCSE(t, `
 kind: ConfigMap
@@ -300,6 +304,7 @@ spec:
 	}
 }
 
+// TestGenerateRejectsDuplicateNames verifies duplicate policy identities fail closed.
 func TestGenerateRejectsDuplicateNames(t *testing.T) {
 	dir := writeCSE(t, `
 kind: ClusterSecurityException
@@ -319,6 +324,7 @@ spec:
 	}
 }
 
+// TestGenerateRejectsEmptyDirectory verifies an empty source cannot produce a permissive file.
 func TestGenerateRejectsEmptyDirectory(t *testing.T) {
 	_, err := generate(t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "no ClusterSecurityException documents found") {

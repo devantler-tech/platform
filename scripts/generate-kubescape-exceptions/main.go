@@ -465,6 +465,7 @@ func render(policies []policy) ([]byte, error) {
 	return append(encoded, '\n'), nil
 }
 
+// main converts the configured exception directory and writes Kubescape JSON.
 func main() {
 	output := flag.String("o", "", "output file (stdout if omitted)")
 	flag.StringVar(output, "output", "", "output file (stdout if omitted)")
