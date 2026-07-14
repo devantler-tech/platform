@@ -28,6 +28,17 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🩹 Validate merge-group heal contract
+        run: |
+          go test ./scripts/validate-merge-group-heal
+          go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
+
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
@@ -370,24 +381,28 @@ jobs:
           wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
   heal-prod-on-failure:
-    name: 🩹 Heal Prod (restore main on merge-group failure)
+    name: 🩹 Heal Prod (restore main after unsuccessful merge-group deploy)
     needs: [changes, deploy-prod]
     # The deploy above runs on the SPECULATIVE merge ref, before the PR lands on
     # `main`. When it fails the merge group is ejected — but the OCI `latest` tag
     # (and the prod cluster reconciling it) is left pointing at that ejected
     # artifact, which never lands on `main`, so prod silently diverges from Git
     # until some future merge overwrites it (devantler-tech/platform#2026). This
-    # failure-path-only job re-deploys the current tip of `main` via the SAME
-    # composite, so the ejected artifact is immediately replaced by main's signed
-    # artifact and prod reconverges with Git. It has ZERO effect on a green merge
-    # (skipped) and does NOT relax the gate: deploy-prod's failure still fails
-    # `CI - Required Checks` below, so the PR is still ejected. It is intentionally
-    # NOT part of that aggregation — it is best-effort cleanup, not a merge gate.
+    # unsuccessful-path-only job re-deploys the current tip of `main` via the
+    # SAME composite, so the speculative artifact is immediately replaced by
+    # main's signed artifact and prod reconverges with Git. It covers explicit
+    # cancellation too: GitHub re-evaluates job conditions during normal
+    # cancellation, and `always()` keeps this cleanup eligible after the deploy
+    # job becomes cancelled. It has ZERO effect on a green merge (skipped) and
+    # does NOT relax the gate: deploy-prod's failure still fails `CI - Required
+    # Checks` below, so the PR is still ejected. It is intentionally NOT part of
+    # that aggregation — it is best-effort cleanup, not a merge gate.
     if: >-
       always() &&
       github.event_name == 'merge_group' &&
       needs.changes.outputs.k8s == 'true' &&
-      needs.deploy-prod.result == 'failure'
+      (needs.deploy-prod.result == 'failure' ||
+       needs.deploy-prod.result == 'cancelled')
     runs-on: ubuntu-latest
     environment: prod
     # Same shared lock as deploy-prod / cd.yaml so the heal can never run against
