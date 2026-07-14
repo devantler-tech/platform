@@ -52,6 +52,16 @@ metadata:
   namespace: aws
   labels:
     app.kubernetes.io/managed-by: ksail
+  annotations:
+    # The top-level `apps` Kustomization runs force: true, but this is a
+    # Crossplane managed resource with the default deletionPolicy: Delete — a
+    # force delete/recreate on immutable-field drift would cascade into DELETING
+    # the backing AWS IAM policy (the same class of failure that wiped coroot-db
+    # on 2026-06-18). The tenant Kustomization avoids force for exactly this
+    # reason; these platform-owned MRs opt out per-resource instead (#2631
+    # review). Flux can still update them in place; a genuine immutable conflict
+    # is an operator decision, not an automatic replace.
+    kustomize.toolkit.fluxcd.io/force: disabled
 spec:
   forProvider:
     description: >-

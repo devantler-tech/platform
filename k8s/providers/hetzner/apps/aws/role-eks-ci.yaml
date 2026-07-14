@@ -31,6 +31,15 @@
 # action is granted, so roles this principal creates (and can pass to EC2) are
 # capped at the smoke-test compute plane even if an arbitrary policy is written
 # to them.
+#
+# ROLLOUT GATE (#2631 review): the iam:CreateRole condition below makes every
+# eksctl-created role carry the boundary, but ksail's generated eks.yaml does not
+# yet set eksctl's iam.serviceRolePermissionsBoundary /
+# managedNodeGroups[].iam.instanceRolePermissionsBoundary — so CloudFormation's
+# first unbounded CreateRole would be DENIED and the smoke could not provision.
+# devantler-tech/ksail#6082 must land before the first System-Test-EKS dispatch.
+# This is a rollout-sequencing gate, not a defect in the condition: the cap is
+# correct, the caller just has to ask for it.
 apiVersion: iam.aws.m.upbound.io/v1beta1
 kind: Role
 metadata:
@@ -38,6 +47,11 @@ metadata:
   namespace: aws
   labels:
     app.kubernetes.io/managed-by: ksail
+  annotations:
+    # See policy-eks-ci-smoke-boundary.yaml: the `apps` Kustomization runs
+    # force: true, and a force-recreate of a Crossplane MR with the default
+    # deletionPolicy: Delete would DELETE the backing AWS IAM role. Opt out.
+    kustomize.toolkit.fluxcd.io/force: disabled
 spec:
   forProvider:
     description: >-
