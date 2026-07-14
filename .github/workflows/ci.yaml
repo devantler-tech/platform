@@ -53,7 +53,9 @@ jobs:
               - 'talos/**'
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
-              - 'scripts/generate-kubescape-exceptions.py'
+              - 'scripts/generate-kubescape-exceptions/**'
+              - 'go.mod'
+              - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'tests/cilium-bandwidth-manager-bbr/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
@@ -96,6 +98,14 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        # Needed by the Kubescape exceptions generator below (Go, per the
+        # bash-or-Go scripting standard) — the scan step shells out to it.
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
 
       - name: 🔐 Validate Flux GHCR credential bridge
         # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
@@ -211,7 +221,7 @@ jobs:
         # cluster-security-exceptions/ — the single source of truth, also
         # consumed in-cluster by the kubescape-operator) are converted at scan
         # time into Kubescape's native exceptions format by
-        # scripts/generate-kubescape-exceptions.py (#2264). With runtime-
+        # scripts/generate-kubescape-exceptions (#2264). With runtime-
         # enforced and except-only findings suppressed, the threshold gates the
         # residual REAL posture instead of sitting ~15 points under it.
         #
@@ -230,7 +240,8 @@ jobs:
         # an exception). Ratchet the floor up as genuine gaps close; never
         # lower it.
         run: |
-          python3 scripts/generate-kubescape-exceptions.py -o /tmp/kubescape-exceptions.json
+          go test ./scripts/generate-kubescape-exceptions
+          go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
           ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95
 
   naming:
