@@ -410,7 +410,7 @@ jobs:
 
       - name: 🔑 Reassert GHCR credential after OpenBao restore
         id: reassert_flux_ghcr_after_restore
-        if: ${{ inputs.restore }}
+        if: ${{ !cancelled() && inputs.restore && steps.verify_flux_ghcr_fanout.outcome == 'success' }}
         # The raft snapshot may contain an older infrastructure/ghcr/auth value.
         # Re-stage Git/SOPS in PushSecret-first order, wait for every consumer,
         # compare the materialized payloads, and only then reassert root auth.

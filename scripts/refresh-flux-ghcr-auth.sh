@@ -504,6 +504,7 @@ if [[ "${fanout_complete}" != "true" ]]; then
     echo "::error::The GHCR fan-out is incomplete; root Flux auth was not changed. Use --allow-incomplete-fanout only during the DR bootstrap, then run the full verifier after reconciliation."
     exit 1
   fi
+  patch_root_secret
   patch_variables_base
   patch_root_secret
   echo "✅ Staged the Git/SOPS credential and refreshed root Flux auth; the first reconcile will complete the missing downstream fan-out."

@@ -18,6 +18,7 @@ HELPER = ROOT / "scripts" / "refresh-flux-ghcr-auth.sh"
 KSAIL_PULL_WRAPPER = ROOT / "scripts" / "run-ksail-prod-with-pull-auth.sh"
 ACTION = ROOT / ".github" / "actions" / "deploy-prod" / "action.yml"
 DR_REBUILD = ROOT / ".github" / "workflows" / "dr-rebuild.yaml"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yaml"
 DR_RUNBOOK = ROOT / "docs" / "dr" / "runbook.md"
 KSAIL_OPERATOR_HELM_RELEASE = (
     ROOT
@@ -1078,6 +1079,22 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 self.assertTrue(self.patch_capture.exists())
                 self.assertFalse(self.fanout_log.exists())
                 self.assertIn("first reconcile will complete", result.stdout)
+                self.assertEqual(
+                    self.operation_log.read_text(encoding="utf-8").splitlines()[-3:],
+                    ["root-patch", "variables-patch", "root-patch"],
+                )
+
+    def test_partial_bootstrap_repairs_root_before_staging_variables(self) -> None:
+        """Keep an unavailable root patch from advancing partial consumers."""
+        result = self._run_helper(
+            self._valid_config(),
+            ("--allow-incomplete-fanout",),
+            FAKE_MISSING_FANOUT_RESOURCE="pushsecret/flux-system/seed-ghcr",
+            FAKE_KUBECTL_FAIL="true",
+        )
+
+        self.assertEqual(result.returncode, 43)
+        self.assertFalse(self.variables_patch_capture.exists())
 
     def test_partial_fanout_fails_closed_without_bootstrap_mode(self) -> None:
         """Reject a partial fan-out during a normal production deployment."""
@@ -1323,7 +1340,8 @@ class DeployActionOrderingTests(unittest.TestCase):
             workflow[fanout_verify:],
         )
         self.assertIn(
-            "if: ${{ inputs.restore }}",
+            "if: ${{ !cancelled() && inputs.restore && "
+            "steps.verify_flux_ghcr_fanout.outcome == 'success' }}",
             workflow[post_restore_verify:],
         )
         self.assertEqual(workflow.count("scripts/refresh-flux-ghcr-auth.sh"), 5)
@@ -1331,6 +1349,7 @@ class DeployActionOrderingTests(unittest.TestCase):
     def test_manual_dr_waits_for_flux_before_full_bridge(self) -> None:
         """Keep bootstrap mode until every first-reconcile layer is Ready."""
         runbook = DR_RUNBOOK.read_text(encoding="utf-8")
+        ci_workflow = CI_WORKFLOW.read_text(encoding="utf-8")
         manual = runbook[
             runbook.index("# 2. Prove the Git/SOPS pull credential") :
             runbook.index("# 6. ONLY if the OpenBao raft-snapshot")
@@ -1352,6 +1371,11 @@ class DeployActionOrderingTests(unittest.TestCase):
         self.assertLess(bootstrap, reconcile)
         self.assertLess(reconcile, wait)
         self.assertLess(wait, full_bridge)
+        self.assertIn(
+            "workload reconciliation also requires the SOPS key",
+            runbook,
+        )
+        self.assertIn("- 'docs/dr/runbook.md'", ci_workflow)
 
 
 class RequiredPackageCoverageTests(unittest.TestCase):

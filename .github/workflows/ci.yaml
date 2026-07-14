@@ -45,6 +45,7 @@ jobs:
               - 'scripts/ghcr-auth-lib.sh'
               - 'scripts/run-ksail-prod-with-pull-auth.sh'
               - 'scripts/tests/test_refresh_flux_ghcr_auth.py'
+              - 'docs/dr/runbook.md'
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/ci.yaml'

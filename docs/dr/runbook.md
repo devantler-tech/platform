@@ -53,8 +53,8 @@ these simultaneously and you cannot recover.
 > `ksail --config ksail.prod.yaml` create/update/push/reconcile command. The
 > wrapper injects the authoritative SOPS pull credential and its rotation
 > marker. Export `HCLOUD_TOKEN`, `WG_SERVER_PRIVATE_KEY`, and a usable SOPS Age
-> key for create/update; publication additionally needs `GHCR_TOKEN` and
-> `GITHUB_ACTOR`.
+> key for create/update; workload reconciliation also requires the SOPS key.
+> Publication additionally needs `GHCR_TOKEN` and `GITHUB_ACTOR`.
 
 ---
 
