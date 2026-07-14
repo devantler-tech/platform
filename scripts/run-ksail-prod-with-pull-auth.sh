@@ -22,6 +22,10 @@ readonly SCRIPT_DIR
 source "${SCRIPT_DIR}/ghcr-auth-lib.sh"
 
 readonly SECRET_FILE="${FLUX_GHCR_SECRET_FILE:-k8s/bases/bootstrap/secret.enc.yaml}"
+# Viper applies this nested config override before KSail expands the two child
+# environment variables. The template itself contains no credential.
+# shellcheck disable=SC2016
+readonly PULL_REGISTRY_TEMPLATE='${GHCR_USERNAME}:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests'
 pull_revision="$(flux_ghcr_revision "${SECRET_FILE}")"
 readonly pull_revision
 
@@ -52,7 +56,8 @@ else
   write_flux_ghcr_credentials "${docker_config}" "${credentials_file}"
   pull_username="$(jq -er '.username' "${credentials_file}")"
   pull_token="$(jq -er '.password' "${credentials_file}")"
-  GHCR_USERNAME="${pull_username}" \
+  KSAIL_SPEC_CLUSTER_LOCALREGISTRY_REGISTRY="${PULL_REGISTRY_TEMPLATE}" \
+    GHCR_USERNAME="${pull_username}" \
     GHCR_TOKEN="${pull_token}" \
     GHCR_PULL_REVISION="${pull_revision}" \
     ksail --config ksail.prod.yaml "$1" "$2"

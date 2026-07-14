@@ -16,6 +16,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / "scripts" / "refresh-flux-ghcr-auth.sh"
 KSAIL_PULL_WRAPPER = ROOT / "scripts" / "run-ksail-prod-with-pull-auth.sh"
+KSAIL_PROD_CONFIG = ROOT / "ksail.prod.yaml"
 ACTION = ROOT / ".github" / "actions" / "deploy-prod" / "action.yml"
 DR_REBUILD = ROOT / ".github" / "workflows" / "dr-rebuild.yaml"
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yaml"
@@ -69,6 +70,11 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.ksail_username_capture = self.workspace / "ksail-username"
         self.ksail_revision_capture = self.workspace / "ksail-revision"
         self.ksail_command_capture = self.workspace / "ksail-command"
+        self.ksail_config_path_capture = self.workspace / "ksail-config-path"
+        self.ksail_registry_capture = self.workspace / "ksail-registry"
+        self.ksail_registry_override_capture = (
+            self.workspace / "ksail-registry-override"
+        )
         self.sync_state_dir = self.workspace / "sync-state"
         self.sync_state_dir.mkdir()
         self._write_encrypted_secret("ENC[AES256_GCM,data:fixture-one]")
@@ -98,10 +104,30 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               exit 0
             fi
 
-            if [[ "$arguments" == *" --config ksail.prod.yaml cluster create "* \
-              || "$arguments" == *" --config ksail.prod.yaml cluster update "* \
-              || "$arguments" == *" --config ksail.prod.yaml workload push "* \
-              || "$arguments" == *" --config ksail.prod.yaml workload reconcile "* ]]; then
+            if [[ "$arguments" == *" cluster create "* \
+              || "$arguments" == *" cluster update "* \
+              || "$arguments" == *" workload push "* \
+              || "$arguments" == *" workload reconcile "* ]]; then
+              config=""
+              previous=""
+              for argument in "$@"; do
+                if [[ "$previous" == --config ]]; then
+                  config="$argument"
+                  break
+                fi
+                previous="$argument"
+              done
+              test -f "$config"
+              registry="$(yq -er '.spec.cluster.localRegistry.registry' "$config")"
+              test "$registry" = \
+                'devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests'
+              registry_override="${KSAIL_SPEC_CLUSTER_LOCALREGISTRY_REGISTRY:-}"
+              if [[ "$arguments" == *" workload push "* ]]; then
+                test -z "$registry_override"
+              else
+                test "$registry_override" = \
+                  '${GHCR_USERNAME}:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests'
+              fi
               test -n "${GHCR_TOKEN:-}"
               test -n "${GHCR_USERNAME:-}"
               test "${GHCR_PULL_REVISION:-}" != ""
@@ -109,6 +135,9 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               printf '%s' "$GHCR_USERNAME" > "$KSAIL_USERNAME_CAPTURE"
               printf '%s' "$GHCR_PULL_REVISION" > "$KSAIL_REVISION_CAPTURE"
               printf '%s\n' "$*" > "$KSAIL_COMMAND_CAPTURE"
+              printf '%s' "$config" > "$KSAIL_CONFIG_PATH_CAPTURE"
+              printf '%s' "$registry" > "$KSAIL_REGISTRY_CAPTURE"
+              printf '%s' "$registry_override" > "$KSAIL_REGISTRY_OVERRIDE_CAPTURE"
               exit 0
             fi
 
@@ -532,6 +561,9 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             self.ksail_username_capture,
             self.ksail_revision_capture,
             self.ksail_command_capture,
+            self.ksail_config_path_capture,
+            self.ksail_registry_capture,
+            self.ksail_registry_override_capture,
         ):
             marker.unlink(missing_ok=True)
         for marker in self.sync_state_dir.iterdir():
@@ -556,6 +588,11 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "KSAIL_USERNAME_CAPTURE": str(self.ksail_username_capture),
                 "KSAIL_REVISION_CAPTURE": str(self.ksail_revision_capture),
                 "KSAIL_COMMAND_CAPTURE": str(self.ksail_command_capture),
+                "KSAIL_CONFIG_PATH_CAPTURE": str(self.ksail_config_path_capture),
+                "KSAIL_REGISTRY_CAPTURE": str(self.ksail_registry_capture),
+                "KSAIL_REGISTRY_OVERRIDE_CAPTURE": str(
+                    self.ksail_registry_override_capture
+                ),
                 "EXPECTED_PULL_USERNAME": expected_username,
                 "EXPECTED_PULL_TOKEN": expected_token,
                 "EXPECTED_GHCR_REVISION": self._expected_revision(),
@@ -588,6 +625,9 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             self.ksail_username_capture,
             self.ksail_revision_capture,
             self.ksail_command_capture,
+            self.ksail_config_path_capture,
+            self.ksail_registry_capture,
+            self.ksail_registry_override_capture,
         ):
             marker.unlink(missing_ok=True)
         expected_username, expected_token = self._expected_credentials(config)
@@ -602,6 +642,11 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "KSAIL_USERNAME_CAPTURE": str(self.ksail_username_capture),
                 "KSAIL_REVISION_CAPTURE": str(self.ksail_revision_capture),
                 "KSAIL_COMMAND_CAPTURE": str(self.ksail_command_capture),
+                "KSAIL_CONFIG_PATH_CAPTURE": str(self.ksail_config_path_capture),
+                "KSAIL_REGISTRY_CAPTURE": str(self.ksail_registry_capture),
+                "KSAIL_REGISTRY_OVERRIDE_CAPTURE": str(
+                    self.ksail_registry_override_capture
+                ),
                 "EXPECTED_PULL_USERNAME": expected_username,
                 "EXPECTED_PULL_TOKEN": expected_token,
                 "EXPECTED_GHCR_REVISION": self._expected_revision(),
@@ -833,8 +878,26 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                     "devantler",
                 )
                 self.assertEqual(
-                    self.ksail_command_capture.read_text(encoding="utf-8").strip(),
-                    f"--config ksail.prod.yaml {' '.join(command)}",
+                    self.ksail_command_capture.read_text(encoding="utf-8")
+                    .strip()
+                    .split(),
+                    ["--config", "ksail.prod.yaml", *command],
+                )
+                self.assertEqual(
+                    self.ksail_config_path_capture.read_text(encoding="utf-8"),
+                    "ksail.prod.yaml",
+                )
+                self.assertEqual(
+                    self.ksail_registry_capture.read_text(encoding="utf-8"),
+                    "devantler:${GHCR_TOKEN}"
+                    "@ghcr.io/devantler-tech/platform/manifests",
+                )
+                self.assertEqual(
+                    self.ksail_registry_override_capture.read_text(
+                        encoding="utf-8"
+                    ),
+                    "${GHCR_USERNAME}:${GHCR_TOKEN}"
+                    "@ghcr.io/devantler-tech/platform/manifests",
                 )
                 self.assertRegex(
                     self.ksail_revision_capture.read_text(encoding="utf-8"),
@@ -867,6 +930,18 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             self.ksail_username_capture.read_text(encoding="utf-8"),
             "fixture-publisher",
         )
+        self.assertEqual(
+            self.ksail_config_path_capture.read_text(encoding="utf-8"),
+            "ksail.prod.yaml",
+        )
+        self.assertEqual(
+            self.ksail_registry_capture.read_text(encoding="utf-8"),
+            "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests",
+        )
+        self.assertEqual(
+            self.ksail_registry_override_capture.read_text(encoding="utf-8"),
+            "",
+        )
         self.assertRegex(
             self.ksail_revision_capture.read_text(encoding="utf-8"),
             r"^[0-9a-f]{64}$",
@@ -879,6 +954,17 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             self.output_path_log.exists(),
             "publication needs the ciphertext revision but not decryption",
         )
+
+    def test_production_config_keeps_its_protected_registry_template(self) -> None:
+        """Keep dynamic pull auth in the wrapper-owned environment only."""
+        config = KSAIL_PROD_CONFIG.read_text(encoding="utf-8")
+
+        self.assertIn(
+            'registry: "devantler:${GHCR_TOKEN}'
+            '@ghcr.io/devantler-tech/platform/manifests"',
+            config,
+        )
+        self.assertNotIn("${GHCR_USERNAME}:${GHCR_TOKEN}@ghcr.io", config)
 
     def test_lifecycle_preserves_username_from_sops_docker_config(self) -> None:
         """Avoid hard-coding the pull credential's registry username."""

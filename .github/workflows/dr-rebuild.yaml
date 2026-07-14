@@ -412,6 +412,8 @@ jobs:
         id: reassert_flux_ghcr_after_restore
         if: ${{ !cancelled() && inputs.restore && steps.verify_flux_ghcr_fanout.outcome == 'success' }}
         # The raft snapshot may contain an older infrastructure/ghcr/auth value.
+        # !cancelled() is intentional: even a failed restore can already have
+        # rematerialised that stale value, so attempt the fail-closed repair.
         # Re-stage Git/SOPS in PushSecret-first order, wait for every consumer,
         # compare the materialized payloads, and only then reassert root auth.
         run: ./scripts/refresh-flux-ghcr-auth.sh

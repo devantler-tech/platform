@@ -137,7 +137,7 @@ spec:
         - siderolabs/util-linux-tools
         - siderolabs/qemu-guest-agent
     localRegistry:
-      registry: "${GHCR_USERNAME}:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
+      registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"
     # Cosign keyless signature verification on the flux-system OCIRepository that
     # KSail generates and owns (rendered onto spec.verify; a hand-written override
     # would lose the reconcile fight, so it is configured here per ksail#4987).

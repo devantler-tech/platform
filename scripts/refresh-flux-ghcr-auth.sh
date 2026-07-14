@@ -37,6 +37,9 @@ readonly SYNC_INTERVAL="${FLUX_GHCR_SYNC_INTERVAL:-2}"
 KSAIL_OPERATOR_VERSION="$(yq -er '.spec.chart.spec.version' \
   k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml)"
 readonly KSAIL_OPERATOR_VERSION
+# Both tenant release workflows create/update latest alongside every semver
+# artifact and image tag. Flux still selects the signed semver artifact; latest
+# is the stable read-permission/existence probe for the same private packages.
 readonly -a REQUIRED_PULL_TARGETS=(
   "devantler-tech/platform/manifests:latest"
   "devantler-tech/wedding-app/manifests:latest"
