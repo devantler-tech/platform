@@ -6,6 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly controllers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
 readonly opt_in_fixture="${root_dir}/tests/cilium-bandwidth-manager-bbr"
+readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -69,6 +70,24 @@ reject_text() {
     fail "${description}"
   fi
 }
+
+awk '
+  /^      - name: 🚦 Validate default-off Cilium bandwidth manager$/ {
+    found_step = 1
+    next
+  }
+  found_step && /^        if: needs\.changes\.outputs\.k8s == '\''true'\''$/ {
+    found_gate = 1
+    exit
+  }
+  found_step && /^      - name:/ {
+    exit
+  }
+  END {
+    exit !(found_step && found_gate)
+  }
+' "${ci_workflow}" ||
+  fail 'the BBR workflow step must be gated to k8s changes'
 
 extractor_probe="$(
   {

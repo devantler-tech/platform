@@ -121,6 +121,7 @@ jobs:
         run: python3 scripts/validate-embedded-json.py
 
       - name: 🚦 Validate default-off Cilium bandwidth manager
+        if: needs.changes.outputs.k8s == 'true'
         # Render the committed and temporary opt-in states so the staged
         # bandwidth-manager + BBR component cannot silently become active or
         # regress the Hetzner WireGuard settings. Bash plus the kubectl bundled
