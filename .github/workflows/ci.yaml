@@ -19,6 +19,7 @@ jobs:
       pull-requests: read # detect changed files
     outputs:
       k8s: ${{ steps.filter.outputs.k8s }}
+      bridge_validation: ${{ steps.filter.outputs.bridge_validation }}
       talos: ${{ steps.filter.outputs.talos }}
     steps:
       - name: 📑 Checkout
@@ -26,6 +27,17 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🩹 Validate merge-group heal contract
+        run: |
+          go test ./scripts/validate-merge-group-heal
+          go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
@@ -43,6 +55,20 @@ jobs:
               - 'scripts/validate-embedded-json.py'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'tests/cilium-bandwidth-manager-bbr/**'
+              - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/ghcr-auth-lib.sh'
+              - 'scripts/run-ksail-prod-with-pull-auth.sh'
+              - '.github/actions/deploy-prod/**'
+              - '.github/workflows/dr-rebuild.yaml'
+              - '.github/workflows/ci.yaml'
+            bridge_validation:
+              - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/ghcr-auth-lib.sh'
+              - 'scripts/run-ksail-prod-with-pull-auth.sh'
+              - 'scripts/tests/test_refresh_flux_ghcr_auth.py'
+              - 'docs/dr/runbook.md'
+              - '.github/actions/deploy-prod/**'
+              - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/ci.yaml'
             talos:
               - 'talos/**'
@@ -57,7 +83,10 @@ jobs:
     # longer boots it; instead it schema-validates and security-scans the
     # manifests. This needs no secrets, so — unlike the old system test — it also
     # runs on fork PRs.
-    if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
+    if: >-
+      github.event_name == 'pull_request' &&
+      (needs.changes.outputs.k8s == 'true' ||
+      needs.changes.outputs.bridge_validation == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -66,6 +95,20 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: 🔐 Validate Flux GHCR credential bridge
+        # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
+        # registry credential, cluster access, or network is used.
+        run: |
+          bash -n \
+            scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth.sh \
+            scripts/run-ksail-prod-with-pull-auth.sh
+          shellcheck \
+            scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth.sh \
+            scripts/run-ksail-prod-with-pull-auth.sh
+          python3 -m unittest scripts.tests.test_refresh_flux_ghcr_auth
 
       - name: 🧩 Validate embedded JSON blobs
         # ConfigMaps that embed whole JSON documents as block scalars (e.g. the
@@ -121,7 +164,7 @@ jobs:
         # a save gated on job success would then never persist the schemas it did
         # manage to fetch, and every retry would cold-start again.
         id: kubeconform-cache
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ksail/kubeconform
           key: kubeconform-schema-cache-v1-${{ github.run_id }}
@@ -239,12 +282,16 @@ jobs:
 
           # Placeholder key material for env-expanded patch values (ksail
           # expands these from environment secrets at deploy time — see
-          # talos/control-planes/wireguard.yaml and talos/cluster/registry-auth.yaml).
+          # talos/control-planes/wireguard.yaml and
+          # talos/cluster/authenticate-ghcr-pulls.yaml and
+          # talos/cluster/mark-ghcr-pull-revision.yaml).
           # Real-format but throwaway, so validation exercises the expansion
           # path without any real secret on the PR event.
           WG_SERVER_PRIVATE_KEY="$(openssl rand -base64 32)"
+          GHCR_USERNAME="placeholder-ghcr-user"
           GHCR_TOKEN="placeholder-ghcr-token"
-          export WG_SERVER_PRIVATE_KEY GHCR_TOKEN
+          GHCR_PULL_REVISION="$(printf '%s\n' 'ENC[ci-placeholder-ciphertext]' | shasum -a 256 | awk '{print $1}')"
+          export WG_SERVER_PRIVATE_KEY GHCR_USERNAME GHCR_TOKEN GHCR_PULL_REVISION
 
           validate_overlay() {
             local dir="$1" mode="$2"
@@ -343,24 +390,28 @@ jobs:
           wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
   heal-prod-on-failure:
-    name: 🩹 Heal Prod (restore main on merge-group failure)
+    name: 🩹 Heal Prod (restore main after unsuccessful merge-group deploy)
     needs: [changes, deploy-prod]
     # The deploy above runs on the SPECULATIVE merge ref, before the PR lands on
     # `main`. When it fails the merge group is ejected — but the OCI `latest` tag
     # (and the prod cluster reconciling it) is left pointing at that ejected
     # artifact, which never lands on `main`, so prod silently diverges from Git
     # until some future merge overwrites it (devantler-tech/platform#2026). This
-    # failure-path-only job re-deploys the current tip of `main` via the SAME
-    # composite, so the ejected artifact is immediately replaced by main's signed
-    # artifact and prod reconverges with Git. It has ZERO effect on a green merge
-    # (skipped) and does NOT relax the gate: deploy-prod's failure still fails
-    # `CI - Required Checks` below, so the PR is still ejected. It is intentionally
-    # NOT part of that aggregation — it is best-effort cleanup, not a merge gate.
+    # unsuccessful-path-only job re-deploys the current tip of `main` via the
+    # SAME composite, so the speculative artifact is immediately replaced by
+    # main's signed artifact and prod reconverges with Git. It covers explicit
+    # cancellation too: GitHub re-evaluates job conditions during normal
+    # cancellation, and `always()` keeps this cleanup eligible after the deploy
+    # job becomes cancelled. It has ZERO effect on a green merge (skipped) and
+    # does NOT relax the gate: deploy-prod's failure still fails `CI - Required
+    # Checks` below, so the PR is still ejected. It is intentionally NOT part of
+    # that aggregation — it is best-effort cleanup, not a merge gate.
     if: >-
       always() &&
       github.event_name == 'merge_group' &&
       needs.changes.outputs.k8s == 'true' &&
-      needs.deploy-prod.result == 'failure'
+      (needs.deploy-prod.result == 'failure' ||
+       needs.deploy-prod.result == 'cancelled')
     runs-on: ubuntu-latest
     environment: prod
     # Same shared lock as deploy-prod / cd.yaml so the heal can never run against
@@ -407,7 +458,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@fec61388ed0c4ec4d6d93e3f1a8b8d17e7d40a72 # v9.0.4
+        uses: devantler-tech/actions/aggregate-job-checks@931b82faa0c30e65f626527a6b3c8cd2d4879c71 # v9.0.11
         with:
           job-results: >-
             ${{ needs.changes.result }}
