@@ -43,15 +43,18 @@ const (
 	designatorTypeAttr = "Attributes"
 )
 
+// designator identifies the Kubernetes resources covered by an exception.
 type designator struct {
 	DesignatorType string            `json:"designatorType"`
 	Attributes     map[string]string `json:"attributes"`
 }
 
+// posturePolicy identifies one Kubescape control excluded by a policy.
 type posturePolicy struct {
 	ControlID string `json:"controlID"`
 }
 
+// policy is Kubescape's native PostureExceptionPolicy representation.
 type policy struct {
 	Name            string          `json:"name"`
 	PolicyType      string          `json:"policyType"`
