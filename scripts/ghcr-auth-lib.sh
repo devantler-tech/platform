@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 # Shared secret-safe helpers for the Git/SOPS GHCR pull credential.
 
+# Fail before any decrypt or mutation when the YAML query implementation used
+# for exact field selection is missing or incompatible.
+require_flux_ghcr_yaml_tool() {
+  local yq_version
+
+  if ! command -v yq >/dev/null 2>&1 \
+    || ! yq_version="$(yq --version 2>/dev/null)" \
+    || [[ "${yq_version}" != *" version v4."* ]] \
+    || ! printf 'probe: ok\n' \
+      | yq -er '.probe | select(tag == "!!str")' - >/dev/null 2>&1; then
+    echo "::error::Mike Farah yq v4 is required by the GHCR credential bridge; install it with 'brew install yq' before running production lifecycle or recovery commands." >&2
+    return 127
+  fi
+}
+
 # Decrypt only the Docker config scalar into a caller-owned restricted file.
 decrypt_flux_ghcr_docker_config() {
   local output_file="$1"

@@ -12,6 +12,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 # shellcheck source=scripts/ghcr-auth-lib.sh
 source "${SCRIPT_DIR}/ghcr-auth-lib.sh"
+require_flux_ghcr_yaml_tool
 
 check_only=false
 allow_incomplete_fanout=false
@@ -182,6 +183,10 @@ sync_talos_registry_auth() {
     echo "::error::Could not list Talos nodes; refusing to mutate any Kubernetes credential consumers."
     return 1
   fi
+  # talosctl connects to the public control-plane endpoints in talosconfig and
+  # proxies --nodes targets through them. Target addresses therefore must be
+  # the stable InternalIPs as seen by those endpoint servers, not client-facing
+  # ExternalIPs (Talos v1.13 "Endpoints and nodes").
   if ! jq -e '
     (.items | length) > 0
     and all(.items[];

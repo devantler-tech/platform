@@ -20,6 +20,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 # shellcheck source=scripts/ghcr-auth-lib.sh
 source "${SCRIPT_DIR}/ghcr-auth-lib.sh"
+require_flux_ghcr_yaml_tool
 
 readonly SECRET_FILE="${FLUX_GHCR_SECRET_FILE:-k8s/bases/bootstrap/secret.enc.yaml}"
 # Viper applies this nested config override before KSail expands the two child

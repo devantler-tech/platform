@@ -61,6 +61,9 @@ sudo apt-get update && sudo apt-get install -y age
 wget -O /tmp/sops_amd64.deb https://github.com/getsops/sops/releases/download/v3.8.1/sops_3.8.1_amd64.deb
 sudo dpkg -i /tmp/sops_amd64.deb
 
+# yq v4 — exact YAML field queries in production lifecycle/recovery scripts
+brew install yq
+
 # KSail — cluster + workload lifecycle (Homebrew)
 brew tap devantler-tech/formulas && brew install ksail
 ```
@@ -69,7 +72,7 @@ Verify the toolchain:
 
 ```bash
 docker --version && ksail --version && kubectl version --client
-sops --version && age --version
+sops --version && age --version && yq --version
 docker ps              # Docker daemon is running
 ksail cluster list     # existing Talos clusters
 ```
@@ -338,7 +341,7 @@ export GITHUB_ACTOR=devantler
 
 ### Tool Reinstallation
 
-If tools stop working, reinstall in order: Docker (restart the service if needed) → KSail (`brew reinstall ksail`) → kubectl (check the cluster context) → SOPS and Age (check the encryption keys).
+If tools stop working, reinstall in order: Docker (restart the service if needed) → KSail (`brew reinstall ksail`) → kubectl (check the cluster context) → SOPS, Age, and yq v4 (check the encryption keys and `yq --version`).
 
 ## What's Useful for the AI Assistant
 

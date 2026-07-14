@@ -14,7 +14,9 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
+AGENT_INSTRUCTIONS = ROOT / "AGENTS.md"
 HELPER = ROOT / "scripts" / "refresh-flux-ghcr-auth.sh"
+GHCR_AUTH_LIB = ROOT / "scripts" / "ghcr-auth-lib.sh"
 KSAIL_PULL_WRAPPER = ROOT / "scripts" / "run-ksail-prod-with-pull-auth.sh"
 KSAIL_PROD_CONFIG = ROOT / "ksail.prod.yaml"
 ACTION = ROOT / ".github" / "actions" / "deploy-prod" / "action.yml"
@@ -355,7 +357,8 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                         }
                       },
                       status: {addresses: [
-                        {type: "InternalIP", address: "10.0.0.2"}
+                        {type: "InternalIP", address: "10.0.0.2"},
+                        {type: "ExternalIP", address: "198.51.100.2"}
                       ]}
                     },
                     {
@@ -370,7 +373,8 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                         }
                       },
                       status: {addresses: [
-                        {type: "InternalIP", address: "10.0.0.1"}
+                        {type: "InternalIP", address: "10.0.0.1"},
+                        {type: "ExternalIP", address: "198.51.100.1"}
                       ]}
                     }
                   ]
@@ -1345,6 +1349,9 @@ class DeployActionOrderingTests(unittest.TestCase):
                 setup_step = document[setup:stage]
                 self.assertIn("TALOS_VERSION: \"1.13.5\"", setup_step)
                 self.assertIn("talosctl-linux-amd64", setup_step)
+                if document == action:
+                    restore = document.index("name: 🔑 Restore talosconfig")
+                    self.assertLess(restore, stage)
 
     def test_consumer_staging_precedes_publish_and_is_reasserted_after_update(
         self,
@@ -1519,6 +1526,57 @@ class DeployActionOrderingTests(unittest.TestCase):
         for production_job in (deploy, heal):
             self.assertIn("needs.changes.outputs.k8s == 'true'", production_job)
             self.assertNotIn("bridge_validation", production_job)
+
+
+class ManualBridgePrerequisiteTests(unittest.TestCase):
+    """Keep manual recovery dependencies explicit and fail-fast."""
+
+    def test_yq_v4_is_documented_and_preflighted(self) -> None:
+        """Require the YAML tool used before any GHCR recovery mutation."""
+        instructions = AGENT_INSTRUCTIONS.read_text(encoding="utf-8")
+        runbook = DR_RUNBOOK.read_text(encoding="utf-8")
+        library = GHCR_AUTH_LIB.read_text(encoding="utf-8")
+
+        self.assertIn("yq v4", instructions)
+        self.assertIn("yq v4", runbook[: runbook.index("## Scenario 1")])
+        self.assertIn("require_flux_ghcr_yaml_tool()", library)
+        for entrypoint in (HELPER, KSAIL_PULL_WRAPPER):
+            with self.subTest(entrypoint=entrypoint.name):
+                self.assertIn(
+                    "require_flux_ghcr_yaml_tool",
+                    entrypoint.read_text(encoding="utf-8"),
+                )
+
+    def test_yaml_tool_preflight_rejects_missing_or_incompatible_yq(self) -> None:
+        """Stop before entrypoint work when Mike Farah yq v4 is unavailable."""
+        cases = ("missing", "incompatible")
+        for case in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temp_dir:
+                if case == "incompatible":
+                    fake_yq = Path(temp_dir) / "yq"
+                    fake_yq.write_text(
+                        "#!/bin/bash\necho 'yq 3.4.3'\n", encoding="utf-8"
+                    )
+                    fake_yq.chmod(0o755)
+                environment = os.environ.copy()
+                environment["PATH"] = temp_dir
+
+                result = subprocess.run(
+                    [
+                        "/bin/bash",
+                        "-c",
+                        'source "$1"; require_flux_ghcr_yaml_tool',
+                        "bash",
+                        str(GHCR_AUTH_LIB),
+                    ],
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("yq v4 is required", result.stderr)
 
 
 class RequiredPackageCoverageTests(unittest.TestCase):

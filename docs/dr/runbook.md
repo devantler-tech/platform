@@ -54,7 +54,9 @@ these simultaneously and you cannot recover.
 > wrapper injects the authoritative SOPS pull credential and its rotation
 > marker. Export `HCLOUD_TOKEN`, `WG_SERVER_PRIVATE_KEY`, and a usable SOPS Age
 > key for create/update; workload reconciliation also requires the SOPS key.
-> Publication additionally needs `GHCR_TOKEN` and `GITHUB_ACTOR`.
+> Install `yq v4` before invoking the wrapper or credential bridge; both fail
+> fast before decryption or mutation when the compatible YAML query tool is
+> unavailable. Publication additionally needs `GHCR_TOKEN` and `GITHUB_ACTOR`.
 
 ---
 
