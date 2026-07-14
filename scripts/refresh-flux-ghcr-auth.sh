@@ -165,6 +165,32 @@ verify_consumer_secret() {
   fi
 }
 
+# Every control plane OTHER than the named one must be Ready before we take it
+# down. etcd tolerates exactly one member down in a 3-member cluster, so rebooting
+# a second one drops quorum and takes the API server with it.
+other_control_planes_ready() {
+  local rebooting="$1"
+  local unready
+
+  unready="$(jq -r --arg rebooting "${rebooting}" '
+    .items[]
+    | select(.metadata.name != $rebooting)
+    | (.metadata.labels // {}) as $labels
+    | select(($labels | has("node-role.kubernetes.io/control-plane"))
+      or ($labels | has("node-role.kubernetes.io/master")))
+    | select(
+        [.status.conditions[]? | select(.type == "Ready" and .status == "True")]
+          | length == 0
+      )
+    | .metadata.name
+  ' "${talos_nodes_file}")"
+
+  if [[ -n "${unready}" ]]; then
+    echo "Control planes not Ready: $(echo "${unready}" | tr '\n' ' ')"
+    return 1
+  fi
+}
+
 # Apply Git/SOPS auth to stale Talos nodes, prove an exact image pull, and only
 # then record the non-secret revision marker that makes the operation retryable.
 sync_talos_registry_auth() {
@@ -173,7 +199,8 @@ sync_talos_registry_auth() {
   local image_reference
   local node_name
   local node_ip
-  local _node_role
+  local node_role
+  local _node_desired
 
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
@@ -219,7 +246,10 @@ sync_talos_registry_auth() {
           then "1" else "0" end),
         .metadata.name,
         ([.status.addresses[]
-          | select(.type == "InternalIP") | .address][0])
+          | select(.type == "InternalIP") | .address][0]),
+        (.metadata.annotations[
+          "platform.devantler.tech/ghcr-pull-desired-revision"
+        ] // "")
       ]
     | @tsv
   ' "${talos_nodes_file}" \
@@ -274,7 +304,7 @@ sync_talos_registry_auth() {
   # Targets are pre-sorted workers-first, and this loop is strictly sequential,
   # so the reboot below rolls one node at a time and control planes go last —
   # etcd keeps quorum throughout.
-  while IFS=$'\t' read -r _node_role node_name node_ip; do
+  while IFS=$'\t' read -r node_role node_name node_ip _node_desired; do
     if ! talosctl \
       --nodes "${node_ip}" \
       patch machineconfig \
@@ -285,7 +315,7 @@ sync_talos_registry_auth() {
       return 1
     fi
 
-    # Writing the credential is NOT enough to make a running node use it, and
+    # Writing the credential is NOT enough to make a RUNNING node use it, and
     # this is the step whose absence caused the 2026-07-14 outage.
     #
     # containerd reads registry auth from its STATIC config
@@ -310,8 +340,47 @@ sync_talos_registry_auth() {
     # ImagePullBackOff, and prod stayed four releases behind for over a day.
     # The pull check proves the CREDENTIAL is good; only the reboot proves
     # CONTAINERD is using it.
-    if ! talosctl --nodes "${node_ip}" reboot >"${talos_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} did not reboot to load the refreshed GHCR registry auth."
+    #
+    # The reboot is UNCONDITIONAL for every selected node, which does mean a
+    # freshly-autoscaled node — whose containerd already booted with the current
+    # credential — gets one avoidable reboot on the next deploy. That is
+    # deliberate, and the tempting optimisation is a trap:
+    #
+    # The obvious way to spot a "fresh" node is its ghcr-pull-desired-revision
+    # marker (mark-ghcr-pull-revision.yaml). But that marker tracks MACHINE
+    # CONFIG state, and machine-config state being decoupled from what containerd
+    # actually loaded IS the bug this whole function exists to fix. The deploy
+    # runs this bridge twice — once before `ksail cluster update` and once after
+    # (deploy-prod action) — and `cluster update` stamps the current desired
+    # marker onto every node, including ones whose containerd is still holding
+    # the old credential. Any node the manual runbook path updates ahead of the
+    # bridge lands in the same state. Skipping a reboot on that evidence would
+    # silently re-create the exact 2026-07-14 outage.
+    #
+    # Correctness beats one wasted reboot: an over-eager reboot costs ~90s on a
+    # drained node, a skipped one costs a day of silent ImagePullBackOff. Skipping
+    # provably-fresh nodes needs evidence about CONTAINERD (its start time versus
+    # when the credential landed), not about the machine config — tracked
+    # separately.
+    #
+    # etcd tolerates exactly one control plane down in a 3-member cluster. This
+    # loop is serial and control planes sort last, but a control plane that was
+    # ALREADY unhealthy before this run would make our reboot the second one down
+    # and drop quorum. Prove the others are Ready first.
+    if [[ "${node_role}" == "1" ]] \
+      && ! other_control_planes_ready "${node_name}"; then
+      echo "::error::Refusing to reboot control plane ${node_name} for the GHCR auth refresh: another control plane is not Ready, so rebooting this one risks etcd quorum."
+      return 1
+    fi
+
+    # --drain cordons the node and evicts its pods under PodDisruptionBudget
+    # control first; without it the workloads are killed along with the node.
+    if ! talosctl \
+      --nodes "${node_ip}" \
+      reboot \
+      --drain \
+      >"${talos_result_file}" 2>&1; then
+      echo "::error::Talos node ${node_name} did not drain+reboot to load the refreshed GHCR registry auth."
       return 1
     fi
     if ! kubectl \

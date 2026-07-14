@@ -219,9 +219,11 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
 
             # A running containerd only adopts new registry auth by restarting,
             # and Talos refuses `service cri restart`, so the node must reboot.
-            # The auth patch must already have landed.
+            # The auth patch must already have landed, and the reboot must drain
+            # (cordon + evict under PDB) rather than killing the pods with it.
             if [[ "$arguments" == *" reboot "* ]]; then
               test -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
+              [[ "$arguments" == *" --drain "* ]]
               printf 'talos-reboot:%s\n' "$node" >> "$TALOS_LOG"
               printf 'talos-reboot:%s\n' "$node" >> "$OPERATION_LOG"
               if [[ "$node" == "${FAKE_TALOS_FAIL_NODE:-disabled}" \
@@ -810,6 +812,67 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             self.talos_patch_path_log.read_text(encoding="utf-8")
         )
         self.assertFalse(temporary_patch.exists())
+        self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
+
+    def test_unhealthy_control_plane_blocks_the_control_plane_reboot(self) -> None:
+        """Never take a SECOND control plane down — etcd would lose quorum.
+
+        The reboot roll is serial and control planes go last, but a control plane
+        that was ALREADY unhealthy before this run makes our reboot the second one
+        down. The worker still syncs (it cannot affect quorum); the control-plane
+        reboot is refused, and no Kubernetes credential consumer is mutated.
+        """
+        revision = self._expected_revision()
+        ready = [{"type": "Ready", "status": "True"}]
+        inventory = {
+            "items": [
+                {
+                    "metadata": {"name": "prod-worker-1", "labels": {}},
+                    "status": {
+                        "addresses": [{"type": "InternalIP", "address": "10.0.0.2"}],
+                        "conditions": ready,
+                    },
+                },
+                {
+                    "metadata": {
+                        "name": "prod-control-plane-1",
+                        "labels": {"node-role.kubernetes.io/control-plane": ""},
+                    },
+                    "status": {
+                        "addresses": [{"type": "InternalIP", "address": "10.0.0.1"}],
+                        "conditions": ready,
+                    },
+                },
+                {
+                    # Already down, and already at the desired revision — so it is
+                    # not itself a sync target, it is just a quorum member.
+                    "metadata": {
+                        "name": "prod-control-plane-2",
+                        "labels": {"node-role.kubernetes.io/control-plane": ""},
+                        "annotations": {
+                            "platform.devantler.tech/ghcr-pull-verified-revision":
+                                revision,
+                        },
+                    },
+                    "status": {
+                        "addresses": [{"type": "InternalIP", "address": "10.0.0.3"}],
+                        "conditions": [{"type": "Ready", "status": "False"}],
+                    },
+                },
+            ]
+        }
+
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_NODE_JSON=json.dumps(inventory),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("risks etcd quorum", result.stdout + result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("talos-reboot:10.0.0.2", operations)
+        self.assertNotIn("talos-reboot:10.0.0.1", operations)
+        self.assertNotIn("root-patch", operations)
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
 
     def test_unready_node_after_reboot_stops_the_roll(self) -> None:
