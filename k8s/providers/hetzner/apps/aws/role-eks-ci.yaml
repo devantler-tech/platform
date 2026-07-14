@@ -134,7 +134,10 @@ spec:
               {
                 "Sid": "SsmAmiLookup",
                 "Effect": "Allow",
-                "Action": "ssm:GetParameter",
+                "Action": [
+                  "ssm:GetParameter",
+                  "ssm:GetParameters"
+                ],
                 "Resource": [
                   "arn:aws:ssm:*::parameter/aws/service/eks/optimized-ami/*",
                   "arn:aws:ssm:*::parameter/aws/service/bottlerocket/*"
@@ -234,6 +237,18 @@ spec:
                   "iam:GetPolicyVersion"
                 ],
                 "Resource": "*"
+              },
+              {
+                "Sid": "IamReadCallerIdentity",
+                "Effect": "Allow",
+                "Action": [
+                  "iam:GetRole",
+                  "iam:GetUser"
+                ],
+                "Resource": [
+                  "arn:aws:iam::939001610192:role/*",
+                  "arn:aws:iam::939001610192:user/*"
+                ]
               },
               {
                 "Sid": "StsIdentity",
