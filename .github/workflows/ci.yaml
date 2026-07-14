@@ -19,6 +19,7 @@ jobs:
       pull-requests: read # detect changed files
     outputs:
       k8s: ${{ steps.filter.outputs.k8s }}
+      bridge_validation: ${{ steps.filter.outputs.bridge_validation }}
       talos: ${{ steps.filter.outputs.talos }}
     steps:
       - name: 📑 Checkout
@@ -41,6 +42,20 @@ jobs:
               - 'talos/**'
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
+              - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/ghcr-auth-lib.sh'
+              - 'scripts/run-ksail-prod-with-pull-auth.sh'
+              - '.github/actions/deploy-prod/**'
+              - '.github/workflows/dr-rebuild.yaml'
+              - '.github/workflows/ci.yaml'
+            bridge_validation:
+              - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/ghcr-auth-lib.sh'
+              - 'scripts/run-ksail-prod-with-pull-auth.sh'
+              - 'scripts/tests/test_refresh_flux_ghcr_auth.py'
+              - 'docs/dr/runbook.md'
+              - '.github/actions/deploy-prod/**'
+              - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/ci.yaml'
             talos:
               - 'talos/**'
@@ -55,7 +70,10 @@ jobs:
     # longer boots it; instead it schema-validates and security-scans the
     # manifests. This needs no secrets, so — unlike the old system test — it also
     # runs on fork PRs.
-    if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
+    if: >-
+      github.event_name == 'pull_request' &&
+      (needs.changes.outputs.k8s == 'true' ||
+      needs.changes.outputs.bridge_validation == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -64,6 +82,20 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: 🔐 Validate Flux GHCR credential bridge
+        # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
+        # registry credential, cluster access, or network is used.
+        run: |
+          bash -n \
+            scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth.sh \
+            scripts/run-ksail-prod-with-pull-auth.sh
+          shellcheck \
+            scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth.sh \
+            scripts/run-ksail-prod-with-pull-auth.sh
+          python3 -m unittest scripts.tests.test_refresh_flux_ghcr_auth
 
       - name: 🧩 Validate embedded JSON blobs
         # ConfigMaps that embed whole JSON documents as block scalars (e.g. the
@@ -230,12 +262,16 @@ jobs:
 
           # Placeholder key material for env-expanded patch values (ksail
           # expands these from environment secrets at deploy time — see
-          # talos/control-planes/wireguard.yaml and talos/cluster/registry-auth.yaml).
+          # talos/control-planes/wireguard.yaml and
+          # talos/cluster/authenticate-ghcr-pulls.yaml and
+          # talos/cluster/mark-ghcr-pull-revision.yaml).
           # Real-format but throwaway, so validation exercises the expansion
           # path without any real secret on the PR event.
           WG_SERVER_PRIVATE_KEY="$(openssl rand -base64 32)"
+          GHCR_USERNAME="placeholder-ghcr-user"
           GHCR_TOKEN="placeholder-ghcr-token"
-          export WG_SERVER_PRIVATE_KEY GHCR_TOKEN
+          GHCR_PULL_REVISION="$(printf '%s\n' 'ENC[ci-placeholder-ciphertext]' | shasum -a 256 | awk '{print $1}')"
+          export WG_SERVER_PRIVATE_KEY GHCR_USERNAME GHCR_TOKEN GHCR_PULL_REVISION
 
           validate_overlay() {
             local dir="$1" mode="$2"
