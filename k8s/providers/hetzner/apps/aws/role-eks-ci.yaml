@@ -1,0 +1,221 @@
+---
+# The AWS-side identity the ksail "System Test - EKS" workflow assumes via
+# GitHub Actions OIDC (platform#2326 child 2). Trust is scoped to exactly one
+# GitHub environment — repo:devantler-tech/ksail:environment:ci — through the
+# account's GitHub OIDC provider (owned by the devantler-tech/aws artifact), so
+# no long-lived key exists anywhere. maxSessionDuration is 7200s because the
+# smoke job may run up to 120 min including cluster cleanup.
+#
+# PLATFORM-OWNED ON PURPOSE (#2631 review, codex P1). This Role — not just the
+# boundary Policy — must live on the platform side. The cap on what eks-ci may
+# mint is expressed as an iam:PermissionsBoundary CONDITION inside this Role's
+# own inlinePolicy, so whoever can edit the Role can delete the condition and
+# escape the cap without ever touching the Policy object. Moving only the Policy
+# to the platform (the first cut of #2631) therefore fixed nothing on its own:
+# the tenant Role RBAC still granted update/patch/delete on iam `roles`, and the
+# PUBLIC devantler-tech/aws artifact is applied as that ServiceAccount. Both the
+# boundary AND the role it constrains are now platform-owned, and the tenant SA
+# holds NO write verbs on iam roles or policies (see role.yaml) — it keeps only
+# the OIDC provider, which is what the aws artifact legitimately owns.
+#
+# Permissions are an INLINE policy (platform#2564: RolePolicyAttachment MRD is
+# deliberately not activated) modeled on eksctl's documented minimum policies,
+# name-scoped to the workflow's st-eks-*/eksctl-st-eks-* naming wherever IAM
+# supports resource-level scoping (CloudFormation stacks, IAM roles/instance
+# profiles, EKS clusters). EC2/autoscaling/SSM-AMI actions are account-wide
+# because eksctl drives them through CloudFormation with the caller's
+# credentials and their create-time actions do not support name scoping; the
+# blast radius remains bounded by the single-environment trust.
+# iam:CreateRole is conditioned on the eks-ci-smoke-boundary permissions
+# boundary (policy-eks-ci-smoke-boundary.yaml) and no *PermissionsBoundary
+# action is granted, so roles this principal creates (and can pass to EC2) are
+# capped at the smoke-test compute plane even if an arbitrary policy is written
+# to them.
+apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: eks-ci
+  namespace: aws
+  labels:
+    app.kubernetes.io/managed-by: ksail
+spec:
+  forProvider:
+    description: >-
+      GitHub OIDC role for the ksail System Test - EKS smoke workflow
+      (repo:devantler-tech/ksail:environment:ci). Creates and deletes
+      throwaway st-eks-* EKS clusters via eksctl.
+    maxSessionDuration: 7200
+    assumeRolePolicy: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "Federated": "arn:aws:iam::939001610192:oidc-provider/token.actions.githubusercontent.com"
+            },
+            "Action": "sts:AssumeRoleWithWebIdentity",
+            "Condition": {
+              "StringEquals": {
+                "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+                "token.actions.githubusercontent.com:sub": "repo:devantler-tech/ksail:environment:ci"
+              }
+            }
+          }
+        ]
+      }
+    inlinePolicy:
+      - name: eks-ci-smoke
+        policy: |
+          {
+            "Version": "2012-10-17",
+            "Statement": [
+              {
+                "Sid": "CloudFormationScoped",
+                "Effect": "Allow",
+                "Action": "cloudformation:*",
+                "Resource": "arn:aws:cloudformation:*:939001610192:stack/eksctl-st-eks-*/*"
+              },
+              {
+                "Sid": "CloudFormationRead",
+                "Effect": "Allow",
+                "Action": [
+                  "cloudformation:ListStacks",
+                  "cloudformation:GetTemplateSummary"
+                ],
+                "Resource": "*"
+              },
+              {
+                "Sid": "EksScoped",
+                "Effect": "Allow",
+                "Action": "eks:*",
+                "Resource": [
+                  "arn:aws:eks:*:939001610192:cluster/st-eks-*",
+                  "arn:aws:eks:*:939001610192:nodegroup/st-eks-*/*/*",
+                  "arn:aws:eks:*:939001610192:addon/st-eks-*/*/*",
+                  "arn:aws:eks:*:939001610192:access-entry/st-eks-*/*/*/*/*",
+                  "arn:aws:eks:*:939001610192:accessEntry/st-eks-*/*/*/*/*"
+                ]
+              },
+              {
+                "Sid": "EksRead",
+                "Effect": "Allow",
+                "Action": [
+                  "eks:DescribeAddonVersions",
+                  "eks:DescribeAddonConfiguration",
+                  "eks:ListClusters"
+                ],
+                "Resource": "*"
+              },
+              {
+                "Sid": "Ec2AndAutoscaling",
+                "Effect": "Allow",
+                "Action": [
+                  "ec2:*",
+                  "autoscaling:*",
+                  "elasticloadbalancing:*"
+                ],
+                "Resource": "*"
+              },
+              {
+                "Sid": "SsmAmiLookup",
+                "Effect": "Allow",
+                "Action": "ssm:GetParameter",
+                "Resource": [
+                  "arn:aws:ssm:*::parameter/aws/service/eks/optimized-ami/*",
+                  "arn:aws:ssm:*::parameter/aws/service/bottlerocket/*"
+                ]
+              },
+              {
+                "Sid": "IamCreateRoleBounded",
+                "Effect": "Allow",
+                "Action": "iam:CreateRole",
+                "Resource": "arn:aws:iam::939001610192:role/eksctl-st-eks-*",
+                "Condition": {
+                  "StringEquals": {
+                    "iam:PermissionsBoundary": "arn:aws:iam::939001610192:policy/eks-ci-smoke-boundary"
+                  }
+                }
+              },
+              {
+                "Sid": "IamScopedRoleLifecycle",
+                "Effect": "Allow",
+                "Action": [
+                  "iam:DeleteRole",
+                  "iam:GetRole",
+                  "iam:TagRole",
+                  "iam:UntagRole",
+                  "iam:AttachRolePolicy",
+                  "iam:DetachRolePolicy",
+                  "iam:PutRolePolicy",
+                  "iam:GetRolePolicy",
+                  "iam:DeleteRolePolicy",
+                  "iam:ListRolePolicies",
+                  "iam:ListAttachedRolePolicies",
+                  "iam:ListInstanceProfilesForRole",
+                  "iam:PassRole"
+                ],
+                "Resource": "arn:aws:iam::939001610192:role/eksctl-st-eks-*"
+              },
+              {
+                "Sid": "IamScopedInstanceProfiles",
+                "Effect": "Allow",
+                "Action": [
+                  "iam:CreateInstanceProfile",
+                  "iam:DeleteInstanceProfile",
+                  "iam:GetInstanceProfile",
+                  "iam:TagInstanceProfile",
+                  "iam:AddRoleToInstanceProfile",
+                  "iam:RemoveRoleFromInstanceProfile"
+                ],
+                "Resource": "arn:aws:iam::939001610192:instance-profile/eksctl-st-eks-*"
+              },
+              {
+                "Sid": "IamServiceLinkedRoles",
+                "Effect": "Allow",
+                "Action": "iam:CreateServiceLinkedRole",
+                "Resource": "*",
+                "Condition": {
+                  "StringEquals": {
+                    "iam:AWSServiceName": [
+                      "eks.amazonaws.com",
+                      "eks-nodegroup.amazonaws.com",
+                      "autoscaling.amazonaws.com",
+                      "elasticloadbalancing.amazonaws.com"
+                    ]
+                  }
+                }
+              },
+              {
+                "Sid": "IamOidcProviderLifecycle",
+                "Effect": "Allow",
+                "Action": [
+                  "iam:CreateOpenIDConnectProvider",
+                  "iam:DeleteOpenIDConnectProvider",
+                  "iam:TagOpenIDConnectProvider",
+                  "iam:UntagOpenIDConnectProvider"
+                ],
+                "Resource": "arn:aws:iam::939001610192:oidc-provider/oidc.eks.*"
+              },
+              {
+                "Sid": "IamReadForEksctl",
+                "Effect": "Allow",
+                "Action": [
+                  "iam:GetOpenIDConnectProvider",
+                  "iam:ListPolicies",
+                  "iam:GetPolicy",
+                  "iam:GetPolicyVersion"
+                ],
+                "Resource": "*"
+              },
+              {
+                "Sid": "StsIdentity",
+                "Effect": "Allow",
+                "Action": "sts:GetCallerIdentity",
+                "Resource": "*"
+              }
+            ]
+          }
+  providerConfigRef:
+    kind: ProviderConfig
+    name: default
