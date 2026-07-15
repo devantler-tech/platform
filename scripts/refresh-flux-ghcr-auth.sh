@@ -205,17 +205,27 @@ other_control_planes_ready() {
   fi
 }
 
-# True when the node is already cordoned. `talosctl reboot --drain` cordons and
-# drains, then UNCORDONS on the way out (Talos defers uncordonNodes), so a node
-# an operator had deliberately cordoned would come back schedulable. Remember the
-# pre-existing cordon and restore it after the reboot.
+# 0 when the node is already cordoned, 1 when it is not, 2 when the cordon state
+# could not be READ. `talosctl reboot --drain` cordons and drains, then UNCORDONS on
+# the way out (Talos defers uncordonNodes), so a node an operator had deliberately
+# cordoned would come back schedulable. Remember the pre-existing cordon and restore
+# it after the reboot.
+#
+# Fail CLOSED on an unreadable state: swallowing a transient `kubectl get node` failure
+# into an empty string would read as "not cordoned", so the post-reboot uncordon would
+# silently make a deliberately-cordoned node schedulable again. Distinguish that failure
+# (2) from a genuine not-cordoned answer (1) so the caller can abort rather than roll a
+# node whose cordon it cannot preserve. Capture kubectl's status instead of testing it
+# inside the `[[ ]]`, so an API failure is never conflated with an empty value.
 node_is_cordoned() {
-  local node_name="$1"
-
-  [[ "$(kubectl \
+  local node_name="$1" unschedulable
+  if ! unschedulable="$(kubectl \
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
-    --output jsonpath='{.spec.unschedulable}' 2>/dev/null)" == "true" ]]
+    --output jsonpath='{.spec.unschedulable}' 2>/dev/null)"; then
+    return 2
+  fi
+  [[ "${unschedulable}" == "true" ]]
 }
 
 # Talos returns gRPC NotFound with the exact image reference when that image is
@@ -391,8 +401,13 @@ sync_talos_registry_auth() {
     # out. A node an operator had already cordoned (maintenance, investigation,
     # autoscaler scale-down) must not silently come back schedulable because we
     # rebooted it for a credential refresh — remember the cordon and restore it.
-    local was_cordoned=0
-    if node_is_cordoned "${node_name}"; then
+    local was_cordoned=0 cordon_rc=0
+    node_is_cordoned "${node_name}" || cordon_rc=$?
+    if [[ "${cordon_rc}" -eq 2 ]]; then
+      echo "::error::Refusing to reboot ${node_name}: its cordon state could not be read, so the post-reboot uncordon could silently make a deliberately-cordoned node schedulable."
+      return 1
+    fi
+    if [[ "${cordon_rc}" -eq 0 ]]; then
       was_cordoned=1
     fi
 

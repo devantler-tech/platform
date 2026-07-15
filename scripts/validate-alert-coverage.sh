@@ -50,9 +50,18 @@ trap 'rm -rf "${work_dir}"' EXIT
 rendered="${work_dir}/rendered.yaml"
 
 # Render every layer once; both kinds are then read from the same output.
+#
+# Fail CLOSED on a render error. Swallowing `kubectl kustomize` failures (a bad
+# kustomization, an unreachable remote base, a schema/input error) would drop every
+# namespace declared only in that layer from `declared-*`, so an uncovered namespace
+# would never be compared against the Alert — CI would bless the exact gap this check
+# exists to catch, precisely when a layer is broken. A partial render is not a pass.
 for layer in "${LAYERS[@]}"; do
   [[ -f "${layer}/kustomization.yaml" ]] || continue
-  kubectl kustomize "${layer}" 2>/dev/null || true
+  if ! kubectl kustomize "${layer}"; then
+    echo "::error::kubectl kustomize failed to render ${layer}; refusing to validate Alert coverage on a partial render." >&2
+    exit 1
+  fi
   echo '---'
 done > "${rendered}"
 
