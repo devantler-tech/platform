@@ -60,6 +60,7 @@ jobs:
               - 'tests/cilium-bandwidth-manager-bbr/**'
               - 'scripts/validate-alert-coverage.sh'
               - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/ghcr-auth-lib.sh'
               - 'scripts/run-ksail-prod-with-pull-auth.sh'
               - '.github/actions/deploy-prod/**'
@@ -67,8 +68,10 @@ jobs:
               - '.github/workflows/ci.yaml'
             bridge_validation:
               - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/ghcr-auth-lib.sh'
               - 'scripts/run-ksail-prod-with-pull-auth.sh'
+              - 'scripts/tests/test-refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/tests/test_refresh_flux_ghcr_auth.py'
               - 'docs/dr/runbook.md'
               - '.github/actions/deploy-prod/**'
@@ -114,12 +117,17 @@ jobs:
         run: |
           bash -n \
             scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth-safety.sh \
             scripts/refresh-flux-ghcr-auth.sh \
-            scripts/run-ksail-prod-with-pull-auth.sh
+            scripts/run-ksail-prod-with-pull-auth.sh \
+            scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           shellcheck \
             scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth-safety.sh \
             scripts/refresh-flux-ghcr-auth.sh \
-            scripts/run-ksail-prod-with-pull-auth.sh
+            scripts/run-ksail-prod-with-pull-auth.sh \
+            scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
+          bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           python3 -m unittest scripts.tests.test_refresh_flux_ghcr_auth
 
       - name: 🧩 Validate embedded JSON blobs

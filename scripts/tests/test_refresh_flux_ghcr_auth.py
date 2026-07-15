@@ -173,6 +173,27 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             done
             test -n "$node"
 
+            if [[ "$arguments" == *" etcd status "* ]]; then
+              if [[ "$node" == "${FAKE_ETCD_STATUS_FAIL_NODE:-disabled}" ]]; then
+                echo "etcd status failed" >&2
+                exit 51
+              fi
+              printf 'NODE MEMBER DB-SIZE\n%s member-id 1MB\n' "$node"
+              exit 0
+            fi
+
+            if [[ "$arguments" == *" etcd alarm list "* ]]; then
+              if [[ "$node" == "${FAKE_ETCD_ALARM_READ_FAIL_NODE:-disabled}" ]]; then
+                echo "etcd alarm read failed" >&2
+                exit 52
+              fi
+              printf 'NODE MEMBER ALARM\n'
+              if [[ "$node" == "${FAKE_ETCD_ALARM_NODE:-disabled}" ]]; then
+                printf '%s member-id NOSPACE\n' "$node"
+              fi
+              exit 0
+            fi
+
             if [[ "$arguments" == *" patch machineconfig "* ]]; then
               [[ "$arguments" == *" --mode=no-reboot "* ]]
               test -f "$patch_file"
@@ -204,12 +225,12 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               test -f "$FAKE_SYNC_STATE_DIR/talos-pull-${node}"
               jq -e --arg revision "$EXPECTED_GHCR_REVISION" '
                 .machine.nodeAnnotations[
-                  "platform.devantler.tech/ghcr-pull-verified-revision"
+                  "platform.devantler.tech/ghcr-pull-verified-revision-v2"
                 ] == $revision
               ' "$patch_file" >/dev/null
               jq -e --arg image "$EXPECTED_KSAIL_TARGET_IMAGE" '
                 .machine.nodeAnnotations[
-                  "platform.devantler.tech/ghcr-pull-verified-image"
+                  "platform.devantler.tech/ghcr-pull-verified-image-v2"
                 ] == $image
               ' "$patch_file" >/dev/null
               printf 'talos-revision:%s\n' "$node" >> "$TALOS_LOG"
@@ -408,7 +429,8 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 --arg revision "$EXPECTED_GHCR_REVISION" \
                 --arg current "${FAKE_TALOS_NODES_CURRENT:-false}" \
                 --arg verified_image \
-                  "${FAKE_TALOS_VERIFIED_IMAGE:-$EXPECTED_KSAIL_TARGET_IMAGE}" '
+                  "${FAKE_TALOS_VERIFIED_IMAGE:-$EXPECTED_KSAIL_TARGET_IMAGE}" \
+                --arg target_image "$EXPECTED_KSAIL_TARGET_IMAGE" '
                 {
                   items: [
                     {
@@ -440,15 +462,61 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                         {type: "InternalIP", address: "10.0.0.1"},
                         {type: "ExternalIP", address: "198.51.100.1"}
                       ]}
+                    },
+                    {
+                      metadata: {
+                        name: "prod-control-plane-2",
+                        labels: {
+                          "node-role.kubernetes.io/control-plane": ""
+                        },
+                        annotations: {
+                          "platform.devantler.tech/ghcr-pull-desired-revision":
+                            $revision,
+                          "platform.devantler.tech/ghcr-pull-verified-revision-v2":
+                            $revision,
+                          "platform.devantler.tech/ghcr-pull-verified-image-v2":
+                            $target_image
+                        }
+                      },
+                      status: {
+                        addresses: [
+                          {type: "InternalIP", address: "10.0.0.3"},
+                          {type: "ExternalIP", address: "198.51.100.3"}
+                        ],
+                        conditions: [{type: "Ready", status: "True"}]
+                      }
+                    },
+                    {
+                      metadata: {
+                        name: "prod-control-plane-3",
+                        labels: {
+                          "node-role.kubernetes.io/control-plane": ""
+                        },
+                        annotations: {
+                          "platform.devantler.tech/ghcr-pull-desired-revision":
+                            $revision,
+                          "platform.devantler.tech/ghcr-pull-verified-revision-v2":
+                            $revision,
+                          "platform.devantler.tech/ghcr-pull-verified-image-v2":
+                            $target_image
+                        }
+                      },
+                      status: {
+                        addresses: [
+                          {type: "InternalIP", address: "10.0.0.4"},
+                          {type: "ExternalIP", address: "198.51.100.4"}
+                        ],
+                        conditions: [{type: "Ready", status: "True"}]
+                      }
                     }
                   ]
                 }
                 | if $current == "true" then
-                    .items[].metadata.annotations[
-                      "platform.devantler.tech/ghcr-pull-verified-revision"
+                    .items[0:2][].metadata.annotations[
+                      "platform.devantler.tech/ghcr-pull-verified-revision-v2"
                     ] = $revision
-                    | .items[].metadata.annotations[
-                      "platform.devantler.tech/ghcr-pull-verified-image"
+                    | .items[0:2][].metadata.annotations[
+                      "platform.devantler.tech/ghcr-pull-verified-image-v2"
                     ] = $verified_image
                   else . end
               '
@@ -841,8 +909,8 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             ],
         )
 
-    def test_refreshes_talos_auth_before_kubernetes_credential_consumers(self) -> None:
-        """Patch, REBOOT, drop the cached image, then pull it — workers first.
+    def test_stages_kubernetes_consumers_before_talos_drains(self) -> None:
+        """Verify fanout, then patch, REBOOT, drop cache, and pull workers first.
 
         The reboot is load-bearing: containerd reads registry auth from its
         static config only at process start, and Talos refuses
@@ -875,11 +943,17 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             self.talos_log.read_text(encoding="utf-8").splitlines(),
             expected_talos_operations,
         )
-        # Each node is drained through the full sequence, and readiness is
-        # awaited after its reboot, before the next node is touched.
+        # Every Kubernetes pull consumer is refreshed and verified before the
+        # first drain. Each node then completes its full sequence before the
+        # next node is touched, and root Flux auth remains the final mutation.
         self.assertEqual(
-            self.operation_log.read_text(encoding="utf-8").splitlines()[:12],
+            self.operation_log.read_text(encoding="utf-8").splitlines(),
             [
+                "variables-patch",
+                "fanout:pushsecret/flux-system/seed-ghcr",
+                "fanout:externalsecret/wedding-app/ghcr-auth",
+                "fanout:externalsecret/ascoachingogvaner/ghcr-auth",
+                "fanout:externalsecret/kyverno/ghcr-auth",
                 "talos-auth:10.0.0.2",
                 "talos-reboot:10.0.0.2",
                 "node-ready:prod-worker-1",
@@ -896,6 +970,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "talos-pull:10.0.0.1:ghcr.io/devantler-tech/ksail:"
                 f"v{KSAIL_OPERATOR_VERSION}",
                 "talos-revision:10.0.0.1",
+                "root-patch",
             ],
         )
         temporary_patch = Path(
@@ -910,7 +985,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         The reboot roll is serial and control planes go last, but a control plane
         that was ALREADY unhealthy before this run makes our reboot the second one
         down. The worker still syncs (it cannot affect quorum); the control-plane
-        reboot is refused, and no Kubernetes credential consumer is mutated.
+        reboot is refused after the Kubernetes credential fanout is made safe.
         """
         revision = self._expected_revision()
         ready = [{"type": "Ready", "status": "True"}]
@@ -940,8 +1015,12 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                         "name": "prod-control-plane-2",
                         "labels": {"node-role.kubernetes.io/control-plane": ""},
                         "annotations": {
-                            "platform.devantler.tech/ghcr-pull-verified-revision":
+                            "platform.devantler.tech/ghcr-pull-verified-revision-v2":
                                 revision,
+                            "platform.devantler.tech/ghcr-pull-verified-image-v2": (
+                                "ghcr.io/devantler-tech/ksail:"
+                                f"v{KSAIL_OPERATOR_VERSION}"
+                            ),
                         },
                     },
                     "status": {
@@ -958,7 +1037,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         )
 
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("risks etcd quorum", result.stdout + result.stderr)
+        self.assertIn("risks quorum", result.stdout + result.stderr)
         operations = self.operation_log.read_text(encoding="utf-8").splitlines()
         self.assertIn("talos-reboot:10.0.0.2", operations)
         self.assertNotIn("talos-reboot:10.0.0.1", operations)
@@ -1009,11 +1088,16 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         operations = self.operation_log.read_text(encoding="utf-8").splitlines()
-        # The worker rebooted but never came back, so the control plane is left
-        # alone and no Kubernetes credential consumer is mutated.
+        # The fanout is already safe. The worker rebooted but never came back,
+        # so the control plane is left alone and root Flux auth is unchanged.
         self.assertEqual(
             operations,
             [
+                "variables-patch",
+                "fanout:pushsecret/flux-system/seed-ghcr",
+                "fanout:externalsecret/wedding-app/ghcr-auth",
+                "fanout:externalsecret/ascoachingogvaner/ghcr-auth",
+                "fanout:externalsecret/kyverno/ghcr-auth",
                 "talos-auth:10.0.0.2",
                 "talos-reboot:10.0.0.2",
                 "node-ready:prod-worker-1",
@@ -1023,8 +1107,8 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertNotIn("root-patch", operations)
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
 
-    def test_talos_failure_prevents_kubernetes_credential_mutation(self) -> None:
-        """Stop before Flux fan-out when any node cannot accept or use auth."""
+    def test_talos_failure_after_safe_fanout_keeps_root_auth_unchanged(self) -> None:
+        """Keep root Flux auth unchanged when the post-fanout node roll fails."""
         for operation in ("auth", "reboot", "remove", "pull", "revision"):
             with self.subTest(operation=operation):
                 result = self._run_helper(
@@ -1034,9 +1118,17 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 )
 
                 self.assertNotEqual(result.returncode, 0)
-                self.assertFalse(self.variables_patch_capture.exists())
+                self.assertTrue(self.variables_patch_capture.exists())
                 self.assertFalse(self.patch_capture.exists())
-                self.assertFalse(self.fanout_log.exists())
+                self.assertEqual(
+                    self.fanout_log.read_text(encoding="utf-8").splitlines(),
+                    [
+                        "pushsecret/flux-system/seed-ghcr",
+                        "externalsecret/wedding-app/ghcr-auth",
+                        "externalsecret/ascoachingogvaner/ghcr-auth",
+                        "externalsecret/kyverno/ghcr-auth",
+                    ],
+                )
                 self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
 
     def test_missing_cached_image_still_pulls_and_records_revision(self) -> None:
@@ -1106,8 +1198,8 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         )
         self.assertNotIn(previous_image, "\n".join(operations))
 
-    def test_dr_without_operator_uses_exact_declared_image(self) -> None:
-        """Verify stale bootstrap nodes with the declared incoming image."""
+    def test_dr_without_fanout_does_not_drain_nodes(self) -> None:
+        """Never drain workloads before a DR cluster has its pull fanout."""
         result = self._run_helper(
             self._valid_config(),
             ("--allow-incomplete-fanout",),
@@ -1115,20 +1207,8 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 0, result.stderr)
-        pulls = [
-            line
-            for line in self.talos_log.read_text(encoding="utf-8").splitlines()
-            if line.startswith("talos-pull:")
-        ]
-        self.assertEqual(
-            pulls,
-            [
-                "talos-pull:10.0.0.2:ghcr.io/devantler-tech/ksail:"
-                f"v{KSAIL_OPERATOR_VERSION}",
-                "talos-pull:10.0.0.1:ghcr.io/devantler-tech/ksail:"
-                f"v{KSAIL_OPERATOR_VERSION}",
-            ],
-        )
+        self.assertFalse(self.talos_log.exists())
+        self.assertTrue(self.patch_capture.exists())
 
     def test_invalid_node_inventory_fails_closed(self) -> None:
         """Reject empty, duplicate, and ambiguous Talos node InternalIPs."""
@@ -1183,8 +1263,10 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 self.assertFalse(self.talos_log.exists())
                 self.assertFalse(self.patch_capture.exists())
 
-    def test_node_discovery_failure_prevents_kubernetes_credential_mutation(self) -> None:
-        """Fail closed before mutation when production nodes cannot be listed."""
+    def test_node_discovery_failure_after_safe_fanout_keeps_root_unchanged(
+        self,
+    ) -> None:
+        """Fail closed after safe fanout when production nodes cannot be listed."""
         result = self._run_helper(
             self._valid_config(),
             FAKE_NODE_DISCOVERY_FAIL="true",
@@ -1192,7 +1274,8 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(self.talos_log.exists())
-        self.assertFalse(self.variables_patch_capture.exists())
+        self.assertTrue(self.variables_patch_capture.exists())
+        self.assertTrue(self.fanout_log.exists())
         self.assertFalse(self.patch_capture.exists())
 
     def test_ksail_lifecycle_wrapper_uses_only_sops_pull_token(self) -> None:
@@ -1822,6 +1905,7 @@ class DeployActionOrderingTests(unittest.TestCase):
         ]
 
         for validation_only_path in (
+            "scripts/tests/test-refresh-flux-ghcr-auth-safety.sh",
             "scripts/tests/test_refresh_flux_ghcr_auth.py",
             "docs/dr/runbook.md",
         ):

@@ -12,6 +12,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 # shellcheck source=scripts/ghcr-auth-lib.sh
 source "${SCRIPT_DIR}/ghcr-auth-lib.sh"
+# shellcheck source=scripts/refresh-flux-ghcr-auth-safety.sh
+source "${SCRIPT_DIR}/refresh-flux-ghcr-auth-safety.sh"
 require_flux_ghcr_yaml_tool
 
 check_only=false
@@ -165,46 +167,6 @@ verify_consumer_secret() {
   fi
 }
 
-# Every control plane OTHER than the named one must be Ready before we take it
-# down. etcd tolerates exactly one member down in a 3-member cluster, so rebooting
-# a second one drops quorum and takes the API server with it.
-#
-# The readiness snapshot is re-taken per node, not read from the one captured
-# before the roll started: an earlier node's reboot can leave a peer NotReady
-# while it settles, and a stale snapshot would wave that through.
-other_control_planes_ready() {
-  local rebooting="$1"
-  local unready
-  local live_nodes_file="${work_dir}/control-plane-health-${rebooting}.json"
-
-  if ! kubectl \
-    --context "${KUBE_CONTEXT}" \
-    get nodes \
-    --output json \
-    >"${live_nodes_file}" 2>/dev/null; then
-    echo "Could not re-read node health before rebooting ${rebooting}."
-    return 1
-  fi
-
-  unready="$(jq -r --arg rebooting "${rebooting}" '
-    .items[]
-    | select(.metadata.name != $rebooting)
-    | (.metadata.labels // {}) as $labels
-    | select(($labels | has("node-role.kubernetes.io/control-plane"))
-      or ($labels | has("node-role.kubernetes.io/master")))
-    | select(
-        [.status.conditions[]? | select(.type == "Ready" and .status == "True")]
-          | length == 0
-      )
-    | .metadata.name
-  ' "${live_nodes_file}")"
-
-  if [[ -n "${unready}" ]]; then
-    echo "Control planes not Ready: $(echo "${unready}" | tr '\n' ' ')"
-    return 1
-  fi
-}
-
 # 0 when the node is already cordoned, 1 when it is not, 2 when the cordon state
 # could not be READ. `talosctl reboot --drain` cordons and drains, then UNCORDONS on
 # the way out (Talos defers uncordonNodes), so a node an operator had deliberately
@@ -281,36 +243,11 @@ sync_talos_registry_auth() {
     return 1
   fi
 
-  if ! jq -r \
-    --arg revision "${desired_revision}" \
-    --arg image "${operator_image}" '
-    .items[]
-    | select(
-        (.metadata.annotations[
-          "platform.devantler.tech/ghcr-pull-verified-revision"
-        ] // "")
-          != $revision
-        or (.metadata.annotations[
-          "platform.devantler.tech/ghcr-pull-verified-image"
-        ] // "")
-          != $image
-      )
-    | (.metadata.labels // {}) as $labels
-    | [
-        (if (($labels | has("node-role.kubernetes.io/control-plane"))
-          or ($labels | has("node-role.kubernetes.io/master")))
-          then "1" else "0" end),
-        .metadata.name,
-        ([.status.addresses[]
-          | select(.type == "InternalIP") | .address][0]),
-        (.metadata.annotations[
-          "platform.devantler.tech/ghcr-pull-desired-revision"
-        ] // "")
-      ]
-    | @tsv
-  ' "${talos_nodes_file}" \
-    | LC_ALL=C sort -k1,1 -k2,2 \
-    > "${talos_node_targets}"; then
+  if ! select_talos_node_targets \
+    "${talos_nodes_file}" \
+    "${desired_revision}" \
+    "${operator_image}" \
+    "${talos_node_targets}"; then
     echo "::error::Could not select Talos nodes requiring the GHCR auth revision."
     return 1
   fi
@@ -357,8 +294,8 @@ sync_talos_registry_auth() {
     # that check goes through the TALOS image API, which builds its auth from
     # the machine config we just wrote, NOT from containerd's CRI plugin. It
     # therefore passes on a node whose kubelet pulls are still failing 403 —
-    # which is exactly what happened: every node was annotated
-    # ghcr-pull-verified-revision while every ksail-operator pod sat in
+    # which is exactly what happened: every node had the legacy unversioned
+    # ghcr-pull-verified-revision marker while every ksail-operator pod sat in
     # ImagePullBackOff, and prod stayed four releases behind for over a day.
     # The pull check proves the CREDENTIAL is good; only the reboot proves
     # CONTAINERD is using it.
@@ -386,14 +323,14 @@ sync_talos_registry_auth() {
     # separately.
     #
     # etcd tolerates exactly one control plane down in a 3-member cluster. This
-    # loop is serial and control planes sort last, but a control plane that was
-    # ALREADY unhealthy before this run — or one left NotReady by the reboot of
-    # an earlier node in this very loop — would make our reboot the second one
-    # down and drop quorum. Prove the others are Ready first, against a freshly
-    # re-read snapshot.
+    # loop is serial and control planes sort last, but a peer can be
+    # Kubernetes-Ready while its etcd member is unhealthy. Re-read the peer
+    # inventory, then prove every other peer is Ready, answers `etcd status`,
+    # and has no etcd alarm immediately before each control-plane reboot.
     if [[ "${node_role}" == "1" ]] \
-      && ! other_control_planes_ready "${node_name}"; then
-      echo "::error::Refusing to reboot control plane ${node_name} for the GHCR auth refresh: another control plane is not Ready, so rebooting this one risks etcd quorum."
+      && ! other_control_planes_safe_to_reboot \
+        "${node_name}" "${KUBE_CONTEXT}" "${work_dir}"; then
+      echo "::error::Refusing to reboot control plane ${node_name} for the GHCR auth refresh: another control plane is not Ready with healthy, alarm-free etcd, so rebooting this one risks quorum."
       return 1
     fi
 
@@ -559,9 +496,10 @@ if [[ "${check_only}" == "true" ]]; then
 fi
 
 # Talos image verification resolves cosign artifacts with host registry auth;
-# pod imagePullSecrets cannot satisfy that request. Use the supported v1.13
-# RegistryAuthConfig document and a file-backed patch so credentials never
-# enter argv. Synchronize and verify nodes before touching Kubernetes Secrets.
+# pod imagePullSecrets cannot satisfy that request. Prepare the supported v1.13
+# RegistryAuthConfig and post-reboot proof patch without placing credentials in
+# argv. Existing-cluster nodes are synchronized only after the complete tenant
+# fan-out has been staged and verified below.
 jq '
   {
     apiVersion: "v1alpha1",
@@ -575,18 +513,19 @@ pull_revision="$(flux_ghcr_revision "${SECRET_FILE}")"
 readonly pull_revision
 jq -n \
   --arg revision "${pull_revision}" \
-  --arg image "${KSAIL_OPERATOR_IMAGE}" '
+  --arg image "${KSAIL_OPERATOR_IMAGE}" \
+  --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
+  --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" '
   {
     machine: {
       nodeAnnotations: {
-        "platform.devantler.tech/ghcr-pull-verified-revision": $revision,
-        "platform.devantler.tech/ghcr-pull-verified-image": $image
+        ($revision_annotation): $revision,
+        ($image_annotation): $image
       }
     }
   }
 ' > "${talos_revision_patch_file}"
 chmod 600 "${talos_auth_patch_file}" "${talos_revision_patch_file}"
-sync_talos_registry_auth "${pull_revision}" "${KSAIL_OPERATOR_IMAGE}"
 
 # Merge only Secret data fields so ownership metadata survives. The sensitive
 # payload stays in pipes/temp files and never appears in argv or logs.
@@ -706,14 +645,11 @@ if [[ "${fanout_complete}" != "true" ]]; then
 fi
 
 # Existing clusters update and verify the whole SOPS -> variables-base ->
-# PushSecret -> OpenBao -> ExternalSecret chain before switching root Flux auth.
-patch_variables_base
-force_sync_resource pushsecret flux-system seed-ghcr
-for namespace in "${FANOUT_NAMESPACES[@]}"; do
-  force_sync_resource externalsecret "${namespace}" ghcr-auth
-  verify_consumer_secret "${namespace}"
-done
-
-patch_root_secret
+# PushSecret -> OpenBao -> ExternalSecret chain before the first Talos drain.
+# Root Flux auth remains last so any failed node proof leaves it unchanged.
+stage_fanout_before_talos \
+  "${pull_revision}" \
+  "${KSAIL_OPERATOR_IMAGE}" \
+  "${FANOUT_NAMESPACES[@]}"
 
 echo "✅ Synchronised every existing consumer and refreshed root Flux GHCR auth from Git/SOPS."
