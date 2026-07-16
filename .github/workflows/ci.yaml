@@ -290,7 +290,7 @@ jobs:
           # Keep in step with the Talos version the prod cluster runs (ksail's
           # node image pin — see ksail DefaultTalosImage).
           # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-          TALOS_VERSION: "1.13.5"
+          TALOS_VERSION: "1.13.6"
         run: |
           curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
           sudo install /tmp/talosctl /usr/local/bin/talosctl
