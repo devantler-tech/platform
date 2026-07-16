@@ -37,6 +37,9 @@ readonly SECRET_FILE="${FLUX_GHCR_SECRET_FILE:-k8s/bases/bootstrap/secret.enc.ya
 readonly KUBE_CONTEXT="${KUBE_CONTEXT:-admin@prod}"
 readonly SYNC_ATTEMPTS="${FLUX_GHCR_SYNC_ATTEMPTS:-60}"
 readonly SYNC_INTERVAL="${FLUX_GHCR_SYNC_INTERVAL:-2}"
+readonly DRAIN_TIMEOUT="${FLUX_GHCR_DRAIN_TIMEOUT:-45m}"
+readonly CORDON_OWNER_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-owner"
+readonly CORDON_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner"
 KSAIL_OPERATOR_VERSION="$(yq -er '.spec.chart.spec.version' \
   k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml)"
 readonly KSAIL_OPERATOR_VERSION
@@ -60,8 +63,9 @@ readonly -a FANOUT_NAMESPACES=(
 )
 
 if ! [[ "${SYNC_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] \
-  || ! [[ "${SYNC_INTERVAL}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS and FLUX_GHCR_SYNC_INTERVAL must be non-negative numbers, with at least one attempt."
+  || ! [[ "${SYNC_INTERVAL}" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  || ! [[ "${DRAIN_TIMEOUT}" =~ ^[1-9][0-9]*(s|m|h)$ ]]; then
+  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS and FLUX_GHCR_SYNC_INTERVAL must be non-negative numbers, with at least one attempt; FLUX_GHCR_DRAIN_TIMEOUT must be a positive whole number of seconds, minutes, or hours."
   exit 64
 fi
 
@@ -82,6 +86,10 @@ fanout_api_resources="${work_dir}/fanout-api-resources.txt"
 talos_auth_patch_file="${work_dir}/talos-registry-auth.json"
 talos_revision_patch_file="${work_dir}/talos-registry-revision.json"
 talos_result_file="${work_dir}/talos-result.txt"
+drain_result_file="${work_dir}/drain-result.txt"
+reboot_result_file="${work_dir}/reboot-result.txt"
+cordon_state_file="${work_dir}/cordon-state.json"
+cordon_release_patch_file="${work_dir}/cordon-release-patch.json"
 talos_nodes_file="${work_dir}/talos-nodes.json"
 talos_node_targets="${work_dir}/talos-node-targets.tsv"
 
@@ -167,42 +175,113 @@ verify_consumer_secret() {
   fi
 }
 
-# 0 when the node is already cordoned, 1 when it is not, 2 when the cordon state
-# could not be READ. `talosctl reboot --drain` cordons and drains, then UNCORDONS on
-# the way out (Talos defers uncordonNodes), so a node an operator had deliberately
-# cordoned would come back schedulable. Remember the pre-existing cordon and restore
-# it after the reboot.
-#
-# Fail CLOSED on an unreadable state: swallowing a transient `kubectl get node` failure
-# into an empty string would read as "not cordoned", so the post-reboot uncordon would
-# silently make a deliberately-cordoned node schedulable again. Distinguish that failure
-# (2) from a genuine not-cordoned answer (1) so the caller can abort rather than roll a
-# node whose cordon it cannot preserve. Capture kubectl's status instead of testing it
-# inside the `[[ ]]`, so an API failure is never conflated with an empty value.
-node_is_cordoned() {
-  local node_name="$1" unschedulable
-  if ! unschedulable="$(kubectl \
-    --context "${KUBE_CONTEXT}" \
-    get node "${node_name}" \
-    --output jsonpath='{.spec.unschedulable}' 2>/dev/null)"; then
-    return 2
-  fi
-  [[ "${unschedulable}" == "true" ]]
+# Emit bounded, printable output only from operations that cannot contain the
+# registry credential. Prefix each line so it cannot become a workflow command.
+emit_safe_operation_output() {
+  local label="$1" result_file="$2"
+  [[ -s "${result_file}" ]] || return 0
+
+  LC_ALL=C tr -cd '\11\12\40-\176' < "${result_file}" \
+    | tail -n 50 \
+    | sed -e "s/^/${label}: /" >&2 \
+    || true
 }
 
-# Restore operator intent on both the normal and post-reboot readiness-failure paths.
-restore_node_cordon_if_needed() {
-  local node_name="$1" was_cordoned="$2" result_file="$3"
-  [[ "${was_cordoned}" == "1" ]] || return 0
+# Claim the right to reverse the cordon that the upcoming kubectl drain creates.
+# The resource-version compare closes the read/claim race, and the annotation is
+# later tested and removed atomically with the uncordon. Another actor taking
+# over an already-cordoned node must replace this annotation: a second bare
+# cordon is idempotent and cannot express new ownership in the Kubernetes API.
+claim_node_cordon_ownership() {
+  local node_name="$1" owner_token="$2" state_file="$3" result_file="$4"
+  local resource_version
+  resource_version="$(jq -er '.metadata.resourceVersion' "${state_file}")"
 
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
-    cordon "${node_name}" \
+    annotate node "${node_name}" \
+    "${CORDON_OWNER_ANNOTATION}=${owner_token}" \
+    --resource-version="${resource_version}" \
     >"${result_file}" 2>&1; then
-    echo "::error::Talos node ${node_name} was cordoned before its GHCR auth reboot but could not be re-cordoned afterwards."
+    echo "::error::Could not claim cordon ownership for Talos node ${node_name}; refusing to drain it."
+    emit_safe_operation_output "cordon-claim" "${result_file}"
     return 1
   fi
-  echo "Restored the pre-existing cordon on ${node_name}."
+}
+
+# kubectl drain cordons the node. Restore schedulability only when this bridge
+# owns that cordon; a pre-existing operator cordon must remain untouched.
+restore_node_schedulability_if_needed() {
+  local node_name="$1" was_cordoned="$2" owner_token="$3"
+  local initial_node_uid="$4" initial_node_taints="$5" result_file="$6"
+  local current_resource_version
+  [[ "${was_cordoned}" == "0" ]] || return 0
+
+  if [[ -z "${owner_token}" ]]; then
+    echo "::error::Refusing to uncordon Talos node ${node_name} without a bridge ownership token."
+    return 1
+  fi
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get node "${node_name}" \
+    --output json \
+    > "${cordon_state_file}" 2> "${result_file}"; then
+    echo "::error::Could not re-read Talos node ${node_name}; refusing to uncordon it."
+    emit_safe_operation_output "uncordon-read" "${result_file}"
+    return 1
+  fi
+  if ! jq -e \
+    --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
+    --arg owner "${owner_token}" \
+    --arg uid "${initial_node_uid}" \
+    --argjson initial_taints "${initial_node_taints}" '
+    .metadata.uid == $uid
+    and .metadata.deletionTimestamp == null
+    and .spec.unschedulable == true
+    and .metadata.annotations[$owner_annotation] == $owner
+    and (((.spec.taints // [])
+      | map(select((
+          .key == "node.kubernetes.io/unschedulable"
+          and .effect == "NoSchedule"
+          and (.value // "") == ""
+        ) | not))
+      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]))
+      == $initial_taints)
+  ' "${cordon_state_file}" >/dev/null; then
+    echo "::error::Cordon ownership changed or scheduling safety state changed for Talos node ${node_name}; refusing to uncordon it."
+    return 1
+  fi
+  current_resource_version="$(jq -er \
+    '.metadata.resourceVersion' "${cordon_state_file}")"
+
+  jq -n \
+    --arg path "${CORDON_OWNER_JSON_PATH}" \
+    --arg owner "${owner_token}" \
+    --arg resource_version "${current_resource_version}" '
+    [
+      {op: "test", path: $path, value: $owner},
+      {
+        op: "test",
+        path: "/metadata/resourceVersion",
+        value: $resource_version
+      },
+      {op: "add", path: "/spec/unschedulable", value: false},
+      {op: "remove", path: $path}
+    ]
+  ' > "${cordon_release_patch_file}"
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    patch node "${node_name}" \
+    --type=json \
+    --patch-file="${cordon_release_patch_file}" \
+    >"${result_file}" 2>&1; then
+    echo "::error::Cordon ownership changed or could not be released for Talos node ${node_name}; refusing to uncordon it."
+    emit_safe_operation_output "uncordon" "${result_file}"
+    return 1
+  fi
+  echo "Restored schedulability on ${node_name}."
 }
 
 # Talos returns gRPC NotFound with the exact image reference when that image is
@@ -275,6 +354,10 @@ sync_talos_registry_auth() {
 
   : > "${talos_result_file}"
   chmod 600 "${talos_result_file}"
+  : > "${drain_result_file}"
+  chmod 600 "${drain_result_file}"
+  : > "${reboot_result_file}"
+  chmod 600 "${reboot_result_file}"
   # Targets are pre-sorted workers-first, and this loop is strictly sequential,
   # so the reboot below rolls one node at a time and control planes go last —
   # etcd keeps quorum throughout.
@@ -349,28 +432,89 @@ sync_talos_registry_auth() {
       return 1
     fi
 
-    # `reboot --drain` cordons, drains, and then UNCORDONS the node on the way
-    # out. A node an operator had already cordoned (maintenance, investigation,
-    # autoscaler scale-down) must not silently come back schedulable because we
-    # rebooted it for a credential refresh — remember the cordon and restore it.
-    local was_cordoned=0 cordon_rc=0
-    node_is_cordoned "${node_name}" || cordon_rc=$?
-    if [[ "${cordon_rc}" -eq 2 ]]; then
-      echo "::error::Refusing to reboot ${node_name}: its cordon state could not be read, so the post-reboot uncordon could silently make a deliberately-cordoned node schedulable."
+    # Remember scheduling intent before kubectl drain cordons the node. Claim a
+    # schedulable node with a compare-and-swap annotation so cleanup can prove
+    # that no newer actor replaced our cordon ownership.
+    local was_cordoned=0 existing_cordon_owner="" cordon_owner_token=""
+    local initial_node_uid="" initial_node_taints="[]"
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get node "${node_name}" \
+      --output json \
+      > "${cordon_state_file}"; then
+      echo "::error::Refusing to reboot ${node_name}: its scheduling state could not be read."
       return 1
     fi
-    if [[ "${cordon_rc}" -eq 0 ]]; then
+    if ! jq -e \
+      --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" '
+      (.metadata.uid | type == "string" and length > 0)
+      and (.metadata.resourceVersion | type == "string" and length > 0)
+      and ((.spec.unschedulable // false) | type == "boolean")
+      and ((.metadata.annotations[$owner_annotation] // "")
+        | type == "string")
+    ' "${cordon_state_file}" >/dev/null; then
+      echo "::error::Refusing to reboot ${node_name}: its scheduling state was malformed."
+      return 1
+    fi
+    initial_node_uid="$(jq -r '.metadata.uid' "${cordon_state_file}")"
+    initial_node_taints="$(jq -cS '
+      (.spec.taints // [])
+      | map(select((
+          .key == "node.kubernetes.io/unschedulable"
+          and .effect == "NoSchedule"
+          and (.value // "") == ""
+        ) | not))
+      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")])
+    ' "${cordon_state_file}")"
+    existing_cordon_owner="$(jq -r \
+      --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
+      '.metadata.annotations[$owner_annotation] // ""' \
+      "${cordon_state_file}")"
+    if [[ -n "${existing_cordon_owner}" ]]; then
+      echo "::error::Refusing to reboot ${node_name}: it already has a GHCR bridge cordon owner, so a previous or concurrent roll must be resolved first."
+      return 1
+    fi
+    if jq -e '.spec.unschedulable == true' \
+      "${cordon_state_file}" >/dev/null; then
       was_cordoned=1
+    else
+      cordon_owner_token="${desired_revision:0:16}-$$-${RANDOM}"
+      claim_node_cordon_ownership \
+        "${node_name}" "${cordon_owner_token}" \
+        "${cordon_state_file}" "${drain_result_file}" || return 1
     fi
 
-    # --drain cordons the node and evicts its pods under PodDisruptionBudget
-    # control first; without it the workloads are killed along with the node.
+    # Drain through the Kubernetes context already proven by this deployment.
+    # Talos v1.13's integrated --drain path fetches a separate admin kubeconfig;
+    # this cluster's generated config targets an unreachable API endpoint.
+    # kubectl also retries PDB-protected evictions, giving CloudNativePG time to
+    # switch primaries and Longhorn time to enforce its data-safety policy.
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      drain "${node_name}" \
+      --ignore-daemonsets \
+      --delete-emptydir-data \
+      --timeout="${DRAIN_TIMEOUT}" \
+      >"${drain_result_file}" 2>&1; then
+      echo "::error::Talos node ${node_name} could not be safely drained before its GHCR auth reboot."
+      emit_safe_operation_output "drain" "${drain_result_file}"
+      restore_node_schedulability_if_needed \
+        "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+        "${initial_node_uid}" "${initial_node_taints}" \
+        "${drain_result_file}" || return 1
+      return 1
+    fi
+
+    # The node is now cordoned and fully drained under PDB control, so a plain
+    # Talos reboot cannot terminate a workload behind Kubernetes' back. Keep
+    # --wait explicit so Kubernetes readiness is checked only after a new boot.
     if ! talosctl \
       --nodes "${node_ip}" \
       reboot \
-      --drain \
-      >"${talos_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} did not drain+reboot to load the refreshed GHCR registry auth."
+      --wait \
+      >"${reboot_result_file}" 2>&1; then
+      echo "::error::Talos node ${node_name} did not reboot to load the refreshed GHCR registry auth; it remains cordoned because its reboot state is uncertain."
+      emit_safe_operation_output "reboot" "${reboot_result_file}"
       return 1
     fi
     if ! kubectl \
@@ -379,15 +523,11 @@ sync_talos_registry_auth() {
       --for=condition=Ready \
       "node/${node_name}" \
       --timeout=10m \
-      >"${talos_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} did not return Ready after its GHCR auth reboot; refusing to roll the next node."
-      restore_node_cordon_if_needed \
-        "${node_name}" "${was_cordoned}" "${talos_result_file}" || return 1
+      >"${reboot_result_file}" 2>&1; then
+      echo "::error::Talos node ${node_name} did not return Ready after its GHCR auth reboot; it remains cordoned and the next node will not be rolled."
+      emit_safe_operation_output "ready" "${reboot_result_file}"
       return 1
     fi
-
-    restore_node_cordon_if_needed \
-      "${node_name}" "${was_cordoned}" "${talos_result_file}" || return 1
 
     # A cached image can make a pull look healthy without proving that the
     # node's runtime can authenticate to GHCR. Remove the incoming exact target
@@ -400,6 +540,10 @@ sync_talos_registry_auth() {
       if ! talos_image_remove_reports_absent \
         "${talos_result_file}" "${operator_image}"; then
         echo "::error::Talos node ${node_name} could not remove the cached incoming KSail image before GHCR verification."
+        restore_node_schedulability_if_needed \
+          "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+          "${initial_node_uid}" "${initial_node_taints}" \
+          "${drain_result_file}" || return 1
         return 1
       fi
     fi
@@ -412,8 +556,20 @@ sync_talos_registry_auth() {
       --namespace cri \
       >"${talos_result_file}" 2>&1; then
       echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image after its auth refresh."
+      restore_node_schedulability_if_needed \
+        "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+        "${initial_node_uid}" "${initial_node_taints}" \
+        "${drain_result_file}" || return 1
       return 1
     fi
+
+    # Restore original scheduling intent after runtime auth is proven but
+    # before recording success. If uncordon fails, a later run must retry this
+    # node instead of skipping one the bridge left unschedulable.
+    restore_node_schedulability_if_needed \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${drain_result_file}" || return 1
 
     # Recorded LAST, and only now: the marker means "this node's containerd has
     # provably loaded this credential revision", so it must not be written
