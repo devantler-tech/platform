@@ -59,6 +59,7 @@ jobs:
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'tests/cilium-bandwidth-manager-bbr/**'
               - 'scripts/validate-alert-coverage.sh'
+              - 'scripts/tests/test_validate_alert_coverage.py'
               - 'scripts/refresh-flux-ghcr-auth.sh'
               - 'scripts/refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/ghcr-auth-lib.sh'
@@ -156,6 +157,7 @@ jobs:
         # pages (ksail-operator, 2026-07-14). Drift is a build failure, not a
         # comment. Bash + the runner's kubectl/yq; no cluster or secrets required.
         run: |
+          python3 -m unittest scripts.tests.test_validate_alert_coverage
           shellcheck scripts/validate-alert-coverage.sh
           bash scripts/validate-alert-coverage.sh
 

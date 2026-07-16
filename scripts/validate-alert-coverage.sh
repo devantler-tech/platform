@@ -57,7 +57,6 @@ rendered="${work_dir}/rendered.yaml"
 # would never be compared against the Alert — CI would bless the exact gap this check
 # exists to catch, precisely when a layer is broken. A partial render is not a pass.
 for layer in "${LAYERS[@]}"; do
-  [[ -f "${layer}/kustomization.yaml" ]] || continue
   if ! kubectl kustomize "${layer}"; then
     echo "::error::kubectl kustomize failed to render ${layer}; refusing to validate Alert coverage on a partial render." >&2
     exit 1
@@ -89,8 +88,10 @@ for kind in HelmRelease Kustomization; do
     exit 1
   fi
 
-  yq e ".spec.eventSources[] | select(.kind == \"${kind}\") | .namespace" "${ALERT_FILE}" \
-    | grep -vE '^null$|^$' | LC_ALL=C sort -u > "${watched}"
+  # yq treats `== "*"` as a wildcard comparison, so anchor a regex to require
+  # the literal whole-resource wildcard instead of accepting any named source.
+  yq e ".spec.eventSources[] | select(.kind == \"${kind}\" and (.name | test(\"^\\\\*$\"))) | .namespace | select(. != null and . != \"\")" "${ALERT_FILE}" \
+    | LC_ALL=C sort -u > "${watched}"
 
   uncovered="$(comm -23 "${declared}" "${watched}")"
   if [[ -n "${uncovered}" ]]; then

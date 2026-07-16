@@ -1114,6 +1114,26 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertNotIn("root-patch", operations)
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
 
+    def test_unready_node_restores_its_pre_existing_cordon(self) -> None:
+        """Keep an operator-cordoned node cordoned when readiness fails."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_CORDONED_NODES="prod-worker-1",
+            FAKE_NODE_READY_FAIL_NODE="prod-worker-1",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("node-ready:prod-worker-1", operations)
+        self.assertIn("node-cordon:prod-worker-1", operations)
+        self.assertLess(
+            operations.index("node-ready:prod-worker-1"),
+            operations.index("node-cordon:prod-worker-1"),
+        )
+        self.assertNotIn("talos-revision:10.0.0.2", operations)
+        self.assertNotIn("root-patch", operations)
+        self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
+
     def test_talos_failure_after_safe_fanout_keeps_root_auth_unchanged(self) -> None:
         """Keep root Flux auth unchanged when the post-fanout node roll fails."""
         for operation in ("auth", "reboot", "remove", "pull", "revision"):

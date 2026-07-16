@@ -190,6 +190,21 @@ node_is_cordoned() {
   [[ "${unschedulable}" == "true" ]]
 }
 
+# Restore operator intent on both the normal and post-reboot readiness-failure paths.
+restore_node_cordon_if_needed() {
+  local node_name="$1" was_cordoned="$2" result_file="$3"
+  [[ "${was_cordoned}" == "1" ]] || return 0
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    cordon "${node_name}" \
+    >"${result_file}" 2>&1; then
+    echo "::error::Talos node ${node_name} was cordoned before its GHCR auth reboot but could not be re-cordoned afterwards."
+    return 1
+  fi
+  echo "Restored the pre-existing cordon on ${node_name}."
+}
+
 # Talos returns gRPC NotFound with the exact image reference when that image is
 # already absent from the selected runtime namespace. Match both so transport,
 # authorization, and unrelated removal failures remain fatal.
@@ -366,19 +381,13 @@ sync_talos_registry_auth() {
       --timeout=10m \
       >"${talos_result_file}" 2>&1; then
       echo "::error::Talos node ${node_name} did not return Ready after its GHCR auth reboot; refusing to roll the next node."
+      restore_node_cordon_if_needed \
+        "${node_name}" "${was_cordoned}" "${talos_result_file}" || return 1
       return 1
     fi
 
-    if [[ "${was_cordoned}" == "1" ]]; then
-      if ! kubectl \
-        --context "${KUBE_CONTEXT}" \
-        cordon "${node_name}" \
-        >"${talos_result_file}" 2>&1; then
-        echo "::error::Talos node ${node_name} was cordoned before its GHCR auth reboot but could not be re-cordoned afterwards."
-        return 1
-      fi
-      echo "Restored the pre-existing cordon on ${node_name}."
-    fi
+    restore_node_cordon_if_needed \
+      "${node_name}" "${was_cordoned}" "${talos_result_file}" || return 1
 
     # A cached image can make a pull look healthy without proving that the
     # node's runtime can authenticate to GHCR. Remove the incoming exact target
