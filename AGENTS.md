@@ -200,13 +200,19 @@ revision on each existing node only after an exact image pull succeeds.
 
 ## Working with Secrets
 
-This platform uses SOPS with Age encryption for all secrets:
+This platform uses SOPS with Age encryption for all secrets. **Never decrypt a secret into a
+terminal, transcript, or file — use the non-printing primitives** (see the absolute rules under
+*Validate before any manifest PR* below):
 
 ```bash
-# View an encrypted secret (requires the proper Age private key)
-sops -d k8s/clusters/local/bootstrap/variables-cluster-secret.enc.yaml
+# Change a value in place — nothing is printed, the file stays encrypted
+sops set k8s/clusters/local/bootstrap/variables-cluster-secret.enc.yaml '["stringData"]["key"]' '"value"'
+sops unset <file>.enc.yaml '["stringData"]["obsolete-key"]'
 
-# Encrypt a new secret
+# Re-encrypt to new recipients after a .sops.yaml change
+sops updatekeys <file>.enc.yaml
+
+# Encrypt a new secret (then delete the plaintext source)
 sops -e --input-type yaml --output-type yaml secret.yaml > secret.enc.yaml
 ```
 
@@ -217,11 +223,13 @@ You **cannot** decrypt existing secrets without the proper Age keys. For local d
 3. Update `.sops.yaml` with your public key.
 4. Re-encrypt all `*.enc.yaml` files with your key.
 
-## Protected Files — Do Not Modify
+## Previously Protected Files — Editable Since 2026-07-16
 
-- `*.enc.yaml` — SOPS-encrypted secrets (cannot be decrypted without the Age private key)
-- `ksail.prod.yaml` — production cluster config (changes affect live infrastructure)
-- `.sops.yaml` — encryption rules and Age public keys
+The maintainer lifted the never-modify list on 2026-07-16 — no file in this repo is off-limits any
+more. `ksail.prod.yaml` is ordinary config (draft PR, validated, reasoning in the body). `*.enc.yaml`
+and `.sops.yaml` are editable **only** through the non-printing SOPS workflow and its absolute rules
+(never decrypt into the session; verify `ENC[AES256_GCM,` before staging) — see *Working with
+Secrets* above and the rules under *Validate before any manifest PR* below.
 
 ## Conventions
 
