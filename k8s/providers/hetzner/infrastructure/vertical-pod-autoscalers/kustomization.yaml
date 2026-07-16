@@ -112,6 +112,35 @@ patches:
         path: /spec/resourcePolicy/containerPolicies/0/maxAllowed
         value:
           cpu: "1"
+  # kyverno admission + reports controllers: cap CPU below the hot-loop level.
+  # Their leader replicas hot-loop (aggregate-report-controller measured at
+  # ~23 no-op reconciles/s, 1.6-2M cumulative; leader steadily burning ~1 CPU
+  # while the standby idles), so an uncapped VPA faithfully sizes the whole
+  # deployment for the pathology: reports hit 1836m and admission 1168m
+  # requests, ~6.2 requested cores across the pairs — which alone tipped the
+  # fleet past the static workers and ratcheted FOUR autoscale nodes into
+  # existence (the 2026-07-16 snapshot-slot deadlock's other half; same class
+  # as the 2026-06-30 DaemonSet ratchet above). CPU is compressible: capping
+  # only throttles the degenerate loop, never correctness. Root-cause hunt for
+  # the loop itself is tracked on the platform issue referenced in the PR.
+  - target:
+      kind: VerticalPodAutoscaler
+      name: kyverno-reports-controller
+    patch: |
+      - op: replace
+        path: /spec/resourcePolicy/containerPolicies/0/maxAllowed
+        value:
+          cpu: 500m
+          memory: 512Mi
+  - target:
+      kind: VerticalPodAutoscaler
+      name: kyverno-admission-controller
+    patch: |
+      - op: replace
+        path: /spec/resourcePolicy/containerPolicies/0/maxAllowed
+        value:
+          cpu: 800m
+          memory: 512Mi
   # spire-server: singleton StatefulSet on an RWO volume — never evict.
   - target:
       kind: VerticalPodAutoscaler
