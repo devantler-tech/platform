@@ -89,6 +89,7 @@ talos_result_file="${work_dir}/talos-result.txt"
 drain_result_file="${work_dir}/drain-result.txt"
 reboot_result_file="${work_dir}/reboot-result.txt"
 cordon_state_file="${work_dir}/cordon-state.json"
+cordon_claim_patch_file="${work_dir}/cordon-claim-patch.json"
 cordon_release_patch_file="${work_dir}/cordon-release-patch.json"
 talos_nodes_file="${work_dir}/talos-nodes.json"
 talos_node_targets="${work_dir}/talos-node-targets.tsv"
@@ -187,30 +188,68 @@ emit_safe_operation_output() {
     || true
 }
 
-# Claim the right to reverse the cordon that the upcoming kubectl drain creates.
-# The resource-version compare closes the read/claim race, and the annotation is
-# later tested and removed atomically with the uncordon. Another actor taking
-# over an already-cordoned node must replace this annotation: a second bare
-# cordon is idempotent and cannot express new ownership in the Kubernetes API.
+# Atomically claim the right to reverse the cordon and make the node
+# unschedulable. Combining both mutations closes the gap where another actor
+# could cordon after our ownership annotation but before kubectl drain. A bare
+# cordon after this patch is an idempotent no-op; an actor taking over an
+# already-cordoned node must replace the annotation to express new ownership.
 claim_node_cordon_ownership() {
   local node_name="$1" owner_token="$2" state_file="$3" result_file="$4"
   local resource_version
   resource_version="$(jq -er '.metadata.resourceVersion' "${state_file}")"
 
+  if jq -e '.metadata.annotations | type == "object"' \
+    "${state_file}" >/dev/null; then
+    jq -n \
+      --arg owner_path "${CORDON_OWNER_JSON_PATH}" \
+      --arg owner "${owner_token}" \
+      --arg resource_version "${resource_version}" '
+      [
+        {
+          op: "test",
+          path: "/metadata/resourceVersion",
+          value: $resource_version
+        },
+        {op: "add", path: $owner_path, value: $owner},
+        {op: "add", path: "/spec/unschedulable", value: true}
+      ]
+    ' > "${cordon_claim_patch_file}"
+  else
+    jq -n \
+      --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
+      --arg owner "${owner_token}" \
+      --arg resource_version "${resource_version}" '
+      [
+        {
+          op: "test",
+          path: "/metadata/resourceVersion",
+          value: $resource_version
+        },
+        {
+          op: "add",
+          path: "/metadata/annotations",
+          value: {($owner_annotation): $owner}
+        },
+        {op: "add", path: "/spec/unschedulable", value: true}
+      ]
+    ' > "${cordon_claim_patch_file}"
+  fi
+
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
-    annotate node "${node_name}" \
-    "${CORDON_OWNER_ANNOTATION}=${owner_token}" \
-    --resource-version="${resource_version}" \
+    patch node "${node_name}" \
+    --type=json \
+    --patch-file="${cordon_claim_patch_file}" \
     >"${result_file}" 2>&1; then
-    echo "::error::Could not claim cordon ownership for Talos node ${node_name}; refusing to drain it."
+    echo "::error::Could not atomically claim and cordon Talos node ${node_name}; refusing to drain it."
     emit_safe_operation_output "cordon-claim" "${result_file}"
     return 1
   fi
 }
 
-# kubectl drain cordons the node. Restore schedulability only when this bridge
-# owns that cordon; a pre-existing operator cordon must remain untouched.
+# The atomic claim cordons the node before kubectl drain. Restore schedulability
+# only when this bridge owns that cordon; a pre-existing operator cordon must
+# remain untouched.
 restore_node_schedulability_if_needed() {
   local node_name="$1" was_cordoned="$2" owner_token="$3"
   local initial_node_uid="$4" initial_node_taints="$5" result_file="$6"
@@ -432,9 +471,9 @@ sync_talos_registry_auth() {
       return 1
     fi
 
-    # Remember scheduling intent before kubectl drain cordons the node. Claim a
-    # schedulable node with a compare-and-swap annotation so cleanup can prove
-    # that no newer actor replaced our cordon ownership.
+    # Remember scheduling intent before any cordon. Atomically claim and cordon
+    # a schedulable node so cleanup can prove that no newer actor replaced our
+    # ownership, while a competing cordon that wins first makes the claim fail.
     local was_cordoned=0 existing_cordon_owner="" cordon_owner_token=""
     local initial_node_uid="" initial_node_taints="[]"
     if ! kubectl \

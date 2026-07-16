@@ -37,13 +37,43 @@ KSAIL_OPERATOR_VERSION = next(
     for line in KSAIL_OPERATOR_HELM_RELEASE.read_text(encoding="utf-8").splitlines()
     if line.strip().startswith("version:")
 )
+
+
+def _yaml_scalar_at_path(document: str, path: tuple[str, ...]) -> str:
+    """Return a scalar from a mapping-only YAML path without adding a dependency."""
+    parents: list[tuple[int, str]] = []
+    for raw_line in document.splitlines():
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+
+        indent = len(line) - len(line.lstrip(" "))
+        key, separator, value = line.strip().partition(":")
+        if not separator:
+            continue
+
+        while parents and parents[-1][0] >= indent:
+            parents.pop()
+
+        current_path = tuple(parent_key for _, parent_key in parents) + (key,)
+        value = value.strip()
+        if current_path == path:
+            if not value:
+                break
+            return value.strip("\"'")
+
+        if not value:
+            parents.append((indent, key))
+
+    raise ValueError(f"missing scalar YAML path: {'.'.join(path)}")
+
+
 # spec.cluster.talos.version is the source of truth the workflows' TALOS_VERSION
 # must track; deriving it here keeps the drift guard honest across version bumps.
-KSAIL_PROD_TALOS_VERSION = next(
-    line.split(":", 1)[1].strip().lstrip("v")
-    for line in KSAIL_PROD_CONFIG.read_text(encoding="utf-8").splitlines()
-    if line.strip().startswith("version:")
-)
+KSAIL_PROD_TALOS_VERSION = _yaml_scalar_at_path(
+    KSAIL_PROD_CONFIG.read_text(encoding="utf-8"),
+    ("spec", "cluster", "talos", "version"),
+).lstrip("v")
 PROVIDER_UPJET_UNIFI = (
     ROOT
     / "k8s"
@@ -57,6 +87,28 @@ TALOS_GHCR_AUTH = ROOT / "talos" / "cluster" / "authenticate-ghcr-pulls.yaml"
 TALOS_GHCR_REVISION = (
     ROOT / "talos" / "cluster" / "mark-ghcr-pull-revision.yaml"
 )
+
+
+class KsailProdConfigTests(unittest.TestCase):
+    """Verify workflow-version guards read the intended nested config key."""
+
+    def test_talos_version_ignores_unrelated_version_fields(self) -> None:
+        """Select spec.cluster.talos.version even when another version appears first."""
+        config = textwrap.dedent(
+            """
+            spec:
+              version: v0.0.0
+              cluster:
+                kubernetesVersion: v1.36.2
+                talos:
+                  version: v1.13.6
+            """
+        )
+
+        self.assertEqual(
+            "v1.13.6",
+            _yaml_scalar_at_path(config, ("spec", "cluster", "talos", "version")),
+        )
 
 
 class RefreshFluxGhcrAuthTests(unittest.TestCase):
@@ -608,32 +660,6 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               exit 0
             fi
 
-            if [[ "$arguments" == *" annotate node "* \
-              && "$arguments" == *" platform.devantler.tech/ghcr-auth-drain-owner="* ]]; then
-              node_target=""
-              owner=""
-              previous=""
-              for argument in "$@"; do
-                if [[ "$previous" == node ]]; then
-                  node_target="$argument"
-                fi
-                case "$argument" in
-                  platform.devantler.tech/ghcr-auth-drain-owner=*)
-                    owner="${argument#*=}"
-                    ;;
-                esac
-                previous="$argument"
-              done
-              test -n "$node_target"
-              test -n "$owner"
-              [[ "$arguments" == *" --resource-version=10 "* ]]
-              owner_file="$FAKE_SYNC_STATE_DIR/cordon-owner-${node_target}"
-              test ! -e "$owner_file"
-              printf '%s' "$owner" > "$owner_file"
-              printf 'node-claim:%s\n' "$node_target" >> "$OPERATION_LOG"
-              exit 0
-            fi
-
             if [[ "$arguments" == *" drain "* ]]; then
               node_target=""
               previous=""
@@ -654,7 +680,13 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 exit 55
               fi
               printf 'node-drain:%s\n' "$node_target" >> "$OPERATION_LOG"
-              touch "$FAKE_SYNC_STATE_DIR/cordoned-${node_target}"
+              if [[ " ${FAKE_CORDONED_NODES:-} " != *" ${node_target} "* ]]; then
+                test -f "$FAKE_SYNC_STATE_DIR/cordoned-${node_target}"
+              fi
+              if [[ "$node_target" == "${FAKE_DRAIN_API_FAIL_NODE:-disabled}" ]]; then
+                echo 'could not list pods before eviction' >&2
+                exit 54
+              fi
               if [[ "$node_target" == "${FAKE_CORDON_OWNER_REPLACED_NODE:-disabled}" ]]; then
                 printf 'operator-cordon' \
                   > "$FAKE_SYNC_STATE_DIR/cordon-owner-${node_target}"
@@ -703,6 +735,44 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               test -n "$node_target"
               test -f "$patch_file"
               owner_file="$FAKE_SYNC_STATE_DIR/cordon-owner-${node_target}"
+              if jq -e '
+                any(.[];
+                  .op == "add"
+                  and .path == "/spec/unschedulable"
+                  and .value == true)
+              ' "$patch_file" >/dev/null; then
+                if [[ "$node_target" == "${FAKE_CORDON_BEFORE_CLAIM_NODE:-disabled}" ]]; then
+                  touch "$FAKE_SYNC_STATE_DIR/cordoned-${node_target}"
+                  printf 'operator-cordon:%s\n' "$node_target" >> "$OPERATION_LOG"
+                  echo 'resourceVersion test failed after concurrent cordon' >&2
+                  exit 56
+                fi
+                expected_owner="$(jq -er '
+                  .[]
+                  | select(
+                      .op == "add"
+                      and .path == (
+                        "/metadata/annotations/platform.devantler.tech"
+                        + "~1ghcr-auth-drain-owner"
+                      ))
+                  | .value
+                ' "$patch_file")"
+                test -n "$expected_owner"
+                test ! -e "$owner_file"
+                jq -e '
+                  .[0].op == "test"
+                  and .[0].path == "/metadata/resourceVersion"
+                  and .[0].value == "10"
+                  and any(.[];
+                    .op == "add"
+                    and .path == "/spec/unschedulable"
+                    and .value == true)
+                ' "$patch_file" >/dev/null
+                printf '%s' "$expected_owner" > "$owner_file"
+                touch "$FAKE_SYNC_STATE_DIR/cordoned-${node_target}"
+                printf 'node-claim-cordon:%s\n' "$node_target" >> "$OPERATION_LOG"
+                exit 0
+              fi
               expected_owner="$(jq -er '.[0].value' "$patch_file")"
               current_owner=""
               if [[ -f "$owner_file" ]]; then
@@ -759,6 +829,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             # must be handled before the namespace guard below.
             if [[ "$arguments" == *" wait "* ]]; then
               [[ "$arguments" == *" --for=condition=Ready "* ]]
+              [[ "$arguments" == *" --timeout=10m "* ]]
               node_target=""
               for argument in "$@"; do
                 case "$argument" in
@@ -1150,7 +1221,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "fanout:externalsecret/ascoachingogvaner/ghcr-auth",
                 "fanout:externalsecret/kyverno/ghcr-auth",
                 "talos-auth:10.0.0.2",
-                "node-claim:prod-worker-1",
+                "node-claim-cordon:prod-worker-1",
                 "node-drain:prod-worker-1",
                 "talos-reboot:10.0.0.2",
                 "node-ready:prod-worker-1",
@@ -1161,7 +1232,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "node-uncordon:prod-worker-1",
                 "talos-revision:10.0.0.2",
                 "talos-auth:10.0.0.1",
-                "node-claim:prod-control-plane-1",
+                "node-claim-cordon:prod-control-plane-1",
                 "node-drain:prod-control-plane-1",
                 "talos-reboot:10.0.0.1",
                 "node-ready:prod-control-plane-1",
@@ -1260,9 +1331,9 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         operations = self.operation_log.read_text(encoding="utf-8").splitlines()
         self.assertIn("node-drain:prod-worker-1", operations)
-        self.assertNotIn("node-claim:prod-worker-1", operations)
+        self.assertNotIn("node-claim-cordon:prod-worker-1", operations)
         self.assertNotIn("node-uncordon:prod-worker-1", operations)
-        self.assertIn("node-claim:prod-control-plane-1", operations)
+        self.assertIn("node-claim-cordon:prod-control-plane-1", operations)
         self.assertIn("node-uncordon:prod-control-plane-1", operations)
 
     def test_schedulable_node_is_uncordoned_after_the_auth_reboot(self) -> None:
@@ -1272,7 +1343,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         operations = self.operation_log.read_text(encoding="utf-8").splitlines()
         self.assertLess(
-            operations.index("node-claim:prod-worker-1"),
+            operations.index("node-claim-cordon:prod-worker-1"),
             operations.index("node-drain:prod-worker-1"),
         )
         self.assertLess(
@@ -1291,6 +1362,39 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             operations.index("talos-revision:10.0.0.2"),
         )
 
+    def test_schedulable_node_is_claimed_and_cordoned_atomically(self) -> None:
+        """Close the gap where a competing cordon could precede our drain."""
+        result = self._run_helper(self._valid_config())
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("node-claim-cordon:prod-worker-1", operations)
+        self.assertNotIn("node-claim:prod-worker-1", operations)
+        self.assertLess(
+            operations.index("node-claim-cordon:prod-worker-1"),
+            operations.index("node-drain:prod-worker-1"),
+        )
+
+    def test_concurrent_cordon_before_atomic_claim_stops_the_roll(self) -> None:
+        """Never take ownership after another actor makes a node unschedulable."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_CORDON_BEFORE_CLAIM_NODE="prod-worker-1",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        output = result.stdout + result.stderr
+        self.assertIn("Could not atomically claim and cordon", output)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("operator-cordon:prod-worker-1", operations)
+        self.assertNotIn("node-claim-cordon:prod-worker-1", operations)
+        self.assertNotIn("node-drain:prod-worker-1", operations)
+        self.assertNotIn("talos-reboot:10.0.0.2", operations)
+        self.assertNotIn("root-patch", operations)
+        self.assertFalse(
+            (self.sync_state_dir / "cordon-owner-prod-worker-1").exists()
+        )
+
     def test_pdb_blocked_drain_restores_original_schedulability(self) -> None:
         """A blocked eviction must be visible and must never reach reboot."""
         result = self._run_helper(
@@ -1306,13 +1410,16 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             output,
         )
         operations = self.operation_log.read_text(encoding="utf-8").splitlines()
-        self.assertIn("node-claim:prod-worker-1", operations)
+        self.assertIn("node-claim-cordon:prod-worker-1", operations)
         self.assertIn("node-drain:prod-worker-1", operations)
         self.assertIn("node-uncordon:prod-worker-1", operations)
         self.assertNotIn("talos-reboot:10.0.0.2", operations)
         self.assertNotIn("talos-revision:10.0.0.2", operations)
         self.assertNotIn("root-patch", operations)
         self.assertNotIn("fixture-secret-token", output)
+        self.assertFalse(
+            (self.sync_state_dir / "cordon-owner-prod-worker-1").exists()
+        )
 
     def test_pdb_blocked_drain_preserves_pre_existing_cordon(self) -> None:
         """Never uncordon a node that was already under operator control."""
@@ -1324,10 +1431,29 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         operations = self.operation_log.read_text(encoding="utf-8").splitlines()
-        self.assertNotIn("node-claim:prod-worker-1", operations)
+        self.assertNotIn("node-claim-cordon:prod-worker-1", operations)
         self.assertIn("node-drain:prod-worker-1", operations)
         self.assertNotIn("node-uncordon:prod-worker-1", operations)
         self.assertNotIn("talos-reboot:10.0.0.2", operations)
+
+    def test_drain_api_failure_releases_the_atomic_claim(self) -> None:
+        """A pre-eviction drain error must not strand our owned cordon."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_DRAIN_API_FAIL_NODE="prod-worker-1",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("node-claim-cordon:prod-worker-1", operations)
+        self.assertIn("node-drain:prod-worker-1", operations)
+        self.assertIn("node-uncordon:prod-worker-1", operations)
+        self.assertNotIn("talos-reboot:10.0.0.2", operations)
+        self.assertNotIn("talos-revision:10.0.0.2", operations)
+        self.assertNotIn("root-patch", operations)
+        self.assertFalse(
+            (self.sync_state_dir / "cordon-owner-prod-worker-1").exists()
+        )
 
     def test_revision_failure_does_not_leave_owned_cordon_behind(self) -> None:
         """Restore scheduling before the final non-secret marker write."""
@@ -1357,7 +1483,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         output = result.stdout + result.stderr
         self.assertIn("ownership changed", output)
         operations = self.operation_log.read_text(encoding="utf-8").splitlines()
-        self.assertIn("node-claim:prod-worker-1", operations)
+        self.assertIn("node-claim-cordon:prod-worker-1", operations)
         self.assertIn("node-drain:prod-worker-1", operations)
         self.assertNotIn("node-uncordon:prod-worker-1", operations)
         self.assertNotIn("talos-revision:10.0.0.2", operations)
@@ -1374,7 +1500,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         output = result.stdout + result.stderr
         self.assertIn("scheduling safety state changed", output)
         operations = self.operation_log.read_text(encoding="utf-8").splitlines()
-        self.assertIn("node-claim:prod-worker-1", operations)
+        self.assertIn("node-claim-cordon:prod-worker-1", operations)
         self.assertIn("node-drain:prod-worker-1", operations)
         self.assertNotIn("node-uncordon:prod-worker-1", operations)
         self.assertNotIn("talos-revision:10.0.0.2", operations)
@@ -1389,7 +1515,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         operations = self.operation_log.read_text(encoding="utf-8").splitlines()
-        self.assertIn("node-claim:prod-worker-1", operations)
+        self.assertIn("node-claim-cordon:prod-worker-1", operations)
         self.assertNotIn("node-uncordon:prod-worker-1", operations)
         self.assertNotIn("talos-revision:10.0.0.2", operations)
         self.assertNotIn("root-patch", operations)
@@ -1417,7 +1543,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "fanout:externalsecret/ascoachingogvaner/ghcr-auth",
                 "fanout:externalsecret/kyverno/ghcr-auth",
                 "talos-auth:10.0.0.2",
-                "node-claim:prod-worker-1",
+                "node-claim-cordon:prod-worker-1",
                 "node-drain:prod-worker-1",
                 "talos-reboot:10.0.0.2",
                 "node-ready:prod-worker-1",
