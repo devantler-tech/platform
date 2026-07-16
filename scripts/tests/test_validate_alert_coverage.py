@@ -110,12 +110,16 @@ class ValidateAlertCoverageTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-    def _run_validator(self) -> subprocess.CompletedProcess[str]:
+    def _run_validator(
+        self, **environment_overrides: str
+    ) -> subprocess.CompletedProcess[str]:
         """Run the copied validator with the real local kubectl and yq."""
+        environment = os.environ.copy()
+        environment.update(environment_overrides)
         return subprocess.run(
             ["bash", str(self.script)],
             cwd=self.workspace,
-            env=os.environ.copy(),
+            env=environment,
             check=False,
             capture_output=True,
             text=True,
@@ -177,6 +181,26 @@ class ValidateAlertCoverageTests(unittest.TestCase):
                 self.assertIn("missing metadata.namespace", output)
                 self.assertIn(kind, output)
                 self.assertIn(name, output)
+
+    def test_yq_diagnostics_remain_visible_on_query_failure(self) -> None:
+        """Keep the parser's own reason when a fail-closed query errors."""
+        bin_dir = self.workspace / "bin"
+        bin_dir.mkdir()
+        yq = bin_dir / "yq"
+        yq.write_text(
+            "#!/usr/bin/env bash\n"
+            "echo fixture-yq-query-diagnostic >&2\n"
+            "exit 72\n",
+            encoding="utf-8",
+        )
+        yq.chmod(0o755)
+
+        result = self._run_validator(
+            PATH=f"{bin_dir}:{os.environ['PATH']}",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("fixture-yq-query-diagnostic", result.stderr)
 
     def test_ci_runs_the_behavioral_regressions_when_they_change(self) -> None:
         """Keep the validator's failure-mode coverage in the required CI job."""

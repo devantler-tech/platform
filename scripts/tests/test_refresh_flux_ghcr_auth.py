@@ -242,7 +242,23 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 echo "etcd status failed after drain" >&2
                 exit 51
               fi
-              printf 'NODE MEMBER DB-SIZE\n%s member-id 1MB\n' "$node"
+              learner=false
+              status_error=""
+              if [[ "$node" == "${FAKE_ETCD_LEARNER_NODE:-disabled}" ]]; then
+                learner=true
+              fi
+              if [[ "$node" == "${FAKE_ETCD_STATUS_ERROR_NODE:-disabled}" ]]; then
+                status_error=" rpc-timeout"
+              fi
+              if [[ "$node" == "${FAKE_ETCD_COMPACT_STATUS_NODE:-disabled}" ]]; then
+                printf 'NODE MEMBER DB SIZE IN USE LEADER RAFT INDEX RAFT TERM RAFT APPLIED INDEX LEARNER ERRORS\n'
+                printf '%s member-id 1.0 MB 0.5 MB (50.00%%) leader-id 100 2 100 %s%s\n' \
+                  "$node" "$learner" "$status_error"
+              else
+                printf 'NODE MEMBER DB SIZE IN USE LEADER RAFT INDEX RAFT TERM RAFT APPLIED INDEX LEARNER PROTOCOL STORAGE ERRORS\n'
+                printf '%s member-id 1.0 MB 0.5 MB (50.00%%) leader-id 100 2 100 %s 3.6.4 3.6.0%s\n' \
+                  "$node" "$learner" "$status_error"
+              fi
               exit 0
             fi
 
@@ -612,6 +628,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               done
               test -n "$node_target"
               owner_file="$FAKE_SYNC_STATE_DIR/cordon-owner-${node_target}"
+              resource_version_file="$FAKE_SYNC_STATE_DIR/resource-version-${node_target}"
               if [[ "$arguments" == *" --output json "* ]]; then
                 owner=""
                 if [[ -f "$owner_file" ]]; then
@@ -626,14 +643,19 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 if [[ -f "$FAKE_SYNC_STATE_DIR/autoscaler-cordon-${node_target}" ]]; then
                   autoscaler_intent=true
                 fi
+                resource_version=10
+                if [[ -f "$resource_version_file" ]]; then
+                  resource_version="$(<"$resource_version_file")"
+                fi
                 jq -n \
                   --arg owner "$owner" \
+                  --arg resource_version "$resource_version" \
                   --argjson cordoned "$cordoned" \
                   --argjson autoscaler_intent "$autoscaler_intent" '
                   {
                     metadata: {
                       uid: "node-uid",
-                      resourceVersion: "10",
+                      resourceVersion: $resource_version,
                       deletionTimestamp: null,
                       annotations: (
                         if $owner == "" then {}
@@ -741,6 +763,11 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               test -n "$node_target"
               test -f "$patch_file"
               owner_file="$FAKE_SYNC_STATE_DIR/cordon-owner-${node_target}"
+              resource_version_file="$FAKE_SYNC_STATE_DIR/resource-version-${node_target}"
+              current_resource_version=10
+              if [[ -f "$resource_version_file" ]]; then
+                current_resource_version="$(<"$resource_version_file")"
+              fi
               if jq -e '
                 any(.[];
                   .op == "add"
@@ -765,10 +792,10 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 ' "$patch_file")"
                 test -n "$expected_owner"
                 test ! -e "$owner_file"
-                jq -e '
+                jq -e --arg resource_version "$current_resource_version" '
                   .[0].op == "test"
                   and .[0].path == "/metadata/resourceVersion"
-                  and .[0].value == "10"
+                  and .[0].value == $resource_version
                   and any(.[];
                     .op == "add"
                     and .path == "/spec/unschedulable"
@@ -776,6 +803,8 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 ' "$patch_file" >/dev/null
                 printf '%s' "$expected_owner" > "$owner_file"
                 touch "$FAKE_SYNC_STATE_DIR/cordoned-${node_target}"
+                printf '%s' "$((current_resource_version + 1))" \
+                  > "$resource_version_file"
                 printf 'node-claim-cordon:%s\n' "$node_target" >> "$OPERATION_LOG"
                 exit 0
               fi
@@ -789,7 +818,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 echo 'cordon ownership changed; refusing to uncordon' >&2
                 exit 56
               fi
-              jq -e '
+              jq -e --arg resource_version "$current_resource_version" '
                 .[0].op == "test"
                 and .[0].path == (
                   "/metadata/annotations/platform.devantler.tech"
@@ -798,7 +827,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 and any(.[];
                   .op == "test"
                   and .path == "/metadata/resourceVersion"
-                  and .value == "10")
+                  and .value == $resource_version)
                 and any(.[];
                   .op == "add"
                   and .path == "/spec/unschedulable"
@@ -811,6 +840,8 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                   ))
               ' "$patch_file" >/dev/null
               printf 'node-uncordon:%s\n' "$node_target" >> "$OPERATION_LOG"
+              printf '%s' "$((current_resource_version + 1))" \
+                > "$resource_version_file"
               rm "$owner_file"
               rm -f "$FAKE_SYNC_STATE_DIR/cordoned-${node_target}"
               exit 0
@@ -1360,6 +1391,38 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertNotIn("talos-revision:10.0.0.1", operations)
         self.assertNotIn("root-patch", operations)
 
+    def test_unsafe_etcd_member_status_blocks_control_plane_reboot(self) -> None:
+        """Reject non-voting learners and status rows that report errors."""
+        for environment_name in (
+            "FAKE_ETCD_LEARNER_NODE",
+            "FAKE_ETCD_STATUS_ERROR_NODE",
+        ):
+            with self.subTest(environment_name=environment_name):
+                result = self._run_helper(
+                    self._valid_config(),
+                    **{environment_name: "10.0.0.3"},
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                operations = self.operation_log.read_text(
+                    encoding="utf-8"
+                ).splitlines()
+                self.assertIn("talos-reboot:10.0.0.2", operations)
+                self.assertNotIn("talos-reboot:10.0.0.1", operations)
+                self.assertNotIn("root-patch", operations)
+
+    def test_compact_healthy_etcd_status_permits_control_plane_reboot(self) -> None:
+        """Accept Talos's status table without protocol/storage columns."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_ETCD_COMPACT_STATUS_NODE="10.0.0.3",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("talos-reboot:10.0.0.1", operations)
+        self.assertIn("root-patch", operations)
+
     def test_pre_existing_cordon_survives_the_auth_reboot(self) -> None:
         """A node an operator cordoned must not come back schedulable.
 
@@ -1404,6 +1467,12 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertLess(
             operations.index("node-uncordon:prod-worker-1"),
             operations.index("talos-revision:10.0.0.2"),
+        )
+        self.assertEqual(
+            (
+                self.sync_state_dir / "resource-version-prod-worker-1"
+            ).read_text(encoding="utf-8"),
+            "12",
         )
 
     def test_schedulable_node_is_claimed_and_cordoned_atomically(self) -> None:

@@ -215,7 +215,23 @@ talosctl() {
     if [[ "${node}" == "${ETCD_STATUS_FAIL_NODE:-}" ]]; then
       return 1
     fi
-    printf 'NODE MEMBER DB-SIZE\n%s member-id 1MB\n' "${node}"
+    learner=false
+    status_error=""
+    if [[ "${node}" == "${ETCD_LEARNER_NODE:-}" ]]; then
+      learner=true
+    fi
+    if [[ "${node}" == "${ETCD_STATUS_ERROR_NODE:-}" ]]; then
+      status_error=" rpc-timeout"
+    fi
+    if [[ "${node}" == "${ETCD_COMPACT_STATUS_NODE:-}" ]]; then
+      printf 'NODE MEMBER DB SIZE IN USE LEADER RAFT INDEX RAFT TERM RAFT APPLIED INDEX LEARNER ERRORS\n'
+      printf '%s member-id 1.0 MB 0.5 MB (50.00%%) leader-id 100 2 100 %s%s\n' \
+        "${node}" "${learner}" "${status_error}"
+    else
+      printf 'NODE MEMBER DB SIZE IN USE LEADER RAFT INDEX RAFT TERM RAFT APPLIED INDEX LEARNER PROTOCOL STORAGE ERRORS\n'
+      printf '%s member-id 1.0 MB 0.5 MB (50.00%%) leader-id 100 2 100 %s 3.6.4 3.6.0%s\n' \
+        "${node}" "${learner}" "${status_error}"
+    fi
     return 0
   fi
 
@@ -232,6 +248,9 @@ talosctl() {
 
 if declare -F other_control_planes_safe_to_reboot >/dev/null; then
   ETCD_STATUS_FAIL_NODE=""
+  ETCD_COMPACT_STATUS_NODE=""
+  ETCD_LEARNER_NODE=""
+  ETCD_STATUS_ERROR_NODE=""
   ETCD_ALARM_NODE=""
   if other_control_planes_safe_to_reboot \
     prod-control-plane-1 test-context "${work_dir}" >/dev/null; then
@@ -240,7 +259,18 @@ if declare -F other_control_planes_safe_to_reboot >/dev/null; then
     fail "healthy alarm-free etcd peers permit a control-plane reboot"
   fi
 
+  ETCD_COMPACT_STATUS_NODE="10.0.0.2"
+  if other_control_planes_safe_to_reboot \
+    prod-control-plane-1 test-context "${work_dir}" >/dev/null; then
+    pass "compact healthy etcd status permits a control-plane reboot"
+  else
+    fail "compact healthy etcd status permits a control-plane reboot"
+  fi
+
   ETCD_STATUS_FAIL_NODE="10.0.0.2"
+  ETCD_COMPACT_STATUS_NODE=""
+  ETCD_LEARNER_NODE=""
+  ETCD_STATUS_ERROR_NODE=""
   ETCD_ALARM_NODE=""
   if other_control_planes_safe_to_reboot \
     prod-control-plane-1 test-context "${work_dir}" >/dev/null 2>&1; then
@@ -250,6 +280,9 @@ if declare -F other_control_planes_safe_to_reboot >/dev/null; then
   fi
 
   ETCD_STATUS_FAIL_NODE=""
+  ETCD_COMPACT_STATUS_NODE=""
+  ETCD_LEARNER_NODE=""
+  ETCD_STATUS_ERROR_NODE=""
   ETCD_ALARM_NODE="10.0.0.3"
   if other_control_planes_safe_to_reboot \
     prod-control-plane-1 test-context "${work_dir}" >/dev/null 2>&1; then
@@ -257,10 +290,37 @@ if declare -F other_control_planes_safe_to_reboot >/dev/null; then
   else
     pass "an etcd peer alarm blocks a control-plane reboot"
   fi
+
+  ETCD_STATUS_FAIL_NODE=""
+  ETCD_COMPACT_STATUS_NODE=""
+  ETCD_LEARNER_NODE="10.0.0.2"
+  ETCD_STATUS_ERROR_NODE=""
+  ETCD_ALARM_NODE=""
+  if other_control_planes_safe_to_reboot \
+    prod-control-plane-1 test-context "${work_dir}" >/dev/null 2>&1; then
+    fail "a learner etcd peer blocks a control-plane reboot"
+  else
+    pass "a learner etcd peer blocks a control-plane reboot"
+  fi
+
+  ETCD_STATUS_FAIL_NODE=""
+  ETCD_COMPACT_STATUS_NODE=""
+  ETCD_LEARNER_NODE=""
+  ETCD_STATUS_ERROR_NODE="10.0.0.3"
+  ETCD_ALARM_NODE=""
+  if other_control_planes_safe_to_reboot \
+    prod-control-plane-1 test-context "${work_dir}" >/dev/null 2>&1; then
+    fail "an etcd status error blocks a control-plane reboot"
+  else
+    pass "an etcd status error blocks a control-plane reboot"
+  fi
 else
   fail "healthy alarm-free etcd peers permit a control-plane reboot"
+  fail "compact healthy etcd status permits a control-plane reboot"
   fail "unreadable etcd peer status blocks a control-plane reboot"
   fail "an etcd peer alarm blocks a control-plane reboot"
+  fail "a learner etcd peer blocks a control-plane reboot"
+  fail "an etcd status error blocks a control-plane reboot"
 fi
 
 if ((failures > 0)); then

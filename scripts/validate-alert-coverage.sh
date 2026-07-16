@@ -89,7 +89,7 @@ for kind in HelmRelease Kustomization; do
     select(.kind == \"${kind}\" and (.apiVersion | test(\"^${group}/\")))
     | select((.metadata.namespace // \"\") == \"\")
     | (.kind + \"/\" + (.metadata.name // \"<unnamed>\"))
-  " "${rendered}" 2>/dev/null > "${missing_namespace_raw}"
+  " "${rendered}" > "${missing_namespace_raw}"
   awk 'NF && $0 != "---"' \
     "${missing_namespace_raw}" > "${missing_namespace}"
   if [[ -s "${missing_namespace}" ]]; then
@@ -104,7 +104,7 @@ for kind in HelmRelease Kustomization; do
     select(.kind == \"${kind}\" and (.apiVersion | test(\"^${group}/\")))
     | .metadata.namespace
     | select(. != null and . != \"\")
-  " "${rendered}" 2>/dev/null > "${declared_raw}"
+  " "${rendered}" > "${declared_raw}"
   awk 'NF && $0 != "---"' "${declared_raw}" \
     | LC_ALL=C sort -u > "${declared}"
 

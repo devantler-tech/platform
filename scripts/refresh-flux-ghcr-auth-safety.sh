@@ -187,11 +187,42 @@ other_control_planes_safe_to_reboot() {
       return 1
     fi
     if ! awk -v expected_node="${peer_ip}" '
-      NR == 1 { header = ($1 == "NODE" && $2 == "MEMBER") }
-      NR > 1 && $1 == expected_node { rows++ }
-      END { exit !(header && rows == 1) }
+      NR == 1 {
+        common = ($1 == "NODE")
+        common = common && ($2 == "MEMBER")
+        common = common && ($3 == "DB") && ($4 == "SIZE")
+        common = common && ($5 == "IN") && ($6 == "USE")
+        common = common && ($7 == "LEADER")
+        common = common && ($8 == "RAFT") && ($9 == "INDEX")
+        common = common && ($10 == "RAFT") && ($11 == "TERM")
+        common = common && ($12 == "RAFT") && ($13 == "APPLIED")
+        common = common && ($14 == "INDEX") && ($15 == "LEARNER")
+        compact = (NF == 16) && ($16 == "ERRORS")
+        extended = (NF == 18)
+        extended = extended && ($16 == "PROTOCOL")
+        extended = extended && ($17 == "STORAGE") && ($18 == "ERRORS")
+        header = common && (compact || extended)
+        expected_data_fields = compact ? 12 : 14
+        next
+      }
+      NF == 0 { next }
+      {
+        data_rows++
+        if ($1 == expected_node) {
+          rows++
+          # Talos emits either the compact 12-field row or a 14-field row with
+          # protocol/storage versions. LEARNER is field 12 in both, and any
+          # status error adds fields after the expected healthy row.
+          if (NF != expected_data_fields || $12 != "false") {
+            unsafe = 1
+          }
+        }
+      }
+      END {
+        exit !(header && data_rows == 1 && rows == 1 && !unsafe)
+      }
     ' "${status_file}"; then
-      echo "Control-plane peer ${peer_name} returned an incomplete etcd status response."
+      echo "Control-plane peer ${peer_name} is an etcd learner, reports a status error, or returned an unrecognized status response."
       return 1
     fi
 
