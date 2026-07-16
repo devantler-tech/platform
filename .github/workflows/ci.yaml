@@ -106,7 +106,7 @@ jobs:
       - name: ⚙️ Setup Go
         # Needed by the Kubescape exceptions generator below (Go, per the
         # bash-or-Go scripting standard) — the scan step shells out to it.
-        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
@@ -177,7 +177,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.170.1"
+          KSAIL_VERSION: "7.171.3"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -310,7 +310,7 @@ jobs:
           # Keep in step with the Talos version the prod cluster runs (ksail's
           # node image pin — see ksail DefaultTalosImage).
           # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-          TALOS_VERSION: "1.13.5"
+          TALOS_VERSION: "1.13.6"
         run: |
           curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
           sudo install /tmp/talosctl /usr/local/bin/talosctl
@@ -498,7 +498,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@931b82faa0c30e65f626527a6b3c8cd2d4879c71 # v9.0.11
+        uses: devantler-tech/actions/aggregate-job-checks@468d652134d991e5cdd4feb1fb942c443897a17f # v10.0.1
         with:
           job-results: >-
             ${{ needs.changes.result }}

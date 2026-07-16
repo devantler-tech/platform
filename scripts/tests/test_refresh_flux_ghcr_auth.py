@@ -37,6 +37,13 @@ KSAIL_OPERATOR_VERSION = next(
     for line in KSAIL_OPERATOR_HELM_RELEASE.read_text(encoding="utf-8").splitlines()
     if line.strip().startswith("version:")
 )
+# spec.cluster.talos.version is the source of truth the workflows' TALOS_VERSION
+# must track; deriving it here keeps the drift guard honest across version bumps.
+KSAIL_PROD_TALOS_VERSION = next(
+    line.split(":", 1)[1].strip().lstrip("v")
+    for line in KSAIL_PROD_CONFIG.read_text(encoding="utf-8").splitlines()
+    if line.strip().startswith("version:")
+)
 PROVIDER_UPJET_UNIFI = (
     ROOT
     / "k8s"
@@ -1757,7 +1764,9 @@ class DeployActionOrderingTests(unittest.TestCase):
                 stage = document.index("id: stage_flux_ghcr_auth")
                 self.assertLess(setup, stage)
                 setup_step = document[setup:stage]
-                self.assertIn("TALOS_VERSION: \"1.13.5\"", setup_step)
+                self.assertIn(
+                    f'TALOS_VERSION: "{KSAIL_PROD_TALOS_VERSION}"', setup_step
+                )
                 self.assertIn("talosctl-linux-amd64", setup_step)
                 if document == action:
                     restore = document.index("name: 🔑 Restore talosconfig")
