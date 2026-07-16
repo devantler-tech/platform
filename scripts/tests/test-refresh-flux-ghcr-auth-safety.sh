@@ -138,14 +138,22 @@ if declare -F stage_fanout_before_talos >/dev/null; then
     force:externalsecret/kyverno/ghcr-auth \
     verify:kyverno/ghcr-auth \
     "talos:${DESIRED_REVISION}:${DESIRED_IMAGE}" \
+    variables-patch \
+    force:pushsecret/flux-system/seed-ghcr \
+    force:externalsecret/wedding-app/ghcr-auth \
+    verify:wedding-app/ghcr-auth \
+    force:externalsecret/ascoachingogvaner/ghcr-auth \
+    verify:ascoachingogvaner/ghcr-auth \
+    force:externalsecret/kyverno/ghcr-auth \
+    verify:kyverno/ghcr-auth \
     root-patch)"
   if [[ "$(<"${operation_log}")" == "${expected_operations}" ]]; then
-    pass "verified tenant fanout completes before any Talos drain"
+    pass "verified tenant fanout brackets the Talos rollout"
   else
-    fail "verified tenant fanout completes before any Talos drain"
+    fail "verified tenant fanout brackets the Talos rollout"
   fi
 else
-  fail "verified tenant fanout completes before any Talos drain"
+  fail "verified tenant fanout brackets the Talos rollout"
 fi
 
 control_plane_inventory="${work_dir}/control-planes.json"

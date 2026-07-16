@@ -544,6 +544,20 @@ sync_talos_registry_auth() {
       return 1
     fi
 
+    # A PDB-respecting drain can legitimately take most of DRAIN_TIMEOUT. An
+    # etcd peer that was healthy before it began may fail while workloads move,
+    # so refresh the quorum proof at the last safe point before the reboot.
+    if [[ "${node_role}" == "1" ]] \
+      && ! other_control_planes_safe_to_reboot \
+        "${node_name}" "${KUBE_CONTEXT}" "${work_dir}"; then
+      echo "::error::Refusing to reboot control plane ${node_name} after its drain: another control plane is no longer Ready with healthy, alarm-free etcd, so rebooting this one risks quorum."
+      restore_node_schedulability_if_needed \
+        "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+        "${initial_node_uid}" "${initial_node_taints}" \
+        "${drain_result_file}" || return 1
+      return 1
+    fi
+
     # The node is now cordoned and fully drained under PDB control, so a plain
     # Talos reboot cannot terminate a workload behind Kubernetes' back. Keep
     # --wait explicit so Kubernetes readiness is checked only after a new boot.
@@ -578,11 +592,7 @@ sync_talos_registry_auth() {
       >"${talos_result_file}" 2>&1; then
       if ! talos_image_remove_reports_absent \
         "${talos_result_file}" "${operator_image}"; then
-        echo "::error::Talos node ${node_name} could not remove the cached incoming KSail image before GHCR verification."
-        restore_node_schedulability_if_needed \
-          "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-          "${initial_node_uid}" "${initial_node_taints}" \
-          "${drain_result_file}" || return 1
+        echo "::error::Talos node ${node_name} could not remove the cached incoming KSail image before GHCR verification; it remains cordoned because registry access is unproved."
         return 1
       fi
     fi
@@ -594,11 +604,7 @@ sync_talos_registry_auth() {
       image pull "${operator_image}" \
       --namespace cri \
       >"${talos_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image after its auth refresh."
-      restore_node_schedulability_if_needed \
-        "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-        "${initial_node_uid}" "${initial_node_taints}" \
-        "${drain_result_file}" || return 1
+      echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image after its auth refresh; it remains cordoned because registry access is unproved."
       return 1
     fi
 

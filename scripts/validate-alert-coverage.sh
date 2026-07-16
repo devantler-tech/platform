@@ -66,6 +66,9 @@ done > "${rendered}"
 
 for kind in HelmRelease Kustomization; do
   declared="${work_dir}/declared-${kind}.txt"
+  declared_raw="${work_dir}/declared-${kind}-raw.txt"
+  missing_namespace="${work_dir}/missing-namespace-${kind}.txt"
+  missing_namespace_raw="${work_dir}/missing-namespace-${kind}-raw.txt"
   watched="${work_dir}/watched-${kind}.txt"
 
   # Only the Flux kinds count. A `kind: Kustomization` in the kustomize.config.k8s.io
@@ -79,9 +82,31 @@ for kind in HelmRelease Kustomization; do
       ;;
   esac
 
-  yq ea "select(.kind == \"${kind}\" and (.apiVersion | test(\"^${group}/\"))) | .metadata.namespace" \
-    "${rendered}" 2>/dev/null \
-    | grep -vE '^null$|^---$|^$' | LC_ALL=C sort -u > "${declared}"
+  # These Flux APIs are namespaced and this render path has no targetNamespace
+  # fallback. Silently dropping an omitted namespace would make the coverage
+  # set look complete even though the resource itself is malformed.
+  yq ea -r "
+    select(.kind == \"${kind}\" and (.apiVersion | test(\"^${group}/\")))
+    | select((.metadata.namespace // \"\") == \"\")
+    | (.kind + \"/\" + (.metadata.name // \"<unnamed>\"))
+  " "${rendered}" 2>/dev/null > "${missing_namespace_raw}"
+  awk 'NF && $0 != "---"' \
+    "${missing_namespace_raw}" > "${missing_namespace}"
+  if [[ -s "${missing_namespace}" ]]; then
+    echo "::error::Rendered ${kind} resources are missing metadata.namespace; Alert coverage cannot be proven."
+    while read -r resource; do
+      [[ -n "${resource}" ]] && echo "  ${resource}"
+    done < "${missing_namespace}"
+    exit 1
+  fi
+
+  yq ea -r "
+    select(.kind == \"${kind}\" and (.apiVersion | test(\"^${group}/\")))
+    | .metadata.namespace
+    | select(. != null and . != \"\")
+  " "${rendered}" 2>/dev/null > "${declared_raw}"
+  awk 'NF && $0 != "---"' "${declared_raw}" \
+    | LC_ALL=C sort -u > "${declared}"
 
   if [[ ! -s "${declared}" ]]; then
     echo "::error::Rendered no ${kind}s at all — the overlays failed to build, so coverage cannot be proven. Failing closed."

@@ -55,15 +55,12 @@ select_talos_node_targets() {
   rm -f "${unsorted_targets}"
 }
 
-# Existing clusters must make every Kubernetes pull consumer safe before the
-# first Talos reboot drains application pods. The root Flux Secret remains last
-# so a failed node rollout cannot advance reconciliation onto a partial state.
-stage_fanout_before_talos() {
-  local desired_revision="$1"
-  local operator_image="$2"
+# Reapply and verify the complete live Kubernetes pull-consumer fanout. Flux and
+# External Secrets reconcile independently, so a long Talos roll can overlap an
+# hourly controller pass that restores the previous Git value.
+sync_and_verify_kubernetes_fanout() {
   local namespace
   local rc
-  shift 2
 
   patch_variables_base || {
     rc=$?
@@ -83,7 +80,27 @@ stage_fanout_before_talos() {
       return "${rc}"
     }
   done
+}
+
+# Existing clusters must make every Kubernetes pull consumer safe before the
+# first Talos reboot drains application pods, then establish the same proof
+# again after the roll. The root Flux Secret remains last so a failed node roll
+# or a live-controller race cannot advance reconciliation onto a partial state.
+stage_fanout_before_talos() {
+  local desired_revision="$1"
+  local operator_image="$2"
+  local rc
+  shift 2
+
+  sync_and_verify_kubernetes_fanout "$@" || {
+    rc=$?
+    return "${rc}"
+  }
   sync_talos_registry_auth "${desired_revision}" "${operator_image}" || {
+    rc=$?
+    return "${rc}"
+  }
+  sync_and_verify_kubernetes_fanout "$@" || {
     rc=$?
     return "${rc}"
   }

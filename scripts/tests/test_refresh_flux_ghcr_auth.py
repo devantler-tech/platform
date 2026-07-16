@@ -237,6 +237,11 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 echo "etcd status failed" >&2
                 exit 51
               fi
+              if [[ "$node" == "${FAKE_ETCD_STATUS_FAIL_AFTER_DRAIN_NODE:-disabled}" \
+                && -f "$FAKE_SYNC_STATE_DIR/drained-prod-control-plane-1" ]]; then
+                echo "etcd status failed after drain" >&2
+                exit 51
+              fi
               printf 'NODE MEMBER DB-SIZE\n%s member-id 1MB\n' "$node"
               exit 0
             fi
@@ -698,6 +703,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 echo 'cannot evict pod backstage-db-4: would violate PodDisruptionBudget backstage-db-primary' >&2
                 exit 53
               fi
+              touch "$FAKE_SYNC_STATE_DIR/drained-${node_target}"
               exit 0
             fi
 
@@ -882,6 +888,13 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               [[ "$arguments" == *" --type=merge "* ]]
               test -n "$patch_file"
               cp "$patch_file" "$VARIABLES_PATCH_CAPTURE"
+              variables_patch_count_file="$FAKE_SYNC_STATE_DIR/variables-patch-count"
+              variables_patch_count=0
+              if [[ -f "$variables_patch_count_file" ]]; then
+                variables_patch_count="$(<"$variables_patch_count_file")"
+              fi
+              variables_patch_count=$((variables_patch_count + 1))
+              printf '%s' "$variables_patch_count" > "$variables_patch_count_file"
               printf 'variables-patch\n' >> "$OPERATION_LOG"
               echo 'secret/variables-base patched'
               exit 0
@@ -944,7 +957,13 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             fi
 
             if [[ "$arguments" == *" get secret ghcr-auth "* ]]; then
-              if [[ "$namespace" == "${FAKE_CONSUMER_MISMATCH_NAMESPACE:-disabled}" ]]; then
+              variables_patch_count=0
+              if [[ -f "$FAKE_SYNC_STATE_DIR/variables-patch-count" ]]; then
+                variables_patch_count="$(<"$FAKE_SYNC_STATE_DIR/variables-patch-count")"
+              fi
+              if [[ "$namespace" == "${FAKE_CONSUMER_MISMATCH_NAMESPACE:-disabled}" \
+                || ( "$namespace" == "${FAKE_CONSUMER_MISMATCH_ON_SECOND_PASS_NAMESPACE:-disabled}" \
+                  && "$variables_patch_count" -ge 2 ) ]]; then
                 encoded=$(printf '%s' '{"auths":{}}' | base64 | tr -d '\r\n')
               else
                 encoded=$(jq -r '.data.ghcr_dockerconfigjson' "$VARIABLES_PATCH_CAPTURE")
@@ -1172,6 +1191,10 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "externalsecret/wedding-app/ghcr-auth",
                 "externalsecret/ascoachingogvaner/ghcr-auth",
                 "externalsecret/kyverno/ghcr-auth",
+                "pushsecret/flux-system/seed-ghcr",
+                "externalsecret/wedding-app/ghcr-auth",
+                "externalsecret/ascoachingogvaner/ghcr-auth",
+                "externalsecret/kyverno/ghcr-auth",
             ],
         )
 
@@ -1242,6 +1265,11 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 f"v{KSAIL_OPERATOR_VERSION}",
                 "node-uncordon:prod-control-plane-1",
                 "talos-revision:10.0.0.1",
+                "variables-patch",
+                "fanout:pushsecret/flux-system/seed-ghcr",
+                "fanout:externalsecret/wedding-app/ghcr-auth",
+                "fanout:externalsecret/ascoachingogvaner/ghcr-auth",
+                "fanout:externalsecret/kyverno/ghcr-auth",
                 "root-patch",
             ],
         )
@@ -1315,6 +1343,22 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertNotIn("talos-reboot:10.0.0.1", operations)
         self.assertNotIn("root-patch", operations)
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
+
+    def test_control_plane_quorum_is_rechecked_after_the_drain(self) -> None:
+        """Abort before reboot when an etcd peer fails during a long drain."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_ETCD_STATUS_FAIL_AFTER_DRAIN_NODE="10.0.0.3",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("risks quorum", result.stdout + result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("node-drain:prod-control-plane-1", operations)
+        self.assertIn("node-uncordon:prod-control-plane-1", operations)
+        self.assertNotIn("talos-reboot:10.0.0.1", operations)
+        self.assertNotIn("talos-revision:10.0.0.1", operations)
+        self.assertNotIn("root-patch", operations)
 
     def test_pre_existing_cordon_survives_the_auth_reboot(self) -> None:
         """A node an operator cordoned must not come back schedulable.
@@ -1595,10 +1639,30 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                     encoding="utf-8"
                 ).splitlines()
                 if operation in ("remove", "pull"):
-                    self.assertIn("node-uncordon:prod-worker-1", operations)
+                    self.assertNotIn("node-uncordon:prod-worker-1", operations)
+                    self.assertTrue(
+                        (self.sync_state_dir / "cordon-owner-prod-worker-1").exists()
+                    )
+                    self.assertTrue(
+                        (self.sync_state_dir / "cordoned-prod-worker-1").exists()
+                    )
                 if operation == "reboot":
                     self.assertNotIn("node-uncordon:prod-worker-1", operations)
                 self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
+
+    def test_second_fanout_verification_blocks_root_cutover(self) -> None:
+        """Recheck live tenant auth after Talos before changing root Flux auth."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_CONSUMER_MISMATCH_ON_SECOND_PASS_NAMESPACE="wedding-app",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("did not materialise", result.stdout + result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("talos-revision:10.0.0.1", operations)
+        self.assertEqual(operations.count("variables-patch"), 2)
+        self.assertNotIn("root-patch", operations)
 
     def test_missing_cached_image_still_pulls_and_records_revision(self) -> None:
         """Treat a confirmed absent cache entry as ready for pull proof."""

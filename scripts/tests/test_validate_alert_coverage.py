@@ -146,6 +146,38 @@ class ValidateAlertCoverageTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("does not watch every namespace", result.stdout + result.stderr)
 
+    def test_watched_resource_without_namespace_fails_closed(self) -> None:
+        """Reject malformed namespaced Flux resources instead of dropping them."""
+        resource_file = self.workspace / LAYERS[0] / "resources.yaml"
+        for kind, name in (
+            ("HelmRelease", "release-0"),
+            ("Kustomization", "layer-0"),
+        ):
+            with self.subTest(kind=kind):
+                self._write_layer(LAYERS[0], 0)
+                resources = resource_file.read_text(encoding="utf-8")
+                namespaced = (
+                    f"kind: {kind}\nmetadata:\n"
+                    f"  name: {name}\n  namespace: flux-system"
+                )
+                self.assertIn(namespaced, resources)
+                resource_file.write_text(
+                    resources.replace(
+                        namespaced,
+                        f"kind: {kind}\nmetadata:\n  name: {name}",
+                        1,
+                    ),
+                    encoding="utf-8",
+                )
+
+                result = self._run_validator()
+
+                output = result.stdout + result.stderr
+                self.assertNotEqual(result.returncode, 0, output)
+                self.assertIn("missing metadata.namespace", output)
+                self.assertIn(kind, output)
+                self.assertIn(name, output)
+
     def test_ci_runs_the_behavioral_regressions_when_they_change(self) -> None:
         """Keep the validator's failure-mode coverage in the required CI job."""
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
