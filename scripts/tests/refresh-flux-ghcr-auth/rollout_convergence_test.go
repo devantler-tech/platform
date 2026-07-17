@@ -260,6 +260,39 @@ func TestBootstrapPullFailureRetainsOnlyUnprovedSeedCordon(t *testing.T) {
 	}
 }
 
+func TestTaintedPeersDoNotCountAsRuntimePullCapacity(t *testing.T) {
+	f := newFixture(t)
+	ready := []any{map[string]any{"type": "Ready", "status": "True"}}
+	worker := nodeFixture("prod-worker-1", "prod-worker-1-uid", "10.0.0.2", false, ready, nil)
+	controlPlaneOne := nodeFixture("prod-control-plane-1", "prod-control-plane-1-uid", "10.0.0.1", true, ready, nil)
+	controlPlaneOne["spec"] = map[string]any{
+		"unschedulable": false,
+		"taints": []any{map[string]any{
+			"key":    "node-role.kubernetes.io/control-plane",
+			"effect": "NoSchedule",
+		}},
+	}
+	controlPlaneTwo := nodeFixture("prod-control-plane-2", "prod-control-plane-2-uid", "10.0.0.3", true, ready, nil)
+	controlPlaneTwo["spec"] = map[string]any{
+		"unschedulable": false,
+		"taints": []any{map[string]any{
+			"key":    "node-role.kubernetes.io/control-plane",
+			"effect": "NoExecute",
+		}},
+	}
+	inventory := map[string]any{"items": []any{worker, controlPlaneOne, controlPlaneTwo}}
+
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_NODE_JSON": encodeJSON(inventory),
+	})
+
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "No Ready schedulable peer")
+	operations := readLines(f.operationLog)
+	requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
+	requireNoLine(t, operations, "root-patch")
+}
+
 func TestRuntimeProbeRejectsInjectedImagePullSecret(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_RUNTIME_PROBE_INJECT_PULL_SECRET_NODES": "prod-control-plane-2"})

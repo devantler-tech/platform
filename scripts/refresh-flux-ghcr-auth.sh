@@ -537,6 +537,8 @@ verify_peer_runtime_pull_overlap() {
     | select(.metadata.name != $draining)
     | select(.metadata.deletionTimestamp == null)
     | select((.spec.unschedulable // false) == false)
+    | select(any(.spec.taints[]?;
+        .effect == "NoSchedule" or .effect == "NoExecute") | not)
     | select(any(.status.conditions[]?;
         .type == "Ready" and .status == "True"))
     | [.metadata.name, .metadata.uid]
