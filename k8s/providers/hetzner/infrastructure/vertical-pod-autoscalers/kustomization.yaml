@@ -123,6 +123,10 @@ patches:
   # as the 2026-06-30 DaemonSet ratchet above). CPU is compressible: capping
   # only throttles the degenerate loop, never correctness. Root-cause hunt for
   # the loop itself is tracked on the platform issue referenced in the PR.
+  # Memory keeps the shared 6Gi ceiling: `op: replace` swaps the whole
+  # maxAllowed object, and a tighter memory max would clamp an incompressible
+  # resource (the admission controller has a documented OOM history) — the
+  # cap here is deliberately CPU-only.
   - target:
       kind: VerticalPodAutoscaler
       name: kyverno-reports-controller
@@ -131,7 +135,7 @@ patches:
         path: /spec/resourcePolicy/containerPolicies/0/maxAllowed
         value:
           cpu: 500m
-          memory: 512Mi
+          memory: 6Gi
   - target:
       kind: VerticalPodAutoscaler
       name: kyverno-admission-controller
@@ -140,7 +144,7 @@ patches:
         path: /spec/resourcePolicy/containerPolicies/0/maxAllowed
         value:
           cpu: 800m
-          memory: 512Mi
+          memory: 6Gi
   # spire-server: singleton StatefulSet on an RWO volume — never evict.
   - target:
       kind: VerticalPodAutoscaler
