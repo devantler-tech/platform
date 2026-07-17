@@ -91,6 +91,7 @@ bootstrap_seed_uid=""
 mkdir -p "${bootstrap_cordon_dir}" "${bootstrap_retain_dir}"
 
 cleanup_refresh_work() {
+  local recovery_state_file recovery_node
   if [[ -n "${active_runtime_probe}" ]]; then
     kubectl \
       --context "${KUBE_CONTEXT}" \
@@ -101,6 +102,30 @@ cleanup_refresh_work() {
       >/dev/null 2>&1 || true
   fi
   cleanup_bootstrap_quarantine || true
+  # Any state file still present here belongs to a bridge-owned cordon that
+  # was not restored — a deliberate reboot-edge retention or a failed
+  # rollback. Its owner token, original UID, and original taints are the only
+  # recovery records, so externalize them to the cluster before the work dir
+  # is deleted; otherwise a transient API failure strands the node cordoned
+  # while every future run refuses its surviving foreign owner annotation.
+  for recovery_state_file in "${bootstrap_cordon_dir}"/*.json; do
+    [[ -e "${recovery_state_file}" ]] || continue
+    recovery_node="$(basename "${recovery_state_file}" .json)"
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace ksail-operator \
+      create configmap "ghcr-cordon-recovery-${recovery_node}" \
+      --from-file=state.json="${recovery_state_file}" \
+      --dry-run=client -o json 2>/dev/null \
+      | kubectl \
+        --context "${KUBE_CONTEXT}" \
+        apply -f - \
+        >/dev/null 2>&1; then
+      echo "::warning::Node ${recovery_node} still carries a bridge-owned cordon; its recovery record was preserved in configmap ksail-operator/ghcr-cordon-recovery-${recovery_node}. Restore schedulability from it, then delete the configmap."
+    else
+      echo "::error::Node ${recovery_node} still carries a bridge-owned cordon and its recovery record could not be preserved in the cluster; restore its schedulability manually before the next roll."
+    fi
+  done
   rm -rf "${work_dir}"
 }
 trap cleanup_refresh_work EXIT
@@ -373,7 +398,7 @@ probe_node_runtime_pull() {
   local node_name="$1"
   local probe_image="$2"
   local probe_name
-  local attempt create_attempt image_id waiting_reason
+  local attempt create_attempt image_id waiting_reason waiting_message
   local probe_created=0
 
   runtime_probe_sequence=$((runtime_probe_sequence + 1))
@@ -495,7 +520,18 @@ probe_node_runtime_pull() {
       "${runtime_probe_state_file}")"
     case "${waiting_reason}" in
       ErrImagePull|ImagePullBackOff)
-        runtime_probe_bootstrap_needed=1
+        # A pull failure alone does not identify its cause: a transient
+        # registry, DNS, or rate-limit outage reports the same waiting reason
+        # as a stale credential. Only registry auth-denial evidence in the
+        # kubelet's waiting message may opt this roll into the warm-spare
+        # bootstrap; anything else stays a plain fail-closed refusal so a
+        # passing outage never triggers machineconfig patches and reboots.
+        waiting_message="$(jq -r \
+          '.status.containerStatuses[0].state.waiting.message // ""' \
+          "${runtime_probe_state_file}")"
+        if [[ "${waiting_message}" =~ (401|403|[Uu]nauthorized|[Ff]orbidden|pull\ access\ denied|[Aa]uthentication\ required) ]]; then
+          runtime_probe_bootstrap_needed=1
+        fi
         delete_runtime_pull_probe "${probe_name}" || true
         echo "::error::The running containerd on ${node_name} could not pull ${probe_image} (${waiting_reason}); refusing to drain workloads onto peers with unproved runtime auth."
         return 1
@@ -1151,64 +1187,13 @@ process_talos_node_target() {
   revalidate_selected_node_identity_before_mutation \
     "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" || return 1
 
-  if [[ "${node_mode}" == "reboot" ]]; then
-    if ! talosctl \
-      --nodes "${node_ip}" \
-      patch machineconfig \
-      --mode=no-reboot \
-      --patch-file="${talos_auth_patch_file}" \
-      >"${talos_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} did not accept the Git/SOPS GHCR registry auth."
-      return 1
-    fi
-
-    # Writing the credential is NOT enough to make a RUNNING node use it, and
-    # this is the step whose absence caused the 2026-07-14 outage.
-    #
-    # containerd reads registry auth from its STATIC config
-    # (plugins.'io.containerd.cri.v1.images'.registry.configs.'ghcr.io'.auth),
-    # which it loads ONCE at process start. Talos re-renders that file
-    # (/etc/cri/conf.d/01-registries.part) immediately on a config change, but
-    # it does not restart containerd — and it refuses to let us either:
-    #
-    #   $ talosctl service cri restart
-    #   error: service "cri" doesn't support restart operation via API
-    #
-    # So after a --mode=no-reboot patch the new credential sits on disk,
-    # correct and INERT, while the running containerd keeps presenting the old
-    # one. A REBOOT is the only supported way to make it adopt the new auth.
-    #
-    # Do not be tempted to drop this and trust the `image pull` check below:
-    # that check goes through the TALOS image API, which builds its auth from
-    # the machine config we just wrote, NOT from containerd's CRI plugin. It
-    # therefore passes on a node whose kubelet pulls are still failing 403 —
-    # which is exactly what happened: every node had the legacy unversioned
-    # ghcr-pull-verified-revision marker while every ksail-operator pod sat in
-    # ImagePullBackOff, and prod stayed four releases behind for over a day.
-    # The pull check proves the CREDENTIAL is good; only the reboot proves
-    # CONTAINERD is using it.
-    #
-    # Credential-revision drift always takes this reboot path; a desired-machine
-    # marker is not evidence that the running containerd loaded the credential.
-    # A node whose v2 credential proof is already current but whose declared
-    # image changed takes the image-only path below and is never rebooted.
-    #
-    # etcd tolerates exactly one control plane down in a 3-member cluster. This
-    # loop is serial and control planes sort last, but a peer can be
-    # Kubernetes-Ready while its etcd member is unhealthy. Re-read the peer
-    # inventory, then prove every other peer is Ready, answers `etcd status`,
-    # and has no etcd alarm immediately before each control-plane reboot.
-    if [[ "${node_role}" == "1" ]] \
-      && ! other_control_planes_safe_to_reboot \
-        "${node_name}" "${KUBE_CONTEXT}" "${work_dir}"; then
-      echo "::error::Refusing to reboot control plane ${node_name} for the GHCR auth refresh: another control plane is not Ready with healthy, alarm-free etcd, so rebooting this one risks quorum."
-      return 1
-    fi
-  fi
-
-    # Remember scheduling intent before any cordon. Both reboot and image-only
-    # verification exclude new placements while the exact target is removed;
-    # only the reboot path drains existing workloads.
+    # Remember scheduling intent and claim cordon ownership BEFORE any Talos
+    # credential write. Both reboot and image-only verification exclude new
+    # placements while the exact target is removed; only the reboot path
+    # drains existing workloads. Claiming first makes the node credential
+    # single-writer: a concurrent roll now fails its own claim instead of
+    # overwriting this roll's freshly patched credential between the patch
+    # and a later ownership check.
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       get node "${node_name}" \
@@ -1289,6 +1274,69 @@ process_talos_node_target() {
           "${cordon_state_file}" "${drain_result_file}" || return 1
       fi
     fi
+
+  if [[ "${node_mode}" == "reboot" ]]; then
+    if ! talosctl \
+      --nodes "${node_ip}" \
+      patch machineconfig \
+      --mode=no-reboot \
+      --patch-file="${talos_auth_patch_file}" \
+      >"${talos_result_file}" 2>&1; then
+      echo "::error::Talos node ${node_name} did not accept the Git/SOPS GHCR registry auth."
+      restore_node_schedulability_if_needed \
+        "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+        "${initial_node_uid}" "${initial_node_taints}" \
+        "${drain_result_file}" || return 1
+      return 1
+    fi
+
+    # Writing the credential is NOT enough to make a RUNNING node use it, and
+    # this is the step whose absence caused the 2026-07-14 outage.
+    #
+    # containerd reads registry auth from its STATIC config
+    # (plugins.'io.containerd.cri.v1.images'.registry.configs.'ghcr.io'.auth),
+    # which it loads ONCE at process start. Talos re-renders that file
+    # (/etc/cri/conf.d/01-registries.part) immediately on a config change, but
+    # it does not restart containerd — and it refuses to let us either:
+    #
+    #   $ talosctl service cri restart
+    #   error: service "cri" doesn't support restart operation via API
+    #
+    # So after a --mode=no-reboot patch the new credential sits on disk,
+    # correct and INERT, while the running containerd keeps presenting the old
+    # one. A REBOOT is the only supported way to make it adopt the new auth.
+    #
+    # Do not be tempted to drop this and trust the `image pull` check below:
+    # that check goes through the TALOS image API, which builds its auth from
+    # the machine config we just wrote, NOT from containerd's CRI plugin. It
+    # therefore passes on a node whose kubelet pulls are still failing 403 —
+    # which is exactly what happened: every node had the legacy unversioned
+    # ghcr-pull-verified-revision marker while every ksail-operator pod sat in
+    # ImagePullBackOff, and prod stayed four releases behind for over a day.
+    # The pull check proves the CREDENTIAL is good; only the reboot proves
+    # CONTAINERD is using it.
+    #
+    # Credential-revision drift always takes this reboot path; a desired-machine
+    # marker is not evidence that the running containerd loaded the credential.
+    # A node whose v2 credential proof is already current but whose declared
+    # image changed takes the image-only path below and is never rebooted.
+    #
+    # etcd tolerates exactly one control plane down in a 3-member cluster. This
+    # loop is serial and control planes sort last, but a peer can be
+    # Kubernetes-Ready while its etcd member is unhealthy. Re-read the peer
+    # inventory, then prove every other peer is Ready, answers `etcd status`,
+    # and has no etcd alarm immediately before each control-plane reboot.
+    if [[ "${node_role}" == "1" ]] \
+      && ! other_control_planes_safe_to_reboot \
+        "${node_name}" "${KUBE_CONTEXT}" "${work_dir}"; then
+      echo "::error::Refusing to reboot control plane ${node_name} for the GHCR auth refresh: another control plane is not Ready with healthy, alarm-free etcd, so rebooting this one risks quorum."
+      restore_node_schedulability_if_needed \
+        "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+        "${initial_node_uid}" "${initial_node_taints}" \
+        "${drain_result_file}" || return 1
+      return 1
+    fi
+  fi
 
   if [[ "${node_mode}" == "reboot" ]]; then
     # Drain through the Kubernetes context already proven by this deployment.

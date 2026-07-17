@@ -192,6 +192,25 @@ func TestRevokedPreviousCredentialBootstrapsThroughEmptyWorker(t *testing.T) {
 	requireLine(t, operations, "root-patch")
 }
 
+func TestTransientPullOutageDoesNotEnterBootstrap(t *testing.T) {
+	f := newFixture(t)
+	// Identical to the revoked-credential bootstrap scenario — an empty
+	// worker is available — except the probe failure carries no auth-denial
+	// evidence. Only a proved stale credential may opt into the warm-spare
+	// bootstrap; a transient registry/DNS outage must stay a plain refusal.
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_ALL_TALOS_NODES_STALE":     "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":     "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES":   "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_RUNTIME_PULL_FAIL_MESSAGE": "dial tcp: lookup ghcr.io: no such host",
+		"FAKE_EMPTY_WORKLOAD_NODES":      "prod-worker-2",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
+	requireNoLine(t, operations, "root-patch")
+}
+
 func TestAllStaleRuntimesWithoutEmptyWorkerFailClosed(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
@@ -338,6 +357,9 @@ func TestBootstrapPullFailureRetainsOnlyUnprovedSeedCordon(t *testing.T) {
 	if !pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-2")) {
 		t.Fatal("unproved bootstrap seed did not retain its owned cordon")
 	}
+	// The retained cordon's recovery record (owner token, original UID and
+	// taints) must survive the run's work-dir deletion.
+	requireLine(t, operations, "configmap-recovery:ghcr-cordon-recovery-prod-worker-2")
 	for _, nodeName := range []string{
 		"prod-worker-1",
 		"prod-control-plane-1",
@@ -400,6 +422,12 @@ func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {
 		"FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_ONCE_NODES": "prod-control-plane-2",
 	})
 	requireSuccessResult(t, result)
+	if !pathExists(filepath.Join(
+		f.syncStateDir,
+		"runtime-probe-create-timeout-once-prod-control-plane-2",
+	)) {
+		t.Fatal("transient runtime-probe timeout was not exercised")
+	}
 	operations := readLines(f.operationLog)
 	requireLine(t, operations, "node-drain:prod-worker-1")
 	requireLine(t, operations, "root-patch")

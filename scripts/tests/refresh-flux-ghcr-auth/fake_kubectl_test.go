@@ -47,6 +47,10 @@ func fakeKubectlImplementation(args []string) int {
 		return fakeKubectlCordon(args)
 	case containsArg(args, "wait"):
 		return fakeKubectlWaitForNode(args)
+	case containsSequence(args, "create", "configmap"):
+		return fakeKubectlCreateRecoveryConfigMap(args, namespace)
+	case containsArg(args, "apply"):
+		return fakeKubectlApplyRecoveryConfigMap()
 	case containsArg(args, "create") && manifestFile != "":
 		return fakeKubectlCreateRuntimeProbe(namespace, manifestFile)
 	case containsSequence(args, "get", "pod"):
@@ -83,6 +87,35 @@ func fakeKubectlImplementation(args []string) int {
 	return commandFailure(91, "unexpected kubectl invocation: %s", strings.Join(args, " "))
 }
 
+func fakeKubectlCreateRecoveryConfigMap(args []string, namespace string) int {
+	name := argumentAfter(args, "configmap")
+	if name == "" || namespace != "ksail-operator" {
+		return commandFailure(91, "unexpected configmap creation: %s", strings.Join(args, " "))
+	}
+	if !containsArg(args, "--dry-run=client") {
+		return commandFailure(91, "recovery configmap creation must be a client-side dry run")
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]any{"name": name, "namespace": namespace},
+	}))
+	return 0
+}
+
+func fakeKubectlApplyRecoveryConfigMap() int {
+	var manifest struct {
+		Metadata struct {
+			Name string `json:"name"`
+		} `json:"metadata"`
+	}
+	if err := json.NewDecoder(os.Stdin).Decode(&manifest); err != nil || manifest.Metadata.Name == "" {
+		return commandFailure(91, "apply received no parseable manifest")
+	}
+	appendEnvFile("OPERATION_LOG", "configmap-recovery:"+manifest.Metadata.Name+"\n")
+	return 0
+}
+
 func fakeKubectlGetNodes() int {
 	if os.Getenv("FAKE_NODE_DISCOVERY_FAIL") == "true" {
 		return commandFailure(46, "node discovery failed")
@@ -103,9 +136,18 @@ func fakeKubectlGetNodes() int {
 	}
 	if os.Getenv("FAKE_ALL_TALOS_NODES_STALE") == "true" {
 		for _, node := range nodes {
-			nodeMap := node.(map[string]any)
-			metadata := nodeMap["metadata"].(map[string]any)
-			annotations := metadata["annotations"].(map[string]any)
+			nodeMap, ok := node.(map[string]any)
+			if !ok {
+				return commandFailure(91, "invalid fake node object")
+			}
+			metadata, ok := nodeMap["metadata"].(map[string]any)
+			if !ok {
+				return commandFailure(91, "invalid fake node metadata")
+			}
+			annotations, ok := metadata["annotations"].(map[string]any)
+			if !ok {
+				return commandFailure(91, "invalid fake node annotations")
+			}
 			delete(annotations, "platform.devantler.tech/ghcr-pull-verified-revision-v2")
 			delete(annotations, "platform.devantler.tech/ghcr-pull-verified-image-v2")
 		}
@@ -671,8 +713,18 @@ func fakeKubectlGetRuntimeProbe(args []string) int {
 	if (wordListContains(os.Getenv("FAKE_RUNTIME_PULL_FAIL_NODES"), probeNode) &&
 		!markerExists("talos-reboot-"+probeIP)) ||
 		wordListContains(os.Getenv("FAKE_RUNTIME_PULL_FAIL_IMAGES"), probeImage) {
+		// The default failure carries registry auth-denial evidence, matching
+		// the stale-credential scenario; a transient outage is simulated by
+		// overriding the message with text that names no auth failure.
+		waitingMessage := "failed to authorize: failed to fetch anonymous token: unexpected status: 403 Forbidden"
+		if custom := os.Getenv("FAKE_RUNTIME_PULL_FAIL_MESSAGE"); custom != "" {
+			waitingMessage = custom
+		}
 		status["containerStatuses"] = []any{map[string]any{
-			"state": map[string]any{"waiting": map[string]any{"reason": "ImagePullBackOff"}},
+			"state": map[string]any{"waiting": map[string]any{
+				"reason":  "ImagePullBackOff",
+				"message": waitingMessage,
+			}},
 		}}
 	} else {
 		if os.Getenv("FAKE_LOG_RUNTIME_PROBE_SUCCESS") == "true" {
