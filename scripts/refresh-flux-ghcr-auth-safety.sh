@@ -24,24 +24,32 @@ select_talos_node_targets() {
     --arg revision "${desired_revision}" \
     --arg image "${operator_image}" \
     --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
-    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" '
-    .items[]
-    | (.metadata.annotations[$revision_annotation] // "") as $verified_revision
-    | (.metadata.annotations[$image_annotation] // "") as $verified_image
-    | select($verified_revision != $revision or $verified_image != $image)
-    | (.metadata.labels // {}) as $labels
-    | [
-        (if (($labels | has("node-role.kubernetes.io/control-plane"))
-          or ($labels | has("node-role.kubernetes.io/master")))
-          then "1" else "0" end),
-        .metadata.name,
-        ([.status.addresses[]
-          | select(.type == "InternalIP") | .address][0]),
-        (if $verified_revision != $revision
-          then "reboot" else "image-only" end),
-        (.metadata.uid // "")
-      ]
-    | @tsv
+    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" \
+    --arg owner_annotation "platform.devantler.tech/ghcr-auth-drain-owner" \
+    --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" '
+    if any(.items[];
+      ((.metadata.annotations[$owner_annotation] // "") != "")
+      or ((.metadata.annotations[$recovery_annotation] // "") != ""))
+    then error("residual GHCR bridge ownership")
+    else
+      .items[]
+      | (.metadata.annotations[$revision_annotation] // "") as $verified_revision
+      | (.metadata.annotations[$image_annotation] // "") as $verified_image
+      | select($verified_revision != $revision or $verified_image != $image)
+      | (.metadata.labels // {}) as $labels
+      | [
+          (if (($labels | has("node-role.kubernetes.io/control-plane"))
+            or ($labels | has("node-role.kubernetes.io/master")))
+            then "1" else "0" end),
+          .metadata.name,
+          ([.status.addresses[]
+            | select(.type == "InternalIP") | .address][0]),
+          (if $verified_revision != $revision
+            then "reboot" else "image-only" end),
+          (.metadata.uid // "")
+        ]
+      | @tsv
+    end
   ' "${nodes_file}" > "${unsorted_targets}"; then
     rm -f "${unsorted_targets}"
     return 1
@@ -56,10 +64,11 @@ select_talos_node_targets() {
 }
 
 # Validate the scheduling state captured immediately before a Talos reboot.
-# The bridge must still own a cordon it created; a pre-existing cordon must stay
-# ownerless, and neither path may proceed after UID, taint, deletion, or
-# schedulability drift. The unschedulable taint mirrors spec.unschedulable and is
-# excluded from the comparison; all other scheduling intent is preserved.
+# The bridge must still own its serialization annotation while the node stays
+# cordoned; neither a bridge-created nor a pre-existing cordon may proceed after
+# UID, taint, deletion, ownership, or schedulability drift. The unschedulable
+# taint mirrors spec.unschedulable and is excluded from the comparison; all
+# other scheduling intent is preserved.
 node_scheduling_state_is_safe_to_reboot() {
   local state_file="$1"
   local was_cordoned="$2"
@@ -77,11 +86,7 @@ node_scheduling_state_is_safe_to_reboot() {
     .metadata.uid == $uid
     and .metadata.deletionTimestamp == null
     and .spec.unschedulable == true
-    and (if $was_cordoned == 0 then
-      .metadata.annotations[$owner_annotation] == $owner
-    else
-      (.metadata.annotations[$owner_annotation] // "") == ""
-    end)
+    and .metadata.annotations[$owner_annotation] == $owner
     and (((.spec.taints // [])
       | map(select((
           .key == "node.kubernetes.io/unschedulable"
@@ -124,11 +129,7 @@ node_scheduling_state_is_safe_while_lifecycle_taints_clear() {
     .metadata.uid == $uid
     and .metadata.deletionTimestamp == null
     and .spec.unschedulable == true
-    and (if $was_cordoned == 0 then
-      .metadata.annotations[$owner_annotation] == $owner
-    else
-      (.metadata.annotations[$owner_annotation] // "") == ""
-    end)
+    and .metadata.annotations[$owner_annotation] == $owner
     and (((.spec.taints // []) | scheduling_taints)
       == ($initial_taints | scheduling_taints))
   ' "${state_file}" >/dev/null

@@ -31,6 +31,12 @@ func fakeKubectlImplementation(args []string) int {
 	}
 
 	switch {
+	case containsSequence(args, "get", "lease"):
+		return fakeKubectlGetSyncLease(args, namespace)
+	case containsSequence(args, "patch", "lease"):
+		return fakeKubectlPatchSyncLease(args, namespace, patchFile)
+	case containsArg(args, "create") && manifestFile != "" && fakeManifestKind(manifestFile) == "Lease":
+		return fakeKubectlCreateSyncLease(namespace, manifestFile)
 	case containsSequence(args, "get", "nodes"):
 		return fakeKubectlGetNodes()
 	case containsSequence(args, "get", "pods"):
@@ -83,6 +89,119 @@ func fakeKubectlImplementation(args []string) int {
 	return commandFailure(91, "unexpected kubectl invocation: %s", strings.Join(args, " "))
 }
 
+func fakeManifestKind(path string) string {
+	var manifest map[string]any
+	if err := json.Unmarshal([]byte(mustReadCommandFile(path)), &manifest); err != nil {
+		return ""
+	}
+	kind, _ := manifest["kind"].(string)
+	return kind
+}
+
+func fakeKubectlGetSyncLease(args []string, namespace string) int {
+	if namespace != "flux-system" || argumentAfter(args, "lease") != "ghcr-auth-refresh" ||
+		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
+		return commandFailure(91, "invalid synchronization lease lookup")
+	}
+	holder := markerContent("sync-lease-holder")
+	if !markerExists("sync-lease-holder") {
+		if os.Getenv("FAKE_HELD_SYNC_LEASE") != "true" {
+			if !containsArg(args, "--ignore-not-found") {
+				return commandFailure(44, "lease not found")
+			}
+			return 0
+		}
+		holder = "other-live-transaction"
+	}
+	defaultLeaseTime := "2999-01-01T00:00:00Z"
+	if os.Getenv("FAKE_EXPIRED_SYNC_LEASE") == "true" {
+		defaultLeaseTime = "2000-01-01T00:00:00Z"
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"metadata": map[string]any{
+			"name":            "ghcr-auth-refresh",
+			"namespace":       "flux-system",
+			"resourceVersion": defaultString(markerContent("sync-lease-resource-version"), "10"),
+		},
+		"spec": map[string]any{
+			"holderIdentity":       holder,
+			"leaseDurationSeconds": parseInt(defaultString(markerContent("sync-lease-duration"), "120"), 120),
+			"acquireTime":          defaultString(markerContent("sync-lease-acquire-time"), defaultLeaseTime),
+			"renewTime":            defaultString(markerContent("sync-lease-renew-time"), defaultLeaseTime),
+			"leaseTransitions":     parseInt(defaultString(markerContent("sync-lease-transitions"), "0"), 0),
+		},
+	}))
+	return 0
+}
+
+func fakeKubectlCreateSyncLease(namespace, manifestFile string) int {
+	if namespace != "flux-system" || markerExists("sync-lease-holder") {
+		return commandFailure(45, "synchronization lease already exists")
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal([]byte(mustReadCommandFile(manifestFile)), &manifest); err != nil {
+		return commandFailure(91, "parse synchronization lease manifest: %v", err)
+	}
+	metadata, _ := manifest["metadata"].(map[string]any)
+	spec, _ := manifest["spec"].(map[string]any)
+	holder, _ := spec["holderIdentity"].(string)
+	if manifest["apiVersion"] != "coordination.k8s.io/v1" || manifest["kind"] != "Lease" ||
+		metadata["name"] != "ghcr-auth-refresh" || metadata["namespace"] != "flux-system" ||
+		holder == "" || holder != os.Getenv("FLUX_GHCR_SYNC_LEASE_HOLDER") {
+		return commandFailure(91, "invalid synchronization lease manifest")
+	}
+	setMarkerContent("sync-lease-holder", holder)
+	setMarkerContent("sync-lease-resource-version", "10")
+	setMarkerContent("sync-lease-duration", fmt.Sprint(spec["leaseDurationSeconds"]))
+	setMarkerContent("sync-lease-acquire-time", fmt.Sprint(spec["acquireTime"]))
+	setMarkerContent("sync-lease-renew-time", fmt.Sprint(spec["renewTime"]))
+	setMarkerContent("sync-lease-transitions", fmt.Sprint(spec["leaseTransitions"]))
+	fmt.Println("lease.coordination.k8s.io/ghcr-auth-refresh created")
+	return 0
+}
+
+func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
+	if namespace != "flux-system" || argumentAfter(args, "lease") != "ghcr-auth-refresh" ||
+		!containsArg(args, "--type=json") || patchFile == "" || !markerExists("sync-lease-holder") {
+		return commandFailure(91, "invalid synchronization lease patch")
+	}
+	var patch []jsonPatchOperation
+	if err := json.Unmarshal([]byte(mustReadCommandFile(patchFile)), &patch); err != nil {
+		return commandFailure(91, "parse synchronization lease patch: %v", err)
+	}
+	currentResourceVersion := defaultString(markerContent("sync-lease-resource-version"), "10")
+	currentHolder := markerContent("sync-lease-holder")
+	if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
+		!hasPatchOperation(patch, "test", "/spec/holderIdentity", currentHolder) {
+		return commandFailure(56, "synchronization lease CAS failed")
+	}
+	if os.Getenv("FAKE_SYNC_LEASE_RENEW_CONFLICT_ONCE") == "true" &&
+		!markerExists("sync-lease-renew-conflict") &&
+		!hasPatchPath(patch, "replace", "/spec/holderIdentity") &&
+		hasPatchPath(patch, "replace", "/spec/renewTime") {
+		setMarkerContent("sync-lease-renew-time", patchValueString(patch, "replace", "/spec/renewTime"))
+		setMarkerContent("sync-lease-resource-version", incrementDecimal(currentResourceVersion))
+		touchMarker("sync-lease-renew-conflict")
+		return commandFailure(56, "simulated same-holder lease renewal race")
+	}
+	if holder := patchValueString(patch, "replace", "/spec/holderIdentity"); hasPatchPath(patch, "replace", "/spec/holderIdentity") {
+		setMarkerContent("sync-lease-holder", holder)
+	}
+	for path, marker := range map[string]string{
+		"/spec/leaseDurationSeconds": "sync-lease-duration",
+		"/spec/acquireTime":          "sync-lease-acquire-time",
+		"/spec/renewTime":            "sync-lease-renew-time",
+		"/spec/leaseTransitions":     "sync-lease-transitions",
+	} {
+		if hasPatchPath(patch, "replace", path) {
+			setMarkerContent(marker, patchValueString(patch, "replace", path))
+		}
+	}
+	setMarkerContent("sync-lease-resource-version", incrementDecimal(currentResourceVersion))
+	fmt.Println("lease.coordination.k8s.io/ghcr-auth-refresh patched")
+	return 0
+}
+
 func fakeKubectlGetNodes() int {
 	if os.Getenv("FAKE_NODE_DISCOVERY_FAIL") == "true" {
 		return commandFailure(46, "node discovery failed")
@@ -103,9 +222,18 @@ func fakeKubectlGetNodes() int {
 	}
 	if os.Getenv("FAKE_ALL_TALOS_NODES_STALE") == "true" {
 		for _, node := range nodes {
-			nodeMap := node.(map[string]any)
-			metadata := nodeMap["metadata"].(map[string]any)
-			annotations := metadata["annotations"].(map[string]any)
+			nodeMap, ok := node.(map[string]any)
+			if !ok {
+				return commandFailure(91, "invalid fake node object")
+			}
+			metadata, ok := nodeMap["metadata"].(map[string]any)
+			if !ok {
+				return commandFailure(91, "invalid fake node metadata")
+			}
+			annotations, ok := metadata["annotations"].(map[string]any)
+			if !ok {
+				return commandFailure(91, "invalid fake node annotations")
+			}
 			delete(annotations, "platform.devantler.tech/ghcr-pull-verified-revision-v2")
 			delete(annotations, "platform.devantler.tech/ghcr-pull-verified-image-v2")
 		}
@@ -208,6 +336,12 @@ func fakeInventoryNode(
 	if verifiedImage != "" {
 		annotations["platform.devantler.tech/ghcr-pull-verified-image-v2"] = verifiedImage
 	}
+	if owner := markerContent("cordon-owner-" + name); owner != "" {
+		annotations["platform.devantler.tech/ghcr-auth-drain-owner"] = owner
+	}
+	if recovery := markerContent("cordon-recovery-" + name); recovery != "" {
+		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
+	}
 	status := map[string]any{
 		"addresses": []any{
 			map[string]any{"type": "InternalIP", "address": internalIP},
@@ -299,6 +433,21 @@ func fakeKubectlGetNode(args []string) int {
 		}
 		return 0
 	}
+	if nodeName == os.Getenv("FAKE_RECOVERY_ADVANCES_BEFORE_RELEASE_NODE") &&
+		!markerExists("recovery-advanced-before-release-"+nodeName) {
+		var recoveryRecord map[string]any
+		if err := json.Unmarshal(
+			[]byte(markerContent("cordon-recovery-"+nodeName)),
+			&recoveryRecord,
+		); err == nil && recoveryRecord["phase"] == "rollback-safe" {
+			recoveryRecord["phase"] = "active"
+			setMarkerContent("cordon-recovery-"+nodeName, encodeJSON(recoveryRecord))
+			currentResourceVersion := defaultString(markerContent("resource-version-"+nodeName), "10")
+			setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+			touchMarker("recovery-advanced-before-release-" + nodeName)
+			appendEnvFile("OPERATION_LOG", "concurrent-recovery-phase:"+nodeName+":active\n")
+		}
+	}
 
 	nodeUID := nodeName + "-uid"
 	nodeIP, controlPlane := fakeNodeAddress(nodeName)
@@ -325,6 +474,9 @@ func fakeKubectlGetNode(args []string) int {
 	annotations := map[string]any{}
 	if owner := markerContent("cordon-owner-" + nodeName); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-owner"] = owner
+	}
+	if recovery := markerContent("cordon-recovery-" + nodeName); recovery != "" {
+		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
 	}
 	cordoned := wordListContains(os.Getenv("FAKE_CORDONED_NODES"), nodeName) || markerExists("cordoned-"+nodeName)
 	if nodeName == os.Getenv("FAKE_EXTERNAL_UNCORDON_AFTER_READY_NODE") && markerExists("ready-"+nodeName) {
@@ -424,6 +576,22 @@ func fakeNodeAddress(nodeName string) (string, bool) {
 	}
 }
 
+func fakeNodeName(nodeAddress string) string {
+	for _, nodeName := range []string{
+		"prod-worker-1",
+		"prod-worker-2",
+		"prod-control-plane-1",
+		"prod-control-plane-2",
+		"prod-control-plane-3",
+	} {
+		address, _ := fakeNodeAddress(nodeName)
+		if address == nodeAddress {
+			return nodeName
+		}
+	}
+	return ""
+}
+
 func fakeKubectlDrain(args []string) int {
 	nodeName := argumentAfter(args, "drain")
 	if nodeName == "" || !containsArg(args, "--ignore-daemonsets") ||
@@ -478,6 +646,48 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 	}
 	currentResourceVersion := defaultString(markerContent("resource-version-"+nodeName), "10")
 	isClaim := hasPatchOperation(patch, "add", "/spec/unschedulable", true)
+	isRecoveryPhase := hasPatchPath(
+		patch,
+		"replace",
+		"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-recovery",
+	)
+	if isRecoveryPhase {
+		expectedOwner := patchValueString(
+			patch,
+			"test",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner",
+		)
+		expectedRecovery := patchValueString(
+			patch,
+			"test",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-recovery",
+		)
+		updatedRecovery := patchValueString(
+			patch,
+			"replace",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-recovery",
+		)
+		if nodeName == os.Getenv("FAKE_RECOVERY_PHASE_FAIL_NODE") ||
+			expectedOwner == "" || expectedOwner != markerContent("cordon-owner-"+nodeName) ||
+			expectedRecovery == "" || expectedRecovery != markerContent("cordon-recovery-"+nodeName) ||
+			updatedRecovery == "" ||
+			!hasPatchOperation(patch, "test", "/metadata/uid", nodeName+"-uid") ||
+			!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) {
+			return commandFailure(56, "invalid bootstrap recovery phase update")
+		}
+		var recoveryRecord map[string]any
+		if err := json.Unmarshal([]byte(updatedRecovery), &recoveryRecord); err != nil {
+			return commandFailure(56, "invalid bootstrap recovery JSON")
+		}
+		phase, _ := recoveryRecord["phase"].(string)
+		if phase != "rollback-safe" && phase != "active" && phase != "retain" && phase != "release-ready" {
+			return commandFailure(56, "invalid bootstrap recovery phase")
+		}
+		setMarkerContent("cordon-recovery-"+nodeName, updatedRecovery)
+		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+		appendEnvFile("OPERATION_LOG", "recovery-phase:"+nodeName+":"+phase+"\n")
+		return 0
+	}
 	if isClaim {
 		if nodeName == os.Getenv("FAKE_CORDON_BEFORE_CLAIM_NODE") {
 			touchMarker("cordoned-" + nodeName)
@@ -494,9 +704,25 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 			return commandFailure(56, "atomic cordon claim omitted node UID")
 		}
 		setMarkerContent("cordon-owner-"+nodeName, owner)
+		if recovery := patchValueString(
+			patch,
+			"add",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-recovery",
+		); recovery != "" {
+			setMarkerContent("cordon-recovery-"+nodeName, recovery)
+		}
 		touchMarker("cordoned-" + nodeName)
 		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
 		appendEnvFile("OPERATION_LOG", "node-claim-cordon:"+nodeName+"\n")
+		if os.Getenv("FAKE_SYNC_LEASE_LOST_AFTER_FIRST_CLAIM") == "true" &&
+			!markerExists("sync-lease-lost-after-claim") {
+			setMarkerContent("sync-lease-holder", "newer-transaction")
+			setMarkerContent(
+				"sync-lease-resource-version",
+				incrementDecimal(defaultString(markerContent("sync-lease-resource-version"), "10")),
+			)
+			touchMarker("sync-lease-lost-after-claim")
+		}
 		return 0
 	}
 
@@ -511,15 +737,33 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		patch[0].Path != "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner" ||
 		!hasPatchOperation(patch, "test", "/metadata/uid", nodeName+"-uid") ||
 		!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
-		!hasPatchOperation(patch, "add", "/spec/unschedulable", false) ||
 		!hasPatchPath(patch, "remove", "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner") {
 		return commandFailure(56, "invalid atomic cordon release")
 	}
-	appendEnvFile("OPERATION_LOG", "node-uncordon:"+nodeName+"\n")
+	currentRecovery := markerContent("cordon-recovery-" + nodeName)
+	if currentRecovery != "" &&
+		(!hasPatchOperation(
+			patch,
+			"test",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-recovery",
+			currentRecovery,
+		) || !hasPatchPath(
+			patch,
+			"remove",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-recovery",
+		)) {
+		return commandFailure(56, "atomic cordon release omitted recovery journal")
+	}
 	setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
 	removeMarker("cordon-owner-" + nodeName)
-	removeMarker("cordoned-" + nodeName)
-	touchMarker("uncordoned-" + nodeName)
+	removeMarker("cordon-recovery-" + nodeName)
+	if hasPatchOperation(patch, "add", "/spec/unschedulable", false) {
+		appendEnvFile("OPERATION_LOG", "node-uncordon:"+nodeName+"\n")
+		removeMarker("cordoned-" + nodeName)
+		touchMarker("uncordoned-" + nodeName)
+	} else {
+		appendEnvFile("OPERATION_LOG", "node-release-cordon-owner:"+nodeName+"\n")
+	}
 	return 0
 }
 
@@ -671,8 +915,21 @@ func fakeKubectlGetRuntimeProbe(args []string) int {
 	if (wordListContains(os.Getenv("FAKE_RUNTIME_PULL_FAIL_NODES"), probeNode) &&
 		!markerExists("talos-reboot-"+probeIP)) ||
 		wordListContains(os.Getenv("FAKE_RUNTIME_PULL_FAIL_IMAGES"), probeImage) {
+		failureMessage := os.Getenv("FAKE_RUNTIME_PULL_FAILURE_MESSAGE")
+		if failureMessage == "__EMPTY__" {
+			failureMessage = ""
+		} else {
+			failureMessage = defaultString(
+				failureMessage,
+				"failed to authorize: unexpected status from GET request to https://ghcr.io/token?scope=repository%3Adevantler-tech%2Fwedding-app%3Apull: 403 Forbidden",
+			)
+		}
 		status["containerStatuses"] = []any{map[string]any{
-			"state": map[string]any{"waiting": map[string]any{"reason": "ImagePullBackOff"}},
+			"name": "pull-probe",
+			"state": map[string]any{"waiting": map[string]any{
+				"reason":  "ImagePullBackOff",
+				"message": failureMessage,
+			}},
 		}}
 	} else {
 		if os.Getenv("FAKE_LOG_RUNTIME_PROBE_SUCCESS") == "true" {
@@ -682,6 +939,7 @@ func fakeKubectlGetRuntimeProbe(args []string) int {
 			)
 		}
 		status["containerStatuses"] = []any{map[string]any{
+			"name":    "pull-probe",
 			"imageID": "ghcr.io/private@sha256:runtime-probe",
 			"state": map[string]any{
 				"terminated": map[string]any{"reason": "Completed", "exitCode": 0},
@@ -712,10 +970,20 @@ func fakeKubectlGetRootSecret() int {
 			"ghcr.io": map[string]any{"username": "devantler", "password": token},
 		},
 	})
-	encoded := base64.StdEncoding.EncodeToString([]byte(config))
+	encoded := defaultString(
+		markerContent("root-secret-value"),
+		base64.StdEncoding.EncodeToString([]byte(config)),
+	)
 	fmt.Println(encodeJSON(map[string]any{
+		"metadata": map[string]any{
+			"resourceVersion": defaultString(markerContent("root-secret-resource-version"), "20"),
+		},
 		"data": map[string]any{".dockerconfigjson": encoded},
 	}))
+	fakeLoseSyncLeaseAfterSecretRead(
+		"FAKE_SYNC_LEASE_LOST_AFTER_ROOT_SECRET_GET",
+		"sync-lease-lost-after-root-secret-get",
+	)
 	return 0
 }
 
@@ -731,42 +999,144 @@ func fakeKubectlAPIResources(args []string) int {
 }
 
 func fakeKubectlPatchRootSecret(args []string, patchFile string) int {
-	if !containsArg(args, "--type=merge") || patchFile == "" {
-		return commandFailure(91, "invalid root secret patch")
-	}
-	if err := copyFile(patchFile, os.Getenv("PATCH_CAPTURE")); err != nil {
-		return commandFailure(91, "capture root patch: %v", err)
-	}
-	appendEnvFile("OPERATION_LOG", "root-patch\n")
-	if os.Getenv("FAKE_KUBECTL_FAIL") == "true" {
-		return commandFailure(43, "cluster patch failed")
-	}
-	fmt.Println("secret/ksail-registry-credentials patched")
-	return 0
+	return fakeKubectlPatchSecretWithCAS(fakeSecretCASPatch{
+		args:                  args,
+		patchFile:             patchFile,
+		dataPath:              "/data/.dockerconfigjson",
+		dataKey:               ".dockerconfigjson",
+		resourceVersionMarker: "root-secret-resource-version",
+		valueMarker:           "root-secret-value",
+		conflictEnvironment:   "FAKE_ROOT_SECRET_CAS_CONFLICT_ONCE",
+		conflictMarker:        "root-secret-cas-conflict",
+		conflictLiveValue:     "newer-root-secret-value",
+		captureEnvironment:    "PATCH_CAPTURE",
+		operation:             "root-patch",
+		resourceName:          "ksail-registry-credentials",
+	})
 }
 
 func fakeKubectlGetVariablesBase(args []string) int {
-	if !containsArg(args, "--ignore-not-found") {
-		return commandFailure(91, "variables-base lookup must tolerate a fresh cluster")
+	if os.Getenv("FAKE_VARIABLES_BASE_ABSENT") == "true" {
+		if containsArg(args, "--ignore-not-found") {
+			return 0
+		}
+		return commandFailure(44, "variables-base not found")
 	}
-	if os.Getenv("FAKE_VARIABLES_BASE_ABSENT") != "true" {
-		fmt.Println("secret/variables-base")
+	if containsSequence(args, "-o", "json") {
+		value := defaultString(markerContent("variables-secret-value"), "previous-variables-value")
+		fmt.Println(encodeJSON(map[string]any{
+			"metadata": map[string]any{
+				"resourceVersion": defaultString(markerContent("variables-secret-resource-version"), "30"),
+			},
+			"data": map[string]any{"ghcr_dockerconfigjson": value},
+		}))
+		fakeLoseSyncLeaseAfterSecretRead(
+			"FAKE_SYNC_LEASE_LOST_AFTER_VARIABLES_SECRET_GET",
+			"sync-lease-lost-after-variables-secret-get",
+		)
+		return 0
 	}
+	if !containsArg(args, "--ignore-not-found") || !containsSequence(args, "-o", "name") {
+		return commandFailure(91, "variables-base discovery must tolerate a fresh cluster")
+	}
+	fmt.Println("secret/variables-base")
 	return 0
 }
 
 func fakeKubectlPatchVariablesBase(args []string, patchFile string) int {
-	if !containsArg(args, "--type=merge") || patchFile == "" {
-		return commandFailure(91, "invalid variables-base patch")
+	result := fakeKubectlPatchSecretWithCAS(fakeSecretCASPatch{
+		args:                  args,
+		patchFile:             patchFile,
+		dataPath:              "/data/ghcr_dockerconfigjson",
+		dataKey:               "ghcr_dockerconfigjson",
+		resourceVersionMarker: "variables-secret-resource-version",
+		valueMarker:           "variables-secret-value",
+		conflictEnvironment:   "FAKE_VARIABLES_SECRET_CAS_CONFLICT_ONCE",
+		conflictMarker:        "variables-secret-cas-conflict",
+		conflictLiveValue:     "newer-variables-secret-value",
+		captureEnvironment:    "VARIABLES_PATCH_CAPTURE",
+		operation:             "variables-patch",
+		resourceName:          "variables-base",
+	})
+	if result == 0 {
+		count := parseInt(markerContent("variables-patch-count"), 0) + 1
+		setMarkerContent("variables-patch-count", strconv.Itoa(count))
 	}
-	if err := copyFile(patchFile, os.Getenv("VARIABLES_PATCH_CAPTURE")); err != nil {
-		return commandFailure(91, "capture variables-base patch: %v", err)
+	return result
+}
+
+type fakeSecretCASPatch struct {
+	args                  []string
+	patchFile             string
+	dataPath              string
+	dataKey               string
+	resourceVersionMarker string
+	valueMarker           string
+	conflictEnvironment   string
+	conflictMarker        string
+	conflictLiveValue     string
+	captureEnvironment    string
+	operation             string
+	resourceName          string
+}
+
+func fakeKubectlPatchSecretWithCAS(request fakeSecretCASPatch) int {
+	if !containsArg(request.args, "--type=json") || request.patchFile == "" {
+		return commandFailure(91, "invalid %s CAS patch", request.resourceName)
 	}
-	count := parseInt(markerContent("variables-patch-count"), 0) + 1
-	setMarkerContent("variables-patch-count", strconv.Itoa(count))
-	appendEnvFile("OPERATION_LOG", "variables-patch\n")
-	fmt.Println("secret/variables-base patched")
+	var patch []jsonPatchOperation
+	if err := json.Unmarshal([]byte(mustReadCommandFile(request.patchFile)), &patch); err != nil {
+		return commandFailure(91, "parse %s CAS patch: %v", request.resourceName, err)
+	}
+	currentResourceVersion := defaultString(markerContent(request.resourceVersionMarker), secretResourceVersionDefault(request.resourceName))
+	value := patchValueString(patch, "add", request.dataPath)
+	if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) || value == "" {
+		return commandFailure(56, "%s resourceVersion CAS failed", request.resourceName)
+	}
+	if os.Getenv(request.conflictEnvironment) == "true" && !markerExists(request.conflictMarker) {
+		setMarkerContent(request.resourceVersionMarker, incrementDecimal(currentResourceVersion))
+		setMarkerContent(request.valueMarker, request.conflictLiveValue)
+		setMarkerContent(request.conflictMarker+"-live-value", request.conflictLiveValue)
+		touchMarker(request.conflictMarker)
+		return commandFailure(56, "simulated stale %s writer", request.resourceName)
+	}
+	if request.resourceName == "ksail-registry-credentials" && os.Getenv("FAKE_KUBECTL_FAIL") == "true" {
+		mustWriteCommandFile(os.Getenv(request.captureEnvironment), encodeJSON(map[string]any{
+			"data": map[string]any{request.dataKey: value},
+		}))
+		appendEnvFile("OPERATION_LOG", request.operation+"\n")
+		return commandFailure(43, "cluster patch failed")
+	}
+	setMarkerContent(request.resourceVersionMarker, incrementDecimal(currentResourceVersion))
+	setMarkerContent(request.valueMarker, value)
+	mustWriteCommandFile(os.Getenv(request.captureEnvironment), encodeJSON(map[string]any{
+		"data": map[string]any{request.dataKey: value},
+	}))
+	appendEnvFile("OPERATION_LOG", request.operation+"\n")
+	fmt.Printf("secret/%s patched\n", request.resourceName)
 	return 0
+}
+
+func secretResourceVersionDefault(resourceName string) string {
+	if resourceName == "ksail-registry-credentials" {
+		return "20"
+	}
+	return "30"
+}
+
+func fakeLoseSyncLeaseAfterSecretRead(environment, marker string) {
+	currentHolder := markerContent("sync-lease-holder")
+	processHolder := os.Getenv("FLUX_GHCR_SYNC_LEASE_HOLDER")
+	if os.Getenv(environment) != "true" || markerExists(marker) ||
+		processHolder == "" || currentHolder != processHolder {
+		return
+	}
+	setMarkerContent("sync-lease-holder", "newer-transaction")
+	setMarkerContent(
+		"sync-lease-resource-version",
+		incrementDecimal(defaultString(markerContent("sync-lease-resource-version"), "10")),
+	)
+	touchMarker(marker)
 }
 
 func fanoutResource(args []string) (string, string) {

@@ -145,24 +145,24 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		"fanout:externalsecret/wedding-app/ghcr-auth",
 		"fanout:externalsecret/ascoachingogvaner/ghcr-auth",
 		"fanout:externalsecret/kyverno/ghcr-auth",
-		"talos-auth:10.0.0.2",
 		"node-claim-cordon:prod-worker-1",
+		"talos-auth:10.0.0.2",
 		"node-drain:prod-worker-1",
 		"talos-reboot:10.0.0.2",
 		"node-ready:prod-worker-1",
 		"talos-remove:10.0.0.2:" + target,
 		"talos-pull:10.0.0.2:" + target,
-		"node-uncordon:prod-worker-1",
 		"talos-revision:10.0.0.2",
-		"talos-auth:10.0.0.1",
+		"node-uncordon:prod-worker-1",
 		"node-claim-cordon:prod-control-plane-1",
+		"talos-auth:10.0.0.1",
 		"node-drain:prod-control-plane-1",
 		"talos-reboot:10.0.0.1",
 		"node-ready:prod-control-plane-1",
 		"talos-remove:10.0.0.1:" + target,
 		"talos-pull:10.0.0.1:" + target,
-		"node-uncordon:prod-control-plane-1",
 		"talos-revision:10.0.0.1",
+		"node-uncordon:prod-control-plane-1",
 		"variables-patch",
 		"fanout:pushsecret/flux-system/seed-ghcr",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
@@ -173,6 +173,9 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 	temporaryPatch := strings.TrimSpace(mustRead(f.talosPatchPathLog))
 	if pathExists(temporaryPatch) {
 		t.Errorf("temporary Talos patch still exists: %s", temporaryPatch)
+	}
+	if holder := mustRead(filepath.Join(f.syncStateDir, "sync-lease-holder")); holder != "" {
+		t.Fatalf("successful run left synchronization lease holder %q", holder)
 	}
 	requireNotContains(t, result.stdout+result.stderr, "fixture-secret-token")
 }
@@ -265,8 +268,9 @@ func TestPreExistingCordonSurvivesTheAuthReboot(t *testing.T) {
 	requireSuccessResult(t, result)
 	operations := readLines(f.operationLog)
 	requireLine(t, operations, "node-drain:prod-worker-1")
-	requireNoLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
 	requireNoLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "node-release-cordon-owner:prod-worker-1")
 	requireLine(t, operations, "node-claim-cordon:prod-control-plane-1")
 	requireLine(t, operations, "node-uncordon:prod-control-plane-1")
 }
@@ -281,7 +285,7 @@ func TestSchedulableNodeIsUncordonedAfterTheAuthReboot(t *testing.T) {
 	pull := lineIndex(t, operations, "talos-pull:10.0.0.2:"+ksailTargetImage)
 	uncordon := lineIndex(t, operations, "node-uncordon:prod-worker-1")
 	revision := lineIndex(t, operations, "talos-revision:10.0.0.2")
-	if claim >= drain || drain >= pull || pull >= uncordon || uncordon >= revision {
+	if claim >= drain || drain >= pull || pull >= revision || revision >= uncordon {
 		t.Errorf("unsafe worker ordering: claim=%d drain=%d pull=%d uncordon=%d revision=%d", claim, drain, pull, uncordon, revision)
 	}
 	if actual := mustRead(filepath.Join(f.syncStateDir, "resource-version-prod-worker-1")); actual != "12" {
@@ -309,7 +313,7 @@ func TestConcurrentCordonBeforeAtomicClaimStopsTheRoll(t *testing.T) {
 	requireContains(t, result.stdout+result.stderr, "Could not atomically claim and cordon")
 	operations := readLines(f.operationLog)
 	requireLine(t, operations, "operator-cordon:prod-worker-1")
-	for _, unexpected := range []string{"node-claim-cordon:prod-worker-1", "node-drain:prod-worker-1", "talos-reboot:10.0.0.2", "root-patch"} {
+	for _, unexpected := range []string{"node-claim-cordon:prod-worker-1", "talos-auth:10.0.0.2", "node-drain:prod-worker-1", "talos-reboot:10.0.0.2", "root-patch"} {
 		requireNoLine(t, operations, unexpected)
 	}
 	if pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-1")) {
@@ -344,9 +348,10 @@ func TestPDBBlockedDrainPreservesPreExistingCordon(t *testing.T) {
 	})
 	requireFailureResult(t, result)
 	operations := readLines(f.operationLog)
-	requireNoLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
 	requireLine(t, operations, "node-drain:prod-worker-1")
 	requireNoLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "node-release-cordon-owner:prod-worker-1")
 	requireNoLine(t, operations, "talos-reboot:10.0.0.2")
 }
 

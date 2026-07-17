@@ -1,6 +1,8 @@
 package refreshfluxghcrauth
 
 import (
+	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -188,6 +190,9 @@ func TestRevokedPreviousCredentialBootstrapsThroughEmptyWorker(t *testing.T) {
 		if claim >= seedDrain {
 			t.Fatalf("stale node %s was not quarantined before seed drain: claim=%d drain=%d", nodeName, claim, seedDrain)
 		}
+		if pathExists(filepath.Join(f.syncStateDir, "cordon-recovery-"+nodeName)) {
+			t.Fatalf("successful bootstrap left a recovery journal on %s", nodeName)
+		}
 	}
 	requireLine(t, operations, "root-patch")
 }
@@ -204,6 +209,40 @@ func TestAllStaleRuntimesWithoutEmptyWorkerFailClosed(t *testing.T) {
 	operations := readLines(f.operationLog)
 	requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
 	requireNoLine(t, operations, "root-patch")
+}
+
+func TestAmbiguousRuntimePullFailureDoesNotBootstrap(t *testing.T) {
+	for name, message := range map[string]string{
+		"missing message":      "__EMPTY__",
+		"dns failure":          "dial tcp: lookup ghcr.io: no such host",
+		"rate limit":           "unexpected status from HEAD request to https://ghcr.io/v2/private/manifests/latest: 429 Too Many Requests",
+		"network timeout":      "net/http: request canceled while waiting for connection",
+		"missing image":        "manifest unknown",
+		"signature validation": "signature verification failed",
+		"token prefix":         "dial tcp https://ghcr.io/token-proxy: 403 Forbidden",
+		"compound status":      "unexpected status from GET request to https://ghcr.io/token?scope=private: 429 Too Many Requests; fallback: 403 Forbidden",
+		"embedded generic":     "unauthorized: authentication required while signature verification failed",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, map[string]string{
+				"FAKE_ALL_TALOS_NODES_STALE":        "true",
+				"FAKE_BOOTSTRAP_WORKER_NAME":        "prod-worker-2",
+				"FAKE_RUNTIME_PULL_FAIL_NODES":      "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+				"FAKE_RUNTIME_PULL_FAILURE_MESSAGE": message,
+				"FAKE_EMPTY_WORKLOAD_NODES":         "prod-worker-2",
+			})
+			requireFailureResult(t, result)
+			requireContains(t, result.stdout+result.stderr, "refusing to drain workloads onto peers with unproved runtime auth")
+			if message != "__EMPTY__" {
+				requireNotContains(t, result.stdout+result.stderr, message)
+			}
+			operations := readLines(f.operationLog)
+			requireNotContains(t, strings.Join(operations, "\n"), "node-claim-cordon:")
+			requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
+			requireNoLine(t, operations, "root-patch")
+		})
+	}
 }
 
 func TestBootstrapRejectsUnprovedCurrentMarkedDestination(t *testing.T) {
@@ -338,6 +377,20 @@ func TestBootstrapPullFailureRetainsOnlyUnprovedSeedCordon(t *testing.T) {
 	if !pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-2")) {
 		t.Fatal("unproved bootstrap seed did not retain its owned cordon")
 	}
+	recoveryPath := filepath.Join(f.syncStateDir, "cordon-recovery-prod-worker-2")
+	if !pathExists(recoveryPath) {
+		t.Fatal("unproved bootstrap seed did not retain its durable recovery journal")
+	}
+	var recovery map[string]any
+	if err := json.Unmarshal([]byte(mustRead(recoveryPath)), &recovery); err != nil {
+		t.Fatalf("parse retained recovery journal: %v", err)
+	}
+	if recovery["phase"] != "retain" {
+		t.Fatalf("retained recovery phase = %v, want retain", recovery["phase"])
+	}
+	if strings.Contains(mustRead(recoveryPath), "fixture-secret-token") {
+		t.Fatal("durable recovery journal contained decrypted registry credentials")
+	}
 	for _, nodeName := range []string{
 		"prod-worker-1",
 		"prod-control-plane-1",
@@ -348,7 +401,212 @@ func TestBootstrapPullFailureRetainsOnlyUnprovedSeedCordon(t *testing.T) {
 		if pathExists(filepath.Join(f.syncStateDir, "cordon-owner-"+nodeName)) {
 			t.Fatalf("unprocessed stale peer %s kept a bootstrap-only cordon", nodeName)
 		}
+		if pathExists(filepath.Join(f.syncStateDir, "cordon-recovery-"+nodeName)) {
+			t.Fatalf("unprocessed stale peer %s kept a bootstrap recovery journal", nodeName)
+		}
 	}
+
+	retry := f.runHelperPreservingClusterState(validConfig(), nil, map[string]string{
+		"FAKE_ALL_TALOS_NODES_STALE":   "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":   "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES": "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_EMPTY_WORKLOAD_NODES":    "prod-worker-2",
+	})
+	requireFailureResult(t, retry)
+	requireContains(t, retry.stdout+retry.stderr, "refusing to release any node in that batch")
+	retryOperations := readLines(f.operationLog)
+	requireNoLine(t, retryOperations, "node-uncordon:prod-worker-2")
+	requireNoLine(t, retryOperations, "root-patch")
+}
+
+func TestBootstrapCleanupFailureRetainsDurableRecoveryAndNextRunReconciles(t *testing.T) {
+	f := newFixture(t)
+	first := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_ALL_TALOS_NODES_STALE":   "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":   "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES": "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_EMPTY_WORKLOAD_NODES":    "prod-worker-2",
+		"FAKE_TALOS_FAIL_NODE":         "10.0.0.5",
+		"FAKE_TALOS_FAIL_OPERATION":    "auth",
+		"FAKE_UNCORDON_FAIL_NODE":      "prod-worker-1",
+	})
+	requireFailureResult(t, first)
+	requireContains(t, first.stdout+first.stderr, "Bootstrap quarantine cleanup was incomplete")
+	firstOperations := readLines(f.operationLog)
+	requireNoLine(t, firstOperations, "root-patch")
+
+	recoveryPath := filepath.Join(f.syncStateDir, "cordon-recovery-prod-worker-1")
+	ownerPath := filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-1")
+	if !pathExists(ownerPath) || !pathExists(recoveryPath) {
+		t.Fatal("failed cleanup did not preserve its durable owner and recovery journal")
+	}
+	var recovery map[string]any
+	if err := json.Unmarshal([]byte(mustRead(recoveryPath)), &recovery); err != nil {
+		t.Fatalf("parse durable recovery journal: %v", err)
+	}
+	if recovery["phase"] != "rollback-safe" {
+		t.Fatalf("durable recovery phase = %v, want rollback-safe", recovery["phase"])
+	}
+	if strings.Contains(mustRead(recoveryPath), "fixture-secret-token") {
+		t.Fatal("durable recovery journal contained decrypted registry credentials")
+	}
+	for _, nodeName := range []string{
+		"prod-worker-2",
+		"prod-control-plane-1",
+		"prod-control-plane-2",
+		"prod-control-plane-3",
+	} {
+		if pathExists(filepath.Join(f.syncStateDir, "cordon-recovery-"+nodeName)) {
+			t.Fatalf("cleanup stopped before releasing %s", nodeName)
+		}
+	}
+
+	second := f.runHelperPreservingClusterState(validConfig(), nil, map[string]string{
+		"FAKE_ALL_TALOS_NODES_STALE":   "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":   "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES": "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_EMPTY_WORKLOAD_NODES":    "prod-worker-2",
+	})
+	requireSuccessResult(t, second)
+	secondOperations := readLines(f.operationLog)
+	reconcileRelease := lineIndex(t, secondOperations, "node-uncordon:prod-worker-1")
+	firstNewClaim := lineIndex(t, secondOperations, "node-claim-cordon:prod-worker-1")
+	if reconcileRelease >= firstNewClaim {
+		t.Fatalf("durable recovery was not reconciled before the new rollout: release=%d claim=%d", reconcileRelease, firstNewClaim)
+	}
+	if pathExists(ownerPath) || pathExists(recoveryPath) {
+		t.Fatal("successful retry left the reconciled owner or recovery journal behind")
+	}
+	requireLine(t, secondOperations, "root-patch")
+}
+
+func TestRecoveryReconciliationRejectsConcurrentPhaseAdvance(t *testing.T) {
+	f := newFixture(t)
+	const nodeName = "prod-worker-1"
+	const owner = "previous-roll-owner"
+	recoveryPath := filepath.Join(f.syncStateDir, "cordon-recovery-"+nodeName)
+	mustWriteJSON(t, recoveryPath, map[string]any{
+		"v":               1,
+		"owner":           owner,
+		"uid":             nodeName + "-uid",
+		"desiredRevision": f.expectedRevision(),
+		"wasCordoned":     0,
+		"initialTaints":   []any{},
+		"phase":           "rollback-safe",
+	})
+	for path, contents := range map[string]string{
+		filepath.Join(f.syncStateDir, "cordon-owner-"+nodeName): owner,
+		filepath.Join(f.syncStateDir, "cordoned-"+nodeName):     "",
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatalf("seed recovery marker %s: %v", path, err)
+		}
+	}
+
+	result := f.runHelperPreservingClusterState(validConfig(), nil, map[string]string{
+		"FAKE_RECOVERY_ADVANCES_BEFORE_RELEASE_NODE": nodeName,
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "Recovery journal changed")
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "concurrent-recovery-phase:"+nodeName+":active")
+	requireNoLine(t, operations, "node-uncordon:"+nodeName)
+	requireNoLine(t, operations, "node-claim-cordon:"+nodeName)
+	requireNoLine(t, operations, "root-patch")
+
+	var recovery map[string]any
+	if err := json.Unmarshal([]byte(mustRead(recoveryPath)), &recovery); err != nil {
+		t.Fatalf("parse concurrently advanced recovery journal: %v", err)
+	}
+	if recovery["phase"] != "active" {
+		t.Fatalf("concurrent recovery phase = %v, want active", recovery["phase"])
+	}
+}
+
+func TestRecoveryReconciliationKeepsActiveOwnerBatchQuarantined(t *testing.T) {
+	f := newFixture(t)
+	const owner = "active-bootstrap-owner"
+	for nodeName, phase := range map[string]string{
+		"prod-worker-1":        "rollback-safe",
+		"prod-control-plane-1": "active",
+	} {
+		recoveryPath := filepath.Join(f.syncStateDir, "cordon-recovery-"+nodeName)
+		mustWriteJSON(t, recoveryPath, map[string]any{
+			"v":               1,
+			"owner":           owner,
+			"uid":             nodeName + "-uid",
+			"desiredRevision": f.expectedRevision(),
+			"wasCordoned":     0,
+			"initialTaints":   []any{},
+			"phase":           phase,
+		})
+		for path, contents := range map[string]string{
+			filepath.Join(f.syncStateDir, "cordon-owner-"+nodeName): owner,
+			filepath.Join(f.syncStateDir, "cordoned-"+nodeName):     "",
+		} {
+			if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+				t.Fatalf("seed active owner batch marker %s: %v", path, err)
+			}
+		}
+	}
+
+	result := f.runHelperPreservingClusterState(validConfig(), nil, nil)
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "refusing to release any node in that batch")
+	operations := readLines(f.operationLog)
+	for _, nodeName := range []string{"prod-worker-1", "prod-control-plane-1"} {
+		requireNoLine(t, operations, "node-uncordon:"+nodeName)
+		if !pathExists(filepath.Join(f.syncStateDir, "cordon-owner-"+nodeName)) ||
+			!pathExists(filepath.Join(f.syncStateDir, "cordon-recovery-"+nodeName)) {
+			t.Fatalf("active owner batch released durable quarantine for %s", nodeName)
+		}
+	}
+	requireNoLine(t, operations, "root-patch")
+}
+
+func TestReleaseReadyRecoveryPreservesPreExistingCordonBeforeNewRoll(t *testing.T) {
+	f := newFixture(t)
+	const nodeName = "prod-worker-1"
+	const owner = "completed-roll-owner"
+	recoveryPath := filepath.Join(f.syncStateDir, "cordon-recovery-"+nodeName)
+	ownerPath := filepath.Join(f.syncStateDir, "cordon-owner-"+nodeName)
+	cordonPath := filepath.Join(f.syncStateDir, "cordoned-"+nodeName)
+	mustWriteJSON(t, recoveryPath, map[string]any{
+		"v":               1,
+		"owner":           owner,
+		"uid":             nodeName + "-uid",
+		"desiredRevision": f.expectedRevision(),
+		"wasCordoned":     1,
+		"initialTaints":   []any{},
+		"phase":           "release-ready",
+	})
+	for path, contents := range map[string]string{
+		ownerPath:  owner,
+		cordonPath: "",
+	} {
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatalf("seed release-ready marker %s: %v", path, err)
+		}
+	}
+
+	result := f.runHelperPreservingClusterState(validConfig(), nil, nil)
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	releases := lineIndices(operations, "node-release-cordon-owner:"+nodeName)
+	if len(releases) != 2 {
+		t.Fatalf("pre-existing cordon owner releases = %d, want reconcile and rollout releases", len(releases))
+	}
+	claim := lineIndex(t, operations, "node-claim-cordon:"+nodeName)
+	if releases[0] >= claim {
+		t.Fatalf("release-ready journal was not reconciled before the new claim: release=%d claim=%d", releases[0], claim)
+	}
+	if pathExists(ownerPath) || pathExists(recoveryPath) {
+		t.Fatal("successful release-ready reconciliation left owner or recovery state")
+	}
+	if !pathExists(cordonPath) {
+		t.Fatal("release-ready reconciliation removed the pre-existing cordon")
+	}
+	requireLine(t, operations, "root-patch")
 }
 
 func TestTaintedPeersDoNotCountAsRuntimePullCapacity(t *testing.T) {
@@ -400,6 +658,12 @@ func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {
 		"FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_ONCE_NODES": "prod-control-plane-2",
 	})
 	requireSuccessResult(t, result)
+	if !pathExists(filepath.Join(
+		f.syncStateDir,
+		"runtime-probe-create-timeout-once-prod-control-plane-2",
+	)) {
+		t.Fatal("transient runtime-probe timeout was not exercised")
+	}
 	operations := readLines(f.operationLog)
 	requireLine(t, operations, "node-drain:prod-worker-1")
 	requireLine(t, operations, "root-patch")

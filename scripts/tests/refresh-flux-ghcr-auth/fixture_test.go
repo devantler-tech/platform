@@ -193,9 +193,26 @@ func validConfig() map[string]any {
 }
 
 func (f *fixture) runHelper(config any, helperArgs []string, overrides map[string]string) commandResult {
+	return f.runHelperWithClusterState(config, helperArgs, overrides, false)
+}
+
+func (f *fixture) runHelperPreservingClusterState(
+	config any,
+	helperArgs []string,
+	overrides map[string]string,
+) commandResult {
+	return f.runHelperWithClusterState(config, helperArgs, overrides, true)
+}
+
+func (f *fixture) runHelperWithClusterState(
+	config any,
+	helperArgs []string,
+	overrides map[string]string,
+	preserveClusterState bool,
+) commandResult {
 	f.t.Helper()
 	mustWriteJSON(f.t, f.decryptedConfig, config)
-	f.clearRunState(true)
+	f.clearRunStatePreservingCluster(true, preserveClusterState)
 	username, token := expectedCredentials(config)
 	env := f.baseEnvironment()
 	env["EXPECTED_PULL_USERNAME"] = username
@@ -252,6 +269,10 @@ func (f *fixture) baseEnvironment() map[string]string {
 }
 
 func (f *fixture) clearRunState(helper bool) {
+	f.clearRunStatePreservingCluster(helper, false)
+}
+
+func (f *fixture) clearRunStatePreservingCluster(helper, preserveClusterState bool) {
 	f.t.Helper()
 	paths := []string{
 		f.outputPathLog,
@@ -280,7 +301,7 @@ func (f *fixture) clearRunState(helper bool) {
 			f.t.Fatalf("clear %s: %v", path, err)
 		}
 	}
-	if helper {
+	if helper && !preserveClusterState {
 		entries, err := os.ReadDir(f.syncStateDir)
 		if err != nil {
 			f.t.Fatalf("read sync state: %v", err)

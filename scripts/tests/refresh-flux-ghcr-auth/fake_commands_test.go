@@ -222,11 +222,24 @@ func fakeTalosctl(args []string) int {
 				patch["username"] != os.Getenv("EXPECTED_PULL_USERNAME") || patch["password"] != os.Getenv("EXPECTED_PULL_TOKEN") {
 				return commandFailure(93, "invalid RegistryAuthConfig")
 			}
+			nodeName := fakeNodeName(node)
+			if nodeName == "" || !markerExists("cordoned-"+nodeName) ||
+				markerContent("cordon-owner-"+nodeName) == "" {
+				return commandFailure(93, "Talos auth mutation lacked an owned Kubernetes cordon")
+			}
+			if markerContent("cordon-recovery-"+nodeName) != "" &&
+				fakeRecoveryPhase(nodeName) != "active" {
+				return commandFailure(93, "bootstrap Talos auth mutation lacked an active recovery journal")
+			}
 			appendTalosOperation("talos-auth:" + node)
 			if talosFailure(node, "auth") {
 				return commandFailure(45, "talos auth failed with %s", os.Getenv("EXPECTED_PULL_TOKEN"))
 			}
 			touchMarker("talos-auth-" + node)
+			if nodeName == os.Getenv("FAKE_EXTERNAL_UNCORDON_AFTER_AUTH_NODE") {
+				removeMarker("cordoned-" + nodeName)
+				appendEnvFile("OPERATION_LOG", "operator-uncordon-after-auth:"+nodeName+"\n")
+			}
 			return 0
 		}
 		if markerExists("talos-auth-" + node) {
@@ -238,6 +251,15 @@ func fakeTalosctl(args []string) int {
 		}
 		if !markerExists("talos-remove-"+node) || !markerExists("talos-pull-"+node) {
 			return commandFailure(93, "revision preceded registry pull proof")
+		}
+		nodeName := fakeNodeName(node)
+		if nodeName == "" || !markerExists("cordoned-"+nodeName) ||
+			markerContent("cordon-owner-"+nodeName) == "" {
+			return commandFailure(93, "Talos revision mutation lacked an owned Kubernetes cordon")
+		}
+		if markerContent("cordon-recovery-"+nodeName) != "" &&
+			fakeRecoveryPhase(nodeName) != "retain" {
+			return commandFailure(93, "bootstrap Talos revision mutation lacked a retained recovery journal")
 		}
 		machine, _ := patch["machine"].(map[string]any)
 		annotations, _ := machine["nodeAnnotations"].(map[string]any)
@@ -279,6 +301,11 @@ func fakeTalosctl(args []string) int {
 		if !markerExists("talos-auth-"+node) && os.Getenv("FAKE_TALOS_NODES_CURRENT") != "true" {
 			return commandFailure(93, "image-only cache mutation lacks proof")
 		}
+		nodeName := fakeNodeName(node)
+		if nodeName == "" || !markerExists("cordoned-"+nodeName) ||
+			markerContent("cordon-owner-"+nodeName) == "" {
+			return commandFailure(93, "Talos image removal lacked an owned Kubernetes cordon")
+		}
 		image := argumentAfter(args, "remove")
 		operation := "talos-remove:" + node + ":" + image
 		appendTalosOperation(operation)
@@ -290,6 +317,10 @@ func fakeTalosctl(args []string) int {
 			return commandFailure(49, "talos remove failed")
 		}
 		touchMarker("talos-remove-" + node)
+		if nodeName == os.Getenv("FAKE_EXTERNAL_UNCORDON_AFTER_REMOVE_NODE") {
+			removeMarker("cordoned-" + nodeName)
+			appendEnvFile("OPERATION_LOG", "operator-uncordon-after-remove:"+nodeName+"\n")
+		}
 		return 0
 	}
 	if containsSequence(args, "image", "pull") {
@@ -305,6 +336,11 @@ func fakeTalosctl(args []string) int {
 		if !markerExists("talos-remove-" + node) {
 			return commandFailure(93, "cached image not removed")
 		}
+		nodeName := fakeNodeName(node)
+		if nodeName == "" || !markerExists("cordoned-"+nodeName) ||
+			markerContent("cordon-owner-"+nodeName) == "" {
+			return commandFailure(93, "Talos image pull lacked an owned Kubernetes cordon")
+		}
 		image := argumentAfter(args, "pull")
 		operation := "talos-pull:" + node + ":" + image
 		appendTalosOperation(operation)
@@ -312,9 +348,25 @@ func fakeTalosctl(args []string) int {
 			return commandFailure(47, "talos pull failed with %s", os.Getenv("EXPECTED_PULL_TOKEN"))
 		}
 		touchMarker("talos-pull-" + node)
+		if nodeName == os.Getenv("FAKE_EXTERNAL_UNCORDON_AFTER_PULL_NODE") {
+			removeMarker("cordoned-" + nodeName)
+			appendEnvFile("OPERATION_LOG", "operator-uncordon-after-pull:"+nodeName+"\n")
+		}
 		return 0
 	}
 	return commandFailure(93, "unexpected talosctl invocation")
+}
+
+func fakeRecoveryPhase(nodeName string) string {
+	var recovery map[string]any
+	if err := json.Unmarshal(
+		[]byte(markerContent("cordon-recovery-"+nodeName)),
+		&recovery,
+	); err != nil {
+		return ""
+	}
+	phase, _ := recovery["phase"].(string)
+	return phase
 }
 
 func fakeKubectl(args []string) int {
