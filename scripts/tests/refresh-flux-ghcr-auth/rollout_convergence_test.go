@@ -151,37 +151,113 @@ func lineIndices(lines []string, target string) []int {
 	return result
 }
 
-func TestRevokedPreviousCredentialBlocksFirstDrain(t *testing.T) {
+func TestRevokedPreviousCredentialBootstrapsThroughEmptyWorker(t *testing.T) {
 	f := newFixture(t)
-	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_REVOKE_CURRENT_ROOT_TOKEN": "true"})
-	requireFailureResult(t, result)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_REVOKE_CURRENT_ROOT_TOKEN": "true",
+		"FAKE_ALL_TALOS_NODES_STALE":     "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":     "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES":   "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_EMPTY_WORKLOAD_NODES":      "prod-worker-2",
+	})
+	requireSuccessResult(t, result)
 	output := result.stdout + result.stderr
-	requireContains(t, output, "current root GHCR credential")
-	operations := readLines(f.operationLog)
-	requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
-	requireNotContains(t, strings.Join(operations, "\n"), "talos-reboot:")
-	requireNoLine(t, operations, "root-patch")
 	requireNotContains(t, output, "previous-runtime-token")
+	operations := readLines(f.operationLog)
+	seedDrain := lineIndex(t, operations, "node-drain:prod-worker-2")
+	seedReboot := lineIndex(t, operations, "talos-reboot:10.0.0.5")
+	seedPull := lineIndex(t, operations, "talos-pull:10.0.0.5:"+ksailTargetImage)
+	seedRelease := lineIndex(t, operations, "node-uncordon:prod-worker-2")
+	firstWorkloadDrain := lineIndex(t, operations, "node-drain:prod-worker-1")
+	if seedDrain >= seedReboot || seedReboot >= seedPull || seedPull >= seedRelease || seedRelease >= firstWorkloadDrain {
+		t.Fatalf("unsafe bootstrap ordering: seed drain=%d reboot=%d pull=%d release=%d workload drain=%d", seedDrain, seedReboot, seedPull, seedRelease, firstWorkloadDrain)
+	}
+	for _, nodeName := range []string{
+		"prod-worker-1",
+		"prod-worker-2",
+		"prod-control-plane-1",
+		"prod-control-plane-2",
+		"prod-control-plane-3",
+	} {
+		claim := lineIndex(t, operations, "node-claim-cordon:"+nodeName)
+		if claim >= seedDrain {
+			t.Fatalf("stale node %s was not quarantined before seed drain: claim=%d drain=%d", nodeName, claim, seedDrain)
+		}
+	}
+	requireLine(t, operations, "root-patch")
 }
 
-func TestValidRootTokenDoesNotSubstituteForPeerRuntimeProof(t *testing.T) {
+func TestAllStaleRuntimesWithoutEmptyWorkerFailClosed(t *testing.T) {
 	f := newFixture(t)
-	ready := []any{map[string]any{"type": "Ready", "status": "True"}}
-	inventory := map[string]any{"items": []any{
-		nodeFixture("prod-worker-1", "prod-worker-1-uid", "10.0.0.2", false, ready, nil),
-		nodeFixture("prod-control-plane-1", "prod-control-plane-1-uid", "10.0.0.1", true, ready, nil),
-		nodeFixture("prod-control-plane-2", "prod-control-plane-2-uid", "10.0.0.3", true, ready, nil),
-		nodeFixture("prod-control-plane-3", "prod-control-plane-3-uid", "10.0.0.5", true, ready, nil),
-	}}
 	result := f.runHelper(validConfig(), nil, map[string]string{
-		"FAKE_NODE_JSON":               encodeJSON(inventory),
-		"FAKE_RUNTIME_PULL_FAIL_NODES": "prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_ALL_TALOS_NODES_STALE":   "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":   "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES": "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
 	})
 	requireFailureResult(t, result)
-	requireContains(t, result.stdout+result.stderr, "running containerd")
+	requireContains(t, result.stdout+result.stderr, "no empty workload-schedulable node")
 	operations := readLines(f.operationLog)
 	requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
 	requireNoLine(t, operations, "root-patch")
+}
+
+func TestBootstrapFailureBeforeRebootRestoresEveryOwnedCordon(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_REVOKE_CURRENT_ROOT_TOKEN": "true",
+		"FAKE_ALL_TALOS_NODES_STALE":     "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":     "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES":   "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_EMPTY_WORKLOAD_NODES":      "prod-worker-2",
+		"FAKE_TALOS_FAIL_NODE":           "10.0.0.5",
+		"FAKE_TALOS_FAIL_OPERATION":      "auth",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	requireNoLine(t, operations, "talos-reboot:10.0.0.5")
+	for _, nodeName := range []string{
+		"prod-worker-1",
+		"prod-worker-2",
+		"prod-control-plane-1",
+		"prod-control-plane-2",
+		"prod-control-plane-3",
+	} {
+		requireLine(t, operations, "node-uncordon:"+nodeName)
+		if pathExists(filepath.Join(f.syncStateDir, "cordon-owner-"+nodeName)) {
+			t.Fatalf("pre-reboot bootstrap failure left %s owned-cordoned", nodeName)
+		}
+	}
+}
+
+func TestBootstrapPullFailureRetainsOnlyUnprovedSeedCordon(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_REVOKE_CURRENT_ROOT_TOKEN": "true",
+		"FAKE_ALL_TALOS_NODES_STALE":     "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":     "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES":   "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_EMPTY_WORKLOAD_NODES":      "prod-worker-2",
+		"FAKE_TALOS_FAIL_NODE":           "10.0.0.5",
+		"FAKE_TALOS_FAIL_OPERATION":      "pull",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-reboot:10.0.0.5")
+	requireNoLine(t, operations, "node-uncordon:prod-worker-2")
+	if !pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-2")) {
+		t.Fatal("unproved bootstrap seed did not retain its owned cordon")
+	}
+	for _, nodeName := range []string{
+		"prod-worker-1",
+		"prod-control-plane-1",
+		"prod-control-plane-2",
+		"prod-control-plane-3",
+	} {
+		requireLine(t, operations, "node-uncordon:"+nodeName)
+		if pathExists(filepath.Join(f.syncStateDir, "cordon-owner-"+nodeName)) {
+			t.Fatalf("unprocessed stale peer %s kept a bootstrap-only cordon", nodeName)
+		}
+	}
 }
 
 func TestRuntimeProbeRejectsInjectedImagePullSecret(t *testing.T) {

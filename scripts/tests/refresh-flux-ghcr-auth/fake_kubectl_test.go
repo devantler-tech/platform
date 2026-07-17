@@ -33,6 +33,8 @@ func fakeKubectlImplementation(args []string) int {
 	switch {
 	case containsSequence(args, "get", "nodes"):
 		return fakeKubectlGetNodes()
+	case containsSequence(args, "get", "pods"):
+		return fakeKubectlGetPods(args)
 	case containsSequence(args, "get", "node"):
 		return fakeKubectlGetNode(args)
 	case containsArg(args, "drain"):
@@ -99,6 +101,34 @@ func fakeKubectlGetNodes() int {
 		fakeInventoryNode("prod-control-plane-2", "prod-control-plane-2-uid", "10.0.0.3", "198.51.100.3", true, revision, revision, image, false),
 		fakeInventoryNode("prod-control-plane-3", "prod-control-plane-3-uid", "10.0.0.4", "198.51.100.4", true, revision, revision, image, false),
 	}
+	if os.Getenv("FAKE_ALL_TALOS_NODES_STALE") == "true" {
+		for _, node := range nodes {
+			nodeMap := node.(map[string]any)
+			metadata := nodeMap["metadata"].(map[string]any)
+			annotations := metadata["annotations"].(map[string]any)
+			delete(annotations, "platform.devantler.tech/ghcr-pull-verified-revision-v2")
+			delete(annotations, "platform.devantler.tech/ghcr-pull-verified-image-v2")
+		}
+	}
+	if bootstrapWorker := os.Getenv("FAKE_BOOTSTRAP_WORKER_NAME"); bootstrapWorker != "" {
+		verifiedRevision := ""
+		verifiedWorkerImage := ""
+		if markerExists("talos-revision-10.0.0.5") {
+			verifiedRevision = revision
+			verifiedWorkerImage = image
+		}
+		nodes = append(nodes, fakeInventoryNode(
+			bootstrapWorker,
+			bootstrapWorker+"-uid",
+			"10.0.0.5",
+			"198.51.100.5",
+			false,
+			revision,
+			verifiedRevision,
+			verifiedWorkerImage,
+			false,
+		))
+	}
 	if os.Getenv("FAKE_TALOS_NODES_CURRENT") == "true" {
 		setInventoryProof(nodes[0], revision, verifiedImage)
 		setInventoryProof(nodes[1], revision, verifiedImage)
@@ -108,6 +138,18 @@ func fakeKubectlGetNodes() int {
 	}
 	if markerExists("talos-revision-10.0.0.1") {
 		setInventoryProof(nodes[1], revision, image)
+	}
+	for _, node := range nodes {
+		nodeMap := node.(map[string]any)
+		status := nodeMap["status"].(map[string]any)
+		addresses := status["addresses"].([]any)
+		internalIP := addresses[0].(map[string]any)["address"].(string)
+		if markerExists("talos-revision-" + internalIP) {
+			setInventoryProof(node, revision, image)
+		}
+		if markerExists("talos-reboot-" + internalIP) {
+			status["conditions"] = []any{map[string]any{"type": "Ready", "status": "True"}}
+		}
 	}
 
 	newNodeName := ""
@@ -175,6 +217,7 @@ func fakeInventoryNode(
 	if !omitReady {
 		status["conditions"] = []any{map[string]any{"type": "Ready", "status": "True"}}
 	}
+	cordoned := wordListContains(os.Getenv("FAKE_CORDONED_NODES"), name) || markerExists("cordoned-"+name)
 	return map[string]any{
 		"metadata": map[string]any{
 			"name":        name,
@@ -182,8 +225,39 @@ func fakeInventoryNode(
 			"labels":      labels,
 			"annotations": annotations,
 		},
+		"spec": map[string]any{
+			"unschedulable": cordoned,
+		},
 		"status": status,
 	}
+}
+
+func fakeKubectlGetPods(args []string) int {
+	nodeName := flagValue(args, "--field-selector")
+	nodeName = strings.TrimPrefix(nodeName, "spec.nodeName=")
+	if nodeName == "" || (!containsSequence(args, "-o", "json") && !containsArg(args, "-o=json")) {
+		return commandFailure(91, "pod inventory must select one node as JSON")
+	}
+	items := []any{
+		map[string]any{
+			"metadata": map[string]any{
+				"name":            "cilium-" + nodeName,
+				"ownerReferences": []any{map[string]any{"kind": "DaemonSet"}},
+			},
+			"status": map[string]any{"phase": "Running"},
+		},
+	}
+	if !wordListContains(os.Getenv("FAKE_EMPTY_WORKLOAD_NODES"), nodeName) {
+		items = append(items, map[string]any{
+			"metadata": map[string]any{
+				"name":            "workload-" + nodeName,
+				"ownerReferences": []any{map[string]any{"kind": "ReplicaSet"}},
+			},
+			"status": map[string]any{"phase": "Running"},
+		})
+	}
+	fmt.Println(encodeJSON(map[string]any{"items": items}))
+	return 0
 }
 
 func setInventoryProof(node any, revision, image string) {
@@ -264,7 +338,8 @@ func fakeKubectlGetNode(args []string) int {
 			"taints":        taints,
 		},
 		"status": map[string]any{
-			"addresses": []any{map[string]any{"type": "InternalIP", "address": nodeIP}},
+			"addresses":  []any{map[string]any{"type": "InternalIP", "address": nodeIP}},
+			"conditions": []any{map[string]any{"type": "Ready", "status": "True"}},
 		},
 	}
 	fmt.Println(encodeJSON(node))
@@ -352,6 +427,9 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 			patch[0].Path != "/metadata/resourceVersion" || fmt.Sprint(patch[0].Value) != currentResourceVersion {
 			return commandFailure(56, "invalid atomic cordon claim")
 		}
+		if !hasPatchOperation(patch, "test", "/metadata/uid", nodeName+"-uid") {
+			return commandFailure(56, "atomic cordon claim omitted node UID")
+		}
 		setMarkerContent("cordon-owner-"+nodeName, owner)
 		touchMarker("cordoned-" + nodeName)
 		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
@@ -368,6 +446,7 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 	}
 	if len(patch) == 0 || patch[0].Operation != "test" ||
 		patch[0].Path != "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner" ||
+		!hasPatchOperation(patch, "test", "/metadata/uid", nodeName+"-uid") ||
 		!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
 		!hasPatchOperation(patch, "add", "/spec/unschedulable", false) ||
 		!hasPatchPath(patch, "remove", "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner") {
@@ -525,7 +604,9 @@ func fakeKubectlGetRuntimeProbe(args []string) int {
 		pullSecrets = append(pullSecrets, map[string]any{"name": "injected-pull-secret"})
 	}
 	status := map[string]any{}
-	if wordListContains(os.Getenv("FAKE_RUNTIME_PULL_FAIL_NODES"), probeNode) ||
+	probeIP, _ := fakeNodeAddress(probeNode)
+	if (wordListContains(os.Getenv("FAKE_RUNTIME_PULL_FAIL_NODES"), probeNode) &&
+		!markerExists("talos-reboot-"+probeIP)) ||
 		wordListContains(os.Getenv("FAKE_RUNTIME_PULL_FAIL_IMAGES"), probeImage) {
 		status["containerStatuses"] = []any{map[string]any{
 			"state": map[string]any{"waiting": map[string]any{"reason": "ImagePullBackOff"}},
