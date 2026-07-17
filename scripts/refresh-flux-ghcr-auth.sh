@@ -960,6 +960,49 @@ revalidate_node_scheduling_guard() {
   fi
 }
 
+wait_for_node_lifecycle_taints_to_clear() {
+  local node_name="$1" was_cordoned="$2" owner_token="$3"
+  local initial_node_uid="$4" initial_node_taints="$5" result_file="$6"
+  local selected_node_ip="$7" selected_node_role="$8"
+  local attempt
+
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get node "${node_name}" \
+      --output json \
+      > "${cordon_state_file}" 2> "${result_file}"; then
+      echo "::error::Could not re-read Talos node ${node_name} while waiting for its post-reboot lifecycle taints to clear; refusing image verification."
+      emit_safe_operation_output "lifecycle-taint-read" "${result_file}"
+      return 1
+    fi
+    if ! selected_node_identity_is_current \
+      "${cordon_state_file}" \
+      "${node_name}" \
+      "${initial_node_uid}" \
+      "${selected_node_ip}" \
+      "${selected_node_role}" \
+      || ! node_scheduling_state_is_safe_while_lifecycle_taints_clear \
+        "${cordon_state_file}" \
+        "${was_cordoned}" \
+        "${owner_token}" \
+        "${initial_node_uid}" \
+        "${initial_node_taints}"; then
+      echo "::error::Talos node ${node_name} identity changed, cordon ownership changed, or non-lifecycle scheduling safety state changed while waiting for its post-reboot lifecycle taints to clear; refusing image verification."
+      return 1
+    fi
+    if ! node_has_lifecycle_taints "${cordon_state_file}"; then
+      return 0
+    fi
+    if ((attempt < SYNC_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
+  done
+
+  echo "::error::Timed out waiting for Talos node ${node_name} post-reboot lifecycle taints to clear; it remains cordoned and image verification was not attempted."
+  return 1
+}
+
 # Talos returns gRPC NotFound with the exact image reference when that image is
 # already absent from the selected runtime namespace. Match both so transport,
 # authorization, and unrelated removal failures remain fatal.
@@ -1229,6 +1272,10 @@ process_talos_node_target() {
       emit_safe_operation_output "ready" "${reboot_result_file}"
       return 1
     fi
+    wait_for_node_lifecycle_taints_to_clear \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${reboot_result_file}" "${node_ip}" "${node_role}" || return 1
   fi
 
     # A reboot/readiness wait or even a short image-only cordon can outlive a

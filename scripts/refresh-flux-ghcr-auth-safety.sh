@@ -93,6 +93,57 @@ node_scheduling_state_is_safe_to_reboot() {
   ' "${state_file}" >/dev/null
 }
 
+# Kubernetes may briefly retain its Ready-condition lifecycle taints after the
+# Ready condition itself turns True. While waiting for those controller-owned
+# taints to disappear, preserve every other part of the captured scheduling
+# intent exactly; a replacement, ownership change, uncordon, or unrelated taint
+# must still fail closed immediately.
+node_scheduling_state_is_safe_while_lifecycle_taints_clear() {
+  local state_file="$1"
+  local was_cordoned="$2"
+  local owner_token="$3"
+  local initial_node_uid="$4"
+  local initial_node_taints="$5"
+
+  jq -e \
+    --arg owner_annotation \
+      "platform.devantler.tech/ghcr-auth-drain-owner" \
+    --arg owner "${owner_token}" \
+    --arg uid "${initial_node_uid}" \
+    --argjson was_cordoned "${was_cordoned}" \
+    --argjson initial_taints "${initial_node_taints}" '
+    def scheduling_taints:
+      map(select((
+        (.key == "node.kubernetes.io/unschedulable"
+          and .effect == "NoSchedule"
+          and (.value // "") == "")
+        or .key == "node.kubernetes.io/not-ready"
+        or .key == "node.kubernetes.io/unreachable"
+      ) | not))
+      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]);
+    .metadata.uid == $uid
+    and .metadata.deletionTimestamp == null
+    and .spec.unschedulable == true
+    and (if $was_cordoned == 0 then
+      .metadata.annotations[$owner_annotation] == $owner
+    else
+      (.metadata.annotations[$owner_annotation] // "") == ""
+    end)
+    and (((.spec.taints // []) | scheduling_taints)
+      == ($initial_taints | scheduling_taints))
+  ' "${state_file}" >/dev/null
+}
+
+node_has_lifecycle_taints() {
+  local state_file="$1"
+
+  jq -e '
+    any(.spec.taints[]?;
+      .key == "node.kubernetes.io/not-ready"
+      or .key == "node.kubernetes.io/unreachable")
+  ' "${state_file}" >/dev/null
+}
+
 # Bind a selected node name to the same UID, InternalIP, and role immediately
 # before any Talos API mutation. Names and addresses can be reused when an
 # autoscaler replaces a node between inventory reads; the immutable UID keeps

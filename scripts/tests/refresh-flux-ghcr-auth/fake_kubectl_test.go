@@ -323,6 +323,25 @@ func fakeKubectlGetNode(args []string) int {
 			"effect": "NoSchedule",
 		})
 	}
+	if markerExists("ready-"+nodeName) &&
+		(nodeName == os.Getenv("FAKE_TRANSIENT_LIFECYCLE_TAINT_AFTER_READY_NODE") ||
+			nodeName == os.Getenv("FAKE_PERSISTENT_LIFECYCLE_TAINT_AFTER_READY_NODE")) {
+		readMarker := "post-ready-node-read-count-" + nodeName
+		readCount := parseInt(markerContent(readMarker), 0) + 1
+		setMarkerContent(readMarker, strconv.Itoa(readCount))
+		if readCount == 1 || nodeName == os.Getenv("FAKE_PERSISTENT_LIFECYCLE_TAINT_AFTER_READY_NODE") {
+			taints = append(taints,
+				map[string]any{
+					"key":    "node.kubernetes.io/not-ready",
+					"effect": "NoSchedule",
+				},
+				map[string]any{
+					"key":    "node.kubernetes.io/unreachable",
+					"effect": "NoExecute",
+				},
+			)
+		}
+	}
 	resourceVersion := defaultString(markerContent("resource-version-"+nodeName), "10")
 	node := map[string]any{
 		"metadata": map[string]any{
