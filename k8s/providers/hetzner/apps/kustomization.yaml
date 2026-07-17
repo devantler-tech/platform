@@ -66,6 +66,22 @@ patches:
   # add-security-context Kyverno rule. Local/CI and stateful workloads stay
   # out; in mixed namespaces (umami, backstage) the rule itself excludes the
   # CNPG database pods via their cnpg.io/cluster label.
+  # Headlamp is a separately gated stateful pilot (#2650): its chart explicitly
+  # renders hostUsers: true, so the namespace-label Kyverno rule cannot override
+  # that authored value. Keep this exact-target values patch default-off until
+  # the concurrent node-auth rollout has settled and Headlamp/Longhorn are
+  # healthy. Activation uncomments the whole block; recovery re-comments/reverts
+  # it and never deletes the plugins PVC.
+  # - target:
+  #     group: helm.toolkit.fluxcd.io
+  #     version: v2
+  #     kind: HelmRelease
+  #     name: headlamp
+  #     namespace: headlamp
+  #   patch: |-
+  #     - op: add
+  #       path: /spec/values/hostUsers
+  #       value: false
   - path: whoami/patches/enable-user-namespaces.yaml
   - path: homepage/patches/enable-user-namespaces.yaml
   - path: umami/patches/enable-user-namespaces.yaml
