@@ -140,6 +140,32 @@ func TestPersistentLifecycleTaintsKeepNodeCordoned(t *testing.T) {
 	}
 }
 
+func TestReadyFalseWithoutLifecycleTaintKeepsNodeCordoned(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_NOT_READY_WITHOUT_LIFECYCLE_TAINT_NODE": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "remain Ready and for post-reboot lifecycle taints to clear")
+	if reads := mustRead(filepath.Join(f.syncStateDir, "post-ready-node-read-count-prod-worker-1")); reads != "2" {
+		t.Errorf("post-Ready node reads = %q, want bounded 2", reads)
+	}
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-ready:prod-worker-1")
+	for _, unexpected := range []string{
+		"talos-remove:10.0.0.2:" + ksailTargetImage,
+		"node-uncordon:prod-worker-1",
+		"talos-revision:10.0.0.2",
+		"root-patch",
+	} {
+		requireNoLine(t, operations, unexpected)
+	}
+	if !pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-1")) ||
+		!pathExists(filepath.Join(f.syncStateDir, "cordoned-prod-worker-1")) {
+		t.Error("Ready=False state did not preserve the owned cordon")
+	}
+}
+
 func TestReplacementAfterUncordonBlocksRevisionMarker(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_NODE_REPLACED_AFTER_UNCORDON_NODE": "prod-worker-1"})

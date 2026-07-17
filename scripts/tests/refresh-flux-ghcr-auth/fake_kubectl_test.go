@@ -218,6 +218,21 @@ func fakeInventoryNode(
 		status["conditions"] = []any{map[string]any{"type": "Ready", "status": "True"}}
 	}
 	cordoned := wordListContains(os.Getenv("FAKE_CORDONED_NODES"), name) || markerExists("cordoned-"+name)
+	taints := []any{}
+	if cordoned {
+		taints = append(taints, map[string]any{
+			"key":    "node.kubernetes.io/unschedulable",
+			"effect": "NoSchedule",
+		})
+	}
+	if markerExists("uncordoned-"+name) &&
+		name == os.Getenv("FAKE_TRANSIENT_UNSCHEDULABLE_TAINT_AFTER_RELEASE_NODE") &&
+		!markerExists("release-taint-cleared-"+name) {
+		taints = append(taints, map[string]any{
+			"key":    "node.kubernetes.io/unschedulable",
+			"effect": "NoSchedule",
+		})
+	}
 	return map[string]any{
 		"metadata": map[string]any{
 			"name":        name,
@@ -227,6 +242,7 @@ func fakeInventoryNode(
 		},
 		"spec": map[string]any{
 			"unschedulable": cordoned,
+			"taints":        taints,
 		},
 		"status": status,
 	}
@@ -237,6 +253,10 @@ func fakeKubectlGetPods(args []string) int {
 	nodeName = strings.TrimPrefix(nodeName, "spec.nodeName=")
 	if nodeName == "" || (!containsSequence(args, "-o", "json") && !containsArg(args, "-o=json")) {
 		return commandFailure(91, "pod inventory must select one node as JSON")
+	}
+	if nodeName == os.Getenv("FAKE_MALFORMED_POD_INVENTORY_NODE") {
+		fmt.Println(`{}`)
+		return 0
 	}
 	items := []any{
 		map[string]any{
@@ -323,6 +343,20 @@ func fakeKubectlGetNode(args []string) int {
 			"effect": "NoSchedule",
 		})
 	}
+	if markerExists("uncordoned-"+nodeName) &&
+		nodeName == os.Getenv("FAKE_TRANSIENT_UNSCHEDULABLE_TAINT_AFTER_RELEASE_NODE") {
+		readMarker := "post-release-node-read-count-" + nodeName
+		readCount := parseInt(markerContent(readMarker), 0) + 1
+		setMarkerContent(readMarker, strconv.Itoa(readCount))
+		if readCount <= 2 {
+			taints = append(taints, map[string]any{
+				"key":    "node.kubernetes.io/unschedulable",
+				"effect": "NoSchedule",
+			})
+		} else {
+			touchMarker("release-taint-cleared-" + nodeName)
+		}
+	}
 	if markerExists("ready-"+nodeName) &&
 		(nodeName == os.Getenv("FAKE_TRANSIENT_LIFECYCLE_TAINT_AFTER_READY_NODE") ||
 			nodeName == os.Getenv("FAKE_PERSISTENT_LIFECYCLE_TAINT_AFTER_READY_NODE")) {
@@ -342,7 +376,20 @@ func fakeKubectlGetNode(args []string) int {
 			)
 		}
 	}
+	readyStatus := "True"
+	if markerExists("ready-"+nodeName) &&
+		nodeName == os.Getenv("FAKE_NOT_READY_WITHOUT_LIFECYCLE_TAINT_NODE") {
+		readMarker := "post-ready-node-read-count-" + nodeName
+		readCount := parseInt(markerContent(readMarker), 0) + 1
+		setMarkerContent(readMarker, strconv.Itoa(readCount))
+		readyStatus = "False"
+	}
 	resourceVersion := defaultString(markerContent("resource-version-"+nodeName), "10")
+	nodeSpec := map[string]any{"taints": taints}
+	if !markerExists("uncordoned-"+nodeName) ||
+		nodeName != os.Getenv("FAKE_OMIT_UNSCHEDULABLE_AFTER_RELEASE_NODE") {
+		nodeSpec["unschedulable"] = cordoned
+	}
 	node := map[string]any{
 		"metadata": map[string]any{
 			"name":              nodeName,
@@ -352,13 +399,10 @@ func fakeKubectlGetNode(args []string) int {
 			"deletionTimestamp": nil,
 			"annotations":       annotations,
 		},
-		"spec": map[string]any{
-			"unschedulable": cordoned,
-			"taints":        taints,
-		},
+		"spec": nodeSpec,
 		"status": map[string]any{
 			"addresses":  []any{map[string]any{"type": "InternalIP", "address": nodeIP}},
-			"conditions": []any{map[string]any{"type": "Ready", "status": "True"}},
+			"conditions": []any{map[string]any{"type": "Ready", "status": readyStatus}},
 		},
 	}
 	fmt.Println(encodeJSON(node))
@@ -631,6 +675,12 @@ func fakeKubectlGetRuntimeProbe(args []string) int {
 			"state": map[string]any{"waiting": map[string]any{"reason": "ImagePullBackOff"}},
 		}}
 	} else {
+		if os.Getenv("FAKE_LOG_RUNTIME_PROBE_SUCCESS") == "true" {
+			appendEnvFile(
+				"OPERATION_LOG",
+				"runtime-probe-success:"+probeNode+":"+probeImage+"\n",
+			)
+		}
 		status["containerStatuses"] = []any{map[string]any{
 			"imageID": "ghcr.io/private@sha256:runtime-probe",
 			"state": map[string]any{

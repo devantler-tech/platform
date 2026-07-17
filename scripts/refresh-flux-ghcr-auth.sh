@@ -568,6 +568,43 @@ verify_peer_runtime_pull_overlap() {
   done < "${runtime_probe_targets_file}"
 }
 
+verify_bootstrap_quarantine_covers_unproved_destinations() {
+  local pending_targets_file="$1"
+  local peer_name peer_uid
+
+  if ! jq -r '
+    .items[]
+    | select(.metadata.deletionTimestamp == null)
+    | select((.spec.unschedulable // false) == false)
+    | select(any(.spec.taints[]?;
+        .effect == "NoSchedule" or .effect == "NoExecute") | not)
+    | select(any(.status.conditions[]?;
+        .type == "Ready" and .status == "True"))
+    | [.metadata.name, .metadata.uid]
+    | @tsv
+  ' "${runtime_probe_nodes_file}" > "${runtime_probe_targets_file}"; then
+    echo "::error::Could not enumerate workload destinations for bootstrap quarantine; refusing the roll."
+    return 1
+  fi
+
+  while IFS=$'\t' read -r peer_name peer_uid; do
+    [[ -n "${peer_name}" && -n "${peer_uid}" ]] || {
+      echo "::error::Workload-destination identity was empty during bootstrap quarantine; refusing the roll."
+      return 1
+    }
+    if grep -Fqx -- "${peer_uid}" "${runtime_proved_targets_file}"; then
+      continue
+    fi
+    if ! awk -F '\t' -v uid="${peer_uid}" '
+      $4 == "reboot" && $5 == uid { found = 1 }
+      END { exit !found }
+    ' "${pending_targets_file}"; then
+      echo "::error::Runtime-unproved workload destination ${peer_name} is not a pending credential-reboot target; refusing bootstrap quarantine."
+      return 1
+    fi
+  done < "${runtime_probe_targets_file}"
+}
+
 # Atomically claim the right to reverse the cordon and make the node
 # unschedulable. Combining both mutations closes the gap where another actor
 # could cordon after our ownership annotation but before kubectl drain. A bare
@@ -759,7 +796,8 @@ node_has_no_evictable_workloads() {
     return 2
   fi
   jq -e '
-    all(.items[]?;
+    (.items | type == "array")
+    and all(.items[];
       (.status.phase == "Succeeded" or .status.phase == "Failed")
       or ((.metadata.annotations["kubernetes.io/config.mirror"] // "") != "")
       or any(.metadata.ownerReferences[]?; .kind == "DaemonSet"))
@@ -780,6 +818,53 @@ node_is_ready_workload_destination() {
     and all(.spec.taints[]?;
       .effect != "NoSchedule" and .effect != "NoExecute")
   ' "${state_file}" >/dev/null
+}
+
+wait_for_bootstrap_seed_release() {
+  local node_name="$1" node_uid="$2" node_ip="$3" node_role="$4"
+  local attempt
+
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get node "${node_name}" \
+      --output json > "${cordon_state_file}"; then
+      echo "::error::Could not re-read proven bootstrap seed ${node_name} while waiting for scheduling release."
+      return 1
+    fi
+    if ! selected_node_identity_is_current \
+      "${cordon_state_file}" "${node_name}" "${node_uid}" \
+      "${node_ip}" "${node_role}"; then
+      echo "::error::Proven bootstrap seed ${node_name} changed identity before it could become an eviction destination."
+      return 1
+    fi
+    # The release patch is already committed at this point. Wait only for
+    # Kubernetes' controller-owned Ready/taint projection; an owner, renewed
+    # spec cordon, or unrelated hard taint is newer scheduling intent.
+    if ! jq -e \
+      --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" '
+      ((.metadata.annotations[$owner_annotation] // "") == "")
+      and ((.spec.unschedulable // false) == false)
+      and all(.spec.taints[]?;
+        (.effect != "NoSchedule" and .effect != "NoExecute")
+        or .key == "node.kubernetes.io/unschedulable"
+        or .key == "node.kubernetes.io/not-ready"
+        or .key == "node.kubernetes.io/unreachable")
+    ' "${cordon_state_file}" >/dev/null; then
+      echo "::error::Scheduling intent changed on proven bootstrap seed ${node_name} after its owned cordon was released."
+      return 1
+    fi
+    if node_is_ready_workload_destination \
+      "${cordon_state_file}" "${node_uid}"; then
+      return 0
+    fi
+    if ((attempt < SYNC_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
+  done
+
+  echo "::error::Timed out waiting for proven bootstrap seed ${node_name} to become a workload-schedulable eviction destination; root Flux auth remains unchanged."
+  return 1
 }
 
 # When the previous host credential is already revoked, no stale runtime can
@@ -991,7 +1076,11 @@ wait_for_node_lifecycle_taints_to_clear() {
       echo "::error::Talos node ${node_name} identity changed, cordon ownership changed, or non-lifecycle scheduling safety state changed while waiting for its post-reboot lifecycle taints to clear; refusing image verification."
       return 1
     fi
-    if ! node_has_lifecycle_taints "${cordon_state_file}"; then
+    if ! node_has_lifecycle_taints "${cordon_state_file}" \
+      && jq -e '
+        any(.status.conditions[]?;
+          .type == "Ready" and .status == "True")
+      ' "${cordon_state_file}" >/dev/null; then
       return 0
     fi
     if ((attempt < SYNC_ATTEMPTS)); then
@@ -999,7 +1088,7 @@ wait_for_node_lifecycle_taints_to_clear() {
     fi
   done
 
-  echo "::error::Timed out waiting for Talos node ${node_name} post-reboot lifecycle taints to clear; it remains cordoned and image verification was not attempted."
+  echo "::error::Timed out waiting for Talos node ${node_name} to remain Ready and for post-reboot lifecycle taints to clear; it remains cordoned and image verification was not attempted."
   return 1
 }
 
@@ -1053,6 +1142,7 @@ process_talos_node_target() {
   local was_cordoned=0 existing_cordon_owner="" cordon_owner_token=""
   local initial_node_uid="" initial_node_taints="[]"
   local bootstrap_state_file="${bootstrap_cordon_dir}/${node_name}.json"
+  local probe_image
 
   if [[ "${node_mode}" != "reboot" && "${node_mode}" != "image-only" ]]; then
     echo "::error::Unknown Talos GHCR synchronization mode '${node_mode}' for ${node_name}."
@@ -1313,6 +1403,19 @@ process_talos_node_target() {
       return 1
     fi
 
+    # Talos' image API authenticates from machine config, not through the
+    # kubelet's running CRI client. Before this freshly rebooted node can
+    # receive workloads, prove both private images through kubelet/containerd
+    # while the bridge-owned cordon is still in place.
+    if [[ "${node_mode}" == "reboot" ]]; then
+      for probe_image in "${RUNTIME_CREDENTIAL_PROBE_IMAGES[@]}"; do
+        probe_node_runtime_pull "${node_name}" "${probe_image}" || return 1
+      done
+      if ! grep -Fqx -- "${node_uid}" "${runtime_proved_targets_file}"; then
+        printf '%s\n' "${node_uid}" >> "${runtime_proved_targets_file}"
+      fi
+    fi
+
     # Restore original scheduling intent only after the uncached pull succeeds.
     # On failure, a cordon claimed by this bridge remains as a fail-closed signal
     # that the node must not receive new pods until registry access is repaired.
@@ -1472,6 +1575,12 @@ sync_talos_registry_auth() {
               "runtime-overlap" "${bootstrap_overlap_result}"
             return 1
           fi
+          if ! verify_bootstrap_quarantine_covers_unproved_destinations \
+            "${talos_pending_targets}"; then
+            emit_safe_operation_output \
+              "runtime-overlap" "${bootstrap_overlap_result}"
+            return 1
+          fi
           if ! prepare_runtime_bootstrap_roll \
             "${desired_revision}" "${talos_pending_targets}"; then
             emit_safe_operation_output \
@@ -1507,6 +1616,12 @@ sync_talos_registry_auth() {
           "${node_ip}" \
           "${node_mode}" \
           "${node_uid}" || return 1
+        if ((bootstrap_mode == 1)) \
+          && [[ "${node_uid}" == "${bootstrap_seed_uid}" ]]; then
+          wait_for_bootstrap_seed_release \
+            "${node_name}" "${node_uid}" \
+            "${node_ip}" "${node_role}" || return 1
+        fi
         rm -f \
           "${bootstrap_cordon_dir}/${node_name}.json" \
           "${bootstrap_retain_dir}/${node_name}"

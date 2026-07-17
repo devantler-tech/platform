@@ -159,6 +159,7 @@ func TestRevokedPreviousCredentialBootstrapsThroughEmptyWorker(t *testing.T) {
 		"FAKE_BOOTSTRAP_WORKER_NAME":     "prod-worker-2",
 		"FAKE_RUNTIME_PULL_FAIL_NODES":   "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
 		"FAKE_EMPTY_WORKLOAD_NODES":      "prod-worker-2",
+		"FAKE_LOG_RUNTIME_PROBE_SUCCESS": "true",
 	})
 	requireSuccessResult(t, result)
 	output := result.stdout + result.stderr
@@ -167,10 +168,14 @@ func TestRevokedPreviousCredentialBootstrapsThroughEmptyWorker(t *testing.T) {
 	seedDrain := lineIndex(t, operations, "node-drain:prod-worker-2")
 	seedReboot := lineIndex(t, operations, "talos-reboot:10.0.0.5")
 	seedPull := lineIndex(t, operations, "talos-pull:10.0.0.5:"+ksailTargetImage)
+	seedWeddingProbe := lineIndex(t, operations, "runtime-probe-success:prod-worker-2:ghcr.io/devantler-tech/wedding-app:latest")
+	seedCoachingProbe := lineIndex(t, operations, "runtime-probe-success:prod-worker-2:ghcr.io/devantler-tech/ascoachingogvaner:latest")
 	seedRelease := lineIndex(t, operations, "node-uncordon:prod-worker-2")
 	firstWorkloadDrain := lineIndex(t, operations, "node-drain:prod-worker-1")
-	if seedDrain >= seedReboot || seedReboot >= seedPull || seedPull >= seedRelease || seedRelease >= firstWorkloadDrain {
-		t.Fatalf("unsafe bootstrap ordering: seed drain=%d reboot=%d pull=%d release=%d workload drain=%d", seedDrain, seedReboot, seedPull, seedRelease, firstWorkloadDrain)
+	if seedDrain >= seedReboot || seedReboot >= seedPull ||
+		seedPull >= seedWeddingProbe || seedWeddingProbe >= seedCoachingProbe ||
+		seedCoachingProbe >= seedRelease || seedRelease >= firstWorkloadDrain {
+		t.Fatalf("unsafe bootstrap ordering: seed drain=%d reboot=%d Talos pull=%d runtime probes=(%d,%d) release=%d workload drain=%d", seedDrain, seedReboot, seedPull, seedWeddingProbe, seedCoachingProbe, seedRelease, firstWorkloadDrain)
 	}
 	for _, nodeName := range []string{
 		"prod-worker-1",
@@ -199,6 +204,92 @@ func TestAllStaleRuntimesWithoutEmptyWorkerFailClosed(t *testing.T) {
 	operations := readLines(f.operationLog)
 	requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
 	requireNoLine(t, operations, "root-patch")
+}
+
+func TestBootstrapRejectsUnprovedCurrentMarkedDestination(t *testing.T) {
+	f := newFixture(t)
+	ready := []any{map[string]any{"type": "Ready", "status": "True"}}
+	inventory := map[string]any{"items": []any{
+		nodeFixture("prod-worker-1", "prod-worker-1-uid", "10.0.0.2", false, ready, nil),
+		nodeFixture(
+			"prod-control-plane-1",
+			"prod-control-plane-1-uid",
+			"10.0.0.1",
+			true,
+			ready,
+			map[string]any{
+				"platform.devantler.tech/ghcr-pull-verified-revision-v2": f.expectedRevision(),
+				"platform.devantler.tech/ghcr-pull-verified-image-v2":    ksailTargetImage,
+			},
+		),
+	}}
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_NODE_JSON":               encodeJSON(inventory),
+		"FAKE_RUNTIME_PULL_FAIL_NODES": "prod-control-plane-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "not a pending credential-reboot target")
+	operations := readLines(f.operationLog)
+	requireNotContains(t, strings.Join(operations, "\n"), "node-claim-cordon:")
+	requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
+	requireNoLine(t, operations, "root-patch")
+}
+
+func TestMalformedPodInventoryCannotAuthorizeBootstrapSeed(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_ALL_TALOS_NODES_STALE":        "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":        "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES":      "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_EMPTY_WORKLOAD_NODES":         "prod-worker-2",
+		"FAKE_MALFORMED_POD_INVENTORY_NODE": "prod-worker-2",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "no empty workload-schedulable node")
+	operations := readLines(f.operationLog)
+	requireNotContains(t, strings.Join(operations, "\n"), "node-claim-cordon:")
+	requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
+	requireNoLine(t, operations, "root-patch")
+}
+
+func TestBootstrapWaitsForSeedReleaseTaintToClear(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_REVOKE_CURRENT_ROOT_TOKEN":                        "true",
+		"FAKE_ALL_TALOS_NODES_STALE":                            "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":                            "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES":                          "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_EMPTY_WORKLOAD_NODES":                             "prod-worker-2",
+		"FAKE_TRANSIENT_UNSCHEDULABLE_TAINT_AFTER_RELEASE_NODE": "prod-worker-2",
+	})
+	requireSuccessResult(t, result)
+	if reads := mustRead(filepath.Join(f.syncStateDir, "post-release-node-read-count-prod-worker-2")); reads != "3" {
+		t.Fatalf("post-release node reads = %q, want identity revalidation plus two bounded release checks", reads)
+	}
+	if !pathExists(filepath.Join(f.syncStateDir, "release-taint-cleared-prod-worker-2")) {
+		t.Fatal("bootstrap continued before the lagging release taint cleared")
+	}
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "talos-reboot:10.0.0.5")
+	requireLine(t, operations, "node-drain:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+}
+
+func TestBootstrapAcceptsOmittedUnschedulableAfterSeedRelease(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_REVOKE_CURRENT_ROOT_TOKEN":             "true",
+		"FAKE_ALL_TALOS_NODES_STALE":                 "true",
+		"FAKE_BOOTSTRAP_WORKER_NAME":                 "prod-worker-2",
+		"FAKE_RUNTIME_PULL_FAIL_NODES":               "prod-worker-1 prod-worker-2 prod-control-plane-1 prod-control-plane-2 prod-control-plane-3",
+		"FAKE_EMPTY_WORKLOAD_NODES":                  "prod-worker-2",
+		"FAKE_OMIT_UNSCHEDULABLE_AFTER_RELEASE_NODE": "prod-worker-2",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-uncordon:prod-worker-2")
+	requireLine(t, operations, "node-drain:prod-worker-1")
+	requireLine(t, operations, "root-patch")
 }
 
 func TestBootstrapFailureBeforeRebootRestoresEveryOwnedCordon(t *testing.T) {
