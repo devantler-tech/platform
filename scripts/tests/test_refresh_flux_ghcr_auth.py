@@ -762,6 +762,12 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                   node_ip=10.0.0.99
                 fi
                 if [[ "$node_target" == \
+                  "${FAKE_NODE_REPLACED_AFTER_UNCORDON_NODE:-disabled}" \
+                  && -f "$FAKE_SYNC_STATE_DIR/uncordoned-${node_target}" ]]; then
+                  node_uid="${node_target}-replacement-uid"
+                  node_ip=10.0.0.99
+                fi
+                if [[ "$node_target" == \
                   "${FAKE_NODE_IP_CHANGED_AFTER_DRAIN_NODE:-disabled}" \
                   && -f "$FAKE_SYNC_STATE_DIR/drained-${node_target}" ]]; then
                   node_ip=10.0.0.99
@@ -1003,6 +1009,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 > "$resource_version_file"
               rm "$owner_file"
               rm -f "$FAKE_SYNC_STATE_DIR/cordoned-${node_target}"
+              touch "$FAKE_SYNC_STATE_DIR/uncordoned-${node_target}"
               exit 0
             fi
 
@@ -1948,6 +1955,20 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertIn("talos-reboot:10.0.0.2", operations)
         self.assertNotIn("talos-remove:10.0.0.2", "\n".join(operations))
         self.assertNotIn("node-uncordon:prod-worker-1", operations)
+        self.assertNotIn("root-patch", operations)
+
+    def test_replacement_after_uncordon_blocks_revision_marker(self) -> None:
+        """Rebind UID and IP immediately before the final Talos marker write."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_NODE_REPLACED_AFTER_UNCORDON_NODE="prod-worker-1",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("identity changed", result.stdout + result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("node-uncordon:prod-worker-1", operations)
+        self.assertNotIn("talos-revision:10.0.0.2", operations)
         self.assertNotIn("root-patch", operations)
 
     def test_replaced_node_is_rejected_before_talos_mutation(self) -> None:

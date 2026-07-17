@@ -960,6 +960,12 @@ process_talos_node_target() {
       "${initial_node_uid}" "${initial_node_taints}" \
       "${drain_result_file}" || return 1
 
+    # The scheduling release is a Kubernetes mutation and therefore another
+    # autoscaler replacement boundary. Rebind the selected UID and InternalIP
+    # at the last possible point before the final Talos proof-marker write.
+    revalidate_selected_node_identity_before_mutation \
+      "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" || return 1
+
     # Recorded LAST, and only now: the marker means "this node's containerd has
     # provably loaded this credential revision", so it must not be written
     # before the reboot that makes that true.
