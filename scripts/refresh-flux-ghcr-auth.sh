@@ -1596,7 +1596,10 @@ process_talos_node_target() {
   local cordon_owner_token=""
   local initial_node_uid="" initial_node_taints="[]"
   local bootstrap_state_file="${bootstrap_cordon_dir}/${node_name}.json"
-  local probe_image recovery_record
+  # Bash 5 keeps an unassigned `local` nounset; Bash 3 expands it as empty.
+  # Initialise the optional recovery payload so CI and operators get the same
+  # fail-closed cleanup path when no bootstrap recovery record was required.
+  local probe_image recovery_record=""
 
   assert_sync_lease_held || return 1
 
