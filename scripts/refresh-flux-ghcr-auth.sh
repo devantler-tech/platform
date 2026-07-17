@@ -244,6 +244,8 @@ verify_ghcr_pull_credential() {
     reference="${target##*:}"
     if ! http_status="$(curl --disable \
       --config "${basic_config}" \
+      --connect-timeout 10 \
+      --max-time 60 \
       --silent \
       --show-error \
       --output "${token_file}" \
@@ -271,6 +273,8 @@ verify_ghcr_pull_credential() {
 
     if ! http_status="$(curl --disable \
       --config "${bearer_config}" \
+      --connect-timeout 10 \
+      --max-time 60 \
       --silent \
       --show-error \
       --output /dev/null \

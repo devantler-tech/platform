@@ -189,6 +189,11 @@ func TestUnhealthyControlPlaneBlocksTheControlPlaneReboot(t *testing.T) {
 				"platform.devantler.tech/ghcr-pull-verified-revision-v2": f.expectedRevision(),
 				"platform.devantler.tech/ghcr-pull-verified-image-v2":    ksailTargetImage,
 			}),
+		nodeFixture("prod-control-plane-3", "prod-control-plane-3-uid", "10.0.0.4", true, ready,
+			map[string]any{
+				"platform.devantler.tech/ghcr-pull-verified-revision-v2": f.expectedRevision(),
+				"platform.devantler.tech/ghcr-pull-verified-image-v2":    ksailTargetImage,
+			}),
 	}}
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_NODE_JSON": encodeJSON(inventory)})
 	requireFailureResult(t, result)

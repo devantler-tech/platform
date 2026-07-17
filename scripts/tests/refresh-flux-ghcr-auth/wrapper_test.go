@@ -57,7 +57,6 @@ func TestKSailLifecycleWrapperUsesOnlySOPSPullToken(t *testing.T) {
 		{"cluster", "update"},
 	}
 	for _, command := range commands {
-		command := command
 		t.Run(strings.Join(command, " "), func(t *testing.T) {
 			f := newFixture(t)
 			result := f.runKSailPullWrapper(validConfig(), command, nil)
@@ -277,7 +276,6 @@ func TestMissingOrMalformedRegistryAuthFailsClosed(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			f := newFixture(t)
 			result := f.runHelper(test.config, nil, nil)
@@ -353,7 +351,6 @@ func TestPartialBootstrapRepairsRootWithoutForcingMissingFanout(t *testing.T) {
 		"externalsecret/kyverno/ghcr-auth",
 	}
 	for _, resource := range missingResources {
-		resource := resource
 		t.Run(resource, func(t *testing.T) {
 			f := newFixture(t)
 			result := f.runHelper(

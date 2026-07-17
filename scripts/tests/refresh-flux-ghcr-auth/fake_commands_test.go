@@ -84,10 +84,15 @@ func fakeCurl(args []string) int {
 		return commandFailure(90, "curl must disable user config")
 	}
 	var configPath, outputPath, scope, requestURL string
+	var connectTimeout, maxTime string
 	for index := 1; index < len(args); {
 		switch args[index] {
 		case "--config":
 			configPath = requiredNext(args, &index)
+		case "--connect-timeout":
+			connectTimeout = requiredNext(args, &index)
+		case "--max-time":
+			maxTime = requiredNext(args, &index)
 		case "--output":
 			outputPath = requiredNext(args, &index)
 		case "--data-urlencode":
@@ -107,6 +112,9 @@ func fakeCurl(args []string) int {
 			}
 			return commandFailure(90, "unexpected curl argument: %s", args[index])
 		}
+	}
+	if connectTimeout != "10" || maxTime != "60" {
+		return commandFailure(90, "curl requires 10-second connect and 60-second total timeouts")
 	}
 	config := mustReadCommandFile(configPath)
 	if outputPath == "" || requestURL == "" {

@@ -101,6 +101,71 @@ func TestFakeCurlRequiresAnchoredUserConfig(t *testing.T) {
 	}
 }
 
+func TestFakeCurlRequiresBoundedTimeouts(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+		args   []string
+	}{
+		{
+			name:   "token exchange",
+			config: "user = fixture:token\n",
+			args: []string{
+				"--disable",
+				"--config", "config",
+				"--output", "response",
+				"--data-urlencode", "scope=repository:devantler-tech/ksail:pull",
+				"--write-out", "%{http_code}",
+				"--silent",
+				"--show-error",
+				"--get",
+				"https://ghcr.io/token",
+			},
+		},
+		{
+			name:   "manifest read",
+			config: "header = \"Authorization: Bearer fixture-registry-token\"\n",
+			args: []string{
+				"--disable",
+				"--config", "config",
+				"--output", "/dev/null",
+				"--write-out", "%{http_code}",
+				"--header", "Accept: application/vnd.oci.image.manifest.v1+json",
+				"--silent",
+				"--show-error",
+				"https://ghcr.io/v2/devantler-tech/ksail/manifests/latest",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			configPath := filepath.Join(workspace, "curl.config")
+			responsePath := filepath.Join(workspace, "response.json")
+			t.Setenv("REGISTRY_READ_LOG", filepath.Join(workspace, "registry-reads.log"))
+			if err := os.WriteFile(configPath, []byte(test.config), 0o600); err != nil {
+				t.Fatalf("write curl config: %v", err)
+			}
+			args := append([]string(nil), test.args...)
+			for index, argument := range args {
+				switch argument {
+				case "config":
+					args[index] = configPath
+				case "response":
+					args[index] = responsePath
+				}
+			}
+
+			exitCode := fakeCurl(args)
+
+			if exitCode == 0 {
+				t.Fatal("fake curl accepted an unbounded registry request")
+			}
+		})
+	}
+}
+
 func setFakeKSailEnvironment(t *testing.T, workspace string) {
 	t.Helper()
 	for _, name := range []string{
