@@ -7,11 +7,12 @@
 readonly GHCR_PULL_VERIFIED_REVISION_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-revision-v2"
 readonly GHCR_PULL_VERIFIED_IMAGE_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-image-v2"
 
-# Select nodes that have not completed the reboot-backed v2 proof for both the
-# incoming credential revision and the exact image used for the registry pull.
-# Legacy unversioned annotations deliberately do not satisfy this selector: the
-# old bridge wrote them without rebooting containerd, so every such node must
-# roll once after this contract lands.
+# Select nodes that have not completed the v2 proof for the incoming credential
+# revision or the exact image used for the registry pull. Credential-stale nodes
+# require a reboot because containerd loads registry auth only at process start;
+# image-only drift needs an uncached pull proof but must not reboot a node whose
+# current credential revision is already proven. Legacy unversioned annotations
+# deliberately select reboot mode once after this contract lands.
 select_talos_node_targets() {
   local nodes_file="$1"
   local desired_revision="$2"
@@ -25,10 +26,9 @@ select_talos_node_targets() {
     --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
     --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" '
     .items[]
-    | select(
-        (.metadata.annotations[$revision_annotation] // "") != $revision
-        or (.metadata.annotations[$image_annotation] // "") != $image
-      )
+    | (.metadata.annotations[$revision_annotation] // "") as $verified_revision
+    | (.metadata.annotations[$image_annotation] // "") as $verified_image
+    | select($verified_revision != $revision or $verified_image != $image)
     | (.metadata.labels // {}) as $labels
     | [
         (if (($labels | has("node-role.kubernetes.io/control-plane"))
@@ -37,9 +37,9 @@ select_talos_node_targets() {
         .metadata.name,
         ([.status.addresses[]
           | select(.type == "InternalIP") | .address][0]),
-        (.metadata.annotations[
-          "platform.devantler.tech/ghcr-pull-desired-revision"
-        ] // "")
+        (if $verified_revision != $revision
+          then "reboot" else "image-only" end),
+        (.metadata.uid // "")
       ]
     | @tsv
   ' "${nodes_file}" > "${unsorted_targets}"; then
@@ -53,6 +53,72 @@ select_talos_node_targets() {
     return 1
   fi
   rm -f "${unsorted_targets}"
+}
+
+# Validate the scheduling state captured immediately before a Talos reboot.
+# The bridge must still own a cordon it created; a pre-existing cordon must stay
+# ownerless, and neither path may proceed after UID, taint, deletion, or
+# schedulability drift. The unschedulable taint mirrors spec.unschedulable and is
+# excluded from the comparison; all other scheduling intent is preserved.
+node_scheduling_state_is_safe_to_reboot() {
+  local state_file="$1"
+  local was_cordoned="$2"
+  local owner_token="$3"
+  local initial_node_uid="$4"
+  local initial_node_taints="$5"
+
+  jq -e \
+    --arg owner_annotation \
+      "platform.devantler.tech/ghcr-auth-drain-owner" \
+    --arg owner "${owner_token}" \
+    --arg uid "${initial_node_uid}" \
+    --argjson was_cordoned "${was_cordoned}" \
+    --argjson initial_taints "${initial_node_taints}" '
+    .metadata.uid == $uid
+    and .metadata.deletionTimestamp == null
+    and .spec.unschedulable == true
+    and (if $was_cordoned == 0 then
+      .metadata.annotations[$owner_annotation] == $owner
+    else
+      (.metadata.annotations[$owner_annotation] // "") == ""
+    end)
+    and (((.spec.taints // [])
+      | map(select((
+          .key == "node.kubernetes.io/unschedulable"
+          and .effect == "NoSchedule"
+          and (.value // "") == ""
+        ) | not))
+      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]))
+      == $initial_taints)
+  ' "${state_file}" >/dev/null
+}
+
+# Bind a selected node name to the same UID, InternalIP, and role immediately
+# before any Talos API mutation. Names and addresses can be reused when an
+# autoscaler replaces a node between inventory reads; the immutable UID keeps
+# the bridge from patching or rebooting the wrong machine.
+selected_node_identity_is_current() {
+  local state_file="$1"
+  local expected_name="$2"
+  local expected_uid="$3"
+  local expected_ip="$4"
+  local expected_role="$5"
+
+  jq -e \
+    --arg name "${expected_name}" \
+    --arg uid "${expected_uid}" \
+    --arg ip "${expected_ip}" \
+    --arg role "${expected_role}" '
+    .metadata.name == $name
+    and .metadata.uid == $uid
+    and .metadata.deletionTimestamp == null
+    and ([.status.addresses[]?
+      | select(.type == "InternalIP") | .address] == [$ip])
+    and ((((.metadata.labels // {})
+      | has("node-role.kubernetes.io/control-plane"))
+      or (((.metadata.labels // {})
+        | has("node-role.kubernetes.io/master")))) == ($role == "1"))
+  ' "${state_file}" >/dev/null
 }
 
 # Reapply and verify the complete live Kubernetes pull-consumer fanout. Flux and
@@ -89,25 +155,43 @@ sync_and_verify_kubernetes_fanout() {
 stage_fanout_before_talos() {
   local desired_revision="$1"
   local operator_image="$2"
+  local talos_sync_result="$3"
+  local stage_attempt=0
+  local stage_attempts="${TALOS_CONVERGENCE_ATTEMPTS:-3}"
   local rc
-  shift 2
+  shift 3
 
-  sync_and_verify_kubernetes_fanout "$@" || {
-    rc=$?
-    return "${rc}"
-  }
-  sync_talos_registry_auth "${desired_revision}" "${operator_image}" || {
-    rc=$?
-    return "${rc}"
-  }
-  sync_and_verify_kubernetes_fanout "$@" || {
-    rc=$?
-    return "${rc}"
-  }
-  patch_root_secret || {
-    rc=$?
-    return "${rc}"
-  }
+  while ((stage_attempt < stage_attempts)); do
+    stage_attempt=$((stage_attempt + 1))
+    sync_and_verify_kubernetes_fanout "$@" || {
+      rc=$?
+      return "${rc}"
+    }
+    sync_talos_registry_auth \
+      "${desired_revision}" \
+      "${operator_image}" \
+      "${talos_sync_result}" || {
+      rc=$?
+      return "${rc}"
+    }
+    if grep -Fxq -- clean "${talos_sync_result}"; then
+      patch_root_secret || {
+        rc=$?
+        return "${rc}"
+      }
+      return 0
+    fi
+    if ! grep -Fxq -- processed "${talos_sync_result}"; then
+      echo "::error::Talos synchronization returned an invalid convergence result; root Flux auth remains unchanged."
+      return 1
+    fi
+    # A node mutation can overlap another controller reconciliation. Re-prove
+    # every consumer, then require a whole node convergence pass with no
+    # mutations before root cutover. This closes both race domains together.
+  done
+
+  echo "::error::Kubernetes pull-consumer and Talos node state did not converge after ${stage_attempts} transaction rounds; root Flux auth remains unchanged."
+  return 1
 }
 
 # Prove every OTHER production control-plane member is Kubernetes-Ready,

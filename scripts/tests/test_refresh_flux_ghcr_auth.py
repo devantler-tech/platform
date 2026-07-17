@@ -299,8 +299,13 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 exit 0
               fi
 
-              test -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
-              test -f "$FAKE_SYNC_STATE_DIR/talos-reboot-${node}"
+              if [[ -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}" ]]; then
+                test -f "$FAKE_SYNC_STATE_DIR/talos-reboot-${node}"
+              else
+                # Image-only verification is allowed only when the fixture
+                # says this credential revision was already reboot-proved.
+                test "${FAKE_TALOS_NODES_CURRENT:-false}" = true
+              fi
               test -f "$FAKE_SYNC_STATE_DIR/talos-remove-${node}"
               test -f "$FAKE_SYNC_STATE_DIR/talos-pull-${node}"
               jq -e --arg revision "$EXPECTED_GHCR_REVISION" '
@@ -321,6 +326,13 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 exit 48
               fi
               touch "$FAKE_SYNC_STATE_DIR/talos-revision-${node}"
+              if [[ "$node" == 10.0.0.5 \
+                && -n "${FAKE_CONSUMER_REVERT_DURING_LATE_NODE_NAMESPACE:-}" ]]; then
+                touch "$FAKE_SYNC_STATE_DIR/consumer-reverted-${FAKE_CONSUMER_REVERT_DURING_LATE_NODE_NAMESPACE}"
+                printf 'consumer-revert:%s\n' \
+                  "$FAKE_CONSUMER_REVERT_DURING_LATE_NODE_NAMESPACE" \
+                  >> "$OPERATION_LOG"
+              fi
               exit 0
             fi
 
@@ -351,10 +363,12 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             fi
 
             if [[ "$arguments" == *" image remove "* ]]; then
-              test -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
-              # The cache is only worth clearing once containerd has reloaded the
-              # credential — i.e. after the reboot.
-              test -f "$FAKE_SYNC_STATE_DIR/talos-reboot-${node}"
+              if [[ -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}" ]]; then
+                # Credential-stale nodes must reboot before cache proof.
+                test -f "$FAKE_SYNC_STATE_DIR/talos-reboot-${node}"
+              else
+                test "${FAKE_TALOS_NODES_CURRENT:-false}" = true
+              fi
               [[ "$arguments" == *" --namespace cri "* ]]
               image=""
               previous=""
@@ -383,11 +397,13 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             fi
 
             if [[ "$arguments" == *" image pull "* ]]; then
-              test -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}"
-              # The pull check is only meaningful once containerd has actually
-              # reloaded the credential (the reboot) and the cached copy is gone
-              # (the remove), so the pull must complete a real registry round-trip.
-              test -f "$FAKE_SYNC_STATE_DIR/talos-reboot-${node}"
+              if [[ -f "$FAKE_SYNC_STATE_DIR/talos-auth-${node}" ]]; then
+                test -f "$FAKE_SYNC_STATE_DIR/talos-reboot-${node}"
+              else
+                test "${FAKE_TALOS_NODES_CURRENT:-false}" = true
+              fi
+              # The cached copy is always removed first, so this is a registry
+              # round-trip in both reboot and image-only modes.
               test -f "$FAKE_SYNC_STATE_DIR/talos-remove-${node}"
               [[ "$arguments" == *" --namespace cri "* ]]
               image=""
@@ -463,6 +479,12 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             if [[ "$url" == https://ghcr.io/token ]]; then
               test -n "$scope"
               grep -q '^user = ' "$config"
+              if [[ "${FAKE_REVOKE_CURRENT_ROOT_TOKEN:-false}" == true ]] \
+                && grep -qF 'previous-runtime-token' "$config"; then
+                printf '{}' > "$output"
+                printf '403'
+                exit 0
+              fi
               printf '{"token":"fixture-registry-token"}' > "$output"
               printf '200'
               exit 0
@@ -491,14 +513,19 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             [[ "$arguments" == *" --context admin@prod "* ]]
             namespace=""
             patch_file=""
+            manifest_file=""
             previous=""
             for argument in "$@"; do
               if [[ "$previous" == --namespace ]]; then
                 namespace="$argument"
               fi
+              if [[ "$previous" == --filename || "$previous" == -f ]]; then
+                manifest_file="$argument"
+              fi
               case "$argument" in
                 --namespace=*) namespace="${argument#*=}" ;;
                 --patch-file=*) patch_file="${argument#*=}" ;;
+                --filename=*) manifest_file="${argument#*=}" ;;
               esac
               previous="$argument"
             done
@@ -513,7 +540,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 printf '%s\n' "$FAKE_NODE_JSON"
                 exit 0
               fi
-              jq -n \
+              nodes_json="$(jq -n \
                 --arg revision "$EXPECTED_GHCR_REVISION" \
                 --arg current "${FAKE_TALOS_NODES_CURRENT:-false}" \
                 --arg verified_image \
@@ -524,6 +551,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                     {
                       metadata: {
                         name: "prod-worker-1",
+                        uid: "prod-worker-1-uid",
                         labels: {},
                         annotations: {
                           "platform.devantler.tech/ghcr-pull-desired-revision":
@@ -538,6 +566,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                     {
                       metadata: {
                         name: "prod-control-plane-1",
+                        uid: "prod-control-plane-1-uid",
                         labels: {
                           "node-role.kubernetes.io/control-plane": ""
                         },
@@ -554,6 +583,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                     {
                       metadata: {
                         name: "prod-control-plane-2",
+                        uid: "prod-control-plane-2-uid",
                         labels: {
                           "node-role.kubernetes.io/control-plane": ""
                         },
@@ -577,6 +607,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                     {
                       metadata: {
                         name: "prod-control-plane-3",
+                        uid: "prod-control-plane-3-uid",
                         labels: {
                           "node-role.kubernetes.io/control-plane": ""
                         },
@@ -607,7 +638,78 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                       "platform.devantler.tech/ghcr-pull-verified-image-v2"
                     ] = $verified_image
                   else . end
-              '
+              ')"
+
+              # Talos nodeAnnotations propagate back to Kubernetes after the
+              # marker patch. Reflect completed nodes so the convergence loop
+              # waits for proof without rolling the same UID twice.
+              for completed in \
+                '0:10.0.0.2' \
+                '1:10.0.0.1'; do
+                item_index="${completed%%:*}"
+                item_ip="${completed#*:}"
+                if [[ -f "$FAKE_SYNC_STATE_DIR/talos-revision-${item_ip}" ]]; then
+                  nodes_json="$(jq \
+                    --argjson item_index "$item_index" \
+                    --arg revision "$EXPECTED_GHCR_REVISION" \
+                    --arg image "$EXPECTED_KSAIL_TARGET_IMAGE" '
+                    .items[$item_index].metadata.annotations[
+                      "platform.devantler.tech/ghcr-pull-verified-revision-v2"
+                    ] = $revision
+                    | .items[$item_index].metadata.annotations[
+                      "platform.devantler.tech/ghcr-pull-verified-image-v2"
+                    ] = $image
+                  ' <<<"$nodes_json")"
+                fi
+              done
+
+              # Simulate autoscaler nodes that appear either during the first
+              # roll or during the potentially long second fanout. Each stays
+              # stale until this bridge processes and marks its distinct UID.
+              new_node_name=""
+              if [[ -n "${FAKE_NODE_APPEARS_AFTER_ROLL:-}" \
+                && -f "$FAKE_SYNC_STATE_DIR/talos-revision-10.0.0.2" \
+                && -f "$FAKE_SYNC_STATE_DIR/talos-revision-10.0.0.1" ]]; then
+                new_node_name="$FAKE_NODE_APPEARS_AFTER_ROLL"
+              elif [[ -n "${FAKE_NODE_APPEARS_DURING_SECOND_FANOUT:-}" \
+                && -f "$FAKE_SYNC_STATE_DIR/variables-patch-count" \
+                && "$(<"$FAKE_SYNC_STATE_DIR/variables-patch-count")" -ge 2 ]]; then
+                new_node_name="$FAKE_NODE_APPEARS_DURING_SECOND_FANOUT"
+              fi
+              if [[ -n "$new_node_name" ]]; then
+                new_node_revision=""
+                new_node_image=""
+                if [[ -f "$FAKE_SYNC_STATE_DIR/talos-revision-10.0.0.5" ]]; then
+                  new_node_revision="$EXPECTED_GHCR_REVISION"
+                  new_node_image="$EXPECTED_KSAIL_TARGET_IMAGE"
+                fi
+                nodes_json="$(jq \
+                  --arg name "$new_node_name" \
+                  --arg revision "$EXPECTED_GHCR_REVISION" \
+                  --arg verified_revision "$new_node_revision" \
+                  --arg verified_image "$new_node_image" '
+                  .items += [{
+                    metadata: {
+                      name: $name,
+                      uid: ($name + "-uid"),
+                      labels: {},
+                      annotations: {
+                        "platform.devantler.tech/ghcr-pull-desired-revision":
+                          $revision,
+                        "platform.devantler.tech/ghcr-pull-verified-revision-v2":
+                          $verified_revision,
+                        "platform.devantler.tech/ghcr-pull-verified-image-v2":
+                          $verified_image
+                      }
+                    },
+                    status: {addresses: [
+                      {type: "InternalIP", address: "10.0.0.5"},
+                      {type: "ExternalIP", address: "198.51.100.5"}
+                    ]}
+                  }]
+                ' <<<"$nodes_json")"
+              fi
+              printf '%s\n' "$nodes_json"
               exit 0
             fi
 
@@ -630,6 +732,40 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               owner_file="$FAKE_SYNC_STATE_DIR/cordon-owner-${node_target}"
               resource_version_file="$FAKE_SYNC_STATE_DIR/resource-version-${node_target}"
               if [[ "$arguments" == *" --output json "* ]]; then
+                node_uid="${node_target}-uid"
+                is_control_plane=false
+                case "$node_target" in
+                  prod-worker-1) node_ip=10.0.0.2 ;;
+                  prod-control-plane-1)
+                    node_ip=10.0.0.1
+                    is_control_plane=true
+                    ;;
+                  prod-control-plane-2)
+                    node_ip=10.0.0.3
+                    is_control_plane=true
+                    ;;
+                  prod-control-plane-3)
+                    node_ip=10.0.0.4
+                    is_control_plane=true
+                    ;;
+                  *) node_ip=10.0.0.5 ;;
+                esac
+                if [[ "$node_target" == \
+                  "${FAKE_NODE_REPLACED_BEFORE_PROCESS_NODE:-disabled}" ]]; then
+                  node_uid="${node_target}-replacement-uid"
+                  node_ip=10.0.0.99
+                fi
+                if [[ "$node_target" == \
+                  "${FAKE_NODE_REPLACED_AFTER_READY_NODE:-disabled}" \
+                  && -f "$FAKE_SYNC_STATE_DIR/ready-${node_target}" ]]; then
+                  node_uid="${node_target}-replacement-uid"
+                  node_ip=10.0.0.99
+                fi
+                if [[ "$node_target" == \
+                  "${FAKE_NODE_IP_CHANGED_AFTER_DRAIN_NODE:-disabled}" \
+                  && -f "$FAKE_SYNC_STATE_DIR/drained-${node_target}" ]]; then
+                  node_ip=10.0.0.99
+                fi
                 owner=""
                 if [[ -f "$owner_file" ]]; then
                   owner="$(<"$owner_file")"
@@ -638,6 +774,11 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 if [[ " ${FAKE_CORDONED_NODES:-} " == *" ${node_target} "* \
                   || -f "$FAKE_SYNC_STATE_DIR/cordoned-${node_target}" ]]; then
                   cordoned=true
+                fi
+                if [[ "$node_target" == \
+                  "${FAKE_EXTERNAL_UNCORDON_AFTER_READY_NODE:-disabled}" \
+                  && -f "$FAKE_SYNC_STATE_DIR/ready-${node_target}" ]]; then
+                  cordoned=false
                 fi
                 autoscaler_intent=false
                 if [[ -f "$FAKE_SYNC_STATE_DIR/autoscaler-cordon-${node_target}" ]]; then
@@ -648,13 +789,23 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                   resource_version="$(<"$resource_version_file")"
                 fi
                 jq -n \
+                  --arg name "$node_target" \
+                  --arg uid "$node_uid" \
+                  --arg node_ip "$node_ip" \
+                  --argjson is_control_plane "$is_control_plane" \
                   --arg owner "$owner" \
                   --arg resource_version "$resource_version" \
                   --argjson cordoned "$cordoned" \
                   --argjson autoscaler_intent "$autoscaler_intent" '
                   {
                     metadata: {
-                      uid: "node-uid",
+                      name: $name,
+                      uid: $uid,
+                      labels: (
+                        if $is_control_plane then {
+                          "node-role.kubernetes.io/control-plane": ""
+                        } else {} end
+                      ),
                       resourceVersion: $resource_version,
                       deletionTimestamp: null,
                       annotations: (
@@ -676,7 +827,11 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                             effect: "NoSchedule"
                           }] else [] end)
                       )
-                    }
+                    },
+                    status: {addresses: [{
+                      type: "InternalIP",
+                      address: $node_ip
+                    }]}
                   }
                 '
                 exit 0
@@ -726,6 +881,10 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 exit 53
               fi
               touch "$FAKE_SYNC_STATE_DIR/drained-${node_target}"
+              if [[ "$node_target" == "${FAKE_EXTERNAL_UNCORDON_AFTER_DRAIN_NODE:-disabled}" ]]; then
+                rm -f "$FAKE_SYNC_STATE_DIR/cordoned-${node_target}"
+                printf 'operator-uncordon:%s\n' "$node_target" >> "$OPERATION_LOG"
+              fi
               exit 0
             fi
 
@@ -879,10 +1038,107 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 echo 'node did not become ready' >&2
                 exit 50
               fi
+              touch "$FAKE_SYNC_STATE_DIR/ready-${node_target}"
               exit 0
             fi
 
             test -n "$namespace"
+
+            if [[ "$arguments" == *" create "* \
+              && -n "$manifest_file" ]]; then
+              test "$namespace" = ksail-operator
+              test -f "$manifest_file"
+              probe_name="$(jq -er '.metadata.name' "$manifest_file")"
+              probe_node="$(jq -er '.spec.nodeName' "$manifest_file")"
+              jq -e '
+                .kind == "Pod"
+                and .metadata.namespace == "ksail-operator"
+                and .spec.automountServiceAccountToken == false
+                and (.spec.imagePullSecrets // [] | length) == 0
+                and (.spec.containers[0].image ==
+                  "ghcr.io/devantler-tech/wedding-app:latest"
+                  or .spec.containers[0].image ==
+                  "ghcr.io/devantler-tech/ascoachingogvaner:latest")
+                and .spec.containers[0].imagePullPolicy == "Always"
+                and .spec.containers[0].securityContext.allowPrivilegeEscalation
+                  == false
+              ' "$manifest_file" >/dev/null
+              probe_image="$(jq -er '.spec.containers[0].image' "$manifest_file")"
+              printf '%s\n%s\n' "$probe_node" "$probe_image" \
+                > "$FAKE_SYNC_STATE_DIR/runtime-probe-${probe_name}"
+              printf 'pod/%s\n' "$probe_name"
+              exit 0
+            fi
+
+            if [[ "$arguments" == *" get pod "* ]]; then
+              probe_name=""
+              previous=""
+              for argument in "$@"; do
+                if [[ "$previous" == pod ]]; then
+                  probe_name="$argument"
+                  break
+                fi
+                previous="$argument"
+              done
+              test -n "$probe_name"
+              probe_node="$(sed -n '1p' \
+                "$FAKE_SYNC_STATE_DIR/runtime-probe-${probe_name}")"
+              probe_image="$(sed -n '2p' \
+                "$FAKE_SYNC_STATE_DIR/runtime-probe-${probe_name}")"
+              pull_secrets='[]'
+              if [[ " ${FAKE_RUNTIME_PROBE_INJECT_PULL_SECRET_NODES:-} " \
+                == *" ${probe_node} "* ]]; then
+                pull_secrets='[{"name":"injected-pull-secret"}]'
+              fi
+              if [[ " ${FAKE_RUNTIME_PULL_FAIL_NODES:-} " \
+                == *" ${probe_node} "* \
+                || " ${FAKE_RUNTIME_PULL_FAIL_IMAGES:-} " \
+                  == *" ${probe_image} "* ]]; then
+                jq -n --argjson pull_secrets "$pull_secrets" \
+                  '{spec:{imagePullSecrets:$pull_secrets},status:{containerStatuses:[{state:{waiting:{
+                  reason:"ImagePullBackOff"
+                }}}]}}'
+              else
+                jq -n --argjson pull_secrets "$pull_secrets" \
+                  '{spec:{imagePullSecrets:$pull_secrets},status:{containerStatuses:[{
+                  imageID:"ghcr.io/private@sha256:runtime-probe",
+                  state:{terminated:{reason:"Completed", exitCode:0}}
+                }]}}'
+              fi
+              exit 0
+            fi
+
+            if [[ "$arguments" == *" delete pod "* ]]; then
+              probe_name=""
+              previous=""
+              for argument in "$@"; do
+                if [[ "$previous" == pod ]]; then
+                  probe_name="$argument"
+                  break
+                fi
+                previous="$argument"
+              done
+              test -n "$probe_name"
+              rm -f "$FAKE_SYNC_STATE_DIR/runtime-probe-${probe_name}"
+              printf 'pod "%s" deleted\n' "$probe_name"
+              exit 0
+            fi
+
+            if [[ "$arguments" == *" get secret ksail-registry-credentials "* \
+              && "$arguments" == *" -o json "* ]]; then
+              current_config="$(jq -nc \
+                --arg token "${FAKE_CURRENT_ROOT_TOKEN:-previous-runtime-token}" '
+                {auths:{"ghcr.io":{
+                  username:"devantler",
+                  password:$token
+                }}}
+              ')"
+              encoded="$(printf '%s' "$current_config" \
+                | base64 | tr -d '\r\n')"
+              jq -n --arg encoded "$encoded" \
+                '{data:{".dockerconfigjson":$encoded}}'
+              exit 0
+            fi
 
             if [[ "$arguments" == *" api-resources "* ]]; then
               [[ "$arguments" == *" --api-group=external-secrets.io "* ]]
@@ -992,12 +1248,18 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
               if [[ -f "$FAKE_SYNC_STATE_DIR/variables-patch-count" ]]; then
                 variables_patch_count="$(<"$FAKE_SYNC_STATE_DIR/variables-patch-count")"
               fi
+              consumer_reverted_file="$FAKE_SYNC_STATE_DIR/consumer-reverted-${namespace}"
               if [[ "$namespace" == "${FAKE_CONSUMER_MISMATCH_NAMESPACE:-disabled}" \
                 || ( "$namespace" == "${FAKE_CONSUMER_MISMATCH_ON_SECOND_PASS_NAMESPACE:-disabled}" \
-                  && "$variables_patch_count" -ge 2 ) ]]; then
+                  && "$variables_patch_count" -ge 2 ) \
+                || ( -f "$consumer_reverted_file" \
+                  && "$variables_patch_count" -lt 3 ) ]]; then
                 encoded=$(printf '%s' '{"auths":{}}' | base64 | tr -d '\r\n')
               else
                 encoded=$(jq -r '.data.ghcr_dockerconfigjson' "$VARIABLES_PATCH_CAPTURE")
+                if [[ "$variables_patch_count" -ge 3 ]]; then
+                  rm -f "$consumer_reverted_file"
+                fi
               fi
               jq -n --arg encoded "$encoded" '{data:{".dockerconfigjson":$encoded}}'
               exit 0
@@ -1109,6 +1371,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "FAKE_SYNC_STATE_DIR": str(self.sync_state_dir),
                 "FLUX_GHCR_SYNC_ATTEMPTS": "2",
                 "FLUX_GHCR_SYNC_INTERVAL": "0",
+                "FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS": "6",
             }
         )
         environment.update(environment_overrides)
@@ -1203,9 +1466,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         temporary_config = Path(self.output_path_log.read_text(encoding="utf-8"))
         self.assertFalse(temporary_config.exists())
         self.assertNotIn("fixture-secret-token", result.stdout + result.stderr)
-        self.assertEqual(
-            self.registry_read_log.read_text(encoding="utf-8").splitlines(),
-            [
+        required_registry_reads = [
                 "devantler-tech/platform/manifests:latest",
                 "devantler-tech/wedding-app/manifests:latest",
                 "devantler-tech/ascoachingogvaner/manifests:latest",
@@ -1213,7 +1474,10 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 "devantler-tech/ascoachingogvaner:latest",
                 f"devantler-tech/ksail:v{KSAIL_OPERATOR_VERSION}",
                 "devantler-tech/provider-upjet-unifi:v0.1.0",
-            ],
+        ]
+        self.assertEqual(
+            self.registry_read_log.read_text(encoding="utf-8").splitlines(),
+            required_registry_reads * 2,
         )
         self.assertEqual(
             self.fanout_log.read_text(encoding="utf-8").splitlines(),
@@ -1323,7 +1587,11 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         inventory = {
             "items": [
                 {
-                    "metadata": {"name": "prod-worker-1", "labels": {}},
+                    "metadata": {
+                        "name": "prod-worker-1",
+                        "uid": "prod-worker-1-uid",
+                        "labels": {},
+                    },
                     "status": {
                         "addresses": [{"type": "InternalIP", "address": "10.0.0.2"}],
                         "conditions": ready,
@@ -1332,6 +1600,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                 {
                     "metadata": {
                         "name": "prod-control-plane-1",
+                        "uid": "prod-control-plane-1-uid",
                         "labels": {"node-role.kubernetes.io/control-plane": ""},
                     },
                     "status": {
@@ -1344,6 +1613,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
                     # not itself a sync target, it is just a quorum member.
                     "metadata": {
                         "name": "prod-control-plane-2",
+                        "uid": "prod-control-plane-2-uid",
                         "labels": {"node-role.kubernetes.io/control-plane": ""},
                         "annotations": {
                             "platform.devantler.tech/ghcr-pull-verified-revision-v2":
@@ -1598,6 +1868,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         operations = self.operation_log.read_text(encoding="utf-8").splitlines()
         self.assertIn("node-claim-cordon:prod-worker-1", operations)
         self.assertIn("node-drain:prod-worker-1", operations)
+        self.assertNotIn("talos-reboot:10.0.0.2", operations)
         self.assertNotIn("node-uncordon:prod-worker-1", operations)
         self.assertNotIn("talos-revision:10.0.0.2", operations)
         self.assertNotIn("root-patch", operations)
@@ -1615,9 +1886,97 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         operations = self.operation_log.read_text(encoding="utf-8").splitlines()
         self.assertIn("node-claim-cordon:prod-worker-1", operations)
         self.assertIn("node-drain:prod-worker-1", operations)
+        self.assertNotIn("talos-reboot:10.0.0.2", operations)
         self.assertNotIn("node-uncordon:prod-worker-1", operations)
         self.assertNotIn("talos-revision:10.0.0.2", operations)
         self.assertNotIn("root-patch", operations)
+
+    def test_external_uncordon_after_drain_blocks_reboot(self) -> None:
+        """Re-read scheduling state after drain and before Talos reboot."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_EXTERNAL_UNCORDON_AFTER_DRAIN_NODE="prod-worker-1",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        output = result.stdout + result.stderr
+        self.assertIn("scheduling safety state changed", output)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("node-drain:prod-worker-1", operations)
+        self.assertNotIn("talos-reboot:10.0.0.2", operations)
+        self.assertNotIn("root-patch", operations)
+
+    def test_changed_internal_ip_after_drain_blocks_reboot(self) -> None:
+        """Never reboot an inventory-time address after its Node UID moves."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_NODE_IP_CHANGED_AFTER_DRAIN_NODE="prod-worker-1",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("identity changed", result.stdout + result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("node-drain:prod-worker-1", operations)
+        self.assertNotIn("talos-reboot:10.0.0.2", operations)
+        self.assertNotIn("root-patch", operations)
+
+    def test_replacement_after_ready_blocks_image_mutation(self) -> None:
+        """Rebind UID and IP after reboot before touching the image cache."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_NODE_REPLACED_AFTER_READY_NODE="prod-worker-1",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("identity changed", result.stdout + result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("talos-reboot:10.0.0.2", operations)
+        self.assertNotIn("talos-remove:10.0.0.2", "\n".join(operations))
+        self.assertNotIn("node-uncordon:prod-worker-1", operations)
+        self.assertNotIn("root-patch", operations)
+
+    def test_external_uncordon_after_ready_blocks_image_mutation(self) -> None:
+        """Require the scheduling guard through the final cache mutation."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_EXTERNAL_UNCORDON_AFTER_READY_NODE="prod-worker-1",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("scheduling safety state changed", result.stdout + result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("talos-reboot:10.0.0.2", operations)
+        self.assertNotIn("talos-remove:10.0.0.2", "\n".join(operations))
+        self.assertNotIn("node-uncordon:prod-worker-1", operations)
+        self.assertNotIn("root-patch", operations)
+
+    def test_replaced_node_is_rejected_before_talos_mutation(self) -> None:
+        """Bind every Talos mutation to the UID and IP selected together."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_NODE_REPLACED_BEFORE_PROCESS_NODE="prod-worker-1",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("identity changed", result.stdout + result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertNotIn("talos-auth:10.0.0.2", operations)
+        self.assertNotIn("node-drain:prod-worker-1", operations)
+        self.assertNotIn("talos-reboot:10.0.0.2", operations)
+        self.assertNotIn("root-patch", operations)
+
+    def test_talos_convergence_budget_requires_target_and_two_clean_reads(
+        self,
+    ) -> None:
+        """Reject a budget that cannot process a target plus prove stability."""
+        result = self._run_helper(
+            self._valid_config(),
+            FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS="2",
+        )
+
+        self.assertEqual(result.returncode, 64)
+        self.assertIn("must be at least 3", result.stdout + result.stderr)
+        self.assertFalse(self.kubectl_called.exists())
 
     def test_uncordon_failure_keeps_revision_marker_stale(self) -> None:
         """A failed ownership release must force the next run to retry."""
@@ -1764,7 +2123,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertTrue(self.patch_capture.exists())
 
     def test_matching_revision_revalidates_changed_declared_image(self) -> None:
-        """Do not trust a current credential marker for a new target image."""
+        """Re-prove a changed image without rebooting current credentials."""
         previous_image = "ghcr.io/devantler-tech/ksail:v7.166.0"
         target_image = (
             "ghcr.io/devantler-tech/ksail:"
@@ -1786,19 +2145,205 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
         self.assertEqual(
             operations,
             [
-                "talos-auth:10.0.0.2",
-                "talos-reboot:10.0.0.2",
                 f"talos-remove:10.0.0.2:{target_image}",
                 f"talos-pull:10.0.0.2:{target_image}",
                 "talos-revision:10.0.0.2",
-                "talos-auth:10.0.0.1",
-                "talos-reboot:10.0.0.1",
                 f"talos-remove:10.0.0.1:{target_image}",
                 f"talos-pull:10.0.0.1:{target_image}",
                 "talos-revision:10.0.0.1",
             ],
         )
+        operation_log = self.operation_log.read_text(encoding="utf-8")
+        self.assertNotIn("node-drain:", operation_log)
+        self.assertNotIn("talos-reboot:", operation_log)
         self.assertNotIn(previous_image, "\n".join(operations))
+
+    def test_failed_image_only_pull_keeps_node_cordoned(self) -> None:
+        """Exclude new pods after cache removal until pull proof succeeds."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_TALOS_NODES_CURRENT="true",
+            FAKE_TALOS_VERIFIED_IMAGE="ghcr.io/devantler-tech/ksail:v7.166.0",
+            FAKE_TALOS_FAIL_NODE="10.0.0.2",
+            FAKE_TALOS_FAIL_OPERATION="pull",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("node-claim-cordon:prod-worker-1", operations)
+        self.assertNotIn("node-drain:prod-worker-1", operations)
+        self.assertNotIn("node-uncordon:prod-worker-1", operations)
+        self.assertNotIn("talos-reboot:10.0.0.2", operations)
+        self.assertNotIn("root-patch", operations)
+
+    def test_node_added_mid_roll_is_processed_before_root_cutover(self) -> None:
+        """Converge a newly autoscaled stale node before changing root auth."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_NODE_APPEARS_AFTER_ROLL="prod-worker-2",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertIn("talos-auth:10.0.0.5", operations)
+        self.assertIn("node-drain:prod-worker-2", operations)
+        self.assertIn("talos-reboot:10.0.0.5", operations)
+        self.assertIn("talos-revision:10.0.0.5", operations)
+        self.assertLess(
+            operations.index("talos-revision:10.0.0.5"),
+            operations.index("root-patch"),
+        )
+
+    def test_node_added_during_second_fanout_is_processed_before_cutover(
+        self,
+    ) -> None:
+        """Re-converge after the potentially long post-roll fanout."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_NODE_APPEARS_DURING_SECOND_FANOUT="prod-worker-2",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        second_fanout_start = [
+            index
+            for index, operation in enumerate(operations)
+            if operation == "variables-patch"
+        ][1]
+        late_revision = operations.index("talos-revision:10.0.0.5")
+        root_cutover = operations.index("root-patch")
+        self.assertLess(second_fanout_start, late_revision)
+        self.assertLess(late_revision, root_cutover)
+
+    def test_late_node_roll_reproves_fanout_before_root_cutover(self) -> None:
+        """Converge fanout and nodes as one bounded transaction."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_NODE_APPEARS_DURING_SECOND_FANOUT="prod-worker-2",
+            FAKE_CONSUMER_REVERT_DURING_LATE_NODE_NAMESPACE="wedding-app",
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        fanout_starts = [
+            index
+            for index, operation in enumerate(operations)
+            if operation == "variables-patch"
+        ]
+        self.assertEqual(len(fanout_starts), 3)
+        consumer_revert = operations.index("consumer-revert:wedding-app")
+        root_cutover = operations.index("root-patch")
+        self.assertLess(consumer_revert, fanout_starts[2])
+        self.assertLess(fanout_starts[2], root_cutover)
+
+    def test_revoked_previous_credential_blocks_first_drain(self) -> None:
+        """Require overlap while workloads can land on not-yet-rebooted peers."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_REVOKE_CURRENT_ROOT_TOKEN="true",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        output = result.stdout + result.stderr
+        self.assertIn("current root GHCR credential", output)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertNotIn("node-drain:", "\n".join(operations))
+        self.assertNotIn("talos-reboot:", "\n".join(operations))
+        self.assertNotIn("root-patch", operations)
+        self.assertNotIn("previous-runtime-token", output)
+
+    def test_valid_root_token_does_not_substitute_for_peer_runtime_proof(
+        self,
+    ) -> None:
+        """Exercise kubelet/containerd on every possible eviction destination."""
+        ready = [{"type": "Ready", "status": "True"}]
+        inventory = {
+            "items": [
+                {
+                    "metadata": {
+                        "name": "prod-worker-1",
+                        "uid": "prod-worker-1-uid",
+                        "labels": {},
+                    },
+                    "status": {
+                        "addresses": [
+                            {"type": "InternalIP", "address": "10.0.0.2"}
+                        ],
+                        "conditions": ready,
+                    },
+                },
+                *[
+                    {
+                        "metadata": {
+                            "name": f"prod-control-plane-{index}",
+                            "uid": f"prod-control-plane-{index}-uid",
+                            "labels": {
+                                "node-role.kubernetes.io/control-plane": ""
+                            },
+                        },
+                        "status": {
+                            "addresses": [
+                                {
+                                    "type": "InternalIP",
+                                    "address": f"10.0.0.{index * 2 - 1}",
+                                }
+                            ],
+                            "conditions": ready,
+                        },
+                    }
+                    for index in (1, 2, 3)
+                ],
+            ]
+        }
+
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_NODE_JSON=json.dumps(inventory),
+            FAKE_RUNTIME_PULL_FAIL_NODES=(
+                "prod-control-plane-1 prod-control-plane-2 "
+                "prod-control-plane-3"
+            ),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        output = result.stdout + result.stderr
+        self.assertIn("running containerd", output)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertNotIn("node-drain:", "\n".join(operations))
+        self.assertNotIn("root-patch", operations)
+
+    def test_runtime_probe_rejects_injected_image_pull_secret(self) -> None:
+        """Require the probe to exercise node runtime auth, not a Pod secret."""
+        result = self._run_helper(
+            self._valid_config(),
+            FAKE_RUNTIME_PROBE_INJECT_PULL_SECRET_NODES="prod-control-plane-2",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("imagePullSecret", result.stdout + result.stderr)
+        operations = self.operation_log.read_text(encoding="utf-8").splitlines()
+        self.assertNotIn("node-drain:", "\n".join(operations))
+        self.assertNotIn("root-patch", operations)
+
+    def test_each_private_runtime_package_acl_must_pass(self) -> None:
+        """Do not substitute a public image or one package ACL for another."""
+        for probe_image in (
+            "ghcr.io/devantler-tech/wedding-app:latest",
+            "ghcr.io/devantler-tech/ascoachingogvaner:latest",
+        ):
+            with self.subTest(probe_image=probe_image):
+                result = self._run_helper(
+                    self._valid_config(),
+                    FAKE_RUNTIME_PULL_FAIL_IMAGES=probe_image,
+                )
+
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(probe_image, result.stdout + result.stderr)
+                operations = self.operation_log.read_text(
+                    encoding="utf-8"
+                ).splitlines()
+                self.assertNotIn("node-drain:", "\n".join(operations))
+                self.assertNotIn("root-patch", operations)
 
     def test_dr_without_fanout_does_not_drain_nodes(self) -> None:
         """Never drain workloads before a DR cluster has its pull fanout."""
@@ -1819,7 +2364,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             {
                 "items": [
                     {
-                        "metadata": {"name": "one"},
+                        "metadata": {"name": "one", "uid": "uid-one"},
                         "status": {"addresses": []},
                     }
                 ]
@@ -1827,7 +2372,7 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             {
                 "items": [
                     {
-                        "metadata": {"name": "one"},
+                        "metadata": {"name": "one", "uid": "uid-one"},
                         "status": {
                             "addresses": [
                                 {"type": "InternalIP", "address": "10.0.0.1"},
@@ -1840,15 +2385,41 @@ class RefreshFluxGhcrAuthTests(unittest.TestCase):
             {
                 "items": [
                     {
-                        "metadata": {"name": "one"},
+                        "metadata": {"name": "one", "uid": "uid-one"},
                         "status": {"addresses": [
                             {"type": "InternalIP", "address": "10.0.0.1"}
                         ]},
                     },
                     {
-                        "metadata": {"name": "two"},
+                        "metadata": {"name": "two", "uid": "uid-two"},
                         "status": {"addresses": [
                             {"type": "InternalIP", "address": "10.0.0.1"}
+                        ]},
+                    },
+                ]
+            },
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "one"},
+                        "status": {"addresses": [
+                            {"type": "InternalIP", "address": "10.0.0.1"}
+                        ]},
+                    }
+                ]
+            },
+            {
+                "items": [
+                    {
+                        "metadata": {"name": "one", "uid": "duplicate"},
+                        "status": {"addresses": [
+                            {"type": "InternalIP", "address": "10.0.0.1"}
+                        ]},
+                    },
+                    {
+                        "metadata": {"name": "two", "uid": "duplicate"},
+                        "status": {"addresses": [
+                            {"type": "InternalIP", "address": "10.0.0.2"}
                         ]},
                     },
                 ]

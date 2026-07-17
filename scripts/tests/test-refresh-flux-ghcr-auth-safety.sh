@@ -31,6 +31,8 @@ legacy_nodes="${work_dir}/legacy-nodes.json"
 legacy_targets="${work_dir}/legacy-targets.tsv"
 current_nodes="${work_dir}/current-nodes.json"
 current_targets="${work_dir}/current-targets.tsv"
+image_only_nodes="${work_dir}/image-only-nodes.json"
+image_only_targets="${work_dir}/image-only-targets.tsv"
 readonly DESIRED_REVISION="ciphertext-revision"
 readonly DESIRED_IMAGE="ghcr.io/devantler-tech/ksail:v7.170.1"
 
@@ -60,10 +62,10 @@ if declare -F select_talos_node_targets >/dev/null; then
     "${DESIRED_REVISION}" \
     "${DESIRED_IMAGE}" \
     "${legacy_targets}" \
-    && [[ -s "${legacy_targets}" ]]; then
-    pass "legacy verification markers force a one-time reboot"
+    && [[ "$(cut -f4 "${legacy_targets}")" == "reboot" ]]; then
+    pass "legacy verification markers select reboot mode"
   else
-    fail "legacy verification markers force a one-time reboot"
+    fail "legacy verification markers select reboot mode"
   fi
 
   jq -n \
@@ -100,9 +102,44 @@ if declare -F select_talos_node_targets >/dev/null; then
   else
     fail "v2 post-reboot markers suppress an already-proved reboot"
   fi
+
+  jq -n \
+    --arg revision "${DESIRED_REVISION}" \
+    --arg previous_image "ghcr.io/devantler-tech/ksail:v7.170.0" \
+    --arg revision_key "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION:-}" \
+    --arg image_key "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION:-}" '
+    {
+      items: [{
+        metadata: {
+          name: "prod-worker-1",
+          uid: "worker-1-uid",
+          labels: {},
+          annotations: {
+            ($revision_key): $revision,
+            ($image_key): $previous_image
+          }
+        },
+        status: {addresses: [
+          {type: "InternalIP", address: "10.0.0.4"}
+        ]}
+      }]
+    }
+  ' > "${image_only_nodes}"
+
+  if select_talos_node_targets \
+    "${image_only_nodes}" \
+    "${DESIRED_REVISION}" \
+    "${DESIRED_IMAGE}" \
+    "${image_only_targets}" \
+    && [[ "$(cut -f4 "${image_only_targets}")" == "image-only" ]]; then
+    pass "a changed image with current credentials selects image-only mode"
+  else
+    fail "a changed image with current credentials selects image-only mode"
+  fi
 else
-  fail "legacy verification markers force a one-time reboot"
+  fail "legacy verification markers select reboot mode"
   fail "v2 post-reboot markers suppress an already-proved reboot"
+  fail "a changed image with current credentials selects image-only mode"
 fi
 
 operation_log="${work_dir}/operations.log"
@@ -116,7 +153,13 @@ verify_consumer_secret() {
   printf 'verify:%s/ghcr-auth\n' "$1" >> "${operation_log}"
 }
 sync_talos_registry_auth() {
+  talos_sync_call_count=$((talos_sync_call_count + 1))
   printf 'talos:%s:%s\n' "$1" "$2" >> "${operation_log}"
+  if ((talos_sync_call_count == 1)); then
+    printf '%s\n' processed > "$3"
+  else
+    printf '%s\n' clean > "$3"
+  fi
 }
 patch_root_secret() {
   printf '%s\n' root-patch >> "${operation_log}"
@@ -124,9 +167,11 @@ patch_root_secret() {
 
 if declare -F stage_fanout_before_talos >/dev/null; then
   : > "${operation_log}"
+  talos_sync_call_count=0
   stage_fanout_before_talos \
     "${DESIRED_REVISION}" \
     "${DESIRED_IMAGE}" \
+    "${work_dir}/talos-stage-result.txt" \
     wedding-app ascoachingogvaner kyverno
   expected_operations="$(printf '%s\n' \
     variables-patch \
@@ -146,6 +191,7 @@ if declare -F stage_fanout_before_talos >/dev/null; then
     verify:ascoachingogvaner/ghcr-auth \
     force:externalsecret/kyverno/ghcr-auth \
     verify:kyverno/ghcr-auth \
+    "talos:${DESIRED_REVISION}:${DESIRED_IMAGE}" \
     root-patch)"
   if [[ "$(<"${operation_log}")" == "${expected_operations}" ]]; then
     pass "verified tenant fanout brackets the Talos rollout"

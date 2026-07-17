@@ -37,6 +37,7 @@ readonly SECRET_FILE="${FLUX_GHCR_SECRET_FILE:-k8s/bases/bootstrap/secret.enc.ya
 readonly KUBE_CONTEXT="${KUBE_CONTEXT:-admin@prod}"
 readonly SYNC_ATTEMPTS="${FLUX_GHCR_SYNC_ATTEMPTS:-60}"
 readonly SYNC_INTERVAL="${FLUX_GHCR_SYNC_INTERVAL:-2}"
+readonly TALOS_CONVERGENCE_ATTEMPTS="${FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS:-${SYNC_ATTEMPTS}}"
 readonly DRAIN_TIMEOUT="${FLUX_GHCR_DRAIN_TIMEOUT:-45m}"
 readonly CORDON_OWNER_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-owner"
 readonly CORDON_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner"
@@ -56,6 +57,13 @@ readonly -a REQUIRED_PULL_TARGETS=(
   "devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
   "devantler-tech/provider-upjet-unifi:v0.1.0"
 )
+# These packages are intentionally private and have independent ACLs. A public
+# image (including KSail itself) can prove registry reachability but cannot
+# prove that containerd loaded a working credential.
+readonly -a RUNTIME_CREDENTIAL_PROBE_IMAGES=(
+  "ghcr.io/devantler-tech/wedding-app:latest"
+  "ghcr.io/devantler-tech/ascoachingogvaner:latest"
+)
 readonly -a FANOUT_NAMESPACES=(
   "wedding-app"
   "ascoachingogvaner"
@@ -63,22 +71,43 @@ readonly -a FANOUT_NAMESPACES=(
 )
 
 if ! [[ "${SYNC_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] \
+  || ! [[ "${TALOS_CONVERGENCE_ATTEMPTS}" =~ ^[3-9]$|^[1-9][0-9]+$ ]] \
   || ! [[ "${SYNC_INTERVAL}" =~ ^[0-9]+([.][0-9]+)?$ ]] \
   || ! [[ "${DRAIN_TIMEOUT}" =~ ^[1-9][0-9]*(s|m|h)$ ]]; then
-  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS and FLUX_GHCR_SYNC_INTERVAL must be non-negative numbers, with at least one attempt; FLUX_GHCR_DRAIN_TIMEOUT must be a positive whole number of seconds, minutes, or hours."
+  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS must be positive, FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS must be at least 3, FLUX_GHCR_SYNC_INTERVAL must be non-negative, and FLUX_GHCR_DRAIN_TIMEOUT must be a positive whole number of seconds, minutes, or hours."
   exit 64
 fi
 
 work_dir="$(mktemp -d)"
-trap 'rm -rf "${work_dir}"' EXIT
 chmod 700 "${work_dir}"
 umask 077
+active_runtime_probe=""
+
+cleanup_refresh_work() {
+  if [[ -n "${active_runtime_probe}" ]]; then
+    kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace ksail-operator \
+      delete pod "${active_runtime_probe}" \
+      --ignore-not-found \
+      --wait=false \
+      >/dev/null 2>&1 || true
+  fi
+  rm -rf "${work_dir}"
+}
+trap cleanup_refresh_work EXIT
 
 docker_config="${work_dir}/config.json"
 credentials_file="${work_dir}/credentials.json"
 basic_curl_config="${work_dir}/curl-basic.config"
 bearer_curl_config="${work_dir}/curl-bearer.config"
 token_response="${work_dir}/token.json"
+current_root_secret_file="${work_dir}/current-root-secret.json"
+current_root_docker_config="${work_dir}/current-root-config.json"
+current_root_credentials_file="${work_dir}/current-root-credentials.json"
+current_root_basic_curl_config="${work_dir}/current-root-curl-basic.config"
+current_root_token_response="${work_dir}/current-root-token.json"
+current_root_bearer_curl_config="${work_dir}/current-root-curl-bearer.config"
 patch_file="${work_dir}/patch.json"
 variables_patch_file="${work_dir}/variables-patch.json"
 expected_normalized="${work_dir}/expected-normalized.json"
@@ -93,6 +122,16 @@ cordon_claim_patch_file="${work_dir}/cordon-claim-patch.json"
 cordon_release_patch_file="${work_dir}/cordon-release-patch.json"
 talos_nodes_file="${work_dir}/talos-nodes.json"
 talos_node_targets="${work_dir}/talos-node-targets.tsv"
+talos_pending_targets="${work_dir}/talos-pending-targets.tsv"
+talos_processed_targets="${work_dir}/talos-processed-targets.tsv"
+talos_stage_result_file="${work_dir}/talos-stage-result.txt"
+runtime_probe_nodes_file="${work_dir}/runtime-probe-nodes.json"
+runtime_probe_targets_file="${work_dir}/runtime-probe-targets.tsv"
+runtime_proved_targets_file="${work_dir}/runtime-proved-targets.txt"
+runtime_probe_manifest_file="${work_dir}/runtime-probe-pod.json"
+runtime_probe_state_file="${work_dir}/runtime-probe-state.json"
+runtime_probe_result_file="${work_dir}/runtime-probe-result.txt"
+runtime_probe_sequence=0
 
 # Force an ESO resource to reconcile and observe a post-annotation Ready edge.
 force_sync_resource() {
@@ -188,6 +227,299 @@ emit_safe_operation_output() {
     || true
 }
 
+# Prove a Docker credential with real manifest reads for every package this
+# deployment can pull. Callers provide mode-0600 curl config/temp paths so the
+# credential never appears in argv or output. This serves both the incoming
+# SOPS credential and the still-live root credential whose overlap keeps peers
+# safe while the first stale node drains.
+verify_ghcr_pull_credential() {
+  local basic_config="$1"
+  local token_file="$2"
+  local bearer_config="$3"
+  local credential_label="$4"
+  local target repository reference http_status
+
+  for target in "${REQUIRED_PULL_TARGETS[@]}"; do
+    repository="${target%:*}"
+    reference="${target##*:}"
+    if ! http_status="$(curl --disable \
+      --config "${basic_config}" \
+      --silent \
+      --show-error \
+      --output "${token_file}" \
+      --write-out '%{http_code}' \
+      --get \
+      --data-urlencode 'service=ghcr.io' \
+      --data-urlencode "scope=repository:${repository}:pull" \
+      'https://ghcr.io/token')"; then
+      echo "::error::Could not request a GHCR pull token for ${repository} with the ${credential_label}; root Flux auth was not changed."
+      return 1
+    fi
+    if [[ "${http_status}" != "200" ]] || ! jq -e '
+      (.token // .access_token // "")
+      | type == "string" and length > 0
+    ' "${token_file}" >/dev/null; then
+      echo "::error::The ${credential_label} could not obtain a pull token for ${repository} (GHCR HTTP ${http_status}); root Flux auth was not changed."
+      return 1
+    fi
+
+    jq -r '
+      (.token // .access_token) as $token
+      | "header = " + (("Authorization: Bearer " + $token) | @json)
+    ' "${token_file}" > "${bearer_config}"
+    chmod 600 "${bearer_config}"
+
+    if ! http_status="$(curl --disable \
+      --config "${bearer_config}" \
+      --silent \
+      --show-error \
+      --output /dev/null \
+      --write-out '%{http_code}' \
+      --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
+      "https://ghcr.io/v2/${repository}/manifests/${reference}")"; then
+      echo "::error::Could not read the GHCR manifest for ${target} with the ${credential_label}; root Flux auth was not changed."
+      return 1
+    fi
+    if [[ "${http_status}" != "200" ]]; then
+      echo "::error::The ${credential_label} cannot read ${target} (GHCR HTTP ${http_status}); root Flux auth was not changed."
+      return 1
+    fi
+  done
+}
+
+# Before the first credential-stale node is drained, prove that the credential
+# still stored in the live root Secret remains accepted by every GHCR package.
+# Peers have not rebooted onto the incoming credential yet, so a revoked old
+# credential would make them unsafe eviction destinations. Root auth stays old
+# until the complete Talos convergence succeeds.
+verify_current_root_credential_overlap() {
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get secret ksail-registry-credentials \
+    -o json \
+    > "${current_root_secret_file}"; then
+    echo "::error::Could not read the current root GHCR credential; refusing to drain onto peers whose runtime credential cannot be proved."
+    return 1
+  fi
+  if ! jq -er '.data[".dockerconfigjson"] | @base64d' \
+    "${current_root_secret_file}" \
+    > "${current_root_docker_config}" 2>/dev/null \
+    || ! jq -e . "${current_root_docker_config}" >/dev/null 2>&1; then
+    echo "::error::The current root GHCR credential is malformed; refusing to drain onto unproved peers."
+    return 1
+  fi
+  if ! write_flux_ghcr_credentials \
+    "${current_root_docker_config}" \
+    "${current_root_credentials_file}"; then
+    echo "::error::The current root GHCR credential cannot be parsed; refusing to drain onto unproved peers."
+    return 1
+  fi
+  jq -r '
+    "user = " + ((.username + ":" + .password) | @json)
+  ' "${current_root_credentials_file}" \
+    > "${current_root_basic_curl_config}"
+  chmod 600 \
+    "${current_root_docker_config}" \
+    "${current_root_credentials_file}" \
+    "${current_root_basic_curl_config}"
+
+  verify_ghcr_pull_credential \
+    "${current_root_basic_curl_config}" \
+    "${current_root_token_response}" \
+    "${current_root_bearer_curl_config}" \
+    "current root GHCR credential"
+}
+
+delete_runtime_pull_probe() {
+  local probe_name="$1"
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace ksail-operator \
+    delete pod "${probe_name}" \
+    --ignore-not-found \
+    --wait=false \
+    > "${runtime_probe_result_file}" 2>&1; then
+    echo "::error::Could not remove runtime pull probe ${probe_name}; root Flux auth remains unchanged."
+    emit_safe_operation_output "runtime-probe-delete" \
+      "${runtime_probe_result_file}"
+    return 1
+  fi
+  if [[ "${active_runtime_probe}" == "${probe_name}" ]]; then
+    active_runtime_probe=""
+  fi
+}
+
+# Exercise each possible eviction destination through kubelet/containerd with
+# no imagePullSecret. A valid live root Secret is not sufficient evidence: in
+# the legacy outage state, machine config already held the new token while the
+# running runtime still presented a revoked predecessor. imagePullPolicy Always
+# forces a registry resolution even when the exact private image is cached.
+probe_node_runtime_pull() {
+  local node_name="$1"
+  local probe_image="$2"
+  local probe_name
+  local attempt image_id waiting_reason
+
+  runtime_probe_sequence=$((runtime_probe_sequence + 1))
+  probe_name="ghcr-runtime-probe-$$-${RANDOM}-${runtime_probe_sequence}"
+  jq -n \
+    --arg name "${probe_name}" \
+    --arg node "${node_name}" \
+    --arg image "${probe_image}" '
+    {
+      apiVersion: "v1",
+      kind: "Pod",
+      metadata: {
+        name: $name,
+        namespace: "ksail-operator",
+        labels: {
+          "app.kubernetes.io/name": "ghcr-runtime-probe",
+          "app.kubernetes.io/component": "credential-verification",
+          "app.kubernetes.io/managed-by": "refresh-flux-ghcr-auth"
+        }
+      },
+      spec: {
+        nodeName: $node,
+        automountServiceAccountToken: false,
+        enableServiceLinks: false,
+        restartPolicy: "Never",
+        terminationGracePeriodSeconds: 0,
+        securityContext: {
+          runAsNonRoot: true,
+          runAsUser: 65532,
+          runAsGroup: 65532,
+          seccompProfile: {type: "RuntimeDefault"}
+        },
+        containers: [{
+          name: "pull-probe",
+          image: $image,
+          imagePullPolicy: "Always",
+          args: ["--version"],
+          resources: {
+            requests: {cpu: "10m", memory: "16Mi"},
+            limits: {cpu: "100m", memory: "64Mi"}
+          },
+          securityContext: {
+            allowPrivilegeEscalation: false,
+            readOnlyRootFilesystem: true,
+            capabilities: {drop: ["ALL"]}
+          }
+        }]
+      }
+    }
+  ' > "${runtime_probe_manifest_file}"
+
+  active_runtime_probe="${probe_name}"
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace ksail-operator \
+    create --filename "${runtime_probe_manifest_file}" \
+    -o name \
+    > "${runtime_probe_result_file}" 2>&1; then
+    echo "::error::Could not create a kubelet/containerd GHCR pull probe on ${node_name}; refusing to drain onto an unproved runtime."
+    emit_safe_operation_output "runtime-probe-create" \
+      "${runtime_probe_result_file}"
+    return 1
+  fi
+
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace ksail-operator \
+      get pod "${probe_name}" \
+      -o json \
+      > "${runtime_probe_state_file}" 2> "${runtime_probe_result_file}"; then
+      echo "::error::Could not read the kubelet/containerd GHCR pull probe on ${node_name}; refusing to drain onto an unproved runtime."
+      emit_safe_operation_output "runtime-probe-read" \
+        "${runtime_probe_result_file}"
+      delete_runtime_pull_probe "${probe_name}" || true
+      return 1
+    fi
+    if ! jq -e \
+      '(.spec.imagePullSecrets // [] | length) == 0' \
+      "${runtime_probe_state_file}" >/dev/null; then
+      delete_runtime_pull_probe "${probe_name}" || true
+      echo "::error::Runtime probe on ${node_name} received an imagePullSecret, so it did not prove the running containerd credential; refusing the drain."
+      return 1
+    fi
+    image_id="$(jq -r \
+      '.status.containerStatuses[0].imageID // ""' \
+      "${runtime_probe_state_file}")"
+    if [[ -n "${image_id}" ]]; then
+      delete_runtime_pull_probe "${probe_name}" || return 1
+      return 0
+    fi
+    waiting_reason="$(jq -r \
+      '.status.containerStatuses[0].state.waiting.reason // ""' \
+      "${runtime_probe_state_file}")"
+    case "${waiting_reason}" in
+      ErrImagePull|ImagePullBackOff|InvalidImageName)
+        delete_runtime_pull_probe "${probe_name}" || true
+        echo "::error::The running containerd on ${node_name} could not pull ${probe_image} (${waiting_reason}); refusing to drain workloads onto peers with unproved runtime auth."
+        return 1
+        ;;
+    esac
+    sleep "${SYNC_INTERVAL}"
+  done
+
+  delete_runtime_pull_probe "${probe_name}" || true
+  echo "::error::Timed out proving the running containerd GHCR credential on ${node_name}; refusing to drain workloads onto an unproved runtime."
+  return 1
+}
+
+verify_peer_runtime_pull_overlap() {
+  local draining_node="$1"
+  local peer_name peer_uid
+  local probe_image
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get nodes \
+    -o json \
+    > "${runtime_probe_nodes_file}"; then
+    echo "::error::Could not list eviction destinations for runtime GHCR proof; refusing to drain ${draining_node}."
+    return 1
+  fi
+  if ! validate_talos_node_inventory "${runtime_probe_nodes_file}"; then
+    echo "::error::Eviction-destination inventory was ambiguous during runtime GHCR proof; refusing to drain ${draining_node}."
+    return 1
+  fi
+  if ! jq -r \
+    --arg draining "${draining_node}" '
+    .items[]
+    | select(.metadata.name != $draining)
+    | select(.metadata.deletionTimestamp == null)
+    | select((.spec.unschedulable // false) == false)
+    | select(any(.status.conditions[]?;
+        .type == "Ready" and .status == "True"))
+    | [.metadata.name, .metadata.uid]
+    | @tsv
+  ' "${runtime_probe_nodes_file}" > "${runtime_probe_targets_file}"; then
+    echo "::error::Could not select eviction destinations for runtime GHCR proof; refusing to drain ${draining_node}."
+    return 1
+  fi
+  if [[ ! -s "${runtime_probe_targets_file}" ]]; then
+    echo "::error::No Ready schedulable peer can receive workloads while ${draining_node} reboots; refusing the drain."
+    return 1
+  fi
+
+  while IFS=$'\t' read -r peer_name peer_uid; do
+    [[ -n "${peer_name}" && -n "${peer_uid}" ]] || {
+      echo "::error::Eviction-destination identity was empty during runtime GHCR proof; refusing to drain ${draining_node}."
+      return 1
+    }
+    if grep -Fqx -- "${peer_uid}" "${runtime_proved_targets_file}"; then
+      continue
+    fi
+    for probe_image in "${RUNTIME_CREDENTIAL_PROBE_IMAGES[@]}"; do
+      probe_node_runtime_pull "${peer_name}" "${probe_image}" || return 1
+    done
+    printf '%s\n' "${peer_uid}" >> "${runtime_proved_targets_file}"
+  done < "${runtime_probe_targets_file}"
+}
+
 # Atomically claim the right to reverse the cordon and make the node
 # unschedulable. Combining both mutations closes the gap where another actor
 # could cordon after our ownership annotation but before kubectl drain. A bare
@@ -270,24 +602,12 @@ restore_node_schedulability_if_needed() {
     emit_safe_operation_output "uncordon-read" "${result_file}"
     return 1
   fi
-  if ! jq -e \
-    --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
-    --arg owner "${owner_token}" \
-    --arg uid "${initial_node_uid}" \
-    --argjson initial_taints "${initial_node_taints}" '
-    .metadata.uid == $uid
-    and .metadata.deletionTimestamp == null
-    and .spec.unschedulable == true
-    and .metadata.annotations[$owner_annotation] == $owner
-    and (((.spec.taints // [])
-      | map(select((
-          .key == "node.kubernetes.io/unschedulable"
-          and .effect == "NoSchedule"
-          and (.value // "") == ""
-        ) | not))
-      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]))
-      == $initial_taints)
-  ' "${cordon_state_file}" >/dev/null; then
+  if ! node_scheduling_state_is_safe_to_reboot \
+    "${cordon_state_file}" \
+    "${was_cordoned}" \
+    "${owner_token}" \
+    "${initial_node_uid}" \
+    "${initial_node_taints}"; then
     echo "::error::Cordon ownership changed or scheduling safety state changed for Talos node ${node_name}; refusing to uncordon it."
     return 1
   fi
@@ -323,6 +643,41 @@ restore_node_schedulability_if_needed() {
   echo "Restored schedulability on ${node_name}."
 }
 
+# Close every post-cordon scheduling race. A drain, reboot, readiness wait, or
+# image proof can outlive an operator/autoscaler change, so re-read before each
+# destructive Talos edge and fail closed when the captured guard no longer holds.
+revalidate_node_scheduling_guard() {
+  local node_name="$1" was_cordoned="$2" owner_token="$3"
+  local initial_node_uid="$4" initial_node_taints="$5" result_file="$6"
+  local selected_node_ip="$7" selected_node_role="$8"
+  local operation="$9"
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get node "${node_name}" \
+    --output json \
+    > "${cordon_state_file}" 2> "${result_file}"; then
+    echo "::error::Could not re-read Talos node ${node_name} immediately before ${operation}; refusing the mutation."
+    emit_safe_operation_output "scheduling-guard" "${result_file}"
+    return 1
+  fi
+  if ! selected_node_identity_is_current \
+    "${cordon_state_file}" \
+    "${node_name}" \
+    "${initial_node_uid}" \
+    "${selected_node_ip}" \
+    "${selected_node_role}" \
+    || ! node_scheduling_state_is_safe_to_reboot \
+    "${cordon_state_file}" \
+    "${was_cordoned}" \
+    "${owner_token}" \
+    "${initial_node_uid}" \
+    "${initial_node_taints}"; then
+    echo "::error::Talos node ${node_name} identity changed, cordon ownership changed, or scheduling safety state changed before ${operation}; refusing the mutation."
+    return 1
+  fi
+}
+
 # Talos returns gRPC NotFound with the exact image reference when that image is
 # already absent from the selected runtime namespace. Match both so transport,
 # authorization, and unrelated removal failures remain fatal.
@@ -335,72 +690,52 @@ talos_image_remove_reports_absent() {
     "${result_file}"
 }
 
+revalidate_selected_node_identity_before_mutation() {
+  local node_name="$1" node_uid="$2" node_ip="$3" node_role="$4"
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get node "${node_name}" \
+    --output json \
+    > "${cordon_state_file}" 2> "${talos_result_file}"; then
+    echo "::error::Could not re-read Talos node ${node_name} before mutation; refusing to target a stale address."
+    emit_safe_operation_output "node-identity" "${talos_result_file}"
+    return 1
+  fi
+  if ! selected_node_identity_is_current \
+    "${cordon_state_file}" \
+    "${node_name}" \
+    "${node_uid}" \
+    "${node_ip}" \
+    "${node_role}"; then
+    echo "::error::Talos node ${node_name} identity changed after inventory selection; refusing to patch, drain, or reboot it."
+    return 1
+  fi
+}
+
 # Apply Git/SOPS auth to stale Talos nodes, reboot them so containerd actually
 # adopts the credential, prove an uncached pull of the declared incoming image,
 # and only then record its non-secret revision+image proof markers so either
 # credential or target changes trigger verification.
-sync_talos_registry_auth() {
+process_talos_node_target() {
   local desired_revision="$1"
   local operator_image="$2"
-  local node_name
-  local node_ip
-  local node_role
-  local _node_desired
+  local node_role="$3"
+  local node_name="$4"
+  local node_ip="$5"
+  local node_mode="$6"
+  local node_uid="$7"
+  local was_cordoned=0 existing_cordon_owner="" cordon_owner_token=""
+  local initial_node_uid="" initial_node_taints="[]"
 
-  if ! kubectl \
-    --context "${KUBE_CONTEXT}" \
-    get nodes \
-    -o json \
-    > "${talos_nodes_file}"; then
-    echo "::error::Could not list Talos nodes; refusing to mutate any Kubernetes credential consumers."
+  if [[ "${node_mode}" != "reboot" && "${node_mode}" != "image-only" ]]; then
+    echo "::error::Unknown Talos GHCR synchronization mode '${node_mode}' for ${node_name}."
     return 1
   fi
-  # talosctl connects to the public control-plane endpoints in talosconfig and
-  # proxies --nodes targets through them. Target addresses therefore must be
-  # the stable InternalIPs as seen by those endpoint servers, not client-facing
-  # ExternalIPs (Talos v1.13 "Endpoints and nodes").
-  if ! jq -e '
-    (.items | length) > 0
-    and all(.items[];
-      ([.status.addresses[]? | select(.type == "InternalIP") | .address]
-        | length) == 1
-      and (([.status.addresses[]?
-        | select(.type == "InternalIP") | .address][0])
-        | type == "string" and length > 0))
-    and (([.items[]
-      | [.status.addresses[]?
-        | select(.type == "InternalIP") | .address][0]]
-      | unique | length) == (.items | length))
-  ' "${talos_nodes_file}" >/dev/null; then
-    echo "::error::Every Talos node must expose exactly one non-empty, unique InternalIP before GHCR auth can be synchronized."
-    return 1
-  fi
+  revalidate_selected_node_identity_before_mutation \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" || return 1
 
-  if ! select_talos_node_targets \
-    "${talos_nodes_file}" \
-    "${desired_revision}" \
-    "${operator_image}" \
-    "${talos_node_targets}"; then
-    echo "::error::Could not select Talos nodes requiring the GHCR auth revision."
-    return 1
-  fi
-
-  # Normal deploys should not regain an all-node Talos API dependency once the
-  # current ciphertext revision has been proved on every node.
-  if [[ ! -s "${talos_node_targets}" ]]; then
-    return 0
-  fi
-
-  : > "${talos_result_file}"
-  chmod 600 "${talos_result_file}"
-  : > "${drain_result_file}"
-  chmod 600 "${drain_result_file}"
-  : > "${reboot_result_file}"
-  chmod 600 "${reboot_result_file}"
-  # Targets are pre-sorted workers-first, and this loop is strictly sequential,
-  # so the reboot below rolls one node at a time and control planes go last —
-  # etcd keeps quorum throughout.
-  while IFS=$'\t' read -r node_role node_name node_ip _node_desired; do
+  if [[ "${node_mode}" == "reboot" ]]; then
     if ! talosctl \
       --nodes "${node_ip}" \
       patch machineconfig \
@@ -437,27 +772,10 @@ sync_talos_registry_auth() {
     # The pull check proves the CREDENTIAL is good; only the reboot proves
     # CONTAINERD is using it.
     #
-    # The reboot is UNCONDITIONAL for every selected node, which does mean a
-    # freshly-autoscaled node — whose containerd already booted with the current
-    # credential — gets one avoidable reboot on the next deploy. That is
-    # deliberate, and the tempting optimisation is a trap:
-    #
-    # The obvious way to spot a "fresh" node is its ghcr-pull-desired-revision
-    # marker (mark-ghcr-pull-revision.yaml). But that marker tracks MACHINE
-    # CONFIG state, and machine-config state being decoupled from what containerd
-    # actually loaded IS the bug this whole function exists to fix. The deploy
-    # runs this bridge twice — once before `ksail cluster update` and once after
-    # (deploy-prod action) — and `cluster update` stamps the current desired
-    # marker onto every node, including ones whose containerd is still holding
-    # the old credential. Any node the manual runbook path updates ahead of the
-    # bridge lands in the same state. Skipping a reboot on that evidence would
-    # silently re-create the exact 2026-07-14 outage.
-    #
-    # Correctness beats one wasted reboot: an over-eager reboot costs ~90s on a
-    # drained node, a skipped one costs a day of silent ImagePullBackOff. Skipping
-    # provably-fresh nodes needs evidence about CONTAINERD (its start time versus
-    # when the credential landed), not about the machine config — tracked
-    # separately.
+    # Credential-revision drift always takes this reboot path; a desired-machine
+    # marker is not evidence that the running containerd loaded the credential.
+    # A node whose v2 credential proof is already current but whose declared
+    # image changed takes the image-only path below and is never rebooted.
     #
     # etcd tolerates exactly one control plane down in a 3-member cluster. This
     # loop is serial and control planes sort last, but a peer can be
@@ -470,21 +788,26 @@ sync_talos_registry_auth() {
       echo "::error::Refusing to reboot control plane ${node_name} for the GHCR auth refresh: another control plane is not Ready with healthy, alarm-free etcd, so rebooting this one risks quorum."
       return 1
     fi
+  fi
 
-    # Remember scheduling intent before any cordon. Atomically claim and cordon
-    # a schedulable node so cleanup can prove that no newer actor replaced our
-    # ownership, while a competing cordon that wins first makes the claim fail.
-    local was_cordoned=0 existing_cordon_owner="" cordon_owner_token=""
-    local initial_node_uid="" initial_node_taints="[]"
+    # Remember scheduling intent before any cordon. Both reboot and image-only
+    # verification exclude new placements while the exact target is removed;
+    # only the reboot path drains existing workloads.
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       get node "${node_name}" \
       --output json \
       > "${cordon_state_file}"; then
-      echo "::error::Refusing to reboot ${node_name}: its scheduling state could not be read."
+      echo "::error::Refusing to synchronize ${node_name}: its scheduling state could not be read."
       return 1
     fi
-    if ! jq -e \
+    if ! selected_node_identity_is_current \
+      "${cordon_state_file}" \
+      "${node_name}" \
+      "${node_uid}" \
+      "${node_ip}" \
+      "${node_role}" \
+      || ! jq -e \
       --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" '
       (.metadata.uid | type == "string" and length > 0)
       and (.metadata.resourceVersion | type == "string" and length > 0)
@@ -492,7 +815,7 @@ sync_talos_registry_auth() {
       and ((.metadata.annotations[$owner_annotation] // "")
         | type == "string")
     ' "${cordon_state_file}" >/dev/null; then
-      echo "::error::Refusing to reboot ${node_name}: its scheduling state was malformed."
+      echo "::error::Refusing to synchronize ${node_name}: its identity changed or scheduling state was malformed."
       return 1
     fi
     initial_node_uid="$(jq -r '.metadata.uid' "${cordon_state_file}")"
@@ -510,7 +833,7 @@ sync_talos_registry_auth() {
       '.metadata.annotations[$owner_annotation] // ""' \
       "${cordon_state_file}")"
     if [[ -n "${existing_cordon_owner}" ]]; then
-      echo "::error::Refusing to reboot ${node_name}: it already has a GHCR bridge cordon owner, so a previous or concurrent roll must be resolved first."
+      echo "::error::Refusing to synchronize ${node_name}: it already has a GHCR bridge cordon owner, so a previous or concurrent roll must be resolved first."
       return 1
     fi
     if jq -e '.spec.unschedulable == true' \
@@ -523,6 +846,7 @@ sync_talos_registry_auth() {
         "${cordon_state_file}" "${drain_result_file}" || return 1
     fi
 
+  if [[ "${node_mode}" == "reboot" ]]; then
     # Drain through the Kubernetes context already proven by this deployment.
     # Talos v1.13's integrated --drain path fetches a separate admin kubeconfig;
     # this cluster's generated config targets an unreachable API endpoint.
@@ -558,6 +882,16 @@ sync_talos_registry_auth() {
       return 1
     fi
 
+    if ! revalidate_node_scheduling_guard \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${drain_result_file}" "${node_ip}" "${node_role}" "reboot"; then
+      # Scheduling intent changed after the PDB-respecting drain. Never reboot
+      # or undo the newer actor's decision; leave the node in its observed state
+      # for an operator or the next run to reconcile explicitly.
+      return 1
+    fi
+
     # The node is now cordoned and fully drained under PDB control, so a plain
     # Talos reboot cannot terminate a workload behind Kubernetes' back. Keep
     # --wait explicit so Kubernetes readiness is checked only after a new boot.
@@ -581,6 +915,16 @@ sync_talos_registry_auth() {
       emit_safe_operation_output "ready" "${reboot_result_file}"
       return 1
     fi
+  fi
+
+    # A reboot/readiness wait or even a short image-only cordon can outlive a
+    # replacement, uncordon, taint, or owner change. Rebind identity and the
+    # scheduling guard at the final Talos edge before touching the image cache.
+    revalidate_node_scheduling_guard \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${talos_result_file}" "${node_ip}" "${node_role}" \
+      "image verification" || return 1
 
     # A cached image can make a pull look healthy without proving that the
     # node's runtime can authenticate to GHCR. Remove the incoming exact target
@@ -608,9 +952,9 @@ sync_talos_registry_auth() {
       return 1
     fi
 
-    # Restore original scheduling intent after runtime auth is proven but
-    # before recording success. If uncordon fails, a later run must retry this
-    # node instead of skipping one the bridge left unschedulable.
+    # Restore original scheduling intent only after the uncached pull succeeds.
+    # On failure, a cordon claimed by this bridge remains as a fail-closed signal
+    # that the node must not receive new pods until registry access is repaired.
     restore_node_schedulability_if_needed \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
@@ -628,7 +972,151 @@ sync_talos_registry_auth() {
       echo "::error::Talos node ${node_name} proved GHCR access but could not record the synchronized credential revision."
       return 1
     fi
-  done < "${talos_node_targets}"
+}
+
+validate_talos_node_inventory() {
+  local nodes_file="$1"
+
+  # talosctl proxies node targets through the public control-plane endpoints,
+  # so use the stable, unique InternalIP. UID is part of convergence identity:
+  # an autoscaler replacement may reuse a name or address and still needs proof.
+  jq -e '
+    (.items | length) > 0
+    and all(.items[];
+      (.metadata.name | type == "string" and test("^[^\\t\\r\\n]+$"))
+      and (.metadata.uid | type == "string" and test("^[^\\t\\r\\n]+$"))
+      and ([.status.addresses[]?
+        | select(.type == "InternalIP") | .address] | length) == 1
+      and (([.status.addresses[]?
+        | select(.type == "InternalIP") | .address][0])
+        | type == "string" and test("^[^\\t\\r\\n]+$")))
+    and (([.items[].metadata.uid] | unique | length) == (.items | length))
+    and (([.items[]
+      | [.status.addresses[]?
+        | select(.type == "InternalIP") | .address][0]]
+      | unique | length) == (.items | length))
+  ' "${nodes_file}" >/dev/null
+}
+
+# Converge the live node set, rather than trusting one inventory captured before
+# a potentially long roll. Completed node UIDs are not rolled twice while their
+# Kubernetes annotations propagate; newly autoscaled/replaced nodes are picked
+# up in the next pass. Two consecutive clean inventories close the common
+# cutover race, and the bounded loop fails before root auth changes if the set
+# never stabilizes.
+sync_talos_registry_auth() {
+  local desired_revision="$1"
+  local operator_image="$2"
+  local sync_result_file="$3"
+  local convergence_attempt=0
+  local consecutive_clean_inventories=0
+  local processed_any_node=0
+  local node_role node_name node_ip node_mode node_uid
+
+  : > "${talos_result_file}"
+  : > "${drain_result_file}"
+  : > "${reboot_result_file}"
+  : > "${talos_processed_targets}"
+  : > "${sync_result_file}"
+  : > "${runtime_proved_targets_file}"
+  chmod 600 \
+    "${talos_result_file}" \
+    "${drain_result_file}" \
+    "${reboot_result_file}" \
+    "${talos_processed_targets}" \
+    "${sync_result_file}" \
+    "${runtime_proved_targets_file}"
+
+  while ((convergence_attempt < TALOS_CONVERGENCE_ATTEMPTS)); do
+    convergence_attempt=$((convergence_attempt + 1))
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get nodes \
+      -o json \
+      > "${talos_nodes_file}"; then
+      echo "::error::Could not list Talos nodes; refusing to mutate any Kubernetes credential consumers."
+      return 1
+    fi
+    if ! validate_talos_node_inventory "${talos_nodes_file}"; then
+      echo "::error::Every Talos node must expose a non-empty unique UID and exactly one non-empty unique InternalIP before GHCR auth can be synchronized."
+      return 1
+    fi
+    if ! select_talos_node_targets \
+      "${talos_nodes_file}" \
+      "${desired_revision}" \
+      "${operator_image}" \
+      "${talos_node_targets}"; then
+      echo "::error::Could not select Talos nodes requiring GHCR synchronization."
+      return 1
+    fi
+
+    : > "${talos_pending_targets}"
+    while IFS=$'\t' read -r \
+      node_role node_name node_ip node_mode node_uid; do
+      [[ -n "${node_name}" ]] || continue
+      if grep -Fqx -- "${node_uid}" "${talos_processed_targets}"; then
+        continue
+      fi
+      printf '%s\t%s\t%s\t%s\t%s\n' \
+        "${node_role}" "${node_name}" "${node_ip}" \
+        "${node_mode}" "${node_uid}" \
+        >> "${talos_pending_targets}"
+    done < "${talos_node_targets}"
+
+    if [[ ! -s "${talos_pending_targets}" ]]; then
+      if [[ ! -s "${talos_node_targets}" ]]; then
+        consecutive_clean_inventories=$((consecutive_clean_inventories + 1))
+        if ((consecutive_clean_inventories >= 2)); then
+          if ((processed_any_node == 1)); then
+            printf '%s\n' processed > "${sync_result_file}"
+          else
+            printf '%s\n' clean > "${sync_result_file}"
+          fi
+          return 0
+        fi
+      else
+        # A completed node can remain in the selector briefly while Talos node
+        # annotations propagate back to Kubernetes. Wait; never re-roll it.
+        consecutive_clean_inventories=0
+      fi
+    else
+      consecutive_clean_inventories=0
+      # A valid previous credential is the safety bridge for the first drain:
+      # not-yet-rebooted peers must still be able to pull evicted workloads.
+      # Re-prove overlap for every newly discovered reboot batch.
+      if awk -F '\t' '$4 == "reboot" { found = 1 } END { exit !found }' \
+        "${talos_pending_targets}"; then
+        verify_current_root_credential_overlap || return 1
+      fi
+
+      # Targets are sorted workers-first and processed strictly sequentially,
+      # so only one node is down and control planes go last.
+      while IFS=$'\t' read -r \
+        node_role node_name node_ip node_mode node_uid; do
+        if [[ "${node_mode}" == "reboot" ]]; then
+          verify_peer_runtime_pull_overlap \
+            "${node_name}" || return 1
+        fi
+        process_talos_node_target \
+          "${desired_revision}" \
+          "${operator_image}" \
+          "${node_role}" \
+          "${node_name}" \
+          "${node_ip}" \
+          "${node_mode}" \
+          "${node_uid}" || return 1
+        processed_any_node=1
+        printf '%s\n' "${node_uid}" >> "${talos_processed_targets}"
+      done < "${talos_pending_targets}"
+    fi
+
+    if ((convergence_attempt < TALOS_CONVERGENCE_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
+  done
+
+  echo "::error::Talos node inventory did not converge after ${TALOS_CONVERGENCE_ATTEMPTS} checks; root Flux auth remains unchanged."
+  return 1
 }
 
 # KSail embeds SOPS, so the deploy uses the same pinned toolchain as workload
@@ -646,59 +1134,14 @@ jq -r '
 ' "${credentials_file}" > "${basic_curl_config}"
 chmod 600 "${basic_curl_config}"
 
-# The same pull credential fans out to Flux OCI sources and private tenant
-# workloads. GHCR permissions are package-granular, and the token endpoint can
-# return only the intersection of requested and granted scopes. Therefore a
-# token HTTP 200 is not proof of pull access: exchange it for a bearer token,
-# then perform a real registry manifest GET for every package. Both credentials
-# stay in mode-0600 files. --disable must remain curl's first argument so an
-# ambient ~/.curlrc cannot enable tracing, add URLs, or otherwise expose auth.
-for target in "${REQUIRED_PULL_TARGETS[@]}"; do
-  repository="${target%:*}"
-  reference="${target##*:}"
-  if ! http_status="$(curl --disable \
-    --config "${basic_curl_config}" \
-    --silent \
-    --show-error \
-    --output "${token_response}" \
-    --write-out '%{http_code}' \
-    --get \
-    --data-urlencode 'service=ghcr.io' \
-    --data-urlencode "scope=repository:${repository}:pull" \
-    'https://ghcr.io/token')"; then
-    echo "::error::Could not request a GHCR pull token for ${repository}; the root Flux Secret was not changed."
-    exit 1
-  fi
-  if [[ "${http_status}" != "200" ]] || ! jq -e '
-    (.token // .access_token // "")
-    | type == "string" and length > 0
-  ' "${token_response}" >/dev/null; then
-    echo "::error::The SOPS GHCR credential could not obtain a pull token for ${repository} (GHCR HTTP ${http_status}); the root Flux Secret was not changed."
-    exit 1
-  fi
-
-  jq -r '
-    (.token // .access_token) as $token
-    | "header = " + (("Authorization: Bearer " + $token) | @json)
-  ' "${token_response}" > "${bearer_curl_config}"
-  chmod 600 "${bearer_curl_config}"
-
-  if ! http_status="$(curl --disable \
-    --config "${bearer_curl_config}" \
-    --silent \
-    --show-error \
-    --output /dev/null \
-    --write-out '%{http_code}' \
-    --header 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
-    "https://ghcr.io/v2/${repository}/manifests/${reference}")"; then
-    echo "::error::Could not read the GHCR manifest for ${target}; the root Flux Secret was not changed."
-    exit 1
-  fi
-  if [[ "${http_status}" != "200" ]]; then
-    echo "::error::The SOPS GHCR pull credential cannot read ${target} (GHCR HTTP ${http_status}); the root Flux Secret was not changed."
-    exit 1
-  fi
-done
+# GHCR permissions are package-granular, so a token response alone is not proof
+# of access. Exchange and read every required manifest with the incoming SOPS
+# credential before touching any cluster consumer.
+verify_ghcr_pull_credential \
+  "${basic_curl_config}" \
+  "${token_response}" \
+  "${bearer_curl_config}" \
+  "SOPS GHCR credential" || exit 1
 
 if [[ "${check_only}" == "true" ]]; then
   echo "✅ Validated every required GHCR package pull from Git/SOPS."
@@ -860,6 +1303,7 @@ fi
 stage_fanout_before_talos \
   "${pull_revision}" \
   "${KSAIL_OPERATOR_IMAGE}" \
+  "${talos_stage_result_file}" \
   "${FANOUT_NAMESPACES[@]}"
 
 echo "✅ Synchronised every existing consumer and refreshed root Flux GHCR auth from Git/SOPS."
