@@ -39,6 +39,7 @@ readonly SYNC_ATTEMPTS="${FLUX_GHCR_SYNC_ATTEMPTS:-60}"
 readonly SYNC_INTERVAL="${FLUX_GHCR_SYNC_INTERVAL:-2}"
 readonly TALOS_CONVERGENCE_ATTEMPTS="${FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS:-${SYNC_ATTEMPTS}}"
 readonly DRAIN_TIMEOUT="${FLUX_GHCR_DRAIN_TIMEOUT:-45m}"
+readonly RUNTIME_PROBE_CREATE_ATTEMPTS=3
 readonly CORDON_OWNER_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-owner"
 readonly CORDON_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner"
 KSAIL_OPERATOR_VERSION="$(yq -er '.spec.chart.spec.version' \
@@ -364,7 +365,8 @@ probe_node_runtime_pull() {
   local node_name="$1"
   local probe_image="$2"
   local probe_name
-  local attempt image_id waiting_reason
+  local attempt create_attempt image_id waiting_reason
+  local probe_created=0
 
   runtime_probe_sequence=$((runtime_probe_sequence + 1))
   probe_name="ghcr-runtime-probe-$$-${RANDOM}-${runtime_probe_sequence}"
@@ -416,12 +418,37 @@ probe_node_runtime_pull() {
   ' > "${runtime_probe_manifest_file}"
 
   active_runtime_probe="${probe_name}"
-  if ! kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace ksail-operator \
-    create --filename "${runtime_probe_manifest_file}" \
-    -o name \
-    > "${runtime_probe_result_file}" 2>&1; then
+  for ((create_attempt = 1; create_attempt <= RUNTIME_PROBE_CREATE_ATTEMPTS; create_attempt++)); do
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace ksail-operator \
+      create --filename "${runtime_probe_manifest_file}" \
+      -o name \
+      > "${runtime_probe_result_file}" 2>&1; then
+      probe_created=1
+      break
+    fi
+
+    # A timed-out admission response is ambiguous: the API server may have
+    # persisted the Pod after the client stopped waiting. Reuse that exact
+    # named probe when it exists; otherwise retry the same immutable manifest.
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace ksail-operator \
+      get pod "${probe_name}" \
+      -o name \
+      >/dev/null 2>&1; then
+      probe_created=1
+      break
+    fi
+
+    if ((create_attempt < RUNTIME_PROBE_CREATE_ATTEMPTS)); then
+      echo "::warning::Runtime pull probe admission failed on ${node_name} (attempt ${create_attempt}/${RUNTIME_PROBE_CREATE_ATTEMPTS}); retrying the same target."
+      sleep "${SYNC_INTERVAL}"
+    fi
+  done
+
+  if ((probe_created == 0)); then
     echo "::error::Could not create a kubelet/containerd GHCR pull probe on ${node_name}; refusing to drain onto an unproved runtime."
     emit_safe_operation_output "runtime-probe-create" \
       "${runtime_probe_result_file}"

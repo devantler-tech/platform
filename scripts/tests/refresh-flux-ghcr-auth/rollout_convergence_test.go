@@ -1,6 +1,7 @@
 package refreshfluxghcrauth
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -188,6 +189,56 @@ func TestRuntimeProbeRejectsInjectedImagePullSecret(t *testing.T) {
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_RUNTIME_PROBE_INJECT_PULL_SECRET_NODES": "prod-control-plane-2"})
 	requireFailureResult(t, result)
 	requireContains(t, result.stdout+result.stderr, "imagePullSecret")
+	operations := readLines(f.operationLog)
+	requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
+	requireNoLine(t, operations, "root-patch")
+}
+
+func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_ONCE_NODES": "prod-control-plane-2",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-drain:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+}
+
+func TestRuntimeProbeReusesPersistedPodAfterAmbiguousAdmissionTimeout(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_RUNTIME_PROBE_CREATE_PERSIST_THEN_TIMEOUT_ONCE_NODES": "prod-control-plane-2",
+	})
+	requireSuccessResult(t, result)
+	attempts := strings.TrimSpace(mustRead(filepath.Join(
+		f.syncStateDir,
+		"runtime-probe-create-attempts-prod-control-plane-2",
+	)))
+	// This node receives one probe per private image. A third create would mean
+	// the first, already-persisted Pod was retried instead of reused.
+	if attempts != "2" {
+		t.Fatalf("persisted runtime probe create attempts = %s, want 2", attempts)
+	}
+	staleProbes, err := filepath.Glob(filepath.Join(
+		f.syncStateDir,
+		"runtime-probe-ghcr-runtime-probe-*",
+	))
+	if err != nil {
+		t.Fatalf("find stale runtime probes: %v", err)
+	}
+	if len(staleProbes) != 0 {
+		t.Fatalf("persisted runtime probes not cleaned up: %v", staleProbes)
+	}
+}
+
+func TestRuntimeProbePersistentAdmissionTimeoutFailsClosed(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_RUNTIME_PROBE_CREATE_ALWAYS_FAIL_NODES": "prod-control-plane-2",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "Could not create a kubelet/containerd GHCR pull probe")
 	operations := readLines(f.operationLog)
 	requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
 	requireNoLine(t, operations, "root-patch")

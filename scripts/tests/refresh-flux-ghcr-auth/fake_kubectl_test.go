@@ -474,6 +474,39 @@ func fakeKubectlCreateRuntimeProbe(namespace, manifestFile string) int {
 	if probeName == "" || probeNode == "" {
 		return commandFailure(91, "runtime probe name or node missing")
 	}
+	if wordListContains(
+		os.Getenv("FAKE_RUNTIME_PROBE_CREATE_PERSIST_THEN_TIMEOUT_ONCE_NODES"),
+		probeNode,
+	) {
+		attemptMarker := "runtime-probe-create-attempts-" + probeNode
+		attempt := parseInt(markerContent(attemptMarker), 0) + 1
+		setMarkerContent(attemptMarker, strconv.Itoa(attempt))
+		if attempt == 1 {
+			setMarkerContent("runtime-probe-"+probeName, probeNode+"\n"+image+"\n")
+
+			return commandFailure(
+				75,
+				"Error from server (InternalError): failed calling webhook: context deadline exceeded",
+			)
+		}
+	}
+	if wordListContains(
+		os.Getenv("FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_ONCE_NODES"),
+		probeNode,
+	) && !markerExists("runtime-probe-create-timeout-once-"+probeNode) {
+		touchMarker("runtime-probe-create-timeout-once-" + probeNode)
+
+		return commandFailure(
+			75,
+			"Error from server (InternalError): failed calling webhook: context deadline exceeded",
+		)
+	}
+	if wordListContains(os.Getenv("FAKE_RUNTIME_PROBE_CREATE_ALWAYS_FAIL_NODES"), probeNode) {
+		return commandFailure(
+			75,
+			"Error from server (InternalError): failed calling webhook: context deadline exceeded",
+		)
+	}
 	setMarkerContent("runtime-probe-"+probeName, probeNode+"\n"+image+"\n")
 	fmt.Printf("pod/%s\n", probeName)
 	return 0
