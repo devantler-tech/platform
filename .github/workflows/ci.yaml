@@ -59,7 +59,7 @@ jobs:
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'tests/cilium-bandwidth-manager-bbr/**'
               - 'scripts/validate-alert-coverage.sh'
-              - 'scripts/tests/test_validate_alert_coverage.py'
+              - 'scripts/tests/validate-alert-coverage/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
               - 'scripts/refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/ghcr-auth-lib.sh'
@@ -73,7 +73,7 @@ jobs:
               - 'scripts/ghcr-auth-lib.sh'
               - 'scripts/run-ksail-prod-with-pull-auth.sh'
               - 'scripts/tests/test-refresh-flux-ghcr-auth-safety.sh'
-              - 'scripts/tests/test_refresh_flux_ghcr_auth.py'
+              - 'scripts/tests/refresh-flux-ghcr-auth/**'
               - 'docs/dr/runbook.md'
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
@@ -129,7 +129,7 @@ jobs:
             scripts/run-ksail-prod-with-pull-auth.sh \
             scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
-          python3 -m unittest scripts.tests.test_refresh_flux_ghcr_auth
+          go test ./scripts/tests/refresh-flux-ghcr-auth
 
       - name: 🧩 Validate embedded JSON blobs
         # ConfigMaps that embed whole JSON documents as block scalars (e.g. the
@@ -155,9 +155,10 @@ jobs:
         # every namespace holding a HelmRelease. A namespace missing from that list
         # is invisible: the release fails, rolls back, reports Ready, and nothing
         # pages (ksail-operator, 2026-07-14). Drift is a build failure, not a
-        # comment. Bash + the runner's kubectl/yq; no cluster or secrets required.
+        # comment. Go behavioral tests + Bash with the runner's kubectl/yq; no
+        # cluster or secrets required.
         run: |
-          python3 -m unittest scripts.tests.test_validate_alert_coverage
+          go test ./scripts/tests/validate-alert-coverage
           shellcheck scripts/validate-alert-coverage.sh
           bash scripts/validate-alert-coverage.sh
 
