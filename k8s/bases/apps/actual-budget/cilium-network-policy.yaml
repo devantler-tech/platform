@@ -6,9 +6,11 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Gateway ingress (direct from Cilium envoy)
-    - fromEntities:
-        - ingress
+    # Authenticated ingress from the platform oauth2-proxy/auth-proxy chain.
+    - fromEndpoints:
+        - matchLabels:
+            app: auth-proxy
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
       toPorts:
         - ports:
             - port: "5006"
