@@ -99,10 +99,9 @@ spec:
       # this namespace), which right-sizes it at steady state; these values remain
       # as the safe baseline a fresh pod starts on before VPA has a recommendation
       # (the 1Gi memory limit keeps that window well above the 384Mi OOM
-      # threshold). Eviction is no longer a deadlock risk: the VPA resizes IN PLACE
-      # (no eviction), and with replicas: 2 + the PDB a Recreate fallback or an OOM
-      # only ever takes one replica, so the admission path stays up. Limit stays
-      # far under auto-vpa's 6Gi maxAllowed ceiling.
+      # threshold). That static VPA is patched to RequestsOnly for this
+      # fail-closed admission controller, so recommendations can right-size the
+      # request without reducing the explicit 1Gi safety limit.
       resources:
         requests:
           cpu: 100m

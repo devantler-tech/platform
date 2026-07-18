@@ -19,6 +19,9 @@
 #     cpu 50m/mem 64Mi, maxAllowed cpu 3/mem 6Gi.
 #   * `vpa-tier: daemonset` → tighter maxAllowed cpu 1/mem 1Gi, so a per-node pod
 #     still fits the smallest autoscale-cx23 worker.
+#   * kyverno-admission-controller → controlledValues RequestsOnly: it keeps the
+#     explicit 1Gi fail-closed admission safety limit while VPA right-sizes the
+#     request.
 #   * spire-server → updateMode Initial: it is a singleton StatefulSet on an RWO
 #     volume, so it is right-sized only at its next natural restart, never evicted.
 #
@@ -112,6 +115,16 @@ patches:
         path: /spec/resourcePolicy/containerPolicies/0/maxAllowed
         value:
           cpu: "1"
+  # kyverno-admission-controller: keep the explicit 1Gi memory limit from the
+  # HelmRelease. Image verification fails closed, and this controller previously
+  # OOMKilled below that safety limit, so VPA may right-size only requests here.
+  - target:
+      kind: VerticalPodAutoscaler
+      name: kyverno-admission-controller
+    patch: |
+      - op: replace
+        path: /spec/resourcePolicy/containerPolicies/0/controlledValues
+        value: RequestsOnly
   # spire-server: singleton StatefulSet on an RWO volume — never evict.
   - target:
       kind: VerticalPodAutoscaler
