@@ -15,19 +15,19 @@
 # scaled-to-0 SOURCE -- a no-op -- while the live PRIMARY keeps its stale startup
 # credentials and crash-loops (umami: Prisma P1000) until a manual restart.
 #
-# This mutate-existing rule copies a source Deployment's
-# secret.reloader.stakater.com/reload annotation onto its "<name>-primary", so
+# This mutate-existing rule copies umami's source Deployment
+# secret.reloader.stakater.com/reload annotation onto umami-umami-primary, so
 # Reloader restarts the primary on rotation. mutateExistingOnPolicyUpdate applies
-# it to primaries that already exist (not just ones created after the policy).
-# Workloads without a "-primary" (non-Flagger apps such as fleetdm/headlamp) have
-# no target, so the rule is a harmless no-op for them. Mirrors the existing
-# mutate-existing pattern in disable-default-sa-automount.yaml.
+# it to a primary that already exists (not just one created after the policy).
+# Mirrors the existing mutate-existing pattern in disable-default-sa-automount.yaml.
 #
-# The background controller needs update access on apps/Deployments to run this
-# mutate-existing patch (Kyverno verifies the grant at policy admission). That
-# grant is an aggregated ClusterRole shipped one layer earlier with the Kyverno
-# controller (controllers/kyverno/background-controller-rbac.yaml) so it is live
-# and aggregated before this policy is admitted.
+# The background controller needs update access on the target Deployment to run
+# this mutate-existing patch (Kyverno verifies the grant at policy admission).
+# That grant is an aggregated ClusterRole shipped one layer earlier with the
+# Kyverno controller (controllers/kyverno/cluster-role.yaml) so it is live and
+# aggregated before this policy is admitted. Keep the policy and RBAC target
+# static unless another Flagger workload needs this workaround: RBAC cannot limit
+# Deployment patch/update to metadata-only changes.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -39,8 +39,8 @@ metadata:
     policies.kyverno.io/subject: Deployment
     policies.kyverno.io/minversion: 1.6.0
     policies.kyverno.io/description: >-
-      Copies a Flagger canary source Deployment's
-      secret.reloader.stakater.com/reload annotation onto its <name>-primary so
+      Copies umami's Flagger canary source Deployment
+      secret.reloader.stakater.com/reload annotation onto umami-umami-primary so
       Stakater Reloader restarts the live primary when the referenced Secret
       rotates (Flagger does not carry the annotation across itself).
 spec:
@@ -51,24 +51,10 @@ spec:
           - resources:
               kinds:
                 - Deployment
-      exclude:
-        any:
-          # A Flagger PRIMARY is never a canary SOURCE: it inherits the reloader
-          # annotation (this rule copies it onto the primary), so it would
-          # re-match and target a non-existent "<name>-primary-primary",
-          # erroring in PolicyReports (observed: umami-umami-primary).
-          - resources:
               names:
-                - "?*-primary"
-          # Apps that use Reloader directly with no Flagger canary, so no
-          # "<name>-primary" target exists -- the mutate-existing target fails to
-          # resolve and errors ("deployments.apps headlamp-primary not found")
-          # instead of the intended harmless no-op the header comment describes.
-          # (fleetdm/fleet carries no reloader annotation today; add it here if
-          # that changes.)
-          - resources:
-              names:
-                - headlamp
+                - umami-umami
+              namespaces:
+                - umami
       preconditions:
         all:
           - key: "{{ request.object.metadata.annotations.\"secret.reloader.stakater.com/reload\" || '' }}"
@@ -79,8 +65,8 @@ spec:
         targets:
           - apiVersion: apps/v1
             kind: Deployment
-            name: "{{ request.object.metadata.name }}-primary"
-            namespace: "{{ request.object.metadata.namespace || request.namespace }}"
+            name: umami-umami-primary
+            namespace: umami
         patchStrategicMerge:
           metadata:
             annotations:
