@@ -15,10 +15,10 @@ resources:
   # node-agent (kubescape/patches/ below) and routing to Slack. See its
   # helm-release.yaml header. Prod-only (runtimeDetection is off on docker/local).
   - alertmanager/
-  # Prod-only: layers a cluster-wide mutual-auth (SPIRE mTLS) policy on top of
-  # the base Cilium controller listed above. SPIRE is enabled only on Hetzner,
-  # so the policy lives here, not in the base — see cilium/ for the rationale.
-  - cilium/
+  # Cilium is supplied by the base controller aggregate. Do not add a
+  # cluster-wide authentication-only policy here: Cilium ingress rules are allow
+  # rules, so a fromEndpoints: [{}] mTLS rule would bypass narrower workload
+  # allow-lists.
   - coredns/
   # Prod-only: Crossplane core for declarative GitHub management — external
   # reconcilers must run on exactly one always-on cluster. The provider

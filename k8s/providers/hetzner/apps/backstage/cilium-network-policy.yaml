@@ -7,10 +7,8 @@
 # ADDITIVE to allow-backstage (Cilium unions ingress allows across policies):
 # this only adds the cross-namespace observability source on 5432 while
 # allow-backstage keeps permitting intra-namespace + cnpg-system. Scoped to the
-# DB instance pods via CNPG's cnpg.io/cluster label. Mutual auth is enforced
-# automatically by the cluster-wide require-mutual-auth policy (both ends carry
-# SPIRE identities), so no authentication stanza is needed — see the umami
-# sibling policy for the full rationale. Prod-only (hetzner overlay).
+# DB instance pods via CNPG's cnpg.io/cluster label. Prod-only (hetzner
+# overlay).
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:

@@ -3,12 +3,13 @@
 > **Status: DESIGN ONLY — no manifest change ships in this PR.** Coroot flags
 > `kube-system:StatefulSet:spire-server` as *"single instance — not resilient to
 > node failure."* That signal is **real**, but the fix is **not** a values flip.
-> spire-server sits IN the cluster-wide pod-to-pod mTLS data path
-> (`require-mutual-auth`), it is installed by the **Cilium** chart (not a
-> standalone SPIRE chart), and naïve HA would (a) split-brain on the built-in
-> SQLite datastore and (b) re-create the SPIRE↔storage circular deadlock that
-> already took prod fully down on 2026-06-06. This doc is the runbook for doing it
-> correctly when the prerequisites are met; until then the **deliberate
+> spire-server is installed by the **Cilium** chart (not a standalone SPIRE
+> chart), and naïve HA would (a) split-brain on the built-in SQLite datastore
+> and (b) add a datastore dependency to identity infrastructure. Earlier versions
+> of this design assumed a blanket `require-mutual-auth` Cilium policy; that
+> policy was removed because Cilium ingress rules are allow rules and a catch-all
+> authentication rule weakens workload allow-lists. This doc remains the runbook
+> for doing SPIRE HA correctly when the prerequisites are met; until then the **deliberate
 > single-node posture stays**, and the replica-floor policy keeps spire-server
 > exempt on purpose.
 
@@ -32,17 +33,12 @@ Three independent blockers, each fatal to a blind change:
    A datastore the identity controller depends on must come up **before** it, not
    two layers after. CNPG-for-SPIRE would have to be a brand-new
    `infrastructure-controllers`-tier Cluster, not a mirror of the apps-tier DBs.
-3. **Circular dependency — the exact deadlock class already fought off, but
-   worse.** spire-server issues the SVIDs that satisfy `require-mutual-auth`, so
-   it gates pod-to-pod mTLS cluster-wide. A CNPG datastore's data path is
-   ordinary pod-to-pod traffic (`cnpg-system` operator → instance pods :5432) —
-   i.e. **behind the very gate SPIRE bootstraps**. SPIRE down → its Postgres
-   unreachable/uncertifiable → SPIRE can't start → loop. This is precisely the
-   SPIRE↔Longhorn deadlock the prod overlay already engineered around by moving
-   the datastore to hcloud-csi (`cilium/patches/store-spire-data-on-hcloud.yaml`,
-   2026-06-06 prod outage), but Postgres is a *busier, multi-pod, multi-node*
-   dependency than a single attached block device, so it is strictly harder to
-   make safe.
+3. **Identity/datastore coupling.** A CNPG datastore's data path is ordinary
+   pod-to-pod traffic (`cnpg-system` operator → instance pods :5432). If Cilium
+   authentication is reintroduced narrowly in the future, SPIRE must still be
+   able to reach its datastore during bootstrap. Postgres is a busier,
+   multi-pod, multi-node dependency than a single attached block device, so it
+   must be staged deliberately.
 
 **Verdict:** correct HA is a deliberate, staged migration of *identity infra* —
 chart-install change + a dedicated bootstrap-tier datastore + a one-time SPIFFE
@@ -60,7 +56,7 @@ over, not blind-flipped).
 | Replicas | **1** (StatefulSet; chart exposes no `replicaCount`) |
 | Datastore | built-in **SQLite** on a single RWO PVC |
 | PVC storage (prod) | **hcloud-csi** `hcloud` 10Gi (NOT longhorn — deadlock break, see overlay patch) |
-| Data-path role | issues SVIDs for `require-mutual-auth` → **in the pod-to-pod mTLS path** |
+| Data-path role | issues SVIDs for Cilium/SPIRE authentication consumers |
 | Failure tolerance | survives **brief** restarts (cilium-agent auth cache + cilium-operator re-sync from CiliumIdentities ride a short gap); a node-loss outage lasts until the pod reschedules + its hcloud volume re-attaches |
 | Replica-floor policy | spire-server **exempted on purpose** (`validate-replica-floor.yaml`) — "HA needs a shared external datastore, not just replicas" |
 
@@ -97,7 +93,7 @@ infrastructure-controllers layer (must be ready before SPIRE serves):
                                          ▼
   spire-server (2 replicas, stateless)  ──sql plugin──►  spire-db  (PostgreSQL, shared)
         ▲                                                     ▲
-        │ require-mutual-auth gates pod-to-pod mTLS           │ creds via ExternalSecret/OpenBao (repo pattern)
+        │ Cilium/SPIRE identity consumers                         │ creds via ExternalSecret/OpenBao (repo pattern)
         └─ MUST be able to reach spire-db WITHOUT a working SVID (bootstrap carve-out)
 ```
 
@@ -107,7 +103,7 @@ The datastore must be reachable by spire-server **before** SPIRE is issuing
 SVIDs, or it deadlocks. Options, hardest constraint first:
 
 - **Datastore storage must NOT be Longhorn.** Same reason the SQLite PVC isn't:
-  Longhorn's control plane is itself behind the mTLS gate. A CNPG `spire-db` on
+  Longhorn's control plane is itself pod-to-pod traffic. A CNPG `spire-db` on
   Longhorn re-arms the original deadlock one layer over. Use **hcloud-csi**
   (`hcloud` StorageClass) for `spire-db`'s PVCs — attaches via the Hetzner API,
   not pod-to-pod, and survives node death. (Trade-off: CNPG HA wants pod
@@ -116,14 +112,10 @@ SVIDs, or it deadlocks. Options, hardest constraint first:
   without a Longhorn replica set. A 1-instance `spire-db` on hcloud + frequent
   base backups may be the pragmatic first cut, accepting that the DB itself is
   then the SPOF the replicas removed from the server tier — see "Open questions".)
-- **The mTLS handshake to spire-db (:5432) must be allowed pre-identity.** Add a
-  Cilium policy carve-out so spire-server↔spire-db (and cnpg-operator↔spire-db)
-  do **not** require a SVID — analogous to the existing **CoreDNS carve-out** in
-  `require-mutual-auth` (DNS must never sit behind the handshake). Without this,
-  the first connection from a freshly-started spire-server to its own datastore
-  needs an SVID that spire-server itself hasn't issued yet → deadlock. This is the
-  single most important safety prerequisite and **must land and be verified before
-  any replica/datastore change.** (It is purely additive — safe to ship ahead.)
+- **Do not add a broad mTLS carve-out or catch-all authentication rule.** If
+  Cilium authentication is reintroduced for SPIRE↔Postgres in the future, it must
+  be scoped to the exact datastore traffic. A blanket `fromEndpoints: [{}]`
+  authentication policy is an allow rule and weakens workload isolation.
 - **Talos node firewall** already allows the SPIRE mesh-auth port 4250
   node-to-node (`talos/workers/allow-cilium-mutual-auth-ingress.yaml`, `talos/control-planes/allow-internal-node-ingress.yaml`). Postgres
   :5432 between nodes is intra-cluster pod traffic over the CNI, not a host port,
@@ -141,8 +133,7 @@ SVIDs, or it deadlocks. Options, hardest constraint first:
   `spire-db-app` (host/port/user/password/dbname/uri); OpenBao Database secrets
   engine rotates the `spire` role (superuser pushed to OpenBao via a PushSecret as
   umami does); spire-server consumes an OpenBao-synced ExternalSecret. **Caveat:**
-  OpenBao/External-Secrets are themselves in the `infrastructure` layer and behind
-  the mTLS gate — for the *bootstrap* connection SPIRE may need the raw CNPG
+  OpenBao/External-Secrets are themselves in the `infrastructure` layer and part of identity bootstrap — for the *bootstrap* connection SPIRE may need the raw CNPG
   `spire-db-app` secret (same layer) rather than the OpenBao-rotated one, with
   rotation layered on only after steady state. Resolve in the spike (Open
   questions).
@@ -189,8 +180,8 @@ Mirrors the openbao raft migration discipline: back up, change install, carry th
 data, verify, then capture in Git.
 
 0. **Prereqs landed & verified (separate, additive PRs):**
-   - mTLS carve-out so spire-server↔spire-db `:5432` (and cnpg-operator↔spire-db)
-     need no SVID — verified with a test pod that the path is allowed pre-identity.
+   - exact, narrow network policy for spire-server↔spire-db `:5432` (and
+     cnpg-operator↔spire-db), verified with a test pod before cutover.
    - `spire-db` CNPG Cluster live in the infra-controllers tier on **hcloud**
      storage, empty `spire` DB, R2 backups confirmed, creds secret published.
    - Decide bootstrap-cred source (raw CNPG secret vs OpenBao) — §"credentials".
@@ -213,8 +204,8 @@ data, verify, then capture in Git.
 4. **Verify** before declaring done:
    - both spire-server replicas Ready, each connected to `spire-db`;
    - `spire-server` Service endpoints = 2;
-   - SVIDs issuing (no cluster-wide `no identity issued` storm; sample pod-to-pod
-     auth-gated flow works after cache expiry);
+   - SVIDs issuing (no cluster-wide `no identity issued` storm; sample Cilium/SPIRE identity
+     consumer works after cache expiry);
    - kill one spire-server pod → identities still issue (the actual HA assertion);
    - `spire-db` failover (kill primary) → spire-server reconnects.
 5. **Land the manifests** (install change + spire-db + carve-out + drop
@@ -226,10 +217,10 @@ data, verify, then capture in Git.
 | Risk | Mitigation |
 |---|---|
 | **Replicas on SQLite → split-brain/corruption.** | Never. HA requires the shared SQL datastore first; replicas only after the datastore cutover. |
-| **SPIRE↔Postgres deadlock** (datastore behind the mTLS gate it bootstraps). | mTLS carve-out for spire-server↔spire-db `:5432` (CoreDNS-carve-out precedent), landed & verified **before** the cutover; **spire-db on hcloud, not longhorn.** |
+| **SPIRE↔Postgres bootstrap coupling.** | Exact spire-server↔spire-db `:5432` policy, landed & verified **before** the cutover; avoid broad catch-all authentication policies; **spire-db on hcloud, not longhorn.** |
 | **Layering inversion** (CNPG Cluster downstream of SPIRE). | Place `spire-db` in the **infra-controllers** tier, not `apps`; it must be ready before spire-server serves. |
 | **Chart can't express SQL datastore / replicas / custom server.conf.** | Change the *install* (standalone SPIRE chart, `install.enabled: false`) or upstream the chart keys — do **not** hand-patch the rendered config (drift-detection + chart-bump fragility). |
-| **Bootstrap credential chicken-and-egg** (OpenBao/ESO also behind the gate). | Use the same-layer raw CNPG `spire-db-app` secret for the bootstrap connection; layer OpenBao rotation on only after steady state. |
+| **Bootstrap credential chicken-and-egg** (OpenBao/ESO are later-layer dependencies). | Use the same-layer raw CNPG `spire-db-app` secret for the bootstrap connection; layer OpenBao rotation on only after steady state. |
 | **`spire-db` becomes the new SPOF** (if run 1-instance on hcloud). | Prefer 3-instance CNPG if hcloud topology allows one-per-node; else accept a 1-instance DB with frequent R2 base backups + fast restore, and document that the server tier is HA even if the DB is the residual SPOF — still strictly better than today. |
 | **Losing the bundled-chart wiring** (cilium-init entry seeding, delegated-identity socket, 1000:1000 ptrace fix). | The standalone deployment must re-create all of it; the existing `helm-release.yaml` comments are the spec. Verify identity issuance end-to-end in staging-equivalent before prod. |
 | **No pre-cutover backup → unrecoverable trust state.** | Velero the spire-server PVC + record CA/trust-domain before step 2; entries are re-derivable but don't rely on it blindly. |
@@ -250,8 +241,8 @@ data, verify, then capture in Git.
 
 ## Recommendation
 
-Ship the **additive, safe** prerequisites first (the spire-server↔spire-db mTLS
-carve-out; optionally a backed-up `spire-db` CNPG Cluster in the infra-controllers
+Ship the **additive, safe** prerequisites first (the exact spire-server↔spire-db
+network policy; optionally a backed-up `spire-db` CNPG Cluster in the infra-controllers
 tier on hcloud) as small independent PRs, and **file the upstream cilium chart
 enhancement** for SQL-datastore + replicas. Treat the full HA cutover (option 1
 above) as a separately-reviewed migration executed with this runbook — **not** a

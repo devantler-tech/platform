@@ -216,11 +216,11 @@ spec:
       # default node-encryption-opt-out-labels
       # (node-role.kubernetes.io/control-plane) exempts, hence the telltale
       # asymmetry: worker->CP host flows work, worker->worker are dead.
-      # That killed cilium-health (4240) and, critically, the SPIRE
-      # mesh-auth handshakes (4250) between all non-CP node pairs, so every
-      # auth-gated pod flow between worker-class nodes black-holed once its
-      # auth-cache entry expired (KEDA scaler liveness kills, ESO->OpenBao
-      # 503s/timeouts, OpenBao raft joins). Active since the 06-06 agent
+      # That killed cilium-health (4240) and the SPIRE mesh-auth handshakes
+      # (4250) between all non-CP node pairs, which degraded workloads that
+      # depend on those control-plane paths (KEDA scaler liveness kills,
+      # ESO->OpenBao 503s/timeouts, OpenBao raft joins). Active since the
+      # 06-06 agent
       # restart picked up #1804; #1944 addressed a different vector
       # (strict-mode plaintext drops) and did not fix this.
       #
@@ -255,22 +255,17 @@ spec:
             server:
               # spire-server is a single-replica StatefulSet backed by an
               # SQLite datastore on a ReadWriteOnce PVC (Cilium chart default).
-              # Now that the hetzner require-mutual-auth policy enforces
-              # pod-to-pod mTLS, this server sits in the data path: while it is
-              # down, NEW identity pairs cannot authenticate. Established flows
-              # ride through via cilium-agent's auth cache, and the
-              # cilium-operator re-syncs entries from CiliumIdentities, so brief
-              # restarts are tolerable.
+              # spire-server is not protected by a multi-replica HA setup here:
+              # while it is down, new Cilium/SPIRE identity material cannot be
+              # issued. The cilium-operator re-syncs entries from
+              # CiliumIdentities, so brief restarts are tolerable.
               #
               # The datastore StorageClass is intentionally NOT set here. On
               # hetzner it is pinned to hcloud-csi by the prod overlay
               # (providers/hetzner/.../cilium/patches/store-spire-data-on-hcloud.yaml)
-              # — NOT the cluster-default longhorn. The reason is a circular
-              # dependency: Longhorn's own control plane is pod-to-pod traffic
-              # behind this very mTLS gate, so binding spire-server's PVC to
-              # longhorn means that when SPIRE is down Longhorn cannot attach the
-              # PVC, so SPIRE cannot start, so it stays down — a deadlock that
-              # wedged all of prod during the 2026-06-06 Talos node roll. An
+              # — NOT the cluster-default longhorn. This avoids coupling SPIRE
+              # recovery to Longhorn's own pod-to-pod control plane during node
+              # recovery. An
               # hcloud Cloud Volume attaches via the Hetzner API (not pod-to-pod)
               # and survives node death, breaking the cycle. See the overlay
               # patch for the full rationale and the one-time StatefulSet-recreate
@@ -313,10 +308,8 @@ spec:
               # caller's uid+gid must equal the target's. If cilium-init runs as root
               # (0) while spire-server runs as 1000 it is denied, hangs forever on
               # "Waiting for spire-server to start...", and never creates the entries.
-              # SPIRE then issues no SVIDs, so the require-mutual-auth policy
-              # black-holes pod-to-pod traffic cluster-wide (kustomize/helm-controller
-              # can no longer reach source-controller — wedging every Flux
-              # reconciliation). `server.securityContext` below sets only the
+              # SPIRE then issues no SVIDs, degrading any Cilium/SPIRE auth
+              # consumers. `server.securityContext` below sets only the
               # spire-server *container* and leaves cilium-init as root, so this
               # pod-level block is what actually fixes the bootstrap.
               # (cilium/cilium#40533)
