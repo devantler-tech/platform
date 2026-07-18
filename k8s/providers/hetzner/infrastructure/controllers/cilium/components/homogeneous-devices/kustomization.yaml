@@ -1,0 +1,102 @@
+# Default-off staging component for platform#2029 / platform#2610.
+#
+# Widens Cilium's eBPF device selection from the private-NIC pin
+# (`devices: "enp7s0 eth1"`, enforce-wireguard-strict-mode.yaml) to BOTH NICs
+# on every node via wildcard patterns, so the BPF masquerade program that
+# ebpf-host-routing (#2609) stages can attach to the PUBLIC default-route
+# NICs — pod->internet egress leaves through them, and BPF masquerading only
+# processes interfaces carrying Cilium's eBPF programs. Without this, enabling
+# ebpf-host-routing would disable iptables masquerade while installing no BPF
+# masquerade on the egress NICs: pod traffic would leave with an unroutable
+# pod-CIDR source and external egress would break cluster-wide.
+#
+# WHY WILDCARDS (the homogeneous strategy, live-verified): upstream requires
+# manually listed bandwidth-manager device names to be consistent on every
+# managed node, and this fleet's NIC names are CLASS-heterogeneous — live
+# inventory 2026-07-18 (`talosctl get addresses` + `kubectl get nodes`, all
+# NINE nodes):
+#
+#   static nodes  (prod-control-plane-2/4/5, prod-worker-1/2/3):
+#     public enp1s0 (default route + public IP) / private enp7s0 (10.0.1.x)
+#   autoscale nodes (autoscale-cx33-*/cx43-* cattle):
+#     public eth0 (default route + public IP + IPv6) / private eth1 (10.0.1.x)
+#
+# Note this INVERTS the 2026-06-19 "workers enp7s0 / control-planes eth1"
+# premise recorded in enforce-wireguard-strict-mode.yaml: the control planes
+# have since been rebuilt onto enp-named machines (confirmed live: all three
+# CP agents report devices=[enp7s0]), and the split is now static-vs-autoscale.
+# Today's two-name pin still covers every node's PRIVATE NIC — but only by
+# UNION (static->enp7s0, autoscale->eth1), each node matching exactly one name.
+#
+# An explicit four-name list ("enp7s0 eth1 enp1s0 eth0") would leave every
+# node with two names that do not exist on it — exactly what upstream's
+# bandwidth-manager consistency guidance forbids. A wildcard pattern list is
+# IDENTICAL on every node and resolves per node to only the devices that
+# exist (upstream documents wildcards for exactly this heterogeneous-naming
+# case). "en+ eth+" matches all four current names, nothing else on these
+# hosts (bond0/dummy0 and Cilium's own cilium_*/lxc* interfaces don't match
+# or are auto-excluded), and also absorbs future autoscaler node-type naming
+# drift (ens*/eno* would still match en+) — retiring the standing WARNING in
+# the strict-mode patch about differently-named private NICs.
+#
+# PRIMARY-ADDRESS RISK — why this stays default-off and activation must
+# prove it per node: the private-only pin exists so each node's PRIMARY
+# address (VXLAN/WireGuard tunnel endpoint, cilium-health, routing — see
+# enforce-wireguard-strict-mode.yaml) stays the private 10.0.1.x that the
+# Talos ingress firewall admits on 4240/4250/8472. Re-admitting the public
+# NICs into the device set re-admits public addresses as primary candidates.
+# Upstream documents that multi-device direct-routing selection prefers the
+# device holding the Kubernetes InternalIP (private here, on every node), but
+# the node-address selection of the running 1.20.0-pre.4 is not documented
+# precisely enough to TRUST that the primary stays private — the 2026-06-19
+# incident showed device-set changes can flip it. So: activate one node at a
+# time and verify before proceeding (runbook below). Note the SPIRE
+# mutual-auth dial itself is intermittently public-IP-bound REGARDLESS of
+# this selection (upstream cilium/cilium#46767, random node-IP pick); that
+# pre-existing defect is tracked separately and is NOT widened by this
+# component as long as the primary/routing address stays private.
+#
+# ACTIVATION RUNBOOK (separate PR referencing this component; low-traffic
+# window; `rollOutCiliumPods: true` rolls agents one node at a time):
+#   1. Reference this component in ../../../kustomization.yaml `components:`.
+#   2. After the FIRST node's agent restarts, verify before letting the roll
+#      continue: agent Ready; its log shows the widened device set (e.g.
+#      devices=[enp1s0 enp7s0]) and NO public primary (the node's advertised
+#      router/tunnel addresses stay 10.0.1.x — check the agent's
+#      node-address/NodeAddress log lines and `kubectl get ciliumnodes`);
+#      cilium-health reachability intact; no new policy-verdict DROPs or
+#      auth-timeout storms in Hubble/agent logs (a `dial <public-ip>:4250`
+#      RATE INCREASE beyond the known #46767 background is a regression).
+#   3. Only after all nine nodes roll clean does ebpf-host-routing (#2609)
+#      become referenceable; bandwidth-manager-bbr activation follows its own
+#      soak (see those components' guards).
+#   ROLLBACK: remove the component reference — the next one-node-at-a-time
+#   roll restores the private-only pin from the strict-mode patch.
+#
+# MERGE-ORDER NOTE (load-bearing): parent `patches:` are applied AFTER all
+# component patches — a devices value carried by
+# patches/enforce-wireguard-strict-mode.yaml could NEVER be overridden by this
+# component (render-verified on #2610's delivery PR: with this component
+# enabled against a patch-carried pin, the patch value still won). That is why
+# the live pin lives in ../private-nic-devices/ (a component), and why THIS
+# component must be listed AFTER it in the parent's `components:` — components
+# apply in list order, later wins (also render-verified). Do not move either
+# device selection back into a parent patch.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: cilium
+      namespace: kube-system
+    patch: |
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: cilium
+        namespace: kube-system
+      spec:
+        values:
+          devices: "en+ eth+"

@@ -66,22 +66,37 @@ components:
   # silently-broken keda external-scaler and homepage Deployments.
   - ../../../../bases/components/helmrelease-drift-detection
   - ../../../../bases/components/helmrelease-flux-defaults
+  # ALWAYS-ON: the live private-NIC Cilium device pin (moved out of the
+  # strict-mode patch so the staged homogeneous-devices/ successor below can
+  # override it — parent `patches:` apply after component patches, so a value
+  # they carry is un-overridable by any component; see the component header).
+  # Keep referenced until homogeneous-devices/ is activated AND soaked.
+  - cilium/components/private-nic-devices/
+  # Default-off homogeneous device selection (#2610): widens the device set to
+  # the public default-route NICs via wildcards ("en+ eth+") so
+  # ebpf-host-routing's BPF masquerade can attach where pod egress actually
+  # leaves. MUST stay listed AFTER private-nic-devices/ when enabled (later
+  # component wins). Activation rolls every Cilium agent one node at a time —
+  # follow the runbook in the component header (verify the FIRST rolled node
+  # keeps a private primary address before letting the roll continue).
+  # Rollback = re-comment.
+  # - cilium/components/homogeneous-devices/
   # Default-off Cilium bandwidth-manager + host-only BBR staging component
   # (#2607). It is not activation-ready: #2609 must prove pod-BBR datapath
-  # prerequisites and #2610 must make device selection homogeneous first.
+  # prerequisites and #2610's homogeneous-devices/ must be activated first.
   # Enabling replaces the node qdisc and rolls every Cilium agent; after both
   # guards close, use a separate low-traffic activation. Rollback = re-comment.
   # - cilium/components/bandwidth-manager-bbr/
   # Default-off eBPF host-routing/masquerade prerequisite staging for pod BBR
   # (#2609). Changes the NAT path for ALL pod egress and rolls every Cilium
-  # agent when enabled. HARD BLOCKER: do NOT enable until #2610 extends the
-  # pinned device list to the public default-route NICs — today's private-only
-  # `devices: "enp7s0 eth1"` would leave public egress without a masquerade
-  # program while iptables masquerade is off, breaking external egress
-  # cluster-wide (see the component's DEVICE section). Then activate on its
-  # own in a low-traffic window (before bandwidth-manager-bbr's host-only
-  # guard may be lifted), verify `cilium status --verbose` + Hubble for
-  # drops. Rollback = re-comment.
+  # agent when enabled. HARD BLOCKER: do NOT enable until #2610's
+  # homogeneous-devices/ component (above) has been ACTIVATED and soaked —
+  # under the private-only pin, public egress would get no masquerade program
+  # while iptables masquerade is off, breaking external egress cluster-wide
+  # (see the component's DEVICE section). Then activate on its own in a
+  # low-traffic window (before bandwidth-manager-bbr's host-only guard may be
+  # lifted), verify `cilium status --verbose` + Hubble for drops.
+  # Rollback = re-comment.
   # - cilium/components/ebpf-host-routing/
 patches:
   - path: openbao/patches/store-data-on-hcloud.yaml
