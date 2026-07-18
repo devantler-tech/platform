@@ -19,18 +19,22 @@ spec:
   hostnames:
     - vault.${domain}
   rules:
-    - backendRefs:
-        # openbao-active routes only to the unsealed Raft leader. The chart's
-        # openbao-ui Service selects every server pod, including sealed-but-Ready
-        # standbys (readinessProbe sealedcode=204), so the UI would round-robin
-        # onto a sealed node. Trade-off: with NO active node (all sealed, DR),
-        # the UI is unreachable — recovery is CLI-driven anyway
-        # (docs/dr/openbao-raft-ha-migration.md).
-        - name: openbao-active
-          port: 8200
-      filters:
+    - filters:
+        # Gate the public OpenBao UI/API route behind oauth2-proxy so
+        # unauthenticated Internet traffic cannot generate unbounded audit
+        # records on the fail-closed file audit PVC. After SSO, auth-proxy
+        # forwards vault.${domain} to the active OpenBao Service.
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://vault.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
               - name: Strict-Transport-Security
                 value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80

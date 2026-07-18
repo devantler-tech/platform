@@ -24,9 +24,9 @@ spec:
               protocol: TCP
             - port: "8201"
               protocol: TCP
-    # Allow same-namespace clients (vault-config Jobs, UI),
+    # Allow same-namespace clients (vault-config Jobs, snapshots),
     # cross-namespace clients (ESO from external-secrets namespace),
-    # and Cilium Gateway envoy proxies for external ingress
+    # and authenticated UI/API traffic forwarded by auth-proxy.
     - fromEndpoints:
         - matchLabels:
             app: vault-config
@@ -36,15 +36,9 @@ spec:
             k8s:io.kubernetes.pod.namespace: openbao
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: external-secrets
-      toPorts:
-        - ports:
-            - port: "8200"
-              protocol: TCP
-    # Cilium Gateway / Ingress traffic (envoy runs with hostNetwork,
-    # so label-based matching doesn't work — use ingress + host entities)
-    - fromEntities:
-        - ingress
-        - host
+        - matchLabels:
+            app: auth-proxy
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
       toPorts:
         - ports:
             - port: "8200"
