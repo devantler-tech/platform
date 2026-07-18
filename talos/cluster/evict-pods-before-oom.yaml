@@ -40,6 +40,10 @@ machine:
         memory.available: 200Mi
       # Bound how long a soft-evicted pod may take to terminate.
       evictionMaxPodGracePeriod: 60
+      # Keep kubelet's default disk/inode hard eviction thresholds when
+      # overriding the memory hard floor below. Without this, Kubernetes
+      # treats omitted evictionHard signals as disabled.
+      mergeDefaultEvictionSettings: true
       # Hard floor: last resort before the kernel OOM-killer.
       evictionHard:
         memory.available: 100Mi
