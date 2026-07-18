@@ -15,6 +15,11 @@ metadata:
   annotations:
     ksail.devantler.tech/reconcile-exclude: "true"
 spec:
+  # SECURITY: this external Git source drives write-scoped UniFi Crossplane
+  # managed resources through the Cloud Connector credential. Keep automatic
+  # reconciliation paused until the source is pinned or signature-verified so a
+  # compromised moving branch cannot use Crossplane as a confused deputy.
+  suspend: true
   interval: 1m
   timeout: 5m
   retryInterval: 2m
