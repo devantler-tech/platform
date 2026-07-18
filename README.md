@@ -18,21 +18,24 @@ For local development:
 
 - [Docker](https://docs.docker.com/get-docker/) — runs the cluster on your machine.
 - [KSail](https://github.com/devantler-tech/ksail) — creates and manages that cluster. CI uses the
-  same tool, so changes are exercised the same way before they reach production.
+  same tool to validate and security-scan manifests, but does not boot a cluster; running one is a
+  local step.
 
 For the production cluster:
 
 - [Hetzner Cloud](https://www.hetzner.com/cloud/) — Infrastructure provider and managed Cloud Load Balancer for cluster ingress. KSail's native Hetzner provider handles Talos boot, CCM, CSI, and kubeconfig.
 - [Cloudflare](https://www.cloudflare.com) — DNS (A/AAAA records pointed at the Hetzner Cloud Load Balancer) and Origin CA.
-- [Flux GitOps](https://fluxcd.io) — watches this repository and applies whatever it finds here to
-  the cluster.
+- [Flux GitOps](https://fluxcd.io) — applies the manifests to the cluster. It does not read this
+  repository directly: the manifests are packaged and published as an OCI artifact, and Flux pulls
+  that.
 - [SOPS](https://getsops.io) and [Age](https://github.com/FiloSottile/age) — encrypt the starting
   secrets that are committed here (the `*.enc.yaml` files), so they can live in Git safely.
 - [OpenBao](https://openbao.org) and the [External Secrets Operator](https://external-secrets.io) —
-  where secrets live once the cluster is running. At startup the encrypted files above are loaded
-  into OpenBao, and the operator copies each secret into the namespace that needs it. Two of them
-  (Dex and oauth2-proxy) are still read straight from the encrypted files while that move finishes.
-  Full picture: [`docs/secret-rotation.md`](docs/secret-rotation.md).
+  where **most** secrets live once the cluster is running. Selected values from the encrypted files
+  above are seeded into OpenBao, and the operator copies each one into the namespace that needs it.
+  The rest — the bootstrap-critical values, plus Dex and oauth2-proxy — are still substituted
+  straight into manifests by Flux at apply time, so OpenBao is not the runtime path for everything
+  committed here. Full picture: [`docs/secret-rotation.md`](docs/secret-rotation.md).
 
 ## Usage
 
@@ -60,11 +63,13 @@ open in a browser.
 
 The local cluster is a **thin test-bed**: somewhere to try one component before promoting it to
 production, not a copy of production. It starts with core infrastructure only — networking and
-gateway, DNS, TLS, Flux, policy, autoscaling, secrets, single sign-on, and PostgreSQL.
+gateway, DNS, TLS, Flux, policy, vertical pod autoscaling, secrets, single sign-on, and the
+CloudNativePG operator. Note that the operator is installed but no database is created: apps are
+opt-in, so a plain local bring-up has no PostgreSQL instance running.
 
-Everything heavier (observability, backup, runtime security, the VM stack, …) and all apps are
-opt-in. Uncomment what you want in these files — each carries a copy-paste template — then re-run
-`ksail workload push && ksail workload reconcile`:
+Everything heavier (observability, request-rate autoscaling, backup, runtime security, the VM stack,
+…) and all apps are opt-in. Uncomment what you want in these files — each carries a copy-paste
+template — then re-run `ksail workload push && ksail workload reconcile`:
 
 - `k8s/providers/docker/infrastructure/controllers/kustomization.yaml`
 - `k8s/providers/docker/infrastructure/kustomization.yaml`
