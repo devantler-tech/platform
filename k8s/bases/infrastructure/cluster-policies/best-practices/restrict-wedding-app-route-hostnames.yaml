@@ -1,0 +1,47 @@
+# The wedding-app tenant reconciles tenant-controlled OCI manifests with its own
+# ServiceAccount. Keep that ServiceAccount able to manage its app HTTPRoute, but
+# prevent it (or any other principal in the namespace) from claiming arbitrary
+# hostnames on the shared wildcard platform Gateway.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-wedding-app-route-hostnames
+  annotations:
+    policies.kyverno.io/title: Restrict Wedding App Route Hostnames
+    policies.kyverno.io/category: Multi-Tenancy, Gateway API
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: HTTPRoute
+    policies.kyverno.io/minversion: 1.9.0
+    policies.kyverno.io/description: >-
+      Restricts HTTPRoute hostnames in the wedding-app namespace to the tenant's
+      approved local and production hostnames so tenant-controlled manifests
+      cannot claim arbitrary platform wildcard subdomains on the shared Gateway.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-explicit-approved-hostname
+      match:
+        any:
+          - resources:
+              kinds:
+                - HTTPRoute
+              namespaces:
+                - wedding-app
+      validate:
+        message: >-
+          wedding-app HTTPRoutes must set hostnames and may only use
+          wedding.platform.lan or wedding.platform.devantler.tech.
+        deny:
+          conditions:
+            any:
+              # Omitting hostnames makes the route match every hostname on the
+              # listener, which is equivalent to claiming the platform wildcard.
+              - key: "{{ length(request.object.spec.hostnames || `[]`) }}"
+                operator: Equals
+                value: 0
+              - key: "{{ request.object.spec.hostnames || `[]` }}"
+                operator: AnyNotIn
+                value:
+                  - wedding.platform.lan
+                  - wedding.platform.devantler.tech
