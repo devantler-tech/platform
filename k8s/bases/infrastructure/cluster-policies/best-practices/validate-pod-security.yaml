@@ -10,10 +10,7 @@
 # intentionally set it to false (homepage, opencost UI, actual-budget)
 # and PSS restricted does not require it. It is enforced via HelmRelease
 # values where possible and the mutation policy adds it as a default.
-#
-# Local-path-provisioner helper pods (used in local/CI clusters) are
-# excluded by name pattern because they run as root with hostPath in
-# app namespaces. Production uses Longhorn (excluded by namespace).
+
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -54,10 +51,6 @@ spec:
                 - observability
                 - velero
                 - chaos-mesh
-          - resources:
-              names:
-                - "helper-pod-create-pvc-*"
-                - "helper-pod-delete-pvc-*"
       validate:
         message: >-
           All containers must set allowPrivilegeEscalation=false,
@@ -111,10 +104,6 @@ spec:
                 - observability
                 - velero
                 - chaos-mesh
-          - resources:
-              names:
-                - "helper-pod-create-pvc-*"
-                - "helper-pod-delete-pvc-*"
       validate:
         message: "Pod must use seccomp profile RuntimeDefault or Localhost."
         pattern:
@@ -144,10 +133,6 @@ spec:
                 - observability
                 - velero
                 - chaos-mesh
-          - resources:
-              names:
-                - "helper-pod-create-pvc-*"
-                - "helper-pod-delete-pvc-*"
       validate:
         message: >-
           Container seccomp profile must be RuntimeDefault or Localhost
