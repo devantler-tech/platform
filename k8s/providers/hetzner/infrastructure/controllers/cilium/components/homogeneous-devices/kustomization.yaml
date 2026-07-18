@@ -56,22 +56,42 @@
 # pre-existing defect is tracked separately and is NOT widened by this
 # component as long as the primary/routing address stays private.
 #
+# ROLLOUT GATE (why this component ALSO sets updateStrategy OnDelete): the
+# base HelmRelease's `rollOutCiliumPods: true` would start an automatic
+# DaemonSet rollout the moment this component is referenced, proceeding to
+# the next node as soon as each updated agent reports Ready — no pause point
+# exists, so the per-node verification below would be unexecutable and a bad
+# primary-address selection could reach the fleet before detection. OnDelete
+# makes the roll operator-stepped: the new config only reaches a node when
+# that node's cilium pod is deleted. The override lives HERE so it applies
+# exactly while the widened device set is being introduced, and its removal
+# (after the fleet is verified) is a strategy-only change that rolls nothing.
+#
 # ACTIVATION RUNBOOK (separate PR referencing this component; low-traffic
-# window; `rollOutCiliumPods: true` rolls agents one node at a time):
+# window):
 #   1. Reference this component in ../../../kustomization.yaml `components:`.
-#   2. After the FIRST node's agent restarts, verify before letting the roll
-#      continue: agent Ready; its log shows the widened device set (e.g.
+#      Under OnDelete, NO agent restarts yet — the new device set is staged
+#      in the agent ConfigMap only.
+#   2. Delete ONE node's cilium pod (`kubectl -n kube-system delete pod
+#      <cilium-x>`) and verify its replacement before touching the next:
+#      agent Ready; its log shows the widened device set (e.g.
 #      devices=[enp1s0 enp7s0]) and NO public primary (the node's advertised
 #      router/tunnel addresses stay 10.0.1.x — check the agent's
 #      node-address/NodeAddress log lines and `kubectl get ciliumnodes`);
 #      cilium-health reachability intact; no new policy-verdict DROPs or
 #      auth-timeout storms in Hubble/agent logs (a `dial <public-ip>:4250`
 #      RATE INCREASE beyond the known #46767 background is a regression).
-#   3. Only after all nine nodes roll clean does ebpf-host-routing (#2609)
-#      become referenceable; bandwidth-manager-bbr activation follows its own
-#      soak (see those components' guards).
-#   ROLLBACK: remove the component reference — the next one-node-at-a-time
-#   roll restores the private-only pin from the strict-mode patch.
+#   3. Repeat node by node across all nine; soak.
+#   4. After the soak, a follow-up PR removes the `updateStrategy` override
+#      from this component — restoring RollingUpdate is a strategy-only
+#      change (the pod template is already current), so it rolls nothing.
+#   5. Only then does ebpf-host-routing (#2609) become referenceable;
+#      bandwidth-manager-bbr activation follows its own soak (see those
+#      components' guards).
+#   ROLLBACK (any point): re-comment the component reference — the template
+#   reverts to the private-only pin and RollingUpdate resumes, so every
+#   already-stepped node rolls BACK automatically; un-stepped nodes never
+#   saw the change.
 #
 # MERGE-ORDER NOTE (load-bearing): parent `patches:` are applied AFTER all
 # component patches — a devices value carried by
@@ -100,3 +120,8 @@ patches:
       spec:
         values:
           devices: "en+ eth+"
+          # Operator-stepped rollout gate — see ROLLOUT GATE above. Removed
+          # by a follow-up PR once all nodes are verified (strategy-only
+          # change; rolls nothing).
+          updateStrategy:
+            type: OnDelete

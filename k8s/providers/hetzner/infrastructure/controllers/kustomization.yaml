@@ -76,10 +76,11 @@ components:
   # the public default-route NICs via wildcards ("en+ eth+") so
   # ebpf-host-routing's BPF masquerade can attach where pod egress actually
   # leaves. MUST stay listed AFTER private-nic-devices/ when enabled (later
-  # component wins). Activation rolls every Cilium agent one node at a time —
-  # follow the runbook in the component header (verify the FIRST rolled node
-  # keeps a private primary address before letting the roll continue).
-  # Rollback = re-comment.
+  # component wins). The component also sets updateStrategy OnDelete, so
+  # enabling it stages config without rolling any agent — the operator steps
+  # the roll pod-by-pod per the component's runbook (verify each node keeps a
+  # private primary address before the next). Rollback = re-comment (stepped
+  # nodes roll back automatically under the restored RollingUpdate).
   # - cilium/components/homogeneous-devices/
   # Default-off Cilium bandwidth-manager + host-only BBR staging component
   # (#2607). It is not activation-ready: #2609 must prove pod-BBR datapath
