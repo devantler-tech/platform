@@ -72,6 +72,17 @@ components:
   # Enabling replaces the node qdisc and rolls every Cilium agent; after both
   # guards close, use a separate low-traffic activation. Rollback = re-comment.
   # - cilium/components/bandwidth-manager-bbr/
+  # Default-off eBPF host-routing/masquerade prerequisite staging for pod BBR
+  # (#2609). Changes the NAT path for ALL pod egress and rolls every Cilium
+  # agent when enabled. HARD BLOCKER: do NOT enable until #2610 extends the
+  # pinned device list to the public default-route NICs — today's private-only
+  # `devices: "enp7s0 eth1"` would leave public egress without a masquerade
+  # program while iptables masquerade is off, breaking external egress
+  # cluster-wide (see the component's DEVICE section). Then activate on its
+  # own in a low-traffic window (before bandwidth-manager-bbr's host-only
+  # guard may be lifted), verify `cilium status --verbose` + Hubble for
+  # drops. Rollback = re-comment.
+  # - cilium/components/ebpf-host-routing/
 patches:
   - path: openbao/patches/store-data-on-hcloud.yaml
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.

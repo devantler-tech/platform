@@ -57,7 +57,7 @@ jobs:
               - 'go.mod'
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
-              - 'tests/cilium-bandwidth-manager-bbr/**'
+              - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
               - 'scripts/tests/validate-alert-coverage/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
@@ -141,6 +141,23 @@ jobs:
         # scripts/validate-embedded-json.py (#2480).
         run: python3 scripts/validate-embedded-json.py
 
+      - name: ⚖️ Install Kyverno CLI
+        if: needs.changes.outputs.k8s == 'true'
+        # Pinned to the version the cluster actually runs (the kyverno Helm
+        # release is v1.18.2), so a policy that passes here is evaluated by the
+        # same engine that admits it in production. Bump both together.
+        uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
+        with:
+          release: v1.18.2
+
+      - name: ⚖️ Validate cluster policies
+        if: needs.changes.outputs.k8s == 'true'
+        # Runs the kyverno test fixtures under tests/. Until now nothing
+        # executed them, so tests/validate-replica-floor had never actually run
+        # in CI — a policy regression could ship green. No cluster or secrets
+        # required; the CLI evaluates the committed ClusterPolicy files offline.
+        run: kyverno test ./tests
+
       - name: 🚦 Validate default-off Cilium bandwidth manager
         if: needs.changes.outputs.k8s == 'true'
         # Render the committed and temporary opt-in states so the staged
@@ -180,7 +197,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.172.3"
+          KSAIL_VERSION: "7.174.0"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -501,7 +518,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@468d652134d991e5cdd4feb1fb942c443897a17f # v10.0.1
+        uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
         with:
           job-results: >-
             ${{ needs.changes.result }}
