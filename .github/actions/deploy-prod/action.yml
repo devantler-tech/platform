@@ -142,18 +142,29 @@ runs:
       run: ksail --config ksail.prod.yaml workload push
 
     - name: ⚙️ Install cosign
-      # sigstore/cosign-installer is the official installer action — it
-      # downloads cosign for the requested release and verifies its own
-      # Sigstore signature against Fulcio + Rekor (keyless), so there is
-      # no per-version SHA256 to track in this repo. Bump cosign by
-      # editing COSIGN_VERSION below; Renovate proposes the bump via the
-      # custom regex manager in .github/renovate.json.
+      # Download cosign directly and verify the exact release asset digest
+      # before installing it. Keep COSIGN_SHA256 repository-local on purpose:
+      # Renovate may bump COSIGN_VERSION automatically, but a mismatched or
+      # compromised release asset must fail before it runs in this privileged
+      # production deploy job.
+      shell: bash
       env:
         # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
         COSIGN_VERSION: "3.1.1"
-      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-      with:
-        cosign-release: 'v${{ env.COSIGN_VERSION }}'
+        # SHA256 of cosign-linux-amd64 for the version above.
+        # Update alongside COSIGN_VERSION (Renovate bumps the version only;
+        # the digest must follow in the same PR — intentional).
+        COSIGN_SHA256: "ae1ecd212663f3693ad9edf8b1a183900c9a52d3155ba6e354237f9a0f6463fc"
+      run: |
+        set -euo pipefail
+        curl -fsSL \
+          "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64" \
+          -o /tmp/cosign
+        echo "${COSIGN_SHA256}  /tmp/cosign" | sha256sum -c -
+        chmod +x /tmp/cosign
+        sudo install /tmp/cosign /usr/local/bin/cosign
+        rm /tmp/cosign
+        cosign version
 
     - name: 🔐 Configure GHCR auth (cosign + buildx + syft)
       # Pre-create ~/.docker/config.json instead of `cosign login` /
@@ -163,7 +174,7 @@ runs:
       # commands would have written (base64 of "actor:token") -- the
       # warning is cosmetic noise on an ephemeral runner that's destroyed
       # after the job. Writing the auth here once also lets cosign, docker
-      # buildx imagetools, and syft (via anchore/sbom-action) all resolve
+      # buildx imagetools, and syft all resolve
       # GHCR credentials through the standard OCI keychain, which reads
       # this same file.
       shell: bash
@@ -226,23 +237,34 @@ runs:
         echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
 
     - name: 📋 Generate SBOM (CycloneDX)
-      # anchore/sbom-action is the official installer wrapper for syft —
-      # it manages syft's binary integrity itself, so no per-version
-      # SHA256 to track here either. Bump syft by editing SYFT_VERSION
-      # below; Renovate proposes the bump via the custom regex manager.
-      # Output is CycloneDX JSON, a format actions/attest accepts via sbom-path.
-      # `upload-artifact: false` matches today's behaviour (no workflow
-      # artifact); the SBOM is attested to the registry in the next step.
+      # Download syft directly and verify the exact release archive digest
+      # before installing it. Keep SYFT_SHA256 repository-local on purpose:
+      # Renovate may bump SYFT_VERSION automatically, but a mismatched or
+      # compromised release archive must fail before it can read registry or
+      # production credentials on this runner. Output remains CycloneDX JSON,
+      # a format actions/attest accepts via sbom-path.
+      shell: bash
       env:
         # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
         SYFT_VERSION: "1.46.0"
-      uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-      with:
-        image: ghcr.io/devantler-tech/platform/manifests@${{ steps.cosign-sign.outputs.digest }}
-        format: cyclonedx-json
-        output-file: sbom.cdx.json
-        syft-version: 'v${{ env.SYFT_VERSION }}'
-        upload-artifact: false
+        # SHA256 of syft_<ver>_linux_amd64.tar.gz for the version above.
+        # Update alongside SYFT_VERSION (Renovate bumps the version only;
+        # the digest must follow in the same PR — intentional).
+        SYFT_SHA256: "d654f678b709eb53c393d38519d5ed7d2e57205529404018614cfefa0fb2b5ca"
+        OCI_DIGEST: ${{ steps.cosign-sign.outputs.digest }}
+      run: |
+        set -euo pipefail
+        curl -fsSL \
+          "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
+          -o /tmp/syft.tar.gz
+        echo "${SYFT_SHA256}  /tmp/syft.tar.gz" | sha256sum -c -
+        sudo tar -xzf /tmp/syft.tar.gz -C /usr/local/bin syft
+        rm /tmp/syft.tar.gz
+        syft version
+        syft scan --output cyclonedx-json=sbom.cdx.json \
+          "ghcr.io/devantler-tech/platform/manifests@${OCI_DIGEST}"
+        test -s sbom.cdx.json
+        jq -e '.bomFormat == "CycloneDX"' sbom.cdx.json >/dev/null
 
     - name: 🪪 Attest SBOM (Sigstore via cosign keyless)
       # Records the SBOM as a Sigstore in-toto attestation against the
