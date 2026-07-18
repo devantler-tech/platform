@@ -71,8 +71,6 @@ data:
       Observability:
         # `coroot` is not in any icon set Homepage resolves; use an MDI icon.
         icon: mdi-chart-line
-      Storage:
-        icon: mdi-harddisk
       Security:
         icon: mdi-shield-lock
       Diagnostics:
