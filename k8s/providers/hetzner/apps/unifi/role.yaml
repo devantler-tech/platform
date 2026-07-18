@@ -1,6 +1,6 @@
 ---
 # Least-privilege RBAC for the unifi app's ServiceAccount: a dedicated namespaced
-# Role granting full verbs over the namespaced provider-upjet-unifi
+# Role granting apply verbs over the namespaced provider-upjet-unifi
 # managed-resource API groups, and only within the unifi namespace. The app's
 # Flux Kustomization applies the Managed Resources from devantler-tech/unifi AS
 # this SA, so it needs no more than this — the ProviderConfig + credential
@@ -34,4 +34,3 @@ rules:
       - create
       - update
       - patch
-      - delete
