@@ -84,22 +84,6 @@ spec:
                   periodSeconds: 5
                   timeoutSeconds: 3
                   failureThreshold: 12  # 60s grace beyond initial delay
-          - target:
-              kind: Deployment
-              name: headlamp
-            patch: |
-              apiVersion: apps/v1
-              kind: Deployment
-              metadata:
-                name: headlamp
-              spec:
-                template:
-                  spec:
-                    volumes:
-                      - name: plugins-dir
-                        emptyDir: null
-                        persistentVolumeClaim:
-                          claimName: headlamp
   # https://github.com/kubernetes-sigs/headlamp/blob/main/charts/headlamp/values.yaml
   values:
     replicaCount: ${headlamp_replicas:=1}
