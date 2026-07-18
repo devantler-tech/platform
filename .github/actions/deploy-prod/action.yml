@@ -133,13 +133,44 @@ runs:
     # down, `ksail cluster update` ran first, hard-failed the job, and froze
     # ALL app/config delivery to an otherwise-healthy cluster (the apiserver
     # and Flux were fine on the two surviving control-plane nodes).
+    - name: 🧾 Prepare immutable workload tag
+      id: workload-ref
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Publish this run under an unguessable, single-use tag instead of
+        # signing the shared mutable `latest` tag. KSail does not currently
+        # expose the pushed digest directly, so the random suffix prevents a
+        # package writer from pre-positioning attacker-controlled content at
+        # the tag this run will resolve and sign.
+        TAG="sha-${GITHUB_SHA::12}-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(openssl rand -hex 8)"
+        CONFIG="${RUNNER_TEMP}/ksail.prod.${TAG}.yaml"
+        cp ksail.prod.yaml "${CONFIG}"
+        python3 - "${CONFIG}" "${TAG}" <<'PY'
+        import pathlib
+        import re
+        import sys
+
+        path = pathlib.Path(sys.argv[1])
+        tag = sys.argv[2]
+        text = path.read_text()
+        updated, count = re.subn(r"(?m)^(\s+tag:\s+)latest$", rf"\g<1>{tag}", text, count=1)
+        if count != 1:
+            raise SystemExit("expected exactly one production workload tag: latest entry")
+        path.write_text(updated)
+        PY
+        echo "config=${CONFIG}" >> "${GITHUB_OUTPUT}"
+        echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+        echo "ref_tag=ghcr.io/devantler-tech/platform/manifests:${TAG}" >> "${GITHUB_OUTPUT}"
+
     - name: 📦 Push manifests to GHCR
       shell: bash
       env:
         GITHUB_ACTOR: ${{ github.actor }}
         GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-      run: ksail --config ksail.prod.yaml workload push
+        KSAIL_CONFIG: ${{ steps.workload-ref.outputs.config }}
+      run: ksail --config "${KSAIL_CONFIG}" workload push
 
     - name: ⚙️ Install cosign
       # sigstore/cosign-installer is the official installer action — it
@@ -207,9 +238,9 @@ runs:
         # ~/.docker/config.json populated by the "Configure GHCR auth"
         # step above; cosign reads them through the OCI keychain.
         COSIGN_YES: "true"
+        REF_TAG: ${{ steps.workload-ref.outputs.ref_tag }}
       run: |
         set -euo pipefail
-        REF_TAG="ghcr.io/devantler-tech/platform/manifests:latest"
         # Resolve the tag → digest BEFORE signing so that (a) cosign signs
         # exactly the bytes we resolved -- no tag→digest TOCTOU if a
         # concurrent deploy mutates the tag between this resolve and the
@@ -221,6 +252,10 @@ runs:
         # cosign-native equivalent (`cosign manifest digest`) was removed
         # in cosign v3.0.
         DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')
+        if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+          echo "::error::Resolved invalid OCI digest for ${REF_TAG}: ${DIGEST}"
+          exit 1
+        fi
         REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"
         cosign sign --yes --recursive "${REF}"
         echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
@@ -291,7 +326,8 @@ runs:
         GITHUB_ACTOR: ${{ github.actor }}
         GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-      run: ksail --config ksail.prod.yaml workload reconcile
+        KSAIL_CONFIG: ${{ steps.workload-ref.outputs.config }}
+      run: ksail --config "${KSAIL_CONFIG}" workload reconcile
 
     - name: 🩺 Diagnose Flux on failure
       if: failure() && steps.reconcile.outcome == 'failure'
@@ -316,8 +352,9 @@ runs:
       env:
         GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+        KSAIL_CONFIG: ${{ steps.workload-ref.outputs.config }}
         # ksail env-expands ${WG_SERVER_PRIVATE_KEY} in the talos patches at
         # load time; an unset var renders an empty key and Talos rejects the
         # whole machine config ('private key is invalid: wrong key "" length: 0').
         WG_SERVER_PRIVATE_KEY: ${{ inputs.wg-server-private-key }}
-      run: ksail --config ksail.prod.yaml cluster update
+      run: ksail --config "${KSAIL_CONFIG}" cluster update
