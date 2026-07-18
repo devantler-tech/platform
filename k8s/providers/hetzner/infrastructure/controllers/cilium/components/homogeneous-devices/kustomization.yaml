@@ -67,11 +67,28 @@
 # exactly while the widened device set is being introduced, and its removal
 # (after the fleet is verified) is a strategy-only change that rolls nothing.
 #
+# GATE LIMITS (what OnDelete does NOT stop): a pod that restarts for any
+# OTHER reason during the window (crash, eviction, node reboot) is recreated
+# from the NEW template immediately, and so is the agent on any NODE the
+# cluster autoscaler adds mid-window — OnDelete gates template-driven
+# replacement only. The runbook therefore suspends autoscaler node creation
+# for the window and treats any incidental restart as an involuntary canary
+# to verify at once.
+#
 # ACTIVATION RUNBOOK (separate PR referencing this component; low-traffic
 # window):
+#   0. Suspend autoscaler node creation for the window:
+#      `kubectl -n kube-system scale deploy
+#      cluster-autoscaler-hetzner-cluster-autoscaler --replicas=0`. The
+#      autoscaler is ksail-provisioned (ksail.prod.yaml `autoscaler.node`),
+#      not Flux-managed, so the scale-down holds until step 5 restores
+#      `--replicas=1`. Confirm the over-provisioning CapacityBuffer headroom
+#      is idle enough that no scale-up would have fired.
 #   1. Reference this component in ../../../kustomization.yaml `components:`.
 #      Under OnDelete, NO agent restarts yet — the new device set is staged
-#      in the agent ConfigMap only.
+#      in the agent ConfigMap only. Watch for INVOLUNTARY canaries from here
+#      on: any cilium pod that restarts for unrelated reasons now boots the
+#      widened set — run step 2's verification on it immediately.
 #   2. Delete ONE node's cilium pod (`kubectl -n kube-system delete pod
 #      <cilium-x>`) and verify its replacement before touching the next:
 #      agent Ready; its log shows the widened device set (e.g.
@@ -85,13 +102,17 @@
 #   4. After the soak, a follow-up PR removes the `updateStrategy` override
 #      from this component — restoring RollingUpdate is a strategy-only
 #      change (the pod template is already current), so it rolls nothing.
-#   5. Only then does ebpf-host-routing (#2609) become referenceable;
+#   5. Restore the autoscaler (`--replicas=1`) and verify the FIRST
+#      autoscaler-created node after resume like a stepped node (its agent
+#      boots the widened set directly).
+#   6. Only then does ebpf-host-routing (#2609) become referenceable;
 #      bandwidth-manager-bbr activation follows its own soak (see those
 #      components' guards).
 #   ROLLBACK (any point): re-comment the component reference — the template
 #   reverts to the private-only pin and RollingUpdate resumes, so every
-#   already-stepped node rolls BACK automatically; un-stepped nodes never
-#   saw the change.
+#   already-stepped node rolls BACK automatically. Un-stepped nodes keep the
+#   old config UNLESS their pod restarted during the window (the involuntary
+#   canaries above) — those roll back with the stepped ones.
 #
 # MERGE-ORDER NOTE (load-bearing): parent `patches:` are applied AFTER all
 # component patches — a devices value carried by
