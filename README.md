@@ -16,14 +16,16 @@ layout and the guides in [`docs/`](docs) are the useful parts, and
 
 For local development:
 
-- [Docker](https://docs.docker.com/get-docker/) - For running the cluster locally.
-- [KSail](https://github.com/devantler-tech/ksail) - For developing the cluster locally, and for running the cluster in CI to ensure all changes are properly tested before being applied to the production cluster.
+- [Docker](https://docs.docker.com/get-docker/) — runs the cluster on your machine.
+- [KSail](https://github.com/devantler-tech/ksail) — creates and manages that cluster. CI uses the
+  same tool, so changes are exercised the same way before they reach production.
 
 For the production cluster:
 
 - [Hetzner Cloud](https://www.hetzner.com/cloud/) — Infrastructure provider and managed Cloud Load Balancer for cluster ingress. KSail's native Hetzner provider handles Talos boot, CCM, CSI, and kubeconfig.
 - [Cloudflare](https://www.cloudflare.com) — DNS (A/AAAA records pointed at the Hetzner Cloud Load Balancer) and Origin CA.
-- [Flux GitOps](https://fluxcd.io) - For managing the kubernetes applications and infrastructure declaratively.
+- [Flux GitOps](https://fluxcd.io) — watches this repository and applies whatever it finds here to
+  the cluster.
 - [SOPS](https://getsops.io) and [Age](https://github.com/FiloSottile/age) — encrypt the starting
   secrets that are committed here (the `*.enc.yaml` files), so they can live in Git safely.
 - [OpenBao](https://openbao.org) and the [External Secrets Operator](https://external-secrets.io) —
@@ -35,13 +37,14 @@ For the production cluster:
 ## Usage
 
 > [!IMPORTANT]
-> Secrets committed to this repo are encrypted at rest with SOPS + Age. At bootstrap they seed OpenBao, and the External Secrets Operator distributes most of them to workloads at runtime; a few (Dex, oauth2-proxy) are still injected directly via Flux `postBuild` substitution while the OpenBao migration completes. If you want to run the platform locally, or in your own Hetzner project, you will need to:
+> The committed secrets are encrypted with my keys, so you cannot decrypt them. To run this locally
+> or in your own Hetzner project, swap in your own:
 >
-> 1. Fork this repo
-> 2. Create your own Age keys
-> 3. Update the `.sops.yaml` file in the root of the repository.
-> 4. Update GitHub secrets with your Age key.
-> 5. Replace all encrypted `*.enc.yaml` files in the `k8s/` folder with new ones that are encrypted with your own keys.
+> 1. Fork this repo.
+> 2. Create your own Age keys.
+> 3. Update `.sops.yaml` in the repository root.
+> 4. Put your Age key in your fork's GitHub secrets.
+> 5. Re-encrypt every `*.enc.yaml` file under `k8s/` with your own keys.
 
 To run this cluster locally, simply run:
 
