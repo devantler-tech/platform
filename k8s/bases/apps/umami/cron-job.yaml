@@ -35,9 +35,9 @@
 # once Umami is reachable, and picking up TENANTS edits automatically. The script
 # is fully idempotent, so a steady-state tick is a fast no-op. `concurrencyPolicy:
 # Forbid` prevents overlap, and `failedJobsHistoryLimit` keeps recent failures
-# visible for debugging (the old TTL'd Job hid them). First provisioning lands
-# within one interval of deploy; to apply immediately run
-# `kubectl create job -n umami --from=cronjob/umami-provision-tenants umami-provision-now`.
+# visible for debugging (the old TTL'd Job hid them). The sibling
+# job.yaml bootstrap Job runs the same idempotent script immediately on deploy,
+# so the default admin password is rotated without waiting for the first tick.
 #
 # Reuses the Umami image (Node runtime, built-in fetch) so no extra image or
 # curl/jq dependency is needed; pinned by digest per platform convention.

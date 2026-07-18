@@ -22,4 +22,5 @@ resources:
   - scaled-object.yaml
   - cilium-network-policy.yaml
   - pod-disruption-budget.yaml
+  - job.yaml
   - cron-job.yaml
