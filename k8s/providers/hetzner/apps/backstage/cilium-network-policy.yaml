@@ -5,7 +5,7 @@
 # scrape pg_stat_* (see patches/enable-coroot-monitoring.yaml).
 #
 # ADDITIVE to allow-backstage (Cilium unions ingress allows across policies):
-# this only adds the cross-namespace observability source on 5432 while
+# this only adds the cross-namespace Coroot cluster-agent source on 5432 while
 # allow-backstage keeps permitting intra-namespace + cnpg-system. Scoped to the
 # DB instance pods via CNPG's cnpg.io/cluster label. Mutual auth is enforced
 # automatically by the cluster-wide require-mutual-auth policy (both ends carry
@@ -24,6 +24,9 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: observability
+            app.kubernetes.io/managed-by: coroot-operator
+            app.kubernetes.io/part-of: coroot
+            app.kubernetes.io/component: cluster-agent
       toPorts:
         - ports:
             - port: "5432"
