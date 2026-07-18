@@ -135,8 +135,8 @@ spec:
             name: ${serviceAccount.metadata.name}
             namespace: ${tenantNamespace.metadata.name}
     # GHCR image-pull secret, sourced from OpenBao (not a SOPS Secret) via the
-    # shared cluster-scoped `openbao` ClusterSecretStore reading the platform
-    # path infrastructure/ghcr/auth. Reconciled platform-side (flux-system), so
+    # shared cluster-scoped `openbao` ClusterSecretStore reading the tenant-scoped
+    # path apps/<tenant>/ghcr/auth. Reconciled platform-side (flux-system), so
     # the `restrict-tenant-secret-stores` Kyverno policy carve-out applies.
     # Produces the `ghcr-auth` dockerconfigjson the OCIRepository (secretRef) and
     # ServiceAccount (imagePullSecrets) consume.
@@ -165,7 +165,7 @@ spec:
           data:
             - secretKey: dockerconfigjson
               remoteRef:
-                key: infrastructure/ghcr/auth
+                key: apps/${schema.spec.name}/ghcr/auth
                 property: dockerconfigjson
     # Default-deny NetworkPolicy mirroring the runtime Kyverno-generated
     # CiliumNetworkPolicy, so the static Kubescape scan sees the namespace as

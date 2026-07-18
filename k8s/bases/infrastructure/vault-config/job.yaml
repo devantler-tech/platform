@@ -626,12 +626,10 @@ spec:
               }
               POLICY
 
-              # Read the shared GHCR image-pull credential. Consumed by the
-              # platform-authored `ghcr-auth` ExternalSecrets in the tenant
-              # namespaces via the `external-secrets` ClusterSecretStore role, so
-              # tenants get their pull secret from OpenBao instead of a per-tenant
-              # SOPS file. Platform-side, not a tenant secret: those ExternalSecrets
-              # are reconciled by flux-system, never by a tenant ServiceAccount.
+              # Read the shared GHCR image-pull credential for platform-only
+              # consumers such as Kyverno image verification. Tenant namespace
+              # `ghcr-auth` ExternalSecrets must use the per-tenant app policies
+              # below (apps/<tenant>/ghcr/auth), never this shared path.
               bao policy write infra-ghcr-readonly - <<'POLICY'
               path "secret/data/infrastructure/ghcr/*" {
                 capabilities = ["read"]
@@ -674,6 +672,9 @@ spec:
               }
               POLICY
 
+              # Read-only view of wedding-app's app path for platform-authored
+              # ExternalSecrets in its namespace, including the tenant-scoped
+              # GHCR pull credential at apps/wedding-app/ghcr/auth.
               bao policy write app-wedding-readonly - <<'POLICY'
               path "secret/data/apps/wedding-app/*" {
                 capabilities = ["read"]
@@ -744,10 +745,11 @@ spec:
               POLICY
 
               # Read-only view of ascoachingogvaner's app path for the shared
-              # ClusterSecretStore bundle: the cert-manager simply.com DNS01
-              # solver consumes the tenant-owned simply.com API credentials
-              # (apps/ascoachingogvaner/simply) to issue the tenant's
-              # certificate on the shared Gateway.
+              # ClusterSecretStore bundle: the platform-authored ghcr-auth
+              # ExternalSecret reads apps/ascoachingogvaner/ghcr/auth, and the
+              # cert-manager simply.com DNS01 solver consumes the tenant-owned
+              # simply.com API credentials (apps/ascoachingogvaner/simply) to
+              # issue the tenant's certificate on the shared Gateway.
               bao policy write app-ascoachingogvaner-readonly - <<'POLICY'
               path "secret/data/apps/ascoachingogvaner/*" {
                 capabilities = ["read"]

@@ -114,17 +114,17 @@ and workloads consume the values **from OpenBao via `ExternalSecret`s**.
 
 ### The GHCR image-pull secret (`ghcr-auth`)
 
-A **platform-managed** credential, not a tenant secret. Every registration dir
-ships a `external-secret-ghcr-auth.yaml` that sources the shared org pull
-credential from OpenBao (`infrastructure/ghcr/auth`) via the cluster-scoped `openbao`
+A **platform-managed** credential, not an app secret, but it must be
+**tenant/repository-scoped**. Every registration dir ships an
+`external-secret-ghcr-auth.yaml` that sources only that tenant's pull credential
+from OpenBao (`apps/<tenant>/ghcr/auth`) via the cluster-scoped `openbao`
 **ClusterSecretStore** and materialises the `ghcr-auth` dockerconfigjson the
 `OCIRepository` and ServiceAccount consume. It is reconciled by flux-system (not
 your tenant SA) — which is why it may use the ClusterSecretStore where your own
 resources may not (the Kyverno policy carves out flux-system-applied resources).
-The value lives SOPS-encrypted as `ghcr_dockerconfigjson` in the shared
-`secret.enc.yaml` (the same org token both clusters use); the
-`seed-ghcr` PushSecret pushes it to `infrastructure/ghcr/auth` via the `openbao`
-ClusterSecretStore.
+Do not point tenant `ghcr-auth` ExternalSecrets at the shared platform
+`infrastructure/ghcr/auth` credential; that path is for platform-only consumers
+such as Kyverno image verification.
 
 - The release and template-sync workflows mint a **GitHub App token** from the
   org-level `APP_ID` variable and `APP_PRIVATE_KEY` secret — already available to
@@ -166,8 +166,8 @@ grants below) and rename — with:
 | `kustomization.yaml` | Kustomize entrypoint listing the resources in this directory |
 | `namespace.yaml` | Namespace, `pod-security.kubernetes.io/enforce: restricted` |
 | `service-account.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
-| `role-binding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
-| `external-secret-ghcr-auth.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret (just `external-secret.yaml` when it is the tenant's only one) |
+| `role-binding.yaml` | Binds the SA to the scoped `tenant-edit` ClusterRole in the namespace |
+| `external-secret-ghcr-auth.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, tenant-scoped key `apps/<tenant>/ghcr/auth`) producing the `ghcr-auth` pull secret (just `external-secret.yaml` when it is the tenant's only one) |
 | `role-binding-external-dns*.yaml` + `cluster-role-binding.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — bind the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
 | `oci-repository.yaml` + `flux-kustomization.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`) |
 
