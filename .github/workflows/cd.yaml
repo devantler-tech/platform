@@ -1,17 +1,28 @@
 name: CD
 
-# Manual-only. Production deploys happen automatically in the CI merge queue
-# (ci.yaml deploy-prod on merge_group); this workflow covers the rare
-# direct-push-to-main case, which has no merge_group event to deploy. Run it
-# by hand from the Actions tab. (Dropped the 'v*' release-tag trigger — it
-# re-deployed what the merge queue had already shipped.)
+# Deploy production only from trusted main (after merge) or by explicit manual
+# dispatch. The CI merge-queue workflow validates speculative merge refs but does
+# not receive production deployment secrets or mutate the production cluster.
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'k8s/**'
+      - 'ksail.yaml'
+      - 'ksail.prod.yaml'
+      - '.sops.yaml'
+      - 'talos-local/**'
+      - 'talos/**'
+      - 'scripts/validate-naming.py'
+      - 'scripts/validate-embedded-json.py'
+      - '.github/workflows/cd.yaml'
+      - '.github/actions/deploy-prod/**'
   workflow_dispatch:
 
 permissions: {}
 
-# Shared with the CI merge-queue deploy-prod job (ci.yaml) so a manual deploy
-# and a merge-queue deploy can never run against the prod cluster at once.
+# Shared across automatic main deploys and manual dispatches so two production
+# deploys can never run against the prod cluster at once.
 concurrency:
   group: prod-deploy
   cancel-in-progress: false
@@ -34,9 +45,9 @@ jobs:
 
       - name: 🚀 Deploy to Production
         # The deploy logic (push → sign → attest → reconcile → cluster update)
-        # is shared with ci.yaml's merge-queue deploy via this composite action,
-        # so the two paths can never drift. Secrets are passed as inputs because
-        # composite actions cannot read `secrets` directly.
+        # lives in a composite action so automatic main deploys and manual
+        # dispatches cannot drift. Secrets are passed as inputs because composite
+        # actions cannot read `secrets` directly.
         uses: ./.github/actions/deploy-prod
         with:
           sops-age-key: ${{ secrets.SOPS_AGE_KEY }}

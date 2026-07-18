@@ -298,102 +298,10 @@ jobs:
           validate_overlay talos cloud          # prod (Hetzner)
           validate_overlay talos-local container # local Docker test-bed
 
-  deploy-prod:
-    name: 🚀 Deploy to Prod
-    needs: [changes]
-    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
-    runs-on: ubuntu-latest
-    environment: prod
-    # Shared with the CD workflow (cd.yaml) so a manual deploy and a
-    # merge-queue deploy can never run against the prod cluster at once.
-    concurrency:
-      group: prod-deploy
-      cancel-in-progress: false
-    permissions:
-      contents: read # checkout repository
-      packages: write # push OCI artifacts to GHCR
-      id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
-      attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
-    steps:
-      - name: 📑 Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: 🚀 Deploy to Production
-        # Shared with cd.yaml's manual deploy via this composite action so the
-        # merge-queue and manual paths can never drift. Secrets are passed as
-        # inputs because composite actions cannot read `secrets` directly.
-        uses: ./.github/actions/deploy-prod
-        with:
-          sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
-          kube-config: ${{ secrets.KUBE_CONFIG }}
-          talos-config: ${{ secrets.TALOS_CONFIG }}
-          ghcr-token: ${{ secrets.GHCR_TOKEN }}
-          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
-          wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
-
-  heal-prod-on-failure:
-    name: 🩹 Heal Prod (restore main on merge-group failure)
-    needs: [changes, deploy-prod]
-    # The deploy above runs on the SPECULATIVE merge ref, before the PR lands on
-    # `main`. When it fails the merge group is ejected — but the OCI `latest` tag
-    # (and the prod cluster reconciling it) is left pointing at that ejected
-    # artifact, which never lands on `main`, so prod silently diverges from Git
-    # until some future merge overwrites it (devantler-tech/platform#2026). This
-    # failure-path-only job re-deploys the current tip of `main` via the SAME
-    # composite, so the ejected artifact is immediately replaced by main's signed
-    # artifact and prod reconverges with Git. It has ZERO effect on a green merge
-    # (skipped) and does NOT relax the gate: deploy-prod's failure still fails
-    # `CI - Required Checks` below, so the PR is still ejected. It is intentionally
-    # NOT part of that aggregation — it is best-effort cleanup, not a merge gate.
-    if: >-
-      always() &&
-      github.event_name == 'merge_group' &&
-      needs.changes.outputs.k8s == 'true' &&
-      needs.deploy-prod.result == 'failure'
-    runs-on: ubuntu-latest
-    environment: prod
-    # Same shared lock as deploy-prod / cd.yaml so the heal can never run against
-    # the prod cluster at the same time as another deploy. `needs: deploy-prod`
-    # also guarantees the failed deploy has released the lock before the heal
-    # acquires it, so there is no self-deadlock.
-    concurrency:
-      group: prod-deploy
-      cancel-in-progress: false
-    permissions:
-      contents: read # checkout repository
-      packages: write # push OCI artifacts to GHCR
-      id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
-      attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
-    steps:
-      - name: 📑 Checkout main
-        # Deploy the CURRENT tip of `main` (the last state that actually landed in
-        # Git), not the merge group's base_sha, so the heal can never regress prod
-        # below a newer merge that landed while this group was in flight.
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          ref: main
-          persist-credentials: false
-
-      - name: 🩹 Re-deploy main to Production
-        # Reuse the shared deploy composite (push → sign → attest → reconcile →
-        # cluster update) against main's checkout, so the restored artifact is
-        # byte-for-byte a normal main deploy (fully signed/attested) — no drift
-        # from the happy path.
-        uses: ./.github/actions/deploy-prod
-        with:
-          sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
-          kube-config: ${{ secrets.KUBE_CONFIG }}
-          talos-config: ${{ secrets.TALOS_CONFIG }}
-          ghcr-token: ${{ secrets.GHCR_TOKEN }}
-          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
-          wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
-
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [changes, validate, naming, validate-talos, deploy-prod]
+    needs: [changes, validate, naming, validate-talos]
     if: always()
     permissions: {}
     steps:
@@ -405,4 +313,3 @@ jobs:
             ${{ needs.validate.result }}
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
-            ${{ needs.deploy-prod.result }}
