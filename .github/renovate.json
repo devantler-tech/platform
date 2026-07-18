@@ -286,6 +286,16 @@
       "addLabels": [
         "vendored-manifest"
       ]
+    },
+    {
+      "description": "kubelet-serving-cert-approver ships only raw Kubernetes install manifests, so the custom-managed kustomize remote resource can change privileged controller/RBAC YAML in the prod infrastructure-controllers layer. Keep Renovate visibility, but require maintainer review for every release bump so the upstream manifest and local PDB selector are re-checked before deployment. automerge:false placed last so it overrides the major/minor/patch automerge defaults above.",
+      "matchPackageNames": [
+        "alex1989hu/kubelet-serving-cert-approver"
+      ],
+      "automerge": false,
+      "addLabels": [
+        "security/review-required"
+      ]
     }
   ],
   "ignorePaths": [
