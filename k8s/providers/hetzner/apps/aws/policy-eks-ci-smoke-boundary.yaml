@@ -31,8 +31,11 @@
 #     Service/Ingress LoadBalancer in an account without the
 #     elasticloadbalancing service-linked role would otherwise be denied by the
 #     boundary despite elasticloadbalancing:* being allowed.
+#   - kms:CreateGrant, CONDITIONED on kms:GrantIsForAWSResource=true so
+#     service-managed smoke resources can receive grants without letting a
+#     passed role delegate arbitrary account KMS key use.
 #
-# Apart from that one conditioned action there is deliberately NO iam:* and no
+# Apart from those conditioned actions there is deliberately NO iam:* and no
 # sts:AssumeRole* — a bounded role stays inside the compute plane even if an
 # arbitrary inline policy is put on it, and it cannot mint arbitrary IAM
 # identities. If a future smoke needs an action outside the cap, the failure
@@ -86,7 +89,6 @@ spec:
               "eks:*",
               "eks-auth:AssumeRoleForPodIdentity",
               "elasticloadbalancing:*",
-              "kms:CreateGrant",
               "kms:DescribeKey",
               "logs:*",
               "ssm:DescribeAssociation",
@@ -109,6 +111,17 @@ spec:
               "sts:TagSession"
             ],
             "Resource": "*"
+          },
+          {
+            "Sid": "KmsGrantsForAwsResourcesOnly",
+            "Effect": "Allow",
+            "Action": "kms:CreateGrant",
+            "Resource": "*",
+            "Condition": {
+              "Bool": {
+                "kms:GrantIsForAWSResource": "true"
+              }
+            }
           },
           {
             "Sid": "ServiceLinkedRolesForNamedServicesOnly",
