@@ -1,5 +1,6 @@
 # Validates that pods in non-infrastructure namespaces do not use
-# host-level access (hostPath, hostNetwork, hostPID, hostIPC).
+# host-level access (hostPath, hostNetwork, hostPID, hostIPC), and that pods
+# in user-namespace-enabled namespaces do not opt back out (hostUsers).
 #
 # Addresses kubescape controls: C-0045, C-0048, C-0041, C-0038
 #
@@ -81,3 +82,49 @@ spec:
             =(hostNetwork): false
             =(hostPID): false
             =(hostIPC): false
+    # The user-namespace rollout (#1807) is delivered by the add-user-namespaces
+    # MUTATE rule in add-security-context.yaml, which injects hostUsers: false
+    # through a +(hostUsers) conditional anchor. A conditional anchor only fills
+    # in an ABSENT value, so a workload that explicitly sets hostUsers: true
+    # keeps it — silently, with no admission error and no policy report, in a
+    # namespace that still carries the opt-in label and still looks hardened.
+    # This rule closes that gap: it is the enforce ratchet for the same control.
+    #
+    # Scope mirrors the mutate rule exactly, on purpose:
+    # - the same namespaceSelector, so only namespaces that have graduated
+    #   through a userns pilot are held to it;
+    # - the same cnpg.io/cluster exclude, so the validate rule can never block a
+    #   workload the mutate rule deliberately skipped. CNPG pods stay on host
+    #   user namespaces pending their own per-app pilot, and leave hostUsers
+    #   absent; excluding them keeps that true even if CNPG later sets the field
+    #   explicitly.
+    #
+    # =(hostUsers) is validate-if-present, matching the hostNetwork/hostPID/
+    # hostIPC idiom above: an absent value passes (and the mutate rule supplies
+    # the default), while an explicit true is rejected.
+    - name: disallow-host-users
+      match:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              namespaceSelector:
+                matchLabels:
+                  pod-security.devantler.tech/user-namespaces: enabled
+      exclude:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              selector:
+                matchExpressions:
+                  - key: cnpg.io/cluster
+                    operator: Exists
+      validate:
+        message: >-
+          hostUsers: true is not allowed in a namespace opted into user
+          namespaces. Remove the field to inherit hostUsers: false, or drop the
+          pod-security.devantler.tech/user-namespaces label from the namespace.
+        pattern:
+          spec:
+            =(hostUsers): false
