@@ -183,26 +183,68 @@ def load_rendered_authorization() -> dict[str, str]:
         capture_output=True,
         text=True,
     )
+
+    return hash_rendered_authorization(command.stdout)
+
+
+def hash_rendered_authorization(rendered_output: str) -> dict[str, str]:
+    """Hash exact rendered identities and reject aliases or duplicates."""
     targets = {
-        ("Role", "eks-ci"): "Role/eks-ci",
-        ("Policy", "eks-ci-smoke-boundary"): "Policy/eks-ci-smoke-boundary",
+        ("Role", "eks-ci"): (
+            "iam.aws.m.upbound.io/v1beta1",
+            "aws",
+            "Role/eks-ci",
+        ),
+        ("Policy", "eks-ci-smoke-boundary"): (
+            "iam.aws.m.upbound.io/v1beta1",
+            "aws",
+            "Policy/eks-ci-smoke-boundary",
+        ),
     }
     rendered: dict[str, str] = {}
 
-    for raw_document in command.stdout.split("---\n"):
+    for raw_document in rendered_output.split("---\n"):
         document = raw_document.strip()
         if not document:
             continue
         lines = document.splitlines()
+        api_versions = [
+            line.removeprefix("apiVersion: ")
+            for line in lines
+            if line.startswith("apiVersion: ")
+        ]
         kinds = [line.removeprefix("kind: ") for line in lines if line.startswith("kind: ")]
         names = [line.removeprefix("  name: ") for line in lines if line.startswith("  name: ")]
+        namespaces = [
+            line.removeprefix("  namespace: ")
+            for line in lines
+            if line.startswith("  namespace: ")
+        ]
         if len(kinds) != 1 or len(names) != 1:
             continue
-        target = targets.get((kinds[0], names[0]))
-        if target is not None:
-            rendered[target] = hashlib.sha256((document + "\n").encode()).hexdigest()
+        expected = targets.get((kinds[0], names[0]))
+        if expected is None:
+            continue
+        if len(api_versions) != 1 or len(namespaces) != 1:
+            raise AssertionError("rendered IAM resource identity is incomplete")
 
-    if set(rendered) != set(targets.values()):
+        expected_api_version, expected_namespace, target = expected
+        identity = (api_versions[0], kinds[0], namespaces[0], names[0])
+        expected_identity = (
+            expected_api_version,
+            kinds[0],
+            expected_namespace,
+            names[0],
+        )
+        if identity != expected_identity:
+            raise AssertionError(f"unexpected rendered IAM identity: {identity}")
+        if target in rendered:
+            raise AssertionError(f"duplicate rendered IAM resource: {identity}")
+
+        rendered[target] = hashlib.sha256((document + "\n").encode()).hexdigest()
+
+    expected_targets = {target[2] for target in targets.values()}
+    if set(rendered) != expected_targets:
         raise AssertionError(f"rendered IAM resources missing or duplicated: {rendered}")
 
     return rendered
@@ -412,6 +454,28 @@ class TestEKSCIRolePolicy(unittest.TestCase):
             EXPECTED_RENDERED_BOUNDARY_SHA256,
             rendered["Policy/eks-ci-smoke-boundary"],
         )
+
+    def test_duplicate_rendered_authorization_resource_is_rejected(self) -> None:
+        role = """apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: eks-ci
+  namespace: aws
+"""
+
+        with self.assertRaises(AssertionError):
+            hash_rendered_authorization(f"{role}---\n{role}")
+
+    def test_alternate_rendered_authorization_identity_is_rejected(self) -> None:
+        unexpected = """apiVersion: iam.aws.m.upbound.io/v1beta2
+kind: Role
+metadata:
+  name: eks-ci
+  namespace: other
+"""
+
+        with self.assertRaises(AssertionError):
+            hash_rendered_authorization(unexpected)
 
     def test_unexpected_allow_statement_is_rejected(self) -> None:
         policy = copy.deepcopy(load_inline_policy())
