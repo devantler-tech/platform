@@ -117,6 +117,7 @@ spec:
                 "Action": [
                   "eks:DescribeAddonVersions",
                   "eks:DescribeAddonConfiguration",
+                  "eks:DescribeClusterVersions",
                   "eks:ListClusters"
                 ],
                 "Resource": "*"

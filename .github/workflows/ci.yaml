@@ -121,6 +121,13 @@ jobs:
             scripts/run-ksail-prod-with-pull-auth.sh
           python3 -m unittest scripts.tests.test_refresh_flux_ghcr_auth
 
+      - name: 🔐 Validate EKS smoke role policy
+        # Parse the inline JSON with only Python's standard library and lock the
+        # read-only eksctl discovery exception plus the surrounding boundaries.
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 -m unittest scripts.tests.test_eks_ci_role_policy
+
       - name: 🧩 Validate embedded JSON blobs
         # ConfigMaps that embed whole JSON documents as block scalars (e.g. the
         # Headlamp Kubescape exceptions ConfigMap's exceptionPolicies) are opaque
