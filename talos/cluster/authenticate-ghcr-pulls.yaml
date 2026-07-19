@@ -3,50 +3,42 @@
 # talos/cluster/verify-first-party-images.yaml (ImageVerificationConfig) verifies the
 # cosign signature of every ghcr.io/devantler-tech/* image at the containerd
 # PULL layer. That signature is a separate artifact stored in the SAME package
-# as the image, and Talos fetches it using THIS machine.registries config —
+# as the image, and Talos fetches it using THIS RegistryAuthConfig —
 # NOT the per-pod `ghcr-auth` imagePullSecret (which kubelet only hands to
 # containerd for the image-layer pull). Our first-party packages are PRIVATE,
-# so without a node-level ghcr.io credential the signature fetch goes out
-# anonymous → HTTP 401 → verification fails → ImagePullBackOff.
+# so without working node-level ghcr.io credentials the signature fetch is
+# denied → verification fails → ImagePullBackOff.
 #
 # It's latent: an image already cached on a node is "already present" and never
 # re-verified, so it only bites a FRESH pull — a new tenant release, or an
 # existing image after a node roll evicts its cache (how ascoachingogvaner
 # v1.2.0 wedged on prod-worker-1 after the k8s-1.36 roll).
 #
-# This is pure host AUTH (machine.registries.config), NOT a mirror
-# (machine.registries.mirrors): it attaches a credential to ghcr.io pulls with
+# This is pure host auth, not a mirror: it attaches a credential to ghcr.io pulls with
 # no endpoint redirect. (ksail's --mirror-registry flag is the wrong tool here —
 # it rewrites the endpoint to a local pull-through container that doesn't exist
 # on Hetzner, and it's only ever processed at `cluster create`, never on
 # `cluster update`.) It is the same credential the cluster already holds for the
 # Flux manifests artifact (spec.cluster.localRegistry), so it adds no new trust.
 #
-# ${GHCR_TOKEN} is expanded by ksail when it loads this patch (envvar.ExpandBytes
-# in LoadPatches) from the deploy step's env — the SAME env var localRegistry
-# already requires — so nothing secret is committed. This is ksail's documented,
-# supported config-as-code pattern for node registry auth (declarative-config
-# docs, "Environment Variable Expansion"; ksail#5135) — explicitly NOT the
-# --mirror-registry CLI flag. Prod-only by construction: this dir pairs with
-# ksail.prod.yaml; local/CI uses talos-local/, which carries no
-# ImageVerificationConfig.
+# ${GHCR_TOKEN} is expanded by ksail when it loads this patch. Production
+# cluster lifecycle commands inject the validated Git/SOPS pull token through
+# run-ksail-prod-with-pull-auth.sh; workload push preserves the separate Actions
+# write token. The separate mark-ghcr-pull-revision.yaml patch carries a
+# non-secret SOPS ciphertext revision because KSail deliberately redacts
+# registry credentials from config fingerprints; the marker makes token-only
+# rotations update the cluster-autoscaler template used by future nodes.
+# Nothing secret is committed. Prod-only by construction: local/CI uses
+# talos-local/.
 #
-# CAVEAT — applying to EXISTING nodes: ksail's `cluster update` diff only tracks
-# node count / Talos version / ISO, so a machine-config-only change like this is
-# NOT pushed to already-running nodes (it reports "No changes detected"). This
-# patch makes every node correct-by-construction on create/recreate (and the
-# autoscaler's rendered worker config); to apply it to nodes that are already up,
-# patch them once out-of-band, e.g.:
-#   talosctl --nodes <node-ips> patch mc --patch @<this file, ${GHCR_TOKEN} filled>
-# (registries is a no-reboot field), then restart any pod stuck in
-# ImagePullBackOff. See docs/dr/runbook.md.
+# Existing nodes are synchronized separately by refresh-flux-ghcr-auth.sh using
+# this same RegistryAuthConfig shape, one node at a time in no-reboot mode, and
+# each node must then pull the exact live ksail-operator image successfully.
 #
 # Reference:
-#   https://docs.siderolabs.com/talos/v1.13/reference/configuration/network/registriesconfig/
-machine:
-  registries:
-    config:
-      ghcr.io:
-        auth:
-          username: devantler
-          password: ${GHCR_TOKEN}
+#   https://docs.siderolabs.com/talos/v1.13/reference/configuration/cri/registryauthconfig
+apiVersion: v1alpha1
+kind: RegistryAuthConfig
+name: ghcr.io
+username: ${GHCR_USERNAME}
+password: ${GHCR_TOKEN}

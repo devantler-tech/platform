@@ -2,33 +2,52 @@
 
 <img width="1063" height="1106" alt="image" src="https://github.com/user-attachments/assets/3ab015f0-ab07-4c39-b861-c69517e0d222" />
 
-This repo contains the deployment artifacts for the DevantlerTech Platform. The platform is a Kubernetes cluster that is highly automated with the use of Flux GitOps, CI/CD with Automated Testing, and much more. Feel free to look around. You might find some inspiration 🙌🏻
+My personal Kubernetes platform, in the open. Everything the cluster runs is described as files in
+this repository, and changes go live by being merged here rather than by anyone running commands
+against the cluster — that pattern is called *GitOps*, and [Flux](https://fluxcd.io) is what applies
+it.
+
+This is a working system rather than a product: it is shaped around what I run, and it is not
+packaged for reuse. Look around anyway — if you are building something similar, the repository
+layout and the guides in [`docs/`](docs) are the useful parts, and
+[`docs/TEMPLATING.md`](docs/TEMPLATING.md) lists exactly what a fork has to change. 🙌🏻
 
 ## Prerequisites
 
 For local development:
 
-- [Docker](https://docs.docker.com/get-docker/) - For running the cluster locally.
-- [KSail](https://github.com/devantler-tech/ksail) - For developing the cluster locally, and for running the cluster in CI to ensure all changes are properly tested before being applied to the production cluster.
+- [Docker](https://docs.docker.com/get-docker/) — runs the cluster on your machine.
+- [KSail](https://github.com/devantler-tech/ksail) — creates and manages that cluster. CI uses the
+  same tool to validate and security-scan manifests, but does not boot a cluster; running one is a
+  local step.
 
 For the production cluster:
 
 - [Hetzner Cloud](https://www.hetzner.com/cloud/) — Infrastructure provider and managed Cloud Load Balancer for cluster ingress. KSail's native Hetzner provider handles Talos boot, CCM, CSI, and kubeconfig.
 - [Cloudflare](https://www.cloudflare.com) — DNS (A/AAAA records pointed at the Hetzner Cloud Load Balancer) and Origin CA.
-- [Flux GitOps](https://fluxcd.io) - For managing the kubernetes applications and infrastructure declaratively.
-- [SOPS](https://getsops.io) and [Age](https://github.com/FiloSottile/age) - For encrypting the seed secrets that are committed to this repository (the `*.enc.yaml` files), allowing me to store them in git with confidence.
-- [OpenBao](https://openbao.org) and the [External Secrets Operator](https://external-secrets.io) - The runtime secret store for most workloads. SOPS-decrypted seeds are pushed into OpenBao at bootstrap, and `ExternalSecret`s sync them into the namespaces that consume them. A few secrets (Dex and oauth2-proxy) are still read directly from the SOPS-encrypted bootstrap secrets via Flux `postBuild` substitution while the migration to OpenBao completes. See [`docs/secret-rotation.md`](docs/secret-rotation.md) for the full secrets architecture.
+- [Flux GitOps](https://fluxcd.io) — applies the manifests to the cluster. It does not read this
+  repository directly: the manifests are packaged and published as an OCI artifact, and Flux pulls
+  that.
+- [SOPS](https://getsops.io) and [Age](https://github.com/FiloSottile/age) — encrypt the starting
+  secrets that are committed here (the `*.enc.yaml` files), so they can live in Git safely.
+- [OpenBao](https://openbao.org) and the [External Secrets Operator](https://external-secrets.io) —
+  where **most** secrets live once the cluster is running. Selected values from the encrypted files
+  above are seeded into OpenBao, and the operator copies each one into the namespace that needs it.
+  The rest — the bootstrap-critical values, plus Dex and oauth2-proxy — are still substituted
+  straight into manifests by Flux at apply time, so OpenBao is not the runtime path for everything
+  committed here. Full picture: [`docs/secret-rotation.md`](docs/secret-rotation.md).
 
 ## Usage
 
 > [!IMPORTANT]
-> Secrets committed to this repo are encrypted at rest with SOPS + Age. At bootstrap they seed OpenBao, and the External Secrets Operator distributes most of them to workloads at runtime; a few (Dex, oauth2-proxy) are still injected directly via Flux `postBuild` substitution while the OpenBao migration completes. If you want to run the platform locally, or in your own Hetzner project, you will need to:
+> The committed secrets are encrypted with my keys, so you cannot decrypt them. To run this locally
+> or in your own Hetzner project, swap in your own:
 >
-> 1. Fork this repo
-> 2. Create your own Age keys
-> 3. Update the `.sops.yaml` file in the root of the repository.
-> 4. Update GitHub secrets with your Age key.
-> 5. Replace all encrypted `*.enc.yaml` files in the `k8s/` folder with new ones that are encrypted with your own keys.
+> 1. Fork this repo.
+> 2. Create your own Age keys.
+> 3. Update `.sops.yaml` in the repository root.
+> 4. Put your Age key in your fork's GitHub secrets.
+> 5. Re-encrypt every `*.enc.yaml` file under `k8s/` with your own keys.
 
 To run this cluster locally, simply run:
 
@@ -38,7 +57,23 @@ ksail workload push
 ksail workload reconcile
 ```
 
-Ports 80 and 443 are automatically mapped to localhost via `extraPortMappings` in `ksail.yaml`. The local cluster is a **thin manual test-bed** — a small Talos cluster for trying a component out before promoting it to prod. By default it runs only the **core infrastructure** (CNI + Gateway, DNS, TLS, Flux, Kyverno + policies, VPA, OpenBao + External Secrets, the Dex SSO stack, and CloudNativePG). Heavier infrastructure (observability, autoscaling, backup, runtime security, the VM stack, …) and all apps are opt-in — uncomment the entries you want in the docker provider overlays (`k8s/providers/docker/infrastructure/controllers/kustomization.yaml`, `…/infrastructure/kustomization.yaml`) and the apps overlay (`k8s/providers/docker/apps/kustomization.yaml`), each of which carries a copy-paste template, then re-run `ksail workload push && ksail workload reconcile`. Reach the deployed services at their `*.platform.lan` hostnames (the `hosts` file maps these to `127.0.0.1`).
+Ports 80 and 443 are mapped to localhost for you (via `extraPortMappings` in [`ksail.yaml`](ksail.yaml)),
+and the [`hosts`](hosts) file points the `*.platform.lan` names at `127.0.0.1` — so deployed services
+open in a browser.
+
+The local cluster is a **thin test-bed**: somewhere to try one component before promoting it to
+production, not a copy of production. It starts with core infrastructure only — networking and
+gateway, DNS, TLS, Flux, policy, vertical pod autoscaling, secrets, single sign-on, and the
+CloudNativePG operator. Note that the operator is installed but no database is created: apps are
+opt-in, so a plain local bring-up has no PostgreSQL instance running.
+
+Everything heavier (observability, request-rate autoscaling, backup, runtime security, the VM stack,
+…) and all apps are opt-in. Uncomment what you want in these files — each carries a copy-paste
+template — then re-run `ksail workload push && ksail workload reconcile`:
+
+- `k8s/providers/docker/infrastructure/controllers/kustomization.yaml`
+- `k8s/providers/docker/infrastructure/kustomization.yaml`
+- `k8s/providers/docker/apps/kustomization.yaml`
 
 To tear down:
 
@@ -122,16 +157,10 @@ The cluster configuration is stored in the `k8s/*` directories where the structu
   - [`apps`](k8s/bases/apps): Contains the different apps that are used for the different clusters and providers.
   - [`bootstrap`](k8s/bases/bootstrap): The foundational **bootstrap layer** (renamed from `variables/`). Holds the shared substitution variables (`variables-base` ConfigMap + SOPS-encrypted Secret) and cluster-scoped PriorityClasses (e.g. `platform-critical`), reconciled by the `bootstrap` Flux Kustomization before everything that `dependsOn` it.
 
-### Kustomize and Flux Kustomization Flow
+### How the layers fit together
 
-> [!IMPORTANT]
-> If you know of a different way to manage kustomize and flux kustomizations that results in less boilerplate code, please let me know. I am always looking for ways to improve the structure and make it more maintainable.
-
-To support hooking into the kustomize flow for adding or modifying resources for a specific cluster, a specific provider, or shared across all clusters, the following structure is used:
-
-#### Kustomize Overlay Flow
-
-Each cluster environment references a provider overlay, which in turn patches the shared base resources:
+Two things stack up. First, each environment points at a provider, which patches the shared
+resources — so a change can be made for one cluster, for one provider, or for everything at once:
 
 ```mermaid
 graph LR
@@ -155,9 +184,7 @@ graph LR
   hetzner --> bases
 ```
 
-#### Flux Kustomization Dependency Chain
-
-Flux Kustomizations are reconciled sequentially. Each layer waits for the previous to become ready:
+Second, Flux applies those layers in order, each waiting for the one before it to come up:
 
 ```mermaid
 graph TB
@@ -171,16 +198,18 @@ graph TB
   apps -- "depends on" --> infra
 ```
 
-This means that for every Flux Kustomization applied to a cluster, there should be a corresponding resource folder in `providers/<provider-name>/` or `bases/` that contains the manifests for that scope. For example, the `infrastructure` Flux Kustomization is backed by:
+Each layer in that chain has a matching folder under `providers/<provider-name>/` and `bases/`. The
+`infrastructure` layer, for example, is backed by `k8s/providers/<provider-name>/infrastructure/` and
+`k8s/bases/infrastructure/`.
 
-- `k8s/providers/<provider-name>/infrastructure/`
-- `k8s/bases/infrastructure/`
+The layer definitions themselves are written once in `k8s/clusters/base/` with placeholders where the
+cluster and provider names go; each cluster's overlay fills those in. Only the per-cluster
+`bootstrap/` directory holds manifests unique to one cluster.
 
-The Flux Kustomizations themselves live in `k8s/clusters/base/` (with sentinel `__CLUSTER__` / `__PROVIDER__` values in `spec.path`). Each `k8s/clusters/<cluster-name>/` overlay patches the `cluster-meta` ConfigMap with its `cluster_name` / `provider` and uses kustomize `replacements:` to rewrite those sentinels with the cluster's real values. Only the per-cluster `bootstrap/` directory holds cluster-specific manifests.
-
-See [`docs/TEMPLATING.md`](docs/TEMPLATING.md) for the exact set of files a fork of this repo needs to edit to stand up its own instance.
-
-See [`docs/TENANTS.md`](docs/TENANTS.md) for how to onboard a new GitOps **tenant** (an app that runs on the platform from its own repository).
+- [`docs/TEMPLATING.md`](docs/TEMPLATING.md) — the exact files a fork must edit, including how those
+  placeholders get filled in.
+- [`docs/TENANTS.md`](docs/TENANTS.md) — adding a **tenant**: an app that runs on the platform from
+  its own repository.
 
 ## Documentation
 
