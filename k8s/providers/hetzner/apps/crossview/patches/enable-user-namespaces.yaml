@@ -1,0 +1,15 @@
+# Opt crossview into the label-gated `add-user-namespaces` Kyverno rule
+# (#1807). Hetzner-only: real Talos kernels support user namespaces; the
+# nested local Docker provider stays default-off. Crossview is fully
+# stateless on disk: the chart's persistence is disabled, so the web pod and
+# the bundled Postgres pod write only to emptyDir mounts (data lives in the
+# in-cluster Postgres whose data dir is itself an emptyDir by design) — no
+# PVC, no idmapped-volume dependency. The namespace has no CNPG pods, so the
+# rule's cnpg.io/cluster exclude is moot here.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: crossview
+  labels:
+    pod-security.devantler.tech/user-namespaces: enabled

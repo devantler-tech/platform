@@ -54,12 +54,29 @@ spec:
     # rejects Price+Hetzner (and the autoscaler would crash on startup).
     #
     # maxNodesTotal is the HARD CEILING ON TOTAL CLUSTER NODES, INCLUDING the
-    # static baseline. 10 = the Hetzner account cap: 6 static (3 control-planes
-    # + 3 workers) + up to 4 autoscaler nodes. KSail passes it to
-    # cluster-autoscaler --max-nodes-total, which counts every node, so this
-    # total framing already matches the runtime. Each pool max is 4, so any
-    # single CX type can fill the 4-node autoscaler headroom (or any mix); the
-    # cluster total stays <= 10.
+    # static baseline. 9 = the Hetzner account cap (10) MINUS ONE RESERVED SLOT:
+    # 6 static (3 control-planes + 3 workers) + up to 3 autoscaler nodes. KSail
+    # passes it to cluster-autoscaler --max-nodes-total, which counts every node,
+    # so this total framing already matches the runtime. Each pool max is 4, so
+    # any single CX type can still fill the autoscaler headroom (or any mix); the
+    # cluster total stays <= 9.
+    #
+    # THE RESERVED SLOT IS LOAD-BEARING — DO NOT RAISE THIS TO THE ACCOUNT CAP.
+    # `deploy-prod` ensures the autoscaler config secret on EVERY deploy, and that
+    # step builds the Talos snapshot whenever one is absent (e.g. after any Talos
+    # version bump). The build needs a TEMPORARY hcloud server, so it needs a free
+    # slot. At maxNodesTotal == serverLimit a fully scaled-out cluster leaves none,
+    # the build fails `resource_limit_exceeded`, and because the ensure step runs
+    # regardless of what a PR changed, EVERY merge_group deploy is evicted AND
+    # `Heal Prod` fails too — wedging the whole queue with no CD path to prod
+    # (platform#2419: v1.13.5 on 07-03, recurring identically for v1.13.6 on 07-16).
+    #
+    # KSail now ENFORCES this: ksail#6172 rejects a Talos+Hetzner config whose
+    # reachable total equals serverLimit (`ErrAutoscalerLeavesNoSnapshotSlot`), and
+    # pins one-below-the-limit as the valid boundary. Only Talos reserves a slot —
+    # other distributions never build a snapshot, so they keep the full limit.
+    # If peak capacity ever needs the 10th node, raise the hcloud account limit
+    # FIRST and keep maxNodesTotal strictly below it.
     #
     # NB KSail's config validation is being changed (ksail#5017) to expect
     # maxNodesTotal as this total (validate maxNodesTotal <= serverLimit). Until
@@ -71,7 +88,7 @@ spec:
       node:
         enabled: true
         expander: [LeastNodes, LeastWaste]
-        maxNodesTotal: 10
+        maxNodesTotal: 9
         scaleDownUnneededTime: "10m"
         # Native over-provisioning: install the CapacityBuffer CRD + controller
         # so the platform's CapacityBuffer (k8s/providers/hetzner/infrastructure/
@@ -120,7 +137,7 @@ spec:
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
-      version: v1.13.5
+      version: v1.13.6
       # Hetzner Talos ISO (x86_64). The v1.11.2 ISO (122630) was deprecated
       # and removed from Hetzner on 2026-03-18. Use v1.12.4 (125127).
       iso: 125127
@@ -165,9 +182,13 @@ spec:
           subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/cd\.yaml@refs/heads/main$'
   provider:
     hetzner:
-      # Hetzner account hard cap: at most 10 servers total. Under the in-progress
-      # KSail change (ksail#5017) the autoscaler validation becomes
-      # maxNodesTotal <= serverLimit (10 <= 10). See the autoscaler block.
+      # Hetzner account hard cap: at most 10 servers total. This mirrors the
+      # account's real limit, so it tracks the account — not the cluster budget.
+      # maxNodesTotal is deliberately held STRICTLY BELOW it (9 < 10) to reserve a
+      # slot for the deploy-time Talos snapshot build's temporary server; ksail#6172
+      # enforces that for Talos+Hetzner. See the autoscaler block for why the
+      # reservation is load-bearing (platform#2419). If this cap is ever raised,
+      # keep maxNodesTotal strictly below it.
       serverLimit: 10
       controlPlaneServerType: cx33
       # Baseline workers on cx43 (8c/16G) rather than cx33 (4c/8G). These 3
