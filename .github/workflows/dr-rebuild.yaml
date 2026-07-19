@@ -78,12 +78,23 @@ jobs:
         # pin current in both places.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.165.5"
+          KSAIL_VERSION: "7.175.3"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
           sudo install /tmp/ksail /usr/local/bin/ksail
           ksail --version
+
+      - name: ⚙️ Setup talosctl
+        # The GHCR bridge verifies RegistryAuthConfig on each stale node.
+        env:
+          # Keep in step with spec.cluster.talos.version in ksail.prod.yaml.
+          # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
+          TALOS_VERSION: "1.13.6"
+        run: |
+          curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
+          sudo install /tmp/talosctl /usr/local/bin/talosctl
+          talosctl version --client
 
       - name: 🔐 Create SOPS Age key
         env:
@@ -94,33 +105,51 @@ jobs:
           echo "${SOPS_AGE_KEY}" > ~/.config/sops/age/keys.txt
           chmod 600 ~/.config/sops/age/keys.txt
 
+      - name: 🔎 Preflight Flux GHCR pull credential
+        # Validate every package served by the shared Git/SOPS credential
+        # before creating infrastructure or publishing a mutable latest tag.
+        run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
+
       - name: 🏗️ Create cluster
         # From-zero provisioning: Hetzner servers, Talos boot, CCM, CSI. Writes
         # a fresh kubeconfig (~/.kube/config, context admin@prod) and
         # talosconfig (~/.talos/config) on this runner — every later step uses
         # those, so this workflow does NOT depend on the (now stale)
         # KUBE_CONFIG / TALOS_CONFIG environment secrets.
-        run: ksail --config ksail.prod.yaml cluster create
+        run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster create
         env:
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
           # ksail env-expands ${WG_SERVER_PRIVATE_KEY} in the talos patches at
           # load time (talos/control-planes/wireguard.yaml); an unset var
           # renders an empty key and Talos rejects the whole machine config.
           WG_SERVER_PRIVATE_KEY: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
+      - name: 🔑 Stage Flux and consumer GHCR pull credential
+        id: stage_flux_ghcr_auth
+        # cluster create already uses the Git/SOPS pull token. Reassert it on
+        # every current Talos node and make Git/SOPS authoritative before the
+        # mutable tag is published. A
+        # partial bootstrap may have variables-base but no ESO resources yet;
+        # the bridge safely repairs root auth so Flux can create them.
+        run: ./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
+
       - name: 📦 Push manifests to GHCR
-        run: ksail --config ksail.prod.yaml workload push
+        run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
+      - name: 🔎 Verify Flux GHCR pull credential after publish
+        id: verify_flux_ghcr_auth_after_push
+        # Prove the newly-published artifact is readable before reconciliation;
+        # every available consumer was already staged before push.
+        run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
+
       - name: 🔁 Trigger Flux reconciliation
-        run: ksail --config ksail.prod.yaml workload reconcile
+        run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
         env:
           GITHUB_ACTOR: ${{ github.actor }}
-          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
       - name: ⏳ Wait for Flux to settle
@@ -131,6 +160,13 @@ jobs:
               --for=condition=Ready --timeout=20m
           done
           echo "✅ All Flux Kustomizations Ready — fresh platform converged."
+
+      - name: 🔑 Verify completed GHCR credential fan-out
+        id: verify_flux_ghcr_fanout
+        # Bootstrap mode may repair only root auth when ESO is not installed
+        # yet. After Flux converges, require the complete PushSecret /
+        # ExternalSecret transaction and exact consumer payload verification.
+        run: ./scripts/refresh-flux-ghcr-auth.sh
 
       - name: 💾 Velero resource restore (newest Completed backup)
         if: ${{ inputs.restore }}
@@ -371,6 +407,16 @@ jobs:
           kubectl annotate pushsecrets --all -A "force-sync=${NOW}" --overwrite || true
           echo "::endgroup::"
           echo "✅ OpenBao restored from the raft snapshot mirror."
+
+      - name: 🔑 Reassert GHCR credential after OpenBao restore
+        id: reassert_flux_ghcr_after_restore
+        if: ${{ !cancelled() && inputs.restore && steps.verify_flux_ghcr_fanout.outcome == 'success' }}
+        # The raft snapshot may contain an older infrastructure/ghcr/auth value.
+        # !cancelled() is intentional: even a failed restore can already have
+        # rematerialised that stale value, so attempt the fail-closed repair.
+        # Re-stage Git/SOPS in PushSecret-first order, wait for every consumer,
+        # compare the materialized payloads, and only then reassert root auth.
+        run: ./scripts/refresh-flux-ghcr-auth.sh
 
       - name: 🔑 Refresh CI deploy credentials (KUBE_CONFIG / TALOS_CONFIG)
         env:
