@@ -73,6 +73,20 @@ spec:
               namespaceSelector:
                 matchLabels:
                   pod-security.devantler.tech/user-namespaces: enabled
+      # CNPG-managed pods (instances and their initdb/join jobs, all labelled
+      # cnpg.io/cluster) stay on host user namespaces even in an opted-in
+      # namespace: their Longhorn PVCs would need idmapped-mount support,
+      # which is unvalidated (#1807 sequences stateful workloads last). This
+      # lets mixed namespaces (stateless app + CNPG database) opt in safely.
+      exclude:
+        any:
+          - resources:
+              kinds:
+                - Pod
+              selector:
+                matchExpressions:
+                  - key: cnpg.io/cluster
+                    operator: Exists
       mutate:
         patchStrategicMerge:
           spec:

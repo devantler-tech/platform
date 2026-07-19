@@ -30,12 +30,18 @@ spec:
     #     with: curl -sSI -H "Authorization: Bearer <token>" \
     #     https://xpkg.upbound.io/v2/upbound/provider-aws-iam/blobs/<digest>
     #     and read the Location header.
+    #   sts.eu-central-1.amazonaws.com + iam.amazonaws.com — the narrowly scoped
+    #     AWS identity APIs used by provider-aws-iam. The provider calls STS
+    #     GetCallerIdentity before reconciling IAM resources, then uses the
+    #     global IAM endpoint for the managed OIDC provider and role.
     - toFQDNs:
         - matchName: "ghcr.io"
         - matchName: "pkg-containers.githubusercontent.com"
         - matchName: "api.github.com"
         - matchName: "xpkg.upbound.io"
         - matchName: "d3qrbvrml4iuq4.cloudfront.net"
+        - matchName: "sts.eu-central-1.amazonaws.com"
+        - matchName: "iam.amazonaws.com"
       toPorts:
         - ports:
             - port: "443"
@@ -61,4 +67,6 @@ spec:
               - matchName: "api.github.com"
               - matchName: "xpkg.upbound.io"
               - matchName: "d3qrbvrml4iuq4.cloudfront.net"
+              - matchName: "sts.eu-central-1.amazonaws.com"
+              - matchName: "iam.amazonaws.com"
               - matchPattern: "*.cluster.local"
