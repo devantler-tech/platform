@@ -120,7 +120,8 @@ posture is:
 1. **Do not commit it to git.** It is `.gitignore`d via the default
    `~/.talos/config` location.
 2. **Keep one copy on each operator workstation** that needs to manage
-   nodes. Replacing a workstation = re-run `ksail --config ksail.prod.yaml cluster update`
+   nodes. Replacing a workstation = re-run
+   `./scripts/run-ksail-prod-with-pull-auth.sh cluster update`
    (which regenerates the local `~/.talos/config` from the cluster's
    running PKI), or use `talosctl config merge <talosconfig>` against
    a backup file. Talos does not have SSH-equivalent — see DR Scenario 4

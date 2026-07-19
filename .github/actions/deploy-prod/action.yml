@@ -19,7 +19,7 @@ inputs:
     description: talosconfig for the prod cluster (secrets.TALOS_CONFIG) used by `ksail cluster update`.
     required: true
   ghcr-token:
-    description: GHCR PAT with write:packages (secrets.GHCR_TOKEN) for OCI push/pull and cosign auth.
+    description: GHCR PAT with write:packages (secrets.GHCR_TOKEN) for OCI push and signing; every pull path uses the Git/SOPS credential.
     required: true
   hcloud-token:
     description: Hetzner Cloud API token (secrets.HCLOUD_TOKEN) used by the KSail Hetzner provider and CCM/CSI.
@@ -43,12 +43,25 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.165.6"
+        KSAIL_VERSION: "7.175.2"
       run: |
         curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
         tar -xzf /tmp/ksail.tar.gz -C /tmp
         sudo install /tmp/ksail /usr/local/bin/ksail
         ksail --version
+
+    - name: ⚙️ Setup talosctl
+      # refresh-flux-ghcr-auth.sh uses the host API for a secret-safe,
+      # per-node RegistryAuthConfig patch and exact image-pull proof.
+      shell: bash
+      env:
+        # Keep in step with spec.cluster.talos.version in ksail.prod.yaml.
+        # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
+        TALOS_VERSION: "1.13.6"
+      run: |
+        curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
+        sudo install /tmp/talosctl /usr/local/bin/talosctl
+        talosctl version --client
 
     - name: 🔐 Create SOPS Age key
       shell: bash
@@ -126,6 +139,16 @@ runs:
         echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig (last kubectl error: ${last_err}). KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
         exit 1
 
+    - name: 🔑 Stage Flux and consumer GHCR pull credential
+      id: stage_flux_ghcr_auth
+      # Validate all seven packages, synchronize and prove an uncached pull of
+      # the declared incoming image on every stale Talos node, then stage and
+      # verify the Kubernetes fan-out BEFORE publishing latest. Every pull
+      # consumer has one known-readable credential before the mutable tag can
+      # be observed.
+      shell: bash
+      run: ./scripts/refresh-flux-ghcr-auth.sh
+
     # Publish the GitOps manifests (push → sign → attest → reconcile) BEFORE
     # syncing Talos machine config (the "🔄 Update cluster" step runs LAST).
     # Manifest delivery never touches the nodes, so it must not be gated on
@@ -139,7 +162,7 @@ runs:
         GITHUB_ACTOR: ${{ github.actor }}
         GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-      run: ksail --config ksail.prod.yaml workload push
+      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push
 
     - name: ⚙️ Install cosign
       # Download cosign directly and verify the exact release asset digest
@@ -306,14 +329,20 @@ runs:
         push-to-registry: true
         create-storage-record: false
 
+    - name: 🔎 Verify Flux GHCR pull credential after publish
+      id: verify_flux_ghcr_auth_after_push
+      # Revalidate the newly-published artifact before apps reconcile. The
+      # complete consumer fan-out was staged before the mutable tag moved.
+      shell: bash
+      run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
+
     - name: 🔁 Trigger Flux reconciliation
       id: reconcile
       shell: bash
       env:
         GITHUB_ACTOR: ${{ github.actor }}
-        GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-      run: ksail --config ksail.prod.yaml workload reconcile
+      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
 
     - name: 🩺 Diagnose Flux on failure
       if: failure() && steps.reconcile.outcome == 'failure'
@@ -336,10 +365,24 @@ runs:
       # release).
       shell: bash
       env:
-        GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
         # ksail env-expands ${WG_SERVER_PRIVATE_KEY} in the talos patches at
         # load time; an unset var renders an empty key and Talos rejects the
         # whole machine config ('private key is invalid: wrong key "" length: 0').
         WG_SERVER_PRIVATE_KEY: ${{ inputs.wg-server-private-key }}
-      run: ksail --config ksail.prod.yaml cluster update
+      run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update
+
+    - name: 🔑 Reassert Flux and consumer GHCR pull credential
+      id: reassert_flux_ghcr_auth
+      # cluster update is already wrapped with Git/SOPS auth, but reassert the
+      # full transaction afterward in case KSail fails part-way. Reassert after
+      # its synchronous consumer fan-out when that update fails part-way, but
+      # only after the publish, signing, attestation, post-publish auth check,
+      # and Flux reconcile all succeeded. Never mutate auth as cleanup for a
+      # failed delivery.
+      if: >-
+        always() &&
+        steps.verify_flux_ghcr_auth_after_push.outcome == 'success' &&
+        steps.reconcile.outcome == 'success'
+      shell: bash
+      run: ./scripts/refresh-flux-ghcr-auth.sh
