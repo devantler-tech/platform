@@ -1,8 +1,11 @@
 # provider-aws-iam declares SafeStart, so its ManagedResourceDefinitions
 # install Inactive. Activate only the namespaced IAM kinds required by the
 # default-off EKS CI identity slice (platform#2564 / platform#2326). The role
-# carries its least-privilege permissions as an inline policy, avoiding the
-# separate Policy and RolePolicyAttachment CRDs and their apiserver/RBAC cost.
+# carries its least-privilege permissions as an inline policy; the single
+# Policy kind is activated for the eks-ci-smoke-boundary permissions boundary
+# (aws#4 security hardening: roles the CI principal creates must carry a
+# boundary, so it cannot mint-and-pass an unbounded role). Broad
+# Policy/RolePolicyAttachment use stays deliberately off.
 ---
 apiVersion: apiextensions.crossplane.io/v1alpha1
 kind: ManagedResourceActivationPolicy
@@ -11,4 +14,5 @@ metadata:
 spec:
   activate:
     - openidconnectproviders.iam.aws.m.upbound.io
+    - policies.iam.aws.m.upbound.io
     - roles.iam.aws.m.upbound.io
