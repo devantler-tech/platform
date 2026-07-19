@@ -271,14 +271,15 @@ def hash_rendered_authorization(rendered_output: str) -> dict[str, str]:
         ]
         if len(api_versions) != 1 or len(kinds) != 1:
             continue
-        is_iam_authorization = api_versions[0].startswith("iam.aws.")
+        api_group = api_versions[0].partition("/")[0]
+        is_iam_authorization = api_group.split(".", 2)[:2] == ["iam", "aws"]
         is_tenant_delegation = namespaces and namespaces[0] == "aws" and (
             (
-                api_versions[0].startswith("rbac.authorization.k8s.io/")
+                api_versions[0] == "rbac.authorization.k8s.io/v1"
                 and kinds[0] in {"Role", "RoleBinding"}
             )
             or (
-                api_versions[0].startswith("kustomize.toolkit.fluxcd.io/")
+                api_versions[0] == "kustomize.toolkit.fluxcd.io/v1"
                 and kinds[0] == "Kustomization"
             )
         )
