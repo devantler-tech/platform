@@ -1,0 +1,15 @@
+# Opt backstage into the label-gated `add-user-namespaces` Kyverno rule
+# (#1807). Hetzner-only: real Talos kernels support user namespaces; the
+# nested local Docker provider stays default-off. The backstage web pod is
+# stateless (secret/env config + a disk-backed emptyDir scratch mount for the
+# scaffolder), so it has no idmapped-volume dependency. The backstage-db CNPG
+# pods in this namespace are NOT affected: the rule excludes
+# cnpg.io/cluster-labelled pods until Longhorn idmapped-mount support is
+# validated (stateful last, #1807).
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: backstage
+  labels:
+    pod-security.devantler.tech/user-namespaces: enabled
