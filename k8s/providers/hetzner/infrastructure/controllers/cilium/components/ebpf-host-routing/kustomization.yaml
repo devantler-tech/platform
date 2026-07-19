@@ -1,0 +1,75 @@
+# Default-off staging component for platform#2029 / platform#2609.
+#
+# Cilium's pod-scope BBR path (removing bandwidth-manager-bbr's
+# bbrHostNamespaceOnly guard) requires eBPF host routing, which in turn
+# requires BPF masquerading. This component stages the SMALLEST compatible
+# prerequisite set on the Hetzner/prod datapath:
+#
+#   bpf.masquerade: true   — moves pod->external SNAT from iptables to eBPF,
+#                            a hard prerequisite for eBPF host routing.
+#   bpf.hostLegacyRouting: false — asserts the eBPF host-routing fast path
+#                            explicitly (also the chart default when the
+#                            prerequisites hold) so a future chart-default
+#                            flip cannot silently fall back to the legacy
+#                            iptables path while this component claims
+#                            otherwise.
+#
+# COMPATIBILITY with the existing datapath (statically asserted here; the
+# activation soak proves it live):
+#   - kubeProxyReplacement: true (base values) — required by bpf.masquerade;
+#     already on.
+#   - Kernel: Talos 6.x ≥ Cilium's 5.10 minimum for eBPF host routing.
+#   - Tunnel (VXLAN) routing mode: supported with BPF masquerade for IPv4;
+#     this cluster is single-stack IPv4.
+#   - WireGuard + egress strict mode (hetzner patch): unchanged by this
+#     component — masquerade happens after encryption steering decisions
+#     (destinations outside the pod CIDR are not strict-mode-dropped, see
+#     enforce-wireguard-strict-mode.yaml). The WireGuard interplay is
+#     exactly what the activation soak must observe (Hubble drops,
+#     cilium status --verbose) before any production enable.
+#   - Private-NIC device pinning: NOT touched here — and it is a HARD
+#     ACTIVATION BLOCKER, not just a naming concern. The always-on
+#     ../private-nic-devices/ component pins the private NICs (required so
+#     the node's primary address stays private for the mutual-auth path),
+#     while the default route — and therefore pod->internet egress — leaves
+#     via the PUBLIC NICs (static nodes enp1s0 / autoscale nodes eth0). BPF
+#     masquerading only processes interfaces carrying Cilium's eBPF
+#     programs, so under the private-only pin the public egress NICs would
+#     get NO masquerade program while iptables masquerade is disabled: pod
+#     traffic would leave with an unroutable pod-CIDR source and external
+#     egress would break cluster-wide. #2610's ../homogeneous-devices/
+#     component (wildcard selection covering both NICs) must be ACTIVATED
+#     and soaked FIRST; only then may this component be referenced.
+#
+# SAFETY: this component is staged, not activation-ready. Keep it
+# unreferenced until its own low-traffic activation + soak; it changes the
+# NAT path for ALL pod egress (Cloudflare-bound responses, registry pulls,
+# webhooks) and `rollOutCiliumPods: true` means enabling it rolls every
+# Cilium agent one node at a time. bandwidth-manager-bbr's
+# bbrHostNamespaceOnly guard stays `true` until THIS component has merged,
+# been activated, and passed its own live soak (that guard removal is a
+# further separate change). Roll back by removing the component reference,
+# which restores chart defaults on the next one-node-at-a-time roll.
+#
+# netkit device mode is deliberately out of scope (see #2029 "revisit
+# later"); no netkit keys appear here.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: cilium
+      namespace: kube-system
+    patch: |
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: cilium
+        namespace: kube-system
+      spec:
+        values:
+          bpf:
+            masquerade: true
+            hostLegacyRouting: false

@@ -1,0 +1,154 @@
+---
+# Disposable production-only proof that a user-namespaced pod can use a
+# Longhorn-backed generic ephemeral volume. The component is deliberately
+# omitted from the parent kustomization until a short-lived activation PR.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: userns-longhorn-smoke
+  namespace: userns-longhorn-smoke
+  labels:
+    app.kubernetes.io/name: userns-longhorn-smoke
+    app.kubernetes.io/component: storage-smoke-test
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: userns-longhorn-smoke
+        app.kubernetes.io/component: storage-smoke-test
+    spec:
+      # Explicit as both the acceptance condition and a guard against the
+      # namespace-scoped Kyverno mutation being unavailable during bootstrap.
+      hostUsers: false
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: write-sentinel
+          image: docker.io/library/busybox:1.38.0@sha256:fd8d9aa63ba2f0982b5304e1ee8d3b90a210bc1ffb5314d980eb6962f1a9715d
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              set -eu
+              uid_map="$(cat /proc/self/uid_map)"
+              gid_map="$(cat /proc/self/gid_map)"
+              uid_host_start="$(printf '%s\n' "$uid_map" | awk 'NR == 1 { print $2 }')"
+              gid_host_start="$(printf '%s\n' "$gid_map" | awk 'NR == 1 { print $2 }')"
+              test "$uid_host_start" -gt 0
+              test "$gid_host_start" -gt 0
+
+              printf '%s\n' "$uid_map" > /smoke/init-uid-map
+              printf '%s\n' "$gid_map" > /smoke/init-gid-map
+              printf 'init-user=%s:%s\n' "$(id -u)" "$(id -g)" > /smoke/sentinel
+              sync
+
+              printf 'init uid_map:\n%s\n' "$uid_map"
+              printf 'init gid_map:\n%s\n' "$gid_map"
+              cat /smoke/sentinel
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions:
+              level: s0
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+          volumeMounts:
+            - name: smoke-data
+              mountPath: /smoke
+      containers:
+        - name: verify-round-trip
+          image: docker.io/library/busybox:1.38.0@sha256:fd8d9aa63ba2f0982b5304e1ee8d3b90a210bc1ffb5314d980eb6962f1a9715d
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              set -eu
+              uid_map="$(cat /proc/self/uid_map)"
+              gid_map="$(cat /proc/self/gid_map)"
+              uid_host_start="$(printf '%s\n' "$uid_map" | awk 'NR == 1 { print $2 }')"
+              gid_host_start="$(printf '%s\n' "$gid_map" | awk 'NR == 1 { print $2 }')"
+              test "$uid_host_start" -gt 0
+              test "$gid_host_start" -gt 0
+              test -s /smoke/init-uid-map
+              test -s /smoke/init-gid-map
+              grep -q '^init-user=' /smoke/sentinel
+
+              printf 'main-user=%s:%s\n' "$(id -u)" "$(id -g)" >> /smoke/sentinel
+              grep -q '^main-user=' /smoke/sentinel
+
+              printf 'main uid_map:\n%s\n' "$uid_map"
+              printf 'main gid_map:\n%s\n' "$gid_map"
+              printf 'init uid_map:\n'
+              cat /smoke/init-uid-map
+              printf 'init gid_map:\n'
+              cat /smoke/init-gid-map
+              cat /smoke/sentinel
+
+              rm /smoke/init-uid-map /smoke/init-gid-map /smoke/sentinel
+              test ! -e /smoke/sentinel
+              printf 'userns-longhorn-round-trip=passed\n'
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions:
+              level: s0
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+          volumeMounts:
+            - name: smoke-data
+              mountPath: /smoke
+      volumes:
+        - name: smoke-data
+          ephemeral:
+            volumeClaimTemplate:
+              metadata:
+                labels:
+                  app.kubernetes.io/name: userns-longhorn-smoke
+              spec:
+                accessModes:
+                  - ReadWriteOnce
+                storageClassName: longhorn-wffc
+                resources:
+                  requests:
+                    storage: 256Mi
