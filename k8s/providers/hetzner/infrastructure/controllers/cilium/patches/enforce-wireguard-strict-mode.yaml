@@ -68,51 +68,11 @@ spec:
           # cilium-health host probes survive the IPCache propagation window
           # during node churn. Pod-to-pod across the CIDR above stays fail-closed.
           allowRemoteNodeIdentities: true
-    # Pin the eBPF datapath to the PRIVATE-network NICs so every node uses its
-    # private IP (10.0.1.x) as its primary node address for agent-to-agent
-    # control traffic — specifically the SPIRE mutual-auth handshake (TCP 4250).
-    #
-    # Hetzner nodes are dual-homed: a public NIC carrying the default route
-    # (workers enp1s0 / control-planes eth0) and the private-network NIC
-    # (workers enp7s0 / control-planes eth1). With devices unset, Cilium probes
-    # and attaches to BOTH, then takes the default-route (public) NIC's IP as the
-    # node's PRIMARY address. cilium-health (4240) and the VXLAN/WireGuard tunnel
-    # ride the private "Direct Routing" NIC and work — but the mutual-auth control
-    # connection (cilium-agent -> peer cilium-agent on 4250) dials the peer's
-    # PRIMARY (public) IP. The Talos ingress firewall only admits 4240/4250/8472
-    # from the private node CIDR (10.0.0.0/16, see
-    # talos/workers/allow-cilium-mutual-auth-ingress.yaml), so the public-sourced 4250 handshake
-    # is dropped (`dial <public-ip>:4250: i/o timeout`) and Cilium black-holes every
-    # cross-node pod flow the hetzner require-mutual-auth policy marks
-    # `authentication.mode: required` once its auth-cache entry lapses. Observed
-    # live (2026-06-19): the Crossview dashboard was unreachable — authenticated
-    # oauth2-proxy/auth-proxy -> crossview:3001 SYNs returned `policy-verdict:
-    # none ... Policy denied DROPPED` (the spire AUTH TYPE on that policy entry
-    # never completed its handshake) — while older dashboards limped on still-
-    # cached auth entries. Failures spanned all three workers, dialing each
-    # other's public IPs on 4250.
-    #
-    # Listing the private NICs makes the private IP each node's primary address,
-    # so the 4250 handshake uses 10.0.1.x and the firewall admits it.
-    #
-    # Safe on this topology (all verified live, 2026-06-19):
-    #   - Ingress: the Hetzner LB reaches nodes on their PRIVATE IPs
-    #     (load-balancer.hetzner.cloud/use-private-ip: "true", see
-    #     ../../../patches/attach-hcloud-load-balancer.yaml) and clients hit the LB's public IP, not
-    #     node public IPs. The private NIC stays a Cilium device, so the LB's
-    #     NodePort BPF is unaffected; only unused public-NIC NodePort BPF is shed.
-    #   - Egress: pod -> internet masquerade is the device-AGNOSTIC iptables rule
-    #     (-s podCIDR ! -d podCIDR ! -o cilium_+ -j MASQUERADE), not scoped to
-    #     this devices list, so pods still SNAT out the public NIC. (Masquerading
-    #     is iptables here; bpf.masquerade is off.)
-    #   - cilium-health / VXLAN / WireGuard already used the private NIC.
-    #
-    # WARNING: hard-codes the private-NIC names. Today every worker is enp7s0 and
-    # every control-plane is eth1 (verified on all 6 nodes). An autoscaler worker
-    # brought up on a server type whose private NIC is named differently would
-    # lose Cilium networking until its name is added here — keep this in sync with
-    # the node pool's machine type.
-    #
-    # PROD/HETZNER ONLY: the docker/local provider is single-NIC, so device
-    # autodetection is correct there. This pin lives in the hetzner overlay.
-    devices: "enp7s0 eth1"
+    # NB: the private-NIC `devices` pin that used to live here moved to
+    # ../components/private-nic-devices/ (same value, so the rendered
+    # HelmRelease is unchanged). It had to become a component so the staged
+    # homogeneous-devices/ successor can override it — a value carried by this
+    # parent patch is applied AFTER all component patches and can never be
+    # overridden by one. The pin's full rationale (2026-06-19 mutual-auth
+    # incident, LB/egress safety analysis) and the refreshed 2026-07-18
+    # NIC inventory live in that component's header.

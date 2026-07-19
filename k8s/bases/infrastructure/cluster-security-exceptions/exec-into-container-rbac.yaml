@@ -29,6 +29,9 @@
 #   - Flux — kustomize-controller and helm-controller (both bound via
 #     cluster-reconciler-flux-system) and flux-operator hold cluster-admin;
 #     arbitrary-manifest reconciliation is the GitOps trust model.
+#   - KubeVirt — the kubevirt-operator ClusterRole explicitly grants
+#     `pods/exec` (vendored upstream bundle); virt-operator needs it to manage
+#     VM lifecycles. AGENTS.md documents this finding as except-only.
 #
 # NOT covered (intentionally): the two tenant Flux-impersonation SAs
 # (wedding-app, ascoachingogvaner) inherit pods/exec only via the built-in `edit`
@@ -41,11 +44,13 @@ metadata:
 spec:
   reason: >-
     Velero (all-or-nothing backup/restore RBAC + cluster-admin), CloudNativePG
-    (operator execs into Postgres pods — explicit pods/exec grant), and the Flux
+    (operator execs into Postgres pods — explicit pods/exec grant), the Flux
     GitOps reconcilers kustomize-controller, helm-controller (both via the
     cluster-reconciler-flux-system binding), and flux-operator (cluster-admin
-    trust model) legitimately hold pods/exec by design. The specific RBAC bindings are
-    matched by kind+name so C-0002 still catches any new exec grant.
+    trust model), and KubeVirt's virt-operator (explicit pods/exec grant to
+    manage VM lifecycles) legitimately hold pods/exec by design. The specific
+    RBAC bindings are matched by kind+name so C-0002 still catches any new
+    exec grant.
   posture:
     - controlID: C-0002
       action: ignore
@@ -73,3 +78,10 @@ spec:
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
         name: ^flux-operator$
+      # KubeVirt — virt-operator manages VM lifecycles via an explicit
+      # pods/exec grant in the kubevirt-operator ClusterRole (vendored
+      # upstream operator bundle), bound by this CRB. Documented as
+      # except-only in AGENTS.md's scan-threshold rationale.
+      - apiGroup: rbac.authorization.k8s.io
+        kind: ClusterRoleBinding
+        name: ^kubevirt-operator$
