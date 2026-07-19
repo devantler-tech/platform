@@ -3,6 +3,23 @@
 # is applied as this ServiceAccount, so it receives namespace-local authority
 # over exactly the namespaced provider-aws-iam kinds activated for the EKS CI
 # identity. ProviderConfig and credential resources remain platform-owned.
+#
+# Neither `policies` NOR `roles` is granted (#2612 / #2631 review). The tenant
+# artifact is the PUBLIC devantler-tech/aws repo, applied as this ServiceAccount,
+# so every verb here is a capability handed to that artifact:
+#
+#   - write on `policies` would let it create, rewrite or delete the
+#     eks-ci-smoke-boundary permissions boundary itself;
+#   - write on `roles` would let it edit the eks-ci Role, whose inlinePolicy
+#     carries the iam:PermissionsBoundary CONDITION that IS the cap — deleting
+#     that condition escapes the boundary without ever touching the Policy
+#     object (and the Role kind can also attach managed policies via
+#     managedPolicyArns, so withholding RolePolicyAttachment does not contain it).
+#
+# A boundary the bounded party can edit caps nothing, so BOTH the boundary
+# (policy-eks-ci-smoke-boundary.yaml) and the role it constrains
+# (role-eks-ci.yaml) are platform-owned. The artifact keeps only the OIDC
+# provider, which is what it legitimately owns.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -15,7 +32,6 @@ rules:
       - iam.aws.m.upbound.io
     resources:
       - openidconnectproviders
-      - roles
     verbs:
       - get
       - list

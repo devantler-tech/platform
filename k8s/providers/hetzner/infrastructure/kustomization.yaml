@@ -3,6 +3,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
+  # Prod-only audit-log forwarder. It consumes the `coroot-api-key` generated
+  # from the Hetzner Coroot CR patch, so it belongs in this infrastructure
+  # layer alongside that CR rather than in the earlier wait-gated controllers
+  # layer. Both resources are applied before Flux waits for readiness, allowing
+  # the operator to create the key before the HelmRelease becomes Ready.
+  - ../../../bases/infrastructure/audit-log-forwarder/
   - cluster-issuers/
   # Crossplane provider-upjet-github package + activation policy. Lives in this
   # `infrastructure` layer (not `infrastructure/controllers/`) because these are
@@ -167,4 +173,3 @@ patches:
       - op: add
         path: /spec/limits/0/default/memory
         value: 2Gi
-
