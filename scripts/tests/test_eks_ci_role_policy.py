@@ -220,13 +220,23 @@ def hash_rendered_authorization(rendered_output: str) -> dict[str, str]:
             for line in lines
             if line.startswith("  namespace: ")
         ]
-        if len(kinds) != 1 or len(names) != 1:
+        if len(api_versions) != 1 or len(kinds) != 1:
             continue
+        is_iam_authorization = api_versions[0].startswith("iam.aws.") and kinds[0] in {
+            "Policy",
+            "Role",
+        }
+        if not is_iam_authorization:
+            continue
+        if len(names) != 1 or len(namespaces) != 1:
+            raise AssertionError("rendered IAM resource identity is incomplete")
+
         expected = targets.get((kinds[0], names[0]))
         if expected is None:
-            continue
-        if len(api_versions) != 1 or len(namespaces) != 1:
-            raise AssertionError("rendered IAM resource identity is incomplete")
+            raise AssertionError(
+                "unexpected rendered IAM authorization resource: "
+                f"{api_versions[0]}/{kinds[0]} {namespaces[0]}/{names[0]}"
+            )
 
         expected_api_version, expected_namespace, target = expected
         identity = (api_versions[0], kinds[0], namespaces[0], names[0])
@@ -476,6 +486,33 @@ metadata:
 
         with self.assertRaises(AssertionError):
             hash_rendered_authorization(unexpected)
+
+    def test_additional_rendered_iam_resource_is_rejected(self) -> None:
+        role = """apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: eks-ci
+  namespace: aws
+"""
+        boundary = """apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: eks-ci-smoke-boundary
+  namespace: aws
+"""
+        unexpected = """apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: Role
+metadata:
+  annotations:
+    crossplane.io/external-name: eks-ci
+  name: eks-ci-alias
+  namespace: aws
+"""
+
+        with self.assertRaises(AssertionError):
+            hash_rendered_authorization(
+                f"{role}---\n{boundary}---\n{unexpected}"
+            )
 
     def test_unexpected_allow_statement_is_rejected(self) -> None:
         policy = copy.deepcopy(load_inline_policy())
