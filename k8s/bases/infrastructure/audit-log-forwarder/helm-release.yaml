@@ -1,0 +1,205 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: audit-log-forwarder
+  namespace: observability
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+  annotations:
+    # Exempt from Flux postBuild envsubst. The collector config below uses the
+    # collector's own `${env:VAR}` expansion, whose colon makes Flux's envsubst
+    # error out ("missing closing brace") rather than skip it — the same
+    # wholesale exemption the KRO ResourceGraphDefinitions use for their
+    # `${...}` CEL expressions. This release consumes no Flux variables.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  interval: 10m0s
+  timeout: 10m
+  # https://github.com/open-telemetry/opentelemetry-helm-charts/tree/main/charts/opentelemetry-collector
+  #
+  # Control-plane-only DaemonSet tailing the kube-apiserver audit log
+  # (/var/log/audit/kube/audit.log, written per
+  # talos/cluster/enable-audit-logging.yaml) and shipping it to Coroot's OTLP
+  # logs endpoint, so audit events are searchable in the Coroot UI. The on-node
+  # file (30-day rotation) stays the resilient primary; this forwarder only
+  # copies. Runs as root because the apiserver writes the file 0600 root-owned;
+  # the observability namespace's privileged PSS label + Kyverno excludes +
+  # Kubescape exception already cover exactly this class of workload (the
+  # coroot eBPF node-agent precedent).
+  chart:
+    spec:
+      chart: opentelemetry-collector
+      version: 0.165.0
+      sourceRef:
+        kind: HelmRepository
+        name: open-telemetry
+  # https://github.com/open-telemetry/opentelemetry-helm-charts/blob/main/charts/opentelemetry-collector/values.yaml
+  values:
+    mode: daemonset
+    fullnameOverride: audit-log-forwarder
+    serviceAccount:
+      # The collector only reads a host file and exports logs; it never calls
+      # the Kubernetes API, so do not expose a bearer token to this root pod.
+      automountServiceAccountToken: false
+    image:
+      # The -k8s distribution carries exactly the components used below
+      # (filelog receiver, file_storage extension, otlphttp exporter).
+      repository: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-k8s
+    command:
+      name: otelcol-k8s
+    # The audit log only exists on control-plane nodes.
+    nodeSelector:
+      node-role.kubernetes.io/control-plane: ""
+    tolerations:
+      - key: node-role.kubernetes.io/control-plane
+        operator: Exists
+        effect: NoSchedule
+    # Pull-only pipeline: no telemetry is received over the network, so no
+    # listener ports are exposed.
+    ports:
+      otlp:
+        enabled: false
+      otlp-http:
+        enabled: false
+      jaeger-compact:
+        enabled: false
+      jaeger-thrift:
+        enabled: false
+      jaeger-grpc:
+        enabled: false
+      zipkin:
+        enabled: false
+    extraEnvs:
+      # Operator-generated project API key (hetzner coroot-patch `projects:`
+      # block) — the same key the bundled node-agent/cluster-agent use.
+      - name: COROOT_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: coroot-api-key
+            key: key
+      - name: K8S_NODE_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: spec.nodeName
+    extraVolumes:
+      - name: audit-log
+        hostPath:
+          path: /var/log/audit/kube
+          # Deliberately no hostPath type: on Talos the kubelet runs in its own
+          # mount namespace that maps only /var/lib/{kubelet,containerd} and
+          # /var/log/{pods,containers}, so a `Directory` type check stats a path
+          # the kubelet cannot see and fails with "is not a directory" even
+          # though the directory exists on the host (live-verified via the
+          # kubelet's /proc/<pid>/mountinfo). The CRI resolves the path in the
+          # host namespace, where it exists — Talos itself mounts this same
+          # directory into kube-apiserver with an unset type for that reason.
+      # Filelog checkpoint store so container restarts resume at the last-read
+      # offset. emptyDir (not hostPath): it lives under /var/lib/kubelet, the
+      # one writable path the Talos kubelet namespace shares with the host, and
+      # it keeps a second hostPath out of the privileged exception. A pod
+      # *re-creation* (DaemonSet update) loses the offset and re-ingests the
+      # current audit.log once — same as the deliberate start_at: beginning
+      # initial ingest; the on-node file remains the resilient primary.
+      - name: checkpoints
+        emptyDir: {}
+    extraVolumeMounts:
+      - name: audit-log
+        mountPath: /var/log/audit/kube
+        readOnly: true
+      - name: checkpoints
+        mountPath: /var/lib/audit-log-forwarder
+    # kube-apiserver writes /var/log/audit/kube as UID 65534 with 0700/0600
+    # modes (live-verified on the prod Talos v1.13.5 nodes), so a plain UID 0
+    # reader with all capabilities dropped gets permission denied and the
+    # filelog receiver forwards nothing. Per Sidero's v1.13 audit-log example,
+    # hostPath readers retain exactly DAC_READ_SEARCH (read/traverse only —
+    # never DAC_OVERRIDE) to bypass the file's DAC check; everything else
+    # stays locked down.
+    securityContext:
+      runAsUser: 0
+      runAsGroup: 0
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop:
+          - ALL
+        add:
+          - DAC_READ_SEARCH
+      seccompProfile:
+        type: RuntimeDefault
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      # Wide request:limit ratio (8:1) so auto-vpa's ratio-preserving
+      # resize keeps burst headroom for audit-log spikes.
+      limits:
+        memory: 512Mi
+    config:
+      extensions:
+        file_storage:
+          directory: /var/lib/audit-log-forwarder
+          create_directory: true
+      receivers:
+        filelog:
+          include:
+            - /var/log/audit/kube/audit.log
+          start_at: beginning
+          storage: file_storage
+          operators:
+            # Audit events are single-line JSON. Parse them to lift the event
+            # timestamp and a compact set of searchable fields; the full raw
+            # event stays in the log body.
+            - type: json_parser
+              parse_to: attributes
+              timestamp:
+                parse_from: attributes.stageTimestamp
+                layout_type: gotime
+                # metav1.MicroTime — RFC3339 with exactly six fractional digits.
+                layout: "2006-01-02T15:04:05.000000Z07:00"
+            # Keep only the high-value structured fields as attributes; the
+            # RequestResponse-level events otherwise explode into hundreds of
+            # attribute keys per RBAC mutation.
+            - type: retain
+              fields:
+                - attributes.level
+                - attributes.stage
+                - attributes.verb
+                - attributes.auditID
+                - attributes.requestURI
+                - attributes.user.username
+                - attributes.objectRef
+                - attributes.responseStatus
+      processors:
+        resource/audit:
+          attributes:
+            # Coroot groups OTLP logs into an application by service.name.
+            - key: service.name
+              value: kube-apiserver-audit
+              action: upsert
+            - key: k8s.node.name
+              value: ${env:K8S_NODE_NAME}
+              action: upsert
+      exporters:
+        otlphttp/coroot:
+          logs_endpoint: http://coroot-coroot.observability.svc.cluster.local:8080/v1/logs
+          headers:
+            x-api-key: ${env:COROOT_API_KEY}
+      service:
+        extensions:
+          - health_check
+          - file_storage
+        pipelines:
+          logs:
+            receivers:
+              - filelog
+            processors:
+              - memory_limiter
+              - resource/audit
+              - batch
+            exporters:
+              - otlphttp/coroot
+          # This collector only forwards the audit log; drop the chart's
+          # default OTLP-fed traces/metrics pipelines.
+          traces: null
+          metrics: null

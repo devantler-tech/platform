@@ -19,7 +19,7 @@ KSail (static baseline)
 Cluster Autoscaler (dynamic workers, managed by KSail)
 ├── Pool: autoscale-cx43 → 0-4 × CX43 (8 vCPU, 16 GB)
 ├── Pool: autoscale-cx53 → 0-4 × CX53 (16 vCPU, 32 GB)
-├── maxNodesTotal: 10 (total cluster nodes incl. baseline: 6 static + 4 autoscaler)
+├── maxNodesTotal: 9 (total cluster nodes incl. baseline: 6 static + 3 autoscaler — one server slot stays reserved, see Cost guardrails)
 └── Expander: [LeastNodes, LeastWaste] (priority chain)
 ```
 
@@ -77,7 +77,7 @@ spec:
       node:
         enabled: true
         expander: [LeastNodes, LeastWaste]
-        maxNodesTotal: 10
+        maxNodesTotal: 9
         scaleDownUnneededTime: "10m"
         pools:
           - name: autoscale-cx43
@@ -107,20 +107,23 @@ spec:
 ### Cost guardrails
 
 - **Hard max per pool** — `pools[].max` caps each pool independently. Set to
-  `4` so any single CX type can serve a full burst (e.g. 4× cx23) instead of
-  forcing larger types; the `maxNodesTotal` total ceiling still caps the
-  autoscaler at 4 (`10 − 6` baseline), so this changes only the type
-  distribution, never the node count.
+  `4` so any single CX type can serve a full burst instead of forcing larger
+  types; the `maxNodesTotal` total ceiling still caps the autoscaler at 3
+  (`9 − 6` baseline), so this changes only the type distribution, never the
+  node count.
 - **Total node ceiling** — `maxNodesTotal` caps the **total cluster node
-  count, including** the static baseline. Set to `10` (6 static + up to 4
+  count, including** the static baseline. Set to `9` (6 static + up to 3
   autoscaler). It is passed straight to cluster-autoscaler's
   `--max-nodes-total`, so the runtime already enforces this total.
 - **serverLimit** (`spec.provider.hetzner.serverLimit`) — the Hetzner account
-  hard cap (`10`). Under the in-progress KSail change
-  ([ksail#5017](https://github.com/devantler-tech/ksail/issues/5017)) the
-  autoscaler validation becomes `maxNodesTotal ≤ serverLimit` (`10 ≤ 10`);
-  until it ships, the old validation (`CP + workers + min(maxNodesTotal, Σ
-  pool.max)`) rejects this config, so the KSail change must land first.
+  hard cap (`10`). **Keep `maxNodesTotal` strictly BELOW `serverLimit`** —
+  KSail's Talos snapshot build creates a TEMPORARY extra server, so a
+  `10 ≤ 10` config leaves it no slot: every Talos image bump then fails at
+  the snapshot-ensure step, evicting every merge-queue deploy and breaking
+  Heal Prod until a slot is freed (the 2026-07 CD outage). KSail enforces
+  `maxNodesTotal < serverLimit` for Talos+Hetzner since
+  [ksail#6172](https://github.com/devantler-tech/ksail/pull/6172); the
+  reserved slot here is that rule applied.
 - **Expander** — `[LeastNodes, LeastWaste]` (current) is an ordered priority
   chain. `LeastNodes` runs first and keeps the pools that scale up with the
   fewest total new nodes (preferring the largest adequate type to keep the node
