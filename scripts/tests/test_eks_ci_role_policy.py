@@ -31,6 +31,16 @@ EXPECTED_TRUST_POLICY_SHA256 = (
 EXPECTED_BOUNDARY_POLICY_SHA256 = (
     "e617004bce71a65f92934c4f7575d7559a290afe7a17363ce12db8ad7b519610"
 )
+# These whole-manifest pins intentionally reject alternate YAML spellings and
+# authorization-affecting spec fields outside forProvider (for example,
+# initProvider or managementPolicies). The parsed assertions below then provide
+# readable failures for the approved representation's security-critical fields.
+EXPECTED_ROLE_MANIFEST_SHA256 = (
+    "96a77d18160c450340e65b0953f44016a01a08429416f7a82142c3f90a61ca07"
+)
+EXPECTED_BOUNDARY_MANIFEST_SHA256 = (
+    "b96bfd8c96baa2e09f32a1cc05f76473ecc021fed554a2880ce8e3dd399902c7"
+)
 EXPECTED_STATEMENT_SIDS = {
     "CloudFormationRead",
     "CloudFormationScoped",
@@ -124,6 +134,7 @@ def load_role_authorization(manifest: Path = ROLE_MANIFEST) -> dict:
     ]
 
     return {
+        "manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
         "for_provider_keys": for_provider_keys(lines),
         "max_session_duration": max_session_lines,
         "trust_policies": extract_json_blocks(lines, "    assumeRolePolicy: |"),
@@ -137,6 +148,7 @@ def load_boundary_authorization() -> dict:
     policies = extract_json_blocks(lines, "    policy: |")
 
     return {
+        "manifest_sha256": hashlib.sha256(BOUNDARY_MANIFEST.read_bytes()).hexdigest(),
         "for_provider_keys": for_provider_keys(lines),
         "policy_count": len(policies),
         "policy": policies[0] if policies else None,
@@ -184,6 +196,11 @@ def assert_inline_policy_shape(policy: dict) -> None:
 
 def assert_role_authorization_shape(authorization: dict) -> None:
     """Pin trust, attachments, session duration, and all inline policies."""
+    if authorization["manifest_sha256"] != EXPECTED_ROLE_MANIFEST_SHA256:
+        raise AssertionError(
+            "unapproved Role manifest: "
+            f"sha256={authorization['manifest_sha256']}"
+        )
     if authorization["for_provider_keys"] != EXPECTED_ROLE_FOR_PROVIDER_KEYS:
         raise AssertionError(
             f"unexpected Role forProvider keys: {authorization['for_provider_keys']}"
@@ -206,6 +223,11 @@ def assert_role_authorization_shape(authorization: dict) -> None:
 
 def assert_boundary_authorization_shape(authorization: dict) -> None:
     """Pin the complete policy that caps roles minted by the smoke identity."""
+    if authorization["manifest_sha256"] != EXPECTED_BOUNDARY_MANIFEST_SHA256:
+        raise AssertionError(
+            "unapproved boundary manifest: "
+            f"sha256={authorization['manifest_sha256']}"
+        )
     if authorization["for_provider_keys"] != EXPECTED_BOUNDARY_FOR_PROVIDER_KEYS:
         raise AssertionError(
             "unexpected boundary forProvider keys: "
@@ -279,6 +301,42 @@ class TestEKSCIRolePolicy(unittest.TestCase):
             "\n  providerConfigRef:", f"{additional_policy}\n  providerConfigRef:", 1
         )
         self.assertNotEqual(source, mutated)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest = Path(temp_dir) / "role.yaml"
+            manifest.write_text(mutated, encoding="utf-8")
+
+            with self.assertRaises(AssertionError):
+                assert_role_authorization_shape(load_role_authorization(manifest))
+
+    def test_flow_style_inline_policy_is_rejected(self) -> None:
+        source = ROLE_MANIFEST.read_text(encoding="utf-8")
+        additional_policy = (
+            "\n      - {name: unexpected, policy: "
+            "'{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\","
+            "\"Action\":\"iam:*\",\"Resource\":\"*\"}]}' }\n"
+        )
+        mutated = source.replace(
+            "\n  providerConfigRef:", f"{additional_policy}\n  providerConfigRef:", 1
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            manifest = Path(temp_dir) / "role.yaml"
+            manifest.write_text(mutated, encoding="utf-8")
+
+            with self.assertRaises(AssertionError):
+                assert_role_authorization_shape(load_role_authorization(manifest))
+
+    def test_init_provider_attachment_is_rejected(self) -> None:
+        source = ROLE_MANIFEST.read_text(encoding="utf-8")
+        init_provider = """
+  initProvider:
+    managedPolicyArns:
+      - arn:aws:iam::aws:policy/AdministratorAccess
+"""
+        mutated = source.replace(
+            "\n  providerConfigRef:", f"{init_provider}\n  providerConfigRef:", 1
+        )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             manifest = Path(temp_dir) / "role.yaml"
