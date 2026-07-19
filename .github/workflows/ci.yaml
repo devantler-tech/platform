@@ -19,6 +19,7 @@ jobs:
       pull-requests: read # detect changed files
     outputs:
       k8s: ${{ steps.filter.outputs.k8s }}
+      bridge_validation: ${{ steps.filter.outputs.bridge_validation }}
       talos: ${{ steps.filter.outputs.talos }}
     steps:
       - name: 📑 Checkout
@@ -26,6 +27,17 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🩹 Validate merge-group heal contract
+        run: |
+          go test ./scripts/validate-merge-group-heal
+          go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
@@ -41,6 +53,25 @@ jobs:
               - 'talos/**'
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
+              - 'scripts/generate-kubescape-exceptions/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
+              - 'tests/**'
+              - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/ghcr-auth-lib.sh'
+              - 'scripts/run-ksail-prod-with-pull-auth.sh'
+              - '.github/actions/deploy-prod/**'
+              - '.github/workflows/dr-rebuild.yaml'
+              - '.github/workflows/ci.yaml'
+            bridge_validation:
+              - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/ghcr-auth-lib.sh'
+              - 'scripts/run-ksail-prod-with-pull-auth.sh'
+              - 'scripts/tests/test_refresh_flux_ghcr_auth.py'
+              - 'docs/dr/runbook.md'
+              - '.github/actions/deploy-prod/**'
+              - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/ci.yaml'
             talos:
               - 'talos/**'
@@ -55,7 +86,10 @@ jobs:
     # longer boots it; instead it schema-validates and security-scans the
     # manifests. This needs no secrets, so — unlike the old system test — it also
     # runs on fork PRs.
-    if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
+    if: >-
+      github.event_name == 'pull_request' &&
+      (needs.changes.outputs.k8s == 'true' ||
+      needs.changes.outputs.bridge_validation == 'true')
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -64,6 +98,28 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        # Needed by the Kubescape exceptions generator below (Go, per the
+        # bash-or-Go scripting standard) — the scan step shells out to it.
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🔐 Validate Flux GHCR credential bridge
+        # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
+        # registry credential, cluster access, or network is used.
+        run: |
+          bash -n \
+            scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth.sh \
+            scripts/run-ksail-prod-with-pull-auth.sh
+          shellcheck \
+            scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth.sh \
+            scripts/run-ksail-prod-with-pull-auth.sh
+          python3 -m unittest scripts.tests.test_refresh_flux_ghcr_auth
 
       - name: 🧩 Validate embedded JSON blobs
         # ConfigMaps that embed whole JSON documents as block scalars (e.g. the
@@ -74,6 +130,31 @@ jobs:
         # second, so it goes first — before the ksail download. See
         # scripts/validate-embedded-json.py (#2480).
         run: python3 scripts/validate-embedded-json.py
+
+      - name: ⚖️ Install Kyverno CLI
+        if: needs.changes.outputs.k8s == 'true'
+        # Pinned to the version the cluster actually runs (the kyverno Helm
+        # release is v1.18.2), so a policy that passes here is evaluated by the
+        # same engine that admits it in production. Bump both together.
+        uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
+        with:
+          release: v1.18.2
+
+      - name: ⚖️ Validate cluster policies
+        if: needs.changes.outputs.k8s == 'true'
+        # Runs the kyverno test fixtures under tests/. Until now nothing
+        # executed them, so tests/validate-replica-floor had never actually run
+        # in CI — a policy regression could ship green. No cluster or secrets
+        # required; the CLI evaluates the committed ClusterPolicy files offline.
+        run: kyverno test ./tests
+
+      - name: 🚦 Validate default-off Cilium bandwidth manager
+        if: needs.changes.outputs.k8s == 'true'
+        # Render the committed and temporary opt-in states so the staged
+        # bandwidth-manager + BBR component cannot silently become active or
+        # regress the Hetzner WireGuard settings. Bash plus the kubectl bundled
+        # on the GitHub-hosted runner; no cluster or secrets required.
+        run: bash scripts/tests/test-cilium-bandwidth-manager-component.sh
 
       - name: ⚙️ Setup KSail
         # Renovate-managed (datasource github-releases; grouped 'ksail' with the
@@ -93,7 +174,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.165.5"
+          KSAIL_VERSION: "7.175.3"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -112,7 +193,7 @@ jobs:
         # a save gated on job success would then never persist the schemas it did
         # manage to fetch, and every retry would cold-start again.
         id: kubeconform-cache
-        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684 # v4.2.3
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ksail/kubeconform
           key: kubeconform-schema-cache-v1-${{ github.run_id }}
@@ -152,25 +233,33 @@ jobs:
         # FAILS if a change drops the posture below the threshold, so new
         # findings must be fixed (or justified) before merge.
         #
-        # The threshold (85) is a regression FLOOR, not the live score. The
-        # Kubescape compliance score is **environment-dependent** — the same
-        # binary on the same manifests scores higher locally (macOS, ≈94%) than on
-        # the Linux CI runner (≈87%), a gap that isn't the render, the framework
-        # cache, or the merge content — and the absolute value also shifts with the
-        # ksail render, so it can't be reproduced exactly offline. CI is the source
-        # of truth; the gate sits a few points under the observed CI value to catch
-        # real regressions without flaking on that variance. (NB the floor may need
-        # re-baselining after a ksail version bump.)
+        # The scan consumes the platform's justified exceptions: the
+        # ClusterSecurityException CRs (k8s/bases/infrastructure/
+        # cluster-security-exceptions/ — the single source of truth, also
+        # consumed in-cluster by the kubescape-operator) are converted at scan
+        # time into Kubescape's native exceptions format by
+        # scripts/generate-kubescape-exceptions (#2264). With runtime-
+        # enforced and except-only findings suppressed, the threshold gates the
+        # residual REAL posture instead of sitting ~15 points under it.
         #
-        # It is not higher because the residual findings are either runtime-
-        # enforced (Kyverno securityContext/limits, CiliumNetworkPolicy) or
-        # genuinely unfixable — notably C-0002, the KubeVirt operator's pods/exec
-        # RBAC, which it needs to manage VMs and can only be excepted. Native scan
-        # exceptions have now shipped (devantler-tech/ksail#5369); wiring the
-        # platform's ClusterSecurityException CRs into the scan and ratcheting the
-        # threshold toward 100 is tracked in #2264. Until then, ratchet up as
-        # genuine gaps are fixed; never lower it.
-        run: ksail workload scan --framework nsa --compliance-threshold 85
+        # The threshold is a regression FLOOR, not the live score. The
+        # Kubescape compliance score has historically been environment-
+        # dependent (Linux CI runner vs macOS) and shifts with the ksail
+        # render, so CI is the source of truth: the observed CI score with
+        # exceptions applied is 98.87% (2026-07-11, ksail 7.165.2 — matching
+        # the local value on that date), and the gate sits a few points under
+        # it to catch real regressions without flaking on run-to-run
+        # variance. (NB the floor may need re-baselining after a ksail
+        # version bump.)
+        #
+        # Known un-excepted residual: C-0012 on the local-dev MinIO Deployment
+        # (deliberate dev-only credential — tracked for a root-cause fix, not
+        # an exception). Ratchet the floor up as genuine gaps close; never
+        # lower it.
+        run: |
+          go test ./scripts/generate-kubescape-exceptions
+          go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
+          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95
 
   naming:
     name: 🏷️ Validate Naming Conventions
@@ -218,7 +307,7 @@ jobs:
           # Keep in step with the Talos version the prod cluster runs (ksail's
           # node image pin — see ksail DefaultTalosImage).
           # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-          TALOS_VERSION: "1.13.5"
+          TALOS_VERSION: "1.13.6"
         run: |
           curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
           sudo install /tmp/talosctl /usr/local/bin/talosctl
@@ -230,12 +319,16 @@ jobs:
 
           # Placeholder key material for env-expanded patch values (ksail
           # expands these from environment secrets at deploy time — see
-          # talos/control-planes/wireguard.yaml and talos/cluster/registry-auth.yaml).
+          # talos/control-planes/wireguard.yaml and
+          # talos/cluster/authenticate-ghcr-pulls.yaml and
+          # talos/cluster/mark-ghcr-pull-revision.yaml).
           # Real-format but throwaway, so validation exercises the expansion
           # path without any real secret on the PR event.
           WG_SERVER_PRIVATE_KEY="$(openssl rand -base64 32)"
+          GHCR_USERNAME="placeholder-ghcr-user"
           GHCR_TOKEN="placeholder-ghcr-token"
-          export WG_SERVER_PRIVATE_KEY GHCR_TOKEN
+          GHCR_PULL_REVISION="$(printf '%s\n' 'ENC[ci-placeholder-ciphertext]' | shasum -a 256 | awk '{print $1}')"
+          export WG_SERVER_PRIVATE_KEY GHCR_USERNAME GHCR_TOKEN GHCR_PULL_REVISION
 
           validate_overlay() {
             local dir="$1" mode="$2"
@@ -334,24 +427,28 @@ jobs:
           wg-server-private-key: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
   heal-prod-on-failure:
-    name: 🩹 Heal Prod (restore main on merge-group failure)
+    name: 🩹 Heal Prod (restore main after unsuccessful merge-group deploy)
     needs: [changes, deploy-prod]
     # The deploy above runs on the SPECULATIVE merge ref, before the PR lands on
     # `main`. When it fails the merge group is ejected — but the OCI `latest` tag
     # (and the prod cluster reconciling it) is left pointing at that ejected
     # artifact, which never lands on `main`, so prod silently diverges from Git
     # until some future merge overwrites it (devantler-tech/platform#2026). This
-    # failure-path-only job re-deploys the current tip of `main` via the SAME
-    # composite, so the ejected artifact is immediately replaced by main's signed
-    # artifact and prod reconverges with Git. It has ZERO effect on a green merge
-    # (skipped) and does NOT relax the gate: deploy-prod's failure still fails
-    # `CI - Required Checks` below, so the PR is still ejected. It is intentionally
-    # NOT part of that aggregation — it is best-effort cleanup, not a merge gate.
+    # unsuccessful-path-only job re-deploys the current tip of `main` via the
+    # SAME composite, so the speculative artifact is immediately replaced by
+    # main's signed artifact and prod reconverges with Git. It covers explicit
+    # cancellation too: GitHub re-evaluates job conditions during normal
+    # cancellation, and `always()` keeps this cleanup eligible after the deploy
+    # job becomes cancelled. It has ZERO effect on a green merge (skipped) and
+    # does NOT relax the gate: deploy-prod's failure still fails `CI - Required
+    # Checks` below, so the PR is still ejected. It is intentionally NOT part of
+    # that aggregation — it is best-effort cleanup, not a merge gate.
     if: >-
       always() &&
       github.event_name == 'merge_group' &&
       needs.changes.outputs.k8s == 'true' &&
-      needs.deploy-prod.result == 'failure'
+      (needs.deploy-prod.result == 'failure' ||
+       needs.deploy-prod.result == 'cancelled')
     runs-on: ubuntu-latest
     environment: prod
     # Same shared lock as deploy-prod / cd.yaml so the heal can never run against
@@ -398,7 +495,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@fec61388ed0c4ec4d6d93e3f1a8b8d17e7d40a72 # v9.0.4
+        uses: devantler-tech/actions/aggregate-job-checks@0f27c13a9785608e0bbf9998777d27761b4de617 # v10.0.2
         with:
           job-results: >-
             ${{ needs.changes.result }}
