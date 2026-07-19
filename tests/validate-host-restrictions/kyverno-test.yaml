@@ -1,0 +1,37 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: validate-host-restrictions-host-users
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/validate-host-restrictions.yaml
+resources:
+  - resources.yaml
+# Declares the namespace labels the namespaceSelector matches on. Without it the
+# CLI reports every resource "Excluded" and the fixture passes vacuously.
+variables: values.yaml
+results:
+  # The regression the mutate rule's conditional anchor cannot catch.
+  - policy: validate-host-restrictions
+    rule: disallow-host-users
+    resources:
+      - userns-enabled/explicit-host-users
+    kind: Pod
+    result: fail
+  # Absent inherits the mutated default; explicit false is already correct.
+  - policy: validate-host-restrictions
+    rule: disallow-host-users
+    resources:
+      - userns-enabled/explicit-unshared
+      - userns-enabled/host-users-absent
+    kind: Pod
+    result: pass
+  # CNPG pods are excluded, and namespaces without the opt-in label are out of scope.
+  - policy: validate-host-restrictions
+    rule: disallow-host-users
+    resources:
+      - userns-enabled/cnpg-instance
+      - userns-absent/unscoped-host-users
+    kind: Pod
+    result: skip
