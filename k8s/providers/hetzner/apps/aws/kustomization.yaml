@@ -9,6 +9,8 @@ resources:
   - network-policy.yaml
   - secret-store.yaml
   - provider-config.yaml
+  - policy-eks-ci-smoke-boundary.yaml
+  - role-eks-ci.yaml
   - external-secret.yaml
   - oci-repository.yaml
   - flux-kustomization.yaml
