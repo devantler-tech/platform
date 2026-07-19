@@ -122,9 +122,24 @@ jobs:
             scripts/run-ksail-prod-with-pull-auth.sh
           python3 -m unittest scripts.tests.test_refresh_flux_ghcr_auth
 
+      - name: ⚙️ Install pinned kubectl renderer
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          kubectl version --client
+
       - name: 🔐 Validate EKS smoke role policy
         # Parse source JSON with Python's standard library, then use kubectl's
-        # built-in Kustomize renderer to pin the final applied IAM resources.
+        # built-in Kustomize renderer to pin the final authorization path.
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python3 -m unittest scripts.tests.test_eks_ci_role_policy

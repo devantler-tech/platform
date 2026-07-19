@@ -50,6 +50,17 @@ EXPECTED_RENDERED_ROLE_SHA256 = (
 EXPECTED_RENDERED_BOUNDARY_SHA256 = (
     "3e42592858d66e627cd9b836c030a6f5ad626488bf18e0984f363f8333d88e12"
 )
+EXPECTED_RENDERED_TENANT_ROLE_SHA256 = (
+    "14029cea58ac1bf0547faa749b136803b42a777811a1528a685604d98ee0bfce"
+)
+EXPECTED_RENDERED_TENANT_BINDING_SHA256 = (
+    "be9680f8b56433be694f143e5877c737532427334841bff5091049549219dce4"
+)
+EXPECTED_RENDERED_TENANT_FLUX_SHA256 = (
+    "582454f8ed7f4ebbc9510f8e0b7ab185b49ca9f2ce8d5e03bde114419082a3c0"
+)
+EXPECTED_KUBECTL_VERSION = "v1.36.2"
+EXPECTED_KUSTOMIZE_VERSION = "v5.8.1"
 EXPECTED_STATEMENT_SIDS = {
     "CloudFormationRead",
     "CloudFormationScoped",
@@ -175,7 +186,16 @@ def load_inline_policy() -> dict:
 
 
 def load_rendered_authorization() -> dict[str, str]:
-    """Render the final apps overlay and hash the two applied IAM resources."""
+    """Render and hash the final authorization and tenant-delegation resources."""
+    version_command = subprocess.run(  # noqa: S603
+        ["kubectl", "version", "--client", "-o", "json"],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert_renderer_version(json.loads(version_command.stdout))
+
     command = subprocess.run(  # noqa: S603
         ["kubectl", "kustomize", str(APPS_KUSTOMIZATION)],
         cwd=REPO_ROOT,
@@ -200,6 +220,21 @@ def hash_rendered_authorization(rendered_output: str) -> dict[str, str]:
             "aws",
             "Policy/eks-ci-smoke-boundary",
         ),
+        ("Role", "aws-managed-resources"): (
+            "rbac.authorization.k8s.io/v1",
+            "aws",
+            "Role/aws-managed-resources",
+        ),
+        ("RoleBinding", "aws-managed-resources"): (
+            "rbac.authorization.k8s.io/v1",
+            "aws",
+            "RoleBinding/aws-managed-resources",
+        ),
+        ("Kustomization", "aws"): (
+            "kustomize.toolkit.fluxcd.io/v1",
+            "aws",
+            "Kustomization/aws",
+        ),
     }
     rendered: dict[str, str] = {}
 
@@ -214,27 +249,48 @@ def hash_rendered_authorization(rendered_output: str) -> dict[str, str]:
             if line.startswith("apiVersion: ")
         ]
         kinds = [line.removeprefix("kind: ") for line in lines if line.startswith("kind: ")]
-        names = [line.removeprefix("  name: ") for line in lines if line.startswith("  name: ")]
+        metadata_lines: list[str] = []
+        in_metadata = False
+        for line in lines:
+            if line == "metadata:":
+                in_metadata = True
+                continue
+            if in_metadata and line and not line.startswith(" "):
+                break
+            if in_metadata:
+                metadata_lines.append(line)
+        names = [
+            line.removeprefix("  name: ")
+            for line in metadata_lines
+            if line.startswith("  name: ")
+        ]
         namespaces = [
             line.removeprefix("  namespace: ")
-            for line in lines
+            for line in metadata_lines
             if line.startswith("  namespace: ")
         ]
         if len(api_versions) != 1 or len(kinds) != 1:
             continue
-        is_iam_authorization = api_versions[0].startswith("iam.aws.") and kinds[0] in {
-            "Policy",
-            "Role",
-        }
-        if not is_iam_authorization:
+        is_iam_authorization = api_versions[0].startswith("iam.aws.")
+        is_tenant_delegation = namespaces and namespaces[0] == "aws" and (
+            (
+                api_versions[0].startswith("rbac.authorization.k8s.io/")
+                and kinds[0] in {"Role", "RoleBinding"}
+            )
+            or (
+                api_versions[0].startswith("kustomize.toolkit.fluxcd.io/")
+                and kinds[0] == "Kustomization"
+            )
+        )
+        if not is_iam_authorization and not is_tenant_delegation:
             continue
         if len(names) != 1 or len(namespaces) != 1:
-            raise AssertionError("rendered IAM resource identity is incomplete")
+            raise AssertionError("rendered authorization identity is incomplete")
 
         expected = targets.get((kinds[0], names[0]))
         if expected is None:
             raise AssertionError(
-                "unexpected rendered IAM authorization resource: "
+                "unexpected rendered authorization resource: "
                 f"{api_versions[0]}/{kinds[0]} {namespaces[0]}/{names[0]}"
             )
 
@@ -247,17 +303,33 @@ def hash_rendered_authorization(rendered_output: str) -> dict[str, str]:
             names[0],
         )
         if identity != expected_identity:
-            raise AssertionError(f"unexpected rendered IAM identity: {identity}")
+            raise AssertionError(f"unexpected rendered authorization identity: {identity}")
         if target in rendered:
-            raise AssertionError(f"duplicate rendered IAM resource: {identity}")
+            raise AssertionError(f"duplicate rendered authorization resource: {identity}")
 
         rendered[target] = hashlib.sha256((document + "\n").encode()).hexdigest()
 
     expected_targets = {target[2] for target in targets.values()}
     if set(rendered) != expected_targets:
-        raise AssertionError(f"rendered IAM resources missing or duplicated: {rendered}")
+        raise AssertionError(
+            f"rendered authorization resources missing or duplicated: {rendered}"
+        )
 
     return rendered
+
+
+def assert_renderer_version(version: dict) -> None:
+    """Keep byte-for-byte rendered hashes bound to one serializer version."""
+    client_version = version.get("clientVersion", {}).get("gitVersion")
+    kustomize_version = version.get("kustomizeVersion")
+    if (
+        client_version != EXPECTED_KUBECTL_VERSION
+        or kustomize_version != EXPECTED_KUSTOMIZE_VERSION
+    ):
+        raise AssertionError(
+            "unapproved kubectl/Kustomize renderer: "
+            f"kubectl={client_version}, kustomize={kustomize_version}"
+        )
 
 
 def canonical_sha256(document: dict) -> str:
@@ -464,6 +536,27 @@ class TestEKSCIRolePolicy(unittest.TestCase):
             EXPECTED_RENDERED_BOUNDARY_SHA256,
             rendered["Policy/eks-ci-smoke-boundary"],
         )
+        self.assertEqual(
+            EXPECTED_RENDERED_TENANT_ROLE_SHA256,
+            rendered["Role/aws-managed-resources"],
+        )
+        self.assertEqual(
+            EXPECTED_RENDERED_TENANT_BINDING_SHA256,
+            rendered["RoleBinding/aws-managed-resources"],
+        )
+        self.assertEqual(
+            EXPECTED_RENDERED_TENANT_FLUX_SHA256,
+            rendered["Kustomization/aws"],
+        )
+
+    def test_unpinned_renderer_version_is_rejected(self) -> None:
+        with self.assertRaises(AssertionError):
+            assert_renderer_version(
+                {
+                    "clientVersion": {"gitVersion": "v1.36.3"},
+                    "kustomizeVersion": "v5.9.0",
+                }
+            )
 
     def test_duplicate_rendered_authorization_resource_is_rejected(self) -> None:
         role = """apiVersion: iam.aws.m.upbound.io/v1beta1
@@ -514,6 +607,31 @@ metadata:
                 f"{role}---\n{boundary}---\n{unexpected}"
             )
 
+    def test_additional_rendered_iam_kind_is_rejected(self) -> None:
+        role = """apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: eks-ci
+  namespace: aws
+"""
+        boundary = """apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: eks-ci-smoke-boundary
+  namespace: aws
+"""
+        attachment = """apiVersion: iam.aws.m.upbound.io/v1beta1
+kind: RolePolicyAttachment
+metadata:
+  name: eks-ci-admin
+  namespace: aws
+"""
+
+        with self.assertRaises(AssertionError):
+            hash_rendered_authorization(
+                f"{role}---\n{boundary}---\n{attachment}"
+            )
+
     def test_unexpected_allow_statement_is_rejected(self) -> None:
         policy = copy.deepcopy(load_inline_policy())
         policy["Statement"].append(
@@ -542,6 +660,11 @@ metadata:
             "            bridge_validation:", maxsplit=1
         )[0]
         self.assertIn("- 'scripts/tests/test_eks_ci_role_policy.py'", k8s_filter)
+        self.assertIn('KUBECTL_VERSION: "v1.36.2"', workflow)
+        self.assertIn(
+            "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82",
+            workflow,
+        )
 
 
 if __name__ == "__main__":
