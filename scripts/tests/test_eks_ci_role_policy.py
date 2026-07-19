@@ -3,21 +3,24 @@
 import copy
 import hashlib
 import json
+import subprocess
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
 
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 ROLE_MANIFEST = (
-    Path(__file__).resolve().parents[2]
+    REPO_ROOT
     / "k8s/providers/hetzner/apps/aws/role-eks-ci.yaml"
 )
 BOUNDARY_MANIFEST = (
-    Path(__file__).resolve().parents[2]
+    REPO_ROOT
     / "k8s/providers/hetzner/apps/aws/policy-eks-ci-smoke-boundary.yaml"
 )
-CI_WORKFLOW = Path(__file__).resolve().parents[2] / ".github/workflows/ci.yaml"
+APPS_KUSTOMIZATION = REPO_ROOT / "k8s/providers/hetzner/apps"
+CI_WORKFLOW = REPO_ROOT / ".github/workflows/ci.yaml"
 EXPECTED_ROLE_FOR_PROVIDER_KEYS = [
     "description",
     "maxSessionDuration",
@@ -40,6 +43,12 @@ EXPECTED_ROLE_MANIFEST_SHA256 = (
 )
 EXPECTED_BOUNDARY_MANIFEST_SHA256 = (
     "b96bfd8c96baa2e09f32a1cc05f76473ecc021fed554a2880ce8e3dd399902c7"
+)
+EXPECTED_RENDERED_ROLE_SHA256 = (
+    "90f9352dae9ce01938a742805241da1936ee0bbc28b1eab637072870c210a383"
+)
+EXPECTED_RENDERED_BOUNDARY_SHA256 = (
+    "3e42592858d66e627cd9b836c030a6f5ad626488bf18e0984f363f8333d88e12"
 )
 EXPECTED_STATEMENT_SIDS = {
     "CloudFormationRead",
@@ -163,6 +172,40 @@ def load_inline_policy() -> dict:
         raise AssertionError("expected exactly one parseable inline policy")
 
     return policies[0]["policy"]
+
+
+def load_rendered_authorization() -> dict[str, str]:
+    """Render the final apps overlay and hash the two applied IAM resources."""
+    command = subprocess.run(  # noqa: S603
+        ["kubectl", "kustomize", str(APPS_KUSTOMIZATION)],
+        cwd=REPO_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    targets = {
+        ("Role", "eks-ci"): "Role/eks-ci",
+        ("Policy", "eks-ci-smoke-boundary"): "Policy/eks-ci-smoke-boundary",
+    }
+    rendered: dict[str, str] = {}
+
+    for raw_document in command.stdout.split("---\n"):
+        document = raw_document.strip()
+        if not document:
+            continue
+        lines = document.splitlines()
+        kinds = [line.removeprefix("kind: ") for line in lines if line.startswith("kind: ")]
+        names = [line.removeprefix("  name: ") for line in lines if line.startswith("  name: ")]
+        if len(kinds) != 1 or len(names) != 1:
+            continue
+        target = targets.get((kinds[0], names[0]))
+        if target is not None:
+            rendered[target] = hashlib.sha256((document + "\n").encode()).hexdigest()
+
+    if set(rendered) != set(targets.values()):
+        raise AssertionError(f"rendered IAM resources missing or duplicated: {rendered}")
+
+    return rendered
 
 
 def canonical_sha256(document: dict) -> str:
@@ -361,6 +404,14 @@ class TestEKSCIRolePolicy(unittest.TestCase):
 
         with self.assertRaises(AssertionError):
             assert_boundary_authorization_shape(authorization)
+
+    def test_rendered_authorization_manifests_are_pinned(self) -> None:
+        rendered = load_rendered_authorization()
+        self.assertEqual(EXPECTED_RENDERED_ROLE_SHA256, rendered["Role/eks-ci"])
+        self.assertEqual(
+            EXPECTED_RENDERED_BOUNDARY_SHA256,
+            rendered["Policy/eks-ci-smoke-boundary"],
+        )
 
     def test_unexpected_allow_statement_is_rejected(self) -> None:
         policy = copy.deepcopy(load_inline_policy())

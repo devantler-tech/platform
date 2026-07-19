@@ -123,8 +123,8 @@ jobs:
           python3 -m unittest scripts.tests.test_refresh_flux_ghcr_auth
 
       - name: 🔐 Validate EKS smoke role policy
-        # Parse the inline JSON with only Python's standard library and lock the
-        # read-only eksctl discovery exception plus the surrounding boundaries.
+        # Parse source JSON with Python's standard library, then use kubectl's
+        # built-in Kustomize renderer to pin the final applied IAM resources.
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python3 -m unittest scripts.tests.test_eks_ci_role_policy
