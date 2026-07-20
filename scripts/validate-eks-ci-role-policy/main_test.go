@@ -518,6 +518,176 @@ subjects:
 	}
 }
 
+// TestGrantsAuthorizationControlDetectsProtectedResourceWrites covers CRD mutation.
+func TestGrantsAuthorizationControlDetectsProtectedResourceWrites(t *testing.T) {
+	documents, err := decodeDocuments([]byte(`apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: protected-resource-writer
+rules:
+  - apiGroups: [iam.aws.m.upbound.io]
+    resources: [roles, policies]
+    verbs: [patch]
+`))
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("decode protected writer: documents=%d error=%v", len(documents), err)
+	}
+	if !grantsAuthorizationControl(documents[0]) {
+		t.Fatal("grantsAuthorizationControl() = false for protected IAM resource writer")
+	}
+}
+
+// TestContainsEmbeddedAuthorizationTemplateDetectsIAM covers deferred CRDs.
+func TestContainsEmbeddedAuthorizationTemplateDetectsIAM(t *testing.T) {
+	documents, err := decodeDocuments([]byte(`apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: generated-iam
+spec:
+  resources:
+    - id: role
+      template:
+        apiVersion: iam.aws.m.upbound.io/v1beta1
+        kind: Role
+        metadata:
+          name: eks-ci
+          namespace: aws
+`))
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("decode IAM template: documents=%d error=%v", len(documents), err)
+	}
+	if !containsEmbeddedAuthorizationTemplate(documents[0], 0) {
+		t.Fatal("containsEmbeddedAuthorizationTemplate() = false for IAM template")
+	}
+}
+
+// TestAuthorizationRoleIdentitiesIncludesBoundAndAggregatedRoles covers inheritance.
+func TestAuthorizationRoleIdentitiesIncludesBoundAndAggregatedRoles(t *testing.T) {
+	documents, err := decodeDocuments([]byte(`apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: readers
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: view-secrets
+  labels:
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := authorizationRoleIdentities(documents)
+	for _, identity := range []resourceIdentity{
+		{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "view"},
+		{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "view-secrets"},
+	} {
+		if !selected[identity] {
+			t.Errorf("authorizationRoleIdentities() omitted %+v", identity)
+		}
+	}
+}
+
+// TestAuthorizationSubstitutionSourceIdentitiesPinsReferencedInputs covers Flux.
+func TestAuthorizationSubstitutionSourceIdentitiesPinsReferencedInputs(t *testing.T) {
+	documents, err := decodeDocuments([]byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: variables-cluster
+      - kind: Secret
+        name: variables-cluster
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected := authorizationSubstitutionSourceIdentities(documents)
+	for _, kind := range []string{"ConfigMap", "Secret"} {
+		identity := resourceIdentity{apiVersion: "v1", kind: kind, namespace: "flux-system", name: "variables-cluster"}
+		if !selected[identity] {
+			t.Errorf("authorizationSubstitutionSourceIdentities() omitted %+v", identity)
+		}
+	}
+}
+
+// TestValidateAuthorizationRejectsDeferredPrivilegeMutations proves full-render gates.
+func TestValidateAuthorizationRejectsDeferredPrivilegeMutations(t *testing.T) {
+	role, boundary, rendered := repositoryInputs(t)
+	mutatedEmail := bytes.Replace(
+		rendered,
+		[]byte("admin_email: ned@devantler.tech"),
+		[]byte("admin_email: attacker@example.invalid"),
+		1,
+	)
+	if bytes.Equal(mutatedEmail, rendered) {
+		t.Fatal("committed render is missing the admin_email substitution source")
+	}
+
+	tests := []struct {
+		name     string
+		rendered []byte
+	}{
+		{name: "authorization substitution source", rendered: mutatedEmail},
+		{
+			name: "embedded IAM template",
+			rendered: append(append([]byte{}, rendered...), []byte(`---
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: generated-iam
+spec:
+  resources:
+    - id: role
+      template:
+        apiVersion: iam.aws.m.upbound.io/v1beta1
+        kind: Role
+        metadata:
+          name: eks-ci
+          namespace: aws
+`)...),
+		},
+		{
+			name: "aggregate-to-view contributor",
+			rendered: append(append([]byte{}, rendered...), []byte(`---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: view-secrets
+  labels:
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+`)...),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateAuthorization(role, boundary, tt.rendered)
+			if err == nil || !strings.Contains(err.Error(), "unapproved rendered authorization surface") {
+				t.Fatalf("validateAuthorization() error = %v, want authorization surface rejection", err)
+			}
+		})
+	}
+}
+
 // TestWorkflowValidatesAuthorizationBeforeMergeGroupDeploy pins deployment order.
 func TestWorkflowValidatesAuthorizationBeforeMergeGroupDeploy(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yaml")) //nolint:gosec // Explicit repository path.

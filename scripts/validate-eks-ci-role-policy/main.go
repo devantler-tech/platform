@@ -36,7 +36,7 @@ const (
 	expectedTrustPolicySHA     = "85d5d45343f9eac5fdc35717c85c88c5b0f8fde9eddffb169c3a223617fd0a5e"
 	expectedInlinePolicySHA    = "60e3086a6d3dac0092ffe8264c04ebae783c0d38f19a3cf073ed8991085a4df8"
 	expectedBoundaryJSONSHA    = "e617004bce71a65f92934c4f7575d7559a290afe7a17363ce12db8ad7b519610"
-	expectedRenderedSurfaceSHA = "acc3389612de79993e9b6862be2f88a19767569c0f5ea15be4bb024be03641b7"
+	expectedRenderedSurfaceSHA = "2d12f6e6ea2d298fc61c9505719e5a46c71d6885336725b4cd645e86dce6efab"
 )
 
 // authorizationOverlayPaths lists every independently reconciled production
@@ -316,6 +316,35 @@ func grantsAuthorizationControl(document map[string]any) bool {
 		if !ok {
 			continue
 		}
+		if stringListIncludes(
+			rule["verbs"],
+			"create",
+			"update",
+			"patch",
+			"delete",
+			"deletecollection",
+			"*",
+		) {
+			protectedResources := []struct {
+				apiGroup  string
+				resources []string
+			}{
+				{apiGroup: "iam.aws.m.upbound.io", resources: []string{"roles", "policies", "*"}},
+				{apiGroup: "iam.aws.upbound.io", resources: []string{"roles", "policies", "*"}},
+				{apiGroup: "kustomize.toolkit.fluxcd.io", resources: []string{"kustomizations", "*"}},
+				{apiGroup: "source.toolkit.fluxcd.io", resources: []string{"*"}},
+				{apiGroup: "helm.toolkit.fluxcd.io", resources: []string{"helmreleases", "*"}},
+				{apiGroup: "pkg.crossplane.io", resources: []string{"providers", "functions", "configurations", "deploymentruntimeconfigs", "*"}},
+				{apiGroup: "kyverno.io", resources: []string{"policies", "clusterpolicies", "*"}},
+				{apiGroup: "policies.kyverno.io", resources: []string{"mutatingpolicies", "generatingpolicies", "*"}},
+			}
+			for _, protected := range protectedResources {
+				if stringListIncludes(rule["apiGroups"], protected.apiGroup, "*") &&
+					stringListIncludes(rule["resources"], protected.resources...) {
+					return true
+				}
+			}
+		}
 		if stringListIncludes(rule["apiGroups"], "rbac.authorization.k8s.io", "*") &&
 			stringListIncludes(
 				rule["resources"],
@@ -476,10 +505,15 @@ func containsEmbeddedAuthorizationTemplate(value any, depth int) bool {
 		}
 	case map[string]any:
 		if depth > 0 {
-			apiVersion := fmt.Sprint(typedValue["apiVersion"])
-			kind := fmt.Sprint(typedValue["kind"])
-			if (apiVersion == "rbac.authorization.k8s.io/v1" || strings.Contains(apiVersion, "${")) &&
-				isRBACAuthorizationKind(kind) {
+			identity := identityOf(typedValue)
+			if strings.Contains(identity.apiVersion, "${") && isAuthorizationKind(identity.kind) ||
+				strings.HasPrefix(identity.apiVersion, "iam.aws.") ||
+				identity.apiVersion == "rbac.authorization.k8s.io/v1" && isRBACAuthorizationKind(identity.kind) ||
+				identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" && identity.kind == "Kustomization" ||
+				isFluxSourceResource(identity) ||
+				isControllerRBACEmitter(identity) ||
+				isCurrentKyvernoMutationPolicy(identity) ||
+				isLegacyKyvernoPolicy(identity) {
 				return true
 			}
 		}
@@ -643,6 +677,180 @@ func isAuthorizationResource(
 		identity.kind == "Kustomization"
 }
 
+// bindingRoleIdentity returns the Role or ClusterRole resolved by one binding.
+func bindingRoleIdentity(document map[string]any, identity resourceIdentity) (resourceIdentity, bool) {
+	if identity.apiVersion != "rbac.authorization.k8s.io/v1" ||
+		(identity.kind != "RoleBinding" && identity.kind != "ClusterRoleBinding") {
+		return resourceIdentity{}, false
+	}
+	roleRef, ok := document["roleRef"].(map[string]any)
+	if !ok || fmt.Sprint(roleRef["apiGroup"]) != "rbac.authorization.k8s.io" {
+		return resourceIdentity{}, false
+	}
+	kind := fmt.Sprint(roleRef["kind"])
+	name := fmt.Sprint(roleRef["name"])
+	if name == "" || kind != "Role" && kind != "ClusterRole" {
+		return resourceIdentity{}, false
+	}
+	namespace := ""
+	if kind == "Role" {
+		namespace = identity.namespace
+	}
+	return resourceIdentity{
+		apiVersion: "rbac.authorization.k8s.io/v1",
+		kind:       kind,
+		namespace:  namespace,
+		name:       name,
+	}, true
+}
+
+// labelsMatchSelector implements the aggregation label-selector shapes used by RBAC.
+func labelsMatchSelector(labels map[string]any, selector map[string]any) bool {
+	if matchLabels, ok := selector["matchLabels"].(map[string]any); ok {
+		for key, expected := range matchLabels {
+			if fmt.Sprint(labels[key]) != fmt.Sprint(expected) {
+				return false
+			}
+		}
+	}
+	expressions, ok := selector["matchExpressions"].([]any)
+	if !ok {
+		return true
+	}
+	for _, rawExpression := range expressions {
+		expression, ok := rawExpression.(map[string]any)
+		if !ok {
+			return true
+		}
+		key := fmt.Sprint(expression["key"])
+		actual, exists := labels[key]
+		switch fmt.Sprint(expression["operator"]) {
+		case "In":
+			if !exists || !stringListIncludes(expression["values"], fmt.Sprint(actual)) {
+				return false
+			}
+		case "NotIn":
+			if exists && stringListIncludes(expression["values"], fmt.Sprint(actual)) {
+				return false
+			}
+		case "Exists":
+			if !exists {
+				return false
+			}
+		case "DoesNotExist":
+			if exists {
+				return false
+			}
+		default:
+			return true
+		}
+	}
+	return true
+}
+
+// aggregationSelectors returns every selector that contributes to one role.
+func aggregationSelectors(document map[string]any) []map[string]any {
+	aggregationRule, ok := document["aggregationRule"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	rawSelectors, ok := aggregationRule["clusterRoleSelectors"].([]any)
+	if !ok {
+		return nil
+	}
+	selectors := make([]map[string]any, 0, len(rawSelectors))
+	for _, rawSelector := range rawSelectors {
+		if selector, ok := rawSelector.(map[string]any); ok {
+			selectors = append(selectors, selector)
+		}
+	}
+	return selectors
+}
+
+// authorizationRoleIdentities finds bound roles and transitive aggregation contributors.
+func authorizationRoleIdentities(documents []map[string]any) map[resourceIdentity]bool {
+	selected := make(map[resourceIdentity]bool)
+	clusterRoles := make(map[resourceIdentity]map[string]any)
+	for _, document := range documents {
+		identity := identityOf(document)
+		if roleIdentity, ok := bindingRoleIdentity(document, identity); ok {
+			selected[roleIdentity] = true
+		}
+		if identity.apiVersion == "rbac.authorization.k8s.io/v1" && identity.kind == "ClusterRole" {
+			clusterRoles[identity] = document
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		selectors := make([]map[string]any, 0, len(selected))
+		for identity := range selected {
+			if identity.kind != "ClusterRole" {
+				continue
+			}
+			selectors = append(selectors, map[string]any{"matchLabels": map[string]any{
+				"rbac.authorization.k8s.io/aggregate-to-" + identity.name: "true",
+			}})
+			selectors = append(selectors, aggregationSelectors(clusterRoles[identity])...)
+		}
+		for identity, document := range clusterRoles {
+			if selected[identity] {
+				continue
+			}
+			metadata, _ := document["metadata"].(map[string]any)
+			labels, _ := metadata["labels"].(map[string]any)
+			for _, selector := range selectors {
+				if labelsMatchSelector(labels, selector) {
+					selected[identity] = true
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	return selected
+}
+
+// authorizationSubstitutionSourceIdentities finds every Flux post-build input.
+func authorizationSubstitutionSourceIdentities(documents []map[string]any) map[resourceIdentity]bool {
+	selected := make(map[resourceIdentity]bool)
+	for _, document := range documents {
+		identity := identityOf(document)
+		if identity.apiVersion != "kustomize.toolkit.fluxcd.io/v1" || identity.kind != "Kustomization" {
+			continue
+		}
+		spec, ok := document["spec"].(map[string]any)
+		if !ok {
+			continue
+		}
+		postBuild, ok := spec["postBuild"].(map[string]any)
+		if !ok {
+			continue
+		}
+		references, ok := postBuild["substituteFrom"].([]any)
+		if !ok {
+			continue
+		}
+		for _, rawReference := range references {
+			reference, ok := rawReference.(map[string]any)
+			if !ok {
+				continue
+			}
+			kind := fmt.Sprint(reference["kind"])
+			name := fmt.Sprint(reference["name"])
+			if name == "" || kind != "ConfigMap" && kind != "Secret" {
+				continue
+			}
+			selected[resourceIdentity{
+				apiVersion: "v1",
+				kind:       kind,
+				namespace:  identity.namespace,
+				name:       name,
+			}] = true
+		}
+	}
+	return selected
+}
+
 // authorizationSurfaceEntry serializes one selected object with its complete
 // identity so the aggregate hash preserves additions, removals, and duplicates.
 func authorizationSurfaceEntry(identity resourceIdentity, document map[string]any) (string, error) {
@@ -666,6 +874,8 @@ func validateRendered(rendered []byte) error {
 	if err != nil {
 		return err
 	}
+	roleIdentities := authorizationRoleIdentities(documents)
+	substitutionSourceIdentities := authorizationSubstitutionSourceIdentities(documents)
 	seen := make(map[resourceIdentity]bool, len(expectedRenderedHashes))
 	surfaceEntries := make([]string, 0, len(expectedRenderedHashes))
 	problems := make([]error, 0)
@@ -677,7 +887,8 @@ func validateRendered(rendered []byte) error {
 			containsFluxSubstitution(document) &&
 			!hasDisabledFluxSubstitution(document)
 		hasEncryptedAuthorization := isAuthorizationCapable && isSOPSEncrypted(document)
-		if !hasAuthorizationSubstitution && !hasEncryptedAuthorization &&
+		if !roleIdentities[identity] && !substitutionSourceIdentities[identity] &&
+			!hasAuthorizationSubstitution && !hasEncryptedAuthorization &&
 			!isAuthorizationResource(document, identity) {
 			continue
 		}
