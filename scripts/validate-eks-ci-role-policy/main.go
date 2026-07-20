@@ -62,6 +62,12 @@ type resourceIdentity struct {
 	name       string
 }
 
+// resourceType identifies every instance of a controller-defined API kind.
+type resourceType struct {
+	apiVersion string
+	kind       string
+}
+
 // expectedRenderedHashes preserves object-specific diagnostics for the core
 // EKS CI identities while the aggregate surface hash pins every selected
 // source, controller, binding, and indirect authorization object.
@@ -851,6 +857,37 @@ func authorizationSubstitutionSourceIdentities(documents []map[string]any) map[r
 	return selected
 }
 
+// authorizationTemplateInstanceTypes finds CRDs whose instances emit authorization.
+func authorizationTemplateInstanceTypes(documents []map[string]any) map[resourceType]bool {
+	selected := make(map[resourceType]bool)
+	for _, document := range documents {
+		identity := identityOf(document)
+		if !strings.HasPrefix(identity.apiVersion, "kro.run/") ||
+			identity.kind != "ResourceGraphDefinition" ||
+			!containsEmbeddedAuthorizationTemplate(document, 0) {
+			continue
+		}
+		schema, err := nestedMap(document, "spec", "schema")
+		if err != nil {
+			continue
+		}
+		apiVersion := fmt.Sprint(schema["apiVersion"])
+		kind := fmt.Sprint(schema["kind"])
+		if apiVersion == "" || kind == "" {
+			continue
+		}
+		if !strings.Contains(apiVersion, "/") {
+			dot := strings.Index(identity.name, ".")
+			if dot < 0 || dot == len(identity.name)-1 {
+				continue
+			}
+			apiVersion = identity.name[dot+1:] + "/" + apiVersion
+		}
+		selected[resourceType{apiVersion: apiVersion, kind: kind}] = true
+	}
+	return selected
+}
+
 // authorizationSurfaceEntry serializes one selected object with its complete
 // identity so the aggregate hash preserves additions, removals, and duplicates.
 func authorizationSurfaceEntry(identity resourceIdentity, document map[string]any) (string, error) {
@@ -876,6 +913,7 @@ func validateRendered(rendered []byte) error {
 	}
 	roleIdentities := authorizationRoleIdentities(documents)
 	substitutionSourceIdentities := authorizationSubstitutionSourceIdentities(documents)
+	templateInstanceTypes := authorizationTemplateInstanceTypes(documents)
 	seen := make(map[resourceIdentity]bool, len(expectedRenderedHashes))
 	surfaceEntries := make([]string, 0, len(expectedRenderedHashes))
 	problems := make([]error, 0)
@@ -887,7 +925,9 @@ func validateRendered(rendered []byte) error {
 			containsFluxSubstitution(document) &&
 			!hasDisabledFluxSubstitution(document)
 		hasEncryptedAuthorization := isAuthorizationCapable && isSOPSEncrypted(document)
+		instanceType := resourceType{apiVersion: identity.apiVersion, kind: identity.kind}
 		if !roleIdentities[identity] && !substitutionSourceIdentities[identity] &&
+			!templateInstanceTypes[instanceType] &&
 			!hasAuthorizationSubstitution && !hasEncryptedAuthorization &&
 			!isAuthorizationResource(document, identity) {
 			continue

@@ -676,6 +676,17 @@ rules:
     verbs: [get]
 `)...),
 		},
+		{
+			name: "KRO authorization template instance",
+			rendered: append(append([]byte{}, rendered...), []byte(`---
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata:
+  name: attacker
+spec:
+  name: attacker
+`)...),
+		},
 	}
 
 	for _, tt := range tests {
