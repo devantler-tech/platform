@@ -93,6 +93,18 @@ func TestValidateAuthorizationRejectsSourceAndRenderedMutations(t *testing.T) {
 			wantError: "role manifest fingerprint",
 		},
 		{
+			name: "unreviewed role management surface",
+			role: bytes.Replace(
+				role,
+				[]byte("\n  providerConfigRef:"),
+				[]byte("\n  initProvider:\n    managedPolicyArns:\n      - arn:aws:iam::aws:policy/AdministratorAccess\n  providerConfigRef:"),
+				1,
+			),
+			boundary:  boundary,
+			rendered:  rendered,
+			wantError: "role manifest fingerprint",
+		},
+		{
 			name: "expanded permissions boundary",
 			role: role,
 			boundary: bytes.Replace(
