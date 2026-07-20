@@ -831,6 +831,7 @@ func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	return run(args[0], stdout, stderr)
 }
 
+// main executes the validator process and returns its contract result to CI.
 func main() {
 	os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr))
 }

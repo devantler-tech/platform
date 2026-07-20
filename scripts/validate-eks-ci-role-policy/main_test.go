@@ -13,6 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// repositoryInputs loads the committed source and complete production render.
 func repositoryInputs(t *testing.T) ([]byte, []byte, []byte) {
 	t.Helper()
 
@@ -36,6 +37,7 @@ func repositoryInputs(t *testing.T) ([]byte, []byte, []byte) {
 	return read(roleManifestPath), read(boundaryManifestPath), rendered
 }
 
+// TestRenderAuthorizationLayersIncludesEveryProductionLayer pins scan coverage.
 func TestRenderAuthorizationLayersIncludesEveryProductionLayer(t *testing.T) {
 	repoRoot := filepath.Join("test", "repo")
 	wantOverlayPaths := []string{
@@ -82,6 +84,7 @@ func TestRenderAuthorizationLayersIncludesEveryProductionLayer(t *testing.T) {
 	}
 }
 
+// TestCommandOutputHonorsCancellation proves renderer deadlines stop subprocesses.
 func TestCommandOutputHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -92,12 +95,14 @@ func TestCommandOutputHonorsCancellation(t *testing.T) {
 	}
 }
 
+// TestParseJSONPolicyRejectsNull keeps embedded policies object-shaped.
 func TestParseJSONPolicyRejectsNull(t *testing.T) {
 	if _, err := parseJSONPolicy("null", "test policy"); err == nil {
 		t.Fatal("parseJSONPolicy() error = nil, want JSON object rejection")
 	}
 }
 
+// TestValidateRenderedRejectsAuthorizationSubstitutions covers variable bypasses.
 func TestValidateRenderedRejectsAuthorizationSubstitutions(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -159,6 +164,7 @@ spec:
 	}
 }
 
+// TestValidateRenderedRejectsIndirectAuthorizationResources covers controllers.
 func TestValidateRenderedRejectsIndirectAuthorizationResources(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -362,6 +368,7 @@ subjects:
 	}
 }
 
+// TestWorkflowValidatesAuthorizationBeforeMergeGroupDeploy pins deployment order.
 func TestWorkflowValidatesAuthorizationBeforeMergeGroupDeploy(t *testing.T) {
 	contents, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yaml")) //nolint:gosec // Explicit repository path.
 	if err != nil {
@@ -402,6 +409,7 @@ func TestWorkflowValidatesAuthorizationBeforeMergeGroupDeploy(t *testing.T) {
 	}
 }
 
+// TestIndirectAuthorizationPolicyIgnoresNonRBACWildcardSelectors prevents noise.
 func TestIndirectAuthorizationPolicyIgnoresNonRBACWildcardSelectors(t *testing.T) {
 	documents, err := decodeDocuments([]byte(`apiVersion: kyverno.io/v1
 kind: ClusterPolicy
@@ -429,6 +437,7 @@ spec:
 	}
 }
 
+// TestBindingReferencesAuthorizationWriter follows grants to privilege writers.
 func TestBindingReferencesAuthorizationWriter(t *testing.T) {
 	documents, err := decodeDocuments([]byte(`apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -452,6 +461,7 @@ subjects: []
 	}
 }
 
+// TestValidateAuthorizationAcceptsCommittedPolicy proves the approved baseline.
 func TestValidateAuthorizationAcceptsCommittedPolicy(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
 
@@ -460,6 +470,7 @@ func TestValidateAuthorizationAcceptsCommittedPolicy(t *testing.T) {
 	}
 }
 
+// TestValidateAuthorizationRejectsSourceAndRenderedMutations covers fail-closed edits.
 func TestValidateAuthorizationRejectsSourceAndRenderedMutations(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
 	originalDocuments, err := decodeDocuments(rendered)
@@ -592,6 +603,7 @@ metadata:
 	}
 }
 
+// TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentity covers aliases.
 func TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentity(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
 
@@ -712,6 +724,7 @@ subjects:
 	}
 }
 
+// TestValidateRendererVersionPinsKubectlAndKustomize prevents renderer drift.
 func TestValidateRendererVersionPinsKubectlAndKustomize(t *testing.T) {
 	valid := []byte(`{
   "clientVersion": {"gitVersion": "v1.36.2"},
@@ -727,6 +740,7 @@ func TestValidateRendererVersionPinsKubectlAndKustomize(t *testing.T) {
 	}
 }
 
+// TestWorkflowRunsValidatorForAuthorizationChanges pins CI path coverage.
 func TestWorkflowRunsValidatorForAuthorizationChanges(t *testing.T) {
 	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github/workflows/ci.yaml"))
 	if err != nil {
