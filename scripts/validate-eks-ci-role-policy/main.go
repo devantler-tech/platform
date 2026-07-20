@@ -31,6 +31,8 @@ const (
 	expectedBoundaryJSONSHA  = "e617004bce71a65f92934c4f7575d7559a290afe7a17363ce12db8ad7b519610"
 )
 
+// resourceIdentity is the complete Kubernetes identity used to distinguish
+// approved authorization objects from aliases and same-named resources.
 type resourceIdentity struct {
 	apiVersion string
 	kind       string
@@ -38,6 +40,8 @@ type resourceIdentity struct {
 	name       string
 }
 
+// expectedRenderedHashes pins every authorization-bearing object that may
+// survive the final Kustomize render; anything else fails closed.
 var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                       "0967890d16316a8cfcb1cca8a52085c6989c42000fafbbd0ada6323d4e15c97c",
 	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:      "66f79a06cd8f789f6a2dd66b263c3f4459447f96227f57996591d75b441b0104",
@@ -46,11 +50,14 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:               "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
 }
 
+// fingerprint returns the SHA-256 identity used for byte-exact source checks.
 func fingerprint(contents []byte) string {
 	digest := sha256.Sum256(contents)
 	return hex.EncodeToString(digest[:])
 }
 
+// canonicalFingerprint hashes a parsed value after canonical JSON encoding so
+// semantically identical YAML formatting cannot bypass structural checks.
 func canonicalFingerprint(value any) (string, error) {
 	canonical, err := json.Marshal(value)
 	if err != nil {
@@ -59,6 +66,8 @@ func canonicalFingerprint(value any) (string, error) {
 	return fingerprint(canonical), nil
 }
 
+// decodeDocuments parses every non-empty YAML document and rejects malformed
+// input instead of silently validating a partial stream.
 func decodeDocuments(contents []byte) ([]map[string]any, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(contents))
 	documents := make([]map[string]any, 0)
@@ -78,6 +87,8 @@ func decodeDocuments(contents []byte) ([]map[string]any, error) {
 	return documents, nil
 }
 
+// nestedMap resolves a required object path and fails when any segment is
+// missing or has the wrong shape.
 func nestedMap(document map[string]any, keys ...string) (map[string]any, error) {
 	current := document
 	for _, key := range keys {
@@ -94,6 +105,8 @@ func nestedMap(document map[string]any, keys ...string) (map[string]any, error) 
 	return current, nil
 }
 
+// requireExactKeys prevents approved objects from hiding extra policy-bearing
+// siblings that a selected-leaf assertion would miss.
 func requireExactKeys(object map[string]any, expected ...string) error {
 	actual := make([]string, 0, len(object))
 	for key := range object {
@@ -107,6 +120,8 @@ func requireExactKeys(object map[string]any, expected ...string) error {
 	return nil
 }
 
+// parseJSONPolicy requires Crossplane's embedded IAM policy to remain a valid
+// JSON object before its canonical shape is compared.
 func parseJSONPolicy(value any, description string) (map[string]any, error) {
 	policyText, ok := value.(string)
 	if !ok {
@@ -119,6 +134,8 @@ func parseJSONPolicy(value any, description string) (map[string]any, error) {
 	return policy, nil
 }
 
+// requireCanonicalFingerprint rejects any structural policy drift with a
+// diagnostic hash that can be reviewed and deliberately approved.
 func requireCanonicalFingerprint(value any, expected string, description string) error {
 	actual, err := canonicalFingerprint(value)
 	if err != nil {
@@ -130,6 +147,8 @@ func requireCanonicalFingerprint(value any, expected string, description string)
 	return nil
 }
 
+// validateRole pins the complete EKS CI role source, trust relationship,
+// session limit, and sole inline policy rather than a subset of actions.
 func validateRole(role []byte) error {
 	if actual := fingerprint(role); actual != expectedRoleManifestSHA {
 		return fmt.Errorf("unapproved role manifest fingerprint: %s", actual)
@@ -173,6 +192,8 @@ func validateRole(role []byte) error {
 	return requireCanonicalFingerprint(policy, expectedInlinePolicySHA, "inline policy")
 }
 
+// validateBoundary pins both the permissions-boundary manifest and its embedded
+// policy so role grants cannot escape the intended ceiling.
 func validateBoundary(boundary []byte) error {
 	if actual := fingerprint(boundary); actual != expectedBoundarySHA {
 		return fmt.Errorf("unapproved boundary manifest fingerprint: %s", actual)
@@ -198,6 +219,8 @@ func validateBoundary(boundary []byte) error {
 	return requireCanonicalFingerprint(policy, expectedBoundaryJSONSHA, "permissions boundary")
 }
 
+// identityOf derives the full identity used by the rendered authorization
+// allowlist; absent metadata stays distinguishable instead of defaulting.
 func identityOf(document map[string]any) resourceIdentity {
 	metadata, _ := document["metadata"].(map[string]any)
 	return resourceIdentity{
@@ -208,6 +231,8 @@ func identityOf(document map[string]any) resourceIdentity {
 	}
 }
 
+// includesAWSServiceAccountIdentity recognizes every Kubernetes principal that
+// can confer privileges on the aws/aws service account, including broad groups.
 func includesAWSServiceAccountIdentity(document map[string]any) bool {
 	subjects, ok := document["subjects"].([]any)
 	if !ok {
@@ -234,6 +259,8 @@ func includesAWSServiceAccountIdentity(document map[string]any) bool {
 	return false
 }
 
+// isAuthorizationResource selects every rendered object capable of changing
+// the EKS CI identity's IAM, RBAC, or Flux authorization surface.
 func isAuthorizationResource(document map[string]any, identity resourceIdentity) bool {
 	if strings.HasPrefix(identity.apiVersion, "iam.aws.") {
 		return true
@@ -255,6 +282,8 @@ func isAuthorizationResource(document map[string]any, identity resourceIdentity)
 		identity.kind == "Kustomization"
 }
 
+// validateRendered requires each approved authorization object exactly once
+// and rejects additions, aliases, omissions, duplicates, or structural drift.
 func validateRendered(rendered []byte) error {
 	documents, err := decodeDocuments(rendered)
 	if err != nil {
@@ -291,6 +320,8 @@ func validateRendered(rendered []byte) error {
 	return errors.Join(problems...)
 }
 
+// validateAuthorization combines source and final-render checks so neither
+// Kustomize transformations nor source edits can bypass the contract.
 func validateAuthorization(role []byte, boundary []byte, rendered []byte) error {
 	if err := validateRole(role); err != nil {
 		return err
@@ -301,6 +332,8 @@ func validateAuthorization(role []byte, boundary []byte, rendered []byte) error 
 	return validateRendered(rendered)
 }
 
+// validateRendererVersion pins kubectl and its embedded Kustomize version,
+// keeping canonical render hashes reproducible across CI and local validation.
 func validateRendererVersion(versionJSON []byte) error {
 	var version struct {
 		ClientVersion struct {
@@ -322,6 +355,8 @@ func validateRendererVersion(versionJSON []byte) error {
 	return nil
 }
 
+// commandOutput captures a repository-controlled command and includes bounded
+// output in failures so validation cannot degrade into an opaque false red.
 func commandOutput(name string, args ...string) ([]byte, error) {
 	command := exec.Command(name, args...) //nolint:gosec // Fixed binary and repository-controlled arguments.
 	output, err := command.CombinedOutput()
@@ -331,6 +366,8 @@ func commandOutput(name string, args ...string) ([]byte, error) {
 	return output, nil
 }
 
+// run executes the complete repository-root authorization validation and
+// returns a process-compatible status without mutating cluster state.
 func run(repoRoot string, stdout io.Writer, stderr io.Writer) int {
 	version, err := commandOutput("kubectl", "version", "--client", "-o", "json")
 	if err != nil {
@@ -364,6 +401,8 @@ func run(repoRoot string, stdout io.Writer, stderr io.Writer) int {
 	return 0
 }
 
+// runCLI enforces the single explicit repository-root argument before invoking
+// validation, preventing ambient working-directory assumptions.
 func runCLI(args []string, stdout io.Writer, stderr io.Writer) int {
 	if len(args) != 1 {
 		_, _ = fmt.Fprintln(stderr, "usage: validate-eks-ci-role-policy <repository-root>")
