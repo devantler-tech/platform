@@ -286,6 +286,156 @@ spec:
 `,
 		},
 		{
+			name: "Flux source object",
+			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: aws
+  namespace: aws
+spec:
+  interval: 5m
+  url: oci://example.invalid/unreviewed
+`,
+		},
+		{
+			name: "Helm controller RBAC emitter",
+			manifest: `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: controller
+  namespace: controllers
+spec:
+  chart:
+    spec:
+      chart: controller
+      sourceRef:
+        kind: HelmRepository
+        name: controller
+  values:
+    rbac:
+      create: true
+`,
+		},
+		{
+			name: "Crossplane package RBAC emitter",
+			manifest: `apiVersion: pkg.crossplane.io/v1
+kind: Provider
+metadata:
+  name: provider-example
+spec:
+  package: ghcr.io/example/provider:v1.0.0
+`,
+		},
+		{
+			name: "service account token minting",
+			manifest: `apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aws-token-minter
+  namespace: aws
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    verbs: [create]
+`,
+		},
+		{
+			name: "service account impersonation",
+			manifest: `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aws-impersonator
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [impersonate]
+`,
+		},
+		{
+			name: "aggregated privilege writer",
+			manifest: `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: aggregated-writer
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.kro.run/aggregate-to-controller: "true"
+rules: []
+`,
+		},
+		{
+			name: "current Kyverno mutating policy",
+			manifest: `apiVersion: policies.kyverno.io/v1alpha1
+kind: MutatingPolicy
+metadata:
+  name: mutate-authorization
+spec:
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [rbac.authorization.k8s.io]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [roles]
+`,
+		},
+		{
+			name: "same-name default role shadow",
+			manifest: `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-admin
+rules: []
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: shadow-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: controller
+    namespace: controllers
+`,
+		},
+		{
+			name:          "SOPS encrypted role rules",
+			errorContains: "encrypted SOPS authorization resource",
+			manifest: `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: encrypted-writer
+rules:
+  - apiGroups: ["ENC[AES256_GCM,data:abc,type:str]"]
+    resources: ["ENC[AES256_GCM,data:def,type:str]"]
+    verbs: ["ENC[AES256_GCM,data:ghi,type:str]"]
+sops:
+  version: 3.9.4
+`,
+		},
+		{
+			name: "Kyverno Flux handoff mutation",
+			manifest: `apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: redirect-flux
+spec:
+  rules:
+    - name: redirect
+      match:
+        any:
+          - resources:
+              kinds: [Kustomization]
+      mutate:
+        patchStrategicMerge:
+          spec:
+            path: ./external
+`,
+		},
+		{
 			name: "KRO binding template",
 			manifest: `apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
@@ -359,7 +509,7 @@ subjects:
 			err := validateRendered([]byte(tt.manifest))
 			errorContains := tt.errorContains
 			if errorContains == "" {
-				errorContains = "unexpected rendered authorization resource"
+				errorContains = "unapproved rendered authorization surface"
 			}
 			if err == nil || !strings.Contains(err.Error(), errorContains) {
 				t.Fatalf("validateRendered() error = %v, want %q", err, errorContains)
@@ -434,30 +584,6 @@ spec:
 	}
 	if isIndirectAuthorizationPolicy(documents[0], identityOf(documents[0])) {
 		t.Fatal("isIndirectAuthorizationPolicy() = true for non-RBAC wildcard selector")
-	}
-}
-
-// TestBindingReferencesAuthorizationWriter follows grants to privilege writers.
-func TestBindingReferencesAuthorizationWriter(t *testing.T) {
-	documents, err := decodeDocuments([]byte(`apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: controller-grant
-  namespace: controllers
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: binding-writer
-subjects: []
-`))
-	if err != nil || len(documents) != 1 {
-		t.Fatalf("decode binding: documents=%d error=%v", len(documents), err)
-	}
-	writers := map[resourceIdentity]struct{}{
-		{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "controllers", name: "binding-writer"}: {},
-	}
-	if !bindingReferencesAuthorizationWriter(documents[0], identityOf(documents[0]), writers) {
-		t.Fatal("bindingReferencesAuthorizationWriter() = false, want true")
 	}
 }
 
@@ -576,7 +702,7 @@ metadata:
   name: unexpected
   namespace: aws
 `)...),
-			wantError: "unexpected rendered authorization resource",
+			wantError: "unapproved rendered authorization surface",
 		},
 		{
 			name:     "additional tenant Flux handoff",
@@ -589,7 +715,7 @@ metadata:
   name: aws-shadow
   namespace: aws
 `)...),
-			wantError: "unexpected rendered authorization resource",
+			wantError: "unapproved rendered authorization surface",
 		},
 	}
 
@@ -717,8 +843,8 @@ subjects:
 		t.Run(tt.name, func(t *testing.T) {
 			mutated := append(append([]byte{}, rendered...), []byte(tt.binding)...)
 			err := validateAuthorization(role, boundary, mutated)
-			if err == nil || !strings.Contains(err.Error(), "unexpected rendered authorization resource") {
-				t.Fatalf("validateAuthorization() error = %v, want unexpected rendered authorization resource", err)
+			if err == nil || !strings.Contains(err.Error(), "unapproved rendered authorization surface") {
+				t.Fatalf("validateAuthorization() error = %v, want unapproved rendered authorization surface", err)
 			}
 		})
 	}

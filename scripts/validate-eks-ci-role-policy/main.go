@@ -29,13 +29,14 @@ const (
 	rootProductionOverlayPath = "k8s/clusters/prod"
 	rendererCommandTimeout    = 2 * time.Minute
 
-	expectedKubectlVersion   = "v1.36.2"
-	expectedKustomizeVersion = "v5.8.1"
-	expectedRoleManifestSHA  = "96a77d18160c450340e65b0953f44016a01a08429416f7a82142c3f90a61ca07"
-	expectedBoundarySHA      = "b96bfd8c96baa2e09f32a1cc05f76473ecc021fed554a2880ce8e3dd399902c7"
-	expectedTrustPolicySHA   = "85d5d45343f9eac5fdc35717c85c88c5b0f8fde9eddffb169c3a223617fd0a5e"
-	expectedInlinePolicySHA  = "60e3086a6d3dac0092ffe8264c04ebae783c0d38f19a3cf073ed8991085a4df8"
-	expectedBoundaryJSONSHA  = "e617004bce71a65f92934c4f7575d7559a290afe7a17363ce12db8ad7b519610"
+	expectedKubectlVersion     = "v1.36.2"
+	expectedKustomizeVersion   = "v5.8.1"
+	expectedRoleManifestSHA    = "96a77d18160c450340e65b0953f44016a01a08429416f7a82142c3f90a61ca07"
+	expectedBoundarySHA        = "b96bfd8c96baa2e09f32a1cc05f76473ecc021fed554a2880ce8e3dd399902c7"
+	expectedTrustPolicySHA     = "85d5d45343f9eac5fdc35717c85c88c5b0f8fde9eddffb169c3a223617fd0a5e"
+	expectedInlinePolicySHA    = "60e3086a6d3dac0092ffe8264c04ebae783c0d38f19a3cf073ed8991085a4df8"
+	expectedBoundaryJSONSHA    = "e617004bce71a65f92934c4f7575d7559a290afe7a17363ce12db8ad7b519610"
+	expectedRenderedSurfaceSHA = "fa092788b22ab9e7f6f2e1399b10d3847e80d7a169c046d54f28146bb21bc9ef"
 )
 
 // authorizationOverlayPaths lists every independently reconciled production
@@ -61,8 +62,9 @@ type resourceIdentity struct {
 	name       string
 }
 
-// expectedRenderedHashes pins every selected EKS CI authorization object that
-// may survive the final render; anything else in that surface fails closed.
+// expectedRenderedHashes preserves object-specific diagnostics for the core
+// EKS CI identities while the aggregate surface hash pins every selected
+// source, controller, binding, and indirect authorization object.
 var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                                        "0967890d16316a8cfcb1cca8a52085c6989c42000fafbbd0ada6323d4e15c97c",
 	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:                       "66f79a06cd8f789f6a2dd66b263c3f4459447f96227f57996591d75b441b0104",
@@ -275,34 +277,6 @@ func identityOf(document map[string]any) resourceIdentity {
 	}
 }
 
-// includesAWSServiceAccountIdentity recognizes every Kubernetes principal that
-// can confer privileges on the aws/aws service account, including broad groups.
-func includesAWSServiceAccountIdentity(document map[string]any) bool {
-	subjects, ok := document["subjects"].([]any)
-	if !ok {
-		return false
-	}
-	for _, rawSubject := range subjects {
-		subject, ok := rawSubject.(map[string]any)
-		if !ok {
-			continue
-		}
-		kind := fmt.Sprint(subject["kind"])
-		name := fmt.Sprint(subject["name"])
-		if kind == "ServiceAccount" && name == "aws" && subject["namespace"] == "aws" {
-			return true
-		}
-		if kind == "User" && name == "system:serviceaccount:aws:aws" {
-			return true
-		}
-		if kind == "Group" && (name == "system:serviceaccounts:aws" ||
-			name == "system:serviceaccounts" || name == "system:authenticated") {
-			return true
-		}
-	}
-	return false
-}
-
 // stringListIncludes reports whether a decoded YAML string list contains any
 // requested value, including the Kubernetes RBAC wildcard when requested.
 func stringListIncludes(value any, expected ...string) bool {
@@ -320,13 +294,18 @@ func stringListIncludes(value any, expected ...string) bool {
 	return false
 }
 
-// grantsAuthorizationWrites identifies Roles and ClusterRoles that can mutate
-// RBAC privileges or use bind/escalate, including wildcard grants.
-func grantsAuthorizationWrites(document map[string]any) bool {
+// grantsAuthorizationControl identifies Roles and ClusterRoles that can mutate
+// RBAC privileges, aggregate them, or assume service-account identities.
+func grantsAuthorizationControl(document map[string]any) bool {
 	identity := identityOf(document)
 	if identity.apiVersion != "rbac.authorization.k8s.io/v1" ||
 		(identity.kind != "Role" && identity.kind != "ClusterRole") {
 		return false
+	}
+	if identity.kind == "ClusterRole" {
+		if _, aggregates := document["aggregationRule"]; aggregates {
+			return true
+		}
 	}
 	rules, ok := document["rules"].([]any)
 	if !ok {
@@ -337,120 +316,40 @@ func grantsAuthorizationWrites(document map[string]any) bool {
 		if !ok {
 			continue
 		}
-		if !stringListIncludes(rule["apiGroups"], "rbac.authorization.k8s.io", "*") ||
-			!stringListIncludes(
+		if stringListIncludes(rule["apiGroups"], "rbac.authorization.k8s.io", "*") &&
+			stringListIncludes(
 				rule["resources"],
 				"roles",
 				"clusterroles",
 				"rolebindings",
 				"clusterrolebindings",
 				"*",
+			) &&
+			stringListIncludes(
+				rule["verbs"],
+				"create",
+				"update",
+				"patch",
+				"delete",
+				"deletecollection",
+				"bind",
+				"escalate",
+				"*",
 			) {
-			continue
+			return true
 		}
-		if stringListIncludes(
-			rule["verbs"],
-			"create",
-			"update",
-			"patch",
-			"delete",
-			"deletecollection",
-			"bind",
-			"escalate",
-			"*",
-		) {
+		if stringListIncludes(rule["apiGroups"], "", "*") &&
+			stringListIncludes(rule["resources"], "serviceaccounts/token", "*") &&
+			stringListIncludes(rule["verbs"], "create", "*") {
+			return true
+		}
+		if stringListIncludes(rule["apiGroups"], "", "*") &&
+			stringListIncludes(rule["resources"], "serviceaccounts", "*") &&
+			stringListIncludes(rule["verbs"], "impersonate", "*") {
 			return true
 		}
 	}
 	return false
-}
-
-// renderedRoleIdentities records every Role and ClusterRole definition visible
-// in the production renders so bindings to unavailable roles fail closed.
-func renderedRoleIdentities(documents []map[string]any) map[resourceIdentity]struct{} {
-	roles := make(map[resourceIdentity]struct{})
-	for _, document := range documents {
-		identity := identityOf(document)
-		if identity.apiVersion == "rbac.authorization.k8s.io/v1" &&
-			(identity.kind == "Role" || identity.kind == "ClusterRole") {
-			roles[identity] = struct{}{}
-		}
-	}
-	return roles
-}
-
-// authorizationWriterIdentities collects every rendered role that can mutate
-// RBAC bindings so grants of those roles can be pinned as part of the surface.
-func authorizationWriterIdentities(documents []map[string]any) map[resourceIdentity]struct{} {
-	writers := make(map[resourceIdentity]struct{})
-	for _, document := range documents {
-		if grantsAuthorizationWrites(document) {
-			writers[identityOf(document)] = struct{}{}
-		}
-	}
-	return writers
-}
-
-// bindingReferencesAuthorizationWriter detects direct grants of a rendered
-// binding-writer Role or ClusterRole to any controller identity.
-func bindingReferencesAuthorizationWriter(
-	document map[string]any,
-	identity resourceIdentity,
-	writers map[resourceIdentity]struct{},
-) bool {
-	if identity.apiVersion != "rbac.authorization.k8s.io/v1" ||
-		(identity.kind != "RoleBinding" && identity.kind != "ClusterRoleBinding") {
-		return false
-	}
-	roleRef, ok := document["roleRef"].(map[string]any)
-	if !ok || fmt.Sprint(roleRef["apiGroup"]) != "rbac.authorization.k8s.io" {
-		return false
-	}
-	roleKind := fmt.Sprint(roleRef["kind"])
-	roleNamespace := ""
-	if roleKind == "Role" {
-		roleNamespace = identity.namespace
-	} else if roleKind != "ClusterRole" {
-		return false
-	}
-	_, ok = writers[resourceIdentity{
-		apiVersion: "rbac.authorization.k8s.io/v1",
-		kind:       roleKind,
-		namespace:  roleNamespace,
-		name:       fmt.Sprint(roleRef["name"]),
-	}]
-	return ok
-}
-
-// bindingReferencesUnavailableRole detects grants of built-in, chart-created,
-// or otherwise absent roles whose privileges cannot be inspected in this render.
-func bindingReferencesUnavailableRole(
-	document map[string]any,
-	identity resourceIdentity,
-	roles map[resourceIdentity]struct{},
-) bool {
-	if identity.apiVersion != "rbac.authorization.k8s.io/v1" ||
-		(identity.kind != "RoleBinding" && identity.kind != "ClusterRoleBinding") {
-		return false
-	}
-	roleRef, ok := document["roleRef"].(map[string]any)
-	if !ok || fmt.Sprint(roleRef["apiGroup"]) != "rbac.authorization.k8s.io" {
-		return false
-	}
-	roleKind := fmt.Sprint(roleRef["kind"])
-	roleNamespace := ""
-	if roleKind == "Role" {
-		roleNamespace = identity.namespace
-	} else if roleKind != "ClusterRole" {
-		return true
-	}
-	_, available := roles[resourceIdentity{
-		apiVersion: "rbac.authorization.k8s.io/v1",
-		kind:       roleKind,
-		namespace:  roleNamespace,
-		name:       fmt.Sprint(roleRef["name"]),
-	}]
-	return !available
 }
 
 // isRBACAuthorizationKind recognizes Kyverno's short and group-qualified role
@@ -463,14 +362,72 @@ func isRBACAuthorizationKind(kind string) bool {
 		strings.HasSuffix(kind, "/RoleBinding") || strings.HasSuffix(kind, "/ClusterRoleBinding")
 }
 
-// kindSelectorIncludesRBACAuthorization checks a Kyverno kind/kinds value.
-func kindSelectorIncludesRBACAuthorization(value any) bool {
+// isFluxSourceResource recognizes artifacts that a Flux Kustomization or
+// HelmRelease can consume independently of the handoff object itself.
+func isFluxSourceResource(identity resourceIdentity) bool {
+	return strings.HasPrefix(identity.apiVersion, "source.toolkit.fluxcd.io/")
+}
+
+// isControllerRBACEmitter recognizes declarative packages whose controllers
+// can materialize RBAC that does not exist in the Kustomize render.
+func isControllerRBACEmitter(identity resourceIdentity) bool {
+	if strings.HasPrefix(identity.apiVersion, "helm.toolkit.fluxcd.io/") && identity.kind == "HelmRelease" {
+		return true
+	}
+	return strings.HasPrefix(identity.apiVersion, "pkg.crossplane.io/")
+}
+
+// isCurrentKyvernoMutationPolicy recognizes the non-legacy Kyverno resources
+// that can generate or mutate objects using CEL-based policy APIs.
+func isCurrentKyvernoMutationPolicy(identity resourceIdentity) bool {
+	return strings.HasPrefix(identity.apiVersion, "policies.kyverno.io/") &&
+		(identity.kind == "MutatingPolicy" || identity.kind == "GeneratingPolicy")
+}
+
+// isLegacyKyvernoPolicy recognizes rule-based mutation and generation APIs.
+func isLegacyKyvernoPolicy(identity resourceIdentity) bool {
+	return strings.HasPrefix(identity.apiVersion, "kyverno.io/") &&
+		(identity.kind == "Policy" || identity.kind == "ClusterPolicy")
+}
+
+// isAuthorizationKind recognizes every kind whose contents or controller can
+// redirect, emit, or grant the protected authorization surface.
+func isAuthorizationKind(kind string) bool {
+	if isRBACAuthorizationKind(kind) {
+		return true
+	}
+	targets := []string{
+		"Kustomization",
+		"OCIRepository",
+		"GitRepository",
+		"Bucket",
+		"HelmRepository",
+		"ExternalArtifact",
+		"HelmRelease",
+		"Provider",
+		"Function",
+		"Configuration",
+		"DeploymentRuntimeConfig",
+	}
+	for _, target := range targets {
+		if kind == target || strings.HasSuffix(kind, "/"+target) {
+			return true
+		}
+	}
+	return strings.HasPrefix(kind, "source.toolkit.fluxcd.io/") && strings.HasSuffix(kind, "/*") ||
+		strings.HasPrefix(kind, "helm.toolkit.fluxcd.io/") && strings.HasSuffix(kind, "/*") ||
+		strings.HasPrefix(kind, "pkg.crossplane.io/") && strings.HasSuffix(kind, "/*") ||
+		strings.HasPrefix(kind, "kustomize.toolkit.fluxcd.io/") && strings.HasSuffix(kind, "/*")
+}
+
+// kindSelectorIncludesAuthorization checks a Kyverno kind/kinds value.
+func kindSelectorIncludesAuthorization(value any) bool {
 	switch typedValue := value.(type) {
 	case string:
-		return isRBACAuthorizationKind(typedValue)
+		return isAuthorizationKind(typedValue)
 	case []any:
 		for _, item := range typedValue {
-			if kind, ok := item.(string); ok && isRBACAuthorizationKind(kind) {
+			if kind, ok := item.(string); ok && isAuthorizationKind(kind) {
 				return true
 			}
 		}
@@ -478,27 +435,27 @@ func kindSelectorIncludesRBACAuthorization(value any) bool {
 	return false
 }
 
-// containsRBACAuthorizationKind finds role or binding kinds inside Kyverno
-// match and target shapes.
-func containsRBACAuthorizationKind(value any) bool {
+// containsAuthorizationKind finds protected kinds inside Kyverno match and
+// target shapes, including Flux sources and controller package resources.
+func containsAuthorizationKind(value any) bool {
 	switch typedValue := value.(type) {
 	case []any:
 		for _, item := range typedValue {
 			switch item.(type) {
 			case []any, map[string]any:
-				if containsRBACAuthorizationKind(item) {
+				if containsAuthorizationKind(item) {
 					return true
 				}
 			}
 		}
 	case map[string]any:
 		for key, item := range typedValue {
-			if (key == "kind" || key == "kinds") && kindSelectorIncludesRBACAuthorization(item) {
+			if (key == "kind" || key == "kinds") && kindSelectorIncludesAuthorization(item) {
 				return true
 			}
 			switch item.(type) {
 			case []any, map[string]any:
-				if containsRBACAuthorizationKind(item) {
+				if containsAuthorizationKind(item) {
 					return true
 				}
 			}
@@ -518,9 +475,11 @@ func containsEmbeddedAuthorizationTemplate(value any, depth int) bool {
 			}
 		}
 	case map[string]any:
-		if depth > 0 && fmt.Sprint(typedValue["apiVersion"]) == "rbac.authorization.k8s.io/v1" {
+		if depth > 0 {
+			apiVersion := fmt.Sprint(typedValue["apiVersion"])
 			kind := fmt.Sprint(typedValue["kind"])
-			if kind == "Role" || kind == "ClusterRole" || kind == "RoleBinding" || kind == "ClusterRoleBinding" {
+			if (apiVersion == "rbac.authorization.k8s.io/v1" || strings.Contains(apiVersion, "${")) &&
+				isRBACAuthorizationKind(kind) {
 				return true
 			}
 		}
@@ -536,8 +495,7 @@ func containsEmbeddedAuthorizationTemplate(value any, depth int) bool {
 // isIndirectAuthorizationPolicy selects Kyverno policies that can generate or
 // mutate RBAC privileges without declaring the resulting object in this render.
 func isIndirectAuthorizationPolicy(document map[string]any, identity resourceIdentity) bool {
-	if !strings.HasPrefix(identity.apiVersion, "kyverno.io/") ||
-		(identity.kind != "Policy" && identity.kind != "ClusterPolicy") {
+	if !isLegacyKyvernoPolicy(identity) {
 		return false
 	}
 	spec, ok := document["spec"].(map[string]any)
@@ -556,13 +514,13 @@ func isIndirectAuthorizationPolicy(document map[string]any, identity resourceIde
 		if rawGenerate, generates := rule["generate"]; generates {
 			generate, ok := rawGenerate.(map[string]any)
 			kind, hasKind := generate["kind"]
-			if !ok || !hasKind || kind == nil || isRBACAuthorizationKind(fmt.Sprint(kind)) {
+			if !ok || !hasKind || kind == nil || isAuthorizationKind(fmt.Sprint(kind)) {
 				return true
 			}
 		}
 		if mutate, mutates := rule["mutate"]; mutates {
 			match, hasMatch := rule["match"]
-			if !hasMatch || containsRBACAuthorizationKind(match) || containsRBACAuthorizationKind(mutate) {
+			if !hasMatch || containsAuthorizationKind(match) || containsAuthorizationKind(mutate) {
 				return true
 			}
 		}
@@ -592,6 +550,34 @@ func containsFluxSubstitution(value any) bool {
 	return false
 }
 
+// containsSOPSCiphertext finds encrypted scalar values that the static render
+// cannot semantically classify before Flux decrypts them in the cluster.
+func containsSOPSCiphertext(value any) bool {
+	switch typedValue := value.(type) {
+	case string:
+		return strings.Contains(typedValue, "ENC[AES256_GCM,")
+	case []any:
+		for _, item := range typedValue {
+			if containsSOPSCiphertext(item) {
+				return true
+			}
+		}
+	case map[string]any:
+		for _, item := range typedValue {
+			if containsSOPSCiphertext(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isSOPSEncrypted recognizes both standard root metadata and encrypted values.
+func isSOPSEncrypted(document map[string]any) bool {
+	_, hasMetadata := document["sops"]
+	return hasMetadata || containsSOPSCiphertext(document)
+}
+
 // hasDisabledFluxSubstitution distinguishes controller template expressions
 // from post-build variables when Flux is explicitly forbidden from expanding
 // the document. The document remains subject to its exact authorization hash.
@@ -614,7 +600,11 @@ func isAuthorizationCapableDocument(document map[string]any, identity resourceId
 		identity.apiVersion == "rbac.authorization.k8s.io/v1" {
 		return true
 	}
-	if identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" && identity.kind == "Kustomization" {
+	if identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" && identity.kind == "Kustomization" ||
+		isFluxSourceResource(identity) ||
+		isControllerRBACEmitter(identity) ||
+		isCurrentKyvernoMutationPolicy(identity) ||
+		isLegacyKyvernoPolicy(identity) {
 		return true
 	}
 	return isIndirectAuthorizationPolicy(document, identity) ||
@@ -626,30 +616,24 @@ func isAuthorizationCapableDocument(document map[string]any, identity resourceId
 func isAuthorizationResource(
 	document map[string]any,
 	identity resourceIdentity,
-	writers map[resourceIdentity]struct{},
-	roles map[resourceIdentity]struct{},
 ) bool {
 	if strings.HasPrefix(identity.apiVersion, "iam.aws.") {
 		return true
 	}
 	if identity.apiVersion == "rbac.authorization.k8s.io/v1" {
-		if grantsAuthorizationWrites(document) ||
-			bindingReferencesAuthorizationWriter(document, identity, writers) ||
-			bindingReferencesUnavailableRole(document, identity, roles) {
+		if identity.kind == "RoleBinding" || identity.kind == "ClusterRoleBinding" ||
+			grantsAuthorizationControl(document) {
 			return true
 		}
 		if identity.namespace == "aws" &&
-			(identity.kind == "Role" || identity.kind == "RoleBinding") {
-			return true
-		}
-		// Follow the privileged subject across namespaces and cluster scope. The
-		// rendered allowlist then pins the one approved binding, including roleRef.
-		if (identity.kind == "RoleBinding" || identity.kind == "ClusterRoleBinding") &&
-			includesAWSServiceAccountIdentity(document) {
+			identity.kind == "Role" {
 			return true
 		}
 	}
-	if isIndirectAuthorizationPolicy(document, identity) {
+	if isIndirectAuthorizationPolicy(document, identity) ||
+		isCurrentKyvernoMutationPolicy(identity) ||
+		isFluxSourceResource(identity) ||
+		isControllerRBACEmitter(identity) {
 		return true
 	}
 	if containsEmbeddedAuthorizationTemplate(document, 0) {
@@ -659,45 +643,71 @@ func isAuthorizationResource(
 		identity.kind == "Kustomization"
 }
 
-// validateRendered requires each approved authorization object exactly once
-// and rejects additions, aliases, omissions, duplicates, or structural drift.
+// authorizationSurfaceEntry serializes one selected object with its complete
+// identity so the aggregate hash preserves additions, removals, and duplicates.
+func authorizationSurfaceEntry(identity resourceIdentity, document map[string]any) (string, error) {
+	canonical, err := json.Marshal(document)
+	if err != nil {
+		return "", fmt.Errorf("marshal authorization surface entry: %w", err)
+	}
+	return strings.Join([]string{
+		identity.apiVersion,
+		identity.kind,
+		identity.namespace,
+		identity.name,
+		string(canonical),
+	}, "\x00"), nil
+}
+
+// validateRendered requires the complete selected authorization surface to
+// match one canonical hash while preserving precise core-object diagnostics.
 func validateRendered(rendered []byte) error {
 	documents, err := decodeDocuments(rendered)
 	if err != nil {
 		return err
 	}
-	writers := authorizationWriterIdentities(documents)
-	roles := renderedRoleIdentities(documents)
 	seen := make(map[resourceIdentity]bool, len(expectedRenderedHashes))
+	surfaceEntries := make([]string, 0, len(expectedRenderedHashes))
 	problems := make([]error, 0)
+	substitutionProblems := make([]error, 0)
 	for _, document := range documents {
 		identity := identityOf(document)
-		hasAuthorizationSubstitution := isAuthorizationCapableDocument(document, identity) &&
+		isAuthorizationCapable := isAuthorizationCapableDocument(document, identity)
+		hasAuthorizationSubstitution := isAuthorizationCapable &&
 			containsFluxSubstitution(document) &&
 			!hasDisabledFluxSubstitution(document)
-		if !hasAuthorizationSubstitution && !isAuthorizationResource(document, identity, writers, roles) {
+		hasEncryptedAuthorization := isAuthorizationCapable && isSOPSEncrypted(document)
+		if !hasAuthorizationSubstitution && !hasEncryptedAuthorization &&
+			!isAuthorizationResource(document, identity) {
 			continue
 		}
+		entry, entryErr := authorizationSurfaceEntry(identity, document)
+		if entryErr != nil {
+			problems = append(problems, entryErr)
+			continue
+		}
+		surfaceEntries = append(surfaceEntries, entry)
 		actual, hashErr := canonicalFingerprint(document)
 		if hashErr != nil {
 			problems = append(problems, hashErr)
 			continue
 		}
+		if hasEncryptedAuthorization {
+			problems = append(problems, fmt.Errorf(
+				"encrypted SOPS authorization resource cannot be validated before reconciliation: %+v fingerprint: %s",
+				identity,
+				actual,
+			))
+		}
+		if hasAuthorizationSubstitution {
+			substitutionProblems = append(substitutionProblems, fmt.Errorf(
+				"unresolved Flux substitution in authorization resource: %+v fingerprint: %s",
+				identity,
+				actual,
+			))
+		}
 		expected, ok := expectedRenderedHashes[identity]
 		if !ok {
-			if hasAuthorizationSubstitution {
-				problems = append(problems, fmt.Errorf(
-					"unresolved Flux substitution in authorization resource: %+v fingerprint: %s",
-					identity,
-					actual,
-				))
-			} else {
-				problems = append(problems, fmt.Errorf(
-					"unexpected rendered authorization resource: %+v fingerprint: %s",
-					identity,
-					actual,
-				))
-			}
 			continue
 		}
 		if seen[identity] {
@@ -713,6 +723,18 @@ func validateRendered(rendered []byte) error {
 		if !seen[identity] {
 			problems = append(problems, fmt.Errorf("missing rendered authorization resource: %+v", identity))
 		}
+	}
+	sort.Strings(surfaceEntries)
+	canonicalSurface, marshalErr := json.Marshal(surfaceEntries)
+	if marshalErr != nil {
+		problems = append(problems, fmt.Errorf("marshal authorization surface: %w", marshalErr))
+		problems = append(problems, substitutionProblems...)
+	} else if actualSurfaceSHA := fingerprint(canonicalSurface); actualSurfaceSHA != expectedRenderedSurfaceSHA {
+		problems = append(problems, fmt.Errorf(
+			"unapproved rendered authorization surface fingerprint: %s",
+			actualSurfaceSHA,
+		))
+		problems = append(problems, substitutionProblems...)
 	}
 	return errors.Join(problems...)
 }
