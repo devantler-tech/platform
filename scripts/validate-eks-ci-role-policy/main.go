@@ -135,8 +135,11 @@ func validateRole(role []byte) error {
 		return fmt.Errorf("unapproved role manifest fingerprint: %s", actual)
 	}
 	documents, err := decodeDocuments(role)
-	if err != nil || len(documents) != 1 {
-		return fmt.Errorf("role manifest must contain exactly one document: %w", err)
+	if err != nil {
+		return fmt.Errorf("decode role manifest: %w", err)
+	}
+	if len(documents) != 1 {
+		return fmt.Errorf("role manifest must contain exactly one document, got %d", len(documents))
 	}
 	forProvider, err := nestedMap(documents[0], "spec", "forProvider")
 	if err != nil {
@@ -175,8 +178,11 @@ func validateBoundary(boundary []byte) error {
 		return fmt.Errorf("unapproved boundary manifest fingerprint: %s", actual)
 	}
 	documents, err := decodeDocuments(boundary)
-	if err != nil || len(documents) != 1 {
-		return fmt.Errorf("boundary manifest must contain exactly one document: %w", err)
+	if err != nil {
+		return fmt.Errorf("decode boundary manifest: %w", err)
+	}
+	if len(documents) != 1 {
+		return fmt.Errorf("boundary manifest must contain exactly one document, got %d", len(documents))
 	}
 	forProvider, err := nestedMap(documents[0], "spec", "forProvider")
 	if err != nil {
@@ -214,7 +220,7 @@ func isAuthorizationResource(identity resourceIdentity) bool {
 		return true
 	}
 	return identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" &&
-		identity.kind == "Kustomization" && identity.name == "aws"
+		identity.kind == "Kustomization"
 }
 
 func validateRendered(rendered []byte) error {

@@ -93,6 +93,19 @@ metadata:
 `)...),
 			wantError: "unexpected rendered authorization resource",
 		},
+		{
+			name:     "additional tenant Flux handoff",
+			role:     role,
+			boundary: boundary,
+			rendered: append(append([]byte{}, rendered...), []byte(`---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: aws-shadow
+  namespace: aws
+`)...),
+			wantError: "unexpected rendered authorization resource",
+		},
 	}
 
 	for _, tt := range tests {
