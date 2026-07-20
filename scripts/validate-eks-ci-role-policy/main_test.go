@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func repositoryInputs(t *testing.T) ([]byte, []byte, []byte) {
@@ -41,6 +43,28 @@ func TestValidateAuthorizationAcceptsCommittedPolicy(t *testing.T) {
 
 func TestValidateAuthorizationRejectsSourceAndRenderedMutations(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
+	missingBoundary := new(bytes.Buffer)
+	encoder := yaml.NewEncoder(missingBoundary)
+	documents, err := decodeDocuments(rendered)
+	if err != nil {
+		t.Fatalf("decode rendered documents: %v", err)
+	}
+	for _, document := range documents {
+		if identityOf(document) == (resourceIdentity{
+			apiVersion: "iam.aws.m.upbound.io/v1beta1",
+			kind:       "Policy",
+			namespace:  "aws",
+			name:       "eks-ci-smoke-boundary",
+		}) {
+			continue
+		}
+		if err := encoder.Encode(document); err != nil {
+			t.Fatalf("encode rendered document: %v", err)
+		}
+	}
+	if err := encoder.Close(); err != nil {
+		t.Fatalf("close rendered document encoder: %v", err)
+	}
 
 	tests := []struct {
 		name      string
@@ -49,6 +73,13 @@ func TestValidateAuthorizationRejectsSourceAndRenderedMutations(t *testing.T) {
 		rendered  []byte
 		wantError string
 	}{
+		{
+			name:      "missing rendered boundary",
+			role:      role,
+			boundary:  boundary,
+			rendered:  missingBoundary.Bytes(),
+			wantError: "missing rendered authorization resource",
+		},
 		{
 			name: "expanded EKS grant",
 			role: bytes.Replace(
