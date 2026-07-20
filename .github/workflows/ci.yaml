@@ -57,6 +57,7 @@ jobs:
               - 'go.mod'
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
+              - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
               - 'scripts/ghcr-auth-lib.sh'
@@ -155,6 +156,28 @@ jobs:
         # regress the Hetzner WireGuard settings. Bash plus the kubectl bundled
         # on the GitHub-hosted runner; no cluster or secrets required.
         run: bash scripts/tests/test-cilium-bandwidth-manager-component.sh
+
+      - name: ⚙️ Install pinned kubectl renderer
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: 🔐 Validate EKS smoke role policy
+        # The Go validator pins the complete source and rendered authorization
+        # surfaces and rejects broader, duplicate, aliased, or missing grants.
+        run: |
+          go test ./scripts/validate-eks-ci-role-policy
+          go run ./scripts/validate-eks-ci-role-policy .
 
       - name: ⚙️ Setup KSail
         # Renovate-managed (datasource github-releases; grouped 'ksail' with the
