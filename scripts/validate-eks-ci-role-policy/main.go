@@ -355,7 +355,7 @@ func validateRendererVersion(versionJSON []byte) error {
 	return nil
 }
 
-// commandOutput captures a repository-controlled command and includes bounded
+// commandOutput captures a repository-controlled command and includes its
 // output in failures so validation cannot degrade into an opaque false red.
 func commandOutput(name string, args ...string) ([]byte, error) {
 	command := exec.Command(name, args...) //nolint:gosec // Fixed binary and repository-controlled arguments.
