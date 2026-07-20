@@ -57,8 +57,8 @@ type resourceIdentity struct {
 	name       string
 }
 
-// expectedRenderedHashes pins every authorization-bearing object that may
-// survive the final Kustomize render; anything else fails closed.
+// expectedRenderedHashes pins every selected EKS CI authorization object that
+// may survive the final render; anything else in that surface fails closed.
 var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                       "0967890d16316a8cfcb1cca8a52085c6989c42000fafbbd0ada6323d4e15c97c",
 	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:      "66f79a06cd8f789f6a2dd66b263c3f4459447f96227f57996591d75b441b0104",
@@ -147,6 +147,9 @@ func parseJSONPolicy(value any, description string) (map[string]any, error) {
 	var policy map[string]any
 	if err := json.Unmarshal([]byte(policyText), &policy); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", description, err)
+	}
+	if policy == nil {
+		return nil, fmt.Errorf("%s is not a JSON object", description)
 	}
 	return policy, nil
 }

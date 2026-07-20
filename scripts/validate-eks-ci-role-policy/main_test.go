@@ -80,6 +80,12 @@ func TestCommandOutputHonorsCancellation(t *testing.T) {
 	}
 }
 
+func TestParseJSONPolicyRejectsNull(t *testing.T) {
+	if _, err := parseJSONPolicy("null", "test policy"); err == nil {
+		t.Fatal("parseJSONPolicy() error = nil, want JSON object rejection")
+	}
+}
+
 func TestValidateAuthorizationAcceptsCommittedPolicy(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
 
