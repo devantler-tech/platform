@@ -64,16 +64,24 @@ type resourceIdentity struct {
 // expectedRenderedHashes pins every selected EKS CI authorization object that
 // may survive the final render; anything else in that surface fails closed.
 var expectedRenderedHashes = map[resourceIdentity]string{
-	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                             "0967890d16316a8cfcb1cca8a52085c6989c42000fafbbd0ada6323d4e15c97c",
-	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:            "66f79a06cd8f789f6a2dd66b263c3f4459447f96227f57996591d75b441b0104",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:              "ff4c3264c519b1b4a7ec9b5145412f39ea2ba7b6163d8dc50fb029b1460edcda",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:       "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "crossview", name: "crossview-portforward"}: "78992d9727763fdcf1bda05969fdc881e6d0e54cc72efc07555304b47d25bc3a",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                "4447f41c03e8297fafdabcadf4fdd8ca3260f2c84264c531b2179cb7df2c1556",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                    "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                              "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                "404de3502423d08af04eaa5d1ca6a6b76634ae09c270e7718994cfd346c8a07f",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                     "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
+	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                                        "0967890d16316a8cfcb1cca8a52085c6989c42000fafbbd0ada6323d4e15c97c",
+	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:                       "66f79a06cd8f789f6a2dd66b263c3f4459447f96227f57996591d75b441b0104",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:                         "ff4c3264c519b1b4a7ec9b5145412f39ea2ba7b6163d8dc50fb029b1460edcda",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:                  "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "crossview", name: "crossview-portforward"}:            "78992d9727763fdcf1bda05969fdc881e6d0e54cc72efc07555304b47d25bc3a",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                           "4447f41c03e8297fafdabcadf4fdd8ca3260f2c84264c531b2179cb7df2c1556",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "404de3502423d08af04eaa5d1ca6a6b76634ae09c270e7718994cfd346c8a07f",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "1a2ecb3104630c44466d846159ee68ff6a98888887c02ecd0278782793dead4a",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "7f674a1762f298330c7c9e4d9d4e8bf46108b10727e02a25ca5096d7913cc0a7",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "312d84288f510b4a38d985385487a52cb2dc1c634bbcbab8dc5e438689891189",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "9d9b62d3221442d6355d16a34d31c198619fb3b3728df960fd67222a531ece7b",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "8e9f72b0f4f982d050aff0b97d246c68b538cbc397cdd45d031c95cfae981e7c",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "47c63f6a762caeacf257ddd32cbbeb3f3568eeea0e258ec006621579114731ff",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "6cca0d2d0e7874bf3f0c82f4e04f151d6c172eeae7929a8dbacbf37ed9793a6c",
 }
 
 // fingerprint returns the SHA-256 identity used for byte-exact source checks.
@@ -445,21 +453,24 @@ func bindingReferencesUnavailableRole(
 	return !available
 }
 
-// isRBACBindingKind recognizes Kyverno's short and group-qualified binding kinds.
-func isRBACBindingKind(kind string) bool {
-	return strings.Contains(kind, "${") || kind == "*" || kind == "RoleBinding" || kind == "ClusterRoleBinding" ||
+// isRBACAuthorizationKind recognizes Kyverno's short and group-qualified role
+// and binding kinds, all of which can change effective privileges.
+func isRBACAuthorizationKind(kind string) bool {
+	return strings.Contains(kind, "${") || kind == "*" || kind == "Role" || kind == "ClusterRole" ||
+		kind == "RoleBinding" || kind == "ClusterRoleBinding" ||
 		(strings.HasPrefix(kind, "rbac.authorization.k8s.io/") && strings.HasSuffix(kind, "/*")) ||
+		strings.HasSuffix(kind, "/Role") || strings.HasSuffix(kind, "/ClusterRole") ||
 		strings.HasSuffix(kind, "/RoleBinding") || strings.HasSuffix(kind, "/ClusterRoleBinding")
 }
 
-// kindSelectorIncludesRBACBinding checks the value of a Kyverno kind/kinds key.
-func kindSelectorIncludesRBACBinding(value any) bool {
+// kindSelectorIncludesRBACAuthorization checks a Kyverno kind/kinds value.
+func kindSelectorIncludesRBACAuthorization(value any) bool {
 	switch typedValue := value.(type) {
 	case string:
-		return isRBACBindingKind(typedValue)
+		return isRBACAuthorizationKind(typedValue)
 	case []any:
 		for _, item := range typedValue {
-			if kind, ok := item.(string); ok && isRBACBindingKind(kind) {
+			if kind, ok := item.(string); ok && isRBACAuthorizationKind(kind) {
 				return true
 			}
 		}
@@ -467,26 +478,27 @@ func kindSelectorIncludesRBACBinding(value any) bool {
 	return false
 }
 
-// containsRBACBindingKind finds binding kinds inside Kyverno match/target shapes.
-func containsRBACBindingKind(value any) bool {
+// containsRBACAuthorizationKind finds role or binding kinds inside Kyverno
+// match and target shapes.
+func containsRBACAuthorizationKind(value any) bool {
 	switch typedValue := value.(type) {
 	case []any:
 		for _, item := range typedValue {
 			switch item.(type) {
 			case []any, map[string]any:
-				if containsRBACBindingKind(item) {
+				if containsRBACAuthorizationKind(item) {
 					return true
 				}
 			}
 		}
 	case map[string]any:
 		for key, item := range typedValue {
-			if (key == "kind" || key == "kinds") && kindSelectorIncludesRBACBinding(item) {
+			if (key == "kind" || key == "kinds") && kindSelectorIncludesRBACAuthorization(item) {
 				return true
 			}
 			switch item.(type) {
 			case []any, map[string]any:
-				if containsRBACBindingKind(item) {
+				if containsRBACAuthorizationKind(item) {
 					return true
 				}
 			}
@@ -522,7 +534,7 @@ func containsEmbeddedAuthorizationTemplate(value any, depth int) bool {
 }
 
 // isIndirectAuthorizationPolicy selects Kyverno policies that can generate or
-// mutate RBAC bindings without declaring the resulting binding in this render.
+// mutate RBAC privileges without declaring the resulting object in this render.
 func isIndirectAuthorizationPolicy(document map[string]any, identity resourceIdentity) bool {
 	if !strings.HasPrefix(identity.apiVersion, "kyverno.io/") ||
 		(identity.kind != "Policy" && identity.kind != "ClusterPolicy") {
@@ -544,13 +556,13 @@ func isIndirectAuthorizationPolicy(document map[string]any, identity resourceIde
 		if rawGenerate, generates := rule["generate"]; generates {
 			generate, ok := rawGenerate.(map[string]any)
 			kind, hasKind := generate["kind"]
-			if !ok || !hasKind || kind == nil || isRBACBindingKind(fmt.Sprint(kind)) {
+			if !ok || !hasKind || kind == nil || isRBACAuthorizationKind(fmt.Sprint(kind)) {
 				return true
 			}
 		}
 		if mutate, mutates := rule["mutate"]; mutates {
 			match, hasMatch := rule["match"]
-			if !hasMatch || containsRBACBindingKind(match) || containsRBACBindingKind(mutate) {
+			if !hasMatch || containsRBACAuthorizationKind(match) || containsRBACAuthorizationKind(mutate) {
 				return true
 			}
 		}
@@ -643,8 +655,7 @@ func isAuthorizationResource(
 	if containsEmbeddedAuthorizationTemplate(document, 0) {
 		return true
 	}
-	return identity.namespace == "aws" &&
-		identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" &&
+	return identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" &&
 		identity.kind == "Kustomization"
 }
 

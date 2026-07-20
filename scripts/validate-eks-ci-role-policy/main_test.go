@@ -161,8 +161,9 @@ spec:
 
 func TestValidateRenderedRejectsIndirectAuthorizationResources(t *testing.T) {
 	tests := []struct {
-		name     string
-		manifest string
+		name          string
+		manifest      string
+		errorContains string
 	}{
 		{
 			name: "Kyverno generator",
@@ -243,6 +244,42 @@ spec:
 `,
 		},
 		{
+			name: "Kyverno role mutation",
+			manifest: `apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: mutate-role
+spec:
+  rules:
+    - name: mutate-role
+      match:
+        any:
+          - resources:
+              kinds: [Role]
+      mutate:
+        patchStrategicMerge:
+          rules:
+            - apiGroups: ["*"]
+              resources: ["*"]
+              verbs: ["*"]
+`,
+		},
+		{
+			name:          "Flux root handoff",
+			errorContains: "unapproved rendered",
+			manifest: `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  path: ./external
+  sourceRef:
+    kind: OCIRepository
+    name: unreviewed
+`,
+		},
+		{
 			name: "KRO binding template",
 			manifest: `apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
@@ -314,8 +351,12 @@ subjects:
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validateRendered([]byte(tt.manifest))
-			if err == nil || !strings.Contains(err.Error(), "unexpected rendered authorization resource") {
-				t.Fatalf("validateRendered() error = %v, want unexpected authorization resource", err)
+			errorContains := tt.errorContains
+			if errorContains == "" {
+				errorContains = "unexpected rendered authorization resource"
+			}
+			if err == nil || !strings.Contains(err.Error(), errorContains) {
+				t.Fatalf("validateRendered() error = %v, want %q", err, errorContains)
 			}
 		})
 	}
