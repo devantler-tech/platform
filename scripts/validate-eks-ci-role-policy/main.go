@@ -26,6 +26,7 @@ const (
 	infrastructureOverlayPath = "k8s/providers/hetzner/infrastructure"
 	controllerOverlayPath     = "k8s/providers/hetzner/infrastructure/controllers"
 	bootstrapOverlayPath      = "k8s/clusters/prod/bootstrap"
+	rootProductionOverlayPath = "k8s/clusters/prod"
 	rendererCommandTimeout    = 2 * time.Minute
 
 	expectedKubectlVersion   = "v1.36.2"
@@ -44,6 +45,7 @@ var authorizationOverlayPaths = []string{
 	infrastructureOverlayPath,
 	controllerOverlayPath,
 	bootstrapOverlayPath,
+	rootProductionOverlayPath,
 }
 
 // commandExecutor makes the renderer orchestration independently testable
@@ -62,11 +64,15 @@ type resourceIdentity struct {
 // expectedRenderedHashes pins every selected EKS CI authorization object that
 // may survive the final render; anything else in that surface fails closed.
 var expectedRenderedHashes = map[resourceIdentity]string{
-	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                       "0967890d16316a8cfcb1cca8a52085c6989c42000fafbbd0ada6323d4e15c97c",
-	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:      "66f79a06cd8f789f6a2dd66b263c3f4459447f96227f57996591d75b441b0104",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:        "ff4c3264c519b1b4a7ec9b5145412f39ea2ba7b6163d8dc50fb029b1460edcda",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}: "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:               "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
+	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                             "0967890d16316a8cfcb1cca8a52085c6989c42000fafbbd0ada6323d4e15c97c",
+	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:            "66f79a06cd8f789f6a2dd66b263c3f4459447f96227f57996591d75b441b0104",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:              "ff4c3264c519b1b4a7ec9b5145412f39ea2ba7b6163d8dc50fb029b1460edcda",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:       "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "crossview", name: "crossview-portforward"}: "78992d9727763fdcf1bda05969fdc881e6d0e54cc72efc07555304b47d25bc3a",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                "4447f41c03e8297fafdabcadf4fdd8ca3260f2c84264c531b2179cb7df2c1556",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                    "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                              "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                     "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
 }
 
 // fingerprint returns the SHA-256 identity used for byte-exact source checks.
@@ -241,15 +247,22 @@ func validateBoundary(boundary []byte) error {
 	return requireCanonicalFingerprint(policy, expectedBoundaryJSONSHA, "permissions boundary")
 }
 
-// identityOf derives the full identity used by the rendered authorization
-// allowlist; absent metadata stays distinguishable instead of defaulting.
+// identityOf derives the canonical identity used by the rendered authorization
+// allowlist; cluster-scoped resources use an empty namespace.
 func identityOf(document map[string]any) resourceIdentity {
 	metadata, _ := document["metadata"].(map[string]any)
+	stringValue := func(object map[string]any, key string) string {
+		value, ok := object[key]
+		if !ok || value == nil {
+			return ""
+		}
+		return fmt.Sprint(value)
+	}
 	return resourceIdentity{
-		apiVersion: fmt.Sprint(document["apiVersion"]),
-		kind:       fmt.Sprint(document["kind"]),
-		namespace:  fmt.Sprint(metadata["namespace"]),
-		name:       fmt.Sprint(metadata["name"]),
+		apiVersion: stringValue(document, "apiVersion"),
+		kind:       stringValue(document, "kind"),
+		namespace:  stringValue(metadata, "namespace"),
+		name:       stringValue(metadata, "name"),
 	}
 }
 
@@ -281,13 +294,234 @@ func includesAWSServiceAccountIdentity(document map[string]any) bool {
 	return false
 }
 
+// stringListIncludes reports whether a decoded YAML string list contains any
+// requested value, including the Kubernetes RBAC wildcard when requested.
+func stringListIncludes(value any, expected ...string) bool {
+	values, ok := value.([]any)
+	if !ok {
+		return false
+	}
+	for _, rawValue := range values {
+		for _, candidate := range expected {
+			if fmt.Sprint(rawValue) == candidate {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// grantsAuthorizationWrites identifies Roles and ClusterRoles that can create
+// or mutate RBAC bindings, including wildcard grants.
+func grantsAuthorizationWrites(document map[string]any) bool {
+	identity := identityOf(document)
+	if identity.apiVersion != "rbac.authorization.k8s.io/v1" ||
+		(identity.kind != "Role" && identity.kind != "ClusterRole") {
+		return false
+	}
+	rules, ok := document["rules"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawRule := range rules {
+		rule, ok := rawRule.(map[string]any)
+		if !ok {
+			continue
+		}
+		if !stringListIncludes(rule["apiGroups"], "rbac.authorization.k8s.io", "*") ||
+			!stringListIncludes(rule["resources"], "rolebindings", "clusterrolebindings", "*") {
+			continue
+		}
+		if stringListIncludes(rule["verbs"], "create", "update", "patch", "delete", "deletecollection", "*") {
+			return true
+		}
+	}
+	return false
+}
+
+// authorizationWriterIdentities collects every rendered role that can mutate
+// RBAC bindings so grants of those roles can be pinned as part of the surface.
+func authorizationWriterIdentities(documents []map[string]any) map[resourceIdentity]struct{} {
+	writers := make(map[resourceIdentity]struct{})
+	for _, document := range documents {
+		if grantsAuthorizationWrites(document) {
+			writers[identityOf(document)] = struct{}{}
+		}
+	}
+	return writers
+}
+
+// bindingReferencesAuthorizationWriter detects direct grants of a rendered
+// binding-writer Role or ClusterRole to any controller identity.
+func bindingReferencesAuthorizationWriter(
+	document map[string]any,
+	identity resourceIdentity,
+	writers map[resourceIdentity]struct{},
+) bool {
+	if identity.apiVersion != "rbac.authorization.k8s.io/v1" ||
+		(identity.kind != "RoleBinding" && identity.kind != "ClusterRoleBinding") {
+		return false
+	}
+	roleRef, ok := document["roleRef"].(map[string]any)
+	if !ok || fmt.Sprint(roleRef["apiGroup"]) != "rbac.authorization.k8s.io" {
+		return false
+	}
+	roleKind := fmt.Sprint(roleRef["kind"])
+	roleNamespace := ""
+	if roleKind == "Role" {
+		roleNamespace = identity.namespace
+	} else if roleKind != "ClusterRole" {
+		return false
+	}
+	_, ok = writers[resourceIdentity{
+		apiVersion: "rbac.authorization.k8s.io/v1",
+		kind:       roleKind,
+		namespace:  roleNamespace,
+		name:       fmt.Sprint(roleRef["name"]),
+	}]
+	return ok
+}
+
+// isRBACBindingKind recognizes Kyverno's short and group-qualified binding kinds.
+func isRBACBindingKind(kind string) bool {
+	return strings.Contains(kind, "${") || kind == "*" || kind == "RoleBinding" || kind == "ClusterRoleBinding" ||
+		(strings.HasPrefix(kind, "rbac.authorization.k8s.io/") && strings.HasSuffix(kind, "/*")) ||
+		strings.HasSuffix(kind, "/RoleBinding") || strings.HasSuffix(kind, "/ClusterRoleBinding")
+}
+
+// kindSelectorIncludesRBACBinding checks the value of a Kyverno kind/kinds key.
+func kindSelectorIncludesRBACBinding(value any) bool {
+	switch typedValue := value.(type) {
+	case string:
+		return isRBACBindingKind(typedValue)
+	case []any:
+		for _, item := range typedValue {
+			if kind, ok := item.(string); ok && isRBACBindingKind(kind) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// containsRBACBindingKind finds binding kinds inside Kyverno match/target shapes.
+func containsRBACBindingKind(value any) bool {
+	switch typedValue := value.(type) {
+	case []any:
+		for _, item := range typedValue {
+			switch item.(type) {
+			case []any, map[string]any:
+				if containsRBACBindingKind(item) {
+					return true
+				}
+			}
+		}
+	case map[string]any:
+		for key, item := range typedValue {
+			if (key == "kind" || key == "kinds") && kindSelectorIncludesRBACBinding(item) {
+				return true
+			}
+			switch item.(type) {
+			case []any, map[string]any:
+				if containsRBACBindingKind(item) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// isIndirectAuthorizationPolicy selects Kyverno policies that can generate or
+// mutate RBAC bindings without declaring the resulting binding in this render.
+func isIndirectAuthorizationPolicy(document map[string]any, identity resourceIdentity) bool {
+	if !strings.HasPrefix(identity.apiVersion, "kyverno.io/") ||
+		(identity.kind != "Policy" && identity.kind != "ClusterPolicy") {
+		return false
+	}
+	spec, ok := document["spec"].(map[string]any)
+	if !ok {
+		return false
+	}
+	rules, ok := spec["rules"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawRule := range rules {
+		rule, ok := rawRule.(map[string]any)
+		if !ok {
+			continue
+		}
+		if rawGenerate, generates := rule["generate"]; generates {
+			generate, ok := rawGenerate.(map[string]any)
+			kind, hasKind := generate["kind"]
+			if !ok || !hasKind || kind == nil || isRBACBindingKind(fmt.Sprint(kind)) {
+				return true
+			}
+		}
+		if mutate, mutates := rule["mutate"]; mutates {
+			match, hasMatch := rule["match"]
+			if !hasMatch || containsRBACBindingKind(match) || containsRBACBindingKind(mutate) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// containsFluxSubstitution finds unresolved post-build substitution tokens in
+// parsed YAML values before they can change an authorization identity at apply.
+func containsFluxSubstitution(value any) bool {
+	switch typedValue := value.(type) {
+	case string:
+		return strings.Contains(typedValue, "${")
+	case []any:
+		for _, item := range typedValue {
+			if containsFluxSubstitution(item) {
+				return true
+			}
+		}
+	case map[string]any:
+		for key, item := range typedValue {
+			if strings.Contains(key, "${") || containsFluxSubstitution(item) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isAuthorizationCapableDocument scopes substitution rejection to resources
+// that can directly or indirectly change the EKS CI authorization surface.
+func isAuthorizationCapableDocument(document map[string]any, identity resourceIdentity) bool {
+	if strings.Contains(identity.apiVersion, "${") || strings.Contains(identity.kind, "${") {
+		return true
+	}
+	if strings.HasPrefix(identity.apiVersion, "iam.aws.") ||
+		identity.apiVersion == "rbac.authorization.k8s.io/v1" {
+		return true
+	}
+	if identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" && identity.kind == "Kustomization" {
+		return true
+	}
+	return isIndirectAuthorizationPolicy(document, identity)
+}
+
 // isAuthorizationResource selects every rendered object capable of changing
 // the EKS CI identity's IAM, RBAC, or Flux authorization surface.
-func isAuthorizationResource(document map[string]any, identity resourceIdentity) bool {
+func isAuthorizationResource(
+	document map[string]any,
+	identity resourceIdentity,
+	writers map[resourceIdentity]struct{},
+) bool {
 	if strings.HasPrefix(identity.apiVersion, "iam.aws.") {
 		return true
 	}
 	if identity.apiVersion == "rbac.authorization.k8s.io/v1" {
+		if grantsAuthorizationWrites(document) ||
+			bindingReferencesAuthorizationWriter(document, identity, writers) {
+			return true
+		}
 		if identity.namespace == "aws" &&
 			(identity.kind == "Role" || identity.kind == "RoleBinding") {
 			return true
@@ -298,6 +532,9 @@ func isAuthorizationResource(document map[string]any, identity resourceIdentity)
 			includesAWSServiceAccountIdentity(document) {
 			return true
 		}
+	}
+	if isIndirectAuthorizationPolicy(document, identity) {
+		return true
 	}
 	return identity.namespace == "aws" &&
 		identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" &&
@@ -311,25 +548,43 @@ func validateRendered(rendered []byte) error {
 	if err != nil {
 		return err
 	}
+	writers := authorizationWriterIdentities(documents)
 	seen := make(map[resourceIdentity]bool, len(expectedRenderedHashes))
 	problems := make([]error, 0)
 	for _, document := range documents {
 		identity := identityOf(document)
-		if !isAuthorizationResource(document, identity) {
+		hasAuthorizationSubstitution := isAuthorizationCapableDocument(document, identity) &&
+			containsFluxSubstitution(document)
+		if !hasAuthorizationSubstitution && !isAuthorizationResource(document, identity, writers) {
+			continue
+		}
+		actual, hashErr := canonicalFingerprint(document)
+		if hashErr != nil {
+			problems = append(problems, hashErr)
 			continue
 		}
 		expected, ok := expectedRenderedHashes[identity]
 		if !ok {
-			return fmt.Errorf("unexpected rendered authorization resource: %+v", identity)
+			if hasAuthorizationSubstitution {
+				problems = append(problems, fmt.Errorf(
+					"unresolved Flux substitution in authorization resource: %+v fingerprint: %s",
+					identity,
+					actual,
+				))
+			} else {
+				problems = append(problems, fmt.Errorf(
+					"unexpected rendered authorization resource: %+v fingerprint: %s",
+					identity,
+					actual,
+				))
+			}
+			continue
 		}
 		if seen[identity] {
-			return fmt.Errorf("duplicate rendered authorization resource: %+v", identity)
+			problems = append(problems, fmt.Errorf("duplicate rendered authorization resource: %+v", identity))
+			continue
 		}
 		seen[identity] = true
-		actual, hashErr := canonicalFingerprint(document)
-		if hashErr != nil {
-			return hashErr
-		}
 		if actual != expected {
 			problems = append(problems, fmt.Errorf("unapproved rendered %+v fingerprint: %s", identity, actual))
 		}

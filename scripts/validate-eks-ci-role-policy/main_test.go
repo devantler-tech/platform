@@ -42,6 +42,7 @@ func TestRenderAuthorizationLayersIncludesEveryProductionLayer(t *testing.T) {
 		"k8s/providers/hetzner/infrastructure",
 		"k8s/providers/hetzner/infrastructure/controllers",
 		"k8s/clusters/prod/bootstrap",
+		"k8s/clusters/prod",
 	}
 	if got, want := strings.Join(authorizationOverlayPaths, "\n"), strings.Join(wantOverlayPaths, "\n"); got != want {
 		t.Fatalf("authorization overlay paths = %q, want %q", got, want)
@@ -93,6 +94,212 @@ func TestCommandOutputHonorsCancellation(t *testing.T) {
 func TestParseJSONPolicyRejectsNull(t *testing.T) {
 	if _, err := parseJSONPolicy("null", "test policy"); err == nil {
 		t.Fatal("parseJSONPolicy() error = nil, want JSON object rejection")
+	}
+}
+
+func TestValidateRenderedRejectsAuthorizationSubstitutions(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest string
+	}{
+		{
+			name: "binding subject namespace",
+			manifest: `apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: substituted-subject
+  namespace: tenant
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: aws
+    namespace: ${target_namespace:=aws}
+`,
+		},
+		{
+			name: "resource kind",
+			manifest: `apiVersion: rbac.authorization.k8s.io/v1
+kind: ${binding_kind:=RoleBinding}
+metadata:
+  name: substituted-kind
+  namespace: tenant
+subjects: []
+`,
+		},
+		{
+			name: "generated binding kind",
+			manifest: `apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: substituted-generator
+spec:
+  rules:
+    - name: generate-binding
+      generate:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: ${generated_kind:=RoleBinding}
+        name: generated
+        namespace: tenant
+        data: {}
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRendered([]byte(tt.manifest))
+			if err == nil || !strings.Contains(err.Error(), "unresolved Flux substitution in authorization resource") {
+				t.Fatalf("validateRendered() error = %v, want unresolved authorization substitution", err)
+			}
+		})
+	}
+}
+
+func TestValidateRenderedRejectsIndirectAuthorizationResources(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest string
+	}{
+		{
+			name: "Kyverno generator",
+			manifest: `apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: generate-aws-binding
+spec:
+  rules:
+    - name: generate-binding
+      generate:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        name: generated
+        namespace: tenant
+        data:
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: cluster-admin
+          subjects:
+            - kind: ServiceAccount
+              name: aws
+              namespace: aws
+`,
+		},
+		{
+			name: "RBAC writer",
+			manifest: `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: binding-writer
+rules:
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings, clusterrolebindings]
+    verbs: [create, update, patch]
+`,
+		},
+		{
+			name: "Kyverno binding mutation",
+			manifest: `apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: mutate-aws-binding
+spec:
+  rules:
+    - name: mutate-binding
+      match:
+        any:
+          - resources:
+              kinds: [RoleBinding]
+      mutate:
+        patchStrategicMerge:
+          subjects:
+            - kind: ServiceAccount
+              name: aws
+              namespace: aws
+`,
+		},
+		{
+			name: "Kyverno RBAC group wildcard mutation",
+			manifest: `apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: mutate-rbac-group
+spec:
+  rules:
+    - name: mutate-rbac
+      match:
+        any:
+          - resources:
+              kinds: [rbac.authorization.k8s.io/*]
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              example: unsafe
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRendered([]byte(tt.manifest))
+			if err == nil || !strings.Contains(err.Error(), "unexpected rendered authorization resource") {
+				t.Fatalf("validateRendered() error = %v, want unexpected authorization resource", err)
+			}
+		})
+	}
+}
+
+func TestIndirectAuthorizationPolicyIgnoresNonRBACWildcardSelectors(t *testing.T) {
+	documents, err := decodeDocuments([]byte(`apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: mutate-pods
+spec:
+  rules:
+    - name: mutate-pod
+      match:
+        any:
+          - resources:
+              kinds: [Pod]
+              namespaces: ["*"]
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              example: safe
+`))
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("decode policy: documents=%d error=%v", len(documents), err)
+	}
+	if isIndirectAuthorizationPolicy(documents[0], identityOf(documents[0])) {
+		t.Fatal("isIndirectAuthorizationPolicy() = true for non-RBAC wildcard selector")
+	}
+}
+
+func TestBindingReferencesAuthorizationWriter(t *testing.T) {
+	documents, err := decodeDocuments([]byte(`apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: controller-grant
+  namespace: controllers
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: binding-writer
+subjects: []
+`))
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("decode binding: documents=%d error=%v", len(documents), err)
+	}
+	writers := map[resourceIdentity]struct{}{
+		{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "controllers", name: "binding-writer"}: {},
+	}
+	if !bindingReferencesAuthorizationWriter(documents[0], identityOf(documents[0]), writers) {
+		t.Fatal("bindingReferencesAuthorizationWriter() = false, want true")
 	}
 }
 
