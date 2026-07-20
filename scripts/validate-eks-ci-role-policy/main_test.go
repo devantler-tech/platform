@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -241,6 +242,73 @@ spec:
               example: unsafe
 `,
 		},
+		{
+			name: "KRO binding template",
+			manifest: `apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: generate-binding
+  annotations:
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  resources:
+    - id: binding
+      template:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: generated
+          namespace: tenant
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: cluster-admin
+        subjects:
+          - kind: ServiceAccount
+            name: ${schema.spec.name}
+            namespace: aws
+`,
+		},
+		{
+			name: "role patch writer",
+			manifest: `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: role-writer
+rules:
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [roles, clusterroles]
+    verbs: [patch]
+`,
+		},
+		{
+			name: "role privilege escalation",
+			manifest: `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: role-binder
+rules:
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    verbs: [bind, escalate]
+`,
+		},
+		{
+			name: "binding to unavailable privileged role",
+			manifest: `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: external-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: controller
+    namespace: controllers
+`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -250,6 +318,46 @@ spec:
 				t.Fatalf("validateRendered() error = %v, want unexpected authorization resource", err)
 			}
 		})
+	}
+}
+
+func TestWorkflowValidatesAuthorizationBeforeMergeGroupDeploy(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "ci.yaml")) //nolint:gosec // Explicit repository path.
+	if err != nil {
+		t.Fatalf("read CI workflow: %v", err)
+	}
+	documents, err := decodeDocuments(contents)
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("decode CI workflow: documents=%d error=%v", len(documents), err)
+	}
+	jobs, err := nestedMap(documents[0], "jobs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizationJob, ok := jobs["validate-eks-authorization"].(map[string]any)
+	if !ok {
+		t.Fatal("CI workflow is missing validate-eks-authorization job")
+	}
+	condition := fmt.Sprint(authorizationJob["if"])
+	if !strings.Contains(condition, "merge_group") || !strings.Contains(condition, "needs.changes.outputs.k8s") {
+		t.Fatalf("authorization job condition = %q, want merge-group k8s gate", condition)
+	}
+
+	for _, jobName := range []string{"deploy-prod", "ci-required-checks"} {
+		job, ok := jobs[jobName].(map[string]any)
+		if !ok || !stringListIncludes(job["needs"], "validate-eks-authorization") {
+			t.Fatalf("%s must need validate-eks-authorization", jobName)
+		}
+	}
+	requiredChecks, _ := jobs["ci-required-checks"].(map[string]any)
+	steps, _ := requiredChecks["steps"].([]any)
+	if len(steps) != 1 {
+		t.Fatalf("ci-required-checks steps = %d, want 1", len(steps))
+	}
+	step, _ := steps[0].(map[string]any)
+	with, _ := step["with"].(map[string]any)
+	if !strings.Contains(fmt.Sprint(with["job-results"]), "needs.validate-eks-authorization.result") {
+		t.Fatal("required-check aggregation omits validate-eks-authorization result")
 	}
 }
 

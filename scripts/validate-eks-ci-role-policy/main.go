@@ -72,6 +72,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                "4447f41c03e8297fafdabcadf4fdd8ca3260f2c84264c531b2179cb7df2c1556",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                    "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                              "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                "404de3502423d08af04eaa5d1ca6a6b76634ae09c270e7718994cfd346c8a07f",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                     "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
 }
 
@@ -311,8 +312,8 @@ func stringListIncludes(value any, expected ...string) bool {
 	return false
 }
 
-// grantsAuthorizationWrites identifies Roles and ClusterRoles that can create
-// or mutate RBAC bindings, including wildcard grants.
+// grantsAuthorizationWrites identifies Roles and ClusterRoles that can mutate
+// RBAC privileges or use bind/escalate, including wildcard grants.
 func grantsAuthorizationWrites(document map[string]any) bool {
 	identity := identityOf(document)
 	if identity.apiVersion != "rbac.authorization.k8s.io/v1" ||
@@ -329,14 +330,45 @@ func grantsAuthorizationWrites(document map[string]any) bool {
 			continue
 		}
 		if !stringListIncludes(rule["apiGroups"], "rbac.authorization.k8s.io", "*") ||
-			!stringListIncludes(rule["resources"], "rolebindings", "clusterrolebindings", "*") {
+			!stringListIncludes(
+				rule["resources"],
+				"roles",
+				"clusterroles",
+				"rolebindings",
+				"clusterrolebindings",
+				"*",
+			) {
 			continue
 		}
-		if stringListIncludes(rule["verbs"], "create", "update", "patch", "delete", "deletecollection", "*") {
+		if stringListIncludes(
+			rule["verbs"],
+			"create",
+			"update",
+			"patch",
+			"delete",
+			"deletecollection",
+			"bind",
+			"escalate",
+			"*",
+		) {
 			return true
 		}
 	}
 	return false
+}
+
+// renderedRoleIdentities records every Role and ClusterRole definition visible
+// in the production renders so bindings to unavailable roles fail closed.
+func renderedRoleIdentities(documents []map[string]any) map[resourceIdentity]struct{} {
+	roles := make(map[resourceIdentity]struct{})
+	for _, document := range documents {
+		identity := identityOf(document)
+		if identity.apiVersion == "rbac.authorization.k8s.io/v1" &&
+			(identity.kind == "Role" || identity.kind == "ClusterRole") {
+			roles[identity] = struct{}{}
+		}
+	}
+	return roles
 }
 
 // authorizationWriterIdentities collects every rendered role that can mutate
@@ -380,6 +412,37 @@ func bindingReferencesAuthorizationWriter(
 		name:       fmt.Sprint(roleRef["name"]),
 	}]
 	return ok
+}
+
+// bindingReferencesUnavailableRole detects grants of built-in, chart-created,
+// or otherwise absent roles whose privileges cannot be inspected in this render.
+func bindingReferencesUnavailableRole(
+	document map[string]any,
+	identity resourceIdentity,
+	roles map[resourceIdentity]struct{},
+) bool {
+	if identity.apiVersion != "rbac.authorization.k8s.io/v1" ||
+		(identity.kind != "RoleBinding" && identity.kind != "ClusterRoleBinding") {
+		return false
+	}
+	roleRef, ok := document["roleRef"].(map[string]any)
+	if !ok || fmt.Sprint(roleRef["apiGroup"]) != "rbac.authorization.k8s.io" {
+		return false
+	}
+	roleKind := fmt.Sprint(roleRef["kind"])
+	roleNamespace := ""
+	if roleKind == "Role" {
+		roleNamespace = identity.namespace
+	} else if roleKind != "ClusterRole" {
+		return true
+	}
+	_, available := roles[resourceIdentity{
+		apiVersion: "rbac.authorization.k8s.io/v1",
+		kind:       roleKind,
+		namespace:  roleNamespace,
+		name:       fmt.Sprint(roleRef["name"]),
+	}]
+	return !available
 }
 
 // isRBACBindingKind recognizes Kyverno's short and group-qualified binding kinds.
@@ -426,6 +489,32 @@ func containsRBACBindingKind(value any) bool {
 				if containsRBACBindingKind(item) {
 					return true
 				}
+			}
+		}
+	}
+	return false
+}
+
+// containsEmbeddedAuthorizationTemplate finds nested RBAC object templates
+// emitted later by controllers such as KRO rather than by Kustomize itself.
+func containsEmbeddedAuthorizationTemplate(value any, depth int) bool {
+	switch typedValue := value.(type) {
+	case []any:
+		for _, item := range typedValue {
+			if containsEmbeddedAuthorizationTemplate(item, depth+1) {
+				return true
+			}
+		}
+	case map[string]any:
+		if depth > 0 && fmt.Sprint(typedValue["apiVersion"]) == "rbac.authorization.k8s.io/v1" {
+			kind := fmt.Sprint(typedValue["kind"])
+			if kind == "Role" || kind == "ClusterRole" || kind == "RoleBinding" || kind == "ClusterRoleBinding" {
+				return true
+			}
+		}
+		for _, item := range typedValue {
+			if containsEmbeddedAuthorizationTemplate(item, depth+1) {
+				return true
 			}
 		}
 	}
@@ -491,6 +580,18 @@ func containsFluxSubstitution(value any) bool {
 	return false
 }
 
+// hasDisabledFluxSubstitution distinguishes controller template expressions
+// from post-build variables when Flux is explicitly forbidden from expanding
+// the document. The document remains subject to its exact authorization hash.
+func hasDisabledFluxSubstitution(document map[string]any) bool {
+	metadata, ok := document["metadata"].(map[string]any)
+	if !ok {
+		return false
+	}
+	annotations, ok := metadata["annotations"].(map[string]any)
+	return ok && fmt.Sprint(annotations["kustomize.toolkit.fluxcd.io/substitute"]) == "disabled"
+}
+
 // isAuthorizationCapableDocument scopes substitution rejection to resources
 // that can directly or indirectly change the EKS CI authorization surface.
 func isAuthorizationCapableDocument(document map[string]any, identity resourceIdentity) bool {
@@ -504,7 +605,8 @@ func isAuthorizationCapableDocument(document map[string]any, identity resourceId
 	if identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" && identity.kind == "Kustomization" {
 		return true
 	}
-	return isIndirectAuthorizationPolicy(document, identity)
+	return isIndirectAuthorizationPolicy(document, identity) ||
+		containsEmbeddedAuthorizationTemplate(document, 0)
 }
 
 // isAuthorizationResource selects every rendered object capable of changing
@@ -513,13 +615,15 @@ func isAuthorizationResource(
 	document map[string]any,
 	identity resourceIdentity,
 	writers map[resourceIdentity]struct{},
+	roles map[resourceIdentity]struct{},
 ) bool {
 	if strings.HasPrefix(identity.apiVersion, "iam.aws.") {
 		return true
 	}
 	if identity.apiVersion == "rbac.authorization.k8s.io/v1" {
 		if grantsAuthorizationWrites(document) ||
-			bindingReferencesAuthorizationWriter(document, identity, writers) {
+			bindingReferencesAuthorizationWriter(document, identity, writers) ||
+			bindingReferencesUnavailableRole(document, identity, roles) {
 			return true
 		}
 		if identity.namespace == "aws" &&
@@ -536,6 +640,9 @@ func isAuthorizationResource(
 	if isIndirectAuthorizationPolicy(document, identity) {
 		return true
 	}
+	if containsEmbeddedAuthorizationTemplate(document, 0) {
+		return true
+	}
 	return identity.namespace == "aws" &&
 		identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" &&
 		identity.kind == "Kustomization"
@@ -549,13 +656,15 @@ func validateRendered(rendered []byte) error {
 		return err
 	}
 	writers := authorizationWriterIdentities(documents)
+	roles := renderedRoleIdentities(documents)
 	seen := make(map[resourceIdentity]bool, len(expectedRenderedHashes))
 	problems := make([]error, 0)
 	for _, document := range documents {
 		identity := identityOf(document)
 		hasAuthorizationSubstitution := isAuthorizationCapableDocument(document, identity) &&
-			containsFluxSubstitution(document)
-		if !hasAuthorizationSubstitution && !isAuthorizationResource(document, identity, writers) {
+			containsFluxSubstitution(document) &&
+			!hasDisabledFluxSubstitution(document)
+		if !hasAuthorizationSubstitution && !isAuthorizationResource(document, identity, writers, roles) {
 			continue
 		}
 		actual, hashErr := canonicalFingerprint(document)
