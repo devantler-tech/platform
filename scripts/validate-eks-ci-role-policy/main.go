@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,14 +14,18 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	roleManifestPath     = "k8s/providers/hetzner/apps/aws/role-eks-ci.yaml"
-	boundaryManifestPath = "k8s/providers/hetzner/apps/aws/policy-eks-ci-smoke-boundary.yaml"
-	appsOverlayPath      = "k8s/providers/hetzner/apps"
+	roleManifestPath          = "k8s/providers/hetzner/apps/aws/role-eks-ci.yaml"
+	boundaryManifestPath      = "k8s/providers/hetzner/apps/aws/policy-eks-ci-smoke-boundary.yaml"
+	appsOverlayPath           = "k8s/providers/hetzner/apps"
+	infrastructureOverlayPath = "k8s/providers/hetzner/infrastructure"
+	controllerOverlayPath     = "k8s/providers/hetzner/infrastructure/controllers"
+	rendererCommandTimeout    = 2 * time.Minute
 
 	expectedKubectlVersion   = "v1.36.2"
 	expectedKustomizeVersion = "v5.8.1"
@@ -30,6 +35,18 @@ const (
 	expectedInlinePolicySHA  = "60e3086a6d3dac0092ffe8264c04ebae783c0d38f19a3cf073ed8991085a4df8"
 	expectedBoundaryJSONSHA  = "e617004bce71a65f92934c4f7575d7559a290afe7a17363ce12db8ad7b519610"
 )
+
+// authorizationOverlayPaths lists every independently reconciled production
+// layer where an object can grant privileges to the aws/aws service account.
+var authorizationOverlayPaths = []string{
+	appsOverlayPath,
+	infrastructureOverlayPath,
+	controllerOverlayPath,
+}
+
+// commandExecutor makes the renderer orchestration independently testable
+// without weakening the production command and deadline contract.
+type commandExecutor func(context.Context, string, ...string) ([]byte, error)
 
 // resourceIdentity is the complete Kubernetes identity used to distinguish
 // approved authorization objects from aliases and same-named resources.
@@ -355,10 +372,10 @@ func validateRendererVersion(versionJSON []byte) error {
 	return nil
 }
 
-// commandOutput captures a repository-controlled command and includes its
-// output in failures so validation cannot degrade into an opaque false red.
-func commandOutput(name string, args ...string) ([]byte, error) {
-	command := exec.Command(name, args...) //nolint:gosec // Fixed binary and repository-controlled arguments.
+// commandOutput runs a repository-controlled command under the caller's
+// deadline and includes its output in failures instead of returning a false red.
+func commandOutput(ctx context.Context, name string, args ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, name, args...) //nolint:gosec // Fixed binary and repository-controlled arguments.
 	output, err := command.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, output)
@@ -366,10 +383,33 @@ func commandOutput(name string, args ...string) ([]byte, error) {
 	return output, nil
 }
 
+// renderAuthorizationLayers renders every independently reconciled production
+// layer and joins them into one YAML stream for fail-closed authorization checks.
+func renderAuthorizationLayers(ctx context.Context, repoRoot string, execute commandExecutor) ([]byte, error) {
+	var rendered bytes.Buffer
+	for _, overlayPath := range authorizationOverlayPaths {
+		layer, err := execute(ctx, "kubectl", "kustomize", filepath.Join(repoRoot, overlayPath))
+		if err != nil {
+			return nil, fmt.Errorf("render %s: %w", overlayPath, err)
+		}
+		if rendered.Len() > 0 {
+			if previous := rendered.Bytes(); previous[len(previous)-1] != '\n' {
+				_ = rendered.WriteByte('\n')
+			}
+			_, _ = rendered.WriteString("---\n")
+		}
+		_, _ = rendered.Write(layer)
+	}
+	return rendered.Bytes(), nil
+}
+
 // run executes the complete repository-root authorization validation and
 // returns a process-compatible status without mutating cluster state.
 func run(repoRoot string, stdout io.Writer, stderr io.Writer) int {
-	version, err := commandOutput("kubectl", "version", "--client", "-o", "json")
+	ctx, cancel := context.WithTimeout(context.Background(), rendererCommandTimeout)
+	defer cancel()
+
+	version, err := commandOutput(ctx, "kubectl", "version", "--client", "-o", "json")
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "EKS CI role policy: %v\n", err)
 		return 1
@@ -378,7 +418,7 @@ func run(repoRoot string, stdout io.Writer, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "EKS CI role policy: %v\n", err)
 		return 1
 	}
-	rendered, err := commandOutput("kubectl", "kustomize", filepath.Join(repoRoot, appsOverlayPath))
+	rendered, err := renderAuthorizationLayers(ctx, repoRoot, commandOutput)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "EKS CI role policy: %v\n", err)
 		return 1
