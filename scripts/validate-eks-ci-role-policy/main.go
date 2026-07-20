@@ -208,18 +208,42 @@ func identityOf(document map[string]any) resourceIdentity {
 	}
 }
 
-func isAuthorizationResource(identity resourceIdentity) bool {
+func targetsAWSServiceAccount(document map[string]any) bool {
+	subjects, ok := document["subjects"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawSubject := range subjects {
+		subject, ok := rawSubject.(map[string]any)
+		if !ok {
+			continue
+		}
+		if subject["kind"] == "ServiceAccount" &&
+			subject["name"] == "aws" && subject["namespace"] == "aws" {
+			return true
+		}
+	}
+	return false
+}
+
+func isAuthorizationResource(document map[string]any, identity resourceIdentity) bool {
 	if strings.HasPrefix(identity.apiVersion, "iam.aws.") {
 		return true
 	}
-	if identity.namespace != "aws" {
-		return false
+	if identity.apiVersion == "rbac.authorization.k8s.io/v1" {
+		if identity.namespace == "aws" &&
+			(identity.kind == "Role" || identity.kind == "RoleBinding") {
+			return true
+		}
+		// Follow the privileged subject across namespaces and cluster scope. The
+		// rendered allowlist then pins the one approved binding, including roleRef.
+		if (identity.kind == "RoleBinding" || identity.kind == "ClusterRoleBinding") &&
+			targetsAWSServiceAccount(document) {
+			return true
+		}
 	}
-	if identity.apiVersion == "rbac.authorization.k8s.io/v1" &&
-		(identity.kind == "Role" || identity.kind == "RoleBinding") {
-		return true
-	}
-	return identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" &&
+	return identity.namespace == "aws" &&
+		identity.apiVersion == "kustomize.toolkit.fluxcd.io/v1" &&
 		identity.kind == "Kustomization"
 }
 
@@ -232,7 +256,7 @@ func validateRendered(rendered []byte) error {
 	problems := make([]error, 0)
 	for _, document := range documents {
 		identity := identityOf(document)
-		if !isAuthorizationResource(identity) {
+		if !isAuthorizationResource(document, identity) {
 			continue
 		}
 		expected, ok := expectedRenderedHashes[identity]

@@ -161,6 +161,61 @@ metadata:
 	}
 }
 
+func TestValidateAuthorizationRejectsBindingsThatTargetAWSServiceAccount(t *testing.T) {
+	role, boundary, rendered := repositoryInputs(t)
+
+	tests := []struct {
+		name    string
+		binding string
+	}{
+		{
+			name: "RoleBinding outside AWS namespace",
+			binding: `---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aws-shadow
+  namespace: tenant-shadow
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aws-managed-resources
+subjects:
+  - kind: ServiceAccount
+    name: aws
+    namespace: aws
+`,
+		},
+		{
+			name: "cluster-wide binding",
+			binding: `---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aws-shadow
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: aws
+    namespace: aws
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mutated := append(append([]byte{}, rendered...), []byte(tt.binding)...)
+			err := validateAuthorization(role, boundary, mutated)
+			if err == nil || !strings.Contains(err.Error(), "unexpected rendered authorization resource") {
+				t.Fatalf("validateAuthorization() error = %v, want unexpected rendered authorization resource", err)
+			}
+		})
+	}
+}
+
 func TestValidateRendererVersionPinsKubectlAndKustomize(t *testing.T) {
 	valid := []byte(`{
   "clientVersion": {"gitVersion": "v1.36.2"},
