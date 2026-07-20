@@ -208,7 +208,7 @@ func identityOf(document map[string]any) resourceIdentity {
 	}
 }
 
-func targetsAWSServiceAccount(document map[string]any) bool {
+func includesAWSServiceAccountIdentity(document map[string]any) bool {
 	subjects, ok := document["subjects"].([]any)
 	if !ok {
 		return false
@@ -218,8 +218,16 @@ func targetsAWSServiceAccount(document map[string]any) bool {
 		if !ok {
 			continue
 		}
-		if subject["kind"] == "ServiceAccount" &&
-			subject["name"] == "aws" && subject["namespace"] == "aws" {
+		kind := fmt.Sprint(subject["kind"])
+		name := fmt.Sprint(subject["name"])
+		if kind == "ServiceAccount" && name == "aws" && subject["namespace"] == "aws" {
+			return true
+		}
+		if kind == "User" && name == "system:serviceaccount:aws:aws" {
+			return true
+		}
+		if kind == "Group" && (name == "system:serviceaccounts:aws" ||
+			name == "system:serviceaccounts" || name == "system:authenticated") {
 			return true
 		}
 	}
@@ -238,7 +246,7 @@ func isAuthorizationResource(document map[string]any, identity resourceIdentity)
 		// Follow the privileged subject across namespaces and cluster scope. The
 		// rendered allowlist then pins the one approved binding, including roleRef.
 		if (identity.kind == "RoleBinding" || identity.kind == "ClusterRoleBinding") &&
-			targetsAWSServiceAccount(document) {
+			includesAWSServiceAccountIdentity(document) {
 			return true
 		}
 	}

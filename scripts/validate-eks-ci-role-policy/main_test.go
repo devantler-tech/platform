@@ -161,7 +161,7 @@ metadata:
 	}
 }
 
-func TestValidateAuthorizationRejectsBindingsThatTargetAWSServiceAccount(t *testing.T) {
+func TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentity(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
 
 	tests := []struct {
@@ -201,6 +201,71 @@ subjects:
   - kind: ServiceAccount
     name: aws
     namespace: aws
+`,
+		},
+		{
+			name: "service account user identity",
+			binding: `---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aws-shadow
+  namespace: tenant-shadow
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aws-managed-resources
+subjects:
+  - kind: User
+    name: system:serviceaccount:aws:aws
+`,
+		},
+		{
+			name: "namespace service account group",
+			binding: `---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aws-shadow
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: Group
+    name: system:serviceaccounts:aws
+`,
+		},
+		{
+			name: "all service accounts group",
+			binding: `---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aws-shadow
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: Group
+    name: system:serviceaccounts
+`,
+		},
+		{
+			name: "all authenticated identities group",
+			binding: `---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: aws-shadow
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: Group
+    name: system:authenticated
 `,
 		},
 	}
