@@ -37,7 +37,17 @@ func repositoryInputs(t *testing.T) ([]byte, []byte, []byte) {
 
 func TestRenderAuthorizationLayersIncludesEveryProductionLayer(t *testing.T) {
 	repoRoot := filepath.Join("test", "repo")
-	renderedPaths := make([]string, 0, len(authorizationOverlayPaths))
+	wantOverlayPaths := []string{
+		"k8s/providers/hetzner/apps",
+		"k8s/providers/hetzner/infrastructure",
+		"k8s/providers/hetzner/infrastructure/controllers",
+		"k8s/clusters/prod/bootstrap",
+	}
+	if got, want := strings.Join(authorizationOverlayPaths, "\n"), strings.Join(wantOverlayPaths, "\n"); got != want {
+		t.Fatalf("authorization overlay paths = %q, want %q", got, want)
+	}
+
+	renderedPaths := make([]string, 0, len(wantOverlayPaths))
 	execute := func(ctx context.Context, name string, args ...string) ([]byte, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -57,12 +67,12 @@ func TestRenderAuthorizationLayersIncludesEveryProductionLayer(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode rendered authorization layers: %v", err)
 	}
-	if got, want := len(documents), len(authorizationOverlayPaths); got != want {
+	if got, want := len(documents), len(wantOverlayPaths); got != want {
 		t.Fatalf("rendered documents = %d, want %d", got, want)
 	}
 
-	wantPaths := make([]string, 0, len(authorizationOverlayPaths))
-	for _, overlayPath := range authorizationOverlayPaths {
+	wantPaths := make([]string, 0, len(wantOverlayPaths))
+	for _, overlayPath := range wantOverlayPaths {
 		wantPaths = append(wantPaths, filepath.Join(repoRoot, overlayPath))
 	}
 	if got, want := strings.Join(renderedPaths, "\n"), strings.Join(wantPaths, "\n"); got != want {

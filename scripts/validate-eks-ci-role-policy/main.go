@@ -25,6 +25,7 @@ const (
 	appsOverlayPath           = "k8s/providers/hetzner/apps"
 	infrastructureOverlayPath = "k8s/providers/hetzner/infrastructure"
 	controllerOverlayPath     = "k8s/providers/hetzner/infrastructure/controllers"
+	bootstrapOverlayPath      = "k8s/clusters/prod/bootstrap"
 	rendererCommandTimeout    = 2 * time.Minute
 
 	expectedKubectlVersion   = "v1.36.2"
@@ -42,6 +43,7 @@ var authorizationOverlayPaths = []string{
 	appsOverlayPath,
 	infrastructureOverlayPath,
 	controllerOverlayPath,
+	bootstrapOverlayPath,
 }
 
 // commandExecutor makes the renderer orchestration independently testable
