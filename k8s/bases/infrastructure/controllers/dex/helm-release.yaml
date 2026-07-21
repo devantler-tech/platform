@@ -156,3 +156,9 @@ spec:
             useLoginAsID: false
             orgs:
               - name: devantler-tech
+                # Actual Budget authenticates directly against Dex, without
+                # oauth2-proxy's allowed_groups layer. Restrict the shared
+                # GitHub connector to the same maintainer team so native OIDC
+                # apps cannot be accessed by every organization member.
+                teams:
+                  - maintainers
