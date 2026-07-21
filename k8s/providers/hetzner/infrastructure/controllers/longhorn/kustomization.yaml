@@ -9,7 +9,6 @@ resources:
   # the chart's `longhorn` class is demoted to non-default in helm-release.yaml.
   - storage-class-longhorn-wffc.yaml
   - cilium-network-policy.yaml
-  - http-route.yaml
   # CPU-only LimitRange: restores a CPU limit (dropped when longhorn-system was
   # excluded from the Kyverno limit policies on 2026-06-20) so longhorn pods pass
   # kubescape C-0270, while keeping the memory limit unset to preserve the
