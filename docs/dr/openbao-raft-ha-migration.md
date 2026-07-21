@@ -12,7 +12,7 @@
 ## Why this can't be a values flip
 
 | | Current | Target |
-|---|---|---|
+| --- | --- | --- |
 | Mode | `server.standalone.enabled: true` | `server.ha.enabled` + `ha.raft.enabled` |
 | Storage | `storage "file"` (`/openbao/data`) | `storage "raft"` (Integrated Storage) |
 | Replicas | 1 (`openbao_replicas: "1"`) | 3 (Raft quorum minimum) |
@@ -152,7 +152,7 @@ both backends mounted), so the snapshot-restore path above is preferred.
 ## Risks (data-loss scenarios) and mitigations
 
 | Risk | Mitigation |
-|---|---|
+| --- | --- |
 | **Flip values without migrating → empty cluster.** | This runbook: snapshot/backup first, init once, restore. Never merge the values flip standalone. |
 | **Double-init split-brain** (init races on >1 pod → two 1-node clusters). | `bao operator init` exactly once on openbao-0; let others `retry_join`. |
 | **Unseal-before-join** (a follower unsealed with mismatched keys before joining corrupts membership). | Join first (`retry_join` handles it), then unseal followers with the **new** key. |

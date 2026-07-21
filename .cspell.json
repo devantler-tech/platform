@@ -10,8 +10,5 @@
   ],
   "language": "en",
   "version": "0.2",
-  "words": [
-    "fluxcd",
-    "traefik"
-  ]
+  "words": ["fluxcd", "traefik"]
 }
