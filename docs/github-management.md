@@ -32,7 +32,7 @@ Three tiers, each in its conventional place — controller in `controllers/`, it
 CRs one tier later in `infrastructure/`, the workload in `apps/`:
 
 | Piece | Where | Notes |
-| --- | --- | --- |
+|---|---|---|
 | Crossplane core | `k8s/providers/hetzner/infrastructure/controllers/crossplane/` | HelmRelease; prod-only. `provider.defaultActivations: []` keeps unused provider CRDs inactive. Installs the pkg.crossplane.io CRDs. |
 | Provider + activation policy | `k8s/providers/hetzner/infrastructure/crossplane/` | The `Provider` package + `DeploymentRuntimeConfig` + `ManagedResourceActivationPolicy` (namespaced MRDs only). One tier after the controller (needs its CRDs), like Coroot/Flagger CRs. Establishes the namespaced github CRDs. |
 | The `github-config` app (platform scaffolding) | `k8s/bases/apps/github-config/` | namespace, SA, least-privilege `Role`, the namespaced `SecretStore`, and the cosign-verified `OCIRepository` + `Kustomization`. Applied by the existing `apps` Flux Kustomization. Prod-only in practice (the docker provider deploys no apps). The package is **public**, so the OCIRepository pulls anonymously — no ghcr pull credential. |

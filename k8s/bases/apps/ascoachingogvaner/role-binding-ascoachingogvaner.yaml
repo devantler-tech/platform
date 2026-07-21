@@ -10,6 +10,6 @@ roleRef:
   kind: ClusterRole
   name: tenant-edit
 subjects:
-  - kind: ServiceAccount
-    name: ascoachingogvaner
-    namespace: ascoachingogvaner
+- kind: ServiceAccount
+  name: ascoachingogvaner
+  namespace: ascoachingogvaner

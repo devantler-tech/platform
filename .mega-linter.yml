@@ -59,6 +59,9 @@ FILTER_REGEX_EXCLUDE: (megalinter-reports/.*|\.megalinter_github_conf/.*|\.agent
 BASH_SHFMT_ARGUMENTS:
   - -i
   - "2"
+  # -ci keeps `case` patterns indented inside the switch, which is how every script here is
+  # written. Without it shfmt de-indents them and CI commits the reflow.
+  - -ci
 
 DISABLE_LINTERS:
   # gitleaks is deprecated in MegaLinter's own descriptor, which recommends exactly this entry and
@@ -98,6 +101,13 @@ DISABLE_ERRORS_LINTERS:
 SPELL_CSPELL_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
 SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
 MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: \.agents/.*
+
+# prettier must not reformat the manifest tree. It is owned by kustomize, Flux and ksail, and it
+# contains vendored upstream operator YAML — prettier rewrote kubevirt-operator.yaml across 16,493
+# lines and CI committed that. yamllint still checks all 736 of those files for syntax, and
+# kubeconform validates them against the real CRD schemas in the "Validate manifests" job. Neither
+# of those rewrites the file.
+YAML_PRETTIER_FILTER_REGEX_EXCLUDE: k8s/.*
 
 # A link checker talking to the public internet from a shared runner will occasionally lose a
 # connection to a site that is perfectly healthy — https://fluxcd.io/ reset once and reddened the

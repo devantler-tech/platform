@@ -6,11 +6,11 @@
 require_flux_ghcr_yaml_tool() {
   local yq_version
 
-  if ! command -v yq >/dev/null 2>&1 ||
-    ! yq_version="$(yq --version 2>/dev/null)" ||
-    [[ "${yq_version}" != *" version v4."* ]] ||
-    ! printf 'probe: ok\n' |
-    yq -er '.probe | select(tag == "!!str")' - >/dev/null 2>&1; then
+  if ! command -v yq >/dev/null 2>&1 \
+    || ! yq_version="$(yq --version 2>/dev/null)" \
+    || [[ "${yq_version}" != *" version v4."* ]] \
+    || ! printf 'probe: ok\n' \
+      | yq -er '.probe | select(tag == "!!str")' - >/dev/null 2>&1; then
     echo "::error::Mike Farah yq v4 is required by the GHCR credential bridge; install it with 'brew install yq' before running production lifecycle or recovery commands." >&2
     return 127
   fi
@@ -65,7 +65,7 @@ write_flux_ghcr_credentials() {
       else
         {username: $decoded.username, password: $decoded.password}
       end
-  ' "${docker_config}" >"${output_file}"; then
+  ' "${docker_config}" > "${output_file}"; then
     echo "::error::The SOPS GHCR pull credential is not a valid Docker config with non-empty, consistent ghcr.io username/password and auth fields."
     return 1
   fi
@@ -82,7 +82,7 @@ flux_ghcr_revision() {
   yq -er '
     .stringData.ghcr_dockerconfigjson
     | select(tag == "!!str" and length > 0 and test("^ENC\\["))
-  ' "${secret_file}" |
-    shasum -a 256 |
-    awk '{print $1}'
+  ' "${secret_file}" \
+    | shasum -a 256 \
+    | awk '{print $1}'
 }

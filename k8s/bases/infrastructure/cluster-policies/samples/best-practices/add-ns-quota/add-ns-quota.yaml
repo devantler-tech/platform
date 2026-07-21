@@ -15,44 +15,44 @@ metadata:
       a new Namespace is created.
 spec:
   rules:
-    - name: generate-resourcequota
-      match:
-        any:
-          - resources:
-              kinds:
-                - Namespace
-      generate:
-        apiVersion: v1
-        kind: ResourceQuota
-        name: default-resourcequota
-        synchronize: true
-        namespace: "{{request.object.metadata.name}}"
-        data:
-          spec:
-            hard:
-              requests.cpu: "4"
-              requests.memory: "16Gi"
-              limits.cpu: "4"
-              limits.memory: "16Gi"
-    - name: generate-limitrange
-      match:
-        any:
-          - resources:
-              kinds:
-                - Namespace
-      generate:
-        apiVersion: v1
-        kind: LimitRange
-        name: default-limitrange
-        synchronize: true
-        namespace: "{{request.object.metadata.name}}"
-        data:
-          spec:
-            limits:
-              - default:
-                  cpu: 500m
-                  memory: 1Gi
-                defaultRequest:
-                  cpu: 200m
-                  memory: 256Mi
-                type: Container
+  - name: generate-resourcequota
+    match:
+      any:
+      - resources:
+          kinds:
+          - Namespace
+    generate:
+      apiVersion: v1
+      kind: ResourceQuota
+      name: default-resourcequota
+      synchronize: true
+      namespace: "{{request.object.metadata.name}}"
+      data:
+        spec:
+          hard:
+            requests.cpu: '4'
+            requests.memory: '16Gi'
+            limits.cpu: '4'
+            limits.memory: '16Gi'
+  - name: generate-limitrange
+    match:
+      any:
+      - resources:
+          kinds:
+          - Namespace
+    generate:
+      apiVersion: v1
+      kind: LimitRange
+      name: default-limitrange
+      synchronize: true
+      namespace: "{{request.object.metadata.name}}"
+      data:
+        spec:
+          limits:
+          - default:
+              cpu: 500m
+              memory: 1Gi
+            defaultRequest:
+              cpu: 200m
+              memory: 256Mi
+            type: Container

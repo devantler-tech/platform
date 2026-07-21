@@ -5,11 +5,11 @@ set -euo pipefail
 set +x
 
 case "${1:-} ${2:-}" in
-"cluster create" | "cluster update" | "workload push" | "workload reconcile") ;;
-*)
-  echo "Usage: $0 {cluster create|cluster update|workload push|workload reconcile}" >&2
-  exit 64
-  ;;
+  "cluster create" | "cluster update" | "workload push" | "workload reconcile") ;;
+  *)
+    echo "Usage: $0 {cluster create|cluster update|workload push|workload reconcile}" >&2
+    exit 64
+    ;;
 esac
 if (($# != 2)); then
   echo "Usage: $0 {cluster create|cluster update|workload push|workload reconcile}" >&2
