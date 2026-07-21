@@ -768,6 +768,50 @@ spec:
 	}
 }
 
+// TestIndirectAuthorizationPolicyCatchesIAMPolicySelectors pins the kinds that
+// CARRY the protected permissions rather than pointing at them.
+//
+// eks-ci-smoke-boundary is an iam.aws.m.upbound.io/v1beta1 Policy, and its
+// spec.forProvider.policy IS the permissions boundary. A legacy ClusterPolicy
+// mutating that field could widen the boundary on the next admission, so it must
+// join the aggregate surface — otherwise the change never moves the validator
+// hash and no approval is ever asked for.
+func TestIndirectAuthorizationPolicyCatchesIAMPolicySelectors(t *testing.T) {
+	for _, selector := range []string{
+		"iam.aws.m.upbound.io/v1beta1/Policy",
+		"iam.aws.upbound.io/v1beta1/Policy",
+		"Policy",
+		"RolePolicyAttachment",
+	} {
+		documents, err := decodeDocuments([]byte(`apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: widen-boundary
+spec:
+  rules:
+    - name: widen
+      match:
+        any:
+          - resources:
+              kinds: ["` + selector + `"]
+              namespaces: ["aws"]
+      mutate:
+        patchStrategicMerge:
+          spec:
+            forProvider:
+              policy: '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"*","Resource":"*"}]}'
+`))
+		if err != nil || len(documents) != 1 {
+			t.Fatalf("decode policy for %q: documents=%d error=%v", selector, len(documents), err)
+		}
+		if !isIndirectAuthorizationPolicy(documents[0], identityOf(documents[0])) {
+			t.Fatalf("isIndirectAuthorizationPolicy() = false for IAM selector %q — a rule mutating "+
+				"spec.forProvider.policy would widen the permissions boundary without moving the "+
+				"validator hash", selector)
+		}
+	}
+}
+
 // TestValidateAuthorizationAcceptsCommittedPolicy proves the approved baseline.
 func TestValidateAuthorizationAcceptsCommittedPolicy(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
@@ -1062,6 +1106,32 @@ func TestWorkflowRunsValidatorForAuthorizationChanges(t *testing.T) {
 	} {
 		if !strings.Contains(contract, required) {
 			t.Errorf("CI workflow is missing %q", required)
+		}
+	}
+}
+
+// TestManualDeployIsGatedByTheValidator closes the way AROUND the CI gate.
+//
+// ci.yaml only runs the validator on pull_request and merge_group, and its
+// deploy-prod job needs it. cd.yaml is the documented direct-push-to-main path
+// and has neither event, so before this it could publish and reconcile the
+// manifests with no authorization check at all — dispatching CD after a direct
+// push was a complete bypass, not a gap in coverage.
+func TestManualDeployIsGatedByTheValidator(t *testing.T) {
+	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github/workflows/cd.yaml"))
+	if err != nil {
+		t.Fatalf("read CD workflow: %v", err)
+	}
+	contract := string(workflow)
+	for _, required := range []string{
+		"validate-eks-authorization:",
+		"go test ./scripts/validate-eks-ci-role-policy",
+		"go run ./scripts/validate-eks-ci-role-policy .",
+		"needs: [validate-eks-authorization]",
+	} {
+		if !strings.Contains(contract, required) {
+			t.Errorf("CD workflow is missing %q — the manual deploy path bypasses the "+
+				"EKS authorization gate that the merge-queue path cannot skip", required)
 		}
 	}
 }

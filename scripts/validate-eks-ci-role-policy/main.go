@@ -397,6 +397,41 @@ func isRBACAuthorizationKind(kind string) bool {
 		strings.HasSuffix(kind, "/RoleBinding") || strings.HasSuffix(kind, "/ClusterRoleBinding")
 }
 
+// isAWSIAMAuthorizationKind recognizes the Crossplane IAM kinds that CARRY the
+// protected permissions rather than merely pointing at them: the role itself,
+// the boundary policy whose document is the permission set, and the attachments
+// that decide which policies apply to it.
+//
+// These are the kinds actually under guard — the role and the boundary policy
+// are both in the protected surface — so a Kyverno selector reaching them is an
+// authorization selector by definition. Missing them let a legacy ClusterPolicy
+// match iam.aws.m.upbound.io/v1beta1/Policy and mutate spec.forProvider.policy,
+// widening the permissions boundary on the next admission without moving the
+// validator hash.
+//
+// Bare kind names are accepted even though "Policy" and "Role" are ambiguous
+// across API groups. The consequence of over-matching is that a policy joins the
+// aggregate surface and the expected hash must be refreshed; the consequence of
+// under-matching is a silent boundary widening. This fails closed on purpose.
+func isAWSIAMAuthorizationKind(kind string) bool {
+	if strings.HasPrefix(kind, "iam.aws.") {
+		return true
+	}
+	targets := []string{
+		"Policy",
+		"RolePolicyAttachment",
+		"UserPolicyAttachment",
+		"GroupPolicyAttachment",
+		"PolicyAttachment",
+	}
+	for _, target := range targets {
+		if kind == target || strings.HasSuffix(kind, "/"+target) {
+			return true
+		}
+	}
+	return false
+}
+
 // isFluxSourceResource recognizes artifacts that a Flux Kustomization or
 // HelmRelease can consume independently of the handoff object itself.
 func isFluxSourceResource(identity resourceIdentity) bool {
@@ -428,7 +463,7 @@ func isLegacyKyvernoPolicy(identity resourceIdentity) bool {
 // isAuthorizationKind recognizes every kind whose contents or controller can
 // redirect, emit, or grant the protected authorization surface.
 func isAuthorizationKind(kind string) bool {
-	if isRBACAuthorizationKind(kind) {
+	if isRBACAuthorizationKind(kind) || isAWSIAMAuthorizationKind(kind) {
 		return true
 	}
 	targets := []string{
@@ -975,6 +1010,18 @@ func validateRendered(rendered []byte) error {
 			problems = append(problems, fmt.Errorf("missing rendered authorization resource: %+v", identity))
 		}
 	}
+	// substitutionProblems are DIAGNOSTIC, not a control, and that is deliberate.
+	// The control is surface MEMBERSHIP: a resource carrying an unresolved
+	// substitution is forced into the aggregate surface above, so its text —
+	// including the `${…}` literal — is covered by the fingerprint and cannot
+	// change without moving it. Emitting the notes only alongside a mismatch is
+	// what keeps them useful: they explain a hash that moved.
+	//
+	// Measured 2026-07-21: promoting them to unconditional errors fails the
+	// committed, approved tree on THIRTY-plus HelmReleases, because post-build
+	// substitution is the platform's normal configuration mechanism and
+	// containsFluxSubstitution matches a document anywhere. A validator that is
+	// red on the approved state is not a stricter gate, it is a disabled one.
 	sort.Strings(surfaceEntries)
 	canonicalSurface, marshalErr := json.Marshal(surfaceEntries)
 	if marshalErr != nil {
