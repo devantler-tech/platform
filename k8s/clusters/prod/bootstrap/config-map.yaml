@@ -7,6 +7,8 @@ metadata:
 data:
   cluster_name: prod
   domain: platform.devantler.tech
+  # Escaped form of domain for external-dns --regex-domain-filter.
+  external_dns_domain_regex: 'platform\.devantler\.tech'
   github_app_client_id: Iv23limfvbk93bAXZI6b
   issuer_group: cert-manager.io
   issuer_kind: ClusterIssuer
