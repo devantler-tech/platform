@@ -86,8 +86,9 @@ spec:
         # team, 'maintainers' (the old 'platform' team was consolidated into
         # it), and Dex returns groups=[devantler-tech:maintainers]; gating on a
         # non-existent 'platform' team rejects every login as "unauthorized".
-        # Drop allowed_groups for an org-only gate (Dex's connector already
-        # restricts to the devantler-tech org).
+        # Keep allowed_groups as defense in depth even though Dex's GitHub
+        # connector is also narrowed to the same maintainer team for native-OIDC
+        # apps that do not route through oauth2-proxy.
         scope = "openid email profile groups"
         allowed_groups = ["devantler-tech:maintainers"]
         # email_domains = ["*"] is intentional: GitHub (via Dex) does not
