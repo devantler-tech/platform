@@ -19,6 +19,9 @@ concurrency:
 jobs:
   deploy-prod:
     name: 🚀 Deploy to Production
+    # workflow_dispatch lets an operator choose a ref. Only deploy from main
+    # so prod secrets never flow into branch-controlled workflow/action code.
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     environment: prod
     permissions:
@@ -30,6 +33,7 @@ jobs:
       - name: 📑 Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: refs/heads/main
           persist-credentials: false
 
       - name: 🚀 Deploy to Production
