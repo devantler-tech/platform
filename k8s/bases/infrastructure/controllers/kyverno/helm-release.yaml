@@ -103,12 +103,13 @@ spec:
       # (no eviction), and with replicas: 2 + the PDB a Recreate fallback or an OOM
       # only ever takes one replica, so the admission path stays up. Limit stays
       # far under auto-vpa's 6Gi maxAllowed ceiling.
-      resources:
-        requests:
-          cpu: 100m
-          memory: 256Mi
-        limits:
-          memory: 1Gi
+      container:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 1Gi
       podSecurityContext:
         runAsNonRoot: true
         seccompProfile:
