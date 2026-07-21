@@ -841,6 +841,9 @@ spec:
               path "secret/data/infrastructure/ghcr/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/data/infrastructure/velero/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/data/apps/fleetdm/*" {
                 capabilities = ["create", "update", "read"]
               }
