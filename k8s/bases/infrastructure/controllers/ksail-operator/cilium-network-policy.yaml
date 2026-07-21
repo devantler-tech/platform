@@ -13,6 +13,15 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
+    # Authenticated, team-authorized traffic via oauth2-proxy/auth-proxy.
+    - fromEndpoints:
+        - matchLabels:
+            app: auth-proxy
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
     # Intra-namespace (e.g. leader-election peers).
     - fromEndpoints:
         - matchLabels:

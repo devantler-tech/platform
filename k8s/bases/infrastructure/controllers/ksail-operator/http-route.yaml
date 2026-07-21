@@ -1,6 +1,7 @@
-# The operator serves the SPA and the REST API (including the OIDC login and
-# /api/v1/auth/callback) on one origin, so the route backends directly to the
-# operator Service -- no oauth2-proxy in front (the operator owns its own OIDC).
+# The operator serves the SPA and REST API (including its native OIDC callback)
+# on one origin. Public traffic still goes through oauth2-proxy first so the
+# shared devantler-tech:maintainers team gate authorizes users before auth-proxy
+# forwards requests to the operator Service.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -27,12 +28,18 @@ spec:
   hostnames:
     - ksail.${domain}
   rules:
-    - backendRefs:
-        - name: ksail-operator
-          port: 8080
-      filters:
+    - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://ksail.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
               - name: Strict-Transport-Security
                 value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80
