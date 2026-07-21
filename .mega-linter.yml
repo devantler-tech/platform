@@ -1,34 +1,41 @@
 # MegaLinter configuration for the platform repository.
 #
 # WHY THIS FILE EXISTS
-# Without it MegaLinter runs its whole default linter set, with VALIDATE_ALL_CODEBASE, over
-# every path — including k8s/, an ~900-file GitOps manifest tree it knows nothing about. The
-# result was a permanently red gate that no pull request could clear: 8043 cspell, 287 checkov,
-# 168 lychee, 17 jscpd, 2 gitleaks, and one each from trivy, v8r and zizmor. Because the job is
-# paths-filtered onto the Go/root validation path, and almost every pull request here changes
-# only k8s/**, the job was skipped and that baseline stayed invisible until someone touched a
-# root file — and then landed on them in full. See #2780.
+# The org's validate-go-project workflow runs MegaLinter with `VALIDATE_ALL_CODEBASE: true`, set in
+# the workflow's env and therefore not overridable from here. With no repository configuration at
+# all, that meant the entire default linter set ran against the entire tree — including k8s/, an
+# ~900-file GitOps manifest tree. The result was a gate carrying ~8,500 findings that no pull
+# request could clear: 8043 cspell, 287 checkov, 168 lychee, 17 jscpd, 2 gitleaks, and one each
+# from trivy, v8r and zizmor. See #2780.
 #
-# THE SCOPING PRINCIPLE — displacement, not silence
-# k8s/** is not unchecked. Every pull request already runs four gates over it, each stricter
-# than the generic linter it displaces here:
-#   * "Validate manifests (local + prod overlays)" — kubeconform schema validation
-#   * "Validate cluster policies"                  — Kyverno CLI
-#   * "Scan manifests (Kubescape NSA)"             — hard gate, posture programme (#2447)
-#   * "Validate naming conventions"
-# Pointing cspell, lychee, checkov, trivy and v8r at that same tree adds a second and weaker
-# opinion plus thousands of findings. Everywhere else — Go, workflows, scripts, docs, root
-# config — every linter below stays fully enforcing.
+# ⚠️ This gate is NOT paths-filtered away from k8s-only pull requests, contrary to what #2780
+# assumed. The workflow's `lintable` filter includes `**/*.yaml`, so a manifest-only change runs it
+# — measured on #2785, whose whole diff is one HelmRelease and whose mega-linter check ran and
+# failed while golangci-lint skipped. Every pull request on this repository was landing red.
 #
-# .agents/skills/** is machine-synced daily from devantler-tech/agent-skills by
-# .github/workflows/update-skills.yaml. Findings there cannot be fixed in this repository; the
-# next sync overwrites them.
+# WHAT IS SCOPED, AND WHAT IS DELIBERATELY NOT
+# Prose, spelling and link checkers are scoped off k8s/ and .agents/: they have no useful opinion
+# about Kubernetes manifests, and .agents/skills/** is machine-synced daily from
+# devantler-tech/agent-skills by .github/workflows/update-skills.yaml, so findings there cannot be
+# fixed here — the next sync overwrites them.
+#
+# The SECURITY scanners are NOT scoped off k8s/, and that is deliberate. It is tempting to argue
+# the Kubescape NSA gate and the Kyverno policy suite already own that tree, but they do not own
+# what checkov and trivy see there:
+#   * Kubescape's own exception CRs turn off C-0013/C-0016/C-0055/C-0211 (runAsNonRoot,
+#     capability drops, privilege escalation) and C-0268..C-0271 (requests/limits) CLUSTER-WIDE,
+#     precisely because it scans the stored spec where Kyverno's injected fields are absent.
+#   * The Kyverno pod-security policies match `kinds: [Pod]`, and k8s/ contains no Pod objects.
+#   * `ksail workload scan` runs once without `--config`, so it covers the local overlay only —
+#     k8s/providers/hetzner/** is never Kubescape-scanned at all.
+# checkov and trivy are therefore the ONLY static checks that would catch a committed workload
+# shipping `privileged: true` or no resource limits. Removing them would be a real regression, so
+# they keep scanning k8s/ and instead go in DISABLE_ERRORS_LINTERS below, where every finding is
+# still reported on every pull request. #2787 tracks driving them to zero.
 
-APPLY_FIXES: all
 FLAVOR_SUGGESTIONS: false
 IGNORE_GITIGNORED_FILES: true
 REPORTERS_MARKDOWN_SUMMARY_TYPE: sections
-LINTER_RULES_PATH: .
 
 EXCLUDED_DIRECTORIES:
   - megalinter-reports
@@ -36,35 +43,42 @@ EXCLUDED_DIRECTORIES:
   - .jscpd
 
 DISABLE_LINTERS:
-  # gitleaks is deprecated by its own author and superseded by betterleaks, which runs in this
-  # same job and is green. MegaLinter prints the deprecation notice on every run and recommends
-  # exactly this entry. Secret scanning is not weakened — betterleaks, secretlint and trufflehog
-  # all stay enabled.
+  # gitleaks is deprecated in MegaLinter's own descriptor, which recommends exactly this entry and
+  # prints the notice on every run. Its 2 findings were triaged before removing it: both are
+  # `generic-api-key` hits on ExternalSecret/PushSecret *key references* — Vault paths naming where
+  # a secret lives, not secret material. betterleaks, secretlint and trufflehog remain enabled;
+  # note they report 0 on this tree, so they are not asserted to be equivalent to gitleaks, only
+  # to be the scanners this repository continues to gate on.
   - REPOSITORY_GITLEAKS
 
 DISABLE_ERRORS_LINTERS:
-  # Both keep RUNNING and REPORTING every finding on every pull request; they just do not fail
-  # the build while the tracked backlog is worked off. Nothing is thresholded and nothing is
-  # hidden.
+  # Every linter here keeps RUNNING and REPORTING every finding on every pull request. It simply
+  # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
+  # path is hidden, and each entry names the issue that removes it.
   #
-  # jscpd: 17 clones, all in test files — scripts/validate-eks-ci-role-policy/main_test.go (Go,
-  # tracked by #2777) and two scripts/tests/*.py files that are themselves migration targets off
-  # Python (#2778).
+  # checkov (286) and trivy (1): Kubernetes misconfiguration in k8s/, which the section above
+  # explains is NOT covered elsewhere. Tracked by #2787.
+  - REPOSITORY_CHECKOV
+  - REPOSITORY_TRIVY
+  # jscpd (17): all in test files — scripts/validate-eks-ci-role-policy/main_test.go (#2777) and
+  # two scripts/tests/*.py files that are themselves migration targets off Python (#2778).
   - COPYPASTE_JSCPD
-  # cspell: the k8s/ and .agents/ exclusions below take 8043 findings down to 1616. The rest are
-  # product, tool and hostname spellings that need a curated project dictionary rather than
-  # per-file fixes — #2786 tracks building it and removing this entry.
+  # cspell (1616 after the exclusions below, from 8043): product, tool and hostname spellings that
+  # need a curated project dictionary rather than per-file fixes. Tracked by #2786.
   - SPELL_CSPELL
 
 # ---------------------------------------------------------------------------------------------
-# Per-linter scoping
+# Per-linter scoping. Only list_of_files linters honour *_FILTER_REGEX_EXCLUDE; project-mode
+# linters (checkov, trivy, jscpd) must be scoped through their own arguments instead.
 
 SPELL_CSPELL_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
 SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
+MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: \.agents/.*
+
 # A link checker talking to the public internet from a shared runner will occasionally lose a
 # connection to a site that is perfectly healthy — https://fluxcd.io/ reset once and reddened the
-# whole gate while answering 200 from here seconds later. Retry and slow down rather than adding
-# a live site to .lycheeignore, which would stop checking it for real.
+# whole gate while answering 200 from here seconds later. Retry and slow down rather than adding a
+# live site to .lycheeignore, which would stop checking it for real.
 SPELL_LYCHEE_ARGUMENTS:
   - --max-retries
   - "5"
@@ -72,38 +86,30 @@ SPELL_LYCHEE_ARGUMENTS:
   - "3"
   - --max-concurrency
   - "8"
-MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: \.agents/.*
 
-# v8r resolves a schema by FILE NAME, so it matched the three CNPG `Cluster` custom resources
-# named cluster.yaml — and ksail.prod.yaml — against unrelated schemas that reject apiVersion,
-# kind, metadata and spec outright. kubeconform validates every k8s/** manifest against the real
-# CRD schemas in the "Validate manifests" job, and ksail validates its own config.
+# v8r resolves a schema by FILE NAME, so it matched the three CNPG `Cluster` custom resources named
+# cluster.yaml — and ksail.prod.yaml — against unrelated schemas that reject apiVersion, kind,
+# metadata and spec outright. kubeconform validates every k8s/** manifest against the real CRD
+# schemas in the "Validate manifests" job, and ksail validates its own config.
 YAML_V8R_FILTER_REGEX_EXCLUDE: (k8s/.*|ksail\..*\.yaml|ksail\.yaml)
 
-# checkov: 216 of its 287 findings are in tests/ (deliberately minimal fixtures that exist to
-# prove one controller behaviour each) and 70 in k8s/, where Kubescape's NSA hard gate and the
-# Kyverno policy suite own posture. It stays fully enabled on workflows and every other path —
-# that is where it earns its keep.
-# Do NOT anchor these. checkov's --skip-path is documented as "word boundaries are not implicit",
-# i.e. the pattern is searched anywhere in the path, and it is applied to a form that matches
-# neither `^k8s/` nor `^/?k8s/` — both were measured against real runs and skipped nothing (287
-# findings went to 286, and that one was the inline skip below, not a path skip).
+# tests/ holds Kyverno policy test fixtures — resources that are DELIBERATELY non-compliant so a
+# `kyverno test` run can prove the policy rejects them. Reporting them for the very violations they
+# exist to demonstrate is noise by construction, and nothing there is deployed (no kustomization
+# under k8s/ references it). This is the one exclusion, and it is not a security trade.
+#
+# Do NOT anchor the checkov pattern. Its --skip-path is documented as "word boundaries are not
+# implicit", i.e. searched anywhere in the path; both `^tests/` and `^/?tests/` were measured
+# against real runs and skipped nothing.
 REPOSITORY_CHECKOV_ARGUMENTS:
   - --skip-path
-  - k8s/
-  - --skip-path
   - tests/
-
-# trivy: its single finding is Kubernetes misconfiguration, the surface Kubescape already gates.
-# Dependency vulnerability scanning over go.mod is untouched and still fails the build.
 REPOSITORY_TRIVY_ARGUMENTS:
-  - --skip-dirs
-  - k8s
   - --skip-dirs
   - tests
 
-# zizmor aborts with "fatal: no audit was performed" because MegaLinter strips GITHUB_TOKEN and
-# its artipacked audit then 401s against the GitHub API. Handing it the token makes the audit run
-# instead of disabling the linter.
+# zizmor aborts with "fatal: no audit was performed" because MegaLinter strips GITHUB_TOKEN and its
+# artipacked audit then 401s against the GitHub API. Handing it the token makes the audit run
+# instead of disabling the linter. Measured: 1 error -> 0, audit performed.
 ACTION_ZIZMOR_UNSECURED_ENV_VARIABLES:
   - GITHUB_TOKEN

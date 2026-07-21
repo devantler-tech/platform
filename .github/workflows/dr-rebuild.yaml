@@ -36,11 +36,11 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type REBUILD-PROD to confirm a from-zero rebuild of the production cluster'
+        description: "Type REBUILD-PROD to confirm a from-zero rebuild of the production cluster"
         required: true
         type: string
       restore:
-        description: 'Restore data after the rebuild (Velero resources + OpenBao raft snapshot)'
+        description: "Restore data after the rebuild (Velero resources + OpenBao raft snapshot)"
         required: false
         type: boolean
         default: true

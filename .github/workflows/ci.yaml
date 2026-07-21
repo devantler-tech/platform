@@ -537,7 +537,15 @@ jobs:
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [changes, validate-eks-authorization, validate, naming, validate-talos, deploy-prod]
+    needs:
+      [
+        changes,
+        validate-eks-authorization,
+        validate,
+        naming,
+        validate-talos,
+        deploy-prod,
+      ]
     if: always()
     permissions: {}
     steps:
