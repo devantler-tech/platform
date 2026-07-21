@@ -1046,6 +1046,7 @@ spec:
                     user_claim="email" \
                     groups_claim="groups" \
                     oidc_scopes="openid,email,profile,groups" \
+                    bound_claims='{"groups":["devantler-tech:maintainers"]}' \
                     policies="vault-admin" \
                     ttl=8h
 
