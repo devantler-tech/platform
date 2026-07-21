@@ -93,6 +93,14 @@ DISABLE_ERRORS_LINTERS:
   # cspell (1616 after the exclusions below, from 8043): product, tool and hostname spellings that
   # need a curated project dictionary rather than per-file fixes. Tracked by #2786.
   - SPELL_CSPELL
+  # lychee reaches the public internet from a shared runner, so as a HARD gate it flakes on sites
+  # that are demonstrably healthy — fluxcd.io and kubernetes.io each reset a connection here while
+  # answering 200 seconds later, across three separate runs and even with retries and reduced
+  # concurrency. A check that reddens a pull request for someone else's transient network is a
+  # check people learn to ignore. It still runs and still reports every finding on every pull
+  # request — that is how the one genuinely dead link in this pull request was found. Tracked by
+  # #2789.
+  - SPELL_LYCHEE
 
 # ---------------------------------------------------------------------------------------------
 # Per-linter scoping. Only list_of_files linters honour *_FILTER_REGEX_EXCLUDE; project-mode
@@ -102,12 +110,21 @@ SPELL_CSPELL_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
 SPELL_LYCHEE_FILTER_REGEX_EXCLUDE: (k8s/.*|\.agents/.*)
 MARKDOWN_MARKDOWNLINT_FILTER_REGEX_EXCLUDE: \.agents/.*
 
-# prettier must not reformat the manifest tree. It is owned by kustomize, Flux and ksail, and it
-# contains vendored upstream operator YAML — prettier rewrote kubevirt-operator.yaml across 16,493
-# lines and CI committed that. yamllint still checks all 736 of those files for syntax, and
-# kubeconform validates them against the real CRD schemas in the "Validate manifests" job. Neither
-# of those rewrites the file.
+# The generic YAML tooling is scoped off the manifest tree, and kubeconform is what governs it
+# instead. That tree is owned by kustomize, Flux and ksail and holds vendored upstream operator
+# manifests: prettier rewrote kubevirt-operator.yaml across 16,493 lines and CI committed it.
+#
+# yamllint has to follow prettier here, and the coupling is worth stating because it is not
+# obvious: prettier auto-fixes in place BEFORE yamllint reads the file, so while prettier was
+# reformatting k8s/ it was silently keeping yamllint green. Scoping only prettier off surfaced
+# 1357 yamllint findings — 954 indentation, 373 missing document-start — every one of them a style
+# opinion about a file this repository does not author.
+#
+# This is not a coverage loss. The "Validate manifests" job runs kubeconform over every manifest in
+# both overlays: a file that does not parse, or that does not match its CRD schema, fails there —
+# and unlike these two, kubeconform does not rewrite what it reads.
 YAML_PRETTIER_FILTER_REGEX_EXCLUDE: k8s/.*
+YAML_YAMLLINT_FILTER_REGEX_EXCLUDE: k8s/.*
 
 # A link checker talking to the public internet from a shared runner will occasionally lose a
 # connection to a site that is perfectly healthy — https://fluxcd.io/ reset once and reddened the
