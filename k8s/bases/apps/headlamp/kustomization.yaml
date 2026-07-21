@@ -4,7 +4,6 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - external-secret.yaml
-  - persistent-volume-claim.yaml
   - helm-release.yaml
   - helm-repository.yaml
   - cluster-role-binding.yaml
