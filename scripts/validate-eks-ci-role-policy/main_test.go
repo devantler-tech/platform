@@ -954,13 +954,15 @@ metadata:
 	}
 }
 
+// awsServiceAccountSubject names the aws/aws service account directly. Two of
+// the routes below reach it by this same subject and differ only in scope.
+const awsServiceAccountSubject = `  - kind: ServiceAccount
+    name: aws
+    namespace: aws
+`
+
 // awsIdentityBinding is one route by which an RBAC binding can reach the
 // aws/aws service account.
-//
-// Every such binding is the same manifest apart from its scope and the subject
-// naming the identity, so only those two vary here and manifest() supplies the
-// rest. Keeping the shell in one place is what makes a new route a two-line
-// addition instead of another copy of the whole document.
 type awsIdentityBinding struct {
 	// namespace scopes the binding. Empty renders the cluster-wide form.
 	namespace string
@@ -969,28 +971,36 @@ type awsIdentityBinding struct {
 	subject string
 }
 
-// manifest renders the binding. Scope drives kind and roleRef together because
-// Kubernetes only permits one pairing each way: a namespaced RoleBinding refers
-// to a Role, a ClusterRoleBinding to a ClusterRole.
+// manifest renders the binding. namespace selects the whole shape, because the
+// routes below need only two: the namespaced ones are all RoleBinding to
+// Role/aws-managed-resources, the cluster-wide ones ClusterRoleBinding to
+// ClusterRole/cluster-admin.
+//
+// That pairing is this table's choice, not a Kubernetes rule. Only
+// ClusterRoleBinding is constrained; a RoleBinding may reference a ClusterRole,
+// which is how a cluster role is granted namespace-scoped — the fixture at the
+// top of this file does exactly that. A route needing that combination wants
+// explicit roleRef fields adding here rather than another inline copy.
 func (b awsIdentityBinding) manifest() string {
 	kind, roleKind, roleName := "ClusterRoleBinding", "ClusterRole", "cluster-admin"
-	metadata := "  name: aws-shadow\n"
+
+	namespaceLine := ""
 	if b.namespace != "" {
 		kind, roleKind, roleName = "RoleBinding", "Role", "aws-managed-resources"
-		metadata += "  namespace: " + b.namespace + "\n"
+		namespaceLine = "  namespace: " + b.namespace + "\n"
 	}
 
-	return "---\n" +
-		"apiVersion: rbac.authorization.k8s.io/v1\n" +
-		"kind: " + kind + "\n" +
-		"metadata:\n" +
-		metadata +
-		"roleRef:\n" +
-		"  apiGroup: rbac.authorization.k8s.io\n" +
-		"  kind: " + roleKind + "\n" +
-		"  name: " + roleName + "\n" +
-		"subjects:\n" +
-		b.subject
+	return fmt.Sprintf(`---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: %s
+metadata:
+  name: aws-shadow
+%sroleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: %s
+  name: %s
+subjects:
+%s`, kind, namespaceLine, roleKind, roleName, b.subject)
 }
 
 // TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentity covers aliases.
@@ -1005,20 +1015,12 @@ func TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentit
 			name: "RoleBinding outside AWS namespace",
 			binding: awsIdentityBinding{
 				namespace: "tenant-shadow",
-				subject: `  - kind: ServiceAccount
-    name: aws
-    namespace: aws
-`,
+				subject:   awsServiceAccountSubject,
 			},
 		},
 		{
-			name: "cluster-wide binding",
-			binding: awsIdentityBinding{
-				subject: `  - kind: ServiceAccount
-    name: aws
-    namespace: aws
-`,
-			},
+			name:    "cluster-wide binding",
+			binding: awsIdentityBinding{subject: awsServiceAccountSubject},
 		},
 		{
 			name: "service account user identity",
