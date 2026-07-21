@@ -73,11 +73,14 @@ YAML_V8R_FILTER_REGEX_EXCLUDE: (k8s/.*|ksail\..*\.yaml|ksail\.yaml)
 # prove one controller behaviour each) and 70 in k8s/, where Kubescape's NSA hard gate and the
 # Kyverno policy suite own posture. It stays fully enabled on workflows and every other path —
 # that is where it earns its keep.
+# The pattern must tolerate the leading slash: checkov reports and matches paths as `/k8s/...`,
+# so a plain `^k8s/` matches nothing and the skip silently does nothing (measured — 287 findings
+# became 286, and that one was the inline skip below, not the path skip).
 REPOSITORY_CHECKOV_ARGUMENTS:
   - --skip-path
-  - ^k8s/
+  - ^/?k8s/
   - --skip-path
-  - ^tests/
+  - ^/?tests/
 
 # trivy: its single finding is Kubernetes misconfiguration, the surface Kubescape already gates.
 # Dependency vulnerability scanning over go.mod is untouched and still fails the build.

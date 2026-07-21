@@ -16,3 +16,21 @@
 ^https?://.*\.lan(/|$)
 ^https?://.*\.svc\.cluster\.local(/|$)
 ^https?://dex\.dev\.platform\.devantler\.tech(/|$)
+
+# 3. Shell and Actions variables interpolated into a URL. lychee percent-encodes the braces, so
+#    ${KSAIL_VERSION} arrives as %7BKSAIL_VERSION%7D and the URL can never resolve — the real one
+#    only exists at run time, once the version is substituted.
+%7B
+
+# 4. RFC 5737 TEST-NET-1. Reserved for documentation and unroutable by design; ci.yaml uses it as
+#    a deliberately dead API-server address.
+^https?://192\.0\.2\.
+
+# 5. An OIDC issuer IDENTIFIER, not a browsable page. Discovery lives at
+#    /.well-known/openid-configuration; the root path is expected to 404. This value must match
+#    GitHub's issuer string exactly, so it is not editable to please a link checker.
+^https://token\.actions\.githubusercontent\.com/?$
+
+# 6. A third-party status badge in the README. It returns 500 intermittently; its availability is
+#    not something this repository can fix, and it must never gate a merge.
+^https://api\.star-history\.com/
