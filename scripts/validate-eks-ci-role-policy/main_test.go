@@ -1142,13 +1142,51 @@ func TestManualDeployIsGatedByTheValidator(t *testing.T) {
 // manual-deploy gate, so if it is not in that filter a PR deleting the gate does
 // not run the job whose test guards the gate — the guard would be removable
 // without ever executing.
+//
+// The filter is PARSED rather than grepped. A substring match on the file is a
+// proxy for the property: the same text survives in a comment, or moved under
+// another filter bucket, while the k8s entry it is supposed to prove is gone.
 func TestValidatorRunsWhenTheManualGateItselfChanges(t *testing.T) {
 	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github/workflows/ci.yaml"))
 	if err != nil {
 		t.Fatalf("read CI workflow: %v", err)
 	}
-	if !strings.Contains(string(workflow), "- '.github/workflows/cd.yaml'") {
-		t.Error("the k8s paths filter omits .github/workflows/cd.yaml — a PR deleting the " +
-			"manual-deploy gate would not run the validator job that guards it")
+	var parsed struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				ID   string            `yaml:"id"`
+				With map[string]string `yaml:"with"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
 	}
+	if err := yaml.Unmarshal(workflow, &parsed); err != nil {
+		t.Fatalf("parse CI workflow: %v", err)
+	}
+	var filters string
+	for _, job := range parsed.Jobs {
+		for _, step := range job.Steps {
+			if step.ID == "filter" {
+				filters = step.With["filters"]
+			}
+		}
+	}
+	if filters == "" {
+		t.Fatal("no step with id 'filter' declares a paths-filter set — the guard below would " +
+			"pass vacuously")
+	}
+	var buckets map[string][]string
+	if err := yaml.Unmarshal([]byte(filters), &buckets); err != nil {
+		t.Fatalf("parse paths filters: %v", err)
+	}
+	k8s, ok := buckets["k8s"]
+	if !ok {
+		t.Fatal("the paths-filter set has no 'k8s' bucket — the validator job's gate is gone")
+	}
+	for _, pattern := range k8s {
+		if pattern == ".github/workflows/cd.yaml" {
+			return
+		}
+	}
+	t.Errorf("the k8s paths filter omits .github/workflows/cd.yaml (has %v) — a PR deleting the "+
+		"manual-deploy gate would not run the validator job that guards it", k8s)
 }
