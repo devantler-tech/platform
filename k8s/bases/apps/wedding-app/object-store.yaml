@@ -4,13 +4,12 @@
 # 1.30; plugin installed in infrastructure/controllers/plugin-barman-cloud).
 #
 # PLATFORM-side (registration dir, reconciled by flux-system): the R2 destination
-# and the shared-bucket credentials are platform-owned, so they live here next to
-# the external-secret-db-backup.yaml that provisions `wedding-db-backup-r2` — the
-# tenant's own (namespaced) SecretStore cannot reach infrastructure/backup/r2, and
-# barmancloud.cnpg.io is outside the tenant's cnpg-tenant-edit RBAC anyway. The
+# and wedding-db-scoped credentials are platform-owned, so they live here next to
+# the external-secret-db-backup.yaml that provisions `wedding-db-backup-r2`. The
 # tenant's Cluster (wedding-app repo deploy/cluster.yaml) opts in by referencing
 # this ObjectStore by name via spec.plugins. r2_* are Flux-substituted from
-# variables-base. Same R2 store + creds + retention as the old inline block.
+# variables-base; the credential itself is dedicated to this backup destination
+# rather than the shared infrastructure backup key.
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:
