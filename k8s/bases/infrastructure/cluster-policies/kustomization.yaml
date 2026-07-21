@@ -13,6 +13,7 @@ resources:
   - best-practices/disallow-latest-tag.yaml
   - best-practices/propagate-reloader-to-flagger-primary.yaml
   - best-practices/restrict-tenant-secret-stores.yaml
+  - best-practices/restrict-tenant-http-route-hostnames.yaml
   - best-practices/validate-host-restrictions.yaml
   - best-practices/validate-pdb-drain-safe.yaml
   - best-practices/validate-pod-security.yaml
