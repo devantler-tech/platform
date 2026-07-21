@@ -179,7 +179,7 @@
       "enabled": false
     },
     {
-      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (dedicated github-releases custom manager, helm-release.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a separate Dependabot PR. Both grouped deps now resolve via the same devantler-tech/ksail github-releases datasource, so they always move to the same real ksail release in lockstep (no more split CLI=7.74.0 / chart=7.74.1 bumps), and the devantler-tech 0-day minimumReleaseAge rule below still matches these first-party deps, so the grouped PR opens immediately.",
+      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (dedicated github-releases custom manager, helm-release.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a separate Dependabot PR. Both grouped deps now resolve via the same devantler-tech/ksail github-releases datasource, so they always move to the same real ksail release in lockstep (no more split CLI=7.74.0 / chart=7.74.1 bumps), while retaining the repository-wide minimumReleaseAge cooldown for privileged deployment tooling.",
       "matchPackageNames": [
         "devantler-tech/ksail",
         "ghcr.io/devantler-tech/charts/ksail-operator",
@@ -238,16 +238,6 @@
         "major"
       ],
       "automerge": true
-    },
-    {
-      "description": "Internal devantler-tech dependencies are trusted (our own code) — bump immediately with no release-age cooldown (e.g. the KSAIL_VERSION custom-manager dep devantler-tech/ksail).",
-      "matchPackageNames": [
-        "devantler-tech/**",
-        "github.com/devantler-tech/**",
-        "ghcr.io/devantler-tech/**",
-        "@devantler-tech/**"
-      ],
-      "minimumReleaseAge": "0 days"
     },
     {
       "description": "Talos Linux distribution upgrades (tracked by the custom manager above; depName siderolabs/talos). Renovate opens the PR automatically — the same flow as every other dependency, with no Dependency Dashboard approval gate. It is NOT automerged: the custom manager bumps the talos.version pin in ksail.prod.yaml (KSail derives the installer image from it plus the extensions list), but the Hetzner iso snapshot id in ksail.prod.yaml is not a version string and cannot be auto-derived, and a lockstep kubernetesVersion bump may be needed when Talos's supported Kubernetes range moves. CI's system-test also runs off ksail.yaml (docker), so it never boots this prod config. A maintainer completes the iso (and any kubernetesVersion) edit on the open PR, then merges. automerge:false is placed last so it overrides the broad talos/** and major-update automerge rules above.",
