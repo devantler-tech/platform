@@ -60,6 +60,8 @@ resources:
   # (like umami-db) these live in this overlay, not the shared base. The
   # drain-safe PDB for the operator-built server StatefulSet ships here too.
   - coroot/cluster.yaml
+  - coroot/password-coroot-monitor.yaml
+  - coroot/external-secret-coroot-monitor.yaml
   - coroot/external-secret.yaml
   - coroot/object-store.yaml
   - coroot/scheduled-backup.yaml

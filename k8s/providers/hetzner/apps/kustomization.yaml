@@ -23,13 +23,17 @@ resources:
   # Prod-only Coroot Postgres integration for the platform-owned CNPG DBs:
   # additive CiliumNetworkPolicies that let the observability cluster-agent
   # scrape each on 5432 (the Cluster patches below stamp the
-  # coroot.com/postgres-scrape annotations + pg_monitor + pg_stat_statements).
+  # coroot.com/postgres-scrape annotations + dedicated pg_monitor roles + pg_stat_statements).
   # coroot-db needs none — it is intra-namespace to the agent and already
   # covered by the base allow-coroot policy. The wedding-app TENANT owns its own
   # equivalent in its repo's deploy/ (cluster.yaml + networkpolicy.yaml), since
   # tenant DB instrumentation is tenant self-description, not a platform patch.
   - umami/cilium-network-policy.yaml
+  - umami/password-coroot-monitor.yaml
+  - umami/external-secret-coroot-monitor.yaml
   - backstage/cilium-network-policy.yaml
+  - backstage/password-coroot-monitor.yaml
+  - backstage/external-secret-coroot-monitor.yaml
 components:
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
   # bases/components/helmrelease-drift-detection.
@@ -48,11 +52,11 @@ patches:
   - path: wedding-app/patches/flux-kustomization-protect-wedding-db.yaml
   # Prod-only Coroot Postgres integration for the in-repo CNPG DBs (strategic
   # merge: inheritedMetadata scrape annotations + pg_stat_statements params, plus
-  # for backstage a pg_monitor managed role). These self-identify, so no target.
+  # for backstage a dedicated pg_monitor managed role). These self-identify, so no target.
   - path: umami/patches/enable-coroot-monitoring.yaml
   - path: backstage/patches/enable-coroot-monitoring.yaml
-  # umami's pg_monitor grant is a JSON6902 append onto its EXISTING managed role
-  # (so it doesn't replace the list / desync the OpenBao-rotation enforcer); a
+  # umami's dedicated pg_monitor role is a JSON6902 append onto the existing
+  # managed.roles list (so it doesn't replace / desync the OpenBao-rotation enforcer); a
   # JSON6902 patch has no embedded identity, so it keeps an explicit target.
   - target:
       group: postgresql.cnpg.io

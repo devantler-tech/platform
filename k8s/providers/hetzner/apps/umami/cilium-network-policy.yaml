@@ -6,7 +6,7 @@
 #
 # ADDITIVE, not a replacement for allow-umami: Cilium unions the ingress allows
 # across every policy selecting an endpoint, so this standalone policy only adds
-# the cross-namespace observability source on 5432 while allow-umami keeps
+# the cross-namespace Coroot cluster-agent source on 5432 while allow-umami keeps
 # permitting intra-namespace + cnpg-system + openbao. Scoped to the DB instance
 # pods via CNPG's cnpg.io/cluster label, mirroring the prod-only allow-coroot-db
 # policy in infrastructure/coroot/.
@@ -32,6 +32,9 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: observability
+            app.kubernetes.io/managed-by: coroot-operator
+            app.kubernetes.io/part-of: coroot
+            app.kubernetes.io/component: cluster-agent
       toPorts:
         - ports:
             - port: "5432"
