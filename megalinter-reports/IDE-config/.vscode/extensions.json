@@ -1,0 +1,10 @@
+{
+    "recommendations": [
+        "timonwong.shellcheck",
+        "AquaSecurityOfficial.trivy-vulnerability-scanner",
+        "esbenp.prettier-vscode",
+        "ms-vscode.Go",
+        "foxundermoon.shell-format",
+        "streetsidesoftware.code-spell-checker"
+    ]
+}

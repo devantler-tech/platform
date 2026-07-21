@@ -27,9 +27,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name"
-          ],
+          "required": ["name"],
           "type": "object",
           "additionalProperties": false
         },
@@ -57,12 +55,7 @@
         "provider": {
           "default": "generic",
           "description": "Provider of the object storage bucket.\nDefaults to 'generic', which expects an S3 (API) compatible object\nstorage.",
-          "enum": [
-            "generic",
-            "aws",
-            "gcp",
-            "azure"
-          ],
+          "enum": ["generic", "aws", "gcp", "azure"],
           "type": "string"
         },
         "proxySecretRef": {
@@ -73,9 +66,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name"
-          ],
+          "required": ["name"],
           "type": "object",
           "additionalProperties": false
         },
@@ -91,9 +82,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name"
-          ],
+          "required": ["name"],
           "type": "object",
           "additionalProperties": false
         },
@@ -112,9 +101,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "name"
-              ],
+              "required": ["name"],
               "type": "object",
               "additionalProperties": false
             },
@@ -125,10 +112,7 @@
             },
             "provider": {
               "description": "Provider of the Security Token Service.",
-              "enum": [
-                "aws",
-                "ldap"
-              ],
+              "enum": ["aws", "ldap"],
               "type": "string"
             },
             "secretRef": {
@@ -139,17 +123,12 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "name"
-              ],
+              "required": ["name"],
               "type": "object",
               "additionalProperties": false
             }
           },
-          "required": [
-            "endpoint",
-            "provider"
-          ],
+          "required": ["endpoint", "provider"],
           "type": "object",
           "additionalProperties": false
         },
@@ -164,11 +143,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "bucketName",
-        "endpoint",
-        "interval"
-      ],
+      "required": ["bucketName", "endpoint", "interval"],
       "type": "object",
       "x-kubernetes-validations": [
         {
@@ -246,13 +221,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "digest",
-            "lastUpdateTime",
-            "path",
-            "revision",
-            "url"
-          ],
+          "required": ["digest", "lastUpdateTime", "path", "revision", "url"],
           "type": "object",
           "additionalProperties": false
         },
@@ -286,11 +255,7 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": [
-                  "True",
-                  "False",
-                  "Unknown"
-                ],
+                "enum": ["True", "False", "Unknown"],
                 "type": "string"
               },
               "type": {

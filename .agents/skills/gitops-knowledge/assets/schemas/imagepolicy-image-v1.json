@@ -18,11 +18,7 @@
         "digestReflectionPolicy": {
           "default": "Never",
           "description": "DigestReflectionPolicy governs the setting of the `.status.latestRef.digest` field.\n\nNever: The digest field will always be set to the empty string.\n\nIfNotPresent: The digest field will be set to the digest of the elected\nlatest image if the field is empty and the image did not change.\n\nAlways: The digest field will always be set to the digest of the elected\nlatest image.\n\nDefault: Never.",
-          "enum": [
-            "Always",
-            "IfNotPresent",
-            "Never"
-          ],
+          "enum": ["Always", "IfNotPresent", "Never"],
           "type": "string"
         },
         "filterTags": {
@@ -52,9 +48,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name"
-          ],
+          "required": ["name"],
           "type": "object",
           "additionalProperties": false
         },
@@ -72,10 +66,7 @@
                 "order": {
                   "default": "asc",
                   "description": "Order specifies the sorting order of the tags. Given the letters of the\nalphabet as tags, ascending order would select Z, and descending order\nwould select A.",
-                  "enum": [
-                    "asc",
-                    "desc"
-                  ],
+                  "enum": ["asc", "desc"],
                   "type": "string"
                 }
               },
@@ -88,10 +79,7 @@
                 "order": {
                   "default": "asc",
                   "description": "Order specifies the sorting order of the tags. Given the integer values\nfrom 0 to 9 as tags, ascending order would select 9, and descending order\nwould select 0.",
-                  "enum": [
-                    "asc",
-                    "desc"
-                  ],
+                  "enum": ["asc", "desc"],
                   "type": "string"
                 }
               },
@@ -106,9 +94,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "range"
-              ],
+              "required": ["range"],
               "type": "object",
               "additionalProperties": false
             }
@@ -121,10 +107,7 @@
           "type": "boolean"
         }
       },
-      "required": [
-        "imageRepositoryRef",
-        "policy"
-      ],
+      "required": ["imageRepositoryRef", "policy"],
       "type": "object",
       "x-kubernetes-validations": [
         {
@@ -173,11 +156,7 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": [
-                  "True",
-                  "False",
-                  "Unknown"
-                ],
+                "enum": ["True", "False", "Unknown"],
                 "type": "string"
               },
               "type": {
@@ -219,10 +198,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name",
-            "tag"
-          ],
+          "required": ["name", "tag"],
           "type": "object",
           "additionalProperties": false
         },
@@ -246,10 +222,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name",
-            "tag"
-          ],
+          "required": ["name", "tag"],
           "type": "object",
           "additionalProperties": false
         }

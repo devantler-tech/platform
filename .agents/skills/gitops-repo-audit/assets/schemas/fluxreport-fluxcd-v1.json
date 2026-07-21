@@ -33,10 +33,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "platform",
-            "serverVersion"
-          ],
+          "required": ["platform", "serverVersion"],
           "type": "object"
         },
         "components": {
@@ -62,12 +59,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "image",
-              "name",
-              "ready",
-              "status"
-            ],
+            "required": ["image", "name", "ready", "status"],
             "type": "object"
           },
           "type": "array"
@@ -93,10 +85,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "entitlement",
-            "status"
-          ],
+          "required": ["entitlement", "status"],
           "type": "object"
         },
         "operator": {
@@ -116,11 +105,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "apiVersion",
-            "platform",
-            "version"
-          ],
+          "required": ["apiVersion", "platform", "version"],
           "type": "object"
         },
         "reconcilers": {
@@ -158,18 +143,11 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "failing",
-                  "running",
-                  "suspended"
-                ],
+                "required": ["failing", "running", "suspended"],
                 "type": "object"
               }
             },
-            "required": [
-              "apiVersion",
-              "kind"
-            ],
+            "required": ["apiVersion", "kind"],
             "type": "object"
           },
           "type": "array"
@@ -199,17 +177,11 @@
               "type": "string"
             }
           },
-          "required": [
-            "id",
-            "ready",
-            "status"
-          ],
+          "required": ["id", "ready", "status"],
           "type": "object"
         }
       },
-      "required": [
-        "distribution"
-      ],
+      "required": ["distribution"],
       "type": "object"
     },
     "status": {
@@ -247,11 +219,7 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": [
-                  "True",
-                  "False",
-                  "Unknown"
-                ],
+                "enum": ["True", "False", "Unknown"],
                 "type": "string"
               },
               "type": {

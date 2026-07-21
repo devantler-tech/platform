@@ -56,10 +56,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "expression",
-                    "message"
-                  ],
+                  "required": ["expression", "message"],
                   "type": "object",
                   "additionalProperties": false
                 },
@@ -80,27 +77,19 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "expression",
-                    "name"
-                  ],
+                  "required": ["expression", "name"],
                   "type": "object",
                   "additionalProperties": false
                 },
                 "type": "array"
               }
             },
-            "required": [
-              "issuerURL",
-              "validations"
-            ],
+            "required": ["issuerURL", "validations"],
             "type": "object",
             "additionalProperties": false
           },
           "type": "array",
-          "x-kubernetes-list-map-keys": [
-            "issuerURL"
-          ],
+          "x-kubernetes-list-map-keys": ["issuerURL"],
           "x-kubernetes-list-type": "map"
         },
         "resourceFilter": {
@@ -158,10 +147,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "name"
-            ],
+            "required": ["kind", "name"],
             "type": "object",
             "additionalProperties": false
           },
@@ -175,9 +161,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name"
-          ],
+          "required": ["name"],
           "type": "object",
           "additionalProperties": false
         },
@@ -205,10 +189,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "resources",
-        "type"
-      ],
+      "required": ["resources", "type"],
       "type": "object",
       "x-kubernetes-validations": [
         {
@@ -266,11 +247,7 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": [
-                  "True",
-                  "False",
-                  "Unknown"
-                ],
+                "enum": ["True", "False", "Unknown"],
                 "type": "string"
               },
               "type": {

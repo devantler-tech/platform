@@ -35,10 +35,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "kind",
-            "name"
-          ],
+          "required": ["kind", "name"],
           "type": "object",
           "additionalProperties": false
         }
@@ -87,13 +84,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "digest",
-            "lastUpdateTime",
-            "path",
-            "revision",
-            "url"
-          ],
+          "required": ["digest", "lastUpdateTime", "path", "revision", "url"],
           "type": "object",
           "additionalProperties": false
         },
@@ -127,11 +118,7 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": [
-                  "True",
-                  "False",
-                  "Unknown"
-                ],
+                "enum": ["True", "False", "Unknown"],
                 "type": "string"
               },
               "type": {

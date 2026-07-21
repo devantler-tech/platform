@@ -37,9 +37,7 @@
               "type": "array"
             }
           },
-          "required": [
-            "namespaceSelectors"
-          ],
+          "required": ["namespaceSelectors"],
           "type": "object",
           "additionalProperties": false
         },
@@ -51,9 +49,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name"
-          ],
+          "required": ["name"],
           "type": "object",
           "additionalProperties": false
         },
@@ -73,12 +69,7 @@
         "provider": {
           "default": "generic",
           "description": "Provider used for authentication, can be 'aws', 'azure', 'gcp' or 'generic'.\nThis field is optional, and only taken into account if the .spec.type field is set to 'oci'.\nWhen not specified, defaults to 'generic'.",
-          "enum": [
-            "generic",
-            "aws",
-            "azure",
-            "gcp"
-          ],
+          "enum": ["generic", "aws", "azure", "gcp"],
           "type": "string"
         },
         "secretRef": {
@@ -89,9 +80,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name"
-          ],
+          "required": ["name"],
           "type": "object",
           "additionalProperties": false
         },
@@ -106,10 +95,7 @@
         },
         "type": {
           "description": "Type of the HelmRepository.\nWhen this field is set to  \"oci\", the URL field value must be prefixed with \"oci://\".",
-          "enum": [
-            "default",
-            "oci"
-          ],
+          "enum": ["default", "oci"],
           "type": "string"
         },
         "url": {
@@ -118,9 +104,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "url"
-      ],
+      "required": ["url"],
       "type": "object",
       "additionalProperties": false
     },
@@ -168,13 +152,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "digest",
-            "lastUpdateTime",
-            "path",
-            "revision",
-            "url"
-          ],
+          "required": ["digest", "lastUpdateTime", "path", "revision", "url"],
           "type": "object",
           "additionalProperties": false
         },
@@ -208,11 +186,7 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": [
-                  "True",
-                  "False",
-                  "Unknown"
-                ],
+                "enum": ["True", "False", "Unknown"],
                 "type": "string"
               },
               "type": {

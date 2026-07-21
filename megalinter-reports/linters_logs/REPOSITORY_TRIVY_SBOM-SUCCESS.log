@@ -1,0 +1,5 @@
+Results of trivy-sbom linter (version 0.71.2)
+See documentation on https://megalinter.io/9.6.0/descriptors/repository_trivy_sbom/
+-----------------------------------------------
+
+✅ [SUCCESS] for workspace .

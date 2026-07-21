@@ -31,10 +31,7 @@
         "reconcileStrategy": {
           "default": "ChartVersion",
           "description": "ReconcileStrategy determines what enables the creation of a new artifact.\nValid values are ('ChartVersion', 'Revision').\nSee the documentation of the values for an explanation on their behavior.\nDefaults to ChartVersion when omitted.",
-          "enum": [
-            "ChartVersion",
-            "Revision"
-          ],
+          "enum": ["ChartVersion", "Revision"],
           "type": "string"
         },
         "sourceRef": {
@@ -46,11 +43,7 @@
             },
             "kind": {
               "description": "Kind of the referent, valid values are ('HelmRepository', 'GitRepository',\n'Bucket').",
-              "enum": [
-                "HelmRepository",
-                "GitRepository",
-                "Bucket"
-              ],
+              "enum": ["HelmRepository", "GitRepository", "Bucket"],
               "type": "string"
             },
             "name": {
@@ -58,10 +51,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "kind",
-            "name"
-          ],
+          "required": ["kind", "name"],
           "type": "object",
           "additionalProperties": false
         },
@@ -93,10 +83,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "issuer",
-                  "subject"
-                ],
+                "required": ["issuer", "subject"],
                 "type": "object",
                 "additionalProperties": false
               },
@@ -105,10 +92,7 @@
             "provider": {
               "default": "cosign",
               "description": "Provider specifies the technology used to sign the OCI Artifact.",
-              "enum": [
-                "cosign",
-                "notation"
-              ],
+              "enum": ["cosign", "notation"],
               "type": "string"
             },
             "secretRef": {
@@ -119,16 +103,12 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "name"
-              ],
+              "required": ["name"],
               "type": "object",
               "additionalProperties": false
             }
           },
-          "required": [
-            "provider"
-          ],
+          "required": ["provider"],
           "type": "object",
           "additionalProperties": false
         },
@@ -138,11 +118,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "chart",
-        "interval",
-        "sourceRef"
-      ],
+      "required": ["chart", "interval", "sourceRef"],
       "type": "object",
       "x-kubernetes-validations": [
         {
@@ -196,13 +172,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "digest",
-            "lastUpdateTime",
-            "path",
-            "revision",
-            "url"
-          ],
+          "required": ["digest", "lastUpdateTime", "path", "revision", "url"],
           "type": "object",
           "additionalProperties": false
         },
@@ -236,11 +206,7 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": [
-                  "True",
-                  "False",
-                  "Unknown"
-                ],
+                "enum": ["True", "False", "Unknown"],
                 "type": "string"
               },
               "type": {

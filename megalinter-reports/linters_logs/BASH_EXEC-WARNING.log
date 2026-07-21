@@ -1,0 +1,19 @@
+Results of bash-exec linter (version 5.3.9)
+See documentation on https://megalinter.io/9.6.0/descriptors/bash_bash_exec/
+-----------------------------------------------
+
+❌ [ERROR] .agents/skills/gitops-repo-audit/scripts/check-deprecated.sh
+    Error: File:[.agents/skills/gitops-repo-audit/scripts/check-deprecated.sh] is not executable
+
+❌ [ERROR] .agents/skills/gitops-repo-audit/scripts/discover.sh
+    Error: File:[.agents/skills/gitops-repo-audit/scripts/discover.sh] is not executable
+
+❌ [ERROR] .agents/skills/gitops-repo-audit/scripts/validate.sh
+    Error: File:[.agents/skills/gitops-repo-audit/scripts/validate.sh] is not executable
+
+❌ [ERROR] scripts/ghcr-auth-lib.sh
+    Error: File:[scripts/ghcr-auth-lib.sh] is not executable
+
+✅ [SUCCESS] scripts/refresh-flux-ghcr-auth.sh
+✅ [SUCCESS] scripts/run-ksail-prod-with-pull-auth.sh
+✅ [SUCCESS] scripts/tests/test-cilium-bandwidth-manager-component.sh

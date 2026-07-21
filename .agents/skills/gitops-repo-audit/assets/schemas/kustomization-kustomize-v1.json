@@ -19,10 +19,7 @@
           "description": "BuildMetadata specifies which kustomize build metadata should be added\nto the built resources. The allowed values are 'originAnnotations' to\nannotate resources with their source origin, and 'transformerAnnotations'\nto annotate resources with the transformers that produced them.",
           "items": {
             "description": "BuildMetadataOption defines the supported buildMetadata options.",
-            "enum": [
-              "originAnnotations",
-              "transformerAnnotations"
-            ],
+            "enum": ["originAnnotations", "transformerAnnotations"],
             "type": "string"
           },
           "type": "array"
@@ -60,9 +57,7 @@
           "properties": {
             "provider": {
               "description": "Provider is the name of the decryption engine.",
-              "enum": [
-                "sops"
-              ],
+              "enum": ["sops"],
               "type": "string"
             },
             "secretRef": {
@@ -73,9 +68,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "name"
-              ],
+              "required": ["name"],
               "type": "object",
               "additionalProperties": false
             },
@@ -84,20 +77,13 @@
               "type": "string"
             }
           },
-          "required": [
-            "provider"
-          ],
+          "required": ["provider"],
           "type": "object",
           "additionalProperties": false
         },
         "deletionPolicy": {
           "description": "DeletionPolicy can be used to control garbage collection when this\nKustomization is deleted. Valid values are ('MirrorPrune', 'Delete',\n'WaitForTermination', 'Orphan'). 'MirrorPrune' mirrors the Prune field\n(orphan if false, delete if true). Defaults to 'MirrorPrune'.",
-          "enum": [
-            "MirrorPrune",
-            "Delete",
-            "WaitForTermination",
-            "Orphan"
-          ],
+          "enum": ["MirrorPrune", "Delete", "WaitForTermination", "Orphan"],
           "type": "string"
         },
         "dependsOn": {
@@ -118,9 +104,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "type": "object",
             "additionalProperties": false
           },
@@ -157,10 +141,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "apiVersion",
-              "current"
-            ],
+            "required": ["apiVersion", "current"],
             "type": "object",
             "additionalProperties": false
           },
@@ -188,10 +169,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "kind",
-              "name"
-            ],
+            "required": ["kind", "name"],
             "type": "object",
             "additionalProperties": false
           },
@@ -245,9 +223,7 @@
                 "additionalProperties": false
               }
             },
-            "required": [
-              "paths"
-            ],
+            "required": ["paths"],
             "type": "object",
             "additionalProperties": false
           },
@@ -279,9 +255,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "type": "object",
             "additionalProperties": false
           },
@@ -303,9 +277,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "name"
-              ],
+              "required": ["name"],
               "type": "object",
               "additionalProperties": false
             },
@@ -321,9 +293,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "name"
-              ],
+              "required": ["name"],
               "type": "object",
               "additionalProperties": false
             }
@@ -398,9 +368,7 @@
                 "additionalProperties": false
               }
             },
-            "required": [
-              "patch"
-            ],
+            "required": ["patch"],
             "type": "object",
             "additionalProperties": false
           },
@@ -427,10 +395,7 @@
                 "properties": {
                   "kind": {
                     "description": "Kind of the values referent, valid values are ('Secret', 'ConfigMap').",
-                    "enum": [
-                      "Secret",
-                      "ConfigMap"
-                    ],
+                    "enum": ["Secret", "ConfigMap"],
                     "type": "string"
                   },
                   "name": {
@@ -445,10 +410,7 @@
                     "type": "boolean"
                   }
                 },
-                "required": [
-                  "kind",
-                  "name"
-                ],
+                "required": ["kind", "name"],
                 "type": "object",
                 "additionalProperties": false
               },
@@ -456,10 +418,7 @@
             },
             "substituteStrategy": {
               "description": "SubstituteStrategy defines the strategy for substituting variables in the YAML manifests.\nValid values are:\n\n - WithVariables (the default): require at least one variable to be defined,\n   either through the inline map or through the resolved references to ConfigMaps\n   and Secrets.\n - Always: perform the substitution even if no variables are defined.",
-              "enum": [
-                "WithVariables",
-                "Always"
-              ],
+              "enum": ["WithVariables", "Always"],
               "type": "string"
             }
           },
@@ -505,10 +464,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "kind",
-            "name"
-          ],
+          "required": ["kind", "name"],
           "type": "object",
           "additionalProperties": false
         },
@@ -532,11 +488,7 @@
           "type": "boolean"
         }
       },
-      "required": [
-        "interval",
-        "prune",
-        "sourceRef"
-      ],
+      "required": ["interval", "prune", "sourceRef"],
       "type": "object",
       "additionalProperties": false
     },
@@ -575,11 +527,7 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": [
-                  "True",
-                  "False",
-                  "Unknown"
-                ],
+                "enum": ["True", "False", "Unknown"],
                 "type": "string"
               },
               "type": {
@@ -671,19 +619,14 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "id",
-                  "v"
-                ],
+                "required": ["id", "v"],
                 "type": "object",
                 "additionalProperties": false
               },
               "type": "array"
             }
           },
-          "required": [
-            "entries"
-          ],
+          "required": ["entries"],
           "type": "object",
           "additionalProperties": false
         },

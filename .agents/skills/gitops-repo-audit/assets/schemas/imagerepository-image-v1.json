@@ -37,9 +37,7 @@
               "type": "array"
             }
           },
-          "required": [
-            "namespaceSelectors"
-          ],
+          "required": ["namespaceSelectors"],
           "type": "object",
           "additionalProperties": false
         },
@@ -51,16 +49,12 @@
               "type": "string"
             }
           },
-          "required": [
-            "name"
-          ],
+          "required": ["name"],
           "type": "object",
           "additionalProperties": false
         },
         "exclusionList": {
-          "default": [
-            "^.*\\.sig$"
-          ],
+          "default": ["^.*\\.sig$"],
           "description": "ExclusionList is a list of regex strings used to exclude certain tags\nfrom being stored in the database.",
           "items": {
             "type": "string"
@@ -84,12 +78,7 @@
         "provider": {
           "default": "generic",
           "description": "The provider used for authentication, can be 'aws', 'azure', 'gcp' or 'generic'.\nWhen not specified, defaults to 'generic'.",
-          "enum": [
-            "generic",
-            "aws",
-            "azure",
-            "gcp"
-          ],
+          "enum": ["generic", "aws", "azure", "gcp"],
           "type": "string"
         },
         "proxySecretRef": {
@@ -100,9 +89,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name"
-          ],
+          "required": ["name"],
           "type": "object",
           "additionalProperties": false
         },
@@ -114,9 +101,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name"
-          ],
+          "required": ["name"],
           "type": "object",
           "additionalProperties": false
         },
@@ -135,10 +120,7 @@
           "type": "string"
         }
       },
-      "required": [
-        "image",
-        "interval"
-      ],
+      "required": ["image", "interval"],
       "type": "object",
       "additionalProperties": false
     },
@@ -181,11 +163,7 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": [
-                  "True",
-                  "False",
-                  "Unknown"
-                ],
+                "enum": ["True", "False", "Unknown"],
                 "type": "string"
               },
               "type": {
@@ -235,9 +213,7 @@
               "type": "integer"
             }
           },
-          "required": [
-            "tagCount"
-          ],
+          "required": ["tagCount"],
           "type": "object",
           "additionalProperties": false
         },

@@ -1,0 +1,484 @@
+Results of checkov linter (version 3.3.2)
+See documentation on https://megalinter.io/9.6.0/descriptors/repository_checkov/
+-----------------------------------------------
+
+❌ [ERROR] for workspace .
+Linter raw log:
+2026-07-21 18:46:55,636 [MainThread  ] [ERROR]  YAML error parsing k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml: expected a single document in the stream
+  in "<unicode string>", line 2, column 1
+but found another document
+  in "<unicode string>", line 9, column 1
+cloudformation scan results:
+
+Passed checks: 0, Failed checks: 0, Skipped checks: 0, Parsing errors: 1
+
+kubernetes scan results:
+
+Passed checks: 1660, Failed checks: 39, Skipped checks: 0
+
+Check: CKV_K8S_23: "Minimize the admission of root containers"
+	FAILED for resource: Deployment.kube-system.coredns
+	File: /k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml:2-125
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-22
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_38: "Ensure that Service Account Tokens are only mounted where necessary"
+	FAILED for resource: Deployment.kube-system.coredns
+	File: /k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml:2-125
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-35
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_11: "CPU limits should be set"
+	FAILED for resource: Deployment.kube-system.coredns
+	File: /k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml:2-125
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-10
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_25: "Minimize the admission of containers with added capability"
+	FAILED for resource: Deployment.kube-system.coredns
+	File: /k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml:2-125
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-24
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_40: "Containers should run as a high UID to avoid host conflict"
+	FAILED for resource: Deployment.kube-system.coredns
+	File: /k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml:2-125
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-37
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_35: "Prefer using secrets as files over secrets as environment variables"
+	FAILED for resource: Deployment.minio.minio
+	File: /k8s/providers/docker/infrastructure/controllers/minio/deployment.yaml:12-93
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-33
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_40: "Containers should run as a high UID to avoid host conflict"
+	FAILED for resource: Deployment.minio.minio
+	File: /k8s/providers/docker/infrastructure/controllers/minio/deployment.yaml:12-93
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-37
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_35: "Prefer using secrets as files over secrets as environment variables"
+	FAILED for resource: Job.minio.minio-create-bucket
+	File: /k8s/providers/docker/infrastructure/controllers/minio/job.yaml:4-69
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-33
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_40: "Containers should run as a high UID to avoid host conflict"
+	FAILED for resource: Job.minio.minio-create-bucket
+	File: /k8s/providers/docker/infrastructure/controllers/minio/job.yaml:4-69
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-37
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_38: "Ensure that Service Account Tokens are only mounted where necessary"
+	FAILED for resource: CronJob.longhorn-system.longhorn-stale-node-cleanup
+	File: /k8s/providers/hetzner/infrastructure/controllers/longhorn/cron-job-stale-node-cleanup.yaml:30-188
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-35
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_8: "Liveness Probe Should be Configured"
+	FAILED for resource: PodTemplate.overprovisioning.overprovisioning
+	File: /k8s/providers/hetzner/infrastructure/overprovisioning/pod-template.yaml:29-86
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-7
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_9: "Readiness Probe Should be Configured"
+	FAILED for resource: PodTemplate.overprovisioning.overprovisioning
+	File: /k8s/providers/hetzner/infrastructure/overprovisioning/pod-template.yaml:29-86
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-8
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_40: "Containers should run as a high UID to avoid host conflict"
+	FAILED for resource: Job.userns-longhorn-smoke.userns-longhorn-smoke
+	File: /k8s/providers/hetzner/apps/userns-longhorn-smoke/job.yaml:5-154
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-37
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_155: "Minimize ClusterRoles that grant control over validating or mutating admission webhook configurations"
+	FAILED for resource: ClusterRole.default.cdi-operator-cluster
+	File: /k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml:5245-5631
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/ensure-clusterroles-that-grant-control-over-validating-or-mutating-admission-webhook-configurations-are-minimized
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_38: "Ensure that Service Account Tokens are only mounted where necessary"
+	FAILED for resource: Deployment.cdi.cdi-operator
+	File: /k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml:5855-5963
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-35
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_11: "CPU limits should be set"
+	FAILED for resource: Deployment.cdi.cdi-operator
+	File: /k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml:5855-5963
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-10
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_43: "Image should use digest"
+	FAILED for resource: Deployment.cdi.cdi-operator
+	File: /k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml:5855-5963
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-39
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_40: "Containers should run as a high UID to avoid host conflict"
+	FAILED for resource: Deployment.cdi.cdi-operator
+	File: /k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml:5855-5963
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-37
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_13: "Memory limits should be set"
+	FAILED for resource: Deployment.cdi.cdi-operator
+	File: /k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml:5855-5963
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-12
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_22: "Use read-only filesystem for containers where possible"
+	FAILED for resource: Deployment.cdi.cdi-operator
+	File: /k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml:5855-5963
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-21
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_15: "Image Pull Policy should be Always"
+	FAILED for resource: Deployment.cdi.cdi-operator
+	File: /k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml:5855-5963
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-14
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_155: "Minimize ClusterRoles that grant control over validating or mutating admission webhook configurations"
+	FAILED for resource: ClusterRole.default.kubevirt-operator
+	File: /k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml:7390-8724
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/ensure-clusterroles-that-grant-control-over-validating-or-mutating-admission-webhook-configurations-are-minimized
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_38: "Ensure that Service Account Tokens are only mounted where necessary"
+	FAILED for resource: Deployment.kubevirt.virt-operator
+	File: /k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml:8741-8875
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-35
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_11: "CPU limits should be set"
+	FAILED for resource: Deployment.kubevirt.virt-operator
+	File: /k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml:8741-8875
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-10
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_43: "Image should use digest"
+	FAILED for resource: Deployment.kubevirt.virt-operator
+	File: /k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml:8741-8875
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-39
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_40: "Containers should run as a high UID to avoid host conflict"
+	FAILED for resource: Deployment.kubevirt.virt-operator
+	File: /k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml:8741-8875
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-37
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_13: "Memory limits should be set"
+	FAILED for resource: Deployment.kubevirt.virt-operator
+	File: /k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml:8741-8875
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-12
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_22: "Use read-only filesystem for containers where possible"
+	FAILED for resource: Deployment.kubevirt.virt-operator
+	File: /k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml:8741-8875
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-21
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_15: "Image Pull Policy should be Always"
+	FAILED for resource: Deployment.kubevirt.virt-operator
+	File: /k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml:8741-8875
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-14
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_38: "Ensure that Service Account Tokens are only mounted where necessary"
+	FAILED for resource: Job.openbao.vault-snapshot-init
+	File: /k8s/bases/infrastructure/vault-backup/job.yaml:23-185
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-35
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_40: "Containers should run as a high UID to avoid host conflict"
+	FAILED for resource: Job.openbao.vault-snapshot-init
+	File: /k8s/bases/infrastructure/vault-backup/job.yaml:23-185
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-37
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_38: "Ensure that Service Account Tokens are only mounted where necessary"
+	FAILED for resource: CronJob.openbao.vault-snapshot
+	File: /k8s/bases/infrastructure/vault-backup/cron-job.yaml:23-190
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-35
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_40: "Containers should run as a high UID to avoid host conflict"
+	FAILED for resource: CronJob.openbao.vault-snapshot
+	File: /k8s/bases/infrastructure/vault-backup/cron-job.yaml:23-190
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-37
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_38: "Ensure that Service Account Tokens are only mounted where necessary"
+	FAILED for resource: Job.openbao.vault-config
+	File: /k8s/bases/infrastructure/vault-config/job.yaml:36-1182
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-35
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_40: "Containers should run as a high UID to avoid host conflict"
+	FAILED for resource: Job.openbao.vault-config
+	File: /k8s/bases/infrastructure/vault-config/job.yaml:36-1182
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-37
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_49: "Minimize wildcard use in Roles and ClusterRoles"
+	FAILED for resource: Role.github-config.github-config-managed-resources
+	File: /k8s/bases/apps/github-config/role.yaml:20-55
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/ensure-minimized-wildcard-use-in-roles-and-clusterroles
+
+		20 | apiVersion: rbac.authorization.k8s.io/v1
+		21 | kind: Role
+		22 | metadata:
+		23 |   name: github-config-managed-resources
+		24 |   namespace: github-config
+		25 |   labels:
+		26 |     app.kubernetes.io/managed-by: ksail
+		27 | rules:
+		28 |   - apiGroups:
+		29 |       - repo.github.m.upbound.io
+		30 |       - team.github.m.upbound.io
+		31 |       - actions.github.m.upbound.io
+		32 |       - enterprise.github.m.upbound.io
+		33 |       - github.m.upbound.io
+		34 |     resources:
+		35 |       - "*"
+		36 |     verbs:
+		37 |       - get
+		38 |       - list
+		39 |       - watch
+		40 |       - create
+		41 |       - update
+		42 |       - patch
+		43 |       - delete
+		44 |   - apiGroups:
+		45 |       - external-secrets.io
+		46 |     resources:
+		47 |       - externalsecrets
+		48 |     verbs:
+		49 |       - get
+		50 |       - list
+		51 |       - watch
+		52 |       - create
+		53 |       - update
+		54 |       - patch
+		55 |       - delete
+
+Check: CKV_K8S_35: "Prefer using secrets as files over secrets as environment variables"
+	FAILED for resource: CronJob.umami.umami-provision-tenants
+	File: /k8s/bases/apps/umami/cron-job.yaml:44-311
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-33
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_40: "Containers should run as a high UID to avoid host conflict"
+	FAILED for resource: CronJob.umami.umami-provision-tenants
+	File: /k8s/bases/apps/umami/cron-job.yaml:44-311
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-37
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+Check: CKV_K8S_22: "Use read-only filesystem for containers where possible"
+	FAILED for resource: CronJob.umami.umami-provision-tenants
+	File: /k8s/bases/apps/umami/cron-job.yaml:44-311
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/kubernetes-policies/kubernetes-policy-index/bc-k8s-21
+
+		Code lines for this resource are too many. Please use IDE of your choice to review the file.
+secrets scan results:
+
+Passed checks: 0, Failed checks: 31, Skipped checks: 0
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/actual-budget/external-secret-enablebanking.yaml:18-19
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		18 |     - secretKey: app**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/actual-budget/external-secret.yaml:15-16
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		15 |     - secretKey: cli**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/actual-budget/helm-release.yaml:227-228
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		227 |           clientSecretKey: cli**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/ascoachingogvaner/external-secret.yaml:34-35
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		34 |     - secretKey: dock**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/crossview/external-secret.yaml:44-45
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		44 |     - secretKey: db**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/crossview/external-secret.yaml:52-53
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		52 |     - secretKey: adm**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/crossview/external-secret.yaml:56-57
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		56 |     - secretKey: oidc**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/fleetdm/external-secret-fleet-license.yaml:16-17
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		16 |     - secretKey: li**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/fleetdm/external-secret-mysql.yaml:19-20
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		19 |     - secretKey: mysq**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/fleetdm/external-secret-mysql.yaml:23-24
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		23 |     - secretKey: mysql-**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/fleetdm/external-secret-mysql.yaml:27-28
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		27 |     - secretKey: mys**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/fleetdm/external-secret-redis.yaml:16-17
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		16 |     - secretKey: red**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/fleetdm/helm-release.yaml:328-329
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		328 |         existingSecretPasswordKey: red**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/headlamp/external-secret.yaml:15-16
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		15 |     - secretKey: cli**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/umami/helm-release.yaml:118-119
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		118 |         existingSecret: umam**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/apps/wedding-app/external-secret-ghcr-auth.yaml:34-35
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		34 |     - secretKey: dock**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/infrastructure/controllers/dex/external-secret.yaml:30-31
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		30 |     - secretKey: cli**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/infrastructure/controllers/velero/helm-release.yaml:108-109
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		108 |       existingSecret: veler**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/infrastructure/external-secrets/ghcr-auth.yaml:25-26
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		25 |     - secretKey: dock**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml:166-167
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		166 |             - secretKey: dock**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/infrastructure/vault-config/external-secret.yaml:15-16
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		15 |     - secretKey: dex-**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/infrastructure/vault-seed/push-secret-seed-actual-budget-enablebanking.yaml:26-27
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		26 |         secretKey: app**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/infrastructure/vault-seed/push-secret-seed-oauth2-proxy-cookie-secret.yaml:17-18
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		17 |         secretKey: oauth2**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/infrastructure/vault-seed/push-secret-seed-r2-credentials.yaml:44-45
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		44 |         secretKey: r2_a**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/infrastructure/vault-seed/push-secret-seed-r2-credentials.yaml:49-50
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		49 |         secretKey: r2_se**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/infrastructure/vault-seed/push-secret-seed-velero-repo-credentials.yaml:36-37
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		36 |         secretKey: repo**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/bases/infrastructure/vault-seed/secret-actual-budget-encryption-placeholder.yaml:25-26
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		25 |   password: PL**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/providers/hetzner/apps/unifi/external-secret-wireguard.yaml:26-27
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		26 |     - secretKey: pr**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/providers/hetzner/apps/unifi/external-secret-wireguard.yaml:30-31
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		30 |     - secretKey: pee**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/providers/hetzner/infrastructure/cluster-issuers/cloudflare-api-token-external-secret.yaml:15-16
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		15 |     - secretKey: ap**********
+
+Check: CKV_SECRET_6: "Base64 High Entropy String"
+	FAILED for resource: HIDDEN_BY_MEGALINTER	File: /k8s/providers/hetzner/infrastructure/external-dns/external-secret.yaml:24-25
+	Guide: https://docs.prismacloud.io/en/enterprise-edition/policy-reference/secrets-policies/secrets-policy-index/git-secrets-6
+
+		24 |     - secretKey: ap**********
+
+github_actions scan results:
+
+Passed checks: 131, Failed checks: 0, Skipped checks: 1
+
+
+
