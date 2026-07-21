@@ -74,16 +74,13 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup KSail
-        # Same install path as ci.yaml's deploy-prod job; renovate keeps the
-        # pin current in both places.
+        # Same verified install path as ci.yaml's validate job and the
+        # deploy-prod action; renovate keeps the pin current in all places.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
           KSAIL_VERSION: "7.176.4"
         run: |
-          curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
-          tar -xzf /tmp/ksail.tar.gz -C /tmp
-          sudo install /tmp/ksail /usr/local/bin/ksail
-          ksail --version
+          .github/scripts/setup-ksail.sh
 
       - name: ⚙️ Setup talosctl
         # The GHCR bridge verifies RegistryAuthConfig on each stale node.
