@@ -79,6 +79,15 @@ spec:
         - ports:
             - port: "8080"
               protocol: TCP
+    # OpenBao UI/API upstream. The public HTTPRoute points at oauth2-proxy,
+    # then auth-proxy forwards only authenticated requests to OpenBao.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: openbao
+      toPorts:
+        - ports:
+            - port: "8200"
+              protocol: TCP
     # DNS resolution
     - toEndpoints:
         - matchLabels:
