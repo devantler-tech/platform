@@ -57,6 +57,7 @@ jobs:
               - 'go.mod'
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
+              - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
               - 'scripts/ghcr-auth-lib.sh'
@@ -64,6 +65,9 @@ jobs:
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/ci.yaml'
+              # cd.yaml carries the manual-deploy gate itself. Without it here, a PR
+              # that deletes that gate does not run the job whose test guards it.
+              - '.github/workflows/cd.yaml'
             bridge_validation:
               - 'scripts/refresh-flux-ghcr-auth.sh'
               - 'scripts/ghcr-auth-lib.sh'
@@ -77,6 +81,49 @@ jobs:
               - 'talos/**'
               - 'talos-local/**'
               - '.github/workflows/ci.yaml'
+
+  validate-eks-authorization:
+    name: 🔐 Validate EKS Authorization
+    needs: [changes]
+    if: >-
+      needs.changes.outputs.k8s == 'true' &&
+      (github.event_name == 'pull_request' || github.event_name == 'merge_group')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ⚙️ Install pinned kubectl renderer
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: 🔐 Validate EKS authorization surface
+        # The Go validator pins source, rendered, indirect, and substituted
+        # authorization before either a PR or merge-group commit may proceed.
+        run: |
+          go test ./scripts/validate-eks-ci-role-policy
+          go run ./scripts/validate-eks-ci-role-policy .
 
   validate:
     name: 🧪 Validate Manifests
@@ -393,7 +440,7 @@ jobs:
 
   deploy-prod:
     name: 🚀 Deploy to Prod
-    needs: [changes]
+    needs: [changes, validate-eks-authorization]
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     environment: prod
@@ -490,7 +537,7 @@ jobs:
   ci-required-checks:
     name: CI - Required Checks
     runs-on: ubuntu-latest
-    needs: [changes, validate, naming, validate-talos, deploy-prod]
+    needs: [changes, validate-eks-authorization, validate, naming, validate-talos, deploy-prod]
     if: always()
     permissions: {}
     steps:
@@ -499,6 +546,7 @@ jobs:
         with:
           job-results: >-
             ${{ needs.changes.result }}
+            ${{ needs.validate-eks-authorization.result }}
             ${{ needs.validate.result }}
             ${{ needs.naming.result }}
             ${{ needs.validate-talos.result }}
