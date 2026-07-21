@@ -1,17 +1,14 @@
-# Aggregate ClusterRole that extends the built-in 'edit' ClusterRole with
-# Cilium network-policy verbs, so a self-service tenant whose ServiceAccount is
-# bound to 'edit' can manage its own CiliumNetworkPolicy resources in its
-# namespace — owning the allow-lists its app needs (Gateway ingress, DB/DNS and
-# external egress) from its own deploy artifact, instead of the platform
-# carrying tenant-specific network rules in each registration dir.
+# Aggregate ClusterRole that extends the scoped `tenant-edit` ClusterRole with
+# limited Cilium network-policy verbs, so a self-service tenant can create
+# additive CiliumNetworkPolicy allow-lists in its namespace without receiving
+# write access to platform-maintained policies.
 #
-# The platform keeps the security FLOOR regardless: the `add-default-deny`
-# Kyverno policy still generates the deny-all + allow-dns CiliumNetworkPolicies
-# in every namespace, and (in prod) the cluster-wide `require-mutual-auth`
-# CiliumClusterwideNetworkPolicy still applies — neither of which a namespaced
-# tenant policy can override. Tenants only layer ALLOWs on top, scoped to their
-# own namespace.
+# The Kyverno-generated `default-deny` and `allow-dns` CiliumNetworkPolicies,
+# plus platform-owned tenant allow-lists, are part of the namespace security
+# boundary. Tenants may create additional policies, but they must not be able to
+# update, patch, or delete existing policies such as `default-deny`.
 #
+# This role is intentionally NOT aggregated into the built-in `edit` role.
 # Grants only the NAMESPACED `ciliumnetworkpolicies` — never the cluster-scoped
 # `ciliumclusterwidenetworkpolicies`, which remain platform territory.
 ---
@@ -20,7 +17,6 @@ kind: ClusterRole
 metadata:
   name: cilium-tenant-edit
   labels:
-    rbac.authorization.k8s.io/aggregate-to-edit: "true"
     devantler.tech/aggregate-to-tenant-edit: "true"
 rules:
   - apiGroups: ["cilium.io"]
@@ -31,6 +27,3 @@ rules:
       - list
       - watch
       - create
-      - update
-      - patch
-      - delete
