@@ -1,0 +1,18 @@
+# URLs lychee must not try to resolve. One regex per line.
+#
+# 1. Hosts with no dot in them are never internet URLs. Two sources in this repo, both
+#    uncheckable from CI by construction:
+#      a) Cluster-internal service names in Gateway/HTTPRoute manifests and in the DR
+#         runbook — https://budget/, https://dex/, https://backstage/. They resolve only
+#         inside the cluster.
+#      b) Mis-parses of cosign keyless-identity REGEXES. lychee stops at the backslash, so
+#         '^https://token\.actions\.githubusercontent\.com$' is reported as https://token/
+#         and '^https://github\.com/...' as https://github/. These are signature-verification
+#         patterns, not links — rewriting them to satisfy a link checker would break image
+#         verification.
+^https?://[^./]+/?$
+
+# 2. Private ingress hostnames. They resolve on the home network only.
+^https?://.*\.lan(/|$)
+^https?://.*\.svc\.cluster\.local(/|$)
+^https?://dex\.dev\.platform\.devantler\.tech(/|$)

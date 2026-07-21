@@ -29,6 +29,10 @@
 name: DR - Rebuild Prod
 
 on:
+  # checkov:skip=CKV_GHA_7:The `confirm` input IS the safety interlock — an operator must type
+  # REBUILD-PROD before this workflow will destroy and rebuild the production cluster. Removing
+  # the inputs to satisfy the check would delete that guard and make an accidental dispatch
+  # destructive, so the check is scoped off here rather than obeyed.
   workflow_dispatch:
     inputs:
       confirm:

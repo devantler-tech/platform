@@ -183,7 +183,7 @@ kubeconfig can be minted from the Talos control plane with
 
 `kubelogin` uses the `kubectl` static client defined in the Dex
 HelmRelease. This is a **public client** (no secret required) that uses
-Dex's [cross-client trust](https://dexidp.io/docs/custom-scopes-claims-clients/#cross-client-trust-and-authorized-party)
+Dex's [cross-client trust](https://dexidp.io/docs/configuration/custom-scopes-claims-clients/#cross-client-trust-and-authorized-party)
 (`trustedPeers`) so the issued token has `aud: public-client`, matching the
 kube-apiserver's `--oidc-client-id` flag.
 
