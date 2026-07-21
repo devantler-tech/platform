@@ -97,26 +97,76 @@ rules:
   # Autoscaling.
   - apiGroups: ["autoscaling"]
     resources: ["horizontalpodautoscalers", "horizontalpodautoscalers/status"]
-    verbs: ["create", "delete", "deletecollection", "patch", "update", "get", "list", "watch"]
+    verbs:
+      [
+        "create",
+        "delete",
+        "deletecollection",
+        "patch",
+        "update",
+        "get",
+        "list",
+        "watch",
+      ]
   # Batch.
   - apiGroups: ["batch"]
     resources: ["cronjobs", "cronjobs/status", "jobs", "jobs/status"]
-    verbs: ["create", "delete", "deletecollection", "patch", "update", "get", "list", "watch"]
+    verbs:
+      [
+        "create",
+        "delete",
+        "deletecollection",
+        "patch",
+        "update",
+        "get",
+        "list",
+        "watch",
+      ]
   # Disruption budgets.
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets", "poddisruptionbudgets/status"]
-    verbs: ["create", "delete", "deletecollection", "patch", "update", "get", "list", "watch"]
+    verbs:
+      [
+        "create",
+        "delete",
+        "deletecollection",
+        "patch",
+        "update",
+        "get",
+        "list",
+        "watch",
+      ]
   # Networking.
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses", "ingresses/status", "networkpolicies"]
-    verbs: ["create", "delete", "deletecollection", "patch", "update", "get", "list", "watch"]
+    verbs:
+      [
+        "create",
+        "delete",
+        "deletecollection",
+        "patch",
+        "update",
+        "get",
+        "list",
+        "watch",
+      ]
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]
     verbs: ["get", "list", "watch"]
   # Leader-election / coordination for tenant workloads.
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
-    verbs: ["create", "delete", "deletecollection", "get", "list", "patch", "update", "watch"]
+    verbs:
+      [
+        "create",
+        "delete",
+        "deletecollection",
+        "get",
+        "list",
+        "patch",
+        "update",
+        "watch",
+      ]
   # Events.
   - apiGroups: ["events.k8s.io"]
     resources: ["events"]

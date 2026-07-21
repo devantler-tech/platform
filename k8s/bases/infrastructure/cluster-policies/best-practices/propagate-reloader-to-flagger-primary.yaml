@@ -71,7 +71,7 @@ spec:
                 - headlamp
       preconditions:
         all:
-          - key: "{{ request.object.metadata.annotations.\"secret.reloader.stakater.com/reload\" || '' }}"
+          - key: '{{ request.object.metadata.annotations."secret.reloader.stakater.com/reload" || '''' }}'
             operator: NotEquals
             value: ""
       mutate:
@@ -84,4 +84,4 @@ spec:
         patchStrategicMerge:
           metadata:
             annotations:
-              secret.reloader.stakater.com/reload: "{{ request.object.metadata.annotations.\"secret.reloader.stakater.com/reload\" }}"
+              secret.reloader.stakater.com/reload: '{{ request.object.metadata.annotations."secret.reloader.stakater.com/reload" }}'

@@ -18,12 +18,12 @@ spec:
       # Matches any Deployment with the label `distributed=required`
       match:
         any:
-        - resources:
-            kinds:
-            - Deployment
-            selector:
-              matchLabels:
-                distributed: required
+          - resources:
+              kinds:
+                - Deployment
+              selector:
+                matchLabels:
+                  distributed: required
       # Mutates the incoming Deployment.
       mutate:
         patchStrategicMerge:
@@ -32,9 +32,9 @@ spec:
               spec:
                 # Adds the topologySpreadConstraints field if non-existent in the request.
                 +(topologySpreadConstraints):
-                - maxSkew: 1
-                  topologyKey: zone
-                  whenUnsatisfiable: DoNotSchedule
-                  labelSelector:
-                    matchLabels:
-                      distributed: required
+                  - maxSkew: 1
+                    topologyKey: zone
+                    whenUnsatisfiable: DoNotSchedule
+                    labelSelector:
+                      matchLabels:
+                        distributed: required

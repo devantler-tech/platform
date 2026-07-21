@@ -56,7 +56,7 @@ spec:
         all:
           # Durable opt-out on the pod template (charts expose podLabels more
           # widely than top-level workload labels).
-          - key: "{{ request.object.spec.template.metadata.labels.\"platform.devantler.tech/replica-ceiling\" || '' }}"
+          - key: '{{ request.object.spec.template.metadata.labels."platform.devantler.tech/replica-ceiling" || '''' }}'
             operator: NotEquals
             value: exempt
       validate:

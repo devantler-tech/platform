@@ -10,6 +10,6 @@ roleRef:
   kind: ClusterRole
   name: tenant-edit
 subjects:
-- kind: ServiceAccount
-  name: wedding-app
-  namespace: wedding-app
+  - kind: ServiceAccount
+    name: wedding-app
+    namespace: wedding-app
