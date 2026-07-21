@@ -7,3 +7,5 @@ resources:
   - flux-kustomization-infrastructure-controllers.yaml
   - flux-kustomization-infrastructure.yaml
   - flux-kustomization-apps.yaml
+
+

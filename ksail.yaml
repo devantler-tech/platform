@@ -54,3 +54,4 @@ spec:
         - MetricTemplate
         - Canary
         - Tenant
+

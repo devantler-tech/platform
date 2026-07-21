@@ -14,7 +14,7 @@ CloudNativePG database and fronted by the platform's SSO.
 ## What's deployed
 
 | Piece | How |
-| --- | --- |
+|---|---|
 | App | `backstage` Helm chart (`backstage.github.io/charts`), image `ghcr.io/backstage/backstage:1.52.0` (demo), 1 replica (single-pod — Backstage runs DB migrations on startup) |
 | Database | CloudNativePG `backstage-db` (2 instances, longhorn, synchronous). Backstage uses the generated `backstage-db-app` Secret and one DB with a schema per plugin (`pluginDivisionMode: schema`) |
 | Backend secret | Generated once by an External Secrets `Password` generator (`password.yaml` + `external-secret.yaml`), never rotated |

@@ -55,7 +55,7 @@ over, not blind-flipped).
 ## Current state (what Coroot is seeing)
 
 | | Today |
-| --- | --- |
+|---|---|
 | Install | Cilium chart sub-component (`authentication.mutual.spire`), `kube-system` |
 | Replicas | **1** (StatefulSet; chart exposes no `replicaCount`) |
 | Datastore | built-in **SQLite** on a single RWO PVC |
@@ -224,7 +224,7 @@ data, verify, then capture in Git.
 ## Risks & mitigations
 
 | Risk | Mitigation |
-| --- | --- |
+|---|---|
 | **Replicas on SQLite → split-brain/corruption.** | Never. HA requires the shared SQL datastore first; replicas only after the datastore cutover. |
 | **SPIRE↔Postgres deadlock** (datastore behind the mTLS gate it bootstraps). | mTLS carve-out for spire-server↔spire-db `:5432` (CoreDNS-carve-out precedent), landed & verified **before** the cutover; **spire-db on hcloud, not longhorn.** |
 | **Layering inversion** (CNPG Cluster downstream of SPIRE). | Place `spire-db` in the **infra-controllers** tier, not `apps`; it must be ready before spire-server serves. |

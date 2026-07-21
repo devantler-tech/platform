@@ -48,7 +48,17 @@ EXCLUDED_DIRECTORIES:
 #   * megalinter-reports/ — also in .gitignore now, after it put 182 report files in a branch.
 #   * .agents/ — machine-synced daily from devantler-tech/agent-skills; any fix here is discarded
 #     by the next sync, so rewriting those 87 files was pure churn.
-FILTER_REGEX_EXCLUDE: (megalinter-reports/.*|\.agents/.*)
+#   * *.enc.yaml — SOPS-encrypted. SOPS writes its own canonical 4-space layout and owns these
+#     files; prettier re-indented `k8s/bases/bootstrap/secret.enc.yaml` to 2 spaces, which the next
+#     `sops` edit simply reverts. A generic formatter must not rewrite machine-managed ciphertext.
+FILTER_REGEX_EXCLUDE: (megalinter-reports/.*|\.megalinter_github_conf/.*|\.agents/.*|.*\.enc\.yaml)
+
+# shfmt defaults to tabs. This repository's shell scripts are 2-space indented, and left to its
+# default shfmt retabbed all four of them — 610 changed lines in one script — and CI committed it.
+# Match the existing style instead of churning it.
+BASH_SHFMT_ARGUMENTS:
+  - -i
+  - "2"
 
 DISABLE_LINTERS:
   # gitleaks is deprecated in MegaLinter's own descriptor, which recommends exactly this entry and

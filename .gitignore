@@ -21,3 +21,6 @@ wedding-app-login.png
 # stages everything (`file_pattern: .`) when it pushes auto-fixes back, and without this it
 # committed 182 report files into the branch.
 megalinter-reports/
+
+# MegaLinter also drops a generated GitHub config tree here.
+.megalinter_github_conf/
