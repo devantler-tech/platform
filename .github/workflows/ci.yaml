@@ -65,6 +65,9 @@ jobs:
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/ci.yaml'
+              # cd.yaml carries the manual-deploy gate itself. Without it here, a PR
+              # that deletes that gate does not run the job whose test guards it.
+              - '.github/workflows/cd.yaml'
             bridge_validation:
               - 'scripts/refresh-flux-ghcr-auth.sh'
               - 'scripts/ghcr-auth-lib.sh'

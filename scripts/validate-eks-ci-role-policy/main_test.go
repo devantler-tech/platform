@@ -1135,3 +1135,20 @@ func TestManualDeployIsGatedByTheValidator(t *testing.T) {
 		}
 	}
 }
+
+// TestValidatorRunsWhenTheManualGateItselfChanges closes the last way around.
+//
+// The validator job is gated on the `k8s` paths filter. cd.yaml now carries the
+// manual-deploy gate, so if it is not in that filter a PR deleting the gate does
+// not run the job whose test guards the gate — the guard would be removable
+// without ever executing.
+func TestValidatorRunsWhenTheManualGateItselfChanges(t *testing.T) {
+	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github/workflows/ci.yaml"))
+	if err != nil {
+		t.Fatalf("read CI workflow: %v", err)
+	}
+	if !strings.Contains(string(workflow), "- '.github/workflows/cd.yaml'") {
+		t.Error("the k8s paths filter omits .github/workflows/cd.yaml — a PR deleting the " +
+			"manual-deploy gate would not run the validator job that guards it")
+	}
+}
