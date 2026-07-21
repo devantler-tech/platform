@@ -19,6 +19,14 @@ spec:
             - port: "8080"
               protocol: TCP
   egress:
+    # Actual Budget upstream (personal finance app; Service actual-budget-actualbudget :5006).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: actual-budget
+      toPorts:
+        - ports:
+            - port: "5006"
+              protocol: TCP
     # Backstage upstream (developer portal; Service backstage :7007).
     - toEndpoints:
         - matchLabels:

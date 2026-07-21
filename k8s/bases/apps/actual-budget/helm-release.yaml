@@ -103,6 +103,11 @@ spec:
                 value:
                   name: ACTUAL_OPENID_ENFORCE
                   value: "true"
+              - op: add
+                path: /spec/template/spec/containers/0/env/-
+                value:
+                  name: ACTUAL_TOKEN_EXPIRATION
+                  value: "openid-provider"
   # https://github.com/community-charts/helm-charts/blob/main/charts/actualbudget/values.yaml
   values:
     replicaCount: ${actual_budget_replicas:=1}
@@ -221,7 +226,7 @@ spec:
         discoveryUrl: "https://dex.${domain}/.well-known/openid-configuration"
         clientId: "public-client"
         authMethod: "openid"
-        tokenExpiration: "never"
+        tokenExpiration: "openid-provider"
         existingSecret:
           name: actual-budget-oidc
           clientSecretKey: client-secret
