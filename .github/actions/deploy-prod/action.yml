@@ -156,6 +156,48 @@ runs:
     # down, `ksail cluster update` ran first, hard-failed the job, and froze
     # ALL app/config delivery to an otherwise-healthy cluster (the apiserver
     # and Flux were fine on the two surviving control-plane nodes).
+    - name: 🏷️ Pin prod workload to this run's OCI tag
+      # ksail.prod.yaml intentionally uses the human-friendly `latest` tag in
+      # Git, but deploys must not sign a digest looked up through that shared
+      # mutable tag after `workload push`: another GHCR writer could retag
+      # `latest` in the push→sign window and trick this trusted workflow into
+      # signing their digest. For the live deploy, rewrite only the checked-out
+      # config to a per-run tag before both `workload push` and `workload
+      # reconcile`; the signing step then resolves that unshared tag rather
+      # than the repository-wide `latest` pointer.
+      shell: bash
+      run: |
+        set -euo pipefail
+        DEPLOY_TAG="sha-${GITHUB_SHA}-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        python3 - <<'PY' "${DEPLOY_TAG}"
+        from pathlib import Path
+        import sys
+
+        deploy_tag = sys.argv[1]
+        path = Path("ksail.prod.yaml")
+        lines = path.read_text().splitlines(keepends=True)
+
+        in_workload = False
+        replaced = False
+        for index, line in enumerate(lines):
+          stripped = line.strip()
+          if line == "  workload:\n":
+            in_workload = True
+            continue
+          if in_workload and line.startswith("  ") and not line.startswith("    "):
+            break
+          if in_workload and stripped.startswith("tag:"):
+            lines[index] = f"    tag: {deploy_tag}\n"
+            replaced = True
+            break
+
+        if not replaced:
+          raise SystemExit("Could not find spec.workload.tag in ksail.prod.yaml")
+
+        path.write_text("".join(lines))
+        PY
+        echo "KSAIL_WORKLOAD_TAG=${DEPLOY_TAG}" >> "${GITHUB_ENV}"
+
     - name: 📦 Push manifests to GHCR
       shell: bash
       env:
@@ -232,11 +274,12 @@ runs:
         COSIGN_YES: "true"
       run: |
         set -euo pipefail
-        REF_TAG="ghcr.io/devantler-tech/platform/manifests:latest"
-        # Resolve the tag → digest BEFORE signing so that (a) cosign signs
-        # exactly the bytes we resolved -- no tag→digest TOCTOU if a
-        # concurrent deploy mutates the tag between this resolve and the
-        # sign call, (b) cosign stops warning about tag-based references
+        REF_TAG="ghcr.io/devantler-tech/platform/manifests:${KSAIL_WORKLOAD_TAG}"
+        # Resolve this deploy's per-run tag → digest BEFORE signing so
+        # that (a) cosign signs exactly the bytes we resolved -- no
+        # tag→digest TOCTOU if a
+        # concurrent deploy mutates a different tag between this resolve and
+        # the sign call, (b) cosign stops warning about tag-based references
         # and we stay forward-compatible with the cosign roadmap that
         # removes tag-based signing entirely, and (c) cosign skips its
         # own internal tag→digest lookup -- one fewer registry round-trip.
