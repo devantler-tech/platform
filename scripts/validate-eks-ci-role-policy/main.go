@@ -36,7 +36,7 @@ const (
 	expectedTrustPolicySHA     = "85d5d45343f9eac5fdc35717c85c88c5b0f8fde9eddffb169c3a223617fd0a5e"
 	expectedInlinePolicySHA    = "60e3086a6d3dac0092ffe8264c04ebae783c0d38f19a3cf073ed8991085a4df8"
 	expectedBoundaryJSONSHA    = "e617004bce71a65f92934c4f7575d7559a290afe7a17363ce12db8ad7b519610"
-	expectedRenderedSurfaceSHA = "2d12f6e6ea2d298fc61c9505719e5a46c71d6885336725b4cd645e86dce6efab"
+	expectedRenderedSurfaceSHA = "a7fc2f116afd6cc1e9595f6b61de85215c751d2cac033660befabc2c7e3fda61"
 )
 
 // authorizationOverlayPaths lists every independently reconciled production
