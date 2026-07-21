@@ -23,7 +23,9 @@
               "type": "string"
             }
           },
-          "required": ["name"],
+          "required": [
+            "name"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -49,7 +51,10 @@
             },
             "operation": {
               "description": "Operation specifies how the selected layer should be processed.\nBy default, the layer compressed content is extracted to storage.\nWhen the operation is set to 'copy', the layer compressed content\nis persisted to storage as it is.",
-              "enum": ["extract", "copy"],
+              "enum": [
+                "extract",
+                "copy"
+              ],
               "type": "string"
             }
           },
@@ -59,7 +64,12 @@
         "provider": {
           "default": "generic",
           "description": "The provider used for authentication, can be 'aws', 'azure', 'gcp' or 'generic'.\nWhen not specified, defaults to 'generic'.",
-          "enum": ["generic", "aws", "azure", "gcp"],
+          "enum": [
+            "generic",
+            "aws",
+            "azure",
+            "gcp"
+          ],
           "type": "string"
         },
         "proxySecretRef": {
@@ -70,7 +80,9 @@
               "type": "string"
             }
           },
-          "required": ["name"],
+          "required": [
+            "name"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -105,7 +117,9 @@
               "type": "string"
             }
           },
-          "required": ["name"],
+          "required": [
+            "name"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -145,7 +159,10 @@
                     "type": "string"
                   }
                 },
-                "required": ["issuer", "subject"],
+                "required": [
+                  "issuer",
+                  "subject"
+                ],
                 "type": "object",
                 "additionalProperties": false
               },
@@ -154,7 +171,10 @@
             "provider": {
               "default": "cosign",
               "description": "Provider specifies the technology used to sign the OCI Artifact.",
-              "enum": ["cosign", "notation"],
+              "enum": [
+                "cosign",
+                "notation"
+              ],
               "type": "string"
             },
             "secretRef": {
@@ -165,7 +185,9 @@
                   "type": "string"
                 }
               },
-              "required": ["name"],
+              "required": [
+                "name"
+              ],
               "type": "object",
               "additionalProperties": false
             },
@@ -177,17 +199,24 @@
                   "type": "string"
                 }
               },
-              "required": ["name"],
+              "required": [
+                "name"
+              ],
               "type": "object",
               "additionalProperties": false
             }
           },
-          "required": ["provider"],
+          "required": [
+            "provider"
+          ],
           "type": "object",
           "additionalProperties": false
         }
       },
-      "required": ["interval", "url"],
+      "required": [
+        "interval",
+        "url"
+      ],
       "type": "object",
       "additionalProperties": false
     },
@@ -235,7 +264,13 @@
               "type": "string"
             }
           },
-          "required": ["digest", "lastUpdateTime", "path", "revision", "url"],
+          "required": [
+            "digest",
+            "lastUpdateTime",
+            "path",
+            "revision",
+            "url"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -269,7 +304,11 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": ["True", "False", "Unknown"],
+                "enum": [
+                  "True",
+                  "False",
+                  "Unknown"
+                ],
                 "type": "string"
               },
               "type": {
@@ -313,7 +352,10 @@
             },
             "operation": {
               "description": "Operation specifies how the selected layer should be processed.\nBy default, the layer compressed content is extracted to storage.\nWhen the operation is set to 'copy', the layer compressed content\nis persisted to storage as it is.",
-              "enum": ["extract", "copy"],
+              "enum": [
+                "extract",
+                "copy"
+              ],
               "type": "string"
             }
           },

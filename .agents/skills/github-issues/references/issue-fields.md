@@ -155,12 +155,12 @@ mutation {
 
 Each entry in `issueFields` takes a `fieldId` plus exactly one value parameter:
 
-| Field type    | Value parameter        | Format                                    |
-|---------------|------------------------|-------------------------------------------|
-| Date          | `dateValue`            | ISO 8601 date string, e.g. `"2026-04-15"` |
-| Text          | `textValue`            | String                                    |
-| Number        | `numberValue`          | Float                                     |
-| Single select | `singleSelectOptionId` | Node ID from the field's `options` list   |
+| Field type | Value parameter | Format |
+|-----------|----------------|--------|
+| Date | `dateValue` | ISO 8601 date string, e.g. `"2026-04-15"` |
+| Text | `textValue` | String |
+| Number | `numberValue` | Float |
+| Single select | `singleSelectOptionId` | Node ID from the field's `options` list |
 
 To clear a field value, set `delete: true` instead of a value parameter.
 

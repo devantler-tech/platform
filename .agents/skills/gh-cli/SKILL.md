@@ -1969,7 +1969,7 @@ gh agent-task create --description "My task"
 ## Global Flags
 
 | Flag                       | Description                            |
-|----------------------------|----------------------------------------|
+| -------------------------- | -------------------------------------- |
 | `--help` / `-h`            | Show help for command                  |
 | `--version`                | Show gh version                        |
 | `--repo [HOST/]OWNER/REPO` | Select another repository              |

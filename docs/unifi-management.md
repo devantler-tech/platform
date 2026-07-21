@@ -28,12 +28,12 @@ cross-resource reference for `TrafficRoute.networkId` are tracked in the
 
 ## Where it lives
 
-| Piece                                                                                                                                                     | Path                                               |
-|-----------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------|
-| Provider install (prod): `Provider` + `DeploymentRuntimeConfig` + `ManagedResourceActivationPolicy`                                                       | `k8s/providers/hetzner/infrastructure/crossplane/` |
-| Tenant (ns, SA/RBAC, netpol, namespaced `SecretStore`, `ProviderConfig`, credential + WireGuard `ExternalSecret`s, `GitRepository`, Flux `Kustomization`) | `k8s/providers/hetzner/apps/unifi/`                |
-| OpenBao read policy (`infra-unifi-readonly`) + dedicated `unifi` auth role + placeholder seeding (Job)                                                    | `k8s/bases/infrastructure/vault-config/job.yaml`   |
-| Registered in the apps overlay                                                                                                                            | `k8s/providers/hetzner/apps/kustomization.yaml`    |
+| Piece | Path |
+| --- | --- |
+| Provider install (prod): `Provider` + `DeploymentRuntimeConfig` + `ManagedResourceActivationPolicy` | `k8s/providers/hetzner/infrastructure/crossplane/` |
+| Tenant (ns, SA/RBAC, netpol, namespaced `SecretStore`, `ProviderConfig`, credential + WireGuard `ExternalSecret`s, `GitRepository`, Flux `Kustomization`) | `k8s/providers/hetzner/apps/unifi/` |
+| OpenBao read policy (`infra-unifi-readonly`) + dedicated `unifi` auth role + placeholder seeding (Job) | `k8s/bases/infrastructure/vault-config/job.yaml` |
+| Registered in the apps overlay | `k8s/providers/hetzner/apps/kustomization.yaml` |
 
 It is a **regular tenant in the apps layer**, reconciled by the shared `apps`
 Flux Kustomization like wedding-app/github-config; the provider itself installs in

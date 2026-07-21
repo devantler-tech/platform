@@ -30,33 +30,33 @@ Follow the [test-driven-development](https://github.com/obra/superpowers/tree/ma
 
 ### Application / Library Repositories
 
-| Type                   | Tooling                                                                            | When to run                                                          |
-|------------------------|------------------------------------------------------------------------------------|----------------------------------------------------------------------|
-| **Linting**            | Linters and linting runners (e.g. `golangci-lint`, `eslint`, `MegaLinter`)         | CI on every PR                                                       |
-| **Scanning**           | Security & quality scanners (e.g. CodeQL, Trivy, SonarQube)                        | CI on every PR                                                       |
-| **Unit tests**         | SDK test frameworks (e.g. `go test`, `xunit`, `jest`)                              | CI on every PR                                                       |
-| **Integration tests**  | SDK test frameworks                                                                | CI on every PR                                                       |
+| Type | Tooling | When to run |
+|------|---------|-------------|
+| **Linting** | Linters and linting runners (e.g. `golangci-lint`, `eslint`, `MegaLinter`) | CI on every PR |
+| **Scanning** | Security & quality scanners (e.g. CodeQL, Trivy, SonarQube) | CI on every PR |
+| **Unit tests** | SDK test frameworks (e.g. `go test`, `xunit`, `jest`) | CI on every PR |
+| **Integration tests** | SDK test frameworks | CI on every PR |
 | **E2E / system tests** | GitHub Actions workflows that exercise the app/binary/service as an end user would | CI on every PR; move to `merge_group` if the suite becomes too heavy |
-| **Benchmark tests**    | SDK benchmark frameworks (e.g. `BenchmarkDotNet`, `go test -bench`)                | CI on every PR                                                       |
+| **Benchmark tests** | SDK benchmark frameworks (e.g. `BenchmarkDotNet`, `go test -bench`) | CI on every PR |
 
 ### Platform / Kubernetes Repositories
 
 For platform engineering work, [ksail](https://github.com/devantler-tech/ksail) provides the build → run → publish loop and [Testkube](https://testkube.io/) runs the actual test suites inside the cluster:
 
-| Type                   | Tooling                                                     | What it does                                                                           |
-|------------------------|-------------------------------------------------------------|----------------------------------------------------------------------------------------|
-| **Linting**            | Manifest linters (e.g. kubeconform, kube-linter)            | Validate manifests statically — no cluster needed                                      |
-| **Scanning**           | Security scanners (e.g. Trivy)                              | Scan manifests and images for vulnerabilities — no cluster needed                      |
-| **Integration tests**  | Ephemeral local cluster (`ksail cluster create`) + Testkube | Spin up a Docker cluster, deploy workloads, and run Testkube test suites against them  |
-| **E2E / system tests** | Ephemeral or real cluster + Testkube                        | Deploy to a full environment (local or remote) and run end-to-end Testkube test suites |
+| Type | Tooling | What it does |
+|------|---------|--------------|
+| **Linting** | Manifest linters (e.g. kubeconform, kube-linter) | Validate manifests statically — no cluster needed |
+| **Scanning** | Security scanners (e.g. Trivy) | Scan manifests and images for vulnerabilities — no cluster needed |
+| **Integration tests** | Ephemeral local cluster (`ksail cluster create`) + Testkube | Spin up a Docker cluster, deploy workloads, and run Testkube test suites against them |
+| **E2E / system tests** | Ephemeral or real cluster + Testkube | Deploy to a full environment (local or remote) and run end-to-end Testkube test suites |
 
 Platform lifecycle commands:
 
-| Command                | Purpose                                                                                       |
-|------------------------|-----------------------------------------------------------------------------------------------|
-| `ksail cluster init`   | Scaffold a new cluster configuration                                                          |
+| Command | Purpose |
+|---------|---------|
+| `ksail cluster init` | Scaffold a new cluster configuration |
 | `ksail cluster create` | Spin up the cluster locally (Docker) or on real infrastructure and verify workloads reconcile |
-| `ksail workload push`  | Push Kubernetes manifests as OCI artifacts to a container registry                            |
+| `ksail workload push` | Push Kubernetes manifests as OCI artifacts to a container registry |
 
 ## Code Quality Gates (CI)
 
@@ -97,20 +97,20 @@ Each repository has two core workflow files — `ci.yaml` and `cd.yaml` — plus
 
 ### Application / Library Repositories
 
-| Event                 | What runs                                                                                                                                                                       |
-|-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `pull_request`        | Linting, scanning, unit tests, integration tests, E2E tests, benchmarks, coverage & benchmark regression checks. Move E2E to `merge_group` only if the suite becomes too heavy. |
-| `merge_group`         | CD to **dev** environment.                                                                                                                                                      |
-| `push` to `main`      | **Publish** artifacts (packages, container images, etc.).                                                                                                                       |
-| Semver tag (`vX.X.X`) | CD to **prod** environment.                                                                                                                                                     |
+| Event | What runs |
+|-------|-----------|
+| `pull_request` | Linting, scanning, unit tests, integration tests, E2E tests, benchmarks, coverage & benchmark regression checks. Move E2E to `merge_group` only if the suite becomes too heavy. |
+| `merge_group` | CD to **dev** environment. |
+| `push` to `main` | **Publish** artifacts (packages, container images, etc.). |
+| Semver tag (`vX.X.X`) | CD to **prod** environment. |
 
 ### Platform / Kubernetes Repositories
 
-| Event                 | What runs                                                                                                                                                                       |
-|-----------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `pull_request`        | Linting, scanning, integration tests on an ephemeral local cluster (`ksail cluster create` + Testkube). Move integration tests to `merge_group` if the suite becomes too heavy. |
-| `merge_group`         | CD to **dev** — deploy to staging infrastructure (e.g. Hetzner).                                                                                                                |
-| Semver tag (`vX.X.X`) | CD to **prod** — `ksail cluster update`, `ksail workload push`, `ksail workload reconcile`.                                                                                     |
+| Event | What runs |
+|-------|-----------|
+| `pull_request` | Linting, scanning, integration tests on an ephemeral local cluster (`ksail cluster create` + Testkube). Move integration tests to `merge_group` if the suite becomes too heavy. |
+| `merge_group` | CD to **dev** — deploy to staging infrastructure (e.g. Hetzner). |
+| Semver tag (`vX.X.X`) | CD to **prod** — `ksail cluster update`, `ksail workload push`, `ksail workload reconcile`. |
 
 ### Releases
 

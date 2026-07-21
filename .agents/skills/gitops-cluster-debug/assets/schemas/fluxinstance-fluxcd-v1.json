@@ -46,7 +46,11 @@
             },
             "size": {
               "description": "Size defines the vertical scaling profile of the Flux controllers.\nThe size is used to determine the concurrency and CPU/Memory limits for the Flux controllers.\nAccepted values are: 'small', 'medium' and 'large'.",
-              "enum": ["small", "medium", "large"],
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ],
               "type": "string"
             },
             "tenantDefaultDecryptionServiceAccount": {
@@ -64,7 +68,13 @@
             "type": {
               "default": "kubernetes",
               "description": "Type specifies the distro of the Kubernetes cluster.\nDefaults to 'kubernetes'.",
-              "enum": ["kubernetes", "openshift", "aws", "azure", "gcp"],
+              "enum": [
+                "kubernetes",
+                "openshift",
+                "aws",
+                "azure",
+                "gcp"
+              ],
               "type": "string"
             }
           },
@@ -150,7 +160,10 @@
               "type": "string"
             }
           },
-          "required": ["registry", "version"],
+          "required": [
+            "registry",
+            "version"
+          ],
           "type": "object"
         },
         "kustomize": {
@@ -203,7 +216,9 @@
                     "type": "object"
                   }
                 },
-                "required": ["patch"],
+                "required": [
+                  "patch"
+                ],
                 "type": "object"
               },
               "type": "array"
@@ -235,11 +250,16 @@
             },
             "storage": {
               "description": "Storage defines if the source-controller shards\nshould use an emptyDir or a persistent volume claim for storage.\nAccepted values are 'ephemeral' or 'persistent', defaults to 'ephemeral'.\nWhen set to 'persistent', the '.spec.storage' field must be set.",
-              "enum": ["ephemeral", "persistent"],
+              "enum": [
+                "ephemeral",
+                "persistent"
+              ],
               "type": "string"
             }
           },
-          "required": ["shards"],
+          "required": [
+            "shards"
+          ],
           "type": "object"
         },
         "storage": {
@@ -255,7 +275,10 @@
               "type": "string"
             }
           },
-          "required": ["class", "size"],
+          "required": [
+            "class",
+            "size"
+          ],
           "type": "object"
         },
         "sync": {
@@ -270,7 +293,11 @@
             },
             "kind": {
               "description": "Kind is the kind of the source.",
-              "enum": ["OCIRepository", "GitRepository", "Bucket"],
+              "enum": [
+                "OCIRepository",
+                "GitRepository",
+                "Bucket"
+              ],
               "type": "string"
             },
             "name": {
@@ -290,7 +317,13 @@
             },
             "provider": {
               "description": "Provider specifies OIDC provider for source authentication.\nFor OCIRepository and Bucket the provider can be set to 'aws', 'azure' or 'gcp'.\nFor GitRepository the provider can be set to 'aws' (requires Flux 2.9 or later),\n'azure' or 'github'.\nTo disable OIDC authentication the provider can be set to 'generic' or left empty.",
-              "enum": ["generic", "aws", "azure", "gcp", "github"],
+              "enum": [
+                "generic",
+                "aws",
+                "azure",
+                "gcp",
+                "github"
+              ],
               "type": "string"
             },
             "pullSecret": {
@@ -306,7 +339,12 @@
               "type": "string"
             }
           },
-          "required": ["kind", "path", "ref", "url"],
+          "required": [
+            "kind",
+            "path",
+            "ref",
+            "url"
+          ],
           "type": "object",
           "x-kubernetes-validations": [
             {
@@ -325,7 +363,9 @@
           "type": "boolean"
         }
       },
-      "required": ["distribution"],
+      "required": [
+        "distribution"
+      ],
       "type": "object",
       "x-kubernetes-validations": [
         {
@@ -361,7 +401,11 @@
                 "type": "string"
               }
             },
-            "required": ["name", "repository", "tag"],
+            "required": [
+              "name",
+              "repository",
+              "tag"
+            ],
             "type": "object"
           },
           "type": "array"
@@ -397,7 +441,11 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": ["True", "False", "Unknown"],
+                "enum": [
+                  "True",
+                  "False",
+                  "Unknown"
+                ],
                 "type": "string"
               },
               "type": {
@@ -490,13 +538,18 @@
                     "type": "string"
                   }
                 },
-                "required": ["id", "v"],
+                "required": [
+                  "id",
+                  "v"
+                ],
                 "type": "object"
               },
               "type": "array"
             }
           },
-          "required": ["entries"],
+          "required": [
+            "entries"
+          ],
           "type": "object"
         },
         "lastAppliedRevision": {

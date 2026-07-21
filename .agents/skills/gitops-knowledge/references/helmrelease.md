@@ -102,15 +102,15 @@ These are **mutually exclusive** — use one or the other, never both.
 
 ## Key Spec Fields
 
-| Field                | Type     | Required | Description                                                                                                                                                                                                                                                               |
-|----------------------|----------|----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `interval`           | duration | yes      | Reconciliation interval                                                                                                                                                                                                                                                   |
-| `releaseName`        | string   | no       | Helm release name (defaults to `metadata.name`)                                                                                                                                                                                                                           |
-| `targetNamespace`    | string   | no       | Namespace for the Helm release. Prefer deploying into `metadata.namespace` and creating that namespace in the parent Kustomization/ResourceSet (see best-practices.md); if set, also set `storageNamespace` to match so the Helm release storage lives with the workloads |
-| `serviceAccountName` | string   | no       | Service account for impersonation                                                                                                                                                                                                                                         |
-| `timeout`            | duration | no       | Timeout for Helm operations                                                                                                                                                                                                                                               |
-| `waitStrategy.name`  | string   | no       | Readiness wait engine: `poller` (default, uses kstatus polling) or `legacy` (Helm v3 waiting logic)                                                                                                                                                                       |
-| `suspend`            | bool     | no       | Pause reconciliation                                                                                                                                                                                                                                                      |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `interval` | duration | yes | Reconciliation interval |
+| `releaseName` | string | no | Helm release name (defaults to `metadata.name`) |
+| `targetNamespace` | string | no | Namespace for the Helm release. Prefer deploying into `metadata.namespace` and creating that namespace in the parent Kustomization/ResourceSet (see best-practices.md); if set, also set `storageNamespace` to match so the Helm release storage lives with the workloads |
+| `serviceAccountName` | string | no | Service account for impersonation |
+| `timeout` | duration | no | Timeout for Helm operations |
+| `waitStrategy.name` | string | no | Readiness wait engine: `poller` (default, uses kstatus polling) or `legacy` (Helm v3 waiting logic) |
+| `suspend` | bool | no | Pause reconciliation |
 
 ## Values
 
@@ -306,11 +306,11 @@ spec:
 
 Control how Helm manages CRDs:
 
-| Value           | Install      | Upgrade      | Description                                   |
-|-----------------|--------------|--------------|-----------------------------------------------|
-| `Create`        | Install CRDs | Skip CRDs    | Default — create on install, leave on upgrade |
-| `Skip`          | Skip CRDs    | Skip CRDs    | Never touch CRDs (manage separately)          |
-| `CreateReplace` | Install CRDs | Replace CRDs | Create and update CRDs (use with caution)     |
+| Value | Install | Upgrade | Description |
+|-------|---------|---------|-------------|
+| `Create` | Install CRDs | Skip CRDs | Default — create on install, leave on upgrade |
+| `Skip` | Skip CRDs | Skip CRDs | Never touch CRDs (manage separately) |
+| `CreateReplace` | Install CRDs | Replace CRDs | Create and update CRDs (use with caution) |
 
 Set per operation:
 ```yaml

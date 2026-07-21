@@ -100,12 +100,12 @@ await browser.close();
 
 ## Quick reference
 
-| Method                                 | Private repos | Permanent | No auth needed |   API-only    |
-|----------------------------------------|:-------------:|:---------:|:--------------:|:-------------:|
-| Contents API + `github.com/raw/`       |       ✅       |     ✅     |       ❌        |       ✅       |
-| Browser drag-drop (`user-attachments`) |       ✅       |     ✅     |       ✅        |       ❌       |
-| `raw.githubusercontent.com`            |    ❌ (404)    |     ✅     |       ❌        |       ✅       |
-| Gist                                   |  Public only  |     ✅     |       ✅        | ❌ (no binary) |
+| Method | Private repos | Permanent | No auth needed | API-only |
+|--------|:---:|:---:|:---:|:---:|
+| Contents API + `github.com/raw/` | ✅ | ✅ | ❌ | ✅ |
+| Browser drag-drop (`user-attachments`) | ✅ | ✅ | ✅ | ❌ |
+| `raw.githubusercontent.com` | ❌ (404) | ✅ | ❌ | ✅ |
+| Gist | Public only | ✅ | ✅ | ❌ (no binary) |
 
 ## Common pitfalls
 

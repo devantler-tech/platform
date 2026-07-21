@@ -152,17 +152,17 @@ apps-repo/                       # Published as OCI artifacts per component
 
 Use these signals to classify an unknown repo:
 
-| Signal                                                     | Likely Pattern                                 |
-|------------------------------------------------------------|------------------------------------------------|
-| Has `clusters/*/` directories                              | Multi-cluster setup (monorepo or fleet repo)   |
-| Has `apps/base/` and `apps/<env>/`                         | Monorepo with Kustomize overlays               |
-| Has `ArtifactGenerator` resources                          | Monorepo with source decomposition             |
-| Has `FluxInstance` with `sync.kind.GitRepository` resource | Git-based fleet repo (Flux Operator)           |
-| Has `FluxInstance` with `sync.kind.OCIRepository` resource | OCI-based fleet repo (Flux Operator)           |
-| Has `ResourceSet` resources                                | Fleet repo with templating (Flux Operator)     |
-| Has `tenants/` directory                                   | Fleet repo (Git or OCI multi-repo)             |
-| Has `components/` with `base/staging/production`           | Infra or apps repo in multi-repo setup         |
-| Has `update/` or `update-policies/` directory              | Repo with image automation                     |
-| References external Git repos via GitRepository            | Fleet repo in Git-based multi-repo             |
-| References OCI artifacts via OCIRepository                 | OCI-based setup                                |
-| Has `postBuild.substituteFrom`                             | Multi-cluster setup with per-cluster variables |
+| Signal                                                     | Likely Pattern                                     |
+|------------------------------------------------------------|----------------------------------------------------|
+| Has `clusters/*/` directories                              | Multi-cluster setup (monorepo or fleet repo)       |
+| Has `apps/base/` and `apps/<env>/`                         | Monorepo with Kustomize overlays                   |
+| Has `ArtifactGenerator` resources                          | Monorepo with source decomposition                 |
+| Has `FluxInstance` with `sync.kind.GitRepository` resource | Git-based fleet repo (Flux Operator)               |
+| Has `FluxInstance` with `sync.kind.OCIRepository` resource | OCI-based fleet repo (Flux Operator)               |
+| Has `ResourceSet` resources                                | Fleet repo with templating (Flux Operator)         |
+| Has `tenants/` directory                                   | Fleet repo (Git or OCI multi-repo)                 |
+| Has `components/` with `base/staging/production`           | Infra or apps repo in multi-repo setup             |
+| Has `update/` or `update-policies/` directory              | Repo with image automation                         |
+| References external Git repos via GitRepository            | Fleet repo in Git-based multi-repo                 |
+| References OCI artifacts via OCIRepository                 | OCI-based setup                                    |
+| Has `postBuild.substituteFrom`                             | Multi-cluster setup with per-cluster variables     |

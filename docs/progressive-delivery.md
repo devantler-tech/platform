@@ -32,20 +32,20 @@ Promotion vs rollback is gated on:
 
 ### Two delivery modes
 
-| Mode                | Flagger `provider` | When                                                             | Traffic                                                                                 |
-|---------------------|--------------------|------------------------------------------------------------------|-----------------------------------------------------------------------------------------|
-| **Weighted canary** | `gatewayapi:v1`    | App is routed **directly** by the Gateway                        | Flagger owns the `HTTPRoute` and shifts `backendRef` weights 10% → 50%                  |
-| **Blue/green**      | `kubernetes`       | App is **behind oauth2-proxy** (no gateway-level split possible) | No live split; canary validated via the load-tester, then the apex Service is repointed |
+| Mode | Flagger `provider` | When | Traffic |
+| --- | --- | --- | --- |
+| **Weighted canary** | `gatewayapi:v1` | App is routed **directly** by the Gateway | Flagger owns the `HTTPRoute` and shifts `backendRef` weights 10% → 50% |
+| **Blue/green** | `kubernetes` | App is **behind oauth2-proxy** (no gateway-level split possible) | No live split; canary validated via the load-tester, then the apex Service is repointed |
 
 ## What's deployed
 
-| Component                                                                   | Layer             | Path                                                                                                      |
-|-----------------------------------------------------------------------------|-------------------|-----------------------------------------------------------------------------------------------------------|
-| `flagger` controller + `flagger-loadtester`                                 | infra-controllers | [`controllers/flagger/`](../k8s/bases/infrastructure/controllers/flagger)                                 |
-| `coroot-request-success-rate` / `coroot-request-duration` `MetricTemplate`s | infrastructure    | [`infrastructure/flagger/`](../k8s/bases/infrastructure/flagger)                                          |
-| **umami** Canary (weighted)                                                 | apps              | [`apps/umami/canary.yaml`](../k8s/bases/apps/umami/canary.yaml)                                           |
-| **homepage** Canary (blue/green)                                            | apps              | [`apps/homepage/canary.yaml`](../k8s/bases/apps/homepage/canary.yaml)                                     |
-| **opencost** Canary (blue/green)                                            | infrastructure    | [`infrastructure/flagger/canary-opencost.yaml`](../k8s/bases/infrastructure/flagger/canary-opencost.yaml) |
+| Component | Layer | Path |
+| --- | --- | --- |
+| `flagger` controller + `flagger-loadtester` | infra-controllers | [`controllers/flagger/`](../k8s/bases/infrastructure/controllers/flagger) |
+| `coroot-request-success-rate` / `coroot-request-duration` `MetricTemplate`s | infrastructure | [`infrastructure/flagger/`](../k8s/bases/infrastructure/flagger) |
+| **umami** Canary (weighted) | apps | [`apps/umami/canary.yaml`](../k8s/bases/apps/umami/canary.yaml) |
+| **homepage** Canary (blue/green) | apps | [`apps/homepage/canary.yaml`](../k8s/bases/apps/homepage/canary.yaml) |
+| **opencost** Canary (blue/green) | infrastructure | [`infrastructure/flagger/canary-opencost.yaml`](../k8s/bases/infrastructure/flagger/canary-opencost.yaml) |
 
 > **CRD-vs-CR layering.** The flagger HelmRelease ships the `Canary` /
 > `MetricTemplate` CRDs (infra-controllers). A CR of those kinds in the *same*
@@ -72,12 +72,12 @@ Promotion vs rollback is gated on:
 
 ### Excluded (and why)
 
-| Workload                                                     | Reason                                                                                                                                                                                                                                                           |
-|--------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Workload | Reason |
+| --- | --- |
 | whoami, headlamp, actual-budget, fleetdm (parked), hubble-ui | Single-replica by design (always-on; auto-vpa right-sizes them). headlamp = single-pod in-memory OIDC; actual-budget = single-writer file DB; hubble-ui/whoami = single-replica UIs — none can run concurrent canary pods. fleetdm is disabled since 2026-06-03. |
-| openbao                                                      | StatefulSet — Flagger only manages Deployments / DaemonSets.                                                                                                                                                                                                     |
-| coroot UI, hubble-ui                                         | Operator-reconciled Deployments — the operator fights Flagger for ownership.                                                                                                                                                                                     |
-| dex, oauth2-proxy, flux-operator                             | Critical SSO / GitOps — too risky to canary.                                                                                                                                                                                                                     |
+| openbao | StatefulSet — Flagger only manages Deployments / DaemonSets. |
+| coroot UI, hubble-ui | Operator-reconciled Deployments — the operator fights Flagger for ownership. |
+| dex, oauth2-proxy, flux-operator | Critical SSO / GitOps — too risky to canary. |
 
 ## Onboarding a new app
 

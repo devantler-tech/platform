@@ -38,29 +38,29 @@ spec:
 
 ## Key Spec Fields
 
-| Field                        | Type     | Required | Description                                                                                                                             |
-|------------------------------|----------|----------|-----------------------------------------------------------------------------------------------------------------------------------------|
-| `sourceRef.kind`             | string   | yes      | `GitRepository`, `OCIRepository`, `Bucket`, or `ExternalArtifact`                                                                       |
-| `sourceRef.name`             | string   | yes      | Source resource name                                                                                                                    |
-| `sourceRef.namespace`        | string   | no       | Cross-namespace reference (enabled by default; platform admins can disable it via the controller `--no-cross-namespace-refs=true` flag) |
-| `path`                       | string   | no       | Path within the source artifact (default: `.`)                                                                                          |
-| `interval`                   | duration | yes      | Reconciliation interval (e.g., `10m`)                                                                                                   |
-| `retryInterval`              | duration | no       | Interval between retries on failure (defaults to `interval` when unset)                                                                 |
-| `prune`                      | bool     | yes      | Delete resources removed from the source (garbage collection)                                                                           |
-| `wait`                       | bool     | no       | Wait for all resources to become ready (default: false). When `true`, `.spec.healthChecks` is ignored                                   |
-| `timeout`                    | duration | no       | Timeout for apply/health-check/prune operations (defaults to `interval` when unset; no fixed `5m` default)                              |
-| `targetNamespace`            | string   | no       | Override namespace for all resources                                                                                                    |
-| `serviceAccountName`         | string   | no       | Service account for impersonation (multi-tenancy)                                                                                       |
-| `force`                      | bool     | no       | Recreate resources that cannot be patched (default: false)                                                                              |
-| `suspend`                    | bool     | no       | Pause reconciliation                                                                                                                    |
-| `deletionPolicy`             | string   | no       | `MirrorPrune` (default), `Delete`, `WaitForTermination`, `Orphan`                                                                       |
-| `ignore`                     | list     | no       | Server-side apply field ignore rules — exclude specific JSON pointer paths from drift detection and apply                               |
-| `commonMetadata.labels`      | map      | no       | Labels applied to all managed resources                                                                                                 |
-| `commonMetadata.annotations` | map      | no       | Annotations applied to all managed resources                                                                                            |
-| `namePrefix`                 | string   | no       | Prefix added to all resource names                                                                                                      |
-| `nameSuffix`                 | string   | no       | Suffix added to all resource names                                                                                                      |
-| `images`                     | list     | no       | Kustomize image overrides (name, newName, newTag, digest)                                                                               |
-| `components`                 | list     | no       | Kustomize reusable components (alpha feature)                                                                                           |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `sourceRef.kind` | string | yes | `GitRepository`, `OCIRepository`, `Bucket`, or `ExternalArtifact` |
+| `sourceRef.name` | string | yes | Source resource name |
+| `sourceRef.namespace` | string | no | Cross-namespace reference (enabled by default; platform admins can disable it via the controller `--no-cross-namespace-refs=true` flag) |
+| `path` | string | no | Path within the source artifact (default: `.`) |
+| `interval` | duration | yes | Reconciliation interval (e.g., `10m`) |
+| `retryInterval` | duration | no | Interval between retries on failure (defaults to `interval` when unset) |
+| `prune` | bool | yes | Delete resources removed from the source (garbage collection) |
+| `wait` | bool | no | Wait for all resources to become ready (default: false). When `true`, `.spec.healthChecks` is ignored |
+| `timeout` | duration | no | Timeout for apply/health-check/prune operations (defaults to `interval` when unset; no fixed `5m` default) |
+| `targetNamespace` | string | no | Override namespace for all resources |
+| `serviceAccountName` | string | no | Service account for impersonation (multi-tenancy) |
+| `force` | bool | no | Recreate resources that cannot be patched (default: false) |
+| `suspend` | bool | no | Pause reconciliation |
+| `deletionPolicy` | string | no | `MirrorPrune` (default), `Delete`, `WaitForTermination`, `Orphan` |
+| `ignore` | list | no | Server-side apply field ignore rules — exclude specific JSON pointer paths from drift detection and apply |
+| `commonMetadata.labels` | map | no | Labels applied to all managed resources |
+| `commonMetadata.annotations` | map | no | Annotations applied to all managed resources |
+| `namePrefix` | string | no | Prefix added to all resource names |
+| `nameSuffix` | string | no | Suffix added to all resource names |
+| `images` | list | no | Kustomize image overrides (name, newName, newTag, digest) |
+| `components` | list | no | Kustomize reusable components (alpha feature) |
 
 ## Dependencies
 
@@ -291,11 +291,11 @@ current build are deleted when `prune: true`.
 
 Kustomization uses Kubernetes server-side apply (SSA). Per-resource annotations control behavior:
 
-| Annotation                          | Default    | Values                                        | Purpose                             |
-|-------------------------------------|------------|-----------------------------------------------|-------------------------------------|
-| `kustomize.toolkit.fluxcd.io/ssa`   | `Override` | `Override`, `Merge`, `IfNotPresent`, `Ignore` | Apply policy                        |
-| `kustomize.toolkit.fluxcd.io/force` | `Disabled` | `Enabled`, `Disabled`                         | Recreate on immutable field changes |
-| `kustomize.toolkit.fluxcd.io/prune` | `Enabled`  | `Enabled`, `Disabled`                         | Garbage collection policy           |
+| Annotation | Default | Values | Purpose |
+|-----------|---------|--------|---------|
+| `kustomize.toolkit.fluxcd.io/ssa` | `Override` | `Override`, `Merge`, `IfNotPresent`, `Ignore` | Apply policy |
+| `kustomize.toolkit.fluxcd.io/force` | `Disabled` | `Enabled`, `Disabled` | Recreate on immutable field changes |
+| `kustomize.toolkit.fluxcd.io/prune` | `Enabled` | `Enabled`, `Disabled` | Garbage collection policy |
 
 - `ssa: Override` — Flux owns all fields, reverts `kubectl` edits (default)
 - `ssa: Merge` — preserve fields added by other tools (only for non-overlapping fields)

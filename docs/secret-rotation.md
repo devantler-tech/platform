@@ -35,13 +35,13 @@ been unchanged for days and there are no live `GeneratorState` instances.
 
 ## Feasibility by secret class
 
-| Class               | Secrets                                       | OpenBao-native fit                  | Plan                                                                                                            |
-|---------------------|-----------------------------------------------|-------------------------------------|-----------------------------------------------------------------------------------------------------------------|
-| **Database creds**  | fleetdm MySQL `fleet` user, Redis             | ✅ **Database engine, static roles** | Phase 1–2 below                                                                                                 |
-| **Internal random** | oauth2-proxy cookie secret                    | ❌ no native engine                  | Migrate consumer to OpenBao, rotate via scheduled Job; no shared party → only forces re-login                   |
-| **Shared OIDC**     | `dex_client_secret`, `flux_web_client_secret` | ❌ no native engine                  | Unify Dex + clients on OpenBao first; coordinated rotation (short consumer refresh) to avoid auth-mismatch skew |
-| **Provider tokens** | cloudflare, hcloud, github, R2                | ❌ external system-of-record         | Scheduled job calling provider API → write OpenBao; mostly out of scope                                         |
-| **Roots**           | SOPS Age key, OpenBao unseal/root             | ❌                                   | Manual runbook + calendar reminder                                                                              |
+| Class | Secrets | OpenBao-native fit | Plan |
+| --- | --- | --- | --- |
+| **Database creds** | fleetdm MySQL `fleet` user, Redis | ✅ **Database engine, static roles** | Phase 1–2 below |
+| **Internal random** | oauth2-proxy cookie secret | ❌ no native engine | Migrate consumer to OpenBao, rotate via scheduled Job; no shared party → only forces re-login |
+| **Shared OIDC** | `dex_client_secret`, `flux_web_client_secret` | ❌ no native engine | Unify Dex + clients on OpenBao first; coordinated rotation (short consumer refresh) to avoid auth-mismatch skew |
+| **Provider tokens** | cloudflare, hcloud, github, R2 | ❌ external system-of-record | Scheduled job calling provider API → write OpenBao; mostly out of scope |
+| **Roots** | SOPS Age key, OpenBao unseal/root | ❌ | Manual runbook + calendar reminder |
 
 ## OpenBao-native rotation (chosen mechanism)
 

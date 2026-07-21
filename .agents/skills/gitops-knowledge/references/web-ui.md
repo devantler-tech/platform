@@ -189,9 +189,9 @@ Permissions are controlled via standard Kubernetes RBAC.
 
 ### Predefined Roles
 
-| Role             | Access      | Description                                                            |
-|------------------|-------------|------------------------------------------------------------------------|
-| `flux-web-user`  | Read-only   | `get`, `list`, `watch` on all resources                                |
+| Role | Access | Description |
+|------|--------|-------------|
+| `flux-web-user` | Read-only | `get`, `list`, `watch` on all resources |
 | `flux-web-admin` | Full access | Read + actions (reconcile, suspend, resume, download, restart, delete) |
 
 ### Granting Access
@@ -235,15 +235,15 @@ Users without any role binding see only the main dashboard with controller healt
 
 The `flux-web-admin` role uses custom verbs beyond standard Kubernetes RBAC:
 
-| Verb                  | Resources                             | Description                    |
-|-----------------------|---------------------------------------|--------------------------------|
-| `reconcile` + `patch` | Flux CRDs                             | Force immediate reconciliation |
-| `suspend` + `patch`   | Flux CRDs                             | Pause reconciliation           |
-| `resume` + `patch`    | Flux CRDs                             | Re-enable reconciliation       |
-| `download`            | Source CRDs                           | Download artifact tarballs     |
-| `restart` + `patch`   | Deployments, StatefulSets, DaemonSets | Rollout restart                |
-| `restart` + `create`  | CronJobs, Jobs                        | Run CronJob immediately        |
-| `delete`              | Pods                                  | Delete individual pods         |
+| Verb | Resources | Description |
+|------|-----------|-------------|
+| `reconcile` + `patch` | Flux CRDs | Force immediate reconciliation |
+| `suspend` + `patch` | Flux CRDs | Pause reconciliation |
+| `resume` + `patch` | Flux CRDs | Re-enable reconciliation |
+| `download` | Source CRDs | Download artifact tarballs |
+| `restart` + `patch` | Deployments, StatefulSets, DaemonSets | Rollout restart |
+| `restart` + `create` | CronJobs, Jobs | Run CronJob immediately |
+| `delete` | Pods | Delete individual pods |
 
 ## User Actions
 
@@ -286,12 +286,12 @@ web:
 
 ### Audit Event Annotations
 
-| Annotation                         | Description                                 |
-|------------------------------------|---------------------------------------------|
-| `event.toolkit.fluxcd.io/action`   | Action performed (reconcile, suspend, etc.) |
-| `event.toolkit.fluxcd.io/username` | User who performed the action               |
-| `event.toolkit.fluxcd.io/groups`   | Groups of the user                          |
-| `event.toolkit.fluxcd.io/subject`  | Target workload (workload actions only)     |
+| Annotation | Description |
+|------------|-------------|
+| `event.toolkit.fluxcd.io/action` | Action performed (reconcile, suspend, etc.) |
+| `event.toolkit.fluxcd.io/username` | User who performed the action |
+| `event.toolkit.fluxcd.io/groups` | Groups of the user |
+| `event.toolkit.fluxcd.io/subject` | Target workload (workload actions only) |
 
 ### Audit Notifications to Slack
 

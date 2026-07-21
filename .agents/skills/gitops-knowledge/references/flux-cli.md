@@ -92,15 +92,15 @@ plain structural checks miss.
 
 Important flags:
 
-| Flag                     | Purpose                                                                                                                                                                                                   |
-|--------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `--verbose`              | Print a line per document, including valid and skipped ones — confirms nothing was silently skipped                                                                                                       |
-| `--skip-missing-schemas` | Skip documents with no schema in the catalog instead of failing (third-party CRDs)                                                                                                                        |
-| `--schema-location`      | Add a schema source (repeatable): `default` for the built-in catalog, a local directory written by `flux schema extract`, or a URL such as `https://raw.githubusercontent.com/datreeio/CRDs-catalog/main` |
-| `--skip-kind`            | Skip documents by `Kind` or `apiVersion/Kind`, e.g. `--skip-kind v1/Secret`                                                                                                                               |
-| `--skip-json-path`       | Strip a field before validation, e.g. `--skip-json-path v1/Secret:/sops` for SOPS metadata that Flux removes at apply time                                                                                |
-| `--skip-file`            | Glob matched against file and directory basenames, e.g. `--skip-file 'kustomization.yaml'` when validating overlay sources rather than build output                                                       |
-| `-o json`                | Structured results for programmatic triage                                                                                                                                                                |
+| Flag | Purpose |
+|---|---|
+| `--verbose` | Print a line per document, including valid and skipped ones — confirms nothing was silently skipped |
+| `--skip-missing-schemas` | Skip documents with no schema in the catalog instead of failing (third-party CRDs) |
+| `--schema-location` | Add a schema source (repeatable): `default` for the built-in catalog, a local directory written by `flux schema extract`, or a URL such as `https://raw.githubusercontent.com/datreeio/CRDs-catalog/main` |
+| `--skip-kind` | Skip documents by `Kind` or `apiVersion/Kind`, e.g. `--skip-kind v1/Secret` |
+| `--skip-json-path` | Strip a field before validation, e.g. `--skip-json-path v1/Secret:/sops` for SOPS metadata that Flux removes at apply time |
+| `--skip-file` | Glob matched against file and directory basenames, e.g. `--skip-file 'kustomization.yaml'` when validating overlay sources rather than build output |
+| `-o json` | Structured results for programmatic triage |
 
 Repositories can pin their validation conventions in a checked-in config so every run
 uses the same skips and schema sources — look for `.fluxschema.yml` in the repo root

@@ -68,7 +68,11 @@
                 "type": "string"
               }
             },
-            "required": ["apiVersion", "kind", "name"],
+            "required": [
+              "apiVersion",
+              "kind",
+              "name"
+            ],
             "type": "object"
           },
           "type": "array"
@@ -83,11 +87,16 @@
             },
             "name": {
               "description": "Name defines how the inputs are combined when multiple\ninput provider objects are used. Supported values are:\n- Flatten: all inputs sets from all input provider objects are\n  flattened into a single list of input sets.\n- Permute: all inputs sets from all input provider objects are\n  combined using a Cartesian product, resulting in a list of input sets\n  that contains every possible combination of input values.\n  For example, if provider A has inputs [{x: 1}, {x: 2}] and provider B has\n  inputs [{y: \"a\"}, {y: \"b\"}], the resulting input sets will be:\n  [{x: 1, y: \"a\"}, {x: 1, y: \"b\"}, {x: 2, y: \"a\"}, {x: 2, y: \"b\"}].\n  This strategy can lead to a large number of input sets and should be\n  used with caution. Users should use filtering features from\n  ResourceSetInputProvider to limit the amount of exported inputs.",
-              "enum": ["Flatten", "Permute"],
+              "enum": [
+                "Flatten",
+                "Permute"
+              ],
               "type": "string"
             }
           },
-          "required": ["name"],
+          "required": [
+            "name"
+          ],
           "type": "object",
           "x-kubernetes-validations": [
             {
@@ -115,12 +124,16 @@
             "properties": {
               "apiVersion": {
                 "description": "APIVersion of the input provider resource.\nWhen not set, the APIVersion of the ResourceSet is used.",
-                "enum": ["fluxcd.controlplane.io/v1"],
+                "enum": [
+                  "fluxcd.controlplane.io/v1"
+                ],
                 "type": "string"
               },
               "kind": {
                 "description": "Kind of the input provider resource.",
-                "enum": ["ResourceSetInputProvider"],
+                "enum": [
+                  "ResourceSetInputProvider"
+                ],
                 "type": "string"
               },
               "name": {
@@ -154,7 +167,10 @@
                           "x-kubernetes-list-type": "atomic"
                         }
                       },
-                      "required": ["key", "operator"],
+                      "required": [
+                        "key",
+                        "operator"
+                      ],
                       "type": "object"
                     },
                     "type": "array",
@@ -232,7 +248,9 @@
                 "type": "string"
               }
             },
-            "required": ["name"],
+            "required": [
+              "name"
+            ],
             "type": "object",
             "x-kubernetes-validations": [
               {
@@ -303,7 +321,11 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": ["True", "False", "Unknown"],
+                "enum": [
+                  "True",
+                  "False",
+                  "Unknown"
+                ],
                 "type": "string"
               },
               "type": {
@@ -403,13 +425,18 @@
                     "type": "string"
                   }
                 },
-                "required": ["id", "v"],
+                "required": [
+                  "id",
+                  "v"
+                ],
                 "type": "object"
               },
               "type": "array"
             }
           },
-          "required": ["entries"],
+          "required": [
+            "entries"
+          ],
           "type": "object"
         },
         "lastAppliedRevision": {

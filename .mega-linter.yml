@@ -42,6 +42,14 @@ EXCLUDED_DIRECTORIES:
   - report
   - .jscpd
 
+# The shared CI job runs MegaLinter with APPLY_FIXES: all — set in the workflow env, so it cannot
+# be turned off from here — and then stages EVERYTHING (`file_pattern: .`) to push the fixes back.
+# Two things must therefore never be reachable by a fixer, or CI commits them:
+#   * megalinter-reports/ — also in .gitignore now, after it put 182 report files in a branch.
+#   * .agents/ — machine-synced daily from devantler-tech/agent-skills; any fix here is discarded
+#     by the next sync, so rewriting those 87 files was pure churn.
+FILTER_REGEX_EXCLUDE: (megalinter-reports/.*|\.agents/.*)
+
 DISABLE_LINTERS:
   # gitleaks is deprecated in MegaLinter's own descriptor, which recommends exactly this entry and
   # prints the notice on every run. Its 2 findings were triaged before removing it: both are
@@ -50,6 +58,12 @@ DISABLE_LINTERS:
   # note they report 0 on this tree, so they are not asserted to be equivalent to gitleaks, only
   # to be the scanners this repository continues to gate on.
   - REPOSITORY_GITLEAKS
+  # markdown-table-formatter pads every cell in a table to the width of the widest cell in its
+  # column. docs/dr/runbook.md has a recovery-instructions cell ~700 characters long, so it
+  # rewrote that table into 700-character rows and made the file unreadable in an editor — and,
+  # because APPLY_FIXES is forced on, it committed that. A formatter that damages the document
+  # it formats is worse than no formatter; markdownlint still governs table syntax.
+  - MARKDOWN_MARKDOWN_TABLE_FORMATTER
 
 DISABLE_ERRORS_LINTERS:
   # Every linter here keeps RUNNING and REPORTING every finding on every pull request. It simply

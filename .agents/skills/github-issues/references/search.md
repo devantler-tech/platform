@@ -6,19 +6,19 @@ The `search_issues` MCP tool uses GitHub's issue search query format for cross-r
 
 There are three ways to find issues, each with different capabilities:
 
-| Capability                                    | `list_issues` (MCP)   | `search_issues` (MCP)   | Advanced search (`gh api`)           |
-|-----------------------------------------------|-----------------------|-------------------------|--------------------------------------|
-| **Scope**                                     | Single repo only      | Cross-repo, cross-org   | Cross-repo, cross-org                |
-| **Issue field filters** (`field.priority:P0`) | No                    | No                      | **Yes** (dot notation)               |
-| **Issue type filter** (`type:Bug`)            | No                    | Yes                     | Yes                                  |
-| **Boolean logic** (AND/OR/NOT, nesting)       | No                    | Yes (implicit AND only) | **Yes** (explicit AND/OR/NOT)        |
-| **Label/state/date filters**                  | Yes                   | Yes                     | Yes                                  |
-| **Assignee/author/mentions**                  | No                    | Yes                     | Yes                                  |
-| **Negation** (`-label:x`, `no:label`)         | No                    | Yes                     | Yes                                  |
-| **Text search** (title/body/comments)         | No                    | Yes                     | Yes                                  |
-| **`since` filter**                            | Yes                   | No                      | No                                   |
-| **Result limit**                              | No cap (paginate all) | 1,000 max               | 1,000 max                            |
-| **How to call**                               | MCP tool directly     | MCP tool directly       | `gh api` with `advanced_search=true` |
+| Capability | `list_issues` (MCP) | `search_issues` (MCP) | Advanced search (`gh api`) |
+|-----------|---------------------|----------------------|---------------------------|
+| **Scope** | Single repo only | Cross-repo, cross-org | Cross-repo, cross-org |
+| **Issue field filters** (`field.priority:P0`) | No | No | **Yes** (dot notation) |
+| **Issue type filter** (`type:Bug`) | No | Yes | Yes |
+| **Boolean logic** (AND/OR/NOT, nesting) | No | Yes (implicit AND only) | **Yes** (explicit AND/OR/NOT) |
+| **Label/state/date filters** | Yes | Yes | Yes |
+| **Assignee/author/mentions** | No | Yes | Yes |
+| **Negation** (`-label:x`, `no:label`) | No | Yes | Yes |
+| **Text search** (title/body/comments) | No | Yes | Yes |
+| **`since` filter** | Yes | No | No |
+| **Result limit** | No cap (paginate all) | 1,000 max | 1,000 max |
+| **How to call** | MCP tool directly | MCP tool directly | `gh api` with `advanced_search=true` |
 
 **Decision guide:**
 - **Single repo, simple filters (state, labels, recent updates):** use `list_issues`

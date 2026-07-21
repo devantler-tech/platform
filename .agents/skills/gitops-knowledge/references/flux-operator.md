@@ -121,13 +121,13 @@ spec:
 
 ### Distribution
 
-| Field                          | Type   | Description                                                                                   |
-|--------------------------------|--------|-----------------------------------------------------------------------------------------------|
-| `distribution.version`         | string | Semver range (`2.x`, `2.8.x`) or exact version                                                |
-| `distribution.registry`        | string | Container registry (e.g., `ghcr.io/fluxcd`)                                                   |
-| `distribution.variant`         | string | `upstream-alpine`, `enterprise-alpine`, `enterprise-distroless`, `enterprise-distroless-fips` |
-| `distribution.artifact`        | string | OCI artifact URL with distribution manifests                                                  |
-| `distribution.imagePullSecret` | string | Secret name for pulling controller images                                                     |
+| Field | Type | Description |
+|-------|------|-------------|
+| `distribution.version` | string | Semver range (`2.x`, `2.8.x`) or exact version |
+| `distribution.registry` | string | Container registry (e.g., `ghcr.io/fluxcd`) |
+| `distribution.variant` | string | `upstream-alpine`, `enterprise-alpine`, `enterprise-distroless`, `enterprise-distroless-fips` |
+| `distribution.artifact` | string | OCI artifact URL with distribution manifests |
+| `distribution.imagePullSecret` | string | Secret name for pulling controller images |
 
 ### Components
 
@@ -143,22 +143,22 @@ Optional components:
 
 ### Cluster Configuration
 
-| Field                                 | Type   | Default         | Description                                                                                     |
-|---------------------------------------|--------|-----------------|-------------------------------------------------------------------------------------------------|
-| `cluster.type`                        | string | `kubernetes`    | `kubernetes`, `openshift`, `aws`, `azure`, `gcp`                                                |
-| `cluster.size`                        | string | `medium`        | Affects controller resource limits and concurrency                                              |
-| `cluster.multitenant`                 | bool   | false           | Enable multi-tenancy lockdown                                                                   |
-| `cluster.tenantDefaultServiceAccount` | string | `default`       | Default SA for tenant reconcilers when multitenant lockdown is enabled and the field is omitted |
-| `cluster.networkPolicy`               | bool   | true            | Restrict network access to Flux controllers                                                     |
-| `cluster.domain`                      | string | `cluster.local` | Kubernetes cluster domain                                                                       |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `cluster.type` | string | `kubernetes` | `kubernetes`, `openshift`, `aws`, `azure`, `gcp` |
+| `cluster.size` | string | `medium` | Affects controller resource limits and concurrency |
+| `cluster.multitenant` | bool | false | Enable multi-tenancy lockdown |
+| `cluster.tenantDefaultServiceAccount` | string | `default` | Default SA for tenant reconcilers when multitenant lockdown is enabled and the field is omitted |
+| `cluster.networkPolicy` | bool | true | Restrict network access to Flux controllers |
+| `cluster.domain` | string | `cluster.local` | Kubernetes cluster domain |
 
 ### Cluster Sizing
 
-| Size     | Concurrency | CPU Limit | Memory Limit | Use Case                               |
-|----------|-------------|-----------|--------------|----------------------------------------|
-| `small`  | 5           | 1000m     | 512Mi        | Dev, small clusters (<50 resources)    |
-| `medium` | 10          | 2000m     | 1Gi          | Standard production clusters           |
-| `large`  | 20          | 3000m     | 3Gi          | Large clusters (hundreds of resources) |
+| Size | Concurrency | CPU Limit | Memory Limit | Use Case |
+|------|-------------|-----------|--------------|----------|
+| `small` | 5 | 1000m | 512Mi | Dev, small clusters (<50 resources) |
+| `medium` | 10 | 2000m | 1Gi | Standard production clusters |
+| `large` | 20 | 3000m | 3Gi | Large clusters (hundreds of resources) |
 
 ### Multi-Tenancy
 
@@ -270,11 +270,11 @@ spec:
 
 Assign a resource to a shard by labelling it, e.g. `sharding.fluxcd.io/key: shard1`.
 
-| Field              | Type     | Description                                                                                                             |
-|--------------------|----------|-------------------------------------------------------------------------------------------------------------------------|
-| `sharding.key`     | string   | Label key used to shard resources (default `sharding.fluxcd.io/key`)                                                    |
-| `sharding.shards`  | []string | Shard names (at least one)                                                                                              |
-| `sharding.storage` | string   | `ephemeral` (emptyDir, default) or `persistent` (PVC). When `persistent`, the top-level `spec.storage` must also be set |
+| Field | Type | Description |
+|-------|------|-------------|
+| `sharding.key` | string | Label key used to shard resources (default `sharding.fluxcd.io/key`) |
+| `sharding.shards` | []string | Shard names (at least one) |
+| `sharding.storage` | string | `ephemeral` (emptyDir, default) or `persistent` (PVC). When `persistent`, the top-level `spec.storage` must also be set |
 
 Invalid sharding configurations — such as `storage: persistent` without a `spec.storage`
 PVC spec — are rejected by the operator's admission validation.

@@ -11,12 +11,12 @@
 
 ## Why this can't be a values flip
 
-|          | Current                                                                | Target                                             |
-|----------|------------------------------------------------------------------------|----------------------------------------------------|
-| Mode     | `server.standalone.enabled: true`                                      | `server.ha.enabled` + `ha.raft.enabled`            |
-| Storage  | `storage "file"` (`/openbao/data`)                                     | `storage "raft"` (Integrated Storage)              |
-| Replicas | 1 (`openbao_replicas: "1"`)                                            | 3 (Raft quorum minimum)                            |
-| Seal     | Shamir 1-of-1, key in `openbao-unseal` Secret, `postStart` auto-unseal | unchanged (or transit auto-unseal — see hardening) |
+| | Current | Target |
+|---|---|---|
+| Mode | `server.standalone.enabled: true` | `server.ha.enabled` + `ha.raft.enabled` |
+| Storage | `storage "file"` (`/openbao/data`) | `storage "raft"` (Integrated Storage) |
+| Replicas | 1 (`openbao_replicas: "1"`) | 3 (Raft quorum minimum) |
+| Seal | Shamir 1-of-1, key in `openbao-unseal` Secret, `postStart` auto-unseal | unchanged (or transit auto-unseal — see hardening) |
 
 Raft is a different storage backend. New raft pods initialize an **empty** store;
 the existing file-storage PVC data is orphaned. Data must be carried over with
@@ -151,15 +151,15 @@ both backends mounted), so the snapshot-restore path above is preferred.
 
 ## Risks (data-loss scenarios) and mitigations
 
-| Risk                                                                                                  | Mitigation                                                                                                                                                |
-|-------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Flip values without migrating → empty cluster.**                                                    | This runbook: snapshot/backup first, init once, restore. Never merge the values flip standalone.                                                          |
-| **Double-init split-brain** (init races on >1 pod → two 1-node clusters).                             | `bao operator init` exactly once on openbao-0; let others `retry_join`.                                                                                   |
-| **Unseal-before-join** (a follower unsealed with mismatched keys before joining corrupts membership). | Join first (`retry_join` handles it), then unseal followers with the **new** key.                                                                         |
-| **Even-node quorum loss.**                                                                            | Always odd (3). 3 voters tolerate 1 failure; the chart's default PDB `maxUnavailable: 1` is correct.                                                      |
-| **8201 blocked** → joins wedge.                                                                       | Open Cilium netpol + Talos firewall for `:8201` (above) before cutover.                                                                                   |
-| **Audit fail-closed × 3.**                                                                            | The file audit device fails closed when its PVC fills; now there are 3 `audit-openbao-*` PVCs — monitor all three `kubelet_volume_stats_available_bytes`. |
-| **No pre-cutover backup → unrecoverable.**                                                            | Confirm a fresh `vault-backup` snapshot **and** a Velero backup of the openbao namespace + PVCs before step 3.                                            |
+| Risk | Mitigation |
+|---|---|
+| **Flip values without migrating → empty cluster.** | This runbook: snapshot/backup first, init once, restore. Never merge the values flip standalone. |
+| **Double-init split-brain** (init races on >1 pod → two 1-node clusters). | `bao operator init` exactly once on openbao-0; let others `retry_join`. |
+| **Unseal-before-join** (a follower unsealed with mismatched keys before joining corrupts membership). | Join first (`retry_join` handles it), then unseal followers with the **new** key. |
+| **Even-node quorum loss.** | Always odd (3). 3 voters tolerate 1 failure; the chart's default PDB `maxUnavailable: 1` is correct. |
+| **8201 blocked** → joins wedge. | Open Cilium netpol + Talos firewall for `:8201` (above) before cutover. |
+| **Audit fail-closed × 3.** | The file audit device fails closed when its PVC fills; now there are 3 `audit-openbao-*` PVCs — monitor all three `kubelet_volume_stats_available_bytes`. |
+| **No pre-cutover backup → unrecoverable.** | Confirm a fresh `vault-backup` snapshot **and** a Velero backup of the openbao namespace + PVCs before step 3. |
 
 ## Hardening (follow-up, not required for HA)
 

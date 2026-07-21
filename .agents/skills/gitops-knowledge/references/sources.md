@@ -30,21 +30,21 @@ spec:
 
 **Key spec fields:**
 
-| Field                   | Type     | Description                                                                                                                                                        |
-|-------------------------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `url`                   | string   | Git URL — HTTPS (`https://`) or SSH (`ssh://user@host:22/repo.git`). SSH scp-style syntax (`git@host:repo`) is NOT supported.                                      |
-| `interval`              | duration | How often to poll for changes (e.g., `5m`, `1h`)                                                                                                                   |
-| `ref.branch`            | string   | Branch name                                                                                                                                                        |
-| `ref.tag`               | string   | Tag name                                                                                                                                                           |
-| `ref.semver`            | string   | Semver constraint (e.g., `>=1.0.0 <2.0.0`)                                                                                                                         |
-| `ref.commit`            | string   | Exact commit SHA                                                                                                                                                   |
-| `ref.name`              | string   | Arbitrary Git reference (e.g., `refs/pull/420/head`, `refs/heads/main`)                                                                                            |
-| `secretRef.name`        | string   | Secret with credentials                                                                                                                                            |
-| `provider`              | string   | Keyless auth provider: `generic` (default), `aws` (CodeCommit IAM), `azure` (Azure DevOps Workload Identity), `github` (GitHub App)                                |
-| `sparseCheckout`        | []string | List of directories to checkout when cloning; only the contents of the listed directories appear in the produced artifact                                          |
-| `recurseSubmodules`     | bool     | Include Git submodules (default: false)                                                                                                                            |
-| `verify.mode`           | string   | Which Git object(s) to verify: `HEAD` (default), `Tag`, or `TagAndHEAD`                                                                                            |
-| `verify.secretRef.name` | string   | Secret with public keys of trusted authors — PGP keys under `.asc` keys and/or SSH keys under `.sshpub` keys (Flux verifies both PGP- and SSH-signed commits/tags) |
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | string | Git URL — HTTPS (`https://`) or SSH (`ssh://user@host:22/repo.git`). SSH scp-style syntax (`git@host:repo`) is NOT supported. |
+| `interval` | duration | How often to poll for changes (e.g., `5m`, `1h`) |
+| `ref.branch` | string | Branch name |
+| `ref.tag` | string | Tag name |
+| `ref.semver` | string | Semver constraint (e.g., `>=1.0.0 <2.0.0`) |
+| `ref.commit` | string | Exact commit SHA |
+| `ref.name` | string | Arbitrary Git reference (e.g., `refs/pull/420/head`, `refs/heads/main`) |
+| `secretRef.name` | string | Secret with credentials |
+| `provider` | string | Keyless auth provider: `generic` (default), `aws` (CodeCommit IAM), `azure` (Azure DevOps Workload Identity), `github` (GitHub App) |
+| `sparseCheckout` | []string | List of directories to checkout when cloning; only the contents of the listed directories appear in the produced artifact |
+| `recurseSubmodules` | bool | Include Git submodules (default: false) |
+| `verify.mode` | string | Which Git object(s) to verify: `HEAD` (default), `Tag`, or `TagAndHEAD` |
+| `verify.secretRef.name` | string | Secret with public keys of trusted authors — PGP keys under `.asc` keys and/or SSH keys under `.sshpub` keys (Flux verifies both PGP- and SSH-signed commits/tags) |
 
 When no `ref` field is set, source-controller checks out the `master` branch. Ref precedence
 when multiple are set: `commit` > `name` > `semver` > `tag` > `branch`. There is no
@@ -103,23 +103,23 @@ spec:
 
 **Key spec fields:**
 
-| Field                              | Type     | Description                                                                                                           |
-|------------------------------------|----------|-----------------------------------------------------------------------------------------------------------------------|
-| `url`                              | string   | OCI URL with `oci://` prefix (e.g., `oci://ghcr.io/org/repo`)                                                         |
-| `interval`                         | duration | Poll interval                                                                                                         |
-| `ref.tag`                          | string   | Image tag                                                                                                             |
-| `ref.semver`                       | string   | Semver constraint for tag selection                                                                                   |
-| `ref.digest`                       | string   | Exact digest (`sha256:...`)                                                                                           |
-| `secretRef.name`                   | string   | Secret of type `kubernetes.io/dockerconfigjson`                                                                       |
-| `certSecretRef.name`               | string   | Secret with TLS CA and client certs for mTLS auth                                                                     |
-| `provider`                         | string   | Cloud OIDC provider for keyless auth: `aws`, `azure`, `gcp`                                                           |
-| `layerSelector.mediaType`          | string   | Filter OCI layers by media type                                                                                       |
-| `layerSelector.operation`          | string   | `extract` (default) or `copy`                                                                                         |
-| `verify.provider`                  | string   | Signature verification: `cosign` or `notation`                                                                        |
-| `verify.matchOIDCIdentity`         | array    | OIDC issuer/subject patterns for keyless verification                                                                 |
-| `verify.trustedRootSecretRef.name` | string   | Secret with a custom Sigstore `trusted_root.json` — verify against self-hosted Fulcio CA / Rekor (air-gapped keyless) |
-| `serviceAccountName`               | string   | Service account for image pull (uses imagePullSecrets)                                                                |
-| `insecure`                         | bool     | Allow HTTP (non-TLS) connections                                                                                      |
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | string | OCI URL with `oci://` prefix (e.g., `oci://ghcr.io/org/repo`) |
+| `interval` | duration | Poll interval |
+| `ref.tag` | string | Image tag |
+| `ref.semver` | string | Semver constraint for tag selection |
+| `ref.digest` | string | Exact digest (`sha256:...`) |
+| `secretRef.name` | string | Secret of type `kubernetes.io/dockerconfigjson` |
+| `certSecretRef.name` | string | Secret with TLS CA and client certs for mTLS auth |
+| `provider` | string | Cloud OIDC provider for keyless auth: `aws`, `azure`, `gcp` |
+| `layerSelector.mediaType` | string | Filter OCI layers by media type |
+| `layerSelector.operation` | string | `extract` (default) or `copy` |
+| `verify.provider` | string | Signature verification: `cosign` or `notation` |
+| `verify.matchOIDCIdentity` | array | OIDC issuer/subject patterns for keyless verification |
+| `verify.trustedRootSecretRef.name` | string | Secret with a custom Sigstore `trusted_root.json` — verify against self-hosted Fulcio CA / Rekor (air-gapped keyless) |
+| `serviceAccountName` | string | Service account for image pull (uses imagePullSecrets) |
+| `insecure` | bool | Allow HTTP (non-TLS) connections |
 
 **Fetching Helm charts from OCI registries:**
 
@@ -165,16 +165,16 @@ spec:
 
 **Key spec fields:**
 
-| Field                | Type     | Description                                                                |
-|----------------------|----------|----------------------------------------------------------------------------|
-| `url`                | string   | Helm repository HTTPS URL                                                  |
-| `interval`           | duration | How often to fetch the index                                               |
-| `secretRef.name`     | string   | Secret with `username`/`password` for auth                                 |
-| `certSecretRef.name` | string   | Secret with TLS CA and client certs for mTLS auth                          |
-| `provider`           | string   | Cloud OIDC provider for keyless auth                                       |
-| `passCredentials`    | bool     | Pass credentials to chart download URLs                                    |
-| `type`               | string   | `default` (HTTPS) or `oci` — but prefer `OCIRepository` for OCI registries |
-| `insecure`           | bool     | Skip TLS verification                                                      |
+| Field | Type | Description |
+|-------|------|-------------|
+| `url` | string | Helm repository HTTPS URL |
+| `interval` | duration | How often to fetch the index |
+| `secretRef.name` | string | Secret with `username`/`password` for auth |
+| `certSecretRef.name` | string | Secret with TLS CA and client certs for mTLS auth |
+| `provider` | string | Cloud OIDC provider for keyless auth |
+| `passCredentials` | bool | Pass credentials to chart download URLs |
+| `type` | string | `default` (HTTPS) or `oci` — but prefer `OCIRepository` for OCI registries |
+| `insecure` | bool | Skip TLS verification |
 
 **Important:** For OCI registries, use `OCIRepository` with `layerSelector` instead of
 `HelmRepository` with `type: oci`. The OCIRepository approach is more flexible and supports
@@ -203,14 +203,14 @@ spec:
 
 **Key spec fields:**
 
-| Field               | Type   | Description                                                          |
-|---------------------|--------|----------------------------------------------------------------------|
-| `chart`             | string | Chart name (from HelmRepository) or path (from GitRepository/Bucket) |
-| `version`           | string | Semver constraint (e.g., `18.x`, `>=1.0.0 <2.0.0`)                   |
-| `sourceRef.kind`    | string | `HelmRepository`, `GitRepository`, or `Bucket`                       |
-| `sourceRef.name`    | string | Source name                                                          |
-| `reconcileStrategy` | string | `ChartVersion` (default) or `Revision`                               |
-| `valuesFiles`       | array  | Values files to merge during packaging                               |
+| Field | Type | Description |
+|-------|------|-------------|
+| `chart` | string | Chart name (from HelmRepository) or path (from GitRepository/Bucket) |
+| `version` | string | Semver constraint (e.g., `18.x`, `>=1.0.0 <2.0.0`) |
+| `sourceRef.kind` | string | `HelmRepository`, `GitRepository`, or `Bucket` |
+| `sourceRef.name` | string | Source name |
+| `reconcileStrategy` | string | `ChartVersion` (default) or `Revision` |
+| `valuesFiles` | array | Values files to merge during packaging |
 
 ## Bucket
 
@@ -234,18 +234,18 @@ spec:
 
 **Key spec fields:**
 
-| Field                | Type   | Description                                                                                                                                                                                            |
-|----------------------|--------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `bucketName`         | string | Bucket name                                                                                                                                                                                            |
-| `endpoint`           | string | S3 endpoint (e.g., `s3.amazonaws.com`, `minio.example.com`)                                                                                                                                            |
-| `region`             | string | Object storage region (optional, no default; some endpoints require it)                                                                                                                                |
-| `provider`           | string | `generic` (default), `aws`, `azure`, `gcp`                                                                                                                                                             |
-| `secretRef.name`     | string | Secret with credentials. Keys are provider-dependent: `generic`/`aws` use `accesskey`+`secretkey`; `gcp` uses `serviceaccount` (JSON key); `azure` uses Entra ID / `accountKey` / `sasKey` credentials |
-| `serviceAccountName` | string | Workload identity for `aws`/`azure`/`gcp` (keyless). Mutually exclusive with `secretRef`                                                                                                               |
-| `certSecretRef.name` | string | Secret with TLS CA and client certs for mTLS auth                                                                                                                                                      |
-| `insecure`           | bool   | Use HTTP instead of HTTPS                                                                                                                                                                              |
-| `prefix`             | string | S3 key prefix filter                                                                                                                                                                                   |
-| `ignore`             | string | `.gitignore`-style patterns to exclude                                                                                                                                                                 |
+| Field | Type | Description |
+|-------|------|-------------|
+| `bucketName` | string | Bucket name |
+| `endpoint` | string | S3 endpoint (e.g., `s3.amazonaws.com`, `minio.example.com`) |
+| `region` | string | Object storage region (optional, no default; some endpoints require it) |
+| `provider` | string | `generic` (default), `aws`, `azure`, `gcp` |
+| `secretRef.name` | string | Secret with credentials. Keys are provider-dependent: `generic`/`aws` use `accesskey`+`secretkey`; `gcp` uses `serviceaccount` (JSON key); `azure` uses Entra ID / `accountKey` / `sasKey` credentials |
+| `serviceAccountName` | string | Workload identity for `aws`/`azure`/`gcp` (keyless). Mutually exclusive with `secretRef` |
+| `certSecretRef.name` | string | Secret with TLS CA and client certs for mTLS auth |
+| `insecure` | bool | Use HTTP instead of HTTPS |
+| `prefix` | string | S3 key prefix filter |
+| `ignore` | string | `.gitignore`-style patterns to exclude |
 
 ## ExternalArtifact
 
@@ -384,18 +384,18 @@ when a new `apps/<name>/kustomize` directory appears.
 
 **Key spec fields:**
 
-| Field                         | Type   | Description                                                                                       |
-|-------------------------------|--------|---------------------------------------------------------------------------------------------------|
-| `pathPattern`                 | string | `@<alias>/<pattern>` directory-discovery pattern with named captures (e.g. `{app}`) for monorepos |
-| `sources[].alias`             | string | Unique alias for referencing in copy operations                                                   |
-| `sources[].kind`              | string | `GitRepository`, `OCIRepository`, `Bucket`, `HelmChart`, or `ExternalArtifact`                    |
-| `sources[].name`              | string | Source name                                                                                       |
-| `artifacts[].name`            | string | Name of the ExternalArtifact to create                                                            |
-| `artifacts[].revision`        | string | Revision tracking (e.g., `@alias`)                                                                |
-| `artifacts[].copy[].from`     | string | Source path (`@alias/pattern`)                                                                    |
-| `artifacts[].copy[].to`       | string | Destination path (`@artifact/path`)                                                               |
-| `artifacts[].copy[].exclude`  | array  | Glob patterns to exclude                                                                          |
-| `artifacts[].copy[].strategy` | string | `Overwrite` (default), `Merge`, or `Extract`                                                      |
+| Field | Type | Description |
+|-------|------|-------------|
+| `pathPattern` | string | `@<alias>/<pattern>` directory-discovery pattern with named captures (e.g. `{app}`) for monorepos |
+| `sources[].alias` | string | Unique alias for referencing in copy operations |
+| `sources[].kind` | string | `GitRepository`, `OCIRepository`, `Bucket`, `HelmChart`, or `ExternalArtifact` |
+| `sources[].name` | string | Source name |
+| `artifacts[].name` | string | Name of the ExternalArtifact to create |
+| `artifacts[].revision` | string | Revision tracking (e.g., `@alias`) |
+| `artifacts[].copy[].from` | string | Source path (`@alias/pattern`) |
+| `artifacts[].copy[].to` | string | Destination path (`@artifact/path`) |
+| `artifacts[].copy[].exclude` | array | Glob patterns to exclude |
+| `artifacts[].copy[].strategy` | string | `Overwrite` (default), `Merge`, or `Extract` |
 
 **Copy strategies:**
 - `Overwrite` (default) — later copies overwrite earlier files at the same path

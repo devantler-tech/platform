@@ -49,7 +49,9 @@
                   "additionalProperties": false
                 }
               },
-              "required": ["ref"],
+              "required": [
+                "ref"
+              ],
               "type": "object",
               "additionalProperties": false
             },
@@ -68,7 +70,9 @@
                       "type": "string"
                     }
                   },
-                  "required": ["email"],
+                  "required": [
+                    "email"
+                  ],
                   "type": "object",
                   "additionalProperties": false
                 },
@@ -94,22 +98,31 @@
                           "type": "string"
                         }
                       },
-                      "required": ["name"],
+                      "required": [
+                        "name"
+                      ],
                       "type": "object",
                       "additionalProperties": false
                     },
                     "type": {
                       "description": "Type selects the signing-key format expected in the referenced\nSecret. When empty, the controller defaults to 'gpg'.",
-                      "enum": ["gpg", "ssh"],
+                      "enum": [
+                        "gpg",
+                        "ssh"
+                      ],
                       "type": "string"
                     }
                   },
-                  "required": ["secretRef"],
+                  "required": [
+                    "secretRef"
+                  ],
                   "type": "object",
                   "additionalProperties": false
                 }
               },
-              "required": ["author"],
+              "required": [
+                "author"
+              ],
               "type": "object",
               "additionalProperties": false
             },
@@ -136,7 +149,9 @@
               "additionalProperties": false
             }
           },
-          "required": ["commit"],
+          "required": [
+            "commit"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -170,7 +185,10 @@
                     "x-kubernetes-list-type": "atomic"
                   }
                 },
-                "required": ["key", "operator"],
+                "required": [
+                  "key",
+                  "operator"
+                ],
                 "type": "object",
                 "additionalProperties": false
               },
@@ -199,7 +217,9 @@
             "kind": {
               "default": "GitRepository",
               "description": "Kind of the referent.",
-              "enum": ["GitRepository"],
+              "enum": [
+                "GitRepository"
+              ],
               "type": "string"
             },
             "name": {
@@ -211,7 +231,10 @@
               "type": "string"
             }
           },
-          "required": ["kind", "name"],
+          "required": [
+            "kind",
+            "name"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -232,7 +255,9 @@
             "strategy": {
               "default": "Setters",
               "description": "Strategy names the strategy to be used.",
-              "enum": ["Setters"],
+              "enum": [
+                "Setters"
+              ],
               "type": "string"
             }
           },
@@ -240,7 +265,10 @@
           "additionalProperties": false
         }
       },
-      "required": ["interval", "sourceRef"],
+      "required": [
+        "interval",
+        "sourceRef"
+      ],
       "type": "object",
       "additionalProperties": false
     },
@@ -279,7 +307,11 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": ["True", "False", "Unknown"],
+                "enum": [
+                  "True",
+                  "False",
+                  "Unknown"
+                ],
                 "type": "string"
               },
               "type": {
@@ -340,7 +372,10 @@
                 "type": "string"
               }
             },
-            "required": ["name", "tag"],
+            "required": [
+              "name",
+              "tag"
+            ],
             "type": "object",
             "additionalProperties": false
           },

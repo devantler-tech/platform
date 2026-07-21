@@ -161,15 +161,15 @@ or `ascoachingogvaner/` (a static tenant that also runs a **tenant-owned
 external-dns** for its custom domain, with the extra external-dns RBAC
 grants below) and rename — with:
 
-| File                                                            | Purpose                                                                                                                                                                                                                                                                      |
-|-----------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `kustomization.yaml`                                            | Kustomize entrypoint listing the resources in this directory                                                                                                                                                                                                                 |
-| `namespace.yaml`                                                | Namespace, `pod-security.kubernetes.io/enforce: restricted`                                                                                                                                                                                                                  |
-| `service-account.yaml`                                          | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]`                                                                                                                                                                                              |
-| `role-binding.yaml`                                             | Binds the SA to the `edit` ClusterRole in the namespace                                                                                                                                                                                                                      |
-| `external-secret-ghcr-auth.yaml`                                | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret (just `external-secret.yaml` when it is the tenant's only one)                                                                   |
+| File | Purpose |
+|---|---|
+| `kustomization.yaml` | Kustomize entrypoint listing the resources in this directory |
+| `namespace.yaml` | Namespace, `pod-security.kubernetes.io/enforce: restricted` |
+| `service-account.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
+| `role-binding.yaml` | Binds the SA to the `edit` ClusterRole in the namespace |
+| `external-secret-ghcr-auth.yaml` | OpenBao-backed `ExternalSecret` (shared `openbao` ClusterSecretStore, key `infrastructure/ghcr/auth`) producing the `ghcr-auth` pull secret (just `external-secret.yaml` when it is the tenant's only one) |
 | `role-binding-external-dns*.yaml` + `cluster-role-binding.yaml` | *Only if the tenant runs its own external-dns for a tenant-owned domain* — bind the tenant's `external-dns` SA to the `tenant-external-dns(-global)` ClusterRoles (HTTPRoutes in its namespace, the shared Gateway in kube-system, namespaces) — mirror `ascoachingogvaner/` |
-| `oci-repository.yaml` + `flux-kustomization.yaml`               | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`)                                                                                                                                                           |
+| `oci-repository.yaml` + `flux-kustomization.yaml` | `OCIRepository` (semver `>=1.0.0`, cosign `verify`) + Flux `Kustomization` (prune, `serviceAccountName: <tenant>`) |
 
 > **Tenant-owned (in the tenant repo's `deploy/`, not here):** the
 > `CiliumNetworkPolicy` allow-lists (`networkpolicy.yaml`, and

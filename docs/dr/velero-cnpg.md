@@ -51,11 +51,11 @@ Backups always land in R2 as a Kopia repository, so they are portable for
 cross-provider/cross-distribution restore regardless of how the volume was
 captured. *How* each volume is captured depends on its storage backend:
 
-| Storage backend                    | Method                               | Why                                                                                                                                                |
-|------------------------------------|--------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------|
-| Longhorn (`longhorn` SC)           | CSI snapshot → Kopia data mover → R2 | Crash-consistent; also backs up PVCs of scaled-to-zero apps (no running pod needed).                                                               |
-| hcloud (`hcloud` SC, e.g. openbao) | File-system backup (Kopia) → R2      | **Hetzner block storage has no CSI snapshot support** (the driver advertises no `CREATE_DELETE_SNAPSHOT`; Hetzner has no volume-snapshot product). |
-| anything else / new PVCs           | File-system backup (Kopia) → R2      | Fail-safe default.                                                                                                                                 |
+| Storage backend                    | Method                               | Why                                                                                  |
+| ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------ |
+| Longhorn (`longhorn` SC)           | CSI snapshot → Kopia data mover → R2  | Crash-consistent; also backs up PVCs of scaled-to-zero apps (no running pod needed).  |
+| hcloud (`hcloud` SC, e.g. openbao) | File-system backup (Kopia) → R2       | **Hetzner block storage has no CSI snapshot support** (the driver advertises no `CREATE_DELETE_SNAPSHOT`; Hetzner has no volume-snapshot product). |
+| anything else / new PVCs           | File-system backup (Kopia) → R2       | Fail-safe default.                                                                    |
 
 The routing is declarative (by StorageClass), not per-pod annotations:
 
@@ -125,13 +125,13 @@ Same Velero install, different backend. Local uses an in-cluster
 S3 code path runs end-to-end in CI. The redirection happens via Flux
 variable overrides in `k8s/clusters/local/bootstrap/`:
 
-| Variable               | Local value                                     |
-|------------------------|-------------------------------------------------|
-| `r2_endpoint`          | `http://minio.minio.svc.cluster.local:9000`     |
-| `r2_region`            | `us-east-1` (MinIO ignores; Velero requires)    |
-| `r2_bucket`            | `platform-backups`                              |
-| `r2_access_key_id`     | `minio` (SOPS-encrypted)                        |
-| `r2_secret_access_key` | `minio-local-development-only` (SOPS-encrypted) |
+| Variable               | Local value                                       |
+| ---------------------- | ------------------------------------------------- |
+| `r2_endpoint`          | `http://minio.minio.svc.cluster.local:9000`       |
+| `r2_region`            | `us-east-1` (MinIO ignores; Velero requires)      |
+| `r2_bucket`            | `platform-backups`                                |
+| `r2_access_key_id`     | `minio` (SOPS-encrypted)                          |
+| `r2_secret_access_key` | `minio-local-development-only` (SOPS-encrypted)   |
 
 No code changes between local and prod — only the variable values differ.
 This is the whole point of the substitution layer: the CI restore drill

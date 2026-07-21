@@ -69,27 +69,27 @@ Namespaces, Sources, Kustomizations, HelmReleases, RBAC, ...
 
 ## Controllers and CRDs
 
-| Kind                     | apiVersion                             | Controller                  | Purpose                                            |
-|--------------------------|----------------------------------------|-----------------------------|----------------------------------------------------|
-| FluxInstance             | fluxcd.controlplane.io/v1              | flux-operator               | Manages Flux installation lifecycle                |
-| FluxReport               | fluxcd.controlplane.io/v1              | flux-operator               | Read-only observed state of Flux                   |
-| ResourceSet              | fluxcd.controlplane.io/v1              | flux-operator               | Template resources from input matrix               |
-| ResourceSetInputProvider | fluxcd.controlplane.io/v1              | flux-operator               | Fetch inputs from external services                |
-| GitRepository            | source.toolkit.fluxcd.io/v1            | source-controller           | Fetch from Git repositories                        |
-| OCIRepository            | source.toolkit.fluxcd.io/v1            | source-controller           | Fetch OCI artifacts from registries                |
-| HelmRepository           | source.toolkit.fluxcd.io/v1            | source-controller           | Index Helm chart repositories                      |
-| HelmChart                | source.toolkit.fluxcd.io/v1            | source-controller           | Fetch and package Helm charts                      |
-| Bucket                   | source.toolkit.fluxcd.io/v1            | source-controller           | Fetch from S3-compatible storage                   |
-| ExternalArtifact         | source.toolkit.fluxcd.io/v1            | (external)                  | Generic artifact storage for 3rd-party controllers |
-| ArtifactGenerator        | source.extensions.fluxcd.io/v1beta1    | source-watcher              | Compose/decompose artifacts from multiple sources  |
-| Kustomization            | kustomize.toolkit.fluxcd.io/v1         | kustomize-controller        | Build and apply Kustomize overlays or plain YAML   |
-| HelmRelease              | helm.toolkit.fluxcd.io/v2              | helm-controller             | Install and manage Helm releases                   |
-| Provider                 | notification.toolkit.fluxcd.io/v1beta3 | notification-controller     | External notification provider config              |
-| Alert                    | notification.toolkit.fluxcd.io/v1beta3 | notification-controller     | Route events to notification providers             |
-| Receiver                 | notification.toolkit.fluxcd.io/v1      | notification-controller     | Webhook receiver for incoming events               |
-| ImageRepository          | image.toolkit.fluxcd.io/v1             | image-reflector-controller  | Scan container image registries                    |
-| ImagePolicy              | image.toolkit.fluxcd.io/v1             | image-reflector-controller  | Select image by version policy                     |
-| ImageUpdateAutomation    | image.toolkit.fluxcd.io/v1             | image-automation-controller | Update YAML in Git with new image tags             |
+| Kind | apiVersion | Controller | Purpose |
+|------|-----------|------------|---------|
+| FluxInstance | fluxcd.controlplane.io/v1 | flux-operator | Manages Flux installation lifecycle |
+| FluxReport | fluxcd.controlplane.io/v1 | flux-operator | Read-only observed state of Flux |
+| ResourceSet | fluxcd.controlplane.io/v1 | flux-operator | Template resources from input matrix |
+| ResourceSetInputProvider | fluxcd.controlplane.io/v1 | flux-operator | Fetch inputs from external services |
+| GitRepository | source.toolkit.fluxcd.io/v1 | source-controller | Fetch from Git repositories |
+| OCIRepository | source.toolkit.fluxcd.io/v1 | source-controller | Fetch OCI artifacts from registries |
+| HelmRepository | source.toolkit.fluxcd.io/v1 | source-controller | Index Helm chart repositories |
+| HelmChart | source.toolkit.fluxcd.io/v1 | source-controller | Fetch and package Helm charts |
+| Bucket | source.toolkit.fluxcd.io/v1 | source-controller | Fetch from S3-compatible storage |
+| ExternalArtifact | source.toolkit.fluxcd.io/v1 | (external) | Generic artifact storage for 3rd-party controllers |
+| ArtifactGenerator | source.extensions.fluxcd.io/v1beta1 | source-watcher | Compose/decompose artifacts from multiple sources |
+| Kustomization | kustomize.toolkit.fluxcd.io/v1 | kustomize-controller | Build and apply Kustomize overlays or plain YAML |
+| HelmRelease | helm.toolkit.fluxcd.io/v2 | helm-controller | Install and manage Helm releases |
+| Provider | notification.toolkit.fluxcd.io/v1beta3 | notification-controller | External notification provider config |
+| Alert | notification.toolkit.fluxcd.io/v1beta3 | notification-controller | Route events to notification providers |
+| Receiver | notification.toolkit.fluxcd.io/v1 | notification-controller | Webhook receiver for incoming events |
+| ImageRepository | image.toolkit.fluxcd.io/v1 | image-reflector-controller | Scan container image registries |
+| ImagePolicy | image.toolkit.fluxcd.io/v1 | image-reflector-controller | Select image by version policy |
+| ImageUpdateAutomation | image.toolkit.fluxcd.io/v1 | image-automation-controller | Update YAML in Git with new image tags |
 
 ## How Flux Works
 
@@ -425,35 +425,35 @@ load `references/notifications.md`.
 Load reference files and OpenAPI schemas based on the question topic.
 Load at most 1-2 reference files per question. Read schemas for field-level validation when generating YAML.
 
-| CRD                      | Reference                        | Schema                                                   |
-|--------------------------|----------------------------------|----------------------------------------------------------|
-| FluxInstance             | `references/flux-operator.md`    | `assets/schemas/fluxinstance-fluxcd-v1.json`             |
-| FluxReport               | `references/flux-operator.md`    | `assets/schemas/fluxreport-fluxcd-v1.json`               |
-| ResourceSet              | `references/resourcesets.md`     | `assets/schemas/resourceset-fluxcd-v1.json`              |
-| ResourceSetInputProvider | `references/resourcesets.md`     | `assets/schemas/resourcesetinputprovider-fluxcd-v1.json` |
-| GitRepository            | `references/sources.md`          | `assets/schemas/gitrepository-source-v1.json`            |
-| OCIRepository            | `references/sources.md`          | `assets/schemas/ocirepository-source-v1.json`            |
-| HelmRepository           | `references/sources.md`          | `assets/schemas/helmrepository-source-v1.json`           |
-| HelmChart                | `references/sources.md`          | `assets/schemas/helmchart-source-v1.json`                |
-| Bucket                   | `references/sources.md`          | `assets/schemas/bucket-source-v1.json`                   |
-| ExternalArtifact         | `references/sources.md`          | `assets/schemas/externalartifact-source-v1.json`         |
-| ArtifactGenerator        | `references/sources.md`          | `assets/schemas/artifactgenerator-source-v1beta1.json`   |
-| Kustomization            | `references/kustomization.md`    | `assets/schemas/kustomization-kustomize-v1.json`         |
-| HelmRelease              | `references/helmrelease.md`      | `assets/schemas/helmrelease-helm-v2.json`                |
-| Provider                 | `references/notifications.md`    | `assets/schemas/provider-notification-v1beta3.json`      |
-| Alert                    | `references/notifications.md`    | `assets/schemas/alert-notification-v1beta3.json`         |
-| Receiver                 | `references/notifications.md`    | `assets/schemas/receiver-notification-v1.json`           |
-| ImageRepository          | `references/image-automation.md` | `assets/schemas/imagerepository-image-v1.json`           |
-| ImagePolicy              | `references/image-automation.md` | `assets/schemas/imagepolicy-image-v1.json`               |
-| ImageUpdateAutomation    | `references/image-automation.md` | `assets/schemas/imageupdateautomation-image-v1.json`     |
+| CRD | Reference | Schema |
+|-----|-----------|--------|
+| FluxInstance | `references/flux-operator.md` | `assets/schemas/fluxinstance-fluxcd-v1.json` |
+| FluxReport | `references/flux-operator.md` | `assets/schemas/fluxreport-fluxcd-v1.json` |
+| ResourceSet | `references/resourcesets.md` | `assets/schemas/resourceset-fluxcd-v1.json` |
+| ResourceSetInputProvider | `references/resourcesets.md` | `assets/schemas/resourcesetinputprovider-fluxcd-v1.json` |
+| GitRepository | `references/sources.md` | `assets/schemas/gitrepository-source-v1.json` |
+| OCIRepository | `references/sources.md` | `assets/schemas/ocirepository-source-v1.json` |
+| HelmRepository | `references/sources.md` | `assets/schemas/helmrepository-source-v1.json` |
+| HelmChart | `references/sources.md` | `assets/schemas/helmchart-source-v1.json` |
+| Bucket | `references/sources.md` | `assets/schemas/bucket-source-v1.json` |
+| ExternalArtifact | `references/sources.md` | `assets/schemas/externalartifact-source-v1.json` |
+| ArtifactGenerator | `references/sources.md` | `assets/schemas/artifactgenerator-source-v1beta1.json` |
+| Kustomization | `references/kustomization.md` | `assets/schemas/kustomization-kustomize-v1.json` |
+| HelmRelease | `references/helmrelease.md` | `assets/schemas/helmrelease-helm-v2.json` |
+| Provider | `references/notifications.md` | `assets/schemas/provider-notification-v1beta3.json` |
+| Alert | `references/notifications.md` | `assets/schemas/alert-notification-v1beta3.json` |
+| Receiver | `references/notifications.md` | `assets/schemas/receiver-notification-v1.json` |
+| ImageRepository | `references/image-automation.md` | `assets/schemas/imagerepository-image-v1.json` |
+| ImagePolicy | `references/image-automation.md` | `assets/schemas/imagepolicy-image-v1.json` |
+| ImageUpdateAutomation | `references/image-automation.md` | `assets/schemas/imageupdateautomation-image-v1.json` |
 
-| Topic                                                                                                                                         | Reference                                |
-|-----------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------|
-| Repository structure, monorepo vs multi-repo, OCI-based fleet management                                                                      | `references/repo-patterns.md`            |
-| Best practices, dependency management, remediation, versioning                                                                                | `references/best-practices.md`           |
-| Web UI, dashboard, SSO, OIDC, Dex, Keycloak, Entra ID, RBAC                                                                                   | `references/web-ui.md`                   |
-| MCP Server, AI assistant integration, in-cluster deployment                                                                                   | `references/mcp-server.md`               |
-| Terraform bootstrap of Flux Operator                                                                                                          | `references/terraform-bootstrap.md`      |
-| Flux CLI and plugins: `flux schema` discover/validate/extract, local rendering with `flux build` and `flux operator build`, overlay debugging | `references/flux-cli.md`                 |
-| Gitless GitOps, Flux OCI artifacts, `flux push artifact`, registry-based delivery                                                             | `references/gitless-gitops.md`           |
-| Gitless image automation (ResourceSet + OCIArtifactTag)                                                                                       | `references/gitless-image-automation.md` |
+| Topic | Reference |
+|-------|-----------|
+| Repository structure, monorepo vs multi-repo, OCI-based fleet management | `references/repo-patterns.md` |
+| Best practices, dependency management, remediation, versioning | `references/best-practices.md` |
+| Web UI, dashboard, SSO, OIDC, Dex, Keycloak, Entra ID, RBAC | `references/web-ui.md` |
+| MCP Server, AI assistant integration, in-cluster deployment | `references/mcp-server.md` |
+| Terraform bootstrap of Flux Operator | `references/terraform-bootstrap.md` |
+| Flux CLI and plugins: `flux schema` discover/validate/extract, local rendering with `flux build` and `flux operator build`, overlay debugging | `references/flux-cli.md` |
+| Gitless GitOps, Flux OCI artifacts, `flux push artifact`, registry-based delivery | `references/gitless-gitops.md` |
+| Gitless image automation (ResourceSet + OCIArtifactTag) | `references/gitless-image-automation.md` |

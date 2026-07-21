@@ -114,34 +114,34 @@ spec:
 
 ## Key Spec Fields
 
-| Field                | Type   | Description                                                                                                                                     |
-|----------------------|--------|-------------------------------------------------------------------------------------------------------------------------------------------------|
-| `inputs`             | array  | List of input value maps — each entry generates one set of resources                                                                            |
-| `inputsFrom`         | array  | References to ResourceSetInputProvider resources                                                                                                |
-| `inputStrategy.name` | string | `Flatten` (default) or `Permute` (Cartesian product)                                                                                            |
-| `resources`          | array  | Templated Kubernetes resource definitions                                                                                                       |
-| `resourcesTemplate`  | string | Go-template string rendered as multi-document YAML (alternative to `resources`)                                                                 |
-| `steps`              | array  | Ordered, named reconciliation steps — each applied and health-checked before the next (mutually exclusive with `resources`/`resourcesTemplate`) |
-| `commonMetadata`     | object | Labels/annotations applied to all generated resources                                                                                           |
-| `dependsOn`          | array  | Prerequisites with optional readiness checks                                                                                                    |
+| Field | Type | Description |
+|-------|------|-------------|
+| `inputs` | array | List of input value maps — each entry generates one set of resources |
+| `inputsFrom` | array | References to ResourceSetInputProvider resources |
+| `inputStrategy.name` | string | `Flatten` (default) or `Permute` (Cartesian product) |
+| `resources` | array | Templated Kubernetes resource definitions |
+| `resourcesTemplate` | string | Go-template string rendered as multi-document YAML (alternative to `resources`) |
+| `steps` | array | Ordered, named reconciliation steps — each applied and health-checked before the next (mutually exclusive with `resources`/`resourcesTemplate`) |
+| `commonMetadata` | object | Labels/annotations applied to all generated resources |
+| `dependsOn` | array | Prerequisites with optional readiness checks |
 
 ## Template Syntax
 
 **Delimiters:** `<< >>` — NOT `{{ }}`
 
-| Expression                                   | Description                                  |
-|----------------------------------------------|----------------------------------------------|
-| `<< inputs.name >>`                          | Simple field substitution                    |
-| `<< inputs.name \| quote >>`                 | Quote the value (wraps in double quotes)     |
-| `<< inputs.replicas \| int >>`               | Convert to integer (for numeric YAML fields) |
-| `<< inputs.config \| toYaml \| nindent 4 >>` | Render as YAML with indentation              |
-| `<< inputs.config \| toJson >>`              | Render as JSON string                        |
-| `<< inputs.name \| slugify >>`               | Convert to DNS-safe slug                     |
-| `<< inputs.labels \| get "app" >>`           | Get value from nested map                    |
-| `<< inputs.tag \| default "latest" >>`       | Default value if empty                       |
-| `<< inputs.name \| upper >>`                 | Convert to uppercase                         |
-| `<< inputs.name \| lower >>`                 | Convert to lowercase                         |
-| `<< inputs.name \| trimSuffix "-app" >>`     | Remove suffix                                |
+| Expression | Description |
+|-----------|-------------|
+| `<< inputs.name >>` | Simple field substitution |
+| `<< inputs.name \| quote >>` | Quote the value (wraps in double quotes) |
+| `<< inputs.replicas \| int >>` | Convert to integer (for numeric YAML fields) |
+| `<< inputs.config \| toYaml \| nindent 4 >>` | Render as YAML with indentation |
+| `<< inputs.config \| toJson >>` | Render as JSON string |
+| `<< inputs.name \| slugify >>` | Convert to DNS-safe slug |
+| `<< inputs.labels \| get "app" >>` | Get value from nested map |
+| `<< inputs.tag \| default "latest" >>` | Default value if empty |
+| `<< inputs.name \| upper >>` | Convert to uppercase |
+| `<< inputs.name \| lower >>` | Convert to lowercase |
+| `<< inputs.name \| trimSuffix "-app" >>` | Remove suffix |
 
 Template functions come from slim-sprig (a subset of Go's sprig template functions).
 
@@ -233,11 +233,11 @@ spec:
 directly. Normalization: uppercase → lowercase; spaces/punctuation (including `-`) →
 underscores; non-alphanumeric removed.
 
-| Object providing inputs                                  | Template key           |
-|----------------------------------------------------------|------------------------|
-| `ResourceSetInputProvider` named `image-tag`             | `inputs.image_tag`     |
-| `ResourceSetInputProvider` named `chart-version`         | `inputs.chart_version` |
-| Inline `.spec.inputs` on a `ResourceSet` named `my-apps` | `inputs.my_apps`       |
+| Object providing inputs | Template key |
+|---|---|
+| `ResourceSetInputProvider` named `image-tag` | `inputs.image_tag` |
+| `ResourceSetInputProvider` named `chart-version` | `inputs.chart_version` |
+| Inline `.spec.inputs` on a `ResourceSet` named `my-apps` | `inputs.my_apps` |
 
 Two always-flat accessors exist alongside the namespaced keys:
 
@@ -426,13 +426,13 @@ Resources are deduplicated by their GVK + namespace + name.
 
 Every input entry automatically includes:
 
-| Field                        | Description                                                                                                                                                                                                                                                                              |
-|------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `inputs.id`                  | Unique identifier for the input set amongst all sets generated for the ResourceSet. Value depends on provider type: Adler-32 checksum of the branch/tag name for Git branches, Git tags and OCI tags (checksum of the provider UID for Static), the PR/MR number for pull/merge requests |
-| `inputs.provider.apiVersion` | API version of the object providing the inputs                                                                                                                                                                                                                                           |
-| `inputs.provider.kind`       | Kind of the object providing the inputs (`ResourceSet` for inline, `ResourceSetInputProvider` for external)                                                                                                                                                                              |
-| `inputs.provider.name`       | Name of the providing object                                                                                                                                                                                                                                                             |
-| `inputs.provider.namespace`  | Namespace of the providing object                                                                                                                                                                                                                                                        |
+| Field | Description |
+|-------|-------------|
+| `inputs.id` | Unique identifier for the input set amongst all sets generated for the ResourceSet. Value depends on provider type: Adler-32 checksum of the branch/tag name for Git branches, Git tags and OCI tags (checksum of the provider UID for Static), the PR/MR number for pull/merge requests |
+| `inputs.provider.apiVersion` | API version of the object providing the inputs |
+| `inputs.provider.kind` | Kind of the object providing the inputs (`ResourceSet` for inline, `ResourceSetInputProvider` for external) |
+| `inputs.provider.name` | Name of the providing object |
+| `inputs.provider.namespace` | Namespace of the providing object |
 
 ## ResourceSetInputProvider
 
@@ -463,48 +463,48 @@ spec:
 
 ### Provider Types and Exported Fields
 
-| Type                     | Exported Fields                                  | Description                                       |
-|--------------------------|--------------------------------------------------|---------------------------------------------------|
-| `GitHubPullRequest`      | `id`, `sha`, `branch`, `author`, `title`         | Open pull requests with matching labels           |
-| `GitHubBranch`           | `id`, `branch`, `sha`                            | Repository branches                               |
-| `GitHubTag`              | `id`, `tag`, `sha`                               | Repository tags                                   |
-| `GitLabMergeRequest`     | `id`, `sha`, `branch`, `author`, `title`         | Open merge requests                               |
-| `GitLabBranch`           | `id`, `branch`, `sha`                            | Repository branches                               |
-| `GitLabTag`              | `id`, `tag`, `sha`                               | Repository tags                                   |
-| `GitLabEnvironment`      | `id`, `sha`, `branch`, `author`, `title`, `slug` | Deployed GitLab environments                      |
-| `AzureDevOpsPullRequest` | `id`, `sha`, `branch`, `author`, `title`         | Open pull requests                                |
-| `AzureDevOpsBranch`      | `id`, `branch`, `sha`                            | Repository branches                               |
-| `AzureDevOpsTag`         | `id`, `tag`, `sha`                               | Repository tags                                   |
-| `GiteaPullRequest`       | `id`, `sha`, `branch`, `author`, `title`         | Open pull requests                                |
-| `GiteaBranch`            | `id`, `branch`, `sha`                            | Repository branches                               |
-| `GiteaTag`               | `id`, `tag`, `sha`                               | Repository tags                                   |
-| `OCIArtifactTag`         | `id`, `tag`, `digest`                            | OCI artifact tags (generic registries)            |
-| `ACRArtifactTag`         | `id`, `tag`, `digest`                            | Azure Container Registry tags (workload identity) |
-| `ECRArtifactTag`         | `id`, `tag`, `digest`                            | AWS ECR tags (workload identity)                  |
-| `GARArtifactTag`         | `id`, `tag`, `digest`                            | Google Artifact Registry tags (workload identity) |
-| `ExternalService`        | (from HTTP response)                             | Custom HTTP service endpoint                      |
-| `Static`                 | (from `defaultValues`)                           | Single input from inline values                   |
+| Type | Exported Fields | Description |
+|------|----------------|-------------|
+| `GitHubPullRequest` | `id`, `sha`, `branch`, `author`, `title` | Open pull requests with matching labels |
+| `GitHubBranch` | `id`, `branch`, `sha` | Repository branches |
+| `GitHubTag` | `id`, `tag`, `sha` | Repository tags |
+| `GitLabMergeRequest` | `id`, `sha`, `branch`, `author`, `title` | Open merge requests |
+| `GitLabBranch` | `id`, `branch`, `sha` | Repository branches |
+| `GitLabTag` | `id`, `tag`, `sha` | Repository tags |
+| `GitLabEnvironment` | `id`, `sha`, `branch`, `author`, `title`, `slug` | Deployed GitLab environments |
+| `AzureDevOpsPullRequest` | `id`, `sha`, `branch`, `author`, `title` | Open pull requests |
+| `AzureDevOpsBranch` | `id`, `branch`, `sha` | Repository branches |
+| `AzureDevOpsTag` | `id`, `tag`, `sha` | Repository tags |
+| `GiteaPullRequest` | `id`, `sha`, `branch`, `author`, `title` | Open pull requests |
+| `GiteaBranch` | `id`, `branch`, `sha` | Repository branches |
+| `GiteaTag` | `id`, `tag`, `sha` | Repository tags |
+| `OCIArtifactTag` | `id`, `tag`, `digest` | OCI artifact tags (generic registries) |
+| `ACRArtifactTag` | `id`, `tag`, `digest` | Azure Container Registry tags (workload identity) |
+| `ECRArtifactTag` | `id`, `tag`, `digest` | AWS ECR tags (workload identity) |
+| `GARArtifactTag` | `id`, `tag`, `digest` | Google Artifact Registry tags (workload identity) |
+| `ExternalService` | (from HTTP response) | Custom HTTP service endpoint |
+| `Static` | (from `defaultValues`) | Single input from inline values |
 
 ### Key Spec Fields
 
-| Field                  | Type   | Description                                                                       |
-|------------------------|--------|-----------------------------------------------------------------------------------|
-| `type`                 | string | Provider type (required, see table above)                                         |
-| `url`                  | string | Repository or registry URL (required for non-Static types)                        |
-| `secretRef.name`       | string | Secret with credentials (`username`/`password` for Git, dockerconfigjson for OCI) |
-| `serviceAccountName`   | string | SA for workload identity (AzureDevOps*, *ArtifactTag types)                       |
-| `filter.limit`         | int    | Max number of inputs to return (default: 100)                                     |
-| `filter.labels`        | array  | Label filter for change requests                                                  |
-| `filter.includeBranch` | string | Regex to include branches                                                         |
-| `filter.excludeBranch` | string | Regex to exclude branches                                                         |
-| `filter.includeTag`    | string | Regex to include tags                                                             |
-| `filter.excludeTag`    | string | Regex to exclude tags                                                             |
-| `filter.semver`        | string | Semver range to filter and sort tags                                              |
-| `skip.labels`          | array  | Labels to skip input updates (prefix `!` to skip if absent)                       |
-| `defaultValues`        | map    | Default key-value pairs merged with exported values                               |
-| `schedule`             | array  | Cron schedules with `cron`, `timeZone`, `window` fields                           |
-| `insecure`             | bool   | Allow HTTP (ExternalService, OCIArtifactTag only)                                 |
-| `certSecretRef.name`   | string | Secret with TLS CA cert (`ca.crt`)                                                |
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Provider type (required, see table above) |
+| `url` | string | Repository or registry URL (required for non-Static types) |
+| `secretRef.name` | string | Secret with credentials (`username`/`password` for Git, dockerconfigjson for OCI) |
+| `serviceAccountName` | string | SA for workload identity (AzureDevOps*, *ArtifactTag types) |
+| `filter.limit` | int | Max number of inputs to return (default: 100) |
+| `filter.labels` | array | Label filter for change requests |
+| `filter.includeBranch` | string | Regex to include branches |
+| `filter.excludeBranch` | string | Regex to exclude branches |
+| `filter.includeTag` | string | Regex to include tags |
+| `filter.excludeTag` | string | Regex to exclude tags |
+| `filter.semver` | string | Semver range to filter and sort tags |
+| `skip.labels` | array | Labels to skip input updates (prefix `!` to skip if absent) |
+| `defaultValues` | map | Default key-value pairs merged with exported values |
+| `schedule` | array | Cron schedules with `cron`, `timeZone`, `window` fields |
+| `insecure` | bool | Allow HTTP (ExternalService, OCIArtifactTag only) |
+| `certSecretRef.name` | string | Secret with TLS CA cert (`ca.crt`) |
 
 Reconciliation is configured via annotations, not spec fields:
 - `fluxcd.controlplane.io/reconcileEvery: "5m"` — poll interval (default: `10m`)

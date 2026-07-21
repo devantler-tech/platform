@@ -128,8 +128,8 @@ A high-level inventory of what Flux reconciles onto the cluster. The manifests l
 - **Progressive delivery** — Flagger (Gateway API canary deployments with SLO-gated automated rollback, metrics from Coroot); see [`docs/progressive-delivery.md`](docs/progressive-delivery.md)
 - **Observability** — Coroot (self-hosted, eBPF: metrics, logs, traces, profiling, service map, SLO alerting), OpenCost (cost); see [`docs/dr/alerting.md`](docs/dr/alerting.md)
 - **Backup / DR** — Velero with CloudNativePG backups; see [`docs/dr/`](docs/dr)
-- **Virtualization** — KubeVirt + CDI *(local/CI only; disabled on the Hetzner/prod overlay)*
-- **Testing** — Testkube *(local/CI only; not deployed to prod)*
+- **Virtualization** — KubeVirt + CDI _(local/CI only; disabled on the Hetzner/prod overlay)_
+- **Testing** — Testkube _(local/CI only; not deployed to prod)_
 
 **Apps** ([`k8s/bases/apps/`](k8s/bases/apps))
 
@@ -230,12 +230,12 @@ Deeper guides and design notes live in [`docs/`](docs):
 > [!NOTE]
 > Prices are approximate and may be outdated.
 
-| Item                         | No. | Per unit | Total in Actual | Total in $ |
-|------------------------------|-----|----------|-----------------|------------|
-| Cloudflare Domains           | 2   | $0,87    | $1,74           | $1,74      |
-| Hetzner CX33 (prod)          | 6   | €6,49    | €38,94          | $44,21     |
-| Hetzner Cloud LB LB11 (prod) | 1   | €5,39    | €5,39           | $6,12      |
-| Total                        |     |          |                 | $52,07     |
+| Item                      | No. | Per unit | Total in Actual | Total in $ |
+| ------------------------- | --- | -------- | --------------- | ---------- |
+| Cloudflare Domains        | 2   | $0,87    | $1,74           | $1,74      |
+| Hetzner CX33 (prod)       | 6   | €6,49    | €38,94          | $44,21     |
+| Hetzner Cloud LB LB11 (prod) | 1 | €5,39   | €5,39           | $6,12      |
+| Total                     |     |          |                 | $52,07     |
 
 ## Star History
 

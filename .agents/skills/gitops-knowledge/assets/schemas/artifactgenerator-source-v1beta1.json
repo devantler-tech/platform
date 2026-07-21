@@ -41,7 +41,11 @@
                     },
                     "strategy": {
                       "description": "Strategy specifies the copy strategy to use.\n'Overwrite' will overwrite existing files in the destination.\n'Merge' is for merging YAML files using Helm values merge strategy.\n'Extract' is for extracting the contents of tarball archives (.tar.gz, .tgz)\nWhen using glob patterns, non-tarball files are silently skipped. For single file sources,\nthe file must be a tarball or an error is returned. Directories are not supported.\nIf not specified, defaults to 'Overwrite'.",
-                      "enum": ["Overwrite", "Merge", "Extract"],
+                      "enum": [
+                        "Overwrite",
+                        "Merge",
+                        "Extract"
+                      ],
                       "type": "string"
                     },
                     "to": {
@@ -52,7 +56,10 @@
                       "type": "string"
                     }
                   },
-                  "required": ["from", "to"],
+                  "required": [
+                    "from",
+                    "to"
+                  ],
                   "type": "object",
                   "additionalProperties": false
                 },
@@ -78,7 +85,10 @@
                 "type": "string"
               }
             },
-            "required": ["copy", "name"],
+            "required": [
+              "copy",
+              "name"
+            ],
             "type": "object",
             "additionalProperties": false
           },
@@ -149,7 +159,11 @@
                 "type": "string"
               }
             },
-            "required": ["alias", "kind", "name"],
+            "required": [
+              "alias",
+              "kind",
+              "name"
+            ],
             "type": "object",
             "additionalProperties": false
           },
@@ -158,7 +172,10 @@
           "type": "array"
         }
       },
-      "required": ["artifacts", "sources"],
+      "required": [
+        "artifacts",
+        "sources"
+      ],
       "type": "object",
       "x-kubernetes-validations": [
         {
@@ -201,7 +218,11 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": ["True", "False", "Unknown"],
+                "enum": [
+                  "True",
+                  "False",
+                  "Unknown"
+                ],
                 "type": "string"
               },
               "type": {
@@ -245,7 +266,12 @@
                 "type": "string"
               }
             },
-            "required": ["digest", "filename", "name", "namespace"],
+            "required": [
+              "digest",
+              "filename",
+              "name",
+              "namespace"
+            ],
             "type": "object",
             "additionalProperties": false
           },

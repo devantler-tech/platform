@@ -22,15 +22,15 @@ the long answer is below.
 Runtime security here is layered. The two eBPF sensors are the headline, but
 they sit inside a wider set of controls:
 
-| Layer               | Control                                                                                                                                                | What it does at runtime                                                                                                                                       |
-|---------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Kernel LSM          | **AppArmor** ([`talos/cluster/enable-apparmor.yaml`](../talos/cluster/enable-apparmor.yaml))                                                           | Confines container processes to a profile; default-deny for unexpected file/cap access                                                                        |
-| Syscall filter      | **seccomp `RuntimeDefault`** (mutated + enforced by [Kyverno](../k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml)) | Blocks the dangerous-syscall tail every container gets by default                                                                                             |
-| Kernel hardening    | **sysctls** ([`talos/cluster/harden-kernel-sysctls.yaml`](../talos/cluster/harden-kernel-sysctls.yaml))                                                | `kptr_restrict`, `ptrace_scope`, unprivileged-eBPF off, etc. — shrinks the local-privesc surface                                                              |
-| Network             | **Cilium + Hubble**                                                                                                                                    | L3–L7 flow visibility and default-deny [CiliumNetworkPolicy](../k8s/bases/infrastructure/cluster-policies/best-practices/add-default-deny.yaml) per namespace |
-| Runtime detection   | **Kubescape node-agent**                                                                                                                               | Learned-behaviour anomaly detection, correlated with config/CVE/compliance posture                                                                            |
-| Runtime enforcement | **Tetragon**                                                                                                                                           | Declarative kernel-hook policies that **terminate the offending process** (SIGKILL) on a policy match                                                         |
-| Forensics           | **API audit log** ([`talos/cluster/enable-audit-logging.yaml`](../talos/cluster/enable-audit-logging.yaml))                                            | Who-did-what record of control-plane mutations                                                                                                                |
+| Layer | Control | What it does at runtime |
+| --- | --- | --- |
+| Kernel LSM | **AppArmor** ([`talos/cluster/enable-apparmor.yaml`](../talos/cluster/enable-apparmor.yaml)) | Confines container processes to a profile; default-deny for unexpected file/cap access |
+| Syscall filter | **seccomp `RuntimeDefault`** (mutated + enforced by [Kyverno](../k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml)) | Blocks the dangerous-syscall tail every container gets by default |
+| Kernel hardening | **sysctls** ([`talos/cluster/harden-kernel-sysctls.yaml`](../talos/cluster/harden-kernel-sysctls.yaml)) | `kptr_restrict`, `ptrace_scope`, unprivileged-eBPF off, etc. — shrinks the local-privesc surface |
+| Network | **Cilium + Hubble** | L3–L7 flow visibility and default-deny [CiliumNetworkPolicy](../k8s/bases/infrastructure/cluster-policies/best-practices/add-default-deny.yaml) per namespace |
+| Runtime detection | **Kubescape node-agent** | Learned-behaviour anomaly detection, correlated with config/CVE/compliance posture |
+| Runtime enforcement | **Tetragon** | Declarative kernel-hook policies that **terminate the offending process** (SIGKILL) on a policy match |
+| Forensics | **API audit log** ([`talos/cluster/enable-audit-logging.yaml`](../talos/cluster/enable-audit-logging.yaml)) | Who-did-what record of control-plane mutations |
 
 This document focuses on the two middle-to-bottom rows — the eBPF sensors.
 
@@ -104,9 +104,9 @@ would duplicate Kubescape). It enforces the rules *you write*.
 
 ## Why both, and not one
 
-| If we kept only…         | We would lose                                                                                                                                                                                          |
-|--------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Tetragon**             | Compliance/CVE/posture correlation, learned-behaviour anomaly detection, the single-pane Kubescape view — i.e. *"is this CVE actually reachable at runtime?"*                                          |
+| If we kept only… | We would lose |
+| --- | --- |
+| **Tetragon** | Compliance/CVE/posture correlation, learned-behaviour anomaly detection, the single-pane Kubescape view — i.e. *"is this CVE actually reachable at runtime?"* |
 | **Kubescape node-agent** | **Enforcement** — killing an offending process (SIGKILL) on a match (with `Override` available for true syscall-blocking) — and expressive low-overhead kernel-hook policies for system-file integrity |
 
 They sit at opposite ends of the detect → enforce spectrum:

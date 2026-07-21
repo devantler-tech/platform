@@ -17,13 +17,13 @@ indistinguishable from the day before the incident.
 The repo + these items are the entire seed for a rebuild. Lose all of
 these simultaneously and you cannot recover.
 
-| Artifact                                | Where it lives                                           | Recovery if lost                                                                                                                                                                                                                                                                                                                                                                               |
-|-----------------------------------------|----------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **SOPS Age private keys** (one per env) | Secure vault + offline backup                            | Re-encrypt all `*.enc.yaml` (below)                                                                                                                                                                                                                                                                                                                                                            |
+| Artifact                                | Where it lives                       | Recovery if lost                     |
+| --------------------------------------- | ------------------------------------ | ------------------------------------ |
+| **SOPS Age private keys** (one per env) | Secure vault + offline backup        | Re-encrypt all `*.enc.yaml` (below)  |
 | **OpenBao unseal key + root token**     | `openbao-unseal` Secret (Velero-backed) + operator vault | Restore the `openbao-unseal` Secret from the most recent Velero backup; the paired raft snapshot lives on the `vault-snapshots` PVC and in the R2 `openbao-snapshots/` mirror, and the `vault-config` Job restores it automatically ([openbao.md](openbao.md) scenarios 2-3); only if every copy is gone, re-initialize OpenBao and re-seed KV — existing encrypted data is then unrecoverable |
-| **Cloudflare R2 access keys**           | Secure vault                                             | Mint new in Cloudflare; SOPS-update                                                                                                                                                                                                                                                                                                                                                            |
-| **Hetzner Cloud API token**             | Secure vault                                             | Mint new in Hetzner Cloud console                                                                                                                                                                                                                                                                                                                                                              |
-| **Cloudflare API token**                | Secure vault                                             | Mint new in Cloudflare dashboard                                                                                                                                                                                                                                                                                                                                                               |
+| **Cloudflare R2 access keys**           | Secure vault                         | Mint new in Cloudflare; SOPS-update  |
+| **Hetzner Cloud API token**             | Secure vault                         | Mint new in Hetzner Cloud console    |
+| **Cloudflare API token**                | Secure vault                         | Mint new in Cloudflare dashboard     |
 
 > Recommendation: store these in a shared vault accessible by at least one
 > additional trusted operator, plus an offline copy in a second physical
@@ -468,9 +468,9 @@ The prod deploy pipeline (the merge-queue `deploy-prod` job in `ci.yaml`, and
 the manual `.github/workflows/cd.yaml`) authenticates to the cluster with
 two GitHub `prod` environment secrets:
 
-| Secret         | Restored to       | Used by                                             |
-|----------------|-------------------|-----------------------------------------------------|
-| `KUBE_CONFIG`  | `~/.kube/config`  | `ksail cluster update` drift detection (kube API)   |
+| Secret         | Restored to       | Used by                                            |
+| -------------- | ----------------- | -------------------------------------------------- |
+| `KUBE_CONFIG`  | `~/.kube/config`  | `ksail cluster update` drift detection (kube API)  |
 | `TALOS_CONFIG` | `~/.talos/config` | `ksail cluster update` machine-config / secret sync |
 
 After a **full rebuild** (Scenario 4) the API endpoint and Talos PKI change,

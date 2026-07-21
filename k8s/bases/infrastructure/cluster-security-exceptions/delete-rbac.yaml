@@ -40,7 +40,7 @@ spec:
       # --- cluster-scoped: ClusterRoleBinding -> ClusterRole (19) ---
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: cdi-sa # CDI (KubeVirt storage import)
+        name: cdi-sa                                     # CDI (KubeVirt storage import)
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
         name: cert-manager-controller-issuers
@@ -55,10 +55,10 @@ spec:
         name: cert-manager-controller-challenges
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: cloudnative-pg # CNPG Postgres operator
+        name: cloudnative-pg                             # CNPG Postgres operator
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: cluster-reconciler-flux-system # Flux kustomize/helm controllers
+        name: cluster-reconciler-flux-system             # Flux kustomize/helm controllers
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
         name: flux-operator
@@ -67,7 +67,7 @@ spec:
         name: coroot-operator
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: crossplane-admin # Crossplane core (Group crossplane-masters)
+        name: crossplane-admin                           # Crossplane core (Group crossplane-masters)
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
         # The trailing hash is the provider-revision hash, rewritten on every
@@ -77,10 +77,10 @@ spec:
         name: "^crossplane:provider:provider-upjet-github-[0-9a-f]+:system$"
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: flagger # progressive delivery
+        name: flagger                                    # progressive delivery
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: "kro:controller" # KRO resource-graph operator
+        name: "kro:controller"                           # KRO resource-graph operator
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
         name: ksail-operator
@@ -95,14 +95,14 @@ spec:
         name: kubevirt-controller
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: longhorn-bind # Longhorn distributed storage
+        name: longhorn-bind                              # Longhorn distributed storage
       - apiGroup: rbac.authorization.k8s.io
         kind: ClusterRoleBinding
-        name: reloader-reloader-role-binding # config/secret change reloader
+        name: reloader-reloader-role-binding             # config/secret change reloader
       # --- namespaced: RoleBinding -> Role/ClusterRole (7) ---
       - apiGroup: rbac.authorization.k8s.io
         kind: RoleBinding
-        name: ascoachingogvaner # tenant deployer SA (edit)
+        name: ascoachingogvaner                          # tenant deployer SA (edit)
       - apiGroup: rbac.authorization.k8s.io
         kind: RoleBinding
         name: "kyverno:admission-controller"
@@ -119,7 +119,7 @@ spec:
         name: tf-runner
       - apiGroup: rbac.authorization.k8s.io
         kind: RoleBinding
-        name: velero-server # backup/restore
+        name: velero-server                              # backup/restore
       - apiGroup: rbac.authorization.k8s.io
         kind: RoleBinding
-        name: wedding-app # tenant deployer SA (edit)
+        name: wedding-app                                # tenant deployer SA (edit)

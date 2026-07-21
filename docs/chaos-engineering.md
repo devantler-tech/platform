@@ -133,7 +133,7 @@ spec:
 ### Node-lifecycle rehearsal (the recurring prod incident class)
 
 The node-roll / autoscaler-churn faults that strand Longhorn volumes (#1816,
-# 1820, #2024) are best rehearsed by draining a *storage* worker and watching
+#1820, #2024) are best rehearsed by draining a *storage* worker and watching
 Longhorn re-attach. Chaos Mesh's `StressChaos` (CPU/memory pressure) can
 reproduce the eviction pressure that triggers it; pair it with a manual
 `kubectl drain` of one Longhorn worker and confirm volumes re-attach and the

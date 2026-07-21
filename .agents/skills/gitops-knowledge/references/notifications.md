@@ -38,66 +38,66 @@ stringData:
 
 **Messaging platforms:**
 
-| Type         | Secret Field            | Address                                  | Notes                                            |
-|--------------|-------------------------|------------------------------------------|--------------------------------------------------|
-| `slack`      | `token` (bot token)     | `https://slack.com/api/chat.postMessage` | Channel set in spec, address in spec             |
-| `discord`    | `address` (webhook URL) | —                                        |                                                  |
-| `msteams`    | `address` (webhook URL) | —                                        | Microsoft Teams                                  |
-| `googlechat` | `address` (webhook URL) | —                                        | Google Chat                                      |
-| `telegram`   | `token`                 | `https://api.telegram.org`               | Channel is chat ID                               |
-| `matrix`     | `token`                 | Matrix homeserver URL                    | Channel is room ID                               |
-| `rocket`     | `address` (webhook URL) | —                                        | Rocket.Chat (type is `rocket`, not `rocketchat`) |
-| `lark`       | `address` (webhook URL) | —                                        |                                                  |
-| `webex`      | `token`                 | —                                        | Channel is room ID                               |
+| Type | Secret Field | Address | Notes |
+|------|-------------|---------|-------|
+| `slack` | `token` (bot token) | `https://slack.com/api/chat.postMessage` | Channel set in spec, address in spec |
+| `discord` | `address` (webhook URL) | — | |
+| `msteams` | `address` (webhook URL) | — | Microsoft Teams |
+| `googlechat` | `address` (webhook URL) | — | Google Chat |
+| `telegram` | `token` | `https://api.telegram.org` | Channel is chat ID |
+| `matrix` | `token` | Matrix homeserver URL | Channel is room ID |
+| `rocket` | `address` (webhook URL) | — | Rocket.Chat (type is `rocket`, not `rocketchat`) |
+| `lark` | `address` (webhook URL) | — | |
+| `webex` | `token` | — | Channel is room ID |
 
 **Alerting and monitoring platforms:**
 
-| Type           | Secret Field      | Address                        | Notes                                                       |
-|----------------|-------------------|--------------------------------|-------------------------------------------------------------|
-| `alertmanager` | —                 | Alertmanager URL               |                                                             |
-| `grafana`      | `token`           | Grafana URL                    |                                                             |
-| `sentry`       | `address` (DSN)   | —                              |                                                             |
-| `datadog`      | `token` (API key) | DataDog endpoint               |                                                             |
-| `opsgenie`     | `token` (API key) | OpsGenie endpoint              |                                                             |
-| `pagerduty`    | — (none required) | `https://events.pagerduty.com` | Integration routing key set in `spec.channel`, not a secret |
+| Type | Secret Field | Address | Notes |
+|------|-------------|---------|-------|
+| `alertmanager` | — | Alertmanager URL | |
+| `grafana` | `token` | Grafana URL | |
+| `sentry` | `address` (DSN) | — | |
+| `datadog` | `token` (API key) | DataDog endpoint | |
+| `opsgenie` | `token` (API key) | OpsGenie endpoint | |
+| `pagerduty` | — (none required) | `https://events.pagerduty.com` | Integration routing key set in `spec.channel`, not a secret |
 
 **Event streaming:**
 
-| Type            | Secret Field                                              | Address                    | Notes                                                                                                                          |
-|-----------------|-----------------------------------------------------------|----------------------------|--------------------------------------------------------------------------------------------------------------------------------|
-| `googlepubsub`  | `token` (JSON key)                                        | —                          | Channel is topic ID                                                                                                            |
-| `azureeventhub` | `address` (SAS connection string, SAS auth only)          | hub name in `spec.address` | `spec.channel` = Event Hubs namespace; `spec.address` = hub name. Managed identity uses `spec.channel`/`spec.address` directly |
-| `nats`          | `creds` / `nkey` / `username`+`password` (priority order) | NATS server URL            | Channel is subject                                                                                                             |
+| Type | Secret Field | Address | Notes |
+|------|-------------|---------|-------|
+| `googlepubsub` | `token` (JSON key) | — | Channel is topic ID |
+| `azureeventhub` | `address` (SAS connection string, SAS auth only) | hub name in `spec.address` | `spec.channel` = Event Hubs namespace; `spec.address` = hub name. Managed identity uses `spec.channel`/`spec.address` directly |
+| `nats` | `creds` / `nkey` / `username`+`password` (priority order) | NATS server URL | Channel is subject |
 
 **Git commit status:**
 
-| Type              | Secret Field               | Address              | Notes                     |
-|-------------------|----------------------------|----------------------|---------------------------|
-| `github`          | `token` (PAT or app token) | —                    | Sets commit status on PRs |
-| `gitlab`          | `token` (access token)     | GitLab URL           | Sets pipeline status      |
-| `gitea`           | `token`                    | Gitea URL            |                           |
-| `bitbucket`       | `token`                    | —                    | Bitbucket Cloud           |
-| `bitbucketserver` | `token`                    | Bitbucket Server URL |                           |
-| `azuredevops`     | `token`                    | Azure DevOps URL     |                           |
+| Type | Secret Field | Address | Notes |
+|------|-------------|---------|-------|
+| `github` | `token` (PAT or app token) | — | Sets commit status on PRs |
+| `gitlab` | `token` (access token) | GitLab URL | Sets pipeline status |
+| `gitea` | `token` | Gitea URL | |
+| `bitbucket` | `token` | — | Bitbucket Cloud |
+| `bitbucketserver` | `token` | Bitbucket Server URL | |
+| `azuredevops` | `token` | Azure DevOps URL | |
 
 **Generic webhooks:**
 
-| Type           | Secret Field                   | Notes                                |
-|----------------|--------------------------------|--------------------------------------|
-| `generic`      | `address` (webhook URL)        | JSON POST to any URL                 |
+| Type | Secret Field | Notes |
+|------|-------------|-------|
+| `generic` | `address` (webhook URL) | JSON POST to any URL |
 | `generic-hmac` | `token` (HMAC key) + `address` | JSON POST with HMAC signature header |
 
 ### Key Spec Fields
 
-| Field                | Type   | Description                                          |
-|----------------------|--------|------------------------------------------------------|
-| `type`               | string | Provider type (see tables above)                     |
-| `address`            | string | API endpoint URL (some providers use secret instead) |
-| `channel`            | string | Channel, room ID, or topic                           |
-| `username`           | string | Bot username for display                             |
-| `secretRef.name`     | string | Secret with credentials                              |
-| `certSecretRef.name` | string | Secret with custom TLS CA certificate                |
-| `suspend`            | bool   | Pause the provider                                   |
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Provider type (see tables above) |
+| `address` | string | API endpoint URL (some providers use secret instead) |
+| `channel` | string | Channel, room ID, or topic |
+| `username` | string | Bot username for display |
+| `secretRef.name` | string | Secret with credentials |
+| `certSecretRef.name` | string | Secret with custom TLS CA certificate |
+| `suspend` | bool | Pause the provider |
 
 ## Alert
 
@@ -132,15 +132,15 @@ spec:
 
 ### Key Spec Fields
 
-| Field              | Type   | Required | Description                                          |
-|--------------------|--------|----------|------------------------------------------------------|
-| `providerRef.name` | string | yes      | Provider to send events to                           |
-| `eventSources`     | array  | yes      | What to watch — list of kind/name/namespace          |
-| `eventSeverity`    | string | no       | Filter: `info` (all events) or `error` (errors only) |
-| `eventMetadata`    | map    | no       | Additional key-value pairs added to events           |
-| `inclusionList`    | array  | no       | Regex patterns — only matching events are sent       |
-| `exclusionList`    | array  | no       | Regex patterns — matching events are dropped         |
-| `suspend`          | bool   | no       | Pause alerting                                       |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `providerRef.name` | string | yes | Provider to send events to |
+| `eventSources` | array | yes | What to watch — list of kind/name/namespace |
+| `eventSeverity` | string | no | Filter: `info` (all events) or `error` (errors only) |
+| `eventMetadata` | map | no | Additional key-value pairs added to events |
+| `inclusionList` | array | no | Regex patterns — only matching events are sent |
+| `exclusionList` | array | no | Regex patterns — matching events are dropped |
+| `suspend` | bool | no | Pause alerting |
 
 ### Event Sources
 
@@ -229,14 +229,14 @@ stringData:
 
 ### Key Spec Fields
 
-| Field            | Type   | Required | Description                                                                                                                                                                                                              |
-|------------------|--------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `type`           | string | yes      | `generic`, `generic-hmac`, `generic-oidc`, `github`, `gitlab`, `bitbucket`, `harbor`, `dockerhub`, `quay`, `gcr`, `nexus`, `acr`, `cdevents` (no `gitea`/`azuredevops` Receiver type — Gitea uses the `github` type)     |
-| `events`         | array  | yes      | Event types to accept (e.g., `push`, `ping`, `pull_request`)                                                                                                                                                             |
-| `secretRef.name` | string | no       | Secret with `token` for HMAC webhook verification (required except for `generic-oidc`). The Secret should carry the label `reconcile.fluxcd.io/watch: Enabled` so the controller reconciles the Receiver when it changes |
-| `oidcProviders`  | array  | no       | OIDC issuers that authenticate incoming requests when `type: generic-oidc` (secret-less)                                                                                                                                 |
-| `resources`      | array  | yes      | Resources to trigger reconciliation on                                                                                                                                                                                   |
-| `suspend`        | bool   | no       | Pause the receiver                                                                                                                                                                                                       |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `type` | string | yes | `generic`, `generic-hmac`, `generic-oidc`, `github`, `gitlab`, `bitbucket`, `harbor`, `dockerhub`, `quay`, `gcr`, `nexus`, `acr`, `cdevents` (no `gitea`/`azuredevops` Receiver type — Gitea uses the `github` type) |
+| `events` | array | yes | Event types to accept (e.g., `push`, `ping`, `pull_request`) |
+| `secretRef.name` | string | no | Secret with `token` for HMAC webhook verification (required except for `generic-oidc`). The Secret should carry the label `reconcile.fluxcd.io/watch: Enabled` so the controller reconciles the Receiver when it changes |
+| `oidcProviders` | array | no | OIDC issuers that authenticate incoming requests when `type: generic-oidc` (secret-less) |
+| `resources` | array | yes | Resources to trigger reconciliation on |
+| `suspend` | bool | no | Pause the receiver |
 
 ### Webhook Path
 

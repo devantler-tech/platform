@@ -25,14 +25,14 @@ Git source -> CI build -> OCI registry -> Flux clusters
 
 Motivation:
 
-| Concern                | Git-based runtime           | Gitless runtime                           |
-|------------------------|-----------------------------|-------------------------------------------|
-| Cluster network access | Git server and registry     | Registry only                             |
-| Credentials in cluster | Git credentials or SSH keys | Registry pull identity                    |
-| Air-gapped operation   | Mirror Git or expose Git    | Mirror OCI artifacts                      |
-| Integrity              | Git commit history          | Immutable digest + signature verification |
-| Monorepo scale         | Cluster clones large repo   | CI publishes per-component artifacts      |
-| Sync speed             | Clone/fetch Git             | Pull pre-packaged artifact                |
+| Concern | Git-based runtime | Gitless runtime |
+|---|---|---|
+| Cluster network access | Git server and registry | Registry only |
+| Credentials in cluster | Git credentials or SSH keys | Registry pull identity |
+| Air-gapped operation | Mirror Git or expose Git | Mirror OCI artifacts |
+| Integrity | Git commit history | Immutable digest + signature verification |
+| Monorepo scale | Cluster clones large repo | CI publishes per-component artifacts |
+| Sync speed | Clone/fetch Git | Pull pre-packaged artifact |
 
 Git still matters: it remains where humans review and merge source changes. The
 container registry becomes the deployment source of truth for clusters.
@@ -41,10 +41,10 @@ container registry becomes the deployment source of truth for clusters.
 
 Flux supports two common OCI artifact shapes:
 
-| Artifact             | Producer                    | Consumer                                 |
-|----------------------|-----------------------------|------------------------------------------|
-| Kubernetes manifests | `flux push artifact`        | `OCIRepository` + `Kustomization`        |
-| Helm charts          | Helm chart push or chart CI | `OCIRepository` + `HelmRelease.chartRef` |
+| Artifact | Producer | Consumer |
+|---|---|---|
+| Kubernetes manifests | `flux push artifact` | `OCIRepository` + `Kustomization` |
+| Helm charts | Helm chart push or chart CI | `OCIRepository` + `HelmRelease.chartRef` |
 
 For plain Kubernetes YAML, `flux push artifact` creates OCI artifacts with Flux media
 types and stores Git source/revision metadata when `--source` and `--revision` are set.
@@ -104,15 +104,15 @@ flux push artifact oci://ghcr.io/org/fleet/apps/podinfo:$(git rev-parse --short 
 
 Important flags:
 
-| Flag                       | Purpose                                                        |
-|----------------------------|----------------------------------------------------------------|
-| `--path`                   | Directory or single YAML file to package                       |
-| `--source`                 | Original Git URL, stored as OCI metadata                       |
-| `--revision`               | Origin revision in `<branch-or-tag>@sha1:<commit>` format      |
-| `--output json`            | Prints repository/digest for signing or provenance steps       |
-| `--provider aws/azure/gcp` | Uses cloud registry authentication                             |
-| `--creds user:password`    | Passes generic registry credentials directly                   |
-| `--reproducible`           | Produces deterministic digests by fixing the created timestamp |
+| Flag | Purpose |
+|---|---|
+| `--path` | Directory or single YAML file to package |
+| `--source` | Original Git URL, stored as OCI metadata |
+| `--revision` | Origin revision in `<branch-or-tag>@sha1:<commit>` format |
+| `--output json` | Prints repository/digest for signing or provenance steps |
+| `--provider aws/azure/gcp` | Uses cloud registry authentication |
+| `--creds user:password` | Passes generic registry credentials directly |
+| `--reproducible` | Produces deterministic digests by fixing the created timestamp |
 
 Always set `--source` and `--revision`. Flux exposes this metadata in
 `OCIRepository.status.artifact.metadata`, `flux trace`, events, notifications, and commit
@@ -149,13 +149,13 @@ flux tag artifact oci://ghcr.io/org/fleet/apps/podinfo:${TAG} --tag latest-stabl
 
 Prefer these conventions:
 
-| Tag                   | Use                                                    |
-|-----------------------|--------------------------------------------------------|
-| Git SHA               | Immutable CI build identity                            |
-| Semver tag (`v1.2.3`) | Release identity                                       |
-| `latest`              | Staging or development channel                         |
-| `latest-stable`       | Production channel if promotion is tag-based           |
-| Semver selector       | Production channel if promotion follows version ranges |
+| Tag | Use |
+|---|---|
+| Git SHA | Immutable CI build identity |
+| Semver tag (`v1.2.3`) | Release identity |
+| `latest` | Staging or development channel |
+| `latest-stable` | Production channel if promotion is tag-based |
+| Semver selector | Production channel if promotion follows version ranges |
 
 ## GitHub Actions Publisher
 

@@ -12,12 +12,12 @@ entirely and upgrades the `HelmRelease` (or `Kustomization`) directly.
 
 **When to pick which:**
 
-| Concern                                                               | Git-based                    | Gitless                                                |
-|-----------------------------------------------------------------------|------------------------------|--------------------------------------------------------|
-| Audit trail of tag bumps                                              | Git commits                  | Flux events / notifications                            |
-| PR-based approval workflow for version bumps                          | Yes (via `push.branch` + PR) | No                                                     |
-| Requires a bot with write access to the repo                          | Yes                          | No                                                     |
-| Requires `image-automation-controller` + `image-reflector-controller` | Yes                          | No — only `flux-operator` + helm/kustomize controllers |
+| Concern | Git-based | Gitless |
+|---|---|---|
+| Audit trail of tag bumps | Git commits | Flux events / notifications |
+| PR-based approval workflow for version bumps | Yes (via `push.branch` + PR) | No |
+| Requires a bot with write access to the repo | Yes | No |
+| Requires `image-automation-controller` + `image-reflector-controller` | Yes | No — only `flux-operator` + helm/kustomize controllers |
 
 This reference assumes familiarity with `ResourceSet` and `ResourceSetInputProvider`
 basics — load `references/resourcesets.md` first if those are new.
@@ -160,11 +160,11 @@ spec:
 Template keys must be valid identifiers, so hyphens in the provider's `metadata.name`
 are converted to underscores in the template:
 
-| `ResourceSetInputProvider` name | Template key           |
-|---------------------------------|------------------------|
-| `podinfo-chart`                 | `inputs.podinfo_chart` |
-| `podinfo-image`                 | `inputs.podinfo_image` |
-| `redis-image`                   | `inputs.redis_image`   |
+| `ResourceSetInputProvider` name | Template key |
+|---|---|
+| `podinfo-chart` | `inputs.podinfo_chart` |
+| `podinfo-image` | `inputs.podinfo_image` |
+| `redis-image` | `inputs.redis_image` |
 
 A provider named `podinfo-image` exporting `tag: 6.5.4` and `digest: sha256:abc…` is
 consumed as `<< inputs.podinfo_image.tag >>` and `<< inputs.podinfo_image.digest >>`.

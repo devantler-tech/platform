@@ -36,7 +36,9 @@
                     "type": "string"
                   }
                 },
-                "required": ["name"],
+                "required": [
+                  "name"
+                ],
                 "type": "object",
                 "additionalProperties": false
               },
@@ -45,7 +47,9 @@
                 "type": "string"
               }
             },
-            "required": ["repository"],
+            "required": [
+              "repository"
+            ],
             "type": "object",
             "additionalProperties": false
           },
@@ -58,7 +62,12 @@
         },
         "provider": {
           "description": "Provider used for authentication, can be 'aws', 'azure', 'github', 'generic'.\nWhen not specified, defaults to 'generic'.",
-          "enum": ["generic", "aws", "azure", "github"],
+          "enum": [
+            "generic",
+            "aws",
+            "azure",
+            "github"
+          ],
           "type": "string"
         },
         "proxySecretRef": {
@@ -69,7 +78,9 @@
               "type": "string"
             }
           },
-          "required": ["name"],
+          "required": [
+            "name"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -112,7 +123,9 @@
               "type": "string"
             }
           },
-          "required": ["name"],
+          "required": [
+            "name"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -148,7 +161,12 @@
             "mode": {
               "default": "HEAD",
               "description": "Mode specifies which Git object(s) should be verified.\n\nThe variants \"head\" and \"HEAD\" both imply the same thing, i.e. verify\nthe commit that the HEAD of the Git repository points to. The variant\n\"head\" solely exists to ensure backwards compatibility.",
-              "enum": ["head", "HEAD", "Tag", "TagAndHEAD"],
+              "enum": [
+                "head",
+                "HEAD",
+                "Tag",
+                "TagAndHEAD"
+              ],
               "type": "string"
             },
             "secretRef": {
@@ -159,17 +177,24 @@
                   "type": "string"
                 }
               },
-              "required": ["name"],
+              "required": [
+                "name"
+              ],
               "type": "object",
               "additionalProperties": false
             }
           },
-          "required": ["secretRef"],
+          "required": [
+            "secretRef"
+          ],
           "type": "object",
           "additionalProperties": false
         }
       },
-      "required": ["interval", "url"],
+      "required": [
+        "interval",
+        "url"
+      ],
       "type": "object",
       "x-kubernetes-validations": [
         {
@@ -223,7 +248,13 @@
               "type": "string"
             }
           },
-          "required": ["digest", "lastUpdateTime", "path", "revision", "url"],
+          "required": [
+            "digest",
+            "lastUpdateTime",
+            "path",
+            "revision",
+            "url"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -257,7 +288,11 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": ["True", "False", "Unknown"],
+                "enum": [
+                  "True",
+                  "False",
+                  "Unknown"
+                ],
                 "type": "string"
               },
               "type": {
@@ -319,7 +354,13 @@
                 "type": "string"
               }
             },
-            "required": ["digest", "lastUpdateTime", "path", "revision", "url"],
+            "required": [
+              "digest",
+              "lastUpdateTime",
+              "path",
+              "revision",
+              "url"
+            ],
             "type": "object",
             "additionalProperties": false
           },
@@ -355,7 +396,9 @@
                     "type": "string"
                   }
                 },
-                "required": ["name"],
+                "required": [
+                  "name"
+                ],
                 "type": "object",
                 "additionalProperties": false
               },
@@ -364,7 +407,9 @@
                 "type": "string"
               }
             },
-            "required": ["repository"],
+            "required": [
+              "repository"
+            ],
             "type": "object",
             "additionalProperties": false
           },

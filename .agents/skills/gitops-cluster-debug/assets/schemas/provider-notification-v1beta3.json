@@ -28,7 +28,9 @@
               "type": "string"
             }
           },
-          "required": ["name"],
+          "required": [
+            "name"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -60,7 +62,9 @@
               "type": "string"
             }
           },
-          "required": ["name"],
+          "required": [
+            "name"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -72,7 +76,9 @@
               "type": "string"
             }
           },
-          "required": ["name"],
+          "required": [
+            "name"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -133,7 +139,9 @@
           "type": "string"
         }
       },
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "type": "object",
       "x-kubernetes-validations": [
         {

@@ -31,7 +31,7 @@ When you report, please include:
 We are a single-maintainer project; responses are best-effort but we aim for:
 
 | Severity | First acknowledgement | Triage decision | Fix or mitigation |
-|----------|-----------------------|-----------------|-------------------|
+| -------- | --------------------- | --------------- | ----------------- |
 | Critical | 48 hours              | 5 days          | 14 days           |
 | High     | 5 days                | 14 days         | 30 days           |
 | Medium   | 14 days               | 30 days         | next minor        |

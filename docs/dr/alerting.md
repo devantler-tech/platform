@@ -15,14 +15,14 @@ single eBPF-based stack.
 The `coroot-operator` HelmRelease installs the operator + the `Coroot` CRD; the
 `Coroot` custom resource (`coroot.yaml`) is reconciled into the workloads:
 
-| Component       | Role                                                         | Persistence (prod)  |
-|-----------------|--------------------------------------------------------------|---------------------|
-| Coroot (UI/app) | Web UI, dashboards, inspections, alerting engine             | `hcloud` PVC, 2 Gi  |
-| Prometheus      | Bundled metrics TSDB (14 d retention), queryable by OpenCost | `hcloud` PVC, 20 Gi |
-| ClickHouse      | Logs, traces and continuous profiles (+ 1 keeper)            | `hcloud` PVC, 15 Gi |
-| node-agent      | eBPF DaemonSet: per-node + per-pod metrics, logs, traces     | n/a                 |
-| cluster-agent   | kube-state-metrics-equivalent cluster inventory              | n/a                 |
-| OpenCost        | Cost allocation, querying Coroot's bundled Prometheus        | n/a                 |
+| Component         | Role                                                          | Persistence (prod)   |
+| ----------------- | ------------------------------------------------------------- | -------------------- |
+| Coroot (UI/app)   | Web UI, dashboards, inspections, alerting engine              | `hcloud` PVC, 2 Gi   |
+| Prometheus        | Bundled metrics TSDB (14 d retention), queryable by OpenCost  | `hcloud` PVC, 20 Gi  |
+| ClickHouse        | Logs, traces and continuous profiles (+ 1 keeper)             | `hcloud` PVC, 15 Gi  |
+| node-agent        | eBPF DaemonSet: per-node + per-pod metrics, logs, traces      | n/a                  |
+| cluster-agent     | kube-state-metrics-equivalent cluster inventory               | n/a                  |
+| OpenCost          | Cost allocation, querying Coroot's bundled Prometheus         | n/a                  |
 
 The node-agent uses eBPF, so it observes every pod's traffic, latency, errors,
 logs and traces **without** per-app scrape config or ServiceMonitors — there is
@@ -115,11 +115,11 @@ RAM, ephemeral (no PVC).
 The node-agent fans each alert out to **all three destinations** (wired in
 `providers/hetzner/infrastructure/controllers/kubescape/patches/`):
 
-| Destination         | Path                                                                                                                                                             |
-|---------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Headlamp plugin** | `nodeAgent.config.alertManagerExporterUrls` → the Alertmanager, which the plugin queries.                                                                        |
-| **Slack**           | the Alertmanager's `slack_configs` receiver → the shared `${alertmanager_webhook_url}` incoming-webhook (same channel as Coroot/Flux).                           |
-| **Coroot**          | `nodeAgent.config.stdoutExporter` (on by default) → Coroot's eBPF log capture surfaces the alert in the **Logs** view (Coroot CE has no inbound alert receiver). |
+| Destination | Path |
+| --- | --- |
+| **Headlamp plugin** | `nodeAgent.config.alertManagerExporterUrls` → the Alertmanager, which the plugin queries. |
+| **Slack** | the Alertmanager's `slack_configs` receiver → the shared `${alertmanager_webhook_url}` incoming-webhook (same channel as Coroot/Flux). |
+| **Coroot** | `nodeAgent.config.stdoutExporter` (on by default) → Coroot's eBPF log capture surfaces the alert in the **Logs** view (Coroot CE has no inbound alert receiver). |
 
 **One manual step (Headlamp).** The plugin's Alertmanager address is a
 **per-user, per-browser** setting (stored in `localStorage`; there is no
@@ -178,10 +178,10 @@ present in the per-cluster `secret.enc.yaml` (under
 - `alertmanager_heartbeat_url` — external heartbeat monitor, reused by the
   `cluster-heartbeat` CronJob.
 
-| Env   | `alertmanager_webhook_url`       | `alertmanager_heartbeat_url`   |
-|-------|----------------------------------|--------------------------------|
-| local | placeholder (Slack stays quiet)  | unset → invalid (no heartbeat) |
-| prod  | Slack `#platform-alerts` webhook | healthchecks.io ping URL       |
+| Env   | `alertmanager_webhook_url`        | `alertmanager_heartbeat_url`     |
+| ----- | --------------------------------- | -------------------------------- |
+| local | placeholder (Slack stays quiet)   | unset → invalid (no heartbeat)   |
+| prod  | Slack `#platform-alerts` webhook  | healthchecks.io ping URL         |
 
 To change either, `sops --set` it in the prod secret, e.g.:
 
@@ -204,13 +204,13 @@ Both are behind GitHub SSO (oauth2-proxy, `devantler` only).
 
 ## Resource footprint (prod, approximate)
 
-| Component                | Notes                                                 |
-|--------------------------|-------------------------------------------------------|
-| Coroot app               | small web app; 2 Gi state PVC                         |
-| Prometheus               | bundled TSDB, 14 d retention, 20 Gi PVC               |
-| ClickHouse               | logs/traces/profiles store, 15 Gi PVC (+ 2 Gi keeper) |
-| node-agent               | eBPF DaemonSet (×node), `platform-critical`           |
-| cluster-agent / operator | lightweight controllers                               |
+| Component   | Notes                                                        |
+| ----------- | ------------------------------------------------------------ |
+| Coroot app  | small web app; 2 Gi state PVC                                |
+| Prometheus  | bundled TSDB, 14 d retention, 20 Gi PVC                      |
+| ClickHouse  | logs/traces/profiles store, 15 Gi PVC (+ 2 Gi keeper)        |
+| node-agent  | eBPF DaemonSet (×node), `platform-critical`                  |
+| cluster-agent / operator | lightweight controllers                         |
 
 ClickHouse is a new stateful component versus the old stack; on the
 memory-constrained Hetzner cluster keep retention modest (`logsTTL` /

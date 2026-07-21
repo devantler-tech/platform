@@ -25,7 +25,10 @@
         "eventSeverity": {
           "default": "info",
           "description": "EventSeverity specifies how to filter events based on severity.\nIf set to 'info' no events will be filtered.",
-          "enum": ["info", "error"],
+          "enum": [
+            "info",
+            "error"
+          ],
           "type": "string"
         },
         "eventSources": {
@@ -75,7 +78,10 @@
                 "type": "string"
               }
             },
-            "required": ["kind", "name"],
+            "required": [
+              "kind",
+              "name"
+            ],
             "type": "object",
             "additionalProperties": false
           },
@@ -103,7 +109,9 @@
               "type": "string"
             }
           },
-          "required": ["name"],
+          "required": [
+            "name"
+          ],
           "type": "object",
           "additionalProperties": false
         },
@@ -117,7 +125,10 @@
           "type": "boolean"
         }
       },
-      "required": ["eventSources", "providerRef"],
+      "required": [
+        "eventSources",
+        "providerRef"
+      ],
       "type": "object",
       "additionalProperties": false
     }

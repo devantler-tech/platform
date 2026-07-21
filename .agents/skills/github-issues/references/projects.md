@@ -108,10 +108,10 @@ When a user asks for a progress update on a project (e.g., "Give me a progress u
 
 ## OAuth Scope Requirements
 
-| Operation                                    | Required scope |
-|----------------------------------------------|----------------|
-| Read projects, fields, items                 | `read:project` |
-| Add/update/delete items, change field values | `project`      |
+| Operation | Required scope |
+|-----------|---------------|
+| Read projects, fields, items | `read:project` |
+| Add/update/delete items, change field values | `project` |
 
 **Common pitfall:** The default `gh auth` token often only has `read:project`. Mutations will fail with `INSUFFICIENT_SCOPES`. To add the write scope:
 

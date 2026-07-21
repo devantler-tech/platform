@@ -54,15 +54,15 @@ over, not blind-flipped).
 
 ## Current state (what Coroot is seeing)
 
-|                      | Today                                                                                                                                                                                                      |
-|----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Install              | Cilium chart sub-component (`authentication.mutual.spire`), `kube-system`                                                                                                                                  |
-| Replicas             | **1** (StatefulSet; chart exposes no `replicaCount`)                                                                                                                                                       |
-| Datastore            | built-in **SQLite** on a single RWO PVC                                                                                                                                                                    |
-| PVC storage (prod)   | **hcloud-csi** `hcloud` 10Gi (NOT longhorn — deadlock break, see overlay patch)                                                                                                                            |
-| Data-path role       | issues SVIDs for `require-mutual-auth` → **in the pod-to-pod mTLS path**                                                                                                                                   |
-| Failure tolerance    | survives **brief** restarts (cilium-agent auth cache + cilium-operator re-sync from CiliumIdentities ride a short gap); a node-loss outage lasts until the pod reschedules + its hcloud volume re-attaches |
-| Replica-floor policy | spire-server **exempted on purpose** (`validate-replica-floor.yaml`) — "HA needs a shared external datastore, not just replicas"                                                                           |
+| | Today |
+|---|---|
+| Install | Cilium chart sub-component (`authentication.mutual.spire`), `kube-system` |
+| Replicas | **1** (StatefulSet; chart exposes no `replicaCount`) |
+| Datastore | built-in **SQLite** on a single RWO PVC |
+| PVC storage (prod) | **hcloud-csi** `hcloud` 10Gi (NOT longhorn — deadlock break, see overlay patch) |
+| Data-path role | issues SVIDs for `require-mutual-auth` → **in the pod-to-pod mTLS path** |
+| Failure tolerance | survives **brief** restarts (cilium-agent auth cache + cilium-operator re-sync from CiliumIdentities ride a short gap); a node-loss outage lasts until the pod reschedules + its hcloud volume re-attaches |
+| Replica-floor policy | spire-server **exempted on purpose** (`validate-replica-floor.yaml`) — "HA needs a shared external datastore, not just replicas" |
 
 What single-replica actually costs here: SVID **issuance** (new identity pairs,
 SVID rotation) is unavailable while spire-server is down. *Established* flows keep
@@ -223,16 +223,16 @@ data, verify, then capture in Git.
 
 ## Risks & mitigations
 
-| Risk                                                                                                              | Mitigation                                                                                                                                                                                                                                               |
-|-------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Replicas on SQLite → split-brain/corruption.**                                                                  | Never. HA requires the shared SQL datastore first; replicas only after the datastore cutover.                                                                                                                                                            |
-| **SPIRE↔Postgres deadlock** (datastore behind the mTLS gate it bootstraps).                                       | mTLS carve-out for spire-server↔spire-db `:5432` (CoreDNS-carve-out precedent), landed & verified **before** the cutover; **spire-db on hcloud, not longhorn.**                                                                                          |
-| **Layering inversion** (CNPG Cluster downstream of SPIRE).                                                        | Place `spire-db` in the **infra-controllers** tier, not `apps`; it must be ready before spire-server serves.                                                                                                                                             |
-| **Chart can't express SQL datastore / replicas / custom server.conf.**                                            | Change the *install* (standalone SPIRE chart, `install.enabled: false`) or upstream the chart keys — do **not** hand-patch the rendered config (drift-detection + chart-bump fragility).                                                                 |
-| **Bootstrap credential chicken-and-egg** (OpenBao/ESO also behind the gate).                                      | Use the same-layer raw CNPG `spire-db-app` secret for the bootstrap connection; layer OpenBao rotation on only after steady state.                                                                                                                       |
-| **`spire-db` becomes the new SPOF** (if run 1-instance on hcloud).                                                | Prefer 3-instance CNPG if hcloud topology allows one-per-node; else accept a 1-instance DB with frequent R2 base backups + fast restore, and document that the server tier is HA even if the DB is the residual SPOF — still strictly better than today. |
-| **Losing the bundled-chart wiring** (cilium-init entry seeding, delegated-identity socket, 1000:1000 ptrace fix). | The standalone deployment must re-create all of it; the existing `helm-release.yaml` comments are the spec. Verify identity issuance end-to-end in staging-equivalent before prod.                                                                       |
-| **No pre-cutover backup → unrecoverable trust state.**                                                            | Velero the spire-server PVC + record CA/trust-domain before step 2; entries are re-derivable but don't rely on it blindly.                                                                                                                               |
+| Risk | Mitigation |
+|---|---|
+| **Replicas on SQLite → split-brain/corruption.** | Never. HA requires the shared SQL datastore first; replicas only after the datastore cutover. |
+| **SPIRE↔Postgres deadlock** (datastore behind the mTLS gate it bootstraps). | mTLS carve-out for spire-server↔spire-db `:5432` (CoreDNS-carve-out precedent), landed & verified **before** the cutover; **spire-db on hcloud, not longhorn.** |
+| **Layering inversion** (CNPG Cluster downstream of SPIRE). | Place `spire-db` in the **infra-controllers** tier, not `apps`; it must be ready before spire-server serves. |
+| **Chart can't express SQL datastore / replicas / custom server.conf.** | Change the *install* (standalone SPIRE chart, `install.enabled: false`) or upstream the chart keys — do **not** hand-patch the rendered config (drift-detection + chart-bump fragility). |
+| **Bootstrap credential chicken-and-egg** (OpenBao/ESO also behind the gate). | Use the same-layer raw CNPG `spire-db-app` secret for the bootstrap connection; layer OpenBao rotation on only after steady state. |
+| **`spire-db` becomes the new SPOF** (if run 1-instance on hcloud). | Prefer 3-instance CNPG if hcloud topology allows one-per-node; else accept a 1-instance DB with frequent R2 base backups + fast restore, and document that the server tier is HA even if the DB is the residual SPOF — still strictly better than today. |
+| **Losing the bundled-chart wiring** (cilium-init entry seeding, delegated-identity socket, 1000:1000 ptrace fix). | The standalone deployment must re-create all of it; the existing `helm-release.yaml` comments are the spec. Verify identity issuance end-to-end in staging-equivalent before prod. |
+| **No pre-cutover backup → unrecoverable trust state.** | Velero the spire-server PVC + record CA/trust-domain before step 2; entries are re-derivable but don't rely on it blindly. |
 
 ## Open questions (resolve in a spike before committing to a cutover date)
 

@@ -39,15 +39,15 @@ spec:
 
 ### Key Spec Fields
 
-| Field            | Type     | Required | Description                                                        |
-|------------------|----------|----------|--------------------------------------------------------------------|
-| `image`          | string   | yes      | Image name without tag (e.g., `ghcr.io/org/app`)                   |
-| `interval`       | duration | yes      | Scan interval                                                      |
-| `provider`       | string   | no       | Registry auth provider: `generic` (default), `aws`, `azure`, `gcp` |
-| `secretRef.name` | string   | no       | Secret of type `kubernetes.io/dockerconfigjson` for auth           |
-| `exclusionList`  | array    | no       | Regex patterns — matching tags are excluded from results           |
-| `insecure`       | bool     | no       | Allow HTTP (non-TLS) connections                                   |
-| `suspend`        | bool     | no       | Pause scanning                                                     |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `image` | string | yes | Image name without tag (e.g., `ghcr.io/org/app`) |
+| `interval` | duration | yes | Scan interval |
+| `provider` | string | no | Registry auth provider: `generic` (default), `aws`, `azure`, `gcp` |
+| `secretRef.name` | string | no | Secret of type `kubernetes.io/dockerconfigjson` for auth |
+| `exclusionList` | array | no | Regex patterns — matching tags are excluded from results |
+| `insecure` | bool | no | Allow HTTP (non-TLS) connections |
+| `suspend` | bool | no | Pause scanning |
 
 **Cloud registry providers:**
 - `aws` — uses IRSA/pod identity for ECR authentication
@@ -80,14 +80,14 @@ spec:
 
 ### Key Spec Fields
 
-| Field                          | Type   | Required | Description                                                             |
-|--------------------------------|--------|----------|-------------------------------------------------------------------------|
-| `imageRepositoryRef.name`      | string | yes      | ImageRepository to select from                                          |
-| `imageRepositoryRef.namespace` | string | no       | Cross-namespace reference                                               |
-| `policy`                       | object | yes      | Selection policy (one of semver/alphabetical/numerical)                 |
-| `filterTags.pattern`           | string | no       | Regex to filter tags before policy applies                              |
-| `filterTags.extract`           | string | no       | Regex group to extract version from tag                                 |
-| `digestReflectionPolicy`       | string | no       | `Never` (default), `IfNotPresent`, or `Always` — when to resolve digest |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `imageRepositoryRef.name` | string | yes | ImageRepository to select from |
+| `imageRepositoryRef.namespace` | string | no | Cross-namespace reference |
+| `policy` | object | yes | Selection policy (one of semver/alphabetical/numerical) |
+| `filterTags.pattern` | string | no | Regex to filter tags before policy applies |
+| `filterTags.extract` | string | no | Regex group to extract version from tag |
+| `digestReflectionPolicy` | string | no | `Never` (default), `IfNotPresent`, or `Always` — when to resolve digest |
 
 ### Policy Types
 
@@ -199,20 +199,20 @@ spec:
 
 ### Key Spec Fields
 
-| Field                                  | Type     | Required | Description                                                    |
-|----------------------------------------|----------|----------|----------------------------------------------------------------|
-| `sourceRef.kind`                       | string   | yes      | `GitRepository`                                                |
-| `sourceRef.name`                       | string   | yes      | Git source to update                                           |
-| `interval`                             | duration | yes      | How often to check for updates                                 |
-| `git.checkout.ref.branch`              | string   | no       | Branch to checkout (default: source branch)                    |
-| `git.commit.author.name`               | string   | no       | Commit author name                                             |
-| `git.commit.author.email`              | string   | yes      | Commit author email                                            |
-| `git.commit.messageTemplate`           | string   | no       | Go template for commit message                                 |
-| `git.commit.signingKey.secretRef.name` | string   | no       | Secret with an OpenPGP or SSH key to sign the commit           |
-| `git.push.branch`                      | string   | no       | Branch to push to (enables PR workflow)                        |
-| `update.path`                          | string   | no       | Directory to scan for image markers (default: repository root) |
-| `update.strategy`                      | string   | no       | `Setters` (default)                                            |
-| `suspend`                              | bool     | no       | Pause automation                                               |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `sourceRef.kind` | string | yes | `GitRepository` |
+| `sourceRef.name` | string | yes | Git source to update |
+| `interval` | duration | yes | How often to check for updates |
+| `git.checkout.ref.branch` | string | no | Branch to checkout (default: source branch) |
+| `git.commit.author.name` | string | no | Commit author name |
+| `git.commit.author.email` | string | yes | Commit author email |
+| `git.commit.messageTemplate` | string | no | Go template for commit message |
+| `git.commit.signingKey.secretRef.name` | string | no | Secret with an OpenPGP or SSH key to sign the commit |
+| `git.push.branch` | string | no | Branch to push to (enables PR workflow) |
+| `update.path` | string | no | Directory to scan for image markers (default: repository root) |
+| `update.strategy` | string | no | `Setters` (default) |
+| `suspend` | bool | no | Pause automation |
 
 ### Push Branch Isolation
 

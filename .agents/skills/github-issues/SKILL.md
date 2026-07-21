@@ -15,25 +15,25 @@ Manage GitHub issues using the `@modelcontextprotocol/server-github` MCP server.
 
 ### MCP Tools (read operations)
 
-| Tool                          | Purpose                                                                                                   |
-|-------------------------------|-----------------------------------------------------------------------------------------------------------|
-| `mcp__github__issue_read`     | Read issue details, sub-issues, comments, labels (methods: get, get_comments, get_sub_issues, get_labels) |
-| `mcp__github__list_issues`    | List and filter repository issues by state, labels, date                                                  |
-| `mcp__github__search_issues`  | Search issues across repos using GitHub search syntax                                                     |
-| `mcp__github__projects_list`  | List projects, project fields, project items, status updates                                              |
-| `mcp__github__projects_get`   | Get details of a project, field, item, or status update                                                   |
-| `mcp__github__projects_write` | Add/update/delete project items, create status updates                                                    |
+| Tool | Purpose |
+|------|---------|
+| `mcp__github__issue_read` | Read issue details, sub-issues, comments, labels (methods: get, get_comments, get_sub_issues, get_labels) |
+| `mcp__github__list_issues` | List and filter repository issues by state, labels, date |
+| `mcp__github__search_issues` | Search issues across repos using GitHub search syntax |
+| `mcp__github__projects_list` | List projects, project fields, project items, status updates |
+| `mcp__github__projects_get` | Get details of a project, field, item, or status update |
+| `mcp__github__projects_write` | Add/update/delete project items, create status updates |
 
 ### CLI / REST API (write operations)
 
 The MCP server does not currently support creating, updating, or commenting on issues. Use `gh api` for these operations.
 
-| Operation      | Command                                                                                          |
-|----------------|--------------------------------------------------------------------------------------------------|
-| Create issue   | `gh api repos/{owner}/{repo}/issues -X POST -f title=... -f body=...`                            |
-| Update issue   | `gh api repos/{owner}/{repo}/issues/{number} -X PATCH -f title=... -f state=...`                 |
-| Add comment    | `gh api repos/{owner}/{repo}/issues/{number}/comments -X POST -f body=...`                       |
-| Close issue    | `gh api repos/{owner}/{repo}/issues/{number} -X PATCH -f state=closed`                           |
+| Operation | Command |
+|-----------|---------|
+| Create issue | `gh api repos/{owner}/{repo}/issues -X POST -f title=... -f body=...` |
+| Update issue | `gh api repos/{owner}/{repo}/issues/{number} -X PATCH -f title=... -f state=...` |
+| Add comment | `gh api repos/{owner}/{repo}/issues/{number}/comments -X POST -f body=...` |
+| Close issue | `gh api repos/{owner}/{repo}/issues/{number} -X PATCH -f state=closed` |
 | Set issue type | Include `-f type=Bug` in the create call (REST API only, not supported by `gh issue create` CLI) |
 
 **Note:** `gh issue create` works for basic issue creation but does **not** support the `--type` flag. Use `gh api` when you need to set issue types.
@@ -91,11 +91,11 @@ gh api graphql -f query='{ organization(login: "ORG") { issueTypes(first: 10) { 
 
 Always use the templates in [references/templates.md](references/templates.md). Choose based on issue type:
 
-| User Request                    | Template        |
-|---------------------------------|-----------------|
-| Bug, error, broken, not working | Bug Report      |
-| Feature, enhancement, add, new  | Feature Request |
-| Task, chore, refactor, update   | Task            |
+| User Request | Template |
+|--------------|----------|
+| Bug, error, broken, not working | Bug Report |
+| Feature, enhancement, add, new | Feature Request |
+| Task, chore, refactor, update | Task |
 
 ## Updating Issues
 
@@ -171,17 +171,17 @@ Implement theme toggle with system preference detection.
 
 Use these standard labels when applicable:
 
-| Label              | Use For                       |
-|--------------------|-------------------------------|
-| `bug`              | Something isn't working       |
-| `enhancement`      | New feature or improvement    |
-| `documentation`    | Documentation updates         |
-| `good first issue` | Good for newcomers            |
-| `help wanted`      | Extra attention needed        |
-| `question`         | Further information requested |
-| `wontfix`          | Will not be addressed         |
-| `duplicate`        | Already exists                |
-| `high-priority`    | Urgent issues                 |
+| Label | Use For |
+|-------|---------|
+| `bug` | Something isn't working |
+| `enhancement` | New feature or improvement |
+| `documentation` | Documentation updates |
+| `good first issue` | Good for newcomers |
+| `help wanted` | Extra attention needed |
+| `question` | Further information requested |
+| `wontfix` | Will not be addressed |
+| `duplicate` | Already exists |
+| `high-priority` | Urgent issues |
 
 ## Tips
 
@@ -194,12 +194,12 @@ Use these standard labels when applicable:
 
 The following features require REST or GraphQL APIs beyond the basic MCP tools. Each is documented in its own reference file so the agent only loads the knowledge it needs.
 
-| Capability                 | When to use                                                                                                  | Reference                                                |
-|----------------------------|--------------------------------------------------------------------------------------------------------------|----------------------------------------------------------|
-| Advanced search            | Complex queries with boolean logic, date ranges, cross-repo search, issue field filters (`field.name:value`) | [references/search.md](references/search.md)             |
-| Sub-issues & parent issues | Breaking work into hierarchical tasks                                                                        | [references/sub-issues.md](references/sub-issues.md)     |
-| Issue dependencies         | Tracking blocked-by / blocking relationships                                                                 | [references/dependencies.md](references/dependencies.md) |
-| Issue types (advanced)     | GraphQL operations beyond MCP `list_issue_types` / `type` param                                              | [references/issue-types.md](references/issue-types.md)   |
-| Projects V2                | Project boards, progress reports, field management                                                           | [references/projects.md](references/projects.md)         |
-| Issue fields               | Custom metadata: dates, priority, text, numbers (private preview)                                            | [references/issue-fields.md](references/issue-fields.md) |
-| Images in issues           | Embedding images in issue bodies and comments via CLI                                                        | [references/images.md](references/images.md)             |
+| Capability | When to use | Reference |
+|------------|-------------|-----------|
+| Advanced search | Complex queries with boolean logic, date ranges, cross-repo search, issue field filters (`field.name:value`) | [references/search.md](references/search.md) |
+| Sub-issues & parent issues | Breaking work into hierarchical tasks | [references/sub-issues.md](references/sub-issues.md) |
+| Issue dependencies | Tracking blocked-by / blocking relationships | [references/dependencies.md](references/dependencies.md) |
+| Issue types (advanced) | GraphQL operations beyond MCP `list_issue_types` / `type` param | [references/issue-types.md](references/issue-types.md) |
+| Projects V2 | Project boards, progress reports, field management | [references/projects.md](references/projects.md) |
+| Issue fields | Custom metadata: dates, priority, text, numbers (private preview) | [references/issue-fields.md](references/issue-fields.md) |
+| Images in issues | Embedding images in issue bodies and comments via CLI | [references/images.md](references/images.md) |

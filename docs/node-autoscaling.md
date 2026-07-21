@@ -85,17 +85,17 @@ spec:
             max: 4
 ```
 
-| Field                   | Default         | Description                                                                                                                                                                                                                                                                |
-|-------------------------|-----------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `enabled`               | `false`         | Enable/disable node autoscaling                                                                                                                                                                                                                                            |
-| `expander`              | `LeastWaste`    | Node selection strategy: `LeastWaste`, `LeastNodes`, `Random` (`Price` is unsupported on Hetzner — no pricing API). Accepts a single value or an ordered priority chain, e.g. `[LeastNodes, LeastWaste]` (requires KSail expander-list support; scalar-only up to v7.57.0) |
-| `maxNodesTotal`         | `0` (unlimited) | Hard ceiling on total cluster nodes, including the static baseline (see [ksail#5017](https://github.com/devantler-tech/ksail/issues/5017))                                                                                                                                 |
-| `scaleDownUnneededTime` | `10m`           | Time before an underutilized node is eligible for removal                                                                                                                                                                                                                  |
-| `pools[].name`          | —               | DNS-1123 pool identifier                                                                                                                                                                                                                                                   |
-| `pools[].serverType`    | —               | Hetzner server type (e.g., `cx23`, `cx33`)                                                                                                                                                                                                                                 |
-| `pools[].location`      | —               | Hetzner datacenter (e.g., `fsn1`)                                                                                                                                                                                                                                          |
-| `pools[].min`           | —               | Minimum nodes in pool                                                                                                                                                                                                                                                      |
-| `pools[].max`           | —               | Maximum nodes in pool                                                                                                                                                                                                                                                      |
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Enable/disable node autoscaling |
+| `expander` | `LeastWaste` | Node selection strategy: `LeastWaste`, `LeastNodes`, `Random` (`Price` is unsupported on Hetzner — no pricing API). Accepts a single value or an ordered priority chain, e.g. `[LeastNodes, LeastWaste]` (requires KSail expander-list support; scalar-only up to v7.57.0) |
+| `maxNodesTotal` | `0` (unlimited) | Hard ceiling on total cluster nodes, including the static baseline (see [ksail#5017](https://github.com/devantler-tech/ksail/issues/5017)) |
+| `scaleDownUnneededTime` | `10m` | Time before an underutilized node is eligible for removal |
+| `pools[].name` | — | DNS-1123 pool identifier |
+| `pools[].serverType` | — | Hetzner server type (e.g., `cx23`, `cx33`) |
+| `pools[].location` | — | Hetzner datacenter (e.g., `fsn1`) |
+| `pools[].min` | — | Minimum nodes in pool |
+| `pools[].max` | — | Maximum nodes in pool |
 
 ### Cost guardrails
 

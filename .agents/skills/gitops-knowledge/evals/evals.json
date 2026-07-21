@@ -172,7 +172,9 @@
       "id": 9,
       "prompt": "Our fleet GitOps monorepo is at {FIXTURE:tests/gitops-knowledge/add-app-repo} (copy it to a scratch directory first). Add a new app called 'backend' deployed from the Helm chart at oci://ghcr.io/acme-corp/charts/backend - track 1.x releases. It should run in its own 'backend' namespace on both the staging and production clusters; the chart's replicaCount value should be 1 in staging and 3 in production. Follow the repo's existing conventions for structure and style, and make sure everything you leave behind is correct.",
       "expected_output": "Eight new files mirroring the podinfo base+overlay layout: apps/base/backend with Namespace, OCIRepository (source.toolkit.fluxcd.io/v1, semver 1.x) and HelmRelease (helm.toolkit.fluxcd.io/v2, chartRef, RetryOnFailure), plus staging/production overlays patching replicaCount to 1 and 3. The agent inventories the repo (flux schema discover) before placing files and validates the rendered overlays (kustomize build | flux schema validate) before finishing.",
-      "files": ["tests/gitops-knowledge/add-app-repo"],
+      "files": [
+        "tests/gitops-knowledge/add-app-repo"
+      ],
       "expectations": [
         "Base directory apps/base/backend exists with a kustomization.yaml, a Namespace, an OCIRepository, and a HelmRelease, mirroring the podinfo layout",
         "Staging and production overlays exist at apps/staging/backend and apps/production/backend, and 'kustomize build' succeeds for both",
@@ -187,7 +189,9 @@
       "id": 10,
       "prompt": "Flux on our staging cluster reports the Kustomization flux-system/apps as failing - the podinfo app errors with a kustomize build failure. A checkout of our GitOps monorepo is at {FIXTURE:tests/gitops-knowledge/debug-repo} (copy it to a scratch directory first). I don't have cluster access from here. Find and fix what's broken, and while you're in there make sure the rest of the repo's manifests are actually valid so we don't hit another failure right after this one.",
       "expected_output": "Three planted bugs found and fixed: (1) apps/staging/podinfo/kustomization.yaml patch path typo podinfo-values.yml -> .yaml (kustomize build failure), (2) apps/base/podinfo/release.yaml interval '1 hour' -> valid duration (schema pattern violation that survives the build), (3) infrastructure/controllers/metrics-server/release.yaml sets both spec.chart and spec.chartRef (CEL violation). Agent reproduces the failure locally with kustomize build, fixes, and re-validates the whole repo (overlays via build output, plain dirs directly).",
-      "files": ["tests/gitops-knowledge/debug-repo"],
+      "files": [
+        "tests/gitops-knowledge/debug-repo"
+      ],
       "expectations": [
         "The staging podinfo overlay builds again: 'kustomize build apps/staging/podinfo' succeeds and the staging values patch is applied (build output contains 'Hello from staging')",
         "The base HelmRelease interval is a valid duration again (the '1 hour' schema violation is fixed)",

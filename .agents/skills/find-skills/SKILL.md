@@ -111,7 +111,7 @@ The `-g` flag installs globally (user-level) and `-y` skips confirmation prompts
 When searching, consider these common categories:
 
 | Category        | Example Queries                          |
-|-----------------|------------------------------------------|
+| --------------- | ---------------------------------------- |
 | Web Development | react, nextjs, typescript, css, tailwind |
 | Testing         | testing, jest, playwright, e2e           |
 | DevOps          | deploy, docker, kubernetes, ci-cd        |
