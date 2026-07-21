@@ -1,3 +1,12 @@
+// Command validate-merge-group-heal checks that the prod-healing job in a
+// workflow still runs under exactly the conditions it was designed for.
+//
+// The heal job restores main after a merge-group deploy fails, so it must fire
+// on a failed or cancelled merge-group deploy that actually touched k8s — and
+// on nothing else. Widening that guard would let the job run when there is
+// nothing to heal; narrowing it would leave main broken after a bad deploy.
+// Pinning the condition here means a workflow edit that changes it fails CI
+// rather than being discovered during an incident.
 package main
 
 import (
