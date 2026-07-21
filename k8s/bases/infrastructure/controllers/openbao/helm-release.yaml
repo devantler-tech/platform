@@ -83,7 +83,7 @@ spec:
                 exit 0
               fi
               if echo "$STATUS" | grep -q '"sealed": true'; then
-                bao operator unseal "$UNSEAL_KEY" || true
+                printf '%s\n' "$UNSEAL_KEY" | bao operator unseal || true
               fi
               ATTEMPTS=$((ATTEMPTS - 1))
               sleep 5

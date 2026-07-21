@@ -283,7 +283,7 @@ spec:
                   fi
 
                   # 2. Unseal openbao-0 with the temp key and wait for a leader.
-                  BAO_ADDR="$(addr 0)" bao operator unseal "$TMP_UNSEAL" >/dev/null
+                  printf '%s\n' "$TMP_UNSEAL" | BAO_ADDR="$(addr 0)" bao operator unseal >/dev/null
                   TRIES=24
                   until pod_status 0 | grep -q '"ha_mode": "active"'; do
                     TRIES=$((TRIES - 1))
@@ -364,7 +364,7 @@ spec:
                   ALL_UNSEALED=false
                   if echo "$STATUS" | grep -q '"sealed": true'; then
                     echo "Unsealing openbao-$i..."
-                    BAO_ADDR="$(addr "$i")" bao operator unseal "$UNSEAL_KEY" >/dev/null \
+                    printf '%s\n' "$UNSEAL_KEY" | BAO_ADDR="$(addr "$i")" bao operator unseal >/dev/null \
                       || echo "WARNING: unseal of openbao-$i failed (not joined yet, or key mismatch)"
                   else
                     echo "openbao-$i not reachable yet"
