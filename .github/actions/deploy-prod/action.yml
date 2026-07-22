@@ -140,6 +140,7 @@ runs:
         exit 1
 
     - name: 🛡️ Suspend autoscaling for gated Cilium rollout
+      id: cilium_rollout_gate
       # The widened device component deliberately uses OnDelete so the Cilium
       # agents can be stepped one node at a time. OnDelete does not protect a
       # newly autoscaled node: it would boot the widened device set immediately.
@@ -349,9 +350,14 @@ runs:
       # node cannot block GitOps delivery (see the Push step's comment). Talos
       # config sync still runs on every deploy and a genuine node-reachability
       # problem still fails the deploy (red) — it just no longer takes the
-      # app/config pipeline down with it. Automatically skipped if an earlier
-      # delivery step already failed (no point syncing nodes for a broken
-      # release).
+      # app/config pipeline down with it. The temporary homogeneous-device
+      # rollout gate also skips this step: KSail owns Cluster Autoscaler and
+      # could reconcile it back to one replica during the command, opening a
+      # scale-up race before the first Cilium canary is verified. A reviewed
+      # rollout-completion or rollback artifact removes the gate; because Flux
+      # reconciliation happens first, that safe artifact is live before cluster
+      # update runs again.
+      if: steps.cilium_rollout_gate.outputs.active != 'true'
       shell: bash
       env:
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
@@ -362,13 +368,12 @@ runs:
       run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update
 
     - name: 🛡️ Reassert or release the Cilium rollout gate
-      # KSail owns the Cluster Autoscaler and cluster update may reconcile its
-      # Deployment. Reassert the suspension afterward while OnDelete is active.
+      # Reassert the suspension after delivery while OnDelete is active.
       # A later, reviewed rollout-completion or rollback artifact removes the
       # gate; only after that artifact has reconciled does this phase restore
-      # the replica count recorded by the pre-publish phase. Run after a failed
-      # cluster update too, so a partial KSail reconciliation cannot reopen the
-      # scale-up race.
+      # the replica count recorded by the pre-publish phase. `always()` also
+      # preserves that fail-closed state when the safe, re-enabled cluster
+      # update fails after reconciliation.
       if: always() && steps.reconcile.outcome == 'success'
       shell: bash
       run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy

@@ -72,19 +72,20 @@
 # from the NEW template immediately, and so is the agent on any NODE the
 # cluster autoscaler adds mid-window — OnDelete gates template-driven
 # replacement only. The deploy path therefore suspends autoscaler node creation
-# before publishing an artifact that activates this gate, reasserts the
-# suspension after KSail's cluster update, and treats any incidental restart as
-# an involuntary canary to verify at once.
+# before publishing an artifact that activates this gate, skips KSail cluster
+# update while the gate is active, and treats any incidental restart as an
+# involuntary canary to verify at once.
 #
 # ACTIVATION RUNBOOK (separate PR referencing this component; low-traffic
 # window):
 #   0. The deploy action records the existing Cluster Autoscaler replica count
 #      on its Deployment, scales it to zero BEFORE publishing the mutable OCI
-#      artifact, and reasserts zero after KSail's cluster update. Confirm
-#      `cluster-autoscaler-hetzner-cluster-autoscaler` is at zero before
-#      stepping Cilium and that the over-provisioning CapacityBuffer headroom
-#      is idle enough that no scale-up would have fired. The guard is
-#      fail-closed; do not bypass a failed suspension step.
+#      artifact, skips KSail cluster update while the gate is active, and
+#      reasserts zero after delivery. Confirm
+#      `cluster-autoscaler-hetzner-cluster-autoscaler` is at zero before stepping
+#      Cilium and that the over-provisioning CapacityBuffer headroom is idle
+#      enough that no scale-up would have fired. The guard is fail-closed; do
+#      not bypass a failed suspension step.
 #   1. Reference this component in ../../../kustomization.yaml `components:`.
 #      Under OnDelete, NO agent restarts yet — the new device set is staged
 #      in the agent ConfigMap only. Watch for INVOLUNTARY canaries from here
@@ -104,10 +105,10 @@
 #      from this component — restoring RollingUpdate is a strategy-only
 #      change (the pod template is already current), so it rolls nothing.
 #   5. The reviewed follow-up that removes the temporary OnDelete override
-#      releases the deploy gate only AFTER its safe artifact reconciles, then
-#      restores the recorded replica count. Verify the FIRST autoscaler-created
-#      node after resume like a stepped node (its agent boots the widened set
-#      directly).
+#      releases the deploy gate only AFTER its safe artifact reconciles. KSail
+#      cluster update then runs again and the post-deploy guard restores the
+#      recorded replica count. Verify the FIRST autoscaler-created node after
+#      resume like a stepped node (its agent boots the widened set directly).
 #   6. Only then does ebpf-host-routing (#2609) become referenceable;
 #      bandwidth-manager-bbr activation follows its own soak (see those
 #      components' guards).

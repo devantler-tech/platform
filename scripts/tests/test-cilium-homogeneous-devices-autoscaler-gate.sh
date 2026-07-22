@@ -37,6 +37,11 @@ cluster_update_line="$(grep -nF 'run: ./scripts/run-ksail-prod-with-pull-auth.sh
 ((second_guard_call_line > reconcile_line && second_guard_call_line > cluster_update_line)) ||
 	fail 'the second rollout guard must reassert or release the gate after deployment'
 
+grep -Fq 'id: cilium_rollout_gate' "${deploy_action}" ||
+	fail 'the pre-publish guard must expose whether the rollout gate is active'
+grep -Fq "if: steps.cilium_rollout_gate.outputs.active != 'true'" "${deploy_action}" ||
+	fail 'cluster update must remain skipped for the entire active rollout gate'
+
 tmp_dir="$(mktemp -d)"
 readonly tmp_dir
 trap 'rm -rf -- "${tmp_dir}"' EXIT
@@ -56,6 +61,7 @@ mkdir -p "${state_dir}"
 printf '1\n' >"${state_dir}/replicas"
 : >"${state_dir}/previous-replicas"
 : >"${state_dir}/commands"
+: >"${state_dir}/github-output"
 
 cat >"${fake_kubectl}" <<'FAKE_KUBECTL'
 #!/usr/bin/env bash
@@ -95,10 +101,13 @@ run_guard() {
 	PLATFORM_ROOT="${fixture_root}" \
 		KUBECTL="${fake_kubectl}" \
 		KUBECTL_STATE="${state_dir}" \
+		GITHUB_OUTPUT="${state_dir}/github-output" \
 		"${guard_script}" "$1"
 }
 
 run_guard --before-publish
+[[ "$(tail -n 1 "${state_dir}/github-output")" == 'active=true' ]] ||
+	fail 'the pre-publish phase must expose an active rollout gate to later steps'
 [[ "$(<"${state_dir}/replicas")" == '0' ]] ||
 	fail 'an active OnDelete rollout must suspend the autoscaler before publish'
 [[ "$(<"${state_dir}/previous-replicas")" == '1' ]] ||
@@ -112,6 +121,8 @@ run_guard --after-deploy
 
 sed -i.bak '/type: OnDelete/d' "${fixture_component}/kustomization.yaml"
 run_guard --before-publish
+[[ "$(tail -n 1 "${state_dir}/github-output")" == 'active=false' ]] ||
+	fail 'the pre-publish phase must release cluster update after the safe gate removal'
 [[ "$(<"${state_dir}/replicas")" == '0' ]] ||
 	fail 'the pre-publish phase must not restore autoscaling before the safe artifact is deployed'
 run_guard --after-deploy
@@ -124,5 +135,10 @@ printf '0\n' >"${state_dir}/replicas"
 run_guard --after-deploy
 [[ "$(<"${state_dir}/replicas")" == '0' ]] ||
 	fail 'an unowned manual autoscaler suspension must remain untouched'
+
+if grep -Ev '(^|[[:space:]])--context admin@prod([[:space:]]|$)' "${state_dir}/commands" |
+	grep -q .; then
+	fail 'every autoscaler read and mutation must pin the admin@prod context'
+fi
 
 printf 'PASS: Cilium activation suspends autoscaling before publish and restores only after the gate is removed\n'

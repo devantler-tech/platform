@@ -169,7 +169,7 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 
 - **`ci.yaml`** — runs on `pull_request` (static manifest validation + Kubescape scan, no cluster) and `merge_group` (deploys prod via the Hetzner provider). Concurrency is shared with `cd.yaml` so a manual deploy and a merge-queue deploy can never run against the prod cluster at the same time.
 - **`cd.yaml`** — runs on `workflow_dispatch` (manual). Deploys to the production Hetzner cluster using `ksail --config ksail.prod.yaml`. Covers direct pushes to `main`, which bypass the merge queue and so are not deployed by `ci.yaml`.
-- **`.github/actions/deploy-prod`** — the composite action both deploy paths call (stage/verify all GHCR pull consumers → push → cosign-sign → attest SBOM + SLSA provenance → revalidate published artifact → Flux reconcile → Talos `cluster update` → final reassert), so the merge-queue and manual deploys can never drift. Secrets are passed as inputs because composite actions cannot read `secrets`.
+- **`.github/actions/deploy-prod`** — the composite action both deploy paths call (stage/verify all GHCR pull consumers → push → cosign-sign → attest SBOM + SLSA provenance → revalidate published artifact → Flux reconcile → Talos `cluster update` → final reassert), so the merge-queue and manual deploys can never drift. The temporary Cilium homogeneous-device `OnDelete` rollout gate is the deliberate exception: it suspends Cluster Autoscaler before publish and skips `cluster update` until a reviewed completion or rollback artifact has reconciled, because KSail owns that Deployment and could otherwise reopen a scale-up race mid-rollout. Secrets are passed as inputs because composite actions cannot read `secrets`.
 
 **Required GitHub Secrets:**
 

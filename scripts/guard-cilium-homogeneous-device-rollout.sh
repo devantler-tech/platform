@@ -34,6 +34,10 @@ fail() {
 [[ -f "${component_kustomization}" ]] ||
 	fail "missing homogeneous-device component: ${component_kustomization}"
 
+kubectl_prod() {
+	"${kubectl_bin}" --context admin@prod "$@"
+}
+
 rollout_gate_active=false
 if grep -Eq \
 	'^[[:space:]]*-[[:space:]]*cilium/components/homogeneous-devices/?[[:space:]]*(#.*)?$' \
@@ -43,13 +47,17 @@ if grep -Eq \
 	rollout_gate_active=true
 fi
 
+if [[ -n "${GITHUB_OUTPUT:-}" ]]; then
+	printf 'active=%s\n' "${rollout_gate_active}" >>"${GITHUB_OUTPUT}"
+fi
+
 get_previous_replicas() {
-	"${kubectl_bin}" -n "${namespace}" get deployment "${deployment}" \
+	kubectl_prod -n "${namespace}" get deployment "${deployment}" \
 		-o "jsonpath=${previous_replicas_jsonpath}"
 }
 
 get_current_replicas() {
-	"${kubectl_bin}" -n "${namespace}" get deployment "${deployment}" \
+	kubectl_prod -n "${namespace}" get deployment "${deployment}" \
 		-o 'jsonpath={.spec.replicas}'
 }
 
@@ -62,7 +70,7 @@ require_replica_count() {
 
 wait_for_replicas() {
 	local expected="$1"
-	"${kubectl_bin}" -n "${namespace}" rollout status \
+	kubectl_prod -n "${namespace}" rollout status \
 		"deployment/${deployment}" --timeout=2m
 	local actual
 	actual="$(get_current_replicas)"
@@ -77,13 +85,13 @@ suspend_autoscaler() {
 	if [[ -z "${previous_replicas}" ]]; then
 		previous_replicas="$(get_current_replicas)"
 		require_replica_count "${previous_replicas}" 'current autoscaler replica count'
-		"${kubectl_bin}" -n "${namespace}" annotate deployment "${deployment}" \
+		kubectl_prod -n "${namespace}" annotate deployment "${deployment}" \
 			"${previous_replicas_annotation}=${previous_replicas}" --overwrite
 	else
 		require_replica_count "${previous_replicas}" 'remembered autoscaler replica count'
 	fi
 
-	"${kubectl_bin}" -n "${namespace}" scale deployment "${deployment}" --replicas=0
+	kubectl_prod -n "${namespace}" scale deployment "${deployment}" --replicas=0
 	wait_for_replicas 0
 	printf 'Cilium homogeneous-device rollout gate active: Cluster Autoscaler is suspended.\n'
 }
@@ -97,10 +105,10 @@ restore_autoscaler_if_owned() {
 	fi
 
 	require_replica_count "${previous_replicas}" 'remembered autoscaler replica count'
-	"${kubectl_bin}" -n "${namespace}" scale deployment "${deployment}" \
+	kubectl_prod -n "${namespace}" scale deployment "${deployment}" \
 		--replicas="${previous_replicas}"
 	wait_for_replicas "${previous_replicas}"
-	"${kubectl_bin}" -n "${namespace}" annotate deployment "${deployment}" \
+	kubectl_prod -n "${namespace}" annotate deployment "${deployment}" \
 		"${previous_replicas_annotation}-"
 	printf 'Cilium homogeneous-device rollout gate released: Cluster Autoscaler restored to %s replicas.\n' \
 		"${previous_replicas}"
