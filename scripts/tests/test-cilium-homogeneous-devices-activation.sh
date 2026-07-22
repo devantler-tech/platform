@@ -71,6 +71,40 @@ reject_text() {
   fi
 }
 
+require_pattern() {
+  local haystack="$1"
+  local pattern="$2"
+  local description="$3"
+
+  grep -Eq -- "${pattern}" <<<"${haystack}" || fail "${description}"
+}
+
+reject_pattern() {
+  local haystack="$1"
+  local pattern="$2"
+  local description="$3"
+
+  if grep -Eq -- "${pattern}" <<<"${haystack}"; then
+    fail "${description}"
+  fi
+}
+
+readonly homogeneous_devices_pattern='^[[:space:]]*devices:[[:space:]]*(en[+] eth[+]|"en[+] eth[+]")[[:space:]]*$'
+readonly private_devices_pattern='^[[:space:]]*devices:[[:space:]]*(enp7s0 eth1|"enp7s0 eth1")[[:space:]]*$'
+
+for rendered_devices in 'devices: en+ eth+' 'devices: "en+ eth+"'; do
+  require_pattern \
+    "${rendered_devices}" \
+    "${homogeneous_devices_pattern}" \
+    'the device matcher must accept quoted and unquoted values'
+done
+for rendered_devices in 'devices: enp7s0 eth1' 'devices: "enp7s0 eth1"'; do
+  require_pattern \
+    "${rendered_devices}" \
+    "${private_devices_pattern}" \
+    'the private-only matcher must detect quoted and unquoted values'
+done
+
 awk '
   /^      - name: 🌐 Validate active Cilium device selection$/ {
     found_step = 1
@@ -107,13 +141,13 @@ read -r private_line homogeneous_line < <(
 production_release="$(kubectl kustomize "${controllers_dir}" | extract_cilium_release)" ||
   fail 'the production controllers render has no Cilium HelmRelease'
 
-require_text \
+require_pattern \
   "${production_release}" \
-  'devices: en+ eth+' \
+  "${homogeneous_devices_pattern}" \
   'the active production render must select both public and private device families'
-reject_text \
+reject_pattern \
   "${production_release}" \
-  'devices: enp7s0 eth1' \
+  "${private_devices_pattern}" \
   'the active production render must not retain the private-only device pin'
 require_text \
   "${production_release}" \
