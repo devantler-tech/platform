@@ -58,6 +58,8 @@ jobs:
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
+              - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
+              - 'scripts/guard-cilium-homogeneous-device-rollout.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
@@ -209,7 +211,9 @@ jobs:
         # Pin the production activation, merge order, and OnDelete rollout gate
         # so a later cleanup cannot silently restore private-only devices or
         # trigger an automatic fleet-wide Cilium restart.
-        run: bash scripts/tests/test-cilium-homogeneous-devices-activation.sh
+        run: |
+          bash scripts/tests/test-cilium-homogeneous-devices-activation.sh
+          bash scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh
 
       - name: ⚙️ Setup KSail
         # Renovate-managed (datasource github-releases; grouped 'ksail' with the

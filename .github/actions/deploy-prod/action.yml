@@ -139,6 +139,16 @@ runs:
         echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig (last kubectl error: ${last_err}). KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
         exit 1
 
+    - name: 🛡️ Suspend autoscaling for gated Cilium rollout
+      # The widened device component deliberately uses OnDelete so the Cilium
+      # agents can be stepped one node at a time. OnDelete does not protect a
+      # newly autoscaled node: it would boot the widened device set immediately.
+      # Suspend before the mutable artifact is published, because Flux may
+      # observe the new tag before the explicit reconcile step. The script
+      # records the pre-existing replica count so only this gate can restore it.
+      shell: bash
+      run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
+
     - name: 🔑 Stage Flux and consumer GHCR pull credential
       id: stage_flux_ghcr_auth
       # Validate all seven packages, synchronize and prove an uncached pull of
@@ -334,6 +344,7 @@ runs:
       uses: devantler-tech/actions/diagnose-flux@e182f2207fb386ef827f48b3cc9b7deac873046a # v7.1.0
 
     - name: 🔄 Update cluster (Talos machine config)
+      id: cluster_update
       # Runs LAST, after manifest delivery, so an unreachable control-plane
       # node cannot block GitOps delivery (see the Push step's comment). Talos
       # config sync still runs on every deploy and a genuine node-reachability
@@ -349,6 +360,18 @@ runs:
         # whole machine config ('private key is invalid: wrong key "" length: 0').
         WG_SERVER_PRIVATE_KEY: ${{ inputs.wg-server-private-key }}
       run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update
+
+    - name: 🛡️ Reassert or release the Cilium rollout gate
+      # KSail owns the Cluster Autoscaler and cluster update may reconcile its
+      # Deployment. Reassert the suspension afterward while OnDelete is active.
+      # A later, reviewed rollout-completion or rollback artifact removes the
+      # gate; only after that artifact has reconciled does this phase restore
+      # the replica count recorded by the pre-publish phase. Run after a failed
+      # cluster update too, so a partial KSail reconciliation cannot reopen the
+      # scale-up race.
+      if: always() && steps.reconcile.outcome == 'success'
+      shell: bash
+      run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
 
     - name: 🔑 Reassert Flux and consumer GHCR pull credential
       id: reassert_flux_ghcr_auth
