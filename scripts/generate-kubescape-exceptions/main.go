@@ -454,7 +454,10 @@ func decodeDocuments(path string) ([]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	defer file.Close()
+	defer func() {
+		// Closing a read-only file cannot affect the decoded result.
+		_ = file.Close()
+	}()
 
 	var documents []any
 
