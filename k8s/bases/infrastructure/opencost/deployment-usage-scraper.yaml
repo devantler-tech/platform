@@ -1,0 +1,76 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencost-usage-scraper
+  namespace: opencost
+  labels:
+    app.kubernetes.io/name: opencost-usage-scraper
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/component: metrics-scraper
+    platform.devantler.tech/replica-floor: exempt
+spec:
+  # Two replicas would scrape identical node series and race them into the
+  # remote-write receiver. Recreate avoids an overlapping rollout; the WAL is
+  # disposable because Prometheus is the durable store.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opencost-usage-scraper
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opencost-usage-scraper
+        app.kubernetes.io/part-of: opencost
+        app.kubernetes.io/component: metrics-scraper
+    spec:
+      serviceAccountName: opencost-usage-scraper
+      # Kubernetes discovery and the API-server node proxy both require the
+      # dedicated, read-only service-account token.
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: prometheus-agent
+          image: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --enable-feature=agent
+            - --storage.agent.path=/prometheus
+            - --web.listen-address=127.0.0.1:9090
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 20m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus
+              readOnly: true
+            - name: data
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: opencost-usage-scraper
+        - name: data
+          emptyDir:
+            sizeLimit: 1Gi
