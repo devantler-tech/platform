@@ -137,16 +137,15 @@ patches:
       name: cilium
       namespace: kube-system
     patch: |
-      apiVersion: helm.toolkit.fluxcd.io/v2
-      kind: HelmRelease
-      metadata:
-        name: cilium
-        namespace: kube-system
-      spec:
-        values:
-          devices: "en+ eth+"
-          # Operator-stepped rollout gate — see ROLLOUT GATE above. Removed
-          # by a follow-up PR once all nodes are verified (strategy-only
-          # change; rolls nothing).
-          updateStrategy:
-            type: OnDelete
+      - op: replace
+        path: /spec/values/devices
+        value: "en+ eth+"
+      # Operator-stepped rollout gate — see ROLLOUT GATE above. Removed
+      # by a follow-up PR once all nodes are verified (strategy-only
+      # change; rolls nothing). Replacing the whole value preserves the
+      # explicit null that clears the chart's rollingUpdate default.
+      - op: replace
+        path: /spec/values/updateStrategy
+        value:
+          rollingUpdate: null
+          type: OnDelete

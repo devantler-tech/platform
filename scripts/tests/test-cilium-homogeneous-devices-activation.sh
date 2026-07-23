@@ -53,6 +53,19 @@ extract_cilium_release() {
   '
 }
 
+extract_top_level_update_strategy() {
+  awk '
+    /^    updateStrategy:[[:space:]]*$/ {
+      found = 1
+      print
+      next
+    }
+    found && /^    [^[:space:]]/ { exit }
+    found { print }
+    END { exit !found }
+  '
+}
+
 require_text() {
   local haystack="$1"
   local needle="$2"
@@ -140,6 +153,8 @@ read -r private_line homogeneous_line < <(
 
 production_release="$(kubectl kustomize "${controllers_dir}" | extract_cilium_release)" ||
   fail 'the production controllers render has no Cilium HelmRelease'
+production_update_strategy="$(extract_top_level_update_strategy <<<"${production_release}")" ||
+  fail 'the production Cilium HelmRelease has no top-level update strategy'
 
 require_pattern \
   "${production_release}" \
@@ -150,9 +165,13 @@ reject_pattern \
   "${private_devices_pattern}" \
   'the active production render must not retain the private-only device pin'
 require_text \
-  "${production_release}" \
-  $'updateStrategy:\n      type: OnDelete' \
-  'the activation must stage an operator-stepped OnDelete rollout'
+  "${production_update_strategy}" \
+  'rollingUpdate: null' \
+  'the activation must clear the chart default rollingUpdate map'
+require_text \
+  "${production_update_strategy}" \
+  'type: OnDelete' \
+  'the activation must clear rollingUpdate while staging an operator-stepped OnDelete rollout'
 require_text \
   "${production_release}" \
   $'encryption:\n      enabled: true\n      nodeEncryption: false' \
