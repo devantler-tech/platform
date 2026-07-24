@@ -449,14 +449,16 @@ func generate(directory string) ([]policy, error) {
 }
 
 // decodeDocuments reads every YAML document in a multi-document file.
-func decodeDocuments(path string) ([]any, error) {
+func decodeDocuments(path string) (documents []any, err error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	defer file.Close()
-
-	var documents []any
+	defer func() {
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("close %s: %w", path, closeErr)
+		}
+	}()
 
 	decoder := yaml.NewDecoder(file)
 
