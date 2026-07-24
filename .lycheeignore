@@ -1,0 +1,39 @@
+# URLs lychee must not try to resolve. One regex per line.
+#
+# 1. A host with no dot in it is never an internet URL. Every one of these comes from lychee
+#    truncating a URL it cannot finish parsing, and both sources are verified:
+#      a) A templated HOSTNAME. `https://budget.${domain}` is reported as https://budget/ —
+#         lychee stops at the `$`, and what is left is the leading label. The real host only
+#         exists once the variable is substituted.
+#      b) A cosign keyless-identity REGEX. lychee stops at the backslash, so
+#         '^https://token\.actions\.githubusercontent\.com$' is reported as https://token/ and
+#         '^https://github\.com/...' as https://github/. These are signature-verification
+#         patterns, not links — rewriting them to please a link checker would break image
+#         verification.
+#    Note this also excludes single-label hosts with a port, e.g. http://localhost:8080/, since a
+#    colon is neither a dot nor a slash. That is intended: those are not reachable from CI either.
+^https?://[^./]+/?$
+
+# 2. Private ingress hostnames. They resolve on the home network only. Anchored on the host, so a
+#    path that merely ends in the same string is still checked.
+^https?://[^/]*\.lan(:[0-9]+)?(/|$)
+^https?://[^/]*\.svc\.cluster\.local(:[0-9]+)?(/|$)
+^https?://dex\.dev\.platform\.devantler\.tech(/|$)
+
+# 3. Shell and Actions variables interpolated into a URL PATH. lychee percent-encodes the braces,
+#    so ${KSAIL_VERSION} arrives as %7BKSAIL_VERSION%7D and the URL can never resolve — the real
+#    one only exists at run time. (A variable in the HOST truncates instead; that is case 1a.)
+%7B
+
+# 4. RFC 5737 TEST-NET-1. Reserved for documentation and unroutable by design; ci.yaml uses it as
+#    a deliberately dead API-server address.
+^https?://192\.0\.2\.
+
+# 5. An OIDC issuer IDENTIFIER, not a browsable page. Discovery lives at
+#    /.well-known/openid-configuration; the root path is expected to 404. This value must match
+#    GitHub's issuer string exactly, so it is not editable to please a link checker.
+^https://token\.actions\.githubusercontent\.com/?$
+
+# 6. A third-party status badge in the README. It returns 500 intermittently; its availability is
+#    not something this repository can fix, and it must never gate a merge.
+^https://api\.star-history\.com/

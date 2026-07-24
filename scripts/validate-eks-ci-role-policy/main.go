@@ -1,3 +1,12 @@
+// Command validate-eks-ci-role-policy pins the privileges production grants to
+// the EKS CI identity.
+//
+// The permissions that identity ends up with are not written in one place: they
+// are the sum of several independently reconciled overlays, so a change in any
+// one of them can widen the identity's reach without that being visible in the
+// diff under review. This command renders each of those overlays and compares
+// the result against approved fingerprints, so an unreviewed privilege grant
+// fails CI instead of reaching the cluster.
 package main
 
 import (

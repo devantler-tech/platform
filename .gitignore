@@ -16,3 +16,11 @@ hetzner/talos-*/*.raw.xz
 .decrypted*
 .playwright-mcp/
 wedding-app-login.png
+
+# MegaLinter writes its report tree here. It must never be committed: the shared CI job
+# stages everything (`file_pattern: .`) when it pushes auto-fixes back, and without this it
+# committed 182 report files into the branch.
+megalinter-reports/
+
+# MegaLinter also drops a generated GitHub config tree here.
+.megalinter_github_conf/
