@@ -5,15 +5,54 @@
 # server-side apply, an unresolved dependency, or a child resource that never
 # goes Ready under a wait:true Kustomization.
 #
-# Watching every Kustomization at error severity catches the whole class: the
+# Watching every Kustomization at error severity catches most of the class: the
 # four top-level health gates (bootstrap → infrastructure-controllers →
-# infrastructure → apps) wait on their children, so a failed controller / app /
-# HelmRelease surfaces as its parent Kustomization going NotReady → an error
-# event here → Slack. Event-driven (no polling pod, so nothing for the kubescape
-# scan to flag) and posting to the same channel as the Coroot alerts.
+# infrastructure → apps) wait on their children, so a failed controller / app
+# surfaces as its parent Kustomization going NotReady → an error event here →
+# Slack. Event-driven (no polling pod, so nothing for the kubescape scan to
+# flag) and posting to the same channel as the Coroot alerts.
+#
+# HelmRelease is watched DIRECTLY rather than left to that parent-Kustomization
+# gate, because a failing HelmRelease can be INVISIBLE to it. With Helm
+# remediation enabled a failed upgrade is ROLLED BACK to the last-good release —
+# after which the HelmRelease is legitimately Ready again, its parent
+# Kustomization stays healthy, and nothing ever pages. The release just silently
+# stops advancing.
+#
+# Not hypothetical: on 2026-07-14 the ksail-operator HelmRelease failed its
+# upgrade and rolled back on every attempt for over a day (stuck four releases
+# behind, every ReplicaSet since v7.168.0 at 0 replicas, because the nodes'
+# containerd still held a revoked ghcr.io credential — see
+# scripts/refresh-flux-ghcr-auth.sh). Prod looked green the entire time and no
+# alert fired.
+#
+# ── WHY THE NAMESPACES ARE ENUMERATED ──────────────────────────────────────────
+# There is NO namespace wildcard. notification-controller defaults an omitted
+# eventSources[].namespace to the ALERT's own namespace and then matches on
+# strict equality (internal/server/event_handlers.go):
+#
+#   if source.Namespace == "" { source.Namespace = alert.Namespace }
+#   if event.InvolvedObject.Namespace != source.Namespace || ... { return false }
+#
+# `name: "*"` is a wildcard over NAMES only. So a bare `kind: HelmRelease,
+# name: "*"` on this flux-system Alert would watch ONLY the 2 HelmReleases in
+# flux-system and miss the other 43 — including ksail-operator, the one that
+# caused the outage. Every namespace holding a HelmRelease must therefore be
+# listed.
+#
+# The SAME defaulting applies to Kustomization, so it needs the same list: the
+# cluster Kustomizations live in flux-system, but every TENANT has its own
+# Kustomization in its own namespace (wedding-app, ascoachingogvaner,
+# github-config, unifi, aws). A bare `kind: Kustomization, name: "*"` would have
+# watched only flux-system and let a failing tenant reconcile pass silently —
+# exactly the failure mode this alert exists to catch.
+#
+# Enumeration drifts, and a silently-uncovered namespace is the very bug this
+# alert exists to prevent — so scripts/validate-alert-coverage.sh fails CI if a
+# HelmRelease *or a Kustomization* appears in a namespace not listed below.
 #
 # notification-controller dedupes + rate-limits, so a persistently-failing
-# Kustomization pages once, not every reconcile.
+# resource pages once, not every reconcile.
 apiVersion: notification.toolkit.fluxcd.io/v1beta3
 kind: Alert
 metadata:
@@ -26,4 +65,113 @@ spec:
   eventSources:
     - kind: Kustomization
       name: "*"
+      namespace: flux-system
+    - kind: Kustomization
+      name: "*"
+      namespace: ascoachingogvaner
+    - kind: Kustomization
+      name: "*"
+      namespace: aws
+    - kind: Kustomization
+      name: "*"
+      namespace: github-config
+    - kind: Kustomization
+      name: "*"
+      namespace: unifi
+    - kind: Kustomization
+      name: "*"
+      namespace: wedding-app
+    - kind: HelmRelease
+      name: "*"
+      namespace: actual-budget
+    - kind: HelmRelease
+      name: "*"
+      namespace: backstage
+    - kind: HelmRelease
+      name: "*"
+      namespace: cert-manager
+    - kind: HelmRelease
+      name: "*"
+      namespace: cnpg-system
+    - kind: HelmRelease
+      name: "*"
+      namespace: crossplane-system
+    - kind: HelmRelease
+      name: "*"
+      namespace: crossview
+    - kind: HelmRelease
+      name: "*"
+      namespace: dex
+    - kind: HelmRelease
+      name: "*"
+      namespace: external-dns
+    - kind: HelmRelease
+      name: "*"
+      namespace: external-secrets
+    - kind: HelmRelease
+      name: "*"
+      namespace: flagger-system
+    - kind: HelmRelease
+      name: "*"
+      namespace: flux-system
+    - kind: HelmRelease
+      name: "*"
+      namespace: headlamp
+    - kind: HelmRelease
+      name: "*"
+      namespace: homepage
+    - kind: HelmRelease
+      name: "*"
+      namespace: keda
+    - kind: HelmRelease
+      name: "*"
+      namespace: kro-system
+    - kind: HelmRelease
+      name: "*"
+      namespace: ksail-operator
+    - kind: HelmRelease
+      name: "*"
+      namespace: kube-system
+    - kind: HelmRelease
+      name: "*"
+      namespace: kubescape
+    - kind: HelmRelease
+      name: "*"
+      namespace: kyverno
+    - kind: HelmRelease
+      name: "*"
+      namespace: longhorn-system
+    - kind: HelmRelease
+      name: "*"
+      namespace: oauth2-proxy
+    - kind: HelmRelease
+      name: "*"
+      namespace: observability
+    - kind: HelmRelease
+      name: "*"
+      namespace: open-feature-operator-system
+    - kind: HelmRelease
+      name: "*"
+      namespace: openbao
+    - kind: HelmRelease
+      name: "*"
+      namespace: opencost
+    - kind: HelmRelease
+      name: "*"
+      namespace: policy-reporter
+    - kind: HelmRelease
+      name: "*"
+      namespace: reloader
+    - kind: HelmRelease
+      name: "*"
+      namespace: umami
+    - kind: HelmRelease
+      name: "*"
+      namespace: velero
+    - kind: HelmRelease
+      name: "*"
+      namespace: vertical-pod-autoscaler
+    - kind: HelmRelease
+      name: "*"
+      namespace: whoami
   summary: "Flux reconciliation error — prod platform"

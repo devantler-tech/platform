@@ -59,7 +59,10 @@ jobs:
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
+              - 'scripts/validate-alert-coverage.sh'
+              - 'scripts/tests/validate-alert-coverage/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/ghcr-auth-lib.sh'
               - 'scripts/run-ksail-prod-with-pull-auth.sh'
               - '.github/actions/deploy-prod/**'
@@ -70,9 +73,11 @@ jobs:
               - '.github/workflows/cd.yaml'
             bridge_validation:
               - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/ghcr-auth-lib.sh'
               - 'scripts/run-ksail-prod-with-pull-auth.sh'
-              - 'scripts/tests/test_refresh_flux_ghcr_auth.py'
+              - 'scripts/tests/test-refresh-flux-ghcr-auth-safety.sh'
+              - 'scripts/tests/refresh-flux-ghcr-auth/**'
               - 'docs/dr/runbook.md'
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
@@ -160,13 +165,18 @@ jobs:
         run: |
           bash -n \
             scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth-safety.sh \
             scripts/refresh-flux-ghcr-auth.sh \
-            scripts/run-ksail-prod-with-pull-auth.sh
+            scripts/run-ksail-prod-with-pull-auth.sh \
+            scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           shellcheck \
             scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth-safety.sh \
             scripts/refresh-flux-ghcr-auth.sh \
-            scripts/run-ksail-prod-with-pull-auth.sh
-          python3 -m unittest scripts.tests.test_refresh_flux_ghcr_auth
+            scripts/run-ksail-prod-with-pull-auth.sh \
+            scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
+          bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
+          go test ./scripts/tests/refresh-flux-ghcr-auth
 
       - name: 🧩 Validate embedded JSON blobs
         # ConfigMaps that embed whole JSON documents as block scalars (e.g. the
@@ -202,6 +212,19 @@ jobs:
         # regress the Hetzner WireGuard settings. Bash plus the kubectl bundled
         # on the GitHub-hosted runner; no cluster or secrets required.
         run: bash scripts/tests/test-cilium-bandwidth-manager-component.sh
+
+      - name: 📢 Validate reconciliation-Alert namespace coverage
+        if: needs.changes.outputs.k8s == 'true'
+        # notification-controller has no namespace wildcard, so the Alert must list
+        # every namespace holding a HelmRelease. A namespace missing from that list
+        # is invisible: the release fails, rolls back, reports Ready, and nothing
+        # pages (ksail-operator, 2026-07-14). Drift is a build failure, not a
+        # comment. Go behavioral tests + Bash with the runner's kubectl/yq; no
+        # cluster or secrets required.
+        run: |
+          go test ./scripts/tests/validate-alert-coverage
+          shellcheck scripts/validate-alert-coverage.sh
+          bash scripts/validate-alert-coverage.sh
 
       - name: ⚙️ Setup KSail
         # Renovate-managed (datasource github-releases; grouped 'ksail' with the
