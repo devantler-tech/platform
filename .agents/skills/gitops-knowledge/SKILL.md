@@ -4,9 +4,9 @@ description: |
 license: Apache-2.0
 metadata:
     github-path: skills/gitops-knowledge
-    github-ref: refs/tags/v0.1.0
+    github-ref: refs/tags/v0.2.0
     github-repo: https://github.com/fluxcd/agent-skills
-    github-tree-sha: d47bb25f90b66b224297b75b4df34d554d2d6763
+    github-tree-sha: 904f1e61c0b3643aac75a3892ed4a4d0b1a37e96
 name: gitops-knowledge
 ---
 # Flux CD Knowledge Base
@@ -16,7 +16,7 @@ to answer questions accurately, generate correct YAML manifests, and explain Flu
 
 **Rules:**
 - Always use the exact apiVersion/kind combinations from the CRD table below. Never invent API versions.
-- Before generating YAML for any CRD, read its OpenAPI schema from `assets/schemas/` to verify field names, types, and enum values.
+- Before generating YAML for any CRD, verify field names, types, enum values, and required fields against its field index in `assets/schemas/` (see the CRD table below). Each line is `<dotted.path> <type> [(required)] [enum=a|b] [default=x] [pattern="..."] [min=N max=N] # description`, with arrays as `path[]` and string maps as `<map[string]T>`. Grep by path prefix to list a subtree (e.g. `grep '^spec\.chart\.' assets/schemas/helmrelease-helm-v2.fields.txt`) or grep a field name to find where it lives. Constraints the index doesn't carry (mutual-exclusivity and other CEL rules) are enforced by `flux schema validate`.
 - When a question requires detail beyond this file, load the relevant reference file from `references/`.
 - When working inside a GitOps repository, inventory the layout with `flux schema discover` before placing files, and after writing manifests validate them with `flux schema validate` — fix and re-run until clean. Load `references/flux-cli.md` for the full CLI workflow, local rendering, and overlay debugging. If the tools aren't installed, skip validation and say so.
 - Prefer Flux Operator (FluxInstance) for cluster setup. Do not reference `flux bootstrap` or legacy `gotk-*` files.
@@ -422,30 +422,30 @@ load `references/notifications.md`.
 
 ## Reference Index
 
-Load reference files and OpenAPI schemas based on the question topic.
-Load at most 1-2 reference files per question. Read schemas for field-level validation when generating YAML.
+Load reference files and field indexes based on the question topic.
+Grep the field index for field-level lookups when generating YAML.
 
-| CRD | Reference | Schema |
+| CRD | Reference | Field Index |
 |-----|-----------|--------|
-| FluxInstance | `references/flux-operator.md` | `assets/schemas/fluxinstance-fluxcd-v1.json` |
-| FluxReport | `references/flux-operator.md` | `assets/schemas/fluxreport-fluxcd-v1.json` |
-| ResourceSet | `references/resourcesets.md` | `assets/schemas/resourceset-fluxcd-v1.json` |
-| ResourceSetInputProvider | `references/resourcesets.md` | `assets/schemas/resourcesetinputprovider-fluxcd-v1.json` |
-| GitRepository | `references/sources.md` | `assets/schemas/gitrepository-source-v1.json` |
-| OCIRepository | `references/sources.md` | `assets/schemas/ocirepository-source-v1.json` |
-| HelmRepository | `references/sources.md` | `assets/schemas/helmrepository-source-v1.json` |
-| HelmChart | `references/sources.md` | `assets/schemas/helmchart-source-v1.json` |
-| Bucket | `references/sources.md` | `assets/schemas/bucket-source-v1.json` |
-| ExternalArtifact | `references/sources.md` | `assets/schemas/externalartifact-source-v1.json` |
-| ArtifactGenerator | `references/sources.md` | `assets/schemas/artifactgenerator-source-v1beta1.json` |
-| Kustomization | `references/kustomization.md` | `assets/schemas/kustomization-kustomize-v1.json` |
-| HelmRelease | `references/helmrelease.md` | `assets/schemas/helmrelease-helm-v2.json` |
-| Provider | `references/notifications.md` | `assets/schemas/provider-notification-v1beta3.json` |
-| Alert | `references/notifications.md` | `assets/schemas/alert-notification-v1beta3.json` |
-| Receiver | `references/notifications.md` | `assets/schemas/receiver-notification-v1.json` |
-| ImageRepository | `references/image-automation.md` | `assets/schemas/imagerepository-image-v1.json` |
-| ImagePolicy | `references/image-automation.md` | `assets/schemas/imagepolicy-image-v1.json` |
-| ImageUpdateAutomation | `references/image-automation.md` | `assets/schemas/imageupdateautomation-image-v1.json` |
+| FluxInstance | `references/flux-operator.md` | `assets/schemas/fluxinstance-fluxcd-v1.fields.txt` |
+| FluxReport | `references/flux-operator.md` | `assets/schemas/fluxreport-fluxcd-v1.fields.txt` |
+| ResourceSet | `references/resourcesets.md` | `assets/schemas/resourceset-fluxcd-v1.fields.txt` |
+| ResourceSetInputProvider | `references/resourcesets.md` | `assets/schemas/resourcesetinputprovider-fluxcd-v1.fields.txt` |
+| GitRepository | `references/sources.md` | `assets/schemas/gitrepository-source-v1.fields.txt` |
+| OCIRepository | `references/sources.md` | `assets/schemas/ocirepository-source-v1.fields.txt` |
+| HelmRepository | `references/sources.md` | `assets/schemas/helmrepository-source-v1.fields.txt` |
+| HelmChart | `references/sources.md` | `assets/schemas/helmchart-source-v1.fields.txt` |
+| Bucket | `references/sources.md` | `assets/schemas/bucket-source-v1.fields.txt` |
+| ExternalArtifact | `references/sources.md` | `assets/schemas/externalartifact-source-v1.fields.txt` |
+| ArtifactGenerator | `references/sources.md` | `assets/schemas/artifactgenerator-source-v1beta1.fields.txt` |
+| Kustomization | `references/kustomization.md` | `assets/schemas/kustomization-kustomize-v1.fields.txt` |
+| HelmRelease | `references/helmrelease.md` | `assets/schemas/helmrelease-helm-v2.fields.txt` |
+| Provider | `references/notifications.md` | `assets/schemas/provider-notification-v1beta3.fields.txt` |
+| Alert | `references/notifications.md` | `assets/schemas/alert-notification-v1beta3.fields.txt` |
+| Receiver | `references/notifications.md` | `assets/schemas/receiver-notification-v1.fields.txt` |
+| ImageRepository | `references/image-automation.md` | `assets/schemas/imagerepository-image-v1.fields.txt` |
+| ImagePolicy | `references/image-automation.md` | `assets/schemas/imagepolicy-image-v1.fields.txt` |
+| ImageUpdateAutomation | `references/image-automation.md` | `assets/schemas/imageupdateautomation-image-v1.fields.txt` |
 
 | Topic | Reference |
 |-------|-----------|
