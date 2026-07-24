@@ -57,6 +57,9 @@ jobs:
               - 'go.mod'
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
+              - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
+              - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
+              - 'scripts/guard-cilium-homogeneous-device-rollout.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
@@ -202,6 +205,15 @@ jobs:
         # regress the Hetzner WireGuard settings. Bash plus the kubectl bundled
         # on the GitHub-hosted runner; no cluster or secrets required.
         run: bash scripts/tests/test-cilium-bandwidth-manager-component.sh
+
+      - name: 🌐 Validate active Cilium device selection
+        if: needs.changes.outputs.k8s == 'true'
+        # Pin the production activation, merge order, and OnDelete rollout gate
+        # so a later cleanup cannot silently restore private-only devices or
+        # trigger an automatic fleet-wide Cilium restart.
+        run: |
+          bash scripts/tests/test-cilium-homogeneous-devices-activation.sh
+          bash scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh
 
       - name: ⚙️ Setup KSail
         # Renovate-managed (datasource github-releases; grouped 'ksail' with the
