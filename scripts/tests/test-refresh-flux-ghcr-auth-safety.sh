@@ -54,15 +54,15 @@ jq -n \
       ]}
     }]
   }
-' > "${legacy_nodes}"
+' >"${legacy_nodes}"
 
 if declare -F select_talos_node_targets >/dev/null; then
   if select_talos_node_targets \
     "${legacy_nodes}" \
     "${DESIRED_REVISION}" \
     "${DESIRED_IMAGE}" \
-    "${legacy_targets}" \
-    && [[ "$(cut -f4 "${legacy_targets}")" == "reboot" ]]; then
+    "${legacy_targets}" &&
+    [[ "$(cut -f4 "${legacy_targets}")" == "reboot" ]]; then
     pass "legacy verification markers select reboot mode"
   else
     fail "legacy verification markers select reboot mode"
@@ -88,16 +88,16 @@ if declare -F select_talos_node_targets >/dev/null; then
         ]}
       }]
     }
-  ' > "${current_nodes}"
+  ' >"${current_nodes}"
 
-  if [[ "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION:-}" == *-v2 ]] \
-    && [[ "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION:-}" == *-v2 ]] \
-    && select_talos_node_targets \
+  if [[ "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION:-}" == *-v2 ]] &&
+    [[ "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION:-}" == *-v2 ]] &&
+    select_talos_node_targets \
       "${current_nodes}" \
       "${DESIRED_REVISION}" \
       "${DESIRED_IMAGE}" \
-      "${current_targets}" \
-    && [[ ! -s "${current_targets}" ]]; then
+      "${current_targets}" &&
+    [[ ! -s "${current_targets}" ]]; then
     pass "v2 post-reboot markers suppress an already-proved reboot"
   else
     fail "v2 post-reboot markers suppress an already-proved reboot"
@@ -124,14 +124,14 @@ if declare -F select_talos_node_targets >/dev/null; then
         ]}
       }]
     }
-  ' > "${image_only_nodes}"
+  ' >"${image_only_nodes}"
 
   if select_talos_node_targets \
     "${image_only_nodes}" \
     "${DESIRED_REVISION}" \
     "${DESIRED_IMAGE}" \
-    "${image_only_targets}" \
-    && [[ "$(cut -f4 "${image_only_targets}")" == "image-only" ]]; then
+    "${image_only_targets}" &&
+    [[ "$(cut -f4 "${image_only_targets}")" == "image-only" ]]; then
     pass "a changed image with current credentials selects image-only mode"
   else
     fail "a changed image with current credentials selects image-only mode"
@@ -144,29 +144,29 @@ fi
 
 operation_log="${work_dir}/operations.log"
 patch_variables_base() {
-  printf '%s\n' variables-patch >> "${operation_log}"
+  printf '%s\n' variables-patch >>"${operation_log}"
 }
 force_sync_resource() {
-  printf 'force:%s/%s/%s\n' "$1" "$2" "$3" >> "${operation_log}"
+  printf 'force:%s/%s/%s\n' "$1" "$2" "$3" >>"${operation_log}"
 }
 verify_consumer_secret() {
-  printf 'verify:%s/ghcr-auth\n' "$1" >> "${operation_log}"
+  printf 'verify:%s/ghcr-auth\n' "$1" >>"${operation_log}"
 }
 sync_talos_registry_auth() {
   talos_sync_call_count=$((talos_sync_call_count + 1))
-  printf 'talos:%s:%s\n' "$1" "$2" >> "${operation_log}"
+  printf 'talos:%s:%s\n' "$1" "$2" >>"${operation_log}"
   if ((talos_sync_call_count == 1)); then
-    printf '%s\n' processed > "$3"
+    printf '%s\n' processed >"$3"
   else
-    printf '%s\n' clean > "$3"
+    printf '%s\n' clean >"$3"
   fi
 }
 patch_root_secret() {
-  printf '%s\n' root-patch >> "${operation_log}"
+  printf '%s\n' root-patch >>"${operation_log}"
 }
 
 if declare -F stage_fanout_before_talos >/dev/null; then
-  : > "${operation_log}"
+  : >"${operation_log}"
   talos_sync_call_count=0
   stage_fanout_before_talos \
     "${DESIRED_REVISION}" \
@@ -238,7 +238,7 @@ jq -n '
       }
     ]
   }
-' > "${control_plane_inventory}"
+' >"${control_plane_inventory}"
 
 kubectl() {
   cp "${control_plane_inventory}" /dev/stdout

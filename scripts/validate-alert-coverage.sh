@@ -62,7 +62,7 @@ for layer in "${LAYERS[@]}"; do
     exit 1
   fi
   echo '---'
-done > "${rendered}"
+done >"${rendered}"
 
 for kind in HelmRelease Kustomization; do
   declared="${work_dir}/declared-${kind}.txt"
@@ -89,14 +89,14 @@ for kind in HelmRelease Kustomization; do
     select(.kind == \"${kind}\" and (.apiVersion | test(\"^${group}/\")))
     | select((.metadata.namespace // \"\") == \"\")
     | (.kind + \"/\" + (.metadata.name // \"<unnamed>\"))
-  " "${rendered}" > "${missing_namespace_raw}"
+  " "${rendered}" >"${missing_namespace_raw}"
   awk 'NF && $0 != "---"' \
-    "${missing_namespace_raw}" > "${missing_namespace}"
+    "${missing_namespace_raw}" >"${missing_namespace}"
   if [[ -s "${missing_namespace}" ]]; then
     echo "::error::Rendered ${kind} resources are missing metadata.namespace; Alert coverage cannot be proven."
     while read -r resource; do
       [[ -n "${resource}" ]] && echo "  ${resource}"
-    done < "${missing_namespace}"
+    done <"${missing_namespace}"
     exit 1
   fi
 
@@ -104,9 +104,9 @@ for kind in HelmRelease Kustomization; do
     select(.kind == \"${kind}\" and (.apiVersion | test(\"^${group}/\")))
     | .metadata.namespace
     | select(. != null and . != \"\")
-  " "${rendered}" > "${declared_raw}"
-  awk 'NF && $0 != "---"' "${declared_raw}" \
-    | LC_ALL=C sort -u > "${declared}"
+  " "${rendered}" >"${declared_raw}"
+  awk 'NF && $0 != "---"' "${declared_raw}" |
+    LC_ALL=C sort -u >"${declared}"
 
   if [[ ! -s "${declared}" ]]; then
     echo "::error::Rendered no ${kind}s at all — the overlays failed to build, so coverage cannot be proven. Failing closed."
@@ -115,8 +115,8 @@ for kind in HelmRelease Kustomization; do
 
   # yq treats `== "*"` as a wildcard comparison, so anchor a regex to require
   # the literal whole-resource wildcard instead of accepting any named source.
-  yq e ".spec.eventSources[] | select(.kind == \"${kind}\" and (.name | test(\"^\\\\*$\"))) | .namespace | select(. != null and . != \"\")" "${ALERT_FILE}" \
-    | LC_ALL=C sort -u > "${watched}"
+  yq e ".spec.eventSources[] | select(.kind == \"${kind}\" and (.name | test(\"^\\\\*$\"))) | .namespace | select(. != null and . != \"\")" "${ALERT_FILE}" |
+    LC_ALL=C sort -u >"${watched}"
 
   uncovered="$(comm -23 "${declared}" "${watched}")"
   if [[ -n "${uncovered}" ]]; then
@@ -125,7 +125,7 @@ for kind in HelmRelease Kustomization; do
     echo "Add a ${kind} eventSource for each namespace below to ${ALERT_FILE}:"
     while read -r ns; do
       [[ -n "${ns}" ]] && printf '    - kind: %s\n      name: "*"\n      namespace: %s\n' "${kind}" "${ns}"
-    done <<< "${uncovered}"
+    done <<<"${uncovered}"
     exit 1
   fi
 
@@ -136,5 +136,5 @@ for kind in HelmRelease Kustomization; do
     echo "::warning::The Alert watches namespaces that hold no ${kind} (dead entries): $(echo "${stale}" | tr '\n' ' ')"
   fi
 
-  echo "✅ Alert covers all $(wc -l < "${declared}" | tr -d ' ') namespaces holding a ${kind}."
+  echo "✅ Alert covers all $(wc -l <"${declared}" | tr -d ' ') namespaces holding a ${kind}."
 done

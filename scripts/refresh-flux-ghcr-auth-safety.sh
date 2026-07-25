@@ -50,13 +50,13 @@ select_talos_node_targets() {
         ]
       | @tsv
     end
-  ' "${nodes_file}" > "${unsorted_targets}"; then
+  ' "${nodes_file}" >"${unsorted_targets}"; then
     rm -f "${unsorted_targets}"
     return 1
   fi
 
   if ! LC_ALL=C sort -k1,1 -k2,2 \
-    "${unsorted_targets}" > "${targets_file}"; then
+    "${unsorted_targets}" >"${targets_file}"; then
     rm -f "${unsorted_targets}"
     return 1
   fi
@@ -78,7 +78,7 @@ node_scheduling_state_is_safe_to_reboot() {
 
   jq -e \
     --arg owner_annotation \
-      "platform.devantler.tech/ghcr-auth-drain-owner" \
+    "platform.devantler.tech/ghcr-auth-drain-owner" \
     --arg owner "${owner_token}" \
     --arg uid "${initial_node_uid}" \
     --argjson was_cordoned "${was_cordoned}" \
@@ -112,7 +112,7 @@ node_scheduling_state_is_safe_while_lifecycle_taints_clear() {
 
   jq -e \
     --arg owner_annotation \
-      "platform.devantler.tech/ghcr-auth-drain-owner" \
+    "platform.devantler.tech/ghcr-auth-drain-owner" \
     --arg owner "${owner_token}" \
     --arg uid "${initial_node_uid}" \
     --argjson was_cordoned "${was_cordoned}" \
@@ -266,7 +266,7 @@ other_control_planes_safe_to_reboot() {
     --context "${kube_context}" \
     get nodes \
     --output json \
-    > "${live_nodes_file}" 2>/dev/null; then
+    >"${live_nodes_file}" 2>/dev/null; then
     echo "Could not re-read control-plane health before rebooting ${rebooting}."
     return 1
   fi
@@ -305,7 +305,7 @@ other_control_planes_safe_to_reboot() {
       else
         $peers[] | [.name, .internal_ips[0]] | @tsv
       end
-  ' "${live_nodes_file}" > "${peer_file}" 2>/dev/null; then
+  ' "${live_nodes_file}" >"${peer_file}" 2>/dev/null; then
     echo "Could not prove that every other control plane is Ready with a unique InternalIP before rebooting ${rebooting}."
     return 1
   fi
@@ -318,7 +318,7 @@ other_control_planes_safe_to_reboot() {
     if ! talosctl \
       --nodes "${peer_ip}" \
       etcd status \
-      > "${status_file}" 2>&1; then
+      >"${status_file}" 2>&1; then
       echo "Could not read etcd status from control-plane peer ${peer_name}."
       return 1
     fi
@@ -365,7 +365,7 @@ other_control_planes_safe_to_reboot() {
     if ! talosctl \
       --nodes "${peer_ip}" \
       etcd alarm list \
-      > "${alarms_file}" 2>&1; then
+      >"${alarms_file}" 2>&1; then
       echo "Could not read etcd alarms from control-plane peer ${peer_name}."
       return 1
     fi
@@ -384,5 +384,5 @@ other_control_planes_safe_to_reboot() {
       echo "Control-plane peer ${peer_name} has an etcd alarm or returned an unrecognized alarm response."
       return 1
     fi
-  done < "${peer_file}"
+  done <"${peer_file}"
 }
