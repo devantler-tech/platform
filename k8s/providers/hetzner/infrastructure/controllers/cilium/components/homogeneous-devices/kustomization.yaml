@@ -63,9 +63,13 @@
 # exists, so the per-node verification below would be unexecutable and a bad
 # primary-address selection could reach the fleet before detection. OnDelete
 # makes the roll operator-stepped: the new config only reaches a node when
-# that node's cilium pod is deleted. The override lives HERE so it applies
-# exactly while the widened device set is being introduced, and its removal
-# (after the fleet is verified) is a strategy-only change that rolls nothing.
+# that node's cilium pod is deleted. The temporary Helm `disableWait` handoff
+# lets the HelmRelease and its parent Flux Kustomization report Ready after the
+# template is staged, so unrelated downstream infrastructure and app delivery
+# remains correctly gated on full Flux convergence instead of being blocked for
+# the duration of the operator rollout. Both overrides live HERE so they apply
+# exactly while the widened device set is being introduced, and their removal
+# after the fleet is verified rolls nothing.
 #
 # GATE LIMITS (what OnDelete does NOT stop): a pod that restarts for any
 # OTHER reason during the window (crash, eviction, node reboot) is recreated
@@ -101,9 +105,10 @@
 #      auth-timeout storms in Hubble/agent logs (a `dial <public-ip>:4250`
 #      RATE INCREASE beyond the known #46767 background is a regression).
 #   3. Repeat node by node across all nine; soak.
-#   4. After the soak, a follow-up PR removes the `updateStrategy` override
-#      from this component — restoring RollingUpdate is a strategy-only
-#      change (the pod template is already current), so it rolls nothing.
+#   4. After the soak, a follow-up PR removes the `updateStrategy` and
+#      `spec.upgrade.disableWait` overrides from this component — restoring
+#      normal rollout waiting and RollingUpdate changes no current pod template,
+#      so it rolls nothing.
 #   5. The reviewed follow-up that removes the temporary OnDelete override
 #      releases the deploy gate only AFTER its safe artifact reconciles. KSail
 #      cluster update then runs again and the post-deploy guard restores the
@@ -149,3 +154,10 @@ patches:
         value:
           rollingUpdate: null
           type: OnDelete
+      # Helm must report the staged template as delivered without waiting for
+      # intentionally un-stepped DaemonSet pods. Flux dependency readiness then
+      # remains meaningful for every downstream layer throughout the rollout.
+      - op: add
+        path: /spec/upgrade
+        value:
+          disableWait: true

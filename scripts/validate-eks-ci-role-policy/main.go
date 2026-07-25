@@ -59,16 +59,18 @@ const (
 // Measured against main b9f39bc before approving this value: both renders
 // contain 159 surface entries and exactly one entry moves, the kube-system
 // Cilium HelmRelease. Its canonical fingerprint changes from 4bfb70e9 to
-// ab1742b4 because values.devices and updateStrategy stage the intended Cilium
-// rollout. No pinned authorization resource or substitution source moves, so
-// the change adds, removes and repoints no grant-bearing object.
+// ac149f7e because values.devices, updateStrategy and the temporary Helm
+// disableWait handoff stage the intended operator-stepped Cilium rollout
+// without blocking Flux dependencies. No pinned authorization resource or
+// substitution source moves, so the change adds, removes and repoints no
+// grant-bearing object.
 //
 // NOTE for whoever re-approves this next: an opaque ciphertext in the surface
 // moves on ANY re-encryption — this value also absorbed a SOPS version bump
 // (3.13.2 -> 3.13.3) — so a routine secret rotation reds this gate with no
 // authorization change at all. Do NOT treat a moved hash as self-evidently
 // benign: re-run the per-entry membership measurement above before re-approving.
-const expectedRenderedSurfaceSHA = "29770d84bbb2370bd33227ad299bbfa5816eec16a5b67014ba1a9000dbde5af2"
+const expectedRenderedSurfaceSHA = "d758b371a854fae0353ad24973f388bbdbc3a31ee22653163fa85146bfb022b4"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

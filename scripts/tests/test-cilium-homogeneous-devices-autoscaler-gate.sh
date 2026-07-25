@@ -56,12 +56,15 @@ cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/cilium/componen
   "${fixture_component}/kustomization.yaml"
 
 fake_kubectl="${tmp_dir}/kubectl"
+fake_curl="${tmp_dir}/curl"
 state_dir="${tmp_dir}/state"
 mkdir -p "${state_dir}"
 printf '1\n' >"${state_dir}/replicas"
 printf '1\n' >"${state_dir}/status-replicas"
 : >"${state_dir}/previous-replicas"
 : >"${state_dir}/commands"
+: >"${state_dir}/provider-commands"
+printf '123\n' >"${state_dir}/provider-id"
 : >"${state_dir}/github-output"
 
 cat >"${fake_kubectl}" <<'FAKE_KUBECTL'
@@ -71,6 +74,9 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${KUBECTL_STATE}/commands"
 
 case "$*" in
+  *"get nodes"*"-o json"*)
+    printf '%s\n' '{"items":[{"metadata":{"name":"autoscale-test"},"spec":{"providerID":"hcloud://123"}}]}'
+    ;;
   *"get deployment"*"cilium-device-rollout-previous-replicas"*)
     cat "${KUBECTL_STATE}/previous-replicas"
     ;;
@@ -102,11 +108,23 @@ esac
 FAKE_KUBECTL
 chmod +x "${fake_kubectl}"
 
+cat >"${fake_curl}" <<'FAKE_CURL'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'called\n' >>"${KUBECTL_STATE}/provider-commands"
+provider_id="$(<"${KUBECTL_STATE}/provider-id")"
+printf '{"servers":[{"id":%s}]}\n' "${provider_id}"
+FAKE_CURL
+chmod +x "${fake_curl}"
+
 run_guard() {
   PLATFORM_ROOT="${fixture_root}" \
     KUBECTL="${fake_kubectl}" \
+    CURL="${fake_curl}" \
     KUBECTL_STATE="${state_dir}" \
     GITHUB_OUTPUT="${state_dir}/github-output" \
+    HCLOUD_TOKEN='test-token' \
+    PROVIDER_STABILITY_SECONDS=0 \
     "${guard_script}" "$1"
 }
 
@@ -117,6 +135,12 @@ run_guard --before-publish
   fail 'an active OnDelete rollout must suspend the autoscaler before publish'
 [[ "$(<"${state_dir}/previous-replicas")" == '1' ]] ||
   fail 'the rollout guard must remember the autoscaler replica count it owns'
+
+printf '456\n' >"${state_dir}/provider-id"
+if run_guard --before-publish; then
+  fail 'a provider-side server without a matching Kubernetes node must fail closed'
+fi
+printf '123\n' >"${state_dir}/provider-id"
 
 run_guard --after-deploy
 [[ "$(<"${state_dir}/replicas")" == '0' ]] ||
@@ -147,5 +171,7 @@ if grep -Ev '(^|[[:space:]])--context admin@prod([[:space:]]|$)' "${state_dir}/c
 fi
 grep -Fq '.status.replicas' "${state_dir}/commands" ||
   fail 'the rollout guard must observe actual autoscaler replicas before publishing'
+[[ -s "${state_dir}/provider-commands" ]] ||
+  fail 'the rollout guard must fence Hetzner provider additions before publishing'
 
 printf 'PASS: Cilium activation suspends autoscaling before publish and restores only after the gate is removed\n'

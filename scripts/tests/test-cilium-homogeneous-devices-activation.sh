@@ -79,6 +79,19 @@ extract_top_level_encryption() {
   '
 }
 
+extract_upgrade() {
+  awk '
+    /^  upgrade:[[:space:]]*$/ {
+      found = 1
+      print
+      next
+    }
+    found && /^  [^[:space:]]/ { exit }
+    found { print }
+    END { exit !found }
+  '
+}
+
 require_text() {
   local haystack="$1"
   local needle="$2"
@@ -183,6 +196,8 @@ production_update_strategy="$(extract_top_level_update_strategy <<<"${production
   fail 'the production Cilium HelmRelease has no top-level update strategy'
 production_encryption="$(extract_top_level_encryption <<<"${production_release}")" ||
   fail 'the production Cilium HelmRelease has no top-level encryption settings'
+production_upgrade="$(extract_upgrade <<<"${production_release}")" ||
+  fail 'the production Cilium HelmRelease has no temporary upgrade handoff'
 
 require_pattern \
   "${production_release}" \
@@ -200,6 +215,10 @@ require_text \
   "${production_update_strategy}" \
   'type: OnDelete' \
   'the activation must clear rollingUpdate while staging an operator-stepped OnDelete rollout'
+require_pattern \
+  "${production_upgrade}" \
+  '^[[:space:]]*disableWait:[[:space:]]*true[[:space:]]*$' \
+  'the operator-stepped rollout must not block Flux dependency convergence'
 require_pattern \
   "${production_encryption}" \
   '^[[:space:]]*enabled:[[:space:]]*true[[:space:]]*$' \

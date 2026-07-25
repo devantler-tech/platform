@@ -132,6 +132,8 @@ jobs:
         id: cilium_rollout_gate
         # A rebuilt cluster must preserve the same staged OnDelete safety
         # boundary as a normal deployment before publishing the mutable tag.
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
 
       - name: 🔑 Stage Flux and consumer GHCR pull credential
@@ -194,20 +196,7 @@ jobs:
         id: wait_flux_revision
         env:
           PLATFORM_MANIFEST_DIGEST: ${{ steps.platform_manifest.outputs.digest }}
-          ROLLOUT_GATE_ACTIVE: ${{ steps.cilium_rollout_gate.outputs.active }}
-        run: |
-          set -euo pipefail
-          wait_args=()
-          if [[ "${ROLLOUT_GATE_ACTIVE}" == 'true' ]]; then
-            wait_args+=(--revision-only)
-          fi
-          ./scripts/wait-for-platform-flux-revision.sh "${wait_args[@]}" "${PLATFORM_MANIFEST_DIGEST}"
-
-      - name: 🛑 Stop for the operator-stepped Cilium rollout
-        if: steps.cilium_rollout_gate.outputs.active == 'true' && steps.wait_flux_revision.outcome == 'success'
-        run: |
-          echo "::error::The exact staged Cilium revision is applied, but OnDelete deliberately prevents automatic convergence. Cluster Autoscaler remains suspended. Complete the node-by-node verification in the homogeneous-devices activation runbook before continuing the manual DR procedure in docs/dr/runbook.md."
-          exit 1
+        run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
 
       - name: ⏳ Wait for Flux to settle
         id: wait_flux

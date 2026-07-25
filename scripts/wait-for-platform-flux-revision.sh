@@ -3,15 +3,9 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s [--revision-only] sha256:<64-lowercase-hex-digits>\n' "${0##*/}" >&2
+  printf 'Usage: %s sha256:<64-lowercase-hex-digits>\n' "${0##*/}" >&2
   exit 2
 }
-
-revision_only=false
-if [[ "${1:-}" == '--revision-only' ]]; then
-  revision_only=true
-  shift
-fi
 
 [[ "$#" -eq 1 ]] || usage
 readonly digest="$1"
@@ -29,14 +23,9 @@ kubectl_prod() {
 kubectl_prod -n flux-system wait "kustomization/${kustomization}" \
   --for="jsonpath={.status.lastAppliedRevision}=${revision}" \
   --timeout="${wait_timeout}"
+kubectl_prod -n flux-system wait "kustomization/${kustomization}" \
+  --for=condition=Ready \
+  --timeout="${wait_timeout}"
 
-if [[ "${revision_only}" == true ]]; then
-  printf 'Flux observed the newly published %s revision: %s\n' \
-    "${kustomization}" "${revision}"
-else
-  kubectl_prod -n flux-system wait "kustomization/${kustomization}" \
-    --for=condition=Ready \
-    --timeout="${wait_timeout}"
-  printf 'Flux applied the newly published %s revision and reports Ready: %s\n' \
-    "${kustomization}" "${revision}"
-fi
+printf 'Flux applied the newly published %s revision and reports Ready: %s\n' \
+  "${kustomization}" "${revision}"
