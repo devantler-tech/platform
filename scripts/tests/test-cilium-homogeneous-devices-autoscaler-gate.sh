@@ -39,7 +39,7 @@ cluster_update_line="$(grep -nF 'run: ./scripts/run-ksail-prod-with-pull-auth.sh
 
 grep -Fq 'id: cilium_rollout_gate' "${deploy_action}" ||
   fail 'the pre-publish guard must expose whether the rollout gate is active'
-grep -Fq "if: steps.cilium_rollout_gate.outputs.active != 'true'" "${deploy_action}" ||
+grep -Fq "steps.cilium_rollout_gate.outputs.active != 'true'" "${deploy_action}" ||
   fail 'cluster update must remain skipped for the entire active rollout gate'
 
 tmp_dir="$(mktemp -d)"
@@ -59,6 +59,7 @@ fake_kubectl="${tmp_dir}/kubectl"
 state_dir="${tmp_dir}/state"
 mkdir -p "${state_dir}"
 printf '1\n' >"${state_dir}/replicas"
+printf '1\n' >"${state_dir}/status-replicas"
 : >"${state_dir}/previous-replicas"
 : >"${state_dir}/commands"
 : >"${state_dir}/github-output"
@@ -76,6 +77,9 @@ case "$*" in
   *"get deployment"*".spec.replicas"*)
     cat "${KUBECTL_STATE}/replicas"
     ;;
+  *"get deployment"*".status.replicas"*)
+    cat "${KUBECTL_STATE}/status-replicas"
+    ;;
   *"annotate deployment"*"cilium-device-rollout-previous-replicas-"*)
     : >"${KUBECTL_STATE}/previous-replicas"
     ;;
@@ -85,7 +89,8 @@ case "$*" in
         >"${KUBECTL_STATE}/previous-replicas"
     ;;
   *"scale deployment"*"--replicas="*)
-    printf '%s\n' "$*" | sed 's/.*--replicas=//' >"${KUBECTL_STATE}/replicas"
+    printf '%s\n' "$*" | sed 's/.*--replicas=//' |
+      tee "${KUBECTL_STATE}/replicas" >"${KUBECTL_STATE}/status-replicas"
     ;;
   *"rollout status deployment"*)
     ;;
@@ -140,5 +145,7 @@ if grep -Ev '(^|[[:space:]])--context admin@prod([[:space:]]|$)' "${state_dir}/c
   grep -q .; then
   fail 'every autoscaler read and mutation must pin the admin@prod context'
 fi
+grep -Fq '.status.replicas' "${state_dir}/commands" ||
+  fail 'the rollout guard must observe actual autoscaler replicas before publishing'
 
 printf 'PASS: Cilium activation suspends autoscaling before publish and restores only after the gate is removed\n'

@@ -23,6 +23,8 @@ readonly namespace='kube-system'
 readonly deployment='cluster-autoscaler-hetzner-cluster-autoscaler'
 readonly previous_replicas_annotation='platform.devantler.tech/cilium-device-rollout-previous-replicas'
 readonly previous_replicas_jsonpath='{.metadata.annotations.platform\.devantler\.tech/cilium-device-rollout-previous-replicas}'
+readonly rollout_wait_seconds="${ROLLOUT_WAIT_SECONDS:-120}"
+readonly rollout_poll_seconds="${ROLLOUT_POLL_SECONDS:-2}"
 
 fail() {
   printf 'ERROR: %s\n' "$1" >&2
@@ -33,6 +35,10 @@ fail() {
   fail "missing controllers kustomization: ${controllers_kustomization}"
 [[ -f "${component_kustomization}" ]] ||
   fail "missing homogeneous-device component: ${component_kustomization}"
+[[ "${rollout_wait_seconds}" =~ ^[0-9]+$ ]] ||
+  fail "ROLLOUT_WAIT_SECONDS is not a non-negative integer: ${rollout_wait_seconds}"
+[[ "${rollout_poll_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+  fail "ROLLOUT_POLL_SECONDS is not a non-negative number: ${rollout_poll_seconds}"
 
 kubectl_prod() {
   "${kubectl_bin}" --context admin@prod "$@"
@@ -61,6 +67,15 @@ get_current_replicas() {
     -o 'jsonpath={.spec.replicas}'
 }
 
+get_status_replicas() {
+  local replicas
+  replicas="$(
+    kubectl_prod -n "${namespace}" get deployment "${deployment}" \
+      -o 'jsonpath={.status.replicas}'
+  )"
+  printf '%s\n' "${replicas:-0}"
+}
+
 require_replica_count() {
   local value="$1"
   local description="$2"
@@ -72,10 +87,19 @@ wait_for_replicas() {
   local expected="$1"
   kubectl_prod -n "${namespace}" rollout status \
     "deployment/${deployment}" --timeout=2m
-  local actual
-  actual="$(get_current_replicas)"
-  [[ "${actual}" == "${expected}" ]] ||
-    fail "${deployment} requested replicas are ${actual:-<empty>}, expected ${expected}"
+
+  local requested actual deadline
+  deadline=$((SECONDS + rollout_wait_seconds))
+  while true; do
+    requested="$(get_current_replicas)"
+    actual="$(get_status_replicas)"
+    if [[ "${requested}" == "${expected}" && "${actual}" == "${expected}" ]]; then
+      return
+    fi
+    ((SECONDS < deadline)) ||
+      fail "${deployment} replicas did not converge: requested=${requested:-<empty>} actual=${actual:-<empty>} expected=${expected}"
+    sleep "${rollout_poll_seconds}"
+  done
 }
 
 suspend_autoscaler() {

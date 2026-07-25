@@ -162,6 +162,14 @@ Flux reconciliation.
 > secrets, because `ksail cluster create` writes fresh configs on the runner.
 > The manual procedure below is the fallback when GitHub Actions itself is
 > unavailable.
+>
+> If the temporary homogeneous-device `OnDelete` rollout gate is active, the
+> workflow stops after proving that Flux observed the exact published revision.
+> This is intentional: readiness cannot complete until the Cilium pods are
+> stepped and verified one node at a time using the activation runbook in
+> `k8s/providers/hetzner/infrastructure/controllers/cilium/components/homogeneous-devices/kustomization.yaml`.
+> Cluster Autoscaler remains suspended. Complete that verification, then
+> continue the manual procedure below rather than bypassing the gate.
 
 ```bash
 # 1. Set credentials locally
