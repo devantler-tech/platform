@@ -130,7 +130,7 @@ OIDC access is **read-only**. Two ClusterRoleBindings in
 user whose email matches the Dex `email` claim (`oidc:${admin_email}`) to:
 
 | Binding | Role | Grants |
-|---|---|---|
+| --- | --- | --- |
 | `oidc-view` | built-in `view` | read all **namespaced** resources (pods, deployments, configmaps, pod logs, events, …) — **excluding Secrets** |
 | `oidc-cluster-reader` | `cluster-reader` | read what `view` omits — mostly **cluster-scoped** infra (nodes, PVs, storage classes, CRDs, API services, priority/runtime/ingress classes, CSRs) plus RBAC objects and node/pod metrics |
 
@@ -183,14 +183,14 @@ kubeconfig can be minted from the Talos control plane with
 
 `kubelogin` uses the `kubectl` static client defined in the Dex
 HelmRelease. This is a **public client** (no secret required) that uses
-Dex's [cross-client trust](https://dexidp.io/docs/custom-scopes-claims-clients/#cross-client-trust-and-authorized-party)
+Dex's [cross-client trust](https://dexidp.io/docs/configuration/custom-scopes-claims-clients/#cross-client-trust-and-authorized-party)
 (`trustedPeers`) so the issued token has `aud: public-client`, matching the
 kube-apiserver's `--oidc-client-id` flag.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
-|---|---|---|
+| --- | --- | --- |
 | `error: You must be logged in to the server (Unauthorized)` | Token expired or wrong audience | Run `kubectl oidc-login setup --oidc-issuer-url=... --oidc-client-id=kubectl` to verify the flow |
 | Browser doesn't open | kubelogin not installed or not in `$PATH` | Verify `kubectl oidc-login --help` works |
 | `x509: certificate signed by unknown authority` (local) | mkcert CA not trusted | Pass `--certificate-authority-data` or install the mkcert root CA in your system trust store |

@@ -176,7 +176,7 @@ runs:
         COSIGN_VERSION: "3.1.1"
       uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       with:
-        cosign-release: 'v${{ env.COSIGN_VERSION }}'
+        cosign-release: "v${{ env.COSIGN_VERSION }}"
 
     - name: 🔐 Configure GHCR auth (cosign + buildx + syft)
       # Pre-create ~/.docker/config.json instead of `cosign login` /
@@ -264,7 +264,7 @@ runs:
         image: ghcr.io/devantler-tech/platform/manifests@${{ steps.cosign-sign.outputs.digest }}
         format: cyclonedx-json
         output-file: sbom.cdx.json
-        syft-version: 'v${{ env.SYFT_VERSION }}'
+        syft-version: "v${{ env.SYFT_VERSION }}"
         upload-artifact: false
 
     - name: 🪪 Attest SBOM (Sigstore via cosign keyless)

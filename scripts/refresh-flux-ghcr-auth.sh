@@ -57,8 +57,8 @@ readonly -a FANOUT_NAMESPACES=(
   "kyverno"
 )
 
-if ! [[ "${SYNC_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] \
-  || ! [[ "${SYNC_INTERVAL}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+if ! [[ "${SYNC_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] ||
+  ! [[ "${SYNC_INTERVAL}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   echo "::error::FLUX_GHCR_SYNC_ATTEMPTS and FLUX_GHCR_SYNC_INTERVAL must be non-negative numbers, with at least one attempt."
   exit 64
 fi
@@ -101,7 +101,7 @@ force_sync_resource() {
     --namespace "${namespace}" \
     get "${kind}" "${name}" \
     -o json \
-    > "${before_file}"
+    >"${before_file}"
   before_refresh="$(jq -r '.status.refreshTime // ""' "${before_file}")"
   stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}"
 
@@ -112,7 +112,7 @@ force_sync_resource() {
     "force-sync=${stamp}" \
     --overwrite \
     -o json \
-    > "${annotated_file}"
+    >"${annotated_file}"
   annotated_resource_version="$(jq -er '.metadata.resourceVersion' \
     "${annotated_file}")"
 
@@ -122,7 +122,7 @@ force_sync_resource() {
       --namespace "${namespace}" \
       get "${kind}" "${name}" \
       -o json \
-      > "${current_file}"
+      >"${current_file}"
     if jq -e \
       --arg before "${before_refresh}" \
       --arg annotated_resource_version "${annotated_resource_version}" '
@@ -154,12 +154,12 @@ verify_consumer_secret() {
     --namespace "${namespace}" \
     get secret ghcr-auth \
     -o json \
-    > "${secret_file}"
+    >"${secret_file}"
   if ! jq -er '.data[".dockerconfigjson"] | @base64d' \
     "${secret_file}" \
-    > "${decoded_file}" 2>/dev/null \
-    || ! jq -S -c . "${decoded_file}" > "${normalized_file}" 2>/dev/null \
-    || ! cmp -s "${expected_normalized}" "${normalized_file}"; then
+    >"${decoded_file}" 2>/dev/null ||
+    ! jq -S -c . "${decoded_file}" >"${normalized_file}" 2>/dev/null ||
+    ! cmp -s "${expected_normalized}" "${normalized_file}"; then
     echo "::error::ExternalSecret ${namespace}/ghcr-auth did not materialise the Git/SOPS GHCR credential."
     return 1
   fi
@@ -191,7 +191,7 @@ sync_talos_registry_auth() {
     --context "${KUBE_CONTEXT}" \
     get nodes \
     -o json \
-    > "${talos_nodes_file}"; then
+    >"${talos_nodes_file}"; then
     echo "::error::Could not list Talos nodes; refusing to mutate any Kubernetes credential consumers."
     return 1
   fi
@@ -240,9 +240,9 @@ sync_talos_registry_auth() {
           | select(.type == "InternalIP") | .address][0])
       ]
     | @tsv
-  ' "${talos_nodes_file}" \
-    | LC_ALL=C sort -k1,1 -k2,2 \
-    > "${talos_node_targets}"; then
+  ' "${talos_nodes_file}" |
+    LC_ALL=C sort -k1,1 -k2,2 \
+      >"${talos_node_targets}"; then
     echo "::error::Could not select Talos nodes requiring the GHCR auth revision."
     return 1
   fi
@@ -253,7 +253,7 @@ sync_talos_registry_auth() {
     return 0
   fi
 
-  : > "${talos_result_file}"
+  : >"${talos_result_file}"
   chmod 600 "${talos_result_file}"
   while IFS=$'\t' read -r _node_role node_name node_ip; do
     if ! talosctl \
@@ -296,7 +296,7 @@ sync_talos_registry_auth() {
       echo "::error::Talos node ${node_name} proved GHCR access but could not record the synchronized credential revision."
       return 1
     fi
-  done < "${talos_node_targets}"
+  done <"${talos_node_targets}"
 }
 
 # KSail embeds SOPS, so the deploy uses the same pinned toolchain as workload
@@ -304,14 +304,14 @@ sync_talos_registry_auth() {
 # stdout or place its plaintext/base64 representation in an argument.
 decrypt_flux_ghcr_docker_config "${docker_config}" "${SECRET_FILE}"
 write_flux_ghcr_credentials "${docker_config}" "${credentials_file}"
-jq -S -c . "${docker_config}" > "${expected_normalized}"
+jq -S -c . "${docker_config}" >"${expected_normalized}"
 
 # Build curl's Basic-auth config without putting the credential in argv or
 # stdout. Support both Docker config representations used in this repository:
 # explicit username/password and base64(username:password) in auth.
 jq -r '
   "user = " + ((.username + ":" + .password) | @json)
-' "${credentials_file}" > "${basic_curl_config}"
+' "${credentials_file}" >"${basic_curl_config}"
 chmod 600 "${basic_curl_config}"
 
 # The same pull credential fans out to Flux OCI sources and private tenant
@@ -348,7 +348,7 @@ for target in "${REQUIRED_PULL_TARGETS[@]}"; do
   jq -r '
     (.token // .access_token) as $token
     | "header = " + (("Authorization: Bearer " + $token) | @json)
-  ' "${token_response}" > "${bearer_curl_config}"
+  ' "${token_response}" >"${bearer_curl_config}"
   chmod 600 "${bearer_curl_config}"
 
   if ! http_status="$(curl --disable \
@@ -385,7 +385,7 @@ jq '
     username: .username,
     password: .password
   }
-' "${credentials_file}" > "${talos_auth_patch_file}"
+' "${credentials_file}" >"${talos_auth_patch_file}"
 pull_revision="$(flux_ghcr_revision "${SECRET_FILE}")"
 readonly pull_revision
 jq -n \
@@ -399,16 +399,16 @@ jq -n \
       }
     }
   }
-' > "${talos_revision_patch_file}"
+' >"${talos_revision_patch_file}"
 chmod 600 "${talos_auth_patch_file}" "${talos_revision_patch_file}"
 sync_talos_registry_auth "${pull_revision}" "${KSAIL_OPERATOR_IMAGE}"
 
 # Merge only Secret data fields so ownership metadata survives. The sensitive
 # payload stays in pipes/temp files and never appears in argv or logs.
-base64 < "${docker_config}" \
-  | tr -d '\r\n' \
-  | jq -Rs '{data: {".dockerconfigjson": .}}' \
-  > "${patch_file}"
+base64 <"${docker_config}" |
+  tr -d '\r\n' |
+  jq -Rs '{data: {".dockerconfigjson": .}}' \
+    >"${patch_file}"
 
 # Patch only the root Flux Secret payload, preserving KSail ownership metadata.
 patch_root_secret() {
@@ -457,7 +457,7 @@ fi
 # even though root Flux auth stayed unchanged.
 jq '{data: {ghcr_dockerconfigjson: .data[".dockerconfigjson"]}}' \
   "${patch_file}" \
-  > "${variables_patch_file}"
+  >"${variables_patch_file}"
 
 # A partially-bootstrapped DR cluster can already have variables-base while ESO
 # CRDs or individual fan-out objects do not exist yet. That state still needs
@@ -469,14 +469,14 @@ if ! kubectl \
   api-resources \
   --api-group=external-secrets.io \
   -o name \
-  > "${fanout_api_resources}"; then
+  >"${fanout_api_resources}"; then
   echo "::error::Could not inspect the External Secrets API; refusing to change root Flux auth."
   exit 1
 fi
 
 fanout_complete=true
-if ! grep -qx 'pushsecrets.external-secrets.io' "${fanout_api_resources}" \
-  || ! grep -qx 'externalsecrets.external-secrets.io' "${fanout_api_resources}"; then
+if ! grep -qx 'pushsecrets.external-secrets.io' "${fanout_api_resources}" ||
+  ! grep -qx 'externalsecrets.external-secrets.io' "${fanout_api_resources}"; then
   fanout_complete=false
 else
   if ! pushsecret_name="$(kubectl \
