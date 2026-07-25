@@ -7,6 +7,7 @@ readonly root_dir
 readonly wait_script="${root_dir}/scripts/wait-for-platform-flux-revision.sh"
 readonly deploy_action="${root_dir}/.github/actions/deploy-prod/action.yml"
 readonly dr_workflow="${root_dir}/.github/workflows/dr-rebuild.yaml"
+readonly dr_runbook="${root_dir}/docs/dr/runbook.md"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -70,6 +71,25 @@ grep -Fq 'PLATFORM_MANIFEST_DIGEST: ${{ steps.platform_manifest.outputs.digest }
 if grep -Fq -- '--revision-only' "${dr_workflow}"; then
   fail 'DR must require exact-revision readiness while Cilium pods remain operator-stepped'
 fi
+
+manual_push_line="$(line_of "${dr_runbook}" './scripts/run-ksail-prod-with-pull-auth.sh workload push')"
+# shellcheck disable=SC2016
+manual_digest_line="$(line_of "${dr_runbook}" 'PLATFORM_MANIFEST_DIGEST="$(docker buildx imagetools inspect')" ||
+  fail 'manual DR must resolve the newly published platform digest'
+manual_reconcile_line="$(line_of "${dr_runbook}" './scripts/run-ksail-prod-with-pull-auth.sh workload reconcile')"
+# shellcheck disable=SC2016
+manual_wait_line="$(line_of "${dr_runbook}" './scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"')" ||
+  fail 'manual DR must wait for the exact published platform revision'
+manual_guard_after_line="$(line_of "${dr_runbook}" './scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy')"
+readonly manual_push_line manual_digest_line manual_reconcile_line manual_wait_line manual_guard_after_line
+
+((manual_push_line < manual_digest_line && manual_digest_line < manual_reconcile_line)) ||
+  fail 'manual DR must resolve the newly published manifest digest before reconciliation'
+((manual_reconcile_line < manual_wait_line && manual_wait_line < manual_guard_after_line)) ||
+  fail 'manual DR must prove the exact published revision is Ready before releasing autoscaling'
+# shellcheck disable=SC2016
+grep -Fq '[[ "${PLATFORM_MANIFEST_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]' "${dr_runbook}" ||
+  fail 'manual DR must validate the resolved platform digest before using it'
 
 tmp_dir="$(mktemp -d)"
 readonly tmp_dir

@@ -183,8 +183,18 @@ Flux reconciliation.
 > ./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
 > ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
 > ./scripts/run-ksail-prod-with-pull-auth.sh workload push
+> export DOCKER_CONFIG="$(mktemp -d)"
+> trap 'rm -rf "${DOCKER_CONFIG}"' EXIT
+> printf '%s' "${GHCR_TOKEN}" |
+>   docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+> PLATFORM_MANIFEST_DIGEST="$(docker buildx imagetools inspect 'ghcr.io/devantler-tech/platform/manifests:latest' --format '{{.Manifest.Digest}}')"
+> [[ "${PLATFORM_MANIFEST_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+>   printf 'Invalid platform manifest digest: %s\n' "${PLATFORM_MANIFEST_DIGEST:-<empty>}" >&2
+>   exit 1
+> }
 > ./scripts/refresh-flux-ghcr-auth.sh --check-only
 > ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
+> ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
 >
 > # 5. Wait for Flux to settle
 > for k in bootstrap infrastructure-controllers infrastructure apps; do
