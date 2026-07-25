@@ -153,7 +153,7 @@
       "priority/high"
     ],
     "minimumReleaseAge": "0 days",
-    "automerge": true
+    "automerge": false
   },
   "packageRules": [
     {
@@ -188,7 +188,7 @@
       "groupName": "ksail"
     },
     {
-      "description": "Security-critical controllers — labelled so security-driven bumps are visible in the PR feed. Automerge stays ON: CI (system-test on a real Talos+Docker cluster, kubescape NSA scan, gitleaks, zizmor, CodeQL) is the trust gate.",
+      "description": "Security-critical controllers — labelled and kept out of automerge so privileged control-plane updates receive human review before production deployment.",
       "matchManagers": [
         "helmv3",
         "flux",
@@ -214,30 +214,30 @@
         "/^velero$/",
         "/^reloader$/"
       ],
-      "automerge": true,
+      "automerge": false,
       "labels": [
         "security/review-required"
       ]
     },
     {
-      "description": "Talos / KSail config changes — labelled for visibility. Automerge stays ON: CI's system-test boots a real Talos+Docker cluster from the patched config, so a broken machine-config patch fails bring-up before merge.",
+      "description": "Talos / KSail config changes — labelled and kept out of automerge because these updates affect cluster bootstrapping and production deployment behavior.",
       "matchFileNames": [
         "talos/**",
         "talos-local/**",
         "ksail.prod.yaml",
         "ksail.yaml"
       ],
-      "automerge": true,
+      "automerge": false,
       "labels": [
         "security/review-required"
       ]
     },
     {
-      "description": "Major versions — automerged. CI (full system-test, kubescape NSA scan, manifest validation) is the trust gate.",
+      "description": "Major versions — kept out of automerge so breaking dependency updates receive human review before production deployment.",
       "matchUpdateTypes": [
         "major"
       ],
-      "automerge": true
+      "automerge": false
     },
     {
       "description": "Internal devantler-tech dependencies are trusted (our own code) — bump immediately with no release-age cooldown (e.g. the KSAIL_VERSION custom-manager dep devantler-tech/ksail).",
