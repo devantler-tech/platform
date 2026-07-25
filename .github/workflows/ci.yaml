@@ -68,6 +68,10 @@ jobs:
               # cd.yaml carries the manual-deploy gate itself. Without it here, a PR
               # that deletes that gate does not run the job whose test guards it.
               - '.github/workflows/cd.yaml'
+              # Same reasoning for validate-main.yaml, which carries the
+              # push-to-main gate: TestAuthorizationGateRunsOnPushToMain guards it,
+              # and that test only runs when this filter matches.
+              - '.github/workflows/validate-main.yaml'
             bridge_validation:
               - 'scripts/refresh-flux-ghcr-auth.sh'
               - 'scripts/ghcr-auth-lib.sh'
