@@ -192,7 +192,9 @@ jobs:
 
       - name: ⏳ Wait for the newly published Flux revision
         id: wait_flux_revision
-        run: ./scripts/wait-for-platform-flux-revision.sh "${{ steps.platform_manifest.outputs.digest }}"
+        env:
+          PLATFORM_MANIFEST_DIGEST: ${{ steps.platform_manifest.outputs.digest }}
+        run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
 
       - name: ⏳ Wait for Flux to settle
         id: wait_flux

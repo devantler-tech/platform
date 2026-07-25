@@ -23,15 +23,18 @@ line_of() {
   fail 'the exact Flux revision wait must be an executable script'
 
 deploy_reconcile_line="$(line_of "${deploy_action}" 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile')"
-# GitHub evaluates this expression; the shell test intentionally matches it literally.
-# shellcheck disable=SC2016
-deploy_wait_line="$(line_of "${deploy_action}" 'run: ./scripts/wait-for-platform-flux-revision.sh "${{ steps.cosign-sign.outputs.digest }}"')"
+deploy_wait_line="$(line_of "${deploy_action}" "run: ./scripts/wait-for-platform-flux-revision.sh \"\${PLATFORM_MANIFEST_DIGEST}\"")" ||
+  fail 'normal deploy must pass the published digest to the Flux wait through the environment'
 deploy_cluster_update_line="$(line_of "${deploy_action}" 'run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update')"
 readonly deploy_reconcile_line deploy_wait_line deploy_cluster_update_line
 ((deploy_reconcile_line < deploy_wait_line && deploy_wait_line < deploy_cluster_update_line)) ||
   fail 'normal deploys must observe the exact applied Flux revision before cluster update'
 grep -Fq "steps.wait_flux_revision.outcome == 'success'" "${deploy_action}" ||
   fail 'cluster update and autoscaler release must require the exact Flux revision wait'
+# GitHub evaluates this expression; the shell test intentionally matches it literally.
+# shellcheck disable=SC2016
+grep -Fq 'PLATFORM_MANIFEST_DIGEST: ${{ steps.cosign-sign.outputs.digest }}' "${deploy_action}" ||
+  fail 'normal deploy must map the published digest into the Flux wait environment'
 
 dr_guard_lines="$(
   grep -nF './scripts/guard-cilium-homogeneous-device-rollout.sh' "${dr_workflow}" |
@@ -47,9 +50,8 @@ dr_guard_after_line="$(printf '%s\n' "${dr_guard_lines}" | sed -n '2p')"
 dr_push_line="$(line_of "${dr_workflow}" 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push')"
 dr_digest_line="$(line_of "${dr_workflow}" 'id: platform_manifest')"
 dr_reconcile_line="$(line_of "${dr_workflow}" 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile')"
-# GitHub evaluates this expression; the shell test intentionally matches it literally.
-# shellcheck disable=SC2016
-dr_wait_line="$(line_of "${dr_workflow}" 'run: ./scripts/wait-for-platform-flux-revision.sh "${{ steps.platform_manifest.outputs.digest }}"')"
+dr_wait_line="$(line_of "${dr_workflow}" "run: ./scripts/wait-for-platform-flux-revision.sh \"\${PLATFORM_MANIFEST_DIGEST}\"")" ||
+  fail 'DR must pass the published digest to the Flux wait through the environment'
 readonly dr_guard_before_line dr_guard_after_line dr_push_line dr_digest_line dr_reconcile_line dr_wait_line
 ((dr_guard_before_line < dr_push_line)) ||
   fail 'DR must suspend autoscaling before publishing the active rollout gate'
@@ -57,6 +59,10 @@ readonly dr_guard_before_line dr_guard_after_line dr_push_line dr_digest_line dr
   fail 'DR must resolve the newly published manifest digest before reconciliation'
 ((dr_reconcile_line < dr_wait_line && dr_wait_line < dr_guard_after_line)) ||
   fail 'DR must observe the exact applied Flux revision before releasing or reasserting the gate'
+# GitHub evaluates this expression; the shell test intentionally matches it literally.
+# shellcheck disable=SC2016
+grep -Fq 'PLATFORM_MANIFEST_DIGEST: ${{ steps.platform_manifest.outputs.digest }}' "${dr_workflow}" ||
+  fail 'DR must map the published digest into the Flux wait environment'
 
 tmp_dir="$(mktemp -d)"
 readonly tmp_dir

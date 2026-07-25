@@ -353,7 +353,9 @@ runs:
       # reports Ready.
       if: steps.cilium_rollout_gate.outputs.active != 'true'
       shell: bash
-      run: ./scripts/wait-for-platform-flux-revision.sh "${{ steps.cosign-sign.outputs.digest }}"
+      env:
+        PLATFORM_MANIFEST_DIGEST: ${{ steps.cosign-sign.outputs.digest }}
+      run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
 
     - name: 🔄 Update cluster (Talos machine config)
       id: cluster_update
