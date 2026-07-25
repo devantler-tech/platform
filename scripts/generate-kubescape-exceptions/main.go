@@ -454,8 +454,9 @@ func decodeDocuments(path string) ([]any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	// Read-only handle: a failed Close cannot lose data, and the caller already
-	// has the decode result. Discard explicitly so errcheck sees the intent.
+	// The file is only ever read, so a close error says nothing about whether
+	// the documents below were decoded correctly — discard it explicitly rather
+	// than leaving it unchecked.
 	defer func() { _ = file.Close() }()
 
 	var documents []any
