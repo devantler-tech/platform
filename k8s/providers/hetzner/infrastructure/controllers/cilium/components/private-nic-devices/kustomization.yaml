@@ -1,0 +1,66 @@
+# ALWAYS-ON component: pin the Cilium eBPF datapath to the PRIVATE-network
+# NICs. This is the live production device selection — it must stay referenced
+# in ../../../kustomization.yaml until homogeneous-devices/ (its staged
+# successor, see below) has been activated and soaked.
+#
+# WHY A COMPONENT AND NOT A PATCH: the staged homogeneous-devices/ component
+# must be able to OVERRIDE this value when referenced. Kustomize applies the
+# parent kustomization's `patches:` AFTER all component patches (verified by
+# render on #2610's delivery PR: a component could not override a `devices`
+# value carried by patches/enforce-wireguard-strict-mode.yaml), while
+# components themselves apply in list order — later wins. Keeping both device
+# selections as components, with the staged one listed after this one, is what
+# makes the flip possible as a one-line reference change. The devices key
+# previously lived in the strict-mode patch; it moved here UNCHANGED, so the
+# rendered HelmRelease is identical and moving it rolled no agents.
+#
+# WHY THE PIN (condensed from the original 2026-06-19 rationale, which lives
+# in git history of patches/enforce-wireguard-strict-mode.yaml): Hetzner nodes
+# are dual-homed. With devices unset, Cilium attaches to BOTH NICs and can
+# take the default-route (public) NIC's IP as the node's PRIMARY address; the
+# SPIRE mutual-auth control connection (agent->agent TCP 4250) then dials peer
+# PUBLIC IPs, which the Talos ingress firewall only admits from the private
+# node CIDR — dropped handshakes black-hole every auth-gated cross-node pod
+# flow (observed live 2026-06-19). Pinning the private NICs keeps each node's
+# primary address private (10.0.1.x), so 4250/4240/8472 ride the admitted
+# path. (A residual upstream defect remains regardless: cilium/cilium#46767 —
+# the auth dial picks a RANDOM advertised node IP, so intermittent public-IP
+# dials persist even with this pin. Tracked separately.)
+#
+# NIC-NAME INVENTORY (live-verified 2026-07-18, `talosctl get addresses`, all
+# NINE nodes — this UPDATES the stale 2026-06-19 "workers enp7s0 /
+# control-planes eth1" premise; the split is static-vs-autoscale now that the
+# control planes were rebuilt onto enp-named machines):
+#   static  (prod-control-plane-2/4/5, prod-worker-1/2/3):
+#     public enp1s0 (default route) / private enp7s0 (10.0.1.x)
+#   autoscale (autoscale-cx33-*/cx43-*): public eth0 / private eth1
+# So this two-name list covers every node's private NIC only by UNION — each
+# node matches exactly ONE of the two names, and the agent logs confirm e.g.
+# devices=[enp7s0] on all three control planes.
+#
+# WARNING (unchanged): hard-codes the private-NIC names. An autoscaler worker
+# on a server type whose private NIC is named differently (e.g. ens*) would
+# lose Cilium networking until its name is added here — keep in sync with the
+# node pool's machine type. The homogeneous-devices/ successor retires this
+# hazard via wildcard patterns.
+#
+# PROD/HETZNER ONLY: the docker/local provider is single-NIC, so device
+# autodetection is correct there.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: cilium
+      namespace: kube-system
+    patch: |
+      apiVersion: helm.toolkit.fluxcd.io/v2
+      kind: HelmRelease
+      metadata:
+        name: cilium
+        namespace: kube-system
+      spec:
+        values:
+          devices: "enp7s0 eth1"

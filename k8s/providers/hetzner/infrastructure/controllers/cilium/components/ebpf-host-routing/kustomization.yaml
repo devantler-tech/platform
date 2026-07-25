@@ -28,18 +28,18 @@
 #     exactly what the activation soak must observe (Hubble drops,
 #     cilium status --verbose) before any production enable.
 #   - Private-NIC device pinning: NOT touched here — and it is a HARD
-#     ACTIVATION BLOCKER, not just a naming concern. The hetzner strict-mode
-#     patch pins `devices: "enp7s0 eth1"` (private NICs, required so SPIRE
-#     mutual-auth dials private primary addresses), while the default route —
-#     and therefore pod->internet egress — leaves via the PUBLIC NICs
-#     (workers enp1s0 / control planes eth0). BPF masquerading only processes
-#     interfaces carrying Cilium's eBPF programs, so with today's device list
-#     the public egress NICs would get NO masquerade program while iptables
-#     masquerade is disabled: pod traffic would leave with an unroutable
-#     pod-CIDR source and external egress would break cluster-wide. #2610
-#     must FIRST extend device selection so the masquerade program attaches
-#     to the public default-route NICs while preserving the private-NIC
-#     primary-address behaviour; only then may this component be referenced.
+#     ACTIVATION BLOCKER, not just a naming concern. The always-on
+#     ../private-nic-devices/ component pins the private NICs (required so
+#     the node's primary address stays private for the mutual-auth path),
+#     while the default route — and therefore pod->internet egress — leaves
+#     via the PUBLIC NICs (static nodes enp1s0 / autoscale nodes eth0). BPF
+#     masquerading only processes interfaces carrying Cilium's eBPF
+#     programs, so under the private-only pin the public egress NICs would
+#     get NO masquerade program while iptables masquerade is disabled: pod
+#     traffic would leave with an unroutable pod-CIDR source and external
+#     egress would break cluster-wide. #2610's ../homogeneous-devices/
+#     component (wildcard selection covering both NICs) must be ACTIVATED
+#     and soaked FIRST; only then may this component be referenced.
 #
 # SAFETY: this component is staged, not activation-ready. Keep it
 # unreferenced until its own low-traffic activation + soak; it changes the

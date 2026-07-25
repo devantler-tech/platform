@@ -76,10 +76,10 @@ readonly -a FANOUT_NAMESPACES=(
   "kyverno"
 )
 
-if ! [[ "${SYNC_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] \
-  || ! [[ "${TALOS_CONVERGENCE_ATTEMPTS}" =~ ^[3-9]$|^[1-9][0-9]+$ ]] \
-  || ! [[ "${SYNC_INTERVAL}" =~ ^[0-9]+([.][0-9]+)?$ ]] \
-  || ! [[ "${DRAIN_TIMEOUT}" =~ ^[1-9][0-9]*(s|m|h)$ ]]; then
+if ! [[ "${SYNC_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] ||
+  ! [[ "${TALOS_CONVERGENCE_ATTEMPTS}" =~ ^[3-9]$|^[1-9][0-9]+$ ]] ||
+  ! [[ "${SYNC_INTERVAL}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+  ! [[ "${DRAIN_TIMEOUT}" =~ ^[1-9][0-9]*(s|m|h)$ ]]; then
   echo "::error::FLUX_GHCR_SYNC_ATTEMPTS must be positive, FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS must be at least 3, FLUX_GHCR_SYNC_INTERVAL must be non-negative, and FLUX_GHCR_DRAIN_TIMEOUT must be a positive whole number of seconds, minutes, or hours."
   exit 64
 fi
@@ -114,9 +114,9 @@ cleanup_refresh_work() {
     cleanup_status=1
     echo "::error::Bootstrap quarantine cleanup was incomplete; durable recovery annotations remain on the affected nodes."
   fi
-  if declare -F release_sync_lease >/dev/null \
-    && [[ "${sync_lease_acquired:-false}" == "true" ]] \
-    && ! release_sync_lease; then
+  if declare -F release_sync_lease >/dev/null &&
+    [[ "${sync_lease_acquired:-false}" == "true" ]] &&
+    ! release_sync_lease; then
     cleanup_status=1
     echo "::error::Could not safely release the GHCR synchronization lease."
   fi
@@ -201,7 +201,7 @@ force_sync_resource() {
     --namespace "${namespace}" \
     get "${kind}" "${name}" \
     -o json \
-    > "${before_file}"
+    >"${before_file}"
   before_refresh="$(jq -r '.status.refreshTime // ""' "${before_file}")"
   stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}"
 
@@ -212,7 +212,7 @@ force_sync_resource() {
     "force-sync=${stamp}" \
     --overwrite \
     -o json \
-    > "${annotated_file}"
+    >"${annotated_file}"
   annotated_resource_version="$(jq -er '.metadata.resourceVersion' \
     "${annotated_file}")"
 
@@ -222,7 +222,7 @@ force_sync_resource() {
       --namespace "${namespace}" \
       get "${kind}" "${name}" \
       -o json \
-      > "${current_file}"
+      >"${current_file}"
     if jq -e \
       --arg before "${before_refresh}" \
       --arg annotated_resource_version "${annotated_resource_version}" '
@@ -254,12 +254,12 @@ verify_consumer_secret() {
     --namespace "${namespace}" \
     get secret ghcr-auth \
     -o json \
-    > "${secret_file}"
+    >"${secret_file}"
   if ! jq -er '.data[".dockerconfigjson"] | @base64d' \
     "${secret_file}" \
-    > "${decoded_file}" 2>/dev/null \
-    || ! jq -S -c . "${decoded_file}" > "${normalized_file}" 2>/dev/null \
-    || ! cmp -s "${expected_normalized}" "${normalized_file}"; then
+    >"${decoded_file}" 2>/dev/null ||
+    ! jq -S -c . "${decoded_file}" >"${normalized_file}" 2>/dev/null ||
+    ! cmp -s "${expected_normalized}" "${normalized_file}"; then
     echo "::error::ExternalSecret ${namespace}/ghcr-auth did not materialise the Git/SOPS GHCR credential."
     return 1
   fi
@@ -271,10 +271,10 @@ emit_safe_operation_output() {
   local label="$1" result_file="$2"
   [[ -s "${result_file}" ]] || return 0
 
-  LC_ALL=C tr -cd '\11\12\40-\176' < "${result_file}" \
-    | tail -n 50 \
-    | sed -e "s/^/${label}: /" >&2 \
-    || true
+  LC_ALL=C tr -cd '\11\12\40-\176' <"${result_file}" |
+    tail -n 50 |
+    sed -e "s/^/${label}: /" >&2 ||
+    true
 }
 
 # Prove a Docker credential with real manifest reads for every package this
@@ -318,7 +318,7 @@ verify_ghcr_pull_credential() {
     jq -r '
       (.token // .access_token) as $token
       | "header = " + (("Authorization: Bearer " + $token) | @json)
-    ' "${token_file}" > "${bearer_config}"
+    ' "${token_file}" >"${bearer_config}"
     chmod 600 "${bearer_config}"
 
     if ! http_status="$(curl --disable \
@@ -352,14 +352,14 @@ verify_current_root_credential_overlap() {
     --namespace flux-system \
     get secret ksail-registry-credentials \
     -o json \
-    > "${current_root_secret_file}"; then
+    >"${current_root_secret_file}"; then
     echo "::error::Could not read the current root GHCR credential; refusing to drain onto peers whose runtime credential cannot be proved."
     return 1
   fi
   if ! jq -er '.data[".dockerconfigjson"] | @base64d' \
     "${current_root_secret_file}" \
-    > "${current_root_docker_config}" 2>/dev/null \
-    || ! jq -e . "${current_root_docker_config}" >/dev/null 2>&1; then
+    >"${current_root_docker_config}" 2>/dev/null ||
+    ! jq -e . "${current_root_docker_config}" >/dev/null 2>&1; then
     echo "::error::The current root GHCR credential is malformed; refusing to drain onto unproved peers."
     return 1
   fi
@@ -372,7 +372,7 @@ verify_current_root_credential_overlap() {
   jq -r '
     "user = " + ((.username + ":" + .password) | @json)
   ' "${current_root_credentials_file}" \
-    > "${current_root_basic_curl_config}"
+    >"${current_root_basic_curl_config}"
   chmod 600 \
     "${current_root_docker_config}" \
     "${current_root_credentials_file}" \
@@ -394,7 +394,7 @@ delete_runtime_pull_probe() {
     delete pod "${probe_name}" \
     --ignore-not-found \
     --wait=false \
-    > "${runtime_probe_result_file}" 2>&1; then
+    >"${runtime_probe_result_file}" 2>&1; then
     echo "::error::Could not remove runtime pull probe ${probe_name}; root Flux auth remains unchanged."
     emit_safe_operation_output "runtime-probe-delete" \
       "${runtime_probe_result_file}"
@@ -465,7 +465,7 @@ probe_node_runtime_pull() {
         }]
       }
     }
-  ' > "${runtime_probe_manifest_file}"
+  ' >"${runtime_probe_manifest_file}"
 
   active_runtime_probe="${probe_name}"
   for ((create_attempt = 1; create_attempt <= RUNTIME_PROBE_CREATE_ATTEMPTS; create_attempt++)); do
@@ -475,7 +475,7 @@ probe_node_runtime_pull() {
       --namespace ksail-operator \
       create --filename "${runtime_probe_manifest_file}" \
       -o name \
-      > "${runtime_probe_result_file}" 2>&1; then
+      >"${runtime_probe_result_file}" 2>&1; then
       probe_created=1
       break
     fi
@@ -512,7 +512,7 @@ probe_node_runtime_pull() {
       --namespace ksail-operator \
       get pod "${probe_name}" \
       -o json \
-      > "${runtime_probe_state_file}" 2> "${runtime_probe_result_file}"; then
+      >"${runtime_probe_state_file}" 2>"${runtime_probe_result_file}"; then
       echo "::error::Could not read the kubelet/containerd GHCR pull probe on ${node_name}; refusing to drain onto an unproved runtime."
       emit_safe_operation_output "runtime-probe-read" \
         "${runtime_probe_result_file}"
@@ -543,7 +543,7 @@ probe_node_runtime_pull() {
     ' \
       "${runtime_probe_state_file}")"
     case "${waiting_reason}" in
-      ErrImagePull|ImagePullBackOff)
+      ErrImagePull | ImagePullBackOff)
         auth_rejected="$(jq -r '
           first(.status.containerStatuses[]?
             | select(.name == "pull-probe")
@@ -583,7 +583,7 @@ verify_peer_runtime_pull_overlap() {
     --context "${KUBE_CONTEXT}" \
     get nodes \
     -o json \
-    > "${runtime_probe_nodes_file}"; then
+    >"${runtime_probe_nodes_file}"; then
     echo "::error::Could not list eviction destinations for runtime GHCR proof; refusing to drain ${draining_node}."
     return 1
   fi
@@ -603,7 +603,7 @@ verify_peer_runtime_pull_overlap() {
         .type == "Ready" and .status == "True"))
     | [.metadata.name, .metadata.uid]
     | @tsv
-  ' "${runtime_probe_nodes_file}" > "${runtime_probe_targets_file}"; then
+  ' "${runtime_probe_nodes_file}" >"${runtime_probe_targets_file}"; then
     echo "::error::Could not select eviction destinations for runtime GHCR proof; refusing to drain ${draining_node}."
     return 1
   fi
@@ -624,8 +624,8 @@ verify_peer_runtime_pull_overlap() {
     for probe_image in "${RUNTIME_CREDENTIAL_PROBE_IMAGES[@]}"; do
       probe_node_runtime_pull "${peer_name}" "${probe_image}" || return 1
     done
-    printf '%s\n' "${peer_uid}" >> "${runtime_proved_targets_file}"
-  done < "${runtime_probe_targets_file}"
+    printf '%s\n' "${peer_uid}" >>"${runtime_proved_targets_file}"
+  done <"${runtime_probe_targets_file}"
 }
 
 verify_bootstrap_quarantine_covers_unproved_destinations() {
@@ -642,7 +642,7 @@ verify_bootstrap_quarantine_covers_unproved_destinations() {
         .type == "Ready" and .status == "True"))
     | [.metadata.name, .metadata.uid]
     | @tsv
-  ' "${runtime_probe_nodes_file}" > "${runtime_probe_targets_file}"; then
+  ' "${runtime_probe_nodes_file}" >"${runtime_probe_targets_file}"; then
     echo "::error::Could not enumerate workload destinations for bootstrap quarantine; refusing the roll."
     return 1
   fi
@@ -662,7 +662,7 @@ verify_bootstrap_quarantine_covers_unproved_destinations() {
       echo "::error::Runtime-unproved workload destination ${peer_name} is not a pending credential-reboot target; refusing bootstrap quarantine."
       return 1
     fi
-  done < "${runtime_probe_targets_file}"
+  done <"${runtime_probe_targets_file}"
 }
 
 # Atomically claim the right to reverse the cordon and make the node
@@ -701,7 +701,7 @@ claim_node_cordon_ownership() {
       + [
         {op: "add", path: "/spec/unschedulable", value: true}
       ]
-    ' > "${cordon_claim_patch_file}"
+    ' >"${cordon_claim_patch_file}"
   else
     jq -n \
       --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
@@ -727,7 +727,7 @@ claim_node_cordon_ownership() {
         },
         {op: "add", path: "/spec/unschedulable", value: true}
       ]
-    ' > "${cordon_claim_patch_file}"
+    ' >"${cordon_claim_patch_file}"
   fi
 
   if ! kubectl \
@@ -760,7 +760,7 @@ restore_node_schedulability_if_needed() {
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
     --output json \
-    > "${cordon_state_file}" 2> "${result_file}"; then
+    >"${cordon_state_file}" 2>"${result_file}"; then
     echo "::error::Could not re-read Talos node ${node_name}; refusing to uncordon it."
     emit_safe_operation_output "uncordon-read" "${result_file}"
     return 1
@@ -784,8 +784,8 @@ restore_node_schedulability_if_needed() {
     echo "::error::Recovery journal changed for Talos node ${node_name}; refusing to release its cordon ownership."
     return 1
   fi
-  if [[ -n "${current_recovery}" ]] \
-    && ! jq -ne \
+  if [[ -n "${current_recovery}" ]] &&
+    ! jq -ne \
       --arg recovery "${current_recovery}" \
       --arg owner "${owner_token}" \
       --arg uid "${initial_node_uid}" '
@@ -830,7 +830,7 @@ restore_node_schedulability_if_needed() {
         ]
       end)
     + [{op: "remove", path: $path}]
-  ' > "${cordon_release_patch_file}"
+  ' >"${cordon_release_patch_file}"
 
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
@@ -860,7 +860,7 @@ update_bootstrap_recovery_phase() {
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
     --output json \
-    > "${cordon_state_file}" 2> "${result_file}"; then
+    >"${cordon_state_file}" 2>"${result_file}"; then
     echo "::error::Could not re-read bootstrap recovery journal for ${node_name}; refusing to cross the reboot/release edge."
     emit_safe_operation_output "recovery-read" "${result_file}"
     return 1
@@ -930,7 +930,7 @@ update_bootstrap_recovery_phase() {
       },
       {op: "replace", path: $recovery_path, value: $updated_recovery}
     ]
-  ' > "${cordon_recovery_patch_file}"
+  ' >"${cordon_recovery_patch_file}"
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     patch node "${node_name}" \
@@ -956,8 +956,8 @@ cleanup_bootstrap_quarantine() {
   [[ -d "${bootstrap_cordon_dir:-}" ]] || return 0
   for state_file in "${bootstrap_cordon_dir}"/*.json; do
     [[ -e "${state_file}" ]] || continue
-    if ! node_name="$(jq -er '.nodeName' "${state_file}")" \
-      || ! was_cordoned="$(jq -er '.wasCordoned' "${state_file}")"; then
+    if ! node_name="$(jq -er '.nodeName' "${state_file}")" ||
+      ! was_cordoned="$(jq -er '.wasCordoned' "${state_file}")"; then
       echo "::error::Could not read bootstrap recovery state from ${state_file}; the durable node journal was left intact."
       cleanup_failed=1
       continue
@@ -965,10 +965,10 @@ cleanup_bootstrap_quarantine() {
     if [[ -e "${bootstrap_retain_dir}/${node_name}" ]]; then
       continue
     fi
-    if ! owner_token="$(jq -er '.ownerToken' "${state_file}")" \
-      || ! initial_uid="$(jq -er '.initialUID' "${state_file}")" \
-      || ! initial_taints="$(jq -c '.initialTaints' "${state_file}")" \
-      || ! expected_recovery="$(jq -er '.recoveryRecord' "${state_file}")"; then
+    if ! owner_token="$(jq -er '.ownerToken' "${state_file}")" ||
+      ! initial_uid="$(jq -er '.initialUID' "${state_file}")" ||
+      ! initial_taints="$(jq -c '.initialTaints' "${state_file}")" ||
+      ! expected_recovery="$(jq -er '.recoveryRecord' "${state_file}")"; then
       echo "::error::Bootstrap recovery state for ${node_name} was malformed; the durable node journal was left intact."
       cleanup_failed=1
       continue
@@ -977,7 +977,7 @@ cleanup_bootstrap_quarantine() {
       --context "${KUBE_CONTEXT}" \
       get node "${node_name}" \
       --output json \
-      > "${cordon_state_file}" 2>/dev/null; then
+      >"${cordon_state_file}" 2>/dev/null; then
       echo "::error::Could not re-read bootstrap-owned node ${node_name} during rollback; its durable recovery journal was left intact."
       cleanup_failed=1
       continue
@@ -1005,13 +1005,13 @@ cleanup_bootstrap_quarantine() {
     expected_phase="$(jq -nr \
       --arg recovery "${expected_recovery}" \
       '$recovery | fromjson? | .phase // ""')"
-    if [[ "${current_recovery}" == "${expected_recovery}" \
-      && "${expected_phase}" == "active" ]]; then
+    if [[ "${current_recovery}" == "${expected_recovery}" &&
+      "${expected_phase}" == "active" ]]; then
       desired_revision="$(jq -nr \
         --arg recovery "${expected_recovery}" \
         '$recovery | fromjson? | .desiredRevision // ""')"
-      if [[ ! "${desired_revision}" =~ ^[0-9a-f]{64}$ ]] \
-        || ! update_bootstrap_recovery_phase \
+      if [[ ! "${desired_revision}" =~ ^[0-9a-f]{64}$ ]] ||
+        ! update_bootstrap_recovery_phase \
           "${node_name}" "${owner_token}" "${initial_uid}" \
           "${desired_revision}" "active" "rollback-safe" \
           "${drain_result_file}"; then
@@ -1046,7 +1046,7 @@ reconcile_bootstrap_recovery_journals() {
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     get nodes \
-    -o json > "${recovery_nodes_file}"; then
+    -o json >"${recovery_nodes_file}"; then
     echo "::error::Could not inspect durable GHCR bootstrap recovery journals; refusing a new rollout."
     return 1
   fi
@@ -1058,7 +1058,7 @@ reconcile_bootstrap_recovery_journals() {
     --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" '
     .items[]
     | select((.metadata.annotations[$recovery_annotation] // "") != "")
-  ' "${recovery_nodes_file}" > "${recovery_targets_file}"; then
+  ' "${recovery_nodes_file}" >"${recovery_targets_file}"; then
     echo "::error::Could not select durable GHCR bootstrap recovery journals."
     return 1
   fi
@@ -1111,14 +1111,14 @@ reconcile_bootstrap_recovery_journals() {
         or .[0].phase == "retain"
       )
     | .[0].owner
-  ' "${recovery_nodes_file}" > "${recovery_blocked_owners_file}"; then
+  ' "${recovery_nodes_file}" >"${recovery_blocked_owners_file}"; then
     echo "::error::Could not group durable GHCR bootstrap recovery journals by owner."
     return 1
   fi
 
   while IFS= read -r node_json; do
     [[ -n "${node_json}" ]] || continue
-    printf '%s\n' "${node_json}" > "${recovery_node_file}"
+    printf '%s\n' "${node_json}" >"${recovery_node_file}"
     node_name="$(jq -r '.metadata.name // ""' "${recovery_node_file}")"
     recovery_record="$(jq -r \
       --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
@@ -1154,7 +1154,7 @@ reconcile_bootstrap_recovery_journals() {
       reconcile_failed=1
       continue
     fi
-    printf '%s\n' "${recovery_record}" > "${recovery_record_file}"
+    printf '%s\n' "${recovery_record}" >"${recovery_record_file}"
     owner_token="$(jq -er '.owner' "${recovery_record_file}")"
     initial_uid="$(jq -er '.uid' "${recovery_record_file}")"
     initial_taints="$(jq -c '.initialTaints' "${recovery_record_file}")"
@@ -1201,7 +1201,7 @@ reconcile_bootstrap_recovery_journals() {
       echo "::error::Could not reconcile durable GHCR bootstrap recovery journal on ${node_name}; leaving it cordoned."
       reconcile_failed=1
     fi
-  done < "${recovery_targets_file}"
+  done <"${recovery_targets_file}"
 
   return "${reconcile_failed}"
 }
@@ -1215,7 +1215,7 @@ node_has_no_evictable_workloads() {
     get pods \
     --all-namespaces \
     --field-selector "spec.nodeName=${node_name}" \
-    -o json > "${pods_file}"; then
+    -o json >"${pods_file}"; then
     echo "::error::Could not inspect workloads on bootstrap candidate ${node_name}; refusing to infer that it is empty."
     return 2
   fi
@@ -1252,7 +1252,7 @@ wait_for_bootstrap_seed_release() {
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       get node "${node_name}" \
-      --output json > "${cordon_state_file}"; then
+      --output json >"${cordon_state_file}"; then
       echo "::error::Could not re-read proven bootstrap seed ${node_name} while waiting for scheduling release."
       return 1
     fi
@@ -1306,7 +1306,7 @@ prepare_runtime_bootstrap_roll() {
   local workload_rc
 
   bootstrap_seed_uid=""
-  : > "${bootstrap_ordered_targets}"
+  : >"${bootstrap_ordered_targets}"
   assert_sync_lease_held || return 1
 
   while IFS=$'\t' read -r \
@@ -1315,7 +1315,7 @@ prepare_runtime_bootstrap_roll() {
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       get node "${node_name}" \
-      --output json > "${cordon_state_file}"; then
+      --output json >"${cordon_state_file}"; then
       echo "::error::Could not inspect bootstrap candidate ${node_name}; refusing the all-stale rollout."
       return 1
     fi
@@ -1337,7 +1337,7 @@ prepare_runtime_bootstrap_roll() {
       workload_rc=$?
       ((workload_rc == 1)) || return "${workload_rc}"
     fi
-  done < "${pending_targets_file}"
+  done <"${pending_targets_file}"
 
   if [[ -z "${bootstrap_seed_uid}" ]]; then
     echo "::error::All eligible runtimes use the stale GHCR credential and no empty workload-schedulable node is available to seed the refresh; refusing to drain any workload."
@@ -1352,7 +1352,7 @@ prepare_runtime_bootstrap_roll() {
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       get node "${node_name}" \
-      --output json > "${cordon_state_file}"; then
+      --output json >"${cordon_state_file}"; then
       echo "::error::Could not capture scheduling state for stale node ${node_name}; refusing the bootstrap roll."
       return 1
     fi
@@ -1442,24 +1442,24 @@ prepare_runtime_bootstrap_roll() {
         wasCordoned: $was_cordoned,
         initialTaints: $initial_taints
       }
-    ' > "${state_file}"; then
+    ' >"${state_file}"; then
       echo "::error::Could not persist bootstrap ownership state for stale node ${node_name}."
       return 1
     fi
     assert_sync_lease_held || return 1
     if ! claim_node_cordon_ownership \
-        "${node_name}" "${owner_token}" \
-        "${cordon_state_file}" "${drain_result_file}" \
-        "${recovery_record}"; then
+      "${node_name}" "${owner_token}" \
+      "${cordon_state_file}" "${drain_result_file}" \
+      "${recovery_record}"; then
       return 1
     fi
     assert_sync_lease_held || return 1
-  done < "${pending_targets_file}"
+  done <"${pending_targets_file}"
 
-  printf '%s\n' "${seed_line}" > "${bootstrap_ordered_targets}"
+  printf '%s\n' "${seed_line}" >"${bootstrap_ordered_targets}"
   awk -F '\t' -v seed_uid="${bootstrap_seed_uid}" \
     '$5 != seed_uid' "${pending_targets_file}" \
-    >> "${bootstrap_ordered_targets}"
+    >>"${bootstrap_ordered_targets}"
 }
 
 # Close every post-cordon scheduling race. A drain, reboot, readiness wait, or
@@ -1476,7 +1476,7 @@ revalidate_node_scheduling_guard() {
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
     --output json \
-    > "${cordon_state_file}" 2> "${result_file}"; then
+    >"${cordon_state_file}" 2>"${result_file}"; then
     echo "::error::Could not re-read Talos node ${node_name} immediately before ${operation}; refusing the mutation."
     emit_safe_operation_output "scheduling-guard" "${result_file}"
     return 1
@@ -1486,13 +1486,13 @@ revalidate_node_scheduling_guard() {
     "${node_name}" \
     "${initial_node_uid}" \
     "${selected_node_ip}" \
-    "${selected_node_role}" \
-    || ! node_scheduling_state_is_safe_to_reboot \
-    "${cordon_state_file}" \
-    "${was_cordoned}" \
-    "${owner_token}" \
-    "${initial_node_uid}" \
-    "${initial_node_taints}"; then
+    "${selected_node_role}" ||
+    ! node_scheduling_state_is_safe_to_reboot \
+      "${cordon_state_file}" \
+      "${was_cordoned}" \
+      "${owner_token}" \
+      "${initial_node_uid}" \
+      "${initial_node_taints}"; then
     echo "::error::Talos node ${node_name} identity changed, cordon ownership changed, or scheduling safety state changed before ${operation}; refusing the mutation."
     return 1
   fi
@@ -1509,7 +1509,7 @@ wait_for_node_lifecycle_taints_to_clear() {
       --context "${KUBE_CONTEXT}" \
       get node "${node_name}" \
       --output json \
-      > "${cordon_state_file}" 2> "${result_file}"; then
+      >"${cordon_state_file}" 2>"${result_file}"; then
       echo "::error::Could not re-read Talos node ${node_name} while waiting for its post-reboot lifecycle taints to clear; refusing image verification."
       emit_safe_operation_output "lifecycle-taint-read" "${result_file}"
       return 1
@@ -1519,8 +1519,8 @@ wait_for_node_lifecycle_taints_to_clear() {
       "${node_name}" \
       "${initial_node_uid}" \
       "${selected_node_ip}" \
-      "${selected_node_role}" \
-      || ! node_scheduling_state_is_safe_while_lifecycle_taints_clear \
+      "${selected_node_role}" ||
+      ! node_scheduling_state_is_safe_while_lifecycle_taints_clear \
         "${cordon_state_file}" \
         "${was_cordoned}" \
         "${owner_token}" \
@@ -1529,8 +1529,8 @@ wait_for_node_lifecycle_taints_to_clear() {
       echo "::error::Talos node ${node_name} identity changed, cordon ownership changed, or non-lifecycle scheduling safety state changed while waiting for its post-reboot lifecycle taints to clear; refusing image verification."
       return 1
     fi
-    if ! node_has_lifecycle_taints "${cordon_state_file}" \
-      && jq -e '
+    if ! node_has_lifecycle_taints "${cordon_state_file}" &&
+      jq -e '
         any(.status.conditions[]?;
           .type == "Ready" and .status == "True")
       ' "${cordon_state_file}" >/dev/null; then
@@ -1564,7 +1564,7 @@ revalidate_selected_node_identity_before_mutation() {
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
     --output json \
-    > "${cordon_state_file}" 2> "${talos_result_file}"; then
+    >"${cordon_state_file}" 2>"${talos_result_file}"; then
     echo "::error::Could not re-read Talos node ${node_name} before mutation; refusing to target a stale address."
     emit_safe_operation_output "node-identity" "${talos_result_file}"
     return 1
@@ -1647,32 +1647,32 @@ process_talos_node_target() {
     # Kubernetes-Ready while its etcd member is unhealthy. Re-read the peer
     # inventory, then prove every other peer is Ready, answers `etcd status`,
     # and has no etcd alarm immediately before each control-plane reboot.
-    if [[ "${node_role}" == "1" ]] \
-      && ! other_control_planes_safe_to_reboot \
+    if [[ "${node_role}" == "1" ]] &&
+      ! other_control_planes_safe_to_reboot \
         "${node_name}" "${KUBE_CONTEXT}" "${work_dir}"; then
       echo "::error::Refusing to reboot control plane ${node_name} for the GHCR auth refresh: another control plane is not Ready with healthy, alarm-free etcd, so rebooting this one risks quorum."
       return 1
     fi
   fi
 
-    # Remember scheduling intent before any cordon. Both reboot and image-only
-    # verification exclude new placements while the exact target is removed;
-    # only the reboot path drains existing workloads.
-    if ! kubectl \
-      --context "${KUBE_CONTEXT}" \
-      get node "${node_name}" \
-      --output json \
-      > "${cordon_state_file}"; then
-      echo "::error::Refusing to synchronize ${node_name}: its scheduling state could not be read."
-      return 1
-    fi
-    if ! selected_node_identity_is_current \
-      "${cordon_state_file}" \
-      "${node_name}" \
-      "${node_uid}" \
-      "${node_ip}" \
-      "${node_role}" \
-      || ! jq -e \
+  # Remember scheduling intent before any cordon. Both reboot and image-only
+  # verification exclude new placements while the exact target is removed;
+  # only the reboot path drains existing workloads.
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get node "${node_name}" \
+    --output json \
+    >"${cordon_state_file}"; then
+    echo "::error::Refusing to synchronize ${node_name}: its scheduling state could not be read."
+    return 1
+  fi
+  if ! selected_node_identity_is_current \
+    "${cordon_state_file}" \
+    "${node_name}" \
+    "${node_uid}" \
+    "${node_ip}" \
+    "${node_role}" ||
+    ! jq -e \
       --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" '
       (.metadata.uid | type == "string" and length > 0)
       and (.metadata.resourceVersion | type == "string" and length > 0)
@@ -1680,13 +1680,13 @@ process_talos_node_target() {
       and ((.metadata.annotations[$owner_annotation] // "")
         | type == "string")
     ' "${cordon_state_file}" >/dev/null; then
-      echo "::error::Refusing to synchronize ${node_name}: its identity changed or scheduling state was malformed."
-      return 1
-    fi
-    if [[ -f "${bootstrap_state_file}" ]]; then
-      if ! jq -e \
-        --arg node_name "${node_name}" \
-        --arg node_uid "${node_uid}" '
+    echo "::error::Refusing to synchronize ${node_name}: its identity changed or scheduling state was malformed."
+    return 1
+  fi
+  if [[ -f "${bootstrap_state_file}" ]]; then
+    if ! jq -e \
+      --arg node_name "${node_name}" \
+      --arg node_uid "${node_uid}" '
         .nodeName == $node_name
         and .initialUID == $node_uid
         and (.ownerToken | type == "string")
@@ -1694,34 +1694,34 @@ process_talos_node_target() {
         and (.wasCordoned == 0 or .wasCordoned == 1)
         and (.initialTaints | type == "array")
       ' "${bootstrap_state_file}" >/dev/null; then
-        echo "::error::Bootstrap ownership state for ${node_name} was malformed; refusing the mutation."
-        return 1
-      fi
-      initial_node_uid="$(jq -er '.initialUID' "${bootstrap_state_file}")"
-      initial_node_taints="$(jq -c '.initialTaints' "${bootstrap_state_file}")"
-      was_cordoned="$(jq -er '.wasCordoned' "${bootstrap_state_file}")"
-      cordon_owner_token="$(jq -er '.ownerToken' "${bootstrap_state_file}")"
-      recovery_record="$(jq -er '.recoveryRecord' "${bootstrap_state_file}")"
-      if ! jq -e \
-        --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
-        --arg recovery "${recovery_record}" \
-        '.metadata.annotations[$recovery_annotation] == $recovery' \
-        "${cordon_state_file}" >/dev/null; then
-        echo "::error::Bootstrap recovery journal changed for ${node_name}; refusing the mutation."
-        return 1
-      fi
-      if ! node_scheduling_state_is_safe_to_reboot \
-        "${cordon_state_file}" \
-        "${was_cordoned}" \
-        "${cordon_owner_token}" \
-        "${initial_node_uid}" \
-        "${initial_node_taints}"; then
-        echo "::error::Bootstrap quarantine ownership or scheduling state changed for ${node_name}; refusing the mutation."
-        return 1
-      fi
-    else
-      initial_node_uid="$(jq -r '.metadata.uid' "${cordon_state_file}")"
-      initial_node_taints="$(jq -cS '
+      echo "::error::Bootstrap ownership state for ${node_name} was malformed; refusing the mutation."
+      return 1
+    fi
+    initial_node_uid="$(jq -er '.initialUID' "${bootstrap_state_file}")"
+    initial_node_taints="$(jq -c '.initialTaints' "${bootstrap_state_file}")"
+    was_cordoned="$(jq -er '.wasCordoned' "${bootstrap_state_file}")"
+    cordon_owner_token="$(jq -er '.ownerToken' "${bootstrap_state_file}")"
+    recovery_record="$(jq -er '.recoveryRecord' "${bootstrap_state_file}")"
+    if ! jq -e \
+      --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
+      --arg recovery "${recovery_record}" \
+      '.metadata.annotations[$recovery_annotation] == $recovery' \
+      "${cordon_state_file}" >/dev/null; then
+      echo "::error::Bootstrap recovery journal changed for ${node_name}; refusing the mutation."
+      return 1
+    fi
+    if ! node_scheduling_state_is_safe_to_reboot \
+      "${cordon_state_file}" \
+      "${was_cordoned}" \
+      "${cordon_owner_token}" \
+      "${initial_node_uid}" \
+      "${initial_node_taints}"; then
+      echo "::error::Bootstrap quarantine ownership or scheduling state changed for ${node_name}; refusing the mutation."
+      return 1
+    fi
+  else
+    initial_node_uid="$(jq -r '.metadata.uid' "${cordon_state_file}")"
+    initial_node_taints="$(jq -cS '
         (.spec.taints // [])
         | map(select((
             .key == "node.kubernetes.io/unschedulable"
@@ -1730,34 +1730,34 @@ process_talos_node_target() {
           ) | not))
         | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")])
       ' "${cordon_state_file}")"
-      existing_cordon_owner="$(jq -r \
-        --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
-        '.metadata.annotations[$owner_annotation] // ""' \
-        "${cordon_state_file}")"
-      if [[ -n "${existing_cordon_owner}" ]]; then
-        echo "::error::Refusing to synchronize ${node_name}: it already has a GHCR bridge cordon owner, so a previous or concurrent roll must be resolved first."
-        return 1
-      fi
-      existing_cordon_recovery="$(jq -r \
-        --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
-        '.metadata.annotations[$recovery_annotation] // ""' \
-        "${cordon_state_file}")"
-      if [[ -n "${existing_cordon_recovery}" ]]; then
-        echo "::error::Refusing to synchronize ${node_name}: it has a GHCR bridge recovery journal without an owner."
-        return 1
-      fi
-      if jq -e '.spec.unschedulable == true' \
-        "${cordon_state_file}" >/dev/null; then
-        was_cordoned=1
-      else
-        was_cordoned=0
-      fi
-      cordon_owner_token="${desired_revision:0:16}-$$-${RANDOM}"
-      assert_sync_lease_held || return 1
-      claim_node_cordon_ownership \
-        "${node_name}" "${cordon_owner_token}" \
-        "${cordon_state_file}" "${drain_result_file}" || return 1
+    existing_cordon_owner="$(jq -r \
+      --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
+      '.metadata.annotations[$owner_annotation] // ""' \
+      "${cordon_state_file}")"
+    if [[ -n "${existing_cordon_owner}" ]]; then
+      echo "::error::Refusing to synchronize ${node_name}: it already has a GHCR bridge cordon owner, so a previous or concurrent roll must be resolved first."
+      return 1
     fi
+    existing_cordon_recovery="$(jq -r \
+      --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
+      '.metadata.annotations[$recovery_annotation] // ""' \
+      "${cordon_state_file}")"
+    if [[ -n "${existing_cordon_recovery}" ]]; then
+      echo "::error::Refusing to synchronize ${node_name}: it has a GHCR bridge recovery journal without an owner."
+      return 1
+    fi
+    if jq -e '.spec.unschedulable == true' \
+      "${cordon_state_file}" >/dev/null; then
+      was_cordoned=1
+    else
+      was_cordoned=0
+    fi
+    cordon_owner_token="${desired_revision:0:16}-$$-${RANDOM}"
+    assert_sync_lease_held || return 1
+    claim_node_cordon_ownership \
+      "${node_name}" "${cordon_owner_token}" \
+      "${cordon_state_file}" "${drain_result_file}" || return 1
+  fi
 
   # A node resourceVersion fences only the claim itself. Renew after the claim
   # and re-read the owned scheduling guard so a process that lost its cluster
@@ -1821,8 +1821,8 @@ process_talos_node_target() {
     # A PDB-respecting drain can legitimately take most of DRAIN_TIMEOUT. An
     # etcd peer that was healthy before it began may fail while workloads move,
     # so refresh the quorum proof at the last safe point before the reboot.
-    if [[ "${node_role}" == "1" ]] \
-      && ! other_control_planes_safe_to_reboot \
+    if [[ "${node_role}" == "1" ]] &&
+      ! other_control_planes_safe_to_reboot \
         "${node_name}" "${KUBE_CONTEXT}" "${work_dir}"; then
       echo "::error::Refusing to reboot control plane ${node_name} after its drain: another control plane is no longer Ready with healthy, alarm-free etcd, so rebooting this one risks quorum."
       restore_node_schedulability_if_needed \
@@ -1850,7 +1850,7 @@ process_talos_node_target() {
         "${node_name}" "${cordon_owner_token}" \
         "${initial_node_uid}" "${desired_revision}" \
         "active" "retain" "${drain_result_file}" || return 1
-      : > "${bootstrap_retain_dir}/${node_name}"
+      : >"${bootstrap_retain_dir}/${node_name}"
     fi
     assert_sync_lease_held || return 1
     if ! talosctl \
@@ -1879,111 +1879,111 @@ process_talos_node_target() {
       "${reboot_result_file}" "${node_ip}" "${node_role}" || return 1
   fi
 
-    # A reboot/readiness wait or even a short image-only cordon can outlive a
-    # replacement, uncordon, taint, or owner change. Rebind identity and the
-    # scheduling guard at the final Talos edge before touching the image cache.
-    revalidate_node_scheduling_guard \
-      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-      "${initial_node_uid}" "${initial_node_taints}" \
-      "${talos_result_file}" "${node_ip}" "${node_role}" \
-      "image verification" || return 1
+  # A reboot/readiness wait or even a short image-only cordon can outlive a
+  # replacement, uncordon, taint, or owner change. Rebind identity and the
+  # scheduling guard at the final Talos edge before touching the image cache.
+  revalidate_node_scheduling_guard \
+    "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+    "${initial_node_uid}" "${initial_node_taints}" \
+    "${talos_result_file}" "${node_ip}" "${node_role}" \
+    "image verification" || return 1
 
-    # A cached image can make a pull look healthy without proving that the
-    # node's runtime can authenticate to GHCR. Remove the incoming exact target
-    # first so the following pull must complete a registry round-trip.
-    if ! talosctl \
-      --nodes "${node_ip}" \
-      image remove "${operator_image}" \
-      --namespace cri \
-      >"${talos_result_file}" 2>&1; then
-      if ! talos_image_remove_reports_absent \
-        "${talos_result_file}" "${operator_image}"; then
-        echo "::error::Talos node ${node_name} could not remove the cached incoming KSail image before GHCR verification; it remains cordoned because registry access is unproved."
-        return 1
-      fi
-    fi
-
-    revalidate_node_scheduling_guard \
-      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-      "${initial_node_uid}" "${initial_node_taints}" \
-      "${talos_result_file}" "${node_ip}" "${node_role}" \
-      "image pull" || return 1
-
-    # Credential validity against GHCR (see the caveat above: this is not, on
-    # its own, proof that containerd is using it — the reboot is).
-    if ! talosctl \
-      --nodes "${node_ip}" \
-      image pull "${operator_image}" \
-      --namespace cri \
-      >"${talos_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image after its auth refresh; it remains cordoned because registry access is unproved."
+  # A cached image can make a pull look healthy without proving that the
+  # node's runtime can authenticate to GHCR. Remove the incoming exact target
+  # first so the following pull must complete a registry round-trip.
+  if ! talosctl \
+    --nodes "${node_ip}" \
+    image remove "${operator_image}" \
+    --namespace cri \
+    >"${talos_result_file}" 2>&1; then
+    if ! talos_image_remove_reports_absent \
+      "${talos_result_file}" "${operator_image}"; then
+      echo "::error::Talos node ${node_name} could not remove the cached incoming KSail image before GHCR verification; it remains cordoned because registry access is unproved."
       return 1
     fi
+  fi
 
-    revalidate_node_scheduling_guard \
-      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-      "${initial_node_uid}" "${initial_node_taints}" \
-      "${talos_result_file}" "${node_ip}" "${node_role}" \
-      "runtime pull proof" || return 1
+  revalidate_node_scheduling_guard \
+    "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+    "${initial_node_uid}" "${initial_node_taints}" \
+    "${talos_result_file}" "${node_ip}" "${node_role}" \
+    "image pull" || return 1
 
-    # Talos' image API authenticates from machine config, not through the
-    # kubelet's running CRI client. Before this freshly rebooted node can
-    # receive workloads, prove both private images through kubelet/containerd
-    # while the bridge-owned cordon is still in place.
-    if [[ "${node_mode}" == "reboot" ]]; then
-      for probe_image in "${RUNTIME_CREDENTIAL_PROBE_IMAGES[@]}"; do
-        probe_node_runtime_pull "${node_name}" "${probe_image}" || return 1
-      done
-      if ! grep -Fqx -- "${node_uid}" "${runtime_proved_targets_file}"; then
-        printf '%s\n' "${node_uid}" >> "${runtime_proved_targets_file}"
-      fi
+  # Credential validity against GHCR (see the caveat above: this is not, on
+  # its own, proof that containerd is using it — the reboot is).
+  if ! talosctl \
+    --nodes "${node_ip}" \
+    image pull "${operator_image}" \
+    --namespace cri \
+    >"${talos_result_file}" 2>&1; then
+    echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image after its auth refresh; it remains cordoned because registry access is unproved."
+    return 1
+  fi
+
+  revalidate_node_scheduling_guard \
+    "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+    "${initial_node_uid}" "${initial_node_taints}" \
+    "${talos_result_file}" "${node_ip}" "${node_role}" \
+    "runtime pull proof" || return 1
+
+  # Talos' image API authenticates from machine config, not through the
+  # kubelet's running CRI client. Before this freshly rebooted node can
+  # receive workloads, prove both private images through kubelet/containerd
+  # while the bridge-owned cordon is still in place.
+  if [[ "${node_mode}" == "reboot" ]]; then
+    for probe_image in "${RUNTIME_CREDENTIAL_PROBE_IMAGES[@]}"; do
+      probe_node_runtime_pull "${node_name}" "${probe_image}" || return 1
+    done
+    if ! grep -Fqx -- "${node_uid}" "${runtime_proved_targets_file}"; then
+      printf '%s\n' "${node_uid}" >>"${runtime_proved_targets_file}"
     fi
+  fi
 
-    revalidate_node_scheduling_guard \
-      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-      "${initial_node_uid}" "${initial_node_taints}" \
-      "${talos_result_file}" "${node_ip}" "${node_role}" \
-      "revision marker" || return 1
+  revalidate_node_scheduling_guard \
+    "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+    "${initial_node_uid}" "${initial_node_taints}" \
+    "${talos_result_file}" "${node_ip}" "${node_role}" \
+    "revision marker" || return 1
 
-    # Record the proof only after the real runtime checks, while the selected
-    # machine remains protected by the owned cordon. Releasing ownership first
-    # would let a concurrent credential revision race this marker write.
-    if ! talosctl \
-      --nodes "${node_ip}" \
-      patch machineconfig \
-      --mode=no-reboot \
-      --patch-file="${talos_revision_patch_file}" \
-      >"${talos_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} proved GHCR access but could not record the synchronized credential revision."
-      return 1
-    fi
+  # Record the proof only after the real runtime checks, while the selected
+  # machine remains protected by the owned cordon. Releasing ownership first
+  # would let a concurrent credential revision race this marker write.
+  if ! talosctl \
+    --nodes "${node_ip}" \
+    patch machineconfig \
+    --mode=no-reboot \
+    --patch-file="${talos_revision_patch_file}" \
+    >"${talos_result_file}" 2>&1; then
+    echo "::error::Talos node ${node_name} proved GHCR access but could not record the synchronized credential revision."
+    return 1
+  fi
 
-    if [[ -f "${bootstrap_state_file}" ]]; then
-      update_bootstrap_recovery_phase \
-        "${node_name}" "${cordon_owner_token}" \
-        "${initial_node_uid}" "${desired_revision}" \
-        "retain" "release-ready" "${drain_result_file}" || return 1
-      recovery_record="$(jq -cn \
-        --arg recovery "${recovery_record}" '
+  if [[ -f "${bootstrap_state_file}" ]]; then
+    update_bootstrap_recovery_phase \
+      "${node_name}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${desired_revision}" \
+      "retain" "release-ready" "${drain_result_file}" || return 1
+    recovery_record="$(jq -cn \
+      --arg recovery "${recovery_record}" '
         ($recovery | fromjson) + {phase: "release-ready"}
       ')"
-    fi
+  fi
 
-    # Restore original scheduling intent only after the proof marker is durable.
-    # Residual ownership makes the next selector fail closed rather than letting
-    # a release failure masquerade as a clean node.
-    rm -f "${bootstrap_retain_dir}/${node_name}"
-    assert_sync_lease_held || return 1
-    restore_node_schedulability_if_needed \
-      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-      "${initial_node_uid}" "${initial_node_taints}" \
-      "${drain_result_file}" "${recovery_record}" || return 1
+  # Restore original scheduling intent only after the proof marker is durable.
+  # Residual ownership makes the next selector fail closed rather than letting
+  # a release failure masquerade as a clean node.
+  rm -f "${bootstrap_retain_dir}/${node_name}"
+  assert_sync_lease_held || return 1
+  restore_node_schedulability_if_needed \
+    "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+    "${initial_node_uid}" "${initial_node_taints}" \
+    "${drain_result_file}" "${recovery_record}" || return 1
 
-    # The release is the final replacement boundary before this UID is marked
-    # processed in the convergence loop. Rebind it once more so a replacement
-    # cannot inherit the old machine's proof within this pass.
-    revalidate_selected_node_identity_before_mutation \
-      "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" || return 1
+  # The release is the final replacement boundary before this UID is marked
+  # processed in the convergence loop. Rebind it once more so a replacement
+  # cannot inherit the old machine's proof within this pass.
+  revalidate_selected_node_identity_before_mutation \
+    "${node_name}" "${node_uid}" "${node_ip}" "${node_role}" || return 1
 }
 
 validate_talos_node_inventory() {
@@ -2026,12 +2026,12 @@ sync_talos_registry_auth() {
   local node_role node_name node_ip node_mode node_uid
   local batch_targets_file first_reboot_name bootstrap_mode
 
-  : > "${talos_result_file}"
-  : > "${drain_result_file}"
-  : > "${reboot_result_file}"
-  : > "${talos_processed_targets}"
-  : > "${sync_result_file}"
-  : > "${runtime_proved_targets_file}"
+  : >"${talos_result_file}"
+  : >"${drain_result_file}"
+  : >"${reboot_result_file}"
+  : >"${talos_processed_targets}"
+  : >"${sync_result_file}"
+  : >"${runtime_proved_targets_file}"
   chmod 600 \
     "${talos_result_file}" \
     "${drain_result_file}" \
@@ -2048,7 +2048,7 @@ sync_talos_registry_auth() {
       --context "${KUBE_CONTEXT}" \
       get nodes \
       -o json \
-      > "${talos_nodes_file}"; then
+      >"${talos_nodes_file}"; then
       echo "::error::Could not list Talos nodes; refusing to mutate any Kubernetes credential consumers."
       return 1
     fi
@@ -2065,7 +2065,7 @@ sync_talos_registry_auth() {
       return 1
     fi
 
-    : > "${talos_pending_targets}"
+    : >"${talos_pending_targets}"
     while IFS=$'\t' read -r \
       node_role node_name node_ip node_mode node_uid; do
       [[ -n "${node_name}" ]] || continue
@@ -2075,17 +2075,17 @@ sync_talos_registry_auth() {
       printf '%s\t%s\t%s\t%s\t%s\n' \
         "${node_role}" "${node_name}" "${node_ip}" \
         "${node_mode}" "${node_uid}" \
-        >> "${talos_pending_targets}"
-    done < "${talos_node_targets}"
+        >>"${talos_pending_targets}"
+    done <"${talos_node_targets}"
 
     if [[ ! -s "${talos_pending_targets}" ]]; then
       if [[ ! -s "${talos_node_targets}" ]]; then
         consecutive_clean_inventories=$((consecutive_clean_inventories + 1))
         if ((consecutive_clean_inventories >= 2)); then
           if ((processed_any_node == 1)); then
-            printf '%s\n' processed > "${sync_result_file}"
+            printf '%s\n' processed >"${sync_result_file}"
           else
-            printf '%s\n' clean > "${sync_result_file}"
+            printf '%s\n' clean >"${sync_result_file}"
           fi
           return 0
         fi
@@ -2107,12 +2107,12 @@ sync_talos_registry_auth() {
         "${talos_pending_targets}"; then
         first_reboot_name="$(awk -F '\t' '$4 == "reboot" { print $2; exit }' \
           "${talos_pending_targets}")"
-        : > "${bootstrap_overlap_result}"
+        : >"${bootstrap_overlap_result}"
         runtime_probe_bootstrap_needed=0
         verify_current_root_credential_overlap \
-          >> "${bootstrap_overlap_result}" 2>&1 || true
+          >>"${bootstrap_overlap_result}" 2>&1 || true
         if ! verify_peer_runtime_pull_overlap "${first_reboot_name}" \
-          >> "${bootstrap_overlap_result}" 2>&1; then
+          >>"${bootstrap_overlap_result}" 2>&1; then
           if ((runtime_probe_bootstrap_needed == 0)); then
             emit_safe_operation_output \
               "runtime-overlap" "${bootstrap_overlap_result}"
@@ -2140,8 +2140,8 @@ sync_talos_registry_auth() {
       while IFS=$'\t' read -r \
         node_role node_name node_ip node_mode node_uid; do
         if [[ "${node_mode}" == "reboot" ]]; then
-          if ((bootstrap_mode == 1)) \
-            && [[ "${node_uid}" == "${bootstrap_seed_uid}" ]]; then
+          if ((bootstrap_mode == 1)) &&
+            [[ "${node_uid}" == "${bootstrap_seed_uid}" ]]; then
             if ! node_has_no_evictable_workloads "${node_name}"; then
               echo "::error::Bootstrap seed ${node_name} gained an evictable workload before its reboot; refusing the roll."
               return 1
@@ -2159,8 +2159,8 @@ sync_talos_registry_auth() {
           "${node_ip}" \
           "${node_mode}" \
           "${node_uid}" || return 1
-        if ((bootstrap_mode == 1)) \
-          && [[ "${node_uid}" == "${bootstrap_seed_uid}" ]]; then
+        if ((bootstrap_mode == 1)) &&
+          [[ "${node_uid}" == "${bootstrap_seed_uid}" ]]; then
           wait_for_bootstrap_seed_release \
             "${node_name}" "${node_uid}" \
             "${node_ip}" "${node_role}" || return 1
@@ -2169,8 +2169,8 @@ sync_talos_registry_auth() {
           "${bootstrap_cordon_dir}/${node_name}.json" \
           "${bootstrap_retain_dir}/${node_name}"
         processed_any_node=1
-        printf '%s\n' "${node_uid}" >> "${talos_processed_targets}"
-      done < "${batch_targets_file}"
+        printf '%s\n' "${node_uid}" >>"${talos_processed_targets}"
+      done <"${batch_targets_file}"
     fi
 
     if ((convergence_attempt < TALOS_CONVERGENCE_ATTEMPTS)); then
@@ -2187,14 +2187,14 @@ sync_talos_registry_auth() {
 # stdout or place its plaintext/base64 representation in an argument.
 decrypt_flux_ghcr_docker_config "${docker_config}" "${SECRET_FILE}"
 write_flux_ghcr_credentials "${docker_config}" "${credentials_file}"
-jq -S -c . "${docker_config}" > "${expected_normalized}"
+jq -S -c . "${docker_config}" >"${expected_normalized}"
 
 # Build curl's Basic-auth config without putting the credential in argv or
 # stdout. Support both Docker config representations used in this repository:
 # explicit username/password and base64(username:password) in auth.
 jq -r '
   "user = " + ((.username + ":" + .password) | @json)
-' "${credentials_file}" > "${basic_curl_config}"
+' "${credentials_file}" >"${basic_curl_config}"
 chmod 600 "${basic_curl_config}"
 
 # GHCR permissions are package-granular, so a token response alone is not proof
@@ -2224,7 +2224,7 @@ jq '
     username: .username,
     password: .password
   }
-' "${credentials_file}" > "${talos_auth_patch_file}"
+' "${credentials_file}" >"${talos_auth_patch_file}"
 pull_revision="$(flux_ghcr_revision "${SECRET_FILE}")"
 readonly pull_revision
 jq -n \
@@ -2240,15 +2240,15 @@ jq -n \
       }
     }
   }
-' > "${talos_revision_patch_file}"
+' >"${talos_revision_patch_file}"
 chmod 600 "${talos_auth_patch_file}" "${talos_revision_patch_file}"
 
 # Merge only Secret data fields so ownership metadata survives. The sensitive
 # payload stays in pipes/temp files and never appears in argv or logs.
-base64 < "${docker_config}" \
-  | tr -d '\r\n' \
-  | jq -Rs '{data: {".dockerconfigjson": .}}' \
-  > "${patch_file}"
+base64 <"${docker_config}" |
+  tr -d '\r\n' |
+  jq -Rs '{data: {".dockerconfigjson": .}}' \
+    >"${patch_file}"
 
 sync_lease_is_available() {
   # Talos machine-config writes do not expose a downstream fencing token. An
@@ -2267,13 +2267,13 @@ acquire_sync_lease() {
   sync_lease_holder="${desired_revision:0:16}-$$-${RANDOM}"
   export FLUX_GHCR_SYNC_LEASE_HOLDER="${sync_lease_holder}"
   for attempt in 1 2 3; do
-    : > "${sync_lease_file}"
+    : >"${sync_lease_file}"
     if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       --namespace flux-system \
       get lease "${SYNC_LEASE_NAME}" \
       --ignore-not-found \
-      -o json > "${sync_lease_file}"; then
+      -o json >"${sync_lease_file}"; then
       echo "::error::Could not inspect the GHCR synchronization lease."
       return 1
     fi
@@ -2296,12 +2296,12 @@ acquire_sync_lease() {
             leaseTransitions: 0
           }
         }
-      ' > "${sync_lease_manifest_file}"
+      ' >"${sync_lease_manifest_file}"
       if kubectl \
         --context "${KUBE_CONTEXT}" \
         --namespace flux-system \
         create --filename "${sync_lease_manifest_file}" \
-        > "${sync_lease_result_file}" 2>&1; then
+        >"${sync_lease_result_file}" 2>&1; then
         sync_lease_acquired=true
         sync_lease_heartbeat_loop &
         sync_lease_heartbeat_pid=$!
@@ -2343,14 +2343,14 @@ acquire_sync_lease() {
         {op: "replace", path: "/spec/renewTime", value: $now},
         {op: "replace", path: "/spec/leaseTransitions", value: $transitions}
       ]
-    ' > "${sync_lease_patch_file}"
+    ' >"${sync_lease_patch_file}"
     if kubectl \
       --context "${KUBE_CONTEXT}" \
       --namespace flux-system \
       patch lease "${SYNC_LEASE_NAME}" \
       --type=json \
       --patch-file="${sync_lease_patch_file}" \
-      > "${sync_lease_result_file}" 2>&1; then
+      >"${sync_lease_result_file}" 2>&1; then
       sync_lease_acquired=true
       sync_lease_heartbeat_loop &
       sync_lease_heartbeat_pid=$!
@@ -2374,7 +2374,7 @@ renew_sync_lease() {
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     get lease "${SYNC_LEASE_NAME}" \
-    -o json > "${lease_file}"; then
+    -o json >"${lease_file}"; then
     return 1
   fi
   resource_version="$(jq -er \
@@ -2394,14 +2394,14 @@ renew_sync_lease() {
       {op: "replace", path: "/spec/renewTime", value: $now},
       {op: "replace", path: "/spec/leaseDurationSeconds", value: $duration}
     ]
-  ' > "${patch_file_local}"
+  ' >"${patch_file_local}"
   if kubectl \
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     patch lease "${SYNC_LEASE_NAME}" \
     --type=json \
     --patch-file="${patch_file_local}" \
-    > "${result_file}" 2>&1; then
+    >"${result_file}" 2>&1; then
     return 0
   fi
 
@@ -2412,7 +2412,7 @@ renew_sync_lease() {
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     get lease "${SYNC_LEASE_NAME}" \
-    -o json > "${lease_file}"; then
+    -o json >"${lease_file}"; then
     return 1
   fi
   jq -e \
@@ -2432,7 +2432,7 @@ sync_lease_heartbeat_loop() {
       sleep 1
     done
     if ! renew_sync_lease; then
-      : > "${sync_lease_lost_file}"
+      : >"${sync_lease_lost_file}"
       return 1
     fi
   done
@@ -2461,7 +2461,7 @@ release_sync_lease() {
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     get lease "${SYNC_LEASE_NAME}" \
-    -o json > "${lease_file}"; then
+    -o json >"${lease_file}"; then
     return 1
   fi
   resource_version="$(jq -er \
@@ -2481,14 +2481,14 @@ release_sync_lease() {
       {op: "replace", path: "/spec/leaseDurationSeconds", value: 1},
       {op: "replace", path: "/spec/renewTime", value: $now}
     ]
-  ' > "${patch_file_local}"
+  ' >"${patch_file_local}"
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     patch lease "${SYNC_LEASE_NAME}" \
     --type=json \
     --patch-file="${patch_file_local}" \
-    > "${result_file}" 2>&1; then
+    >"${result_file}" 2>&1; then
     return 1
   fi
   sync_lease_holder=""
@@ -2514,7 +2514,7 @@ patch_secret_data_with_cas() {
       --context "${KUBE_CONTEXT}" \
       --namespace "${namespace}" \
       get secret "${name}" \
-      -o json > "${state_file}"; then
+      -o json >"${state_file}"; then
       echo "::error::Could not inspect Secret ${namespace}/${name} for an atomic credential update."
       return 1
     fi
@@ -2539,7 +2539,7 @@ patch_secret_data_with_cas() {
             {op: "add", path: $data_path, value: $value}
           ]
         end
-    ' > "${cas_patch_file}"
+    ' >"${cas_patch_file}"
 
     # Renew again after the read/build window. If a stale request lands after
     # this point, the captured Secret resourceVersion rejects it; if it lands
@@ -2613,7 +2613,7 @@ fi
 # even though root Flux auth stayed unchanged.
 jq '{data: {ghcr_dockerconfigjson: .data[".dockerconfigjson"]}}' \
   "${patch_file}" \
-  > "${variables_patch_file}"
+  >"${variables_patch_file}"
 
 # A partially-bootstrapped DR cluster can already have variables-base while ESO
 # CRDs or individual fan-out objects do not exist yet. That state still needs
@@ -2625,14 +2625,14 @@ if ! kubectl \
   api-resources \
   --api-group=external-secrets.io \
   -o name \
-  > "${fanout_api_resources}"; then
+  >"${fanout_api_resources}"; then
   echo "::error::Could not inspect the External Secrets API; refusing to change root Flux auth."
   exit 1
 fi
 
 fanout_complete=true
-if ! grep -qx 'pushsecrets.external-secrets.io' "${fanout_api_resources}" \
-  || ! grep -qx 'externalsecrets.external-secrets.io' "${fanout_api_resources}"; then
+if ! grep -qx 'pushsecrets.external-secrets.io' "${fanout_api_resources}" ||
+  ! grep -qx 'externalsecrets.external-secrets.io' "${fanout_api_resources}"; then
   fanout_complete=false
 else
   if ! pushsecret_name="$(kubectl \
