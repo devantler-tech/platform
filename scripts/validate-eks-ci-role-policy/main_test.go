@@ -954,119 +954,112 @@ metadata:
 	}
 }
 
+// awsServiceAccountSubject names the aws/aws service account directly. Two of
+// the routes below reach it by this same subject and differ only in scope.
+const awsServiceAccountSubject = `  - kind: ServiceAccount
+    name: aws
+    namespace: aws
+`
+
+// awsIdentityBinding is one route by which an RBAC binding can reach the
+// aws/aws service account.
+type awsIdentityBinding struct {
+	// namespace scopes the binding. Empty renders the cluster-wide form.
+	namespace string
+	// subject is the single YAML list item under subjects:, including its
+	// trailing newline.
+	subject string
+}
+
+// manifest renders the binding. namespace selects the whole shape, because the
+// routes below need only two: the namespaced ones are all RoleBinding to
+// Role/aws-managed-resources, the cluster-wide ones ClusterRoleBinding to
+// ClusterRole/cluster-admin.
+//
+// That pairing is this table's choice, not a Kubernetes rule. Only
+// ClusterRoleBinding is constrained; a RoleBinding may reference a ClusterRole,
+// which is how a cluster role is granted namespace-scoped — the fixture at the
+// top of this file does exactly that. A route needing that combination wants
+// explicit roleRef fields adding here rather than another inline copy.
+func (b awsIdentityBinding) manifest() string {
+	kind, roleKind, roleName := "ClusterRoleBinding", "ClusterRole", "cluster-admin"
+
+	namespaceLine := ""
+	if b.namespace != "" {
+		kind, roleKind, roleName = "RoleBinding", "Role", "aws-managed-resources"
+		namespaceLine = "  namespace: " + b.namespace + "\n"
+	}
+
+	return fmt.Sprintf(`---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: %s
+metadata:
+  name: aws-shadow
+%sroleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: %s
+  name: %s
+subjects:
+%s`, kind, namespaceLine, roleKind, roleName, b.subject)
+}
+
 // TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentity covers aliases.
 func TestValidateAuthorizationRejectsBindingsThatIncludeAWSServiceAccountIdentity(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
 
 	tests := []struct {
 		name    string
-		binding string
+		binding awsIdentityBinding
 	}{
 		{
 			name: "RoleBinding outside AWS namespace",
-			binding: `---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: aws-shadow
-  namespace: tenant-shadow
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: aws-managed-resources
-subjects:
-  - kind: ServiceAccount
-    name: aws
-    namespace: aws
-`,
+			binding: awsIdentityBinding{
+				namespace: "tenant-shadow",
+				subject:   awsServiceAccountSubject,
+			},
 		},
 		{
-			name: "cluster-wide binding",
-			binding: `---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aws-shadow
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
-subjects:
-  - kind: ServiceAccount
-    name: aws
-    namespace: aws
-`,
+			name:    "cluster-wide binding",
+			binding: awsIdentityBinding{subject: awsServiceAccountSubject},
 		},
 		{
 			name: "service account user identity",
-			binding: `---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: aws-shadow
-  namespace: tenant-shadow
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: aws-managed-resources
-subjects:
-  - kind: User
+			binding: awsIdentityBinding{
+				namespace: "tenant-shadow",
+				subject: `  - kind: User
     name: system:serviceaccount:aws:aws
 `,
+			},
 		},
 		{
 			name: "namespace service account group",
-			binding: `---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aws-shadow
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
-subjects:
-  - kind: Group
+			binding: awsIdentityBinding{
+				subject: `  - kind: Group
     name: system:serviceaccounts:aws
 `,
+			},
 		},
 		{
 			name: "all service accounts group",
-			binding: `---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aws-shadow
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
-subjects:
-  - kind: Group
+			binding: awsIdentityBinding{
+				subject: `  - kind: Group
     name: system:serviceaccounts
 `,
+			},
 		},
 		{
 			name: "all authenticated identities group",
-			binding: `---
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: aws-shadow
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cluster-admin
-subjects:
-  - kind: Group
+			binding: awsIdentityBinding{
+				subject: `  - kind: Group
     name: system:authenticated
 `,
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mutated := append(append([]byte{}, rendered...), []byte(tt.binding)...)
+			mutated := append(append([]byte{}, rendered...), []byte(tt.binding.manifest())...)
 			err := validateAuthorization(role, boundary, mutated)
 			if err == nil || !strings.Contains(err.Error(), "unapproved rendered authorization surface") {
 				t.Fatalf("validateAuthorization() error = %v, want unapproved rendered authorization surface", err)

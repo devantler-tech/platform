@@ -1,3 +1,12 @@
+// Command validate-eks-ci-role-policy pins the privileges production grants to
+// the EKS CI identity.
+//
+// The permissions that identity ends up with are not written in one place: they
+// are the sum of several independently reconciled overlays, so a change in any
+// one of them can widen the identity's reach without that being visible in the
+// diff under review. This command renders each of those overlays and compares
+// the result against approved fingerprints, so an unreviewed privilege grant
+// fails CI instead of reaching the cluster.
 package main
 
 import (
@@ -29,15 +38,37 @@ const (
 	rootProductionOverlayPath = "k8s/clusters/prod"
 	rendererCommandTimeout    = 2 * time.Minute
 
-	expectedKubectlVersion     = "v1.36.2"
-	expectedKustomizeVersion   = "v5.8.1"
-	expectedRoleManifestSHA    = "96a77d18160c450340e65b0953f44016a01a08429416f7a82142c3f90a61ca07"
-	expectedBoundarySHA        = "b96bfd8c96baa2e09f32a1cc05f76473ecc021fed554a2880ce8e3dd399902c7"
-	expectedTrustPolicySHA     = "85d5d45343f9eac5fdc35717c85c88c5b0f8fde9eddffb169c3a223617fd0a5e"
-	expectedInlinePolicySHA    = "60e3086a6d3dac0092ffe8264c04ebae783c0d38f19a3cf073ed8991085a4df8"
-	expectedBoundaryJSONSHA    = "e617004bce71a65f92934c4f7575d7559a290afe7a17363ce12db8ad7b519610"
-	expectedRenderedSurfaceSHA = "96ce6935966175e43ca6ab341ad10c5a868336c55cd5fc571d719a60c5682ad5"
+	expectedKubectlVersion   = "v1.36.2"
+	expectedKustomizeVersion = "v5.8.1"
+	expectedRoleManifestSHA  = "96a77d18160c450340e65b0953f44016a01a08429416f7a82142c3f90a61ca07"
+	expectedBoundarySHA      = "b96bfd8c96baa2e09f32a1cc05f76473ecc021fed554a2880ce8e3dd399902c7"
+	expectedTrustPolicySHA   = "85d5d45343f9eac5fdc35717c85c88c5b0f8fde9eddffb169c3a223617fd0a5e"
+	expectedInlinePolicySHA  = "60e3086a6d3dac0092ffe8264c04ebae783c0d38f19a3cf073ed8991085a4df8"
+	expectedBoundaryJSONSHA  = "e617004bce71a65f92934c4f7575d7559a290afe7a17363ce12db8ad7b519610"
 )
+
+// expectedRenderedSurfaceSHA is the aggregate fingerprint of the whole selected
+// authorization surface.
+//
+// It sits outside the const block above so this rationale can travel with it
+// without re-aligning seven unrelated security constants.
+//
+// The approved surface includes the encrypted flux-system/variables-cluster
+// substitution source and the staged Cilium homogeneous-device activation.
+//
+// Measured against main b9f39bc before approving this value: both renders
+// contain 159 surface entries and exactly one entry moves, the kube-system
+// Cilium HelmRelease. Its canonical fingerprint changes from 4bfb70e9 to
+// ab1742b4 because values.devices and updateStrategy stage the intended Cilium
+// rollout. No pinned authorization resource or substitution source moves, so
+// the change adds, removes and repoints no grant-bearing object.
+//
+// NOTE for whoever re-approves this next: an opaque ciphertext in the surface
+// moves on ANY re-encryption — this value also absorbed a SOPS version bump
+// (3.13.2 -> 3.13.3) — so a routine secret rotation reds this gate with no
+// authorization change at all. Do NOT treat a moved hash as self-evidently
+// benign: re-run the per-entry membership measurement above before re-approving.
+const expectedRenderedSurfaceSHA = "29770d84bbb2370bd33227ad299bbfa5816eec16a5b67014ba1a9000dbde5af2"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

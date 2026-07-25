@@ -1,0 +1,64 @@
+name: Validate Main
+
+# ci.yaml runs the authorization gate on `pull_request` and `merge_group` only,
+# and cd.yaml runs it on a manual dispatch. A DIRECT PUSH to main fires none of
+# those, so main could carry a broken authorization surface with every one of
+# its own checks green — which is exactly what happened in f89efff4: the break
+# stayed invisible on main for two days and surfaced only as an unexplained red
+# on unrelated PRs, because a PR's CI builds the merge result and so inherits
+# main's state.
+#
+# This workflow closes that hole: the same gate, on the push itself, so a
+# regression is reported where it is introduced.
+#
+# Deliberately NOT path-filtered. The gate reads the whole rendered
+# authorization surface, which a change anywhere in the overlays (or in the
+# validator itself) can move; a paths filter here would recreate a narrower
+# version of the same blind spot.
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: validate-main-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-eks-authorization:
+    name: 🔐 Validate EKS Authorization
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ⚙️ Install pinned kubectl renderer
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: 🔐 Validate EKS authorization surface
+        run: |
+          go test ./scripts/validate-eks-ci-role-policy
+          go run ./scripts/validate-eks-ci-role-policy .
