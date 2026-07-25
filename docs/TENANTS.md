@@ -162,7 +162,7 @@ external-dns** for its custom domain, with the extra external-dns RBAC
 grants below) and rename — with:
 
 | File | Purpose |
-|---|---|
+| --- | --- |
 | `kustomization.yaml` | Kustomize entrypoint listing the resources in this directory |
 | `namespace.yaml` | Namespace, `pod-security.kubernetes.io/enforce: restricted` |
 | `service-account.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
