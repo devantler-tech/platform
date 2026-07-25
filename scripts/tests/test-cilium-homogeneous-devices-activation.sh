@@ -66,6 +66,19 @@ extract_top_level_update_strategy() {
   '
 }
 
+extract_top_level_encryption() {
+  awk '
+    /^    encryption:[[:space:]]*$/ {
+      found = 1
+      print
+      next
+    }
+    found && /^    [^[:space:]]/ { exit }
+    found { print }
+    END { exit !found }
+  '
+}
+
 require_text() {
   local haystack="$1"
   local needle="$2"
@@ -118,6 +131,19 @@ for rendered_devices in 'devices: enp7s0 eth1' 'devices: "enp7s0 eth1"'; do
     'the private-only matcher must detect quoted and unquoted values'
 done
 
+for rendered_encryption in \
+  $'encryption:\n  enabled: true\n  nodeEncryption: false' \
+  $'encryption:\n  nodeEncryption: false\n  enabled: true'; do
+  require_pattern \
+    "${rendered_encryption}" \
+    '^[[:space:]]*enabled:[[:space:]]*true[[:space:]]*$' \
+    'the encryption assertion must require enabled independently of field order'
+  require_pattern \
+    "${rendered_encryption}" \
+    '^[[:space:]]*nodeEncryption:[[:space:]]*false[[:space:]]*$' \
+    'the encryption assertion must require nodeEncryption independently of field order'
+done
+
 awk '
   /^      - name: 🌐 Validate active Cilium device selection$/ {
     found_step = 1
@@ -155,6 +181,8 @@ production_release="$(kubectl kustomize "${controllers_dir}" | extract_cilium_re
   fail 'the production controllers render has no Cilium HelmRelease'
 production_update_strategy="$(extract_top_level_update_strategy <<<"${production_release}")" ||
   fail 'the production Cilium HelmRelease has no top-level update strategy'
+production_encryption="$(extract_top_level_encryption <<<"${production_release}")" ||
+  fail 'the production Cilium HelmRelease has no top-level encryption settings'
 
 require_pattern \
   "${production_release}" \
@@ -172,9 +200,13 @@ require_text \
   "${production_update_strategy}" \
   'type: OnDelete' \
   'the activation must clear rollingUpdate while staging an operator-stepped OnDelete rollout'
-require_text \
-  "${production_release}" \
-  $'encryption:\n      enabled: true\n      nodeEncryption: false' \
+require_pattern \
+  "${production_encryption}" \
+  '^[[:space:]]*enabled:[[:space:]]*true[[:space:]]*$' \
+  'the activation must preserve enabled WireGuard encryption'
+require_pattern \
+  "${production_encryption}" \
+  '^[[:space:]]*nodeEncryption:[[:space:]]*false[[:space:]]*$' \
   'the activation must preserve the production encryption settings'
 require_text \
   "${production_release}" \

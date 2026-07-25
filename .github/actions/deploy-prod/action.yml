@@ -344,6 +344,17 @@ runs:
       # larger --tail values). Failure-path-only: it cannot affect a green deploy.
       uses: devantler-tech/actions/diagnose-flux@e182f2207fb386ef827f48b3cc9b7deac873046a # v7.1.0
 
+    - name: ⏳ Wait for the newly published Flux revision
+      id: wait_flux_revision
+      # Pin the mutable latest tag to the digest resolved immediately after
+      # publish. A successful reconcile command only proves that Flux accepted
+      # the request; autoscaling and Talos mutation stay blocked until the
+      # infrastructure controller layer has applied this exact artifact and
+      # reports Ready.
+      if: steps.cilium_rollout_gate.outputs.active != 'true'
+      shell: bash
+      run: ./scripts/wait-for-platform-flux-revision.sh "${{ steps.cosign-sign.outputs.digest }}"
+
     - name: 🔄 Update cluster (Talos machine config)
       id: cluster_update
       # Runs LAST, after manifest delivery, so an unreachable control-plane
@@ -355,9 +366,11 @@ runs:
       # could reconcile it back to one replica during the command, opening a
       # scale-up race before the first Cilium canary is verified. A reviewed
       # rollout-completion or rollback artifact removes the gate; because Flux
-      # reconciliation happens first, that safe artifact is live before cluster
-      # update runs again.
-      if: steps.cilium_rollout_gate.outputs.active != 'true'
+      # exact-revision wait happens first, that safe artifact is live before
+      # cluster update runs again.
+      if: >-
+        steps.cilium_rollout_gate.outputs.active != 'true' &&
+        steps.wait_flux_revision.outcome == 'success'
       shell: bash
       env:
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
@@ -374,7 +387,13 @@ runs:
       # the replica count recorded by the pre-publish phase. `always()` also
       # preserves that fail-closed state when the safe, re-enabled cluster
       # update fails after reconciliation.
-      if: always() && steps.reconcile.outcome == 'success'
+      if: >-
+        always() &&
+        steps.reconcile.outcome == 'success' &&
+        (
+          steps.cilium_rollout_gate.outputs.active == 'true' ||
+          steps.wait_flux_revision.outcome == 'success'
+        )
       shell: bash
       run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
 
