@@ -132,7 +132,7 @@ chmod +x "${fake_kubectl}"
 cat >"${fake_curl}" <<'FAKE_CURL'
 #!/usr/bin/env bash
 set -euo pipefail
-printf 'called\n' >>"${KUBECTL_STATE}/provider-commands"
+printf '%s\n' "$*" >>"${KUBECTL_STATE}/provider-commands"
 provider_id="$(<"${KUBECTL_STATE}/provider-id")"
 printf '{"servers":[{"id":%s}]}\n' "${provider_id}"
 FAKE_CURL
@@ -194,5 +194,7 @@ grep -Fq '.status.replicas' "${state_dir}/commands" ||
   fail 'the rollout guard must observe actual autoscaler replicas before publishing'
 [[ -s "${state_dir}/provider-commands" ]] ||
   fail 'the rollout guard must fence Hetzner provider additions before publishing'
+grep -Fq 'label_selector=hcloud/node-group' "${state_dir}/provider-commands" ||
+  fail 'the provider fence must select the hcloud autoscaler node-group label'
 
 printf 'PASS: Cilium activation suspends autoscaling before publish and restores only after the gate is removed\n'

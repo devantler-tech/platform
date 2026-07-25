@@ -440,7 +440,7 @@ Common causes:
 Autoscaler. Clean up manually:
 
 ```bash
-hcloud server list --selector cluster.autoscaler.nodeGroupLabel
+hcloud server list --selector hcloud/node-group
 # Delete each orphaned server
 hcloud server delete <server-id>
 ```

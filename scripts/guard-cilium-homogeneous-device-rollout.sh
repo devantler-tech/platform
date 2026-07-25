@@ -90,7 +90,7 @@ get_hcloud_autoscaler_ids() {
     fail 'HCLOUD_TOKEN is required to fence in-flight autoscaler additions'
   "${curl_bin}" --fail --silent --show-error --get \
     --header "Authorization: Bearer ${HCLOUD_TOKEN}" \
-    --data-urlencode 'label_selector=cluster.autoscaler.nodeGroupLabel' \
+    --data-urlencode 'label_selector=hcloud/node-group' \
     "${hcloud_api_url}/servers" |
     "${jq_bin}" -er '[.servers[].id | tostring] | sort | join(",")'
 }

@@ -201,7 +201,7 @@ kubectl -n kube-system get cm cluster-autoscaler-status -o yaml
 
 ```bash
 # Check if the Hetzner server was created
-hcloud server list --selector cluster.autoscaler.nodeGroupLabel
+hcloud server list --selector hcloud/node-group
 
 # Check Talos bootstrap status (if server IP is known)
 talosctl -n <node-ip> health
