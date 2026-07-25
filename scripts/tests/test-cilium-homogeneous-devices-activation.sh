@@ -162,7 +162,7 @@ awk '
     found_step = 1
     next
   }
-  found_step && /^        if: needs\.changes\.outputs\.k8s == '\''true'\''$/ {
+  found_step && /^        if: needs\.changes\.outputs\.k8s == '\''true'\'' \|\| needs\.changes\.outputs\.bridge_validation == '\''true'\''$/ {
     found_gate = 1
     exit
   }
@@ -173,7 +173,7 @@ awk '
     exit !(found_step && found_gate)
   }
 ' "${ci_workflow}" ||
-  fail 'the homogeneous-device workflow step must be gated to k8s changes'
+  fail 'the homogeneous-device workflow step must run for k8s and bridge-validation changes'
 
 read -r private_line homogeneous_line < <(
   awk '

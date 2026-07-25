@@ -213,7 +213,7 @@ jobs:
         run: bash scripts/tests/test-cilium-bandwidth-manager-component.sh
 
       - name: 🌐 Validate active Cilium device selection
-        if: needs.changes.outputs.k8s == 'true'
+        if: needs.changes.outputs.k8s == 'true' || needs.changes.outputs.bridge_validation == 'true'
         # Pin the production activation, merge order, and OnDelete rollout gate
         # so a later cleanup cannot silently restore private-only devices or
         # trigger an automatic fleet-wide Cilium restart.
