@@ -53,23 +53,24 @@ const (
 // It sits outside the const block above so this rationale can travel with it
 // without re-aligning seven unrelated security constants.
 //
-// Re-approved 2026-07-25 after f89efff4 ("fix(secret): update alertmanager
-// webhook URL and metadata timestamps"). That commit re-encrypted
-// k8s/clusters/prod/bootstrap/secret.enc.yaml, and the Secret it renders to —
-// flux-system/variables-cluster — is a substituteFrom source, so its ciphertext
-// is part of the surface.
+// The approved surface includes the encrypted flux-system/variables-cluster
+// substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured before re-approving, rather than assumed: exactly ONE of 159 surface
-// entries moved (that Secret), the Secret's plaintext KEY SET is unchanged, and
-// no pinned authorization resource moved. So the edit added, removed and
-// repointed no substitution variable — the change is authorization-inert.
+// Measured against main b9f39bc before approving this value: both renders
+// contain 159 surface entries and exactly one entry moves, the kube-system
+// Cilium HelmRelease. Its canonical fingerprint changes from 4bfb70e9 to
+// 434560fd because values.devices, updateStrategy and the temporary Helm
+// disableWait handoff stage the intended operator-stepped Cilium rollout
+// without blocking Flux dependencies. No pinned authorization resource or
+// substitution source moves, so the change adds, removes and repoints no
+// grant-bearing object.
 //
 // NOTE for whoever re-approves this next: an opaque ciphertext in the surface
 // moves on ANY re-encryption — this value also absorbed a SOPS version bump
 // (3.13.2 -> 3.13.3) — so a routine secret rotation reds this gate with no
 // authorization change at all. Do NOT treat a moved hash as self-evidently
 // benign: re-run the per-entry membership measurement above before re-approving.
-const expectedRenderedSurfaceSHA = "44cb60262b1fd052663855cb35b2ac60d202534586b7f586a5c1611ce840ada9"
+const expectedRenderedSurfaceSHA = "9c50a90deac105597b57e0308e3d1f6d61b987dbabefc55af4ff2eaad80a9f43"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
