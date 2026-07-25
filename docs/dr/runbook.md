@@ -163,76 +163,76 @@ Flux reconciliation.
 > The manual procedure below is the fallback when GitHub Actions itself is
 > unavailable.
 >
-```bash
-# 1. Set credentials locally
-export HCLOUD_TOKEN=<hetzner-cloud-api-token>
-export WG_SERVER_PRIVATE_KEY=<wireguard-server-private-key>
-export GHCR_TOKEN=<ghcr-pat-with-packages-read-write>
-export GITHUB_ACTOR=devantler
-export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt  # points at the env's Age key
-talosctl version --client  # must be installed; use the prod-pinned v1.13.5
-
-# 2. Prove the Git/SOPS pull credential can read every private package before
-#    creating infrastructure or publishing a mutable latest tag
-./scripts/refresh-flux-ghcr-auth.sh --check-only
-
-# 3. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
-./scripts/run-ksail-prod-with-pull-auth.sh cluster create
-
-# 4. Bootstrap Flux from this repo
-./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
-./scripts/run-ksail-prod-with-pull-auth.sh workload push
-./scripts/refresh-flux-ghcr-auth.sh --check-only
-./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
-
-# 5. Wait for Flux to settle
-for k in bootstrap infrastructure-controllers infrastructure apps; do
-  kubectl --context admin@prod -n flux-system wait "kustomization/${k}" \
-    --for=condition=Ready --timeout=20m
-done
-./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out + every stale node
-
-# 6. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
-#     in R2 — the vault came up fresh): re-feed the user-fed secrets that
-#     SOPS deliberately does not seed (see the push-secret-seed-* files in
-#     k8s/bases/infrastructure/vault-seed/). Until then,
-#     cert-manager DNS01, external-dns, and fleetdm stay pending:
-kubectl -n openbao exec openbao-0 -- \
-  bao kv put secret/infrastructure/dns/cloudflare api_token=<cloudflare-token>
-kubectl -n openbao exec openbao-0 -- \
-  bao kv put secret/apps/fleetdm/license license-key=<fleet-license-jwt>
-
-# 5. DNS — normally NO manual step: external-dns (hetzner overlay,
-#    policy: sync, gateway-httproute source) repoints the Cloudflare
-#    records at the new load balancer automatically once the HTTPRoutes
-#    are Ready and its Cloudflare token has re-synced from the vault.
-#    Verify, and only intervene if external-dns itself is broken:
-kubectl -n external-dns logs deploy/external-dns | tail -20
-kubectl -n kube-system get svc cilium-gateway-platform \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-# Fallback only: update A/AAAA records for ${domain} at your DNS provider.
-
-# 6. Restore Velero backups (apps + PVCs)
-kubectl -n velero create -f - <<EOF
-apiVersion: velero.io/v1
-kind: Restore
-metadata:
-  name: rebuild-$(date +%s)
-  namespace: velero
-spec:
-  backupName: <pick-latest-from-velero-backup-get>
-  includedNamespaces:
-    - "*"
-  excludedNamespaces:
-    - kube-system
-    - velero
-EOF
-
-# 7. (If any CNPG Cluster exists) restore from R2
-kubectl cnpg restore <new-cluster-name> \
-  --backup <backup-name> \
-  --target-time '<RFC3339-timestamp-or-omit-for-latest>'
-```
+> ```bash
+> # 1. Set credentials locally
+> export HCLOUD_TOKEN=<hetzner-cloud-api-token>
+> export WG_SERVER_PRIVATE_KEY=<wireguard-server-private-key>
+> export GHCR_TOKEN=<ghcr-pat-with-packages-read-write>
+> export GITHUB_ACTOR=devantler
+> export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt  # points at the env's Age key
+> talosctl version --client  # must be installed; use the prod-pinned v1.13.5
+>
+> # 2. Prove the Git/SOPS pull credential can read every private package before
+> #    creating infrastructure or publishing a mutable latest tag
+> ./scripts/refresh-flux-ghcr-auth.sh --check-only
+>
+> # 3. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
+> ./scripts/run-ksail-prod-with-pull-auth.sh cluster create
+>
+> # 4. Bootstrap Flux from this repo
+> ./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
+> ./scripts/run-ksail-prod-with-pull-auth.sh workload push
+> ./scripts/refresh-flux-ghcr-auth.sh --check-only
+> ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
+>
+> # 5. Wait for Flux to settle
+> for k in bootstrap infrastructure-controllers infrastructure apps; do
+>   kubectl --context admin@prod -n flux-system wait "kustomization/${k}" \
+>     --for=condition=Ready --timeout=20m
+> done
+> ./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out + every stale node
+>
+> # 6. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
+> #     in R2 — the vault came up fresh): re-feed the user-fed secrets that
+> #     SOPS deliberately does not seed (see the push-secret-seed-* files in
+> #     k8s/bases/infrastructure/vault-seed/). Until then,
+> #     cert-manager DNS01, external-dns, and fleetdm stay pending:
+> kubectl -n openbao exec openbao-0 -- \
+>   bao kv put secret/infrastructure/dns/cloudflare api_token=<cloudflare-token>
+> kubectl -n openbao exec openbao-0 -- \
+>   bao kv put secret/apps/fleetdm/license license-key=<fleet-license-jwt>
+>
+> # 5. DNS — normally NO manual step: external-dns (hetzner overlay,
+> #    policy: sync, gateway-httproute source) repoints the Cloudflare
+> #    records at the new load balancer automatically once the HTTPRoutes
+> #    are Ready and its Cloudflare token has re-synced from the vault.
+> #    Verify, and only intervene if external-dns itself is broken:
+> kubectl -n external-dns logs deploy/external-dns | tail -20
+> kubectl -n kube-system get svc cilium-gateway-platform \
+>   -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+> # Fallback only: update A/AAAA records for ${domain} at your DNS provider.
+>
+> # 6. Restore Velero backups (apps + PVCs)
+> kubectl -n velero create -f - <<EOF
+> apiVersion: velero.io/v1
+> kind: Restore
+> metadata:
+>   name: rebuild-$(date +%s)
+>   namespace: velero
+> spec:
+>   backupName: <pick-latest-from-velero-backup-get>
+>   includedNamespaces:
+>     - "*"
+>   excludedNamespaces:
+>     - kube-system
+>     - velero
+> EOF
+>
+> # 7. (If any CNPG Cluster exists) restore from R2
+> kubectl cnpg restore <new-cluster-name> \
+>   --backup <backup-name> \
+>   --target-time '<RFC3339-timestamp-or-omit-for-latest>'
+> ```
 
 If this is the **first time** restoring after losing the SOPS keys, replace
 step 3 with the rotation flow in Scenario 6 first.
