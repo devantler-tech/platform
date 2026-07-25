@@ -181,6 +181,7 @@ Flux reconciliation.
 >
 > # 4. Bootstrap Flux from this repo
 > ./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
+> ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
 > ./scripts/run-ksail-prod-with-pull-auth.sh workload push
 > ./scripts/refresh-flux-ghcr-auth.sh --check-only
 > ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
@@ -191,6 +192,7 @@ Flux reconciliation.
 >     --for=condition=Ready --timeout=20m
 > done
 > ./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out + every stale node
+> ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
 >
 > # 6. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
 > #     in R2 — the vault came up fresh): re-feed the user-fed secrets that

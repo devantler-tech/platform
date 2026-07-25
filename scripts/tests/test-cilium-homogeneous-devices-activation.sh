@@ -220,6 +220,14 @@ require_pattern \
   '^[[:space:]]*disableWait:[[:space:]]*true[[:space:]]*$' \
   'the operator-stepped rollout must not block Flux dependency convergence'
 require_pattern \
+  "${production_upgrade}" \
+  '^[[:space:]]*retries:[[:space:]]*-1[[:space:]]*$' \
+  'the temporary Helm wait handoff must preserve infinite upgrade remediation'
+require_pattern \
+  "${production_upgrade}" \
+  '^[[:space:]]*remediateLastFailure:[[:space:]]*true[[:space:]]*$' \
+  'the temporary Helm wait handoff must preserve last-failure remediation'
+require_pattern \
   "${production_encryption}" \
   '^[[:space:]]*enabled:[[:space:]]*true[[:space:]]*$' \
   'the activation must preserve enabled WireGuard encryption'

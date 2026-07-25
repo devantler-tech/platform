@@ -157,7 +157,8 @@ patches:
       # Helm must report the staged template as delivered without waiting for
       # intentionally un-stepped DaemonSet pods. Flux dependency readiness then
       # remains meaningful for every downstream layer throughout the rollout.
+      # Patch only this leaf so the shared infinite-retry remediation policy
+      # remains intact.
       - op: add
-        path: /spec/upgrade
-        value:
-          disableWait: true
+        path: /spec/upgrade/disableWait
+        value: true

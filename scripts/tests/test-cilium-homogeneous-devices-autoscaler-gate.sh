@@ -6,6 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly guard_script="${root_dir}/scripts/guard-cilium-homogeneous-device-rollout.sh"
 readonly deploy_action="${root_dir}/.github/actions/deploy-prod/action.yml"
+readonly dr_runbook="${root_dir}/docs/dr/runbook.md"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -41,6 +42,26 @@ grep -Fq 'id: cilium_rollout_gate' "${deploy_action}" ||
   fail 'the pre-publish guard must expose whether the rollout gate is active'
 grep -Fq "steps.cilium_rollout_gate.outputs.active != 'true'" "${deploy_action}" ||
   fail 'cluster update must remain skipped for the entire active rollout gate'
+
+manual_dr_guard_calls="$(
+  grep -nF './scripts/guard-cilium-homogeneous-device-rollout.sh' "${dr_runbook}" |
+    cut -d: -f1 || true
+)"
+readonly manual_dr_guard_calls
+manual_dr_guard_count="$(printf '%s\n' "${manual_dr_guard_calls}" | grep -c . || true)"
+readonly manual_dr_guard_count
+[[ "${manual_dr_guard_count}" -eq 2 ]] ||
+  fail 'the manual DR fallback must invoke the rollout guard exactly twice'
+manual_dr_guard_before_line="$(printf '%s\n' "${manual_dr_guard_calls}" | sed -n '1p')"
+manual_dr_guard_after_line="$(printf '%s\n' "${manual_dr_guard_calls}" | sed -n '2p')"
+manual_dr_push_line="$(grep -nF './scripts/run-ksail-prod-with-pull-auth.sh workload push' "${dr_runbook}" | cut -d: -f1)"
+manual_dr_converged_line="$(grep -nF './scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out' "${dr_runbook}" | cut -d: -f1)"
+readonly manual_dr_guard_before_line manual_dr_guard_after_line manual_dr_push_line manual_dr_converged_line
+
+((manual_dr_guard_before_line < manual_dr_push_line)) ||
+  fail 'the manual DR fallback must suspend autoscaling before publishing manifests'
+((manual_dr_guard_after_line > manual_dr_converged_line)) ||
+  fail 'the manual DR fallback must reassert or release the gate after Flux converges'
 
 tmp_dir="$(mktemp -d)"
 readonly tmp_dir
