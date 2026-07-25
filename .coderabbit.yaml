@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit configuration. Only the settings that differ from CodeRabbit's defaults are
+# listed here; everything else stays at the default.
+#
+# inheritance: without this, a repository .coderabbit.yaml is the sole config source and
+# REPLACES any organization/UI settings (the docstring ERROR gate itself lives in the UI,
+# since the YAML default is `warning`). Enabling inheritance keeps every UI/org setting —
+# path filters, request_changes_workflow, custom checks — and only overrides the one value
+# defined below, so this change stays scoped to docstrings.
+inheritance: true
+reviews:
+  pre_merge_checks:
+    # Docstring Coverage measures one coverage percentage across a PR's changed files and
+    # cannot be scoped per-path (the only path mechanism, reviews.path_filters, would drop
+    # the files from the whole review rather than from just this metric).
+    #
+    # It also under-counts: it credits a docstring only when the doc comment itself appears
+    # inside the PR diff hunk, so changing the BODY of an already-documented function scores
+    # as undocumented. This repository's Go code lives in scripts/ as small validators whose
+    # tests are the bulk of each changeset, and Go test functions idiomatically carry no doc
+    # comments — so a test-heavy PR is dragged below the threshold twice over.
+    #
+    # Measured on #2753 (merged 2026-07-21): the pre-merge summary reported 68.75% against
+    # the 80% threshold and was that PR's ONLY failed check, while a direct count of the
+    # changed files found 65 of 65 functions carrying an adjacent doc comment.
+    #
+    # Keep the check as an advisory WARNING — CodeRabbit still reports coverage — instead of
+    # a hard merge ERROR. Mirrors devantler-tech/ksail, devantler-tech/monorepo,
+    # devantler-tech/.github and devantler-tech/actions, which made the same change for the
+    # same un-scopeable-metric reason. Part of devantler-tech/monorepo#2108.
+    docstrings:
+      mode: warning
