@@ -29,15 +29,38 @@ const (
 	rootProductionOverlayPath = "k8s/clusters/prod"
 	rendererCommandTimeout    = 2 * time.Minute
 
-	expectedKubectlVersion     = "v1.36.2"
-	expectedKustomizeVersion   = "v5.8.1"
-	expectedRoleManifestSHA    = "96a77d18160c450340e65b0953f44016a01a08429416f7a82142c3f90a61ca07"
-	expectedBoundarySHA        = "b96bfd8c96baa2e09f32a1cc05f76473ecc021fed554a2880ce8e3dd399902c7"
-	expectedTrustPolicySHA     = "85d5d45343f9eac5fdc35717c85c88c5b0f8fde9eddffb169c3a223617fd0a5e"
-	expectedInlinePolicySHA    = "60e3086a6d3dac0092ffe8264c04ebae783c0d38f19a3cf073ed8991085a4df8"
-	expectedBoundaryJSONSHA    = "e617004bce71a65f92934c4f7575d7559a290afe7a17363ce12db8ad7b519610"
-	expectedRenderedSurfaceSHA = "a7fc2f116afd6cc1e9595f6b61de85215c751d2cac033660befabc2c7e3fda61"
+	expectedKubectlVersion   = "v1.36.2"
+	expectedKustomizeVersion = "v5.8.1"
+	expectedRoleManifestSHA  = "96a77d18160c450340e65b0953f44016a01a08429416f7a82142c3f90a61ca07"
+	expectedBoundarySHA      = "b96bfd8c96baa2e09f32a1cc05f76473ecc021fed554a2880ce8e3dd399902c7"
+	expectedTrustPolicySHA   = "85d5d45343f9eac5fdc35717c85c88c5b0f8fde9eddffb169c3a223617fd0a5e"
+	expectedInlinePolicySHA  = "60e3086a6d3dac0092ffe8264c04ebae783c0d38f19a3cf073ed8991085a4df8"
+	expectedBoundaryJSONSHA  = "e617004bce71a65f92934c4f7575d7559a290afe7a17363ce12db8ad7b519610"
 )
+
+// expectedRenderedSurfaceSHA is the aggregate fingerprint of the whole selected
+// authorization surface.
+//
+// It sits outside the const block above so this rationale can travel with it
+// without re-aligning seven unrelated security constants.
+//
+// Re-approved 2026-07-25 after f89efff4 ("fix(secret): update alertmanager
+// webhook URL and metadata timestamps"). That commit re-encrypted
+// k8s/clusters/prod/bootstrap/secret.enc.yaml, and the Secret it renders to —
+// flux-system/variables-cluster — is a substituteFrom source, so its ciphertext
+// is part of the surface.
+//
+// Measured before re-approving, rather than assumed: exactly ONE of 159 surface
+// entries moved (that Secret), the Secret's plaintext KEY SET is unchanged, and
+// no pinned authorization resource moved. So the edit added, removed and
+// repointed no substitution variable — the change is authorization-inert.
+//
+// NOTE for whoever re-approves this next: an opaque ciphertext in the surface
+// moves on ANY re-encryption — this value also absorbed a SOPS version bump
+// (3.13.2 -> 3.13.3) — so a routine secret rotation reds this gate with no
+// authorization change at all. Do NOT treat a moved hash as self-evidently
+// benign: re-run the per-entry membership measurement above before re-approving.
+const expectedRenderedSurfaceSHA = "44cb60262b1fd052663855cb35b2ac60d202534586b7f586a5c1611ce840ada9"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
