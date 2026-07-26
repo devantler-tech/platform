@@ -128,6 +128,14 @@ jobs:
           # renders an empty key and Talos rejects the whole machine config.
           WG_SERVER_PRIVATE_KEY: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
+      - name: 🛡️ Suspend autoscaling for the Cilium rollout gate
+        id: cilium_rollout_gate
+        # A rebuilt cluster must preserve the same staged OnDelete safety
+        # boundary as a normal deployment before publishing the mutable tag.
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
+
       - name: 🔑 Stage Flux and consumer GHCR pull credential
         id: stage_flux_ghcr_auth
         # cluster create already uses the Git/SOPS pull token. Reassert it on
@@ -144,6 +152,33 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
+      - name: 🔐 Configure GHCR auth for digest resolution
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.docker
+          AUTH=$(printf '%s:%s' "${GITHUB_ACTOR}" "${GHCR_TOKEN}" | base64 -w0)
+          echo "::add-mask::${AUTH}"
+          jq -n --arg auth "${AUTH}" \
+            '{auths: {"ghcr.io": {auth: $auth}}}' \
+            > ~/.docker/config.json
+          chmod 600 ~/.docker/config.json
+
+      - name: 🔎 Resolve the newly published platform manifest
+        id: platform_manifest
+        run: |
+          set -euo pipefail
+          REF_TAG='ghcr.io/devantler-tech/platform/manifests:latest'
+          DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Published platform digest is invalid: ${DIGEST:-<empty>}"
+            exit 1
+          fi
+          echo "digest=${DIGEST}" >>"${GITHUB_OUTPUT}"
+
       - name: 🔎 Verify Flux GHCR pull credential after publish
         id: verify_flux_ghcr_auth_after_push
         # Prove the newly-published artifact is readable before reconciliation;
@@ -151,12 +186,20 @@ jobs:
         run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
 
       - name: 🔁 Trigger Flux reconciliation
+        id: reconcile
         run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
+      - name: ⏳ Wait for the newly published Flux revision
+        id: wait_flux_revision
+        env:
+          PLATFORM_MANIFEST_DIGEST: ${{ steps.platform_manifest.outputs.digest }}
+        run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
+
       - name: ⏳ Wait for Flux to settle
+        id: wait_flux
         run: |
           for k in bootstrap infrastructure-controllers infrastructure apps; do
             echo "Waiting for Kustomization ${k}..."
@@ -164,6 +207,10 @@ jobs:
               --for=condition=Ready --timeout=20m
           done
           echo "✅ All Flux Kustomizations Ready — fresh platform converged."
+
+      - name: 🛡️ Reassert or release the Cilium rollout gate
+        if: always() && steps.wait_flux.outcome == 'success'
+        run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
 
       - name: 🔑 Verify completed GHCR credential fan-out
         id: verify_flux_ghcr_fanout
