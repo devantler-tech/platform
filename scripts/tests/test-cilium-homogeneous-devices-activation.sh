@@ -79,6 +79,19 @@ extract_top_level_encryption() {
   '
 }
 
+extract_top_level_node_port() {
+  awk '
+    /^    nodePort:[[:space:]]*$/ {
+      found = 1
+      print
+      next
+    }
+    found && /^    [^[:space:]]/ { exit }
+    found { print }
+    END { exit !found }
+  '
+}
+
 extract_upgrade() {
   awk '
     /^  upgrade:[[:space:]]*$/ {
@@ -196,6 +209,8 @@ production_update_strategy="$(extract_top_level_update_strategy <<<"${production
   fail 'the production Cilium HelmRelease has no top-level update strategy'
 production_encryption="$(extract_top_level_encryption <<<"${production_release}")" ||
   fail 'the production Cilium HelmRelease has no top-level encryption settings'
+production_node_port="$(extract_top_level_node_port <<<"${production_release}")" ||
+  fail 'the production Cilium HelmRelease has no top-level NodePort settings'
 production_upgrade="$(extract_upgrade <<<"${production_release}")" ||
   fail 'the production Cilium HelmRelease has no temporary upgrade handoff'
 
@@ -207,6 +222,10 @@ reject_pattern \
   "${production_release}" \
   "${private_devices_pattern}" \
   'the active production render must not retain the private-only device pin'
+require_text \
+  "${production_node_port}" \
+  '- 10.0.0.0/16' \
+  'the public-NIC device set must restrict NodePort listeners to private node addresses'
 require_text \
   "${production_update_strategy}" \
   'rollingUpdate: null' \
