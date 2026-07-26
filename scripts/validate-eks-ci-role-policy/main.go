@@ -56,19 +56,23 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main 607ad877 before approving this value: rendering the
-// five authorization overlays for both trees yields 503 documents on each side
-// — no entry is added, removed or renamed — and the entire textual delta is
-// FOUR lines, each the cosign `subject:` matcher of an app OCIRepository
-// (github-config, wedding-app, ascoachingogvaner, aws). Each drops the dead
-// (reusable-workflows|actions) alternation and replaces the `@.+` ref part with
-// `@([0-9a-f]{40}|refs/tags/v.+)$`, so an artifact signed from a floating
-// workflow ref no longer verifies. The validator reported no per-resource
-// fingerprint mismatch, no missing and no duplicate resource, so no RBAC
-// object, ServiceAccount, pinned authorization resource or substitution source
-// moves: the change adds, removes and repoints no grant-bearing object. The
-// gate moved only because an OCIRepository carrying a ghcr-auth secretRef is
-// itself inside the selected surface, not because a privilege changed.
+// Measured against main e77fdb9c before approving this value: the render goes
+// from 503 to 509 documents and the delta is **purely additive** — 97 added
+// lines, ZERO removed — so no existing entry is modified, removed or renamed.
+// The six new documents are one tenant skeleton (`doggy-countdown`):
+// Namespace, NetworkPolicy, ServiceAccount, RoleBinding, OCIRepository and
+// Flux Kustomization. The validator reported no per-resource
+// fingerprint mismatch, no missing and no duplicate resource.
+//
+// The new RoleBinding grants the tenant's own ServiceAccount the existing
+// `tenant-edit` ClusterRole in its own namespace — the same scoped grant every
+// other tenant skeleton carries. Nothing is granted to the aws/aws service
+// account this validator exists to protect, and no existing grant is repointed.
+// The tenant pulls a PUBLIC package, so it carries no pull secret and no
+// ExternalSecret — it holds no credential at all.
+//
+// (The previous value covered the cosign matcher tightening: 503 documents on
+// both sides, four changed `subject:` lines, no grant-bearing object moved.)
 //
 // NOTE for whoever re-approves this next: an opaque ciphertext in the surface
 // moves on ANY re-encryption — this value also absorbed a SOPS version bump
@@ -79,7 +83,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "aba2c747530f3742b4fa2571e0c216c9722d7b9540bfea3dfc797d692e0b54f9"
+const expectedRenderedSurfaceSHA = "5d11d1bf2f5989c3483dd528fb59306cc14ef71b44f87e804e1c3c905a4da406"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
