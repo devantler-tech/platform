@@ -23,6 +23,10 @@ var (
 	ksailPullWrapperPath = filepath.Join(rootPath, "scripts", "run-ksail-prod-with-pull-auth.sh")
 	ksailOperatorVersion = readKSailOperatorVersion()
 	ksailTargetImage     = "ghcr.io/devantler-tech/ksail:v" + ksailOperatorVersion
+
+	// Set once by prepareFakeCommandBinary; see the comment there for why the
+	// fakes do not run from the test binary itself.
+	fakeCommandBinary string
 )
 
 type commandResult struct {
@@ -69,9 +73,54 @@ func TestMain(m *testing.M) {
 	case "kubectl":
 		code = fakeKubectl(os.Args[1:])
 	default:
+		cleanup := prepareFakeCommandBinary()
 		code = m.Run()
+		cleanup()
 	}
 	os.Exit(code)
+}
+
+// The fakes are this same binary re-executed under another name, and the script
+// under test calls them hundreds of times per case. That makes every build flag
+// applied to the test binary a per-invocation cost: under the coverage
+// workflow's `-race -coverprofile -covermode=atomic` a 1.23s case measures
+// 39.48s, a 32x multiplier that puts the package far past Go's 10m default no
+// matter how the tests are scheduled. The fakes are argument parsers and file
+// writers, so none of that instrumentation tells us anything about them — and
+// the package reports `coverage: [no statements]` regardless, because what it
+// covers is a shell script.
+//
+// So the fakes run from an uninstrumented copy of this binary, built once per
+// run, while the tests themselves keep whatever flags they were invoked with.
+// Building it needs the Go toolchain; when that is unavailable the fakes fall
+// back to this binary, which is correct but pays the multiplier.
+func prepareFakeCommandBinary() func() {
+	self, err := os.Executable()
+	if err != nil {
+		panic("resolve test executable: " + err.Error())
+	}
+	fakeCommandBinary = self
+
+	dir, err := os.MkdirTemp("", "ghcr-auth-fakes-")
+	if err != nil {
+		return func() {}
+	}
+	cleanup := func() { _ = os.RemoveAll(dir) }
+
+	candidate := filepath.Join(dir, "fake-commands")
+	build := exec.Command("go", "test", "-c", "-o", candidate, ".")
+	build.Dir = filepath.Join(rootPath, "scripts", "tests", "refresh-flux-ghcr-auth")
+	if output, buildErr := build.CombinedOutput(); buildErr != nil {
+		fmt.Fprintf(os.Stderr,
+			"fake-command binary build failed (%v); falling back to the instrumented test binary:\n%s\n",
+			buildErr, output)
+
+		return cleanup
+	}
+
+	fakeCommandBinary = candidate
+
+	return cleanup
 }
 
 func findRepoRoot() string {
@@ -122,12 +171,11 @@ func newFixture(t *testing.T) *fixture {
 	}
 	mustMkdir(f.binDir)
 	mustMkdir(f.syncStateDir)
-	testExecutable, err := os.Executable()
-	if err != nil {
-		t.Fatalf("resolve test executable: %v", err)
+	if fakeCommandBinary == "" {
+		t.Fatal("fake-command binary was not prepared; TestMain must run before any fixture")
 	}
 	for _, name := range []string{"ksail", "talosctl", "curl", "kubectl"} {
-		if err := os.Symlink(testExecutable, filepath.Join(f.binDir, name)); err != nil {
+		if err := os.Symlink(fakeCommandBinary, filepath.Join(f.binDir, name)); err != nil {
 			t.Fatalf("link fake %s: %v", name, err)
 		}
 	}
@@ -245,6 +293,12 @@ func (f *fixture) runKSailPullWrapper(config any, command []string, overrides ma
 
 func (f *fixture) baseEnvironment() map[string]string {
 	env := environmentMap(os.Environ())
+	// A coverage run exports GOCOVERDIR, and the Go runtime writes a warning to
+	// stderr when a binary that inherits it has no coverage instrumentation. The
+	// fakes are exactly that, and the tests read the captured stderr, so an
+	// inherited GOCOVERDIR turns a coverage run into assertion failures that a
+	// plain run never shows.
+	delete(env, "GOCOVERDIR")
 	env["PATH"] = f.binDir + string(os.PathListSeparator) + env["PATH"]
 	env["FAKE_DECRYPTED_CONFIG"] = f.decryptedConfig
 	env["FLUX_GHCR_SECRET_FILE"] = f.encryptedSecret
