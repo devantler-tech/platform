@@ -24,17 +24,18 @@ spec:
   verify:
     provider: cosign
     matchOIDCIdentity:
-      # Keyless-signed by the shared publish-manifests reusable workflow that
-      # .github's cd.yaml calls. Signing runs INSIDE that reusable workflow, so
-      # the cosign OIDC subject is the reusable workflow's path, NOT .github's
-      # own cd.yaml — same convention as the publish-app.yaml-signed app
-      # artifacts. The workflow is moving from devantler-tech/reusable-workflows
-      # into devantler-tech/actions (actions#425 consumer repoint); both repo
-      # subjects are accepted via ONE regex-alternated entry — cosign's keyless
-      # attestation verification rejects MULTIPLE identity entries outright
-      # ("unsupported: multiple identities are not supported at this time"), so
-      # the transition must be expressed inside a single subject regex. Narrow
-      # the alternation to actions-only once the first actions-signed artifact
-      # has been published and verified.
+      # Keyless-signed by the shared publish-manifests workflow that .github's
+      # cd.yaml calls. Signing runs INSIDE that workflow, so the cosign OIDC
+      # subject is that workflow's path, NOT .github's own cd.yaml — same
+      # convention as the publish-app.yaml-signed app artifacts.
+      #
+      # The ref part accepts only a 40-hex commit SHA or a release tag, so an
+      # artifact signed from a floating ref (e.g. @main) does not verify.
+      # Consumers pin the workflow by SHA, so only the SHA branch is exercised
+      # today; the tag branch is kept so a tag-pinned caller also verifies.
+      # cosign's keyless attestation verification rejects MULTIPLE identity
+      # entries outright ("unsupported: multiple identities are not supported at
+      # this time"), so any future alternation must stay inside one subject
+      # regex.
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/(reusable-workflows|actions)/\.github/workflows/publish-manifests\.yaml@.+$'
+        subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@([0-9a-f]{40}|refs/tags/v.+)$'
