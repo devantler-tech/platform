@@ -56,21 +56,30 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main b9f39bc before approving this value: both renders
-// contain 159 surface entries and exactly one entry moves, the kube-system
-// Cilium HelmRelease. Its canonical fingerprint changes from 4bfb70e9 to
-// 434560fd because values.devices, updateStrategy and the temporary Helm
-// disableWait handoff stage the intended operator-stepped Cilium rollout
-// without blocking Flux dependencies. No pinned authorization resource or
-// substitution source moves, so the change adds, removes and repoints no
-// grant-bearing object.
+// Measured against main 607ad877 before approving this value: rendering the
+// five authorization overlays for both trees yields 503 documents on each side
+// — no entry is added, removed or renamed — and the entire textual delta is
+// FOUR lines, each the cosign `subject:` matcher of an app OCIRepository
+// (github-config, wedding-app, ascoachingogvaner, aws). Each drops the dead
+// (reusable-workflows|actions) alternation and replaces the `@.+` ref part with
+// `@([0-9a-f]{40}|refs/tags/v.+)$`, so an artifact signed from a floating
+// workflow ref no longer verifies. The validator reported no per-resource
+// fingerprint mismatch, no missing and no duplicate resource, so no RBAC
+// object, ServiceAccount, pinned authorization resource or substitution source
+// moves: the change adds, removes and repoints no grant-bearing object. The
+// gate moved only because an OCIRepository carrying a ghcr-auth secretRef is
+// itself inside the selected surface, not because a privilege changed.
 //
 // NOTE for whoever re-approves this next: an opaque ciphertext in the surface
 // moves on ANY re-encryption — this value also absorbed a SOPS version bump
 // (3.13.2 -> 3.13.3) — so a routine secret rotation reds this gate with no
 // authorization change at all. Do NOT treat a moved hash as self-evidently
 // benign: re-run the per-entry membership measurement above before re-approving.
-const expectedRenderedSurfaceSHA = "9c50a90deac105597b57e0308e3d1f6d61b987dbabefc55af4ff2eaad80a9f43"
+// A Go toolchain is only needed to recompute the hash; MEMBERSHIP is a plain
+// kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
+// infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
+// trees and diff them.
+const expectedRenderedSurfaceSHA = "aba2c747530f3742b4fa2571e0c216c9722d7b9540bfea3dfc797d692e0b54f9"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
