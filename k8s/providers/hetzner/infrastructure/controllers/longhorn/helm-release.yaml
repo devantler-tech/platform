@@ -140,9 +140,16 @@ spec:
     # the container runs non-root only because the image bakes USER nginx
     # (live: uid=499(nginx) gid=486(nginx), no securityContext at all). Nothing
     # enforces that — `longhorn-system` is excluded from the `add-security-context`
-    # Kyverno mutation, so no admission control supplies it either. With
-    # runAsNonRoot pinned here, an image that ever ships a root default is REFUSED
-    # by the kubelet instead of silently running as root.
+    # Kyverno mutation, so no admission control supplies it either. Pinning the
+    # identity here FORCES it: because runAsUser is set explicitly, an image that
+    # ever ships a root default is launched as uid 499 regardless of its own USER,
+    # rather than silently running as root. Note the mechanism — this is an
+    # override, NOT a kubelet rejection. runAsNonRoot only refuses a container
+    # whose effective user resolves to root, which with an explicit non-zero
+    # runAsUser it never does; the refusal path is the backstop that fires if this
+    # uid is ever removed or set to 0. So when diagnosing a future chart rollout,
+    # the expected failure signal is the container starting as 499 and failing in
+    # its own start-up, not an admission-time or kubelet refusal.
     #
     # The chart cannot express this: deployment-ui.yaml renders no securityContext
     # and exposes no `longhornUI.securityContext` value, so a postRenderer is the
@@ -152,9 +159,17 @@ spec:
     # the name `nginx`, and the kubelet cannot verify a non-numeric user against
     # runAsNonRoot, so it would refuse the container without an explicit uid.
     #
-    # KNOWN LIMIT: if a chart bump ever renames the Deployment, this patch silently
-    # stops applying (kustomize does not error on a non-matching target). The uid
-    # is chart-version-coupled for the same reason — revisit both on a major bump.
+    # KNOWN LIMIT: if a chart bump ever renames the Deployment, this patch stops
+    # applying, and kustomize does not error on a non-matching target — verified:
+    # rendering this exact patch against the live Deployment with the target name
+    # changed exits 0 and emits the object completely unpatched. The uid is
+    # chart-version-coupled for the same reason — revisit both on a major bump.
+    #
+    # It does NOT go unnoticed, though. This HelmRelease is a member of the pinned
+    # EKS authorization surface (document 217 of the rendered membership), so any
+    # chart bump moves the aggregate fingerprint and reds that gate, forcing a
+    # re-approval — which is exactly the checkpoint where this patch gets
+    # re-verified. The gate is the backstop; this comment is the instruction.
     #
     # The three writable paths (/var/cache/nginx, /var/config/nginx, /var/run) are
     # chart-provided emptyDirs and world-writable, so no fsGroup is needed, and

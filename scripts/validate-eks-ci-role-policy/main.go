@@ -56,10 +56,28 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main 1b204ded before approving this value: 509 documents on
+// Measured against main c5e2f307 before approving this value: 509 documents on
 // both sides, with membership IDENTICAL — zero added, zero removed, zero
-// renamed. Exactly ONE entry's content moved, the tenant
-// `ResourceGraphDefinition`, and its rendered delta is a single line: the
+// renamed (proven by set difference in BOTH directions over
+// apiVersion|kind|namespace|name, not by count alone, which cannot see a
+// rename). Exactly ONE entry's content moved:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  longhorn-system/longhorn
+//
+// Its rendered delta is the `postRenderers` block added by this change, which
+// pins longhorn-ui's non-root identity (runAsNonRoot/runAsUser/runAsGroup,
+// seccomp RuntimeDefault, drop ALL, no privilege escalation). That block
+// constrains the workload; it grants nothing.
+//
+// No grant-bearing object moved: the surface carries 61 Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount documents on BOTH sides, and
+// none of them is in the moved set above. Every `aws`-bearing line in the
+// rendered surface is byte-identical across the two trees, so nothing granted to
+// the aws/aws service account this validator exists to protect is touched.
+//
+// (The value before this one covered the tenant `ResourceGraphDefinition`,
+// measured against 1b204ded: 509 documents on both sides, membership identical,
+// exactly one entry moved, and its rendered delta was a single line — the
 // cosign `subject:` matcher narrows from
 // `(reusable-workflows|actions)/…@.+` to `actions/…@([0-9a-f]{40}|refs/tags/v.+)`.
 // That drops the archived `reusable-workflows` repo as an accepted signer and
@@ -70,20 +88,15 @@ const (
 // strictly a tightening: every subject the new matcher accepts, the old one
 // already accepted.
 //
-// The moved line is the cosign subject, NOT one of the RGD's grant templates:
-// the ServiceAccount and `tenant-edit` RoleBinding this RGD expands to are
-// untouched. Across the whole surface no grant-bearing object moved — no Role,
-// ClusterRole, RoleBinding, ClusterRoleBinding or ServiceAccount is added,
-// removed or modified — and nothing granted to the aws/aws service account this
-// validator exists to protect is touched. The RGD is itself individually
-// pinned, so its per-resource fingerprint above moved with it and was
-// re-approved from the same measurement.
-//
-// (The previous value covered onboarding the `doggy-countdown` tenant, measured
-// against e77fdb9c: a purely additive 503 -> 509 documents, one tenant skeleton,
-// no existing entry modified. The one before that covered the cosign matcher
-// tightening on the then-four live trust rules: 503 documents on both sides,
-// four changed `subject:` lines, no grant-bearing object moved.)
+// moved line was the cosign subject, NOT one of the RGD's grant templates — the
+// ServiceAccount and `tenant-edit` RoleBinding it expands to were untouched, no
+// grant-bearing object moved, and the RGD being individually pinned meant its
+// per-resource fingerprint moved with it and was re-approved from the same
+// measurement. The value before that covered onboarding the `doggy-countdown`
+// tenant, measured against e77fdb9c: a purely additive 503 -> 509 documents, one
+// tenant skeleton, no existing entry modified. The one before that covered the
+// cosign matcher tightening on the then-four live trust rules: 503 documents on
+// both sides, four changed `subject:` lines, no grant-bearing object moved.)
 //
 // NOTE for whoever re-approves this next: an opaque ciphertext in the surface
 // moves on ANY re-encryption — this value also absorbed a SOPS version bump
