@@ -49,12 +49,28 @@ permissions: {}
 
 # Shared with ci.yaml's merge-queue deploy and cd.yaml's tag deploy so a DR
 # rebuild can never race a regular deploy against the prod cluster.
-# queue: max so a rebuild waiting behind a deploy is never silently replaced by
-# a newer event — see the fuller rationale in cd.yaml.
+#
+# queue: single is the DELIBERATE choice here, and the opposite of the
+# prod-deploy jobs that share this group. Apply the same test they do: is the
+# run an event-carrying state transition, or does it converge?
+#
+# A deploy carries a specific revision to the cluster, so dropping one loses
+# that revision — hence queue: max there. A DR rebuild converges: every dispatch
+# means "make prod exist again from zero", and the newest request subsumes any
+# earlier one. Under queue: max, two operators reaching for the button during
+# one incident would get TWO from-zero rebuilds, the second tearing down and
+# restoring over the cluster the first had just recovered. Coalescing to the
+# latest pending request is the safe behaviour for a convergent operation.
+#
+# Accepted residual: a pending DR request is replaced if any newer run enters
+# this group, a merge deploy included. That is the pre-existing behaviour and it
+# is tolerable here because a DR rebuild is operator-attended — someone typed
+# REBUILD-PROD and is watching — so a dropped request is noticed immediately,
+# whereas a duplicate rebuild would run unattended against a recovered cluster.
 concurrency:
   group: prod-deploy
   cancel-in-progress: false
-  queue: max
+  queue: single
 
 jobs:
   rebuild:
