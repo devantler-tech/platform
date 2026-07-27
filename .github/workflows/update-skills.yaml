@@ -4,9 +4,16 @@ on:
   schedule:
     - cron: "0 6 * * *" # Daily at 06:00 UTC
 
+# queue: single is the DELIBERATE choice here, not the unexamined default.
+# This job converges .agents/skills to whatever upstream currently holds and
+# opens/updates a PR, so the newest run always produces the correct end state
+# and a dropped pending run loses nothing — the work is idempotent rather than
+# event-carrying. Contrast the prod-deploy group, which is queue: max because
+# each deploy is a distinct state transition that must actually happen.
 concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"
   cancel-in-progress: false
+  queue: single
 
 permissions: {}
 

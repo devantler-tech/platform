@@ -12,9 +12,20 @@ permissions: {}
 
 # Shared with the CI merge-queue deploy-prod job (ci.yaml) so a manual deploy
 # and a merge-queue deploy can never run against the prod cluster at once.
+#
+# queue: max is load-bearing, not a tidy-up. cancel-in-progress: false protects
+# the deploy that is already RUNNING; it says nothing about the one waiting
+# behind it. Under the default (queue: single) at most one run may be pending,
+# so a third event replaces the second and that deploy is discarded silently —
+# no failure, no annotation, nothing in the run list. queue: max lets up to 100
+# runs queue FIFO instead, so every deploy in a burst reaches the cluster in
+# order. Cancelling an intermediate deploy is exactly what leaves prod in an
+# inconsistent state, and with main behind a merge queue, several changes
+# landing close together is normal rather than exceptional.
 concurrency:
   group: prod-deploy
   cancel-in-progress: false
+  queue: max
 
 jobs:
   # The merge-queue deploy in ci.yaml cannot run without this validator passing,

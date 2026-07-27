@@ -49,9 +49,12 @@ permissions: {}
 
 # Shared with ci.yaml's merge-queue deploy and cd.yaml's tag deploy so a DR
 # rebuild can never race a regular deploy against the prod cluster.
+# queue: max so a rebuild waiting behind a deploy is never silently replaced by
+# a newer event — see the fuller rationale in cd.yaml.
 concurrency:
   group: prod-deploy
   cancel-in-progress: false
+  queue: max
 
 jobs:
   rebuild:

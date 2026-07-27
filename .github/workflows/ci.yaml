@@ -465,9 +465,13 @@ jobs:
     environment: prod
     # Shared with the CD workflow (cd.yaml) so a manual deploy and a
     # merge-queue deploy can never run against the prod cluster at once.
+    # queue: max so a deploy waiting on that lock is queued rather than replaced
+    # by the next merge — without it, the middle deploy of any burst is dropped
+    # silently. See the fuller rationale in cd.yaml.
     concurrency:
       group: prod-deploy
       cancel-in-progress: false
+      queue: max
     permissions:
       contents: read # checkout repository
       packages: write # push OCI artifacts to GHCR
@@ -521,9 +525,13 @@ jobs:
     # the prod cluster at the same time as another deploy. `needs: deploy-prod`
     # also guarantees the failed deploy has released the lock before the heal
     # acquires it, so there is no self-deadlock.
+    # queue: max matters most here: a heal that is dropped while pending leaves
+    # main un-restored after a failed deploy, which is the exact state this job
+    # exists to prevent. See the fuller rationale in cd.yaml.
     concurrency:
       group: prod-deploy
       cancel-in-progress: false
+      queue: max
     permissions:
       contents: read # checkout repository
       packages: write # push OCI artifacts to GHCR
