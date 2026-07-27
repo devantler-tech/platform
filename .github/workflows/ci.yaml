@@ -150,6 +150,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
+      security-events: write # upload the Kubescape SARIF to Code Scanning
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -330,10 +331,56 @@ jobs:
         # (deliberate dev-only credential — tracked for a root-cause fix, not
         # an exception). Ratchet the floor up as genuine gaps close; never
         # lower it.
+        #
+        # --format sarif -o writes the findings to a file IN ADDITION to the
+        # human-readable posture table, which still goes to this log unchanged
+        # (verified on both a passing and a failing scan) — so the SARIF is a
+        # pure addition, not a swap. The upload step below turns those findings
+        # into Code Scanning alerts. The threshold flag is untouched and remains
+        # the merge gate; this step's pass/fail behaviour does not change.
         run: |
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
-          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95
+          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
+
+      - name: 🛡️ Upload Kubescape findings to Code Scanning
+        # The score gate above answers "did posture regress"; it cannot show
+        # WHICH control failed on WHICH file, and a finding that does not move
+        # the score is invisible in it entirely. Code Scanning gives each
+        # control an alert with file and line, dedupes it across runs, and
+        # closes it automatically when the finding is gone (#2829).
+        #
+        # `!cancelled()` rather than `success()`: the findings are wanted most
+        # precisely when the gate above FAILED. ksail writes the SARIF before it
+        # applies the threshold, so the file exists on that path too.
+        #
+        # Skipped on fork PRs — this job deliberately runs on them (it needs no
+        # secrets), but a fork's GITHUB_TOKEN cannot be granted
+        # security-events: write, so attempting the upload there would fail the
+        # build for a permission no fork can have.
+        #
+        # The fork check is the ONLY narrowing: the scan step above is
+        # unconditional within this job, so gating this step on a path filter
+        # would silently drop the findings for any run the scan still made.
+        #
+        # KNOWN CHARACTERISTIC: cluster-RBAC controls that are not backed by a
+        # manifest file (C-0002 is the one observed) emit a result with an EMPTY
+        # artifactLocation.uri. The scan as configured here — NSA framework with
+        # this repo's exceptions — produces none of them (measured: 0 of 4
+        # findings; the same scan with exceptions removed produces 1 of 70). If
+        # a future exception or framework change surfaces one and this upload
+        # starts failing on it, that empty uri is the thing to look at first,
+        # not the SARIF as a whole.
+        if: >-
+          !cancelled() &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          sarif_file: ${{ runner.temp }}/kubescape.sarif
+          # Distinguishes these alerts from the CodeQL and zizmor analyses that
+          # already publish to this repository's Security tab, so each tool's
+          # results are tracked and closed independently.
+          category: kubescape-nsa
 
   naming:
     name: 🏷️ Validate Naming Conventions
