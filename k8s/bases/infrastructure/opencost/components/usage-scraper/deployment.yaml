@@ -26,8 +26,8 @@ spec:
         app.kubernetes.io/component: metrics-scraper
     spec:
       serviceAccountName: opencost-usage-scraper
-      # Kubernetes discovery and the API-server node proxy both require the
-      # dedicated, read-only service-account token.
+      # Kubernetes discovery and authenticated direct kubelet scraping both
+      # require the dedicated, read-only service-account token.
       automountServiceAccountToken: true
       securityContext:
         runAsNonRoot: true
