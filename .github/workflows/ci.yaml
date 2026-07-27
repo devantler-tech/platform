@@ -62,6 +62,7 @@ jobs:
               - 'scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh'
               - 'scripts/guard-cilium-homogeneous-device-rollout.sh'
               - 'scripts/wait-for-platform-flux-revision.sh'
+              - 'scripts/tests/test-opencost-usage-scraper.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
@@ -221,6 +222,13 @@ jobs:
           bash scripts/tests/test-cilium-homogeneous-devices-activation.sh
           bash scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh
           bash scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh
+
+      - name: 📊 Validate OpenCost usage metrics path
+        if: needs.changes.outputs.k8s == 'true'
+        # OpenCost cannot distinguish a dead usage sensor from an idle cluster.
+        # Render the full component contract so the cAdvisor scrape and its
+        # least-privilege delivery path cannot silently disappear.
+        run: bash scripts/tests/test-opencost-usage-scraper.sh
 
       - name: ⚙️ Setup KSail
         # Renovate-managed (datasource github-releases; grouped 'ksail' with the
