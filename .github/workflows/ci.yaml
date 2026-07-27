@@ -343,6 +343,16 @@ jobs:
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
           ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
 
+      - name: 🔬 TEMPORARY — report SARIF URI shape
+        # Diagnostic only: the alerts from the first run of this PR anchored
+        # to bases/... while the files live at k8s/bases/..., so this prints
+        # what was actually uploaded. Removed before this PR leaves draft.
+        if: "!cancelled()"
+        run: |
+          jq -r '[.runs[].results[].locations[].physicalLocation.artifactLocation.uri]|unique[]' "${RUNNER_TEMP}/kubescape.sarif"
+          echo "--- workspace check ---"
+          ls -d k8s bases 2>&1 || true
+
       - name: 🛡️ Upload Kubescape findings to Code Scanning
         # The score gate above answers "did posture regress"; it cannot show
         # WHICH control failed on WHICH file, and a finding that does not move
