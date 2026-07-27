@@ -54,6 +54,7 @@ jobs:
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
               - 'scripts/generate-kubescape-exceptions/**'
+              - 'scripts/normalize-sarif-paths.sh'
               - 'go.mod'
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
@@ -343,15 +344,22 @@ jobs:
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
           ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
 
-      - name: 🔬 TEMPORARY — report SARIF URI shape
-        # Diagnostic only: the alerts from the first run of this PR anchored
-        # to bases/... while the files live at k8s/bases/..., so this prints
-        # what was actually uploaded. Removed before this PR leaves draft.
+      - name: 🧭 Make the SARIF paths repo-root-relative
+        # Kubescape reports paths relative to the directory it scanned, so a
+        # finding in k8s/bases/... arrives as bases/... . Code Scanning resolves
+        # an alert against the REPO ROOT, so uploading those unchanged creates
+        # alerts pointing at files that do not exist — measured on this PR's
+        # first run: the upload was green, four alerts existed, all four dead.
+        #
+        # The same scan run locally emitted the k8s/ prefix, so the shape is not
+        # stable across ksail versions. The script resolves each path against
+        # the working tree rather than assuming either shape, so it is a no-op
+        # if ksail later emits root-relative paths, and it hard-fails rather
+        # than uploading a path it cannot resolve.
         if: "!cancelled()"
         run: |
-          jq -r '[.runs[].results[].locations[].physicalLocation.artifactLocation.uri]|unique[]' "${RUNNER_TEMP}/kubescape.sarif"
-          echo "--- workspace check ---"
-          ls -d k8s bases 2>&1 || true
+          shellcheck scripts/normalize-sarif-paths.sh
+          bash scripts/normalize-sarif-paths.sh "${RUNNER_TEMP}/kubescape.sarif" k8s .
 
       - name: 🛡️ Upload Kubescape findings to Code Scanning
         # The score gate above answers "did posture regress"; it cannot show
@@ -375,12 +383,10 @@ jobs:
         #
         # KNOWN CHARACTERISTIC: cluster-RBAC controls that are not backed by a
         # manifest file (C-0002 is the one observed) emit a result with an EMPTY
-        # artifactLocation.uri. The scan as configured here — NSA framework with
-        # this repo's exceptions — produces none of them (measured: 0 of 4
-        # findings; the same scan with exceptions removed produces 1 of 70). If
-        # a future exception or framework change surfaces one and this upload
-        # starts failing on it, that empty uri is the thing to look at first,
-        # not the SARIF as a whole.
+        # artifactLocation.uri — there is no file for such a finding to anchor
+        # to. The step above drops those; with this repo's exceptions applied
+        # the scan produces none anyway (measured: 0 of 4 findings; the same
+        # scan with exceptions removed produces 1 of 70).
         if: >-
           !cancelled() &&
           github.event.pull_request.head.repo.full_name == github.repository
