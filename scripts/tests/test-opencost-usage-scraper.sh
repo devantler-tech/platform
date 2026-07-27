@@ -6,6 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly opencost_dir="${root_dir}/k8s/bases/infrastructure/opencost"
 readonly usage_scraper_component="${opencost_dir}/components/usage-scraper"
+readonly production_infrastructure="${root_dir}/k8s/providers/hetzner/infrastructure"
 readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
 
 fail() {
@@ -201,4 +202,19 @@ require_text \
   'port: "10250"' \
   'the usage scraper must reach only the authenticated kubelet HTTPS port'
 
-printf 'PASS: the default-off OpenCost component uses least-privilege direct cAdvisor scraping\n'
+production_rendered="$(kubectl kustomize "${production_infrastructure}")" ||
+  fail 'the production infrastructure overlay must render'
+extract_resource \
+  Deployment \
+  opencost-usage-scraper <<<"${production_rendered}" >/dev/null ||
+  fail 'production must explicitly activate the usage-scraper Deployment'
+extract_resource \
+  CiliumNetworkPolicy \
+  allow-opencost-usage-scraper <<<"${production_rendered}" >/dev/null ||
+  fail 'production must activate the scraper-scoped kubelet network policy'
+extract_resource \
+  ClusterRole \
+  opencost-usage-scraper <<<"${production_rendered}" >/dev/null ||
+  fail 'production must activate the fine-grained usage-scraper ClusterRole'
+
+printf 'PASS: production explicitly activates the default-off least-privilege OpenCost scraper\n'

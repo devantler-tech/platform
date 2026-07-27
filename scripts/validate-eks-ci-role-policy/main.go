@@ -56,8 +56,18 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main c5e2f307 before approving this value: 509 documents on
-// both sides, with membership IDENTICAL — zero added, zero removed, zero
+// Measured against main fa041449 before approving this value: the production
+// infrastructure overlay moves from 204 -> 210 documents, with exactly six
+// additive OpenCost usage-scraper resources and no existing document modified
+// or removed. The authorization delta is one dedicated ServiceAccount, one
+// ClusterRole limited to get/list/watch on nodes plus get on nodes/metrics, and
+// one binding between exactly those identities. The ConfigMap, Deployment, and
+// scraper-scoped CiliumNetworkPolicy carry the bounded scrape/remote-write path
+// but grant no Kubernetes authorization. The privileged nodes/proxy resource is
+// absent. No aws/aws permission or existing grant-bearing object moved.
+//
+// Measured against main c5e2f307 before approving the previous value: 509
+// documents on both sides, with membership IDENTICAL — zero added, zero removed, zero
 // renamed (proven by set difference in BOTH directions over
 // apiVersion|kind|namespace|name, not by count alone, which cannot see a
 // rename). Exactly ONE entry's content moved:
@@ -107,7 +117,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "36fc9fecc7a9e438b8996e29b01ad396bba0358e8f00e0adba1b8988b4599693"
+const expectedRenderedSurfaceSHA = "b1b8547b7a4826c100cbbbea860fc9688fc8b0f3472148a52f63bfeb27969e29"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -148,8 +158,10 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:                  "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "crossview", name: "crossview-portforward"}:            "78992d9727763fdcf1bda05969fdc881e6d0e54cc72efc07555304b47d25bc3a",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                           "4447f41c03e8297fafdabcadf4fdd8ca3260f2c84264c531b2179cb7df2c1556",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "opencost-usage-scraper"}:                                   "3cb22a5a2d178e9cc93ebc3995d936d124800c441785dc23d780281746569937",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "opencost-usage-scraper"}:                            "4b28e1da280a7940a1cb4d538bc31ede1b5d272c17189a81afeae48acbb8b7a0",
 	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "a4ab25489f2548aec728d4706aff02246d4669538b0f577c57bef132051910b6",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
