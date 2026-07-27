@@ -56,21 +56,58 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main b9f39bc before approving this value: both renders
-// contain 159 surface entries and exactly one entry moves, the kube-system
-// Cilium HelmRelease. Its canonical fingerprint changes from 4bfb70e9 to
-// 434560fd because values.devices, updateStrategy and the temporary Helm
-// disableWait handoff stage the intended operator-stepped Cilium rollout
-// without blocking Flux dependencies. No pinned authorization resource or
-// substitution source moves, so the change adds, removes and repoints no
-// grant-bearing object.
+// Measured against main c5e2f307 before approving this value: 509 documents on
+// both sides, with membership IDENTICAL — zero added, zero removed, zero
+// renamed (proven by set difference in BOTH directions over
+// apiVersion|kind|namespace|name, not by count alone, which cannot see a
+// rename). Exactly ONE entry's content moved:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  longhorn-system/longhorn
+//
+// Its rendered delta is the `postRenderers` block added by this change, which
+// pins longhorn-ui's non-root identity (runAsNonRoot/runAsUser/runAsGroup,
+// seccomp RuntimeDefault, drop ALL, no privilege escalation). That block
+// constrains the workload; it grants nothing.
+//
+// No grant-bearing object moved: the surface carries 61 Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount documents on BOTH sides, and
+// none of them is in the moved set above. Every `aws`-bearing line in the
+// rendered surface is byte-identical across the two trees, so nothing granted to
+// the aws/aws service account this validator exists to protect is touched.
+//
+// (The value before this one covered the tenant `ResourceGraphDefinition`,
+// measured against 1b204ded: 509 documents on both sides, membership identical,
+// exactly one entry moved, and its rendered delta was a single line — the
+// cosign `subject:` matcher narrows from
+// `(reusable-workflows|actions)/…@.+` to `actions/…@([0-9a-f]{40}|refs/tags/v.+)`.
+// That drops the archived `reusable-workflows` repo as an accepted signer and
+// stops a floating ref (e.g. `@refs/heads/main`) from satisfying the rule. The
+// result is byte-identical to the three live `publish-app` OCIRepository trust
+// rules (wedding-app, ascoachingogvaner, doggy-countdown), so the template every
+// tenant is generated from now carries the same rule its tenants do. It is
+// strictly a tightening: every subject the new matcher accepts, the old one
+// already accepted.
+//
+// moved line was the cosign subject, NOT one of the RGD's grant templates — the
+// ServiceAccount and `tenant-edit` RoleBinding it expands to were untouched, no
+// grant-bearing object moved, and the RGD being individually pinned meant its
+// per-resource fingerprint moved with it and was re-approved from the same
+// measurement. The value before that covered onboarding the `doggy-countdown`
+// tenant, measured against e77fdb9c: a purely additive 503 -> 509 documents, one
+// tenant skeleton, no existing entry modified. The one before that covered the
+// cosign matcher tightening on the then-four live trust rules: 503 documents on
+// both sides, four changed `subject:` lines, no grant-bearing object moved.)
 //
 // NOTE for whoever re-approves this next: an opaque ciphertext in the surface
 // moves on ANY re-encryption — this value also absorbed a SOPS version bump
 // (3.13.2 -> 3.13.3) — so a routine secret rotation reds this gate with no
 // authorization change at all. Do NOT treat a moved hash as self-evidently
 // benign: re-run the per-entry membership measurement above before re-approving.
-const expectedRenderedSurfaceSHA = "9c50a90deac105597b57e0308e3d1f6d61b987dbabefc55af4ff2eaad80a9f43"
+// A Go toolchain is only needed to recompute the hash; MEMBERSHIP is a plain
+// kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
+// infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
+// trees and diff them.
+const expectedRenderedSurfaceSHA = "36fc9fecc7a9e438b8996e29b01ad396bba0358e8f00e0adba1b8988b4599693"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -113,7 +150,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                           "4447f41c03e8297fafdabcadf4fdd8ca3260f2c84264c531b2179cb7df2c1556",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "404de3502423d08af04eaa5d1ca6a6b76634ae09c270e7718994cfd346c8a07f",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "a4ab25489f2548aec728d4706aff02246d4669538b0f577c57bef132051910b6",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "1a2ecb3104630c44466d846159ee68ff6a98888887c02ecd0278782793dead4a",
