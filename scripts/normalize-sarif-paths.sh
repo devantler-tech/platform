@@ -33,8 +33,14 @@ SARIF="${1:?usage: normalize-sarif-paths.sh <sarif-file> <prefix> [repo-root]}"
 PREFIX="${2:?usage: normalize-sarif-paths.sh <sarif-file> <prefix> [repo-root]}"
 ROOT="${3:-.}"
 
-[ -f "$SARIF" ] || { echo "normalize-sarif-paths: no such file: $SARIF" >&2; exit 2; }
-[ -d "$ROOT/$PREFIX" ] || { echo "normalize-sarif-paths: prefix dir not found: $ROOT/$PREFIX" >&2; exit 2; }
+[ -f "$SARIF" ] || {
+  echo "normalize-sarif-paths: no such file: $SARIF" >&2
+  exit 2
+}
+[ -d "$ROOT/$PREFIX" ] || {
+  echo "normalize-sarif-paths: prefix dir not found: $ROOT/$PREFIX" >&2
+  exit 2
+}
 
 PREFIX="${PREFIX%/}"
 
@@ -86,7 +92,7 @@ jq --arg prefix "$PREFIX" --argjson rewrite "$(printf '%s\n' "${rewrite_args[@]+
         )
       )
   )
-' "$SARIF" > "$tmp"
+' "$SARIF" >"$tmp"
 mv "$tmp" "$SARIF"
 
 dropped=$(printf '%s\n' "${uris[@]+"${uris[@]}"}" | grep -c '^$' || true)
@@ -100,6 +106,9 @@ while IFS= read -r line; do after+=("$line"); done < <(jq -r '
 bad=0
 for uri in "${after[@]}"; do
   [ -n "$uri" ] || continue
-  [ -e "$ROOT/$uri" ] || { echo "::error::normalize-sarif-paths: still unresolved after rewrite: $uri" >&2; bad=1; }
+  [ -e "$ROOT/$uri" ] || {
+    echo "::error::normalize-sarif-paths: still unresolved after rewrite: $uri" >&2
+    bad=1
+  }
 done
 [ "$bad" -eq 0 ] || exit 1
