@@ -63,23 +63,27 @@ const (
 // cosign `subject:` matcher narrows from
 // `(reusable-workflows|actions)/…@.+` to `actions/…@([0-9a-f]{40}|refs/tags/v.+)`.
 // That drops the archived `reusable-workflows` repo as an accepted signer and
-// stops a floating ref (e.g. `@main`) from satisfying the rule, bringing the
-// template every tenant is generated from into line with the four live
-// OCIRepository trust rules. It is strictly a tightening: every subject the new
-// matcher accepts, the old one already accepted.
+// stops a floating ref (e.g. `@refs/heads/main`) from satisfying the rule. The
+// result is byte-identical to the three live `publish-app` OCIRepository trust
+// rules (wedding-app, ascoachingogvaner, doggy-countdown), so the template every
+// tenant is generated from now carries the same rule its tenants do. It is
+// strictly a tightening: every subject the new matcher accepts, the old one
+// already accepted.
 //
-// No grant-bearing object moved — no Role, ClusterRole, RoleBinding,
-// ClusterRoleBinding or ServiceAccount is added, removed or modified — and
-// nothing granted to the aws/aws service account this validator exists to
-// protect is touched. The RGD is itself individually pinned, so its
-// per-resource fingerprint above moved with it and was re-approved from the
-// same measurement.
+// The moved line is the cosign subject, NOT one of the RGD's grant templates:
+// the ServiceAccount and `tenant-edit` RoleBinding this RGD expands to are
+// untouched. Across the whole surface no grant-bearing object moved — no Role,
+// ClusterRole, RoleBinding, ClusterRoleBinding or ServiceAccount is added,
+// removed or modified — and nothing granted to the aws/aws service account this
+// validator exists to protect is touched. The RGD is itself individually
+// pinned, so its per-resource fingerprint above moved with it and was
+// re-approved from the same measurement.
 //
-// (The previous value covered onboarding the `doggy-countdown` tenant: a purely
-// additive 503 -> 509 documents, one tenant skeleton, no existing entry
-// modified. The one before that covered the cosign matcher tightening on the
-// four live trust rules: 503 documents on both sides, four changed `subject:`
-// lines, no grant-bearing object moved.)
+// (The previous value covered onboarding the `doggy-countdown` tenant, measured
+// against e77fdb9c: a purely additive 503 -> 509 documents, one tenant skeleton,
+// no existing entry modified. The one before that covered the cosign matcher
+// tightening on the then-four live trust rules: 503 documents on both sides,
+// four changed `subject:` lines, no grant-bearing object moved.)
 //
 // NOTE for whoever re-approves this next: an opaque ciphertext in the surface
 // moves on ANY re-encryption — this value also absorbed a SOPS version bump
