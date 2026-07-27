@@ -129,3 +129,54 @@ spec:
 
     longhornUI:
       replicas: ${longhorn_ui_replicas:=1}
+  # Declare longhorn-ui's non-root identity so Kubescape C-0013 (and C-0016
+  # no-privilege-escalation / C-0055 drop-ALL) can see it. The chart's
+  # deployment-ui.yaml renders NO securityContext at all and exposes no
+  # `longhornUI.securityContext` value, so a postRenderer is the only way to
+  # state it — the same reason origin-ca-issuer patches its resources here.
+  #
+  # This is a DECLARATION change, not a runtime one: the image already bakes
+  # USER nginx, and the live container runs as uid=499(nginx) gid=486(nginx)
+  # with no securityContext set. Kubescape scans the workload pod-template, so
+  # an undeclared non-root process still reads as a C-0013 failure. Pinning the
+  # values the container already runs with therefore cannot change behaviour.
+  #
+  # The three writable paths (/var/cache/nginx, /var/config/nginx, /var/run) are
+  # chart-provided emptyDirs and are world-writable (0777), so no fsGroup is
+  # needed. readOnlyRootFilesystem is deliberately NOT set: the ui entrypoint
+  # renders its nginx config at start-up, so a read-only root is a separate
+  # (C-0017) question with real breakage risk — it stays covered by the existing
+  # exception rather than being bundled into a non-root change.
+  # nginx listens on 8000, so no NET_BIND_SERVICE is required and caps drop ALL.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: longhorn-ui
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: longhorn-ui
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      runAsNonRoot: true
+                      runAsUser: 499
+                      runAsGroup: 486
+                      seccompProfile:
+                        type: RuntimeDefault
+                    containers:
+                      - name: longhorn-ui
+                        securityContext:
+                          runAsNonRoot: true
+                          runAsUser: 499
+                          runAsGroup: 486
+                          allowPrivilegeEscalation: false
+                          capabilities:
+                            drop:
+                              - ALL
+                          seccompProfile:
+                            type: RuntimeDefault
