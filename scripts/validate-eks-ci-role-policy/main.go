@@ -94,7 +94,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "7502a7e60522787e6427728db431f3c53aec8ae4e9702d421620da3b2af937cb"
+const expectedRenderedSurfaceSHA = "36fc9fecc7a9e438b8996e29b01ad396bba0358e8f00e0adba1b8988b4599693"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
