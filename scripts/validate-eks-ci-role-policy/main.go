@@ -56,23 +56,30 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main e77fdb9c before approving this value: the render goes
-// from 503 to 509 documents and the delta is **purely additive** — 97 added
-// lines, ZERO removed — so no existing entry is modified, removed or renamed.
-// The six new documents are one tenant skeleton (`doggy-countdown`):
-// Namespace, NetworkPolicy, ServiceAccount, RoleBinding, OCIRepository and
-// Flux Kustomization. The validator reported no per-resource
-// fingerprint mismatch, no missing and no duplicate resource.
+// Measured against main 1b204ded before approving this value: 509 documents on
+// both sides, with membership IDENTICAL — zero added, zero removed, zero
+// renamed. Exactly ONE entry's content moved, the tenant
+// `ResourceGraphDefinition`, and its rendered delta is a single line: the
+// cosign `subject:` matcher narrows from
+// `(reusable-workflows|actions)/…@.+` to `actions/…@([0-9a-f]{40}|refs/tags/v.+)`.
+// That drops the archived `reusable-workflows` repo as an accepted signer and
+// stops a floating ref (e.g. `@main`) from satisfying the rule, bringing the
+// template every tenant is generated from into line with the four live
+// OCIRepository trust rules. It is strictly a tightening: every subject the new
+// matcher accepts, the old one already accepted.
 //
-// The new RoleBinding grants the tenant's own ServiceAccount the existing
-// `tenant-edit` ClusterRole in its own namespace — the same scoped grant every
-// other tenant skeleton carries. Nothing is granted to the aws/aws service
-// account this validator exists to protect, and no existing grant is repointed.
-// The tenant pulls a PUBLIC package, so it carries no pull secret and no
-// ExternalSecret — it holds no credential at all.
+// No grant-bearing object moved — no Role, ClusterRole, RoleBinding,
+// ClusterRoleBinding or ServiceAccount is added, removed or modified — and
+// nothing granted to the aws/aws service account this validator exists to
+// protect is touched. The RGD is itself individually pinned, so its
+// per-resource fingerprint above moved with it and was re-approved from the
+// same measurement.
 //
-// (The previous value covered the cosign matcher tightening: 503 documents on
-// both sides, four changed `subject:` lines, no grant-bearing object moved.)
+// (The previous value covered onboarding the `doggy-countdown` tenant: a purely
+// additive 503 -> 509 documents, one tenant skeleton, no existing entry
+// modified. The one before that covered the cosign matcher tightening on the
+// four live trust rules: 503 documents on both sides, four changed `subject:`
+// lines, no grant-bearing object moved.)
 //
 // NOTE for whoever re-approves this next: an opaque ciphertext in the surface
 // moves on ANY re-encryption — this value also absorbed a SOPS version bump
@@ -83,7 +90,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "5d11d1bf2f5989c3483dd528fb59306cc14ef71b44f87e804e1c3c905a4da406"
+const expectedRenderedSurfaceSHA = "7502a7e60522787e6427728db431f3c53aec8ae4e9702d421620da3b2af937cb"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -126,7 +133,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                           "4447f41c03e8297fafdabcadf4fdd8ca3260f2c84264c531b2179cb7df2c1556",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "404de3502423d08af04eaa5d1ca6a6b76634ae09c270e7718994cfd346c8a07f",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "a4ab25489f2548aec728d4706aff02246d4669538b0f577c57bef132051910b6",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "1a2ecb3104630c44466d846159ee68ff6a98888887c02ecd0278782793dead4a",
