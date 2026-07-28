@@ -539,8 +539,7 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 	if os.Getenv("FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN") == "true" &&
 		markerExists("transient-drain-attempt-prod-worker-1") &&
 		!markerExists("sync-lease-heartbeat-interrupted") &&
-		!(os.Getenv("FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY") == "true" &&
-			markerExists("sync-lease-heartbeat-interruption-started")) {
+		(os.Getenv("FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY") != "true" || !markerExists("sync-lease-heartbeat-interruption-started")) {
 		if os.Getenv("FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY") == "true" {
 			if !markerExists("sync-lease-heartbeat-interruption-started") {
 				touchMarker("sync-lease-heartbeat-interruption-started")
