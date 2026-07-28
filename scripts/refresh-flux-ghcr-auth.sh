@@ -137,10 +137,14 @@ cleanup_refresh_work() {
     echo "::error::Could not safely resume Flux policy reconciliation; the ownership annotation was retained for explicit recovery."
   fi
   if declare -F resume_flux_policy_parent >/dev/null &&
-    [[ "${flux_policy_parent_acquired:-false}" == "true" ]] &&
-    ! resume_flux_policy_parent; then
-    cleanup_status=1
-    echo "::error::Could not safely resume the parent Flux reconciliation; its ownership annotation was retained for explicit recovery."
+    [[ "${flux_policy_parent_acquired:-false}" == "true" ]]; then
+    if [[ "${flux_policy_handoff_acquired:-false}" == "true" ]]; then
+      cleanup_status=1
+      echo "::error::The child Flux policy handoff remains fenced; retaining the parent fence for explicit recovery."
+    elif ! resume_flux_policy_parent; then
+      cleanup_status=1
+      echo "::error::Could not safely resume the parent Flux reconciliation; its ownership annotation was retained for explicit recovery."
+    fi
   fi
   if ! cleanup_bootstrap_quarantine; then
     cleanup_status=1

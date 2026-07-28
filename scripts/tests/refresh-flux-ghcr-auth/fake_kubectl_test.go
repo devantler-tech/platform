@@ -266,6 +266,9 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 		!hasPatchPath(patch, "remove", reconcilePath) {
 		return commandFailure(56, "invalid Flux policy handoff release")
 	}
+	if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_RELEASE_FAIL") == "true" {
+		return commandFailure(56, "persistent Flux policy handoff release failure")
+	}
 	removeMarker("flux-policy-handoff-owner")
 	removeMarker("flux-policy-handoff-suspended")
 	setMarkerContent(

@@ -828,6 +828,28 @@ func TestAmbiguousFluxChildReleaseIsAdopted(t *testing.T) {
 	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
 }
 
+func TestChildFenceReleaseFailureRetainsParentFence(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_RELEASE_FAIL": "true",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	requireNoLine(t, operations, "flux-policy-resume:infrastructure")
+	requireNoLine(t, operations, "flux-policy-parent-resume:flux-system")
+	for _, residual := range []string{
+		"flux-policy-parent-owner",
+		"flux-policy-parent-suspended",
+		"flux-policy-handoff-owner",
+		"flux-policy-handoff-suspended",
+	} {
+		if !pathExists(filepath.Join(f.syncStateDir, residual)) {
+			t.Fatalf("failed child release did not retain fence %s", residual)
+		}
+	}
+}
+
 func TestFluxPolicyHandoffResumesAfterPolicyStageFailure(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
