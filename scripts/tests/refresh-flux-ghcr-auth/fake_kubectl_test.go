@@ -38,6 +38,12 @@ func fakeKubectlImplementation(args []string) int {
 		return fakeKubectlPatchSyncLease(args, namespace, patchFile)
 	case containsArg(args, "create") && manifestFile != "" && fakeManifestKind(manifestFile) == "Lease":
 		return fakeKubectlCreateSyncLease(namespace, manifestFile)
+	case containsSequence(args, "get", "imagevalidatingpolicy.policies.kyverno.io"):
+		return fakeKubectlGetImageValidatingPolicy(args)
+	case containsSequence(args, "patch", "imagevalidatingpolicy.policies.kyverno.io"):
+		return fakeKubectlPatchImageValidatingPolicy(args, patchFile)
+	case containsSequence(args, "get", "mutatingwebhookconfigurations.admissionregistration.k8s.io"):
+		return fakeKubectlGetImageVerificationWebhooks()
 	case containsSequence(args, "get", "nodes"):
 		return fakeKubectlGetNodes()
 	case containsSequence(args, "get", "pods"):
@@ -88,6 +94,112 @@ func fakeKubectlImplementation(args []string) int {
 	}
 
 	return commandFailure(91, "unexpected kubectl invocation: %s", strings.Join(args, " "))
+}
+
+func fakeKubectlGetImageValidatingPolicy(args []string) int {
+	name := argumentAfter(args, "imagevalidatingpolicy.policies.kyverno.io")
+	if (name != "verify-app-images" && name != "verify-ksail-images") ||
+		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
+		return commandFailure(91, "invalid image-validating policy lookup")
+	}
+	timeout := 30
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_STALE") == "true" &&
+		!markerExists("ivpol-timeout-" + name) {
+		timeout = 10
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"apiVersion": "policies.kyverno.io/v1",
+		"kind":       "ImageValidatingPolicy",
+		"metadata":   map[string]any{"name": name},
+		"spec": map[string]any{
+			"failurePolicy": "Fail",
+			"webhookConfiguration": map[string]any{
+				"timeoutSeconds": timeout,
+			},
+		},
+	}))
+	return 0
+}
+
+func fakeKubectlPatchImageValidatingPolicy(args []string, patchFile string) int {
+	name := argumentAfter(args, "imagevalidatingpolicy.policies.kyverno.io")
+	if (name != "verify-app-images" && name != "verify-ksail-images") ||
+		!containsArg(args, "--type=merge") || patchFile == "" {
+		return commandFailure(91, "invalid image-validating policy patch")
+	}
+	var patch map[string]any
+	if err := json.Unmarshal([]byte(mustReadCommandFile(patchFile)), &patch); err != nil {
+		return commandFailure(91, "parse image-validating policy patch: %v", err)
+	}
+	spec, _ := patch["spec"].(map[string]any)
+	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
+	if webhookConfiguration["timeoutSeconds"] != float64(30) {
+		return commandFailure(91, "image-validating policy patch omitted the 30-second timeout")
+	}
+	touchMarker("ivpol-timeout-" + name)
+	appendEnvFile("OPERATION_LOG", "ivpol-timeout-patch:"+name+"\n")
+	fmt.Printf("imagevalidatingpolicy.policies.kyverno.io/%s patched\n", name)
+	return 0
+}
+
+func fakeKubectlGetImageVerificationWebhooks() int {
+	stale := os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_STALE") == "true"
+	converged := !stale ||
+		(markerExists("ivpol-timeout-verify-app-images") &&
+			markerExists("ivpol-timeout-verify-ksail-images"))
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_NEVER_CONVERGE") == "true" {
+		converged = false
+	}
+	webhooks := []any{
+		map[string]any{
+			"name": "mutate.ivpol.kyverno.svc-fail",
+			"clientConfig": map[string]any{
+				"service": map[string]any{
+					"name":      "kyverno-svc",
+					"namespace": "kyverno",
+					"path":      "/ivpol/mutate/verify-app-images/verify-ksail-images",
+				},
+			},
+			"timeoutSeconds": 10,
+		},
+	}
+	if converged {
+		webhooks = []any{
+			map[string]any{
+				"name": "mutate.verify-app-images.ivpol.kyverno.svc-fail",
+				"clientConfig": map[string]any{
+					"service": map[string]any{
+						"name":      "kyverno-svc",
+						"namespace": "kyverno",
+						"path":      "/ivpol/mutate/verify-app-images",
+					},
+				},
+				"timeoutSeconds": 30,
+			},
+			map[string]any{
+				"name": "mutate.verify-ksail-images.ivpol.kyverno.svc-fail",
+				"clientConfig": map[string]any{
+					"service": map[string]any{
+						"name":      "kyverno-svc",
+						"namespace": "kyverno",
+						"path":      "/ivpol/mutate/verify-ksail-images",
+					},
+				},
+				"timeoutSeconds": 30,
+			},
+		}
+		if stale {
+			appendEnvFile("OPERATION_LOG", "ivpol-webhooks-ready\n")
+		}
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "List",
+		"items": []any{
+			map[string]any{"webhooks": webhooks},
+		},
+	}))
+	return 0
 }
 
 func fakeManifestKind(path string) string {

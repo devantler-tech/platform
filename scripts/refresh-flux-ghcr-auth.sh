@@ -43,6 +43,11 @@ readonly DRAIN_TIMEOUT="${FLUX_GHCR_DRAIN_TIMEOUT:-45m}"
 # timeout during a cold signature lookup. Keep retrying the same immutable Pod
 # name so an ambiguous admission response is reused instead of duplicated.
 readonly RUNTIME_PROBE_CREATE_ATTEMPTS=6
+readonly IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS=30
+readonly -a IMAGE_VERIFICATION_POLICIES=(
+  "verify-app-images"
+  "verify-ksail-images"
+)
 readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
 readonly SYNC_LEASE_DURATION_SECONDS=120
 readonly SYNC_LEASE_HEARTBEAT_SECONDS=30
@@ -166,6 +171,10 @@ runtime_proved_targets_file="${work_dir}/runtime-proved-targets.txt"
 runtime_probe_manifest_file="${work_dir}/runtime-probe-pod.json"
 runtime_probe_state_file="${work_dir}/runtime-probe-state.json"
 runtime_probe_result_file="${work_dir}/runtime-probe-result.txt"
+image_verification_policy_state_file="${work_dir}/image-verification-policy.json"
+image_verification_policy_patch_file="${work_dir}/image-verification-policy-patch.json"
+image_verification_policy_result_file="${work_dir}/image-verification-policy-result.txt"
+image_verification_webhooks_file="${work_dir}/image-verification-webhooks.json"
 recovery_nodes_file="${work_dir}/recovery-nodes.json"
 recovery_node_file="${work_dir}/recovery-node.json"
 recovery_targets_file="${work_dir}/recovery-targets.jsonl"
@@ -574,6 +583,132 @@ probe_node_runtime_pull() {
 
   delete_runtime_pull_probe "${probe_name}" || true
   echo "::error::Timed out proving the running containerd GHCR credential on ${node_name}; refusing to drain workloads onto an unproved runtime."
+  return 1
+}
+
+# The credential bridge runs before the candidate artifact is published, so a
+# policy fix carried by that artifact cannot repair admission for the runtime
+# probes that protect the publish. Bootstrap the two declarative IVPOL timeout
+# fields directly, under the same synchronization lease, then wait until
+# Kyverno exposes separate effective fail-closed webhook paths for them. The
+# candidate manifests carry the identical desired state, so this narrow patch
+# closes the bootstrap edge without weakening admission.
+stage_image_verification_webhook_budget() {
+  local policy current_timeout attempt
+
+  for policy in "${IMAGE_VERIFICATION_POLICIES[@]}"; do
+    assert_sync_lease_held || return 1
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get imagevalidatingpolicy.policies.kyverno.io "${policy}" \
+      -o json \
+      >"${image_verification_policy_state_file}" \
+      2>"${image_verification_policy_result_file}"; then
+      echo "::error::Could not inspect image-verification policy ${policy}; refusing runtime pull probes."
+      emit_safe_operation_output \
+        "image-verification-policy-read" \
+        "${image_verification_policy_result_file}"
+      return 1
+    fi
+    if ! jq -e \
+      --arg policy "${policy}" '
+      .apiVersion == "policies.kyverno.io/v1"
+      and .kind == "ImageValidatingPolicy"
+      and .metadata.name == $policy
+      and .spec.failurePolicy == "Fail"
+    ' "${image_verification_policy_state_file}" >/dev/null; then
+      echo "::error::Image-verification policy ${policy} is malformed or not fail-closed; refusing runtime pull probes."
+      return 1
+    fi
+    current_timeout="$(jq -r \
+      '.spec.webhookConfiguration.timeoutSeconds // 0' \
+      "${image_verification_policy_state_file}")"
+    if [[ "${current_timeout}" == "${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}" ]]; then
+      continue
+    fi
+
+    jq -n \
+      --argjson timeout "${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}" '
+      {
+        spec: {
+          webhookConfiguration: {
+            timeoutSeconds: $timeout
+          }
+        }
+      }
+    ' >"${image_verification_policy_patch_file}"
+    assert_sync_lease_held || return 1
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      patch imagevalidatingpolicy.policies.kyverno.io "${policy}" \
+      --type=merge \
+      --patch-file="${image_verification_policy_patch_file}" \
+      >"${image_verification_policy_result_file}" 2>&1; then
+      echo "::error::Could not stage the fail-closed image-verification timeout for ${policy}; refusing runtime pull probes."
+      emit_safe_operation_output \
+        "image-verification-policy-patch" \
+        "${image_verification_policy_result_file}"
+      return 1
+    fi
+  done
+
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    assert_sync_lease_held || return 1
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get mutatingwebhookconfigurations.admissionregistration.k8s.io \
+      -o json \
+      >"${image_verification_webhooks_file}" \
+      2>"${image_verification_policy_result_file}"; then
+      echo "::error::Could not inspect effective Kyverno admission webhooks; refusing runtime pull probes."
+      emit_safe_operation_output \
+        "image-verification-webhook-read" \
+        "${image_verification_policy_result_file}"
+      return 1
+    fi
+    if jq -e \
+      --argjson timeout "${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}" '
+      [
+        .items[]?.webhooks[]?
+        | select(
+            (.clientConfig.service.name // "") == "kyverno-svc"
+            and (.clientConfig.service.namespace // "") == "kyverno"
+          )
+      ] as $webhooks
+      | any(
+          $webhooks[];
+          (.clientConfig.service.path // "")
+            == "/ivpol/mutate/verify-app-images"
+          and .timeoutSeconds == $timeout
+        )
+      and any(
+        $webhooks[];
+        (.clientConfig.service.path // "")
+          == "/ivpol/mutate/verify-ksail-images"
+        and .timeoutSeconds == $timeout
+      )
+      and all(
+        $webhooks[];
+        (.clientConfig.service.path // "") as $path
+        | if (
+            ($path | contains("verify-app-images"))
+            or ($path | contains("verify-ksail-images"))
+          ) then
+            $path == "/ivpol/mutate/verify-app-images"
+            or $path == "/ivpol/mutate/verify-ksail-images"
+          else
+            true
+          end
+      )
+    ' "${image_verification_webhooks_file}" >/dev/null; then
+      return 0
+    fi
+    if ((attempt < SYNC_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
+  done
+
+  echo "::error::The fail-closed image-verification admission webhooks did not converge to separate ${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}s paths; refusing runtime pull probes."
   return 1
 }
 
@@ -2688,6 +2823,11 @@ if [[ "${fanout_complete}" != "true" ]]; then
   echo "✅ Staged the Git/SOPS credential and refreshed root Flux auth; the first reconcile will complete the missing downstream fan-out."
   exit 0
 fi
+
+# The live policies gate the runtime probes below. Stage their candidate
+# timeout budget before any node drain, because the candidate artifact that
+# declares the same state has not been published yet.
+stage_image_verification_webhook_budget
 
 # Existing clusters update and verify the whole SOPS -> variables-base ->
 # PushSecret -> OpenBao -> ExternalSecret chain before the first Talos drain.

@@ -652,6 +652,53 @@ func TestRuntimeProbeRejectsInjectedImagePullSecret(t *testing.T) {
 	requireNoLine(t, operations, "root-patch")
 }
 
+func TestStaleImageVerificationWebhookBudgetIsStagedBeforeRuntimeProbe(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_IMAGE_VERIFICATION_WEBHOOKS_STALE": "true",
+		"FAKE_LOG_RUNTIME_PROBE_SUCCESS":          "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	appPatch := lineIndex(t, operations, "ivpol-timeout-patch:verify-app-images")
+	ksailPatch := lineIndex(t, operations, "ivpol-timeout-patch:verify-ksail-images")
+	webhookReady := lineIndex(t, operations, "ivpol-webhooks-ready")
+	firstRuntimeProbe := lineIndex(
+		t,
+		operations,
+		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/wedding-app:latest",
+	)
+	if appPatch >= webhookReady || ksailPatch >= webhookReady || webhookReady >= firstRuntimeProbe {
+		t.Fatalf(
+			"unsafe image-verification bootstrap ordering: app patch=%d ksail patch=%d webhook ready=%d runtime probe=%d",
+			appPatch,
+			ksailPatch,
+			webhookReady,
+			firstRuntimeProbe,
+		)
+	}
+}
+
+func TestImageVerificationWebhookConvergenceFailureFailsClosed(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_IMAGE_VERIFICATION_WEBHOOKS_STALE":          "true",
+		"FAKE_IMAGE_VERIFICATION_WEBHOOKS_NEVER_CONVERGE": "true",
+		"FLUX_GHCR_SYNC_ATTEMPTS":                         "3",
+		"FLUX_GHCR_SYNC_INTERVAL":                         "0",
+	})
+	requireFailureResult(t, result)
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"image-verification admission webhooks did not converge",
+	)
+	operations := readLines(f.operationLog)
+	requireNotContains(t, strings.Join(operations, "\n"), "runtime-probe-success:")
+	requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
+	requireNoLine(t, operations, "root-patch")
+}
+
 func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
