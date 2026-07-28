@@ -86,6 +86,10 @@ jobs:
               - 'scripts/guard-cilium-homogeneous-device-rollout.sh'
               - 'scripts/wait-for-platform-flux-revision.sh'
               - 'scripts/tests/test-opencost-usage-scraper.sh'
+              # Both halves, so editing the guard alone — or its test alone —
+              # still runs the check that covers it.
+              - 'scripts/dr-rebuild-supersession-guard.sh'
+              - 'scripts/tests/test-dr-rebuild-supersession-guard.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
@@ -263,6 +267,14 @@ jobs:
         # Render the full component contract so the cAdvisor scrape and its
         # least-privilege delivery path cannot silently disappear.
         run: bash scripts/tests/test-opencost-usage-scraper.sh
+
+      - name: 🧭 Validate the DR rebuild supersession gate
+        if: needs.changes.outputs.k8s == 'true'
+        # concurrency alone cannot stop a pending DR dispatch from rebuilding on
+        # top of the rebuild that just recovered prod. The guard supplies that,
+        # and this pins both its decision and the wiring that reaches it — a
+        # guard the destructive job does not depend on protects nothing.
+        run: bash scripts/tests/test-dr-rebuild-supersession-guard.sh
 
       - name: 📢 Validate reconciliation-Alert namespace coverage
         if: needs.changes.outputs.k8s == 'true'
