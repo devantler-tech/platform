@@ -61,6 +61,7 @@ jobs:
     permissions:
       contents: read # checkout repository
       packages: write # push OCI artifacts to GHCR
+      id-token: write # keyless cosign signing (Fulcio OIDC)
     steps:
       - name: 🛑 Verify confirmation phrase
         env:
@@ -178,6 +179,41 @@ jobs:
             exit 1
           fi
           echo "digest=${DIGEST}" >>"${GITHUB_OUTPUT}"
+
+      - name: ⚙️ Install cosign
+        # Same installer and pinned release as the deploy-prod composite, so a
+        # DR-published artifact is signed by the identical toolchain a normal
+        # deploy uses. Renovate bumps COSIGN_VERSION via the custom regex
+        # manager in .github/renovate.json.
+        env:
+          # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
+          COSIGN_VERSION: "3.1.2"
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: "v${{ env.COSIGN_VERSION }}"
+
+      - name: 🖋️ Sign OCI manifest with cosign (keyless)
+        # A DR rebuild writes the same mutable tag as a normal deploy, so it
+        # must produce the same supply-chain evidence — otherwise enabling
+        # verification on the root source turns every recovery into a rejected
+        # artifact at the exact moment manual repair is hardest.
+        #
+        # Signs the digest resolved by the step above rather than the tag: a
+        # concurrent deploy could move `latest` between resolve and sign, and
+        # signing the tag would then attest bytes we never published. The
+        # signing identity is this workflow at its dispatch ref
+        # (dr-rebuild.yaml@refs/heads/main), which ksail.prod.yaml's
+        # matchOIDCIdentity allow-list names explicitly.
+        env:
+          # Keyless is the default when --key is omitted (COSIGN_EXPERIMENTAL
+          # was retired in cosign 2.x). GHCR credentials come from
+          # ~/.docker/config.json written by the auth step above.
+          COSIGN_YES: "true"
+          DIGEST: ${{ steps.platform_manifest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"
+          cosign sign --yes --recursive "${REF}"
 
       - name: 🔎 Verify Flux GHCR pull credential after publish
         id: verify_flux_ghcr_auth_after_push
