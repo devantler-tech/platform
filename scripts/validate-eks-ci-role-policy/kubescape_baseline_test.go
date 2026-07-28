@@ -22,28 +22,24 @@ const (
 	kubescapeCategory = "kubescape-nsa"
 )
 
-// scansKubescapeToSarif reports whether any job actually runs the scan in the
+// scansKubescapeToSarif reports whether this job runs the scan in the
 // SARIF-producing mode.
-func (w workflow) scansKubescapeToSarif() bool {
-	for _, j := range w.Jobs {
-		for _, s := range j.Steps {
-			if strings.Contains(s.Run, kubescapeScanCommand) &&
-				strings.Contains(s.Run, kubescapeScanSarifFlag) {
-				return true
-			}
+func (j job) scansKubescapeToSarif() bool {
+	for _, s := range j.Steps {
+		if strings.Contains(s.Run, kubescapeScanCommand) &&
+			strings.Contains(s.Run, kubescapeScanSarifFlag) {
+			return true
 		}
 	}
 	return false
 }
 
-// uploadsKubescapeSarif reports whether any job uploads that SARIF to Code
+// uploadsKubescapeSarif reports whether this job uploads that SARIF to Code
 // Scanning under the kubescape category.
-func (w workflow) uploadsKubescapeSarif() bool {
-	for _, j := range w.Jobs {
-		for _, s := range j.Steps {
-			if strings.Contains(s.Uses, uploadSarifAction) && s.With.Category == kubescapeCategory {
-				return true
-			}
+func (j job) uploadsKubescapeSarif() bool {
+	for _, s := range j.Steps {
+		if strings.Contains(s.Uses, uploadSarifAction) && s.With.Category == kubescapeCategory {
+			return true
 		}
 	}
 	return false
@@ -51,8 +47,25 @@ func (w workflow) uploadsKubescapeSarif() bool {
 
 // publishesKubescapeBaselineOnPushToMain reports whether the workflow produces a
 // default-branch Kubescape analysis.
+//
+// Both halves are required of a SINGLE job, not of the workflow as a whole.
+// Every job gets its own fresh runner and its own ${RUNNER_TEMP}, so a scan in
+// one job and an uploader in another share no filesystem: the uploader would
+// have no SARIF to read and no analysis would be published. Matching the two
+// halves independently would let exactly that arrangement report the gap as
+// closed — the same false-green this guard exists to prevent. A future split
+// across jobs is legitimate only with an explicit artifact handoff, which is a
+// different shape and should have to update this guard deliberately.
 func (w workflow) publishesKubescapeBaselineOnPushToMain() bool {
-	return w.triggersOnPushToMain() && w.scansKubescapeToSarif() && w.uploadsKubescapeSarif()
+	if !w.triggersOnPushToMain() {
+		return false
+	}
+	for _, j := range w.Jobs {
+		if j.scansKubescapeToSarif() && j.uploadsKubescapeSarif() {
+			return true
+		}
+	}
+	return false
 }
 
 // TestKubescapeBaselineIsPublishedForTheDefaultBranch pins the gap measured on
@@ -169,6 +182,24 @@ func TestKubescapeBaselineGuardIsNotVacuous(t *testing.T) {
 		if perturbed.publishesKubescapeBaselineOnPushToMain() {
 			t.Fatal("an upload under a different category creates a parallel alert set, " +
 				"not a baseline the PR-ref findings can close against")
+		}
+	})
+
+	t.Run("scan and upload split across jobs does not count", func(t *testing.T) {
+		perturbed := publishing
+		perturbed.Jobs = map[string]job{
+			"scan": {Steps: []step{
+				{Run: kubescapeScanCommand + " --framework nsa " + kubescapeScanSarifFlag + " -o out.sarif"},
+			}},
+			"upload": {Steps: []step{
+				{Uses: uploadSarifAction + "@v4", With: stepInputs{Category: kubescapeCategory}},
+			}},
+		}
+		if perturbed.publishesKubescapeBaselineOnPushToMain() {
+			t.Fatal("a scan and an upload in SEPARATE jobs must not count: each job gets a " +
+				"fresh runner, so the uploader cannot read the scanner's ${RUNNER_TEMP} " +
+				"SARIF and no baseline is published — the guard must not report the gap " +
+				"closed on a workflow that only names both halves somewhere")
 		}
 	})
 }
