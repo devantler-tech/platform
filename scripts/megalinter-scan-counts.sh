@@ -45,9 +45,15 @@ set -euo pipefail
 readonly CI_CHECKOV_VERSION='3.3.2'
 readonly CI_TRIVY_VERSION='0.71.2'
 
-# The frameworks MegaLinter's checkov run reports. All four must appear locally or the total is not
-# comparable — see the dropped-framework guard in scan_checkov.
-readonly EXPECTED_CHECKOV_FRAMEWORKS=(cloudformation kubernetes secrets github_actions)
+# The frameworks MegaLinter's checkov run reports, split by whether they contribute to the total.
+#
+# Only the contributing ones are REQUIRED. A framework that finds nothing can legitimately stop
+# reporting altogether once its last input is resolved — checkov omits the section rather than
+# printing a zero — and CI's cloudformation section exists solely because of one unparsable file.
+# Requiring all four would therefore refuse exactly when the tracked cleanup succeeds, which is the
+# same self-defeating shape as demanding trivy detail rows from a cleared backlog.
+readonly REQUIRED_CHECKOV_FRAMEWORKS=(kubernetes secrets)
+readonly OPTIONAL_CHECKOV_FRAMEWORKS=(cloudformation github_actions)
 
 # A parsing error means a file was NOT analysed, so findings can hide behind it. CI's run has
 # exactly one (in the cloudformation framework) and so does a correct local run, which is why this
@@ -145,18 +151,22 @@ scan_checkov() {
   # dropped framework is the failure mode already seen here — an absolute --directory removes the
   # whole kubernetes framework and its 42 findings while the other three still report, so the run
   # looks healthy and the total is simply 42 lower.
-  local missing=''
-  local fw
-  for fw in "${EXPECTED_CHECKOV_FRAMEWORKS[@]}"; do
+  local missing='' absent='' fw
+  for fw in "${REQUIRED_CHECKOV_FRAMEWORKS[@]}"; do
     if ! grep -aqE "^${fw} scan results:" "$out"; then
       missing="$missing $fw"
     fi
   done
   if [ -n "$missing" ]; then
-    printf 'checkov did not report these frameworks CI reports:%s\n' "$missing" >&2
+    printf 'checkov did not report these finding-contributing frameworks:%s\n' "$missing" >&2
     printf 'Refusing to report a count — a dropped framework silently lowers the total.\n' >&2
     exit 2
   fi
+  for fw in "${OPTIONAL_CHECKOV_FRAMEWORKS[@]}"; do
+    if ! grep -aqE "^${fw} scan results:" "$out"; then
+      absent="$absent $fw"
+    fi
+  done
 
   local parse_errors
   parse_errors="$(sum_by 'Parsing errors: [0-9]+' "$out")"
@@ -170,7 +180,12 @@ scan_checkov() {
   local total
   total="$(sum_by 'Failed checks: [0-9]+' "$out")"
 
-  printf '\ncheckov — %s failing checks (%s parsing error(s), same as CI)\n' "$total" "$parse_errors"
+  printf '\ncheckov — %s failing checks (%s parsing error(s); CI has %s)\n' \
+    "$total" "$parse_errors" "$CI_CHECKOV_PARSING_ERRORS"
+  if [ -n "$absent" ]; then
+    printf '  note: zero-finding framework(s) not reported this run:%s — expected once their\n' "$absent"
+    printf '        last input is resolved, and it does not change the total.\n'
+  fi
   printf '  per framework (failed / passed):\n'
   # Frameworks are reported as a "<name> scan results:" header followed by the counts line.
   awk '
