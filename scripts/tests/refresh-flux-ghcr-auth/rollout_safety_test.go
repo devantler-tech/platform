@@ -604,6 +604,40 @@ func TestUncordonFailureKeepsRevisionMarkerAndOwnerFailClosed(t *testing.T) {
 	}
 }
 
+func TestTransientNodeRevisionAdvanceRetriesCordonRelease(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_NODE_RESOURCE_VERSION_ADVANCES_BEFORE_RELEASE_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "concurrent-node-resource-version:prod-worker-1")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+	if pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-1")) {
+		t.Error("successful release retry left owner marker")
+	}
+}
+
+func TestLostCordonReleaseResponseAdoptsExactReleasedState(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_NODE_RELEASE_RESPONSE_LOST_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	if !pathExists(filepath.Join(f.syncStateDir, "node-release-response-lost-prod-worker-1")) {
+		t.Fatal("fixture did not lose the applied cordon release response")
+	}
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+	if pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-1")) {
+		t.Error("adopted release left owner marker")
+	}
+}
+
 func TestUnreadyNodeAfterRebootStopsTheRoll(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

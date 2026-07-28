@@ -44,6 +44,7 @@ readonly DRAIN_TIMEOUT="${FLUX_GHCR_DRAIN_TIMEOUT:-45m}"
 # name so an ambiguous admission response is reused instead of duplicated.
 readonly RUNTIME_PROBE_CREATE_ATTEMPTS=6
 readonly NODE_READY_TRANSPORT_RETRY_ATTEMPTS=3
+readonly CORDON_RELEASE_ATTEMPTS=3
 readonly IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS=30
 readonly IMAGE_VERIFICATION_POLICY="verify-app-images"
 readonly RETIRED_IMAGE_VERIFICATION_POLICY="verify-ksail-images"
@@ -978,10 +979,26 @@ claim_node_cordon_ownership() {
 # The atomic claim cordons the node before kubectl drain. Restore schedulability
 # only when this bridge owns that cordon; a pre-existing operator cordon must
 # remain untouched.
+node_schedulability_release_is_complete() {
+  local state_file="$1" node_uid="$2" was_cordoned="$3"
+
+  jq -e \
+    --arg uid "${node_uid}" \
+    --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
+    --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
+    --argjson was_cordoned "${was_cordoned}" '
+    .metadata.uid == $uid
+    and (((.metadata.annotations // {})[$owner_annotation] // "") == "")
+    and (((.metadata.annotations // {})[$recovery_annotation] // "") == "")
+    and ((.spec.unschedulable // false) == ($was_cordoned == 1))
+  ' "${state_file}" >/dev/null
+}
+
 restore_node_schedulability_if_needed() {
   local node_name="$1" was_cordoned="$2" owner_token="$3"
   local initial_node_uid="$4" initial_node_taints="$5" result_file="$6"
   local expected_recovery="${7:-}"
+  local release_attempt="${8:-1}"
   local current_resource_version current_recovery
 
   if [[ -z "${owner_token}" ]]; then
@@ -997,6 +1014,15 @@ restore_node_schedulability_if_needed() {
     echo "::error::Could not re-read Talos node ${node_name}; refusing to uncordon it."
     emit_safe_operation_output "uncordon-read" "${result_file}"
     return 1
+  fi
+  if node_schedulability_release_is_complete \
+    "${cordon_state_file}" "${initial_node_uid}" "${was_cordoned}"; then
+    if [[ "${was_cordoned}" == "0" ]]; then
+      echo "Restored schedulability on ${node_name}."
+    else
+      echo "Released bridge ownership while preserving the pre-existing cordon on ${node_name}."
+    fi
+    return 0
   fi
   if ! node_scheduling_state_is_safe_to_reboot \
     "${cordon_state_file}" \
@@ -1071,6 +1097,17 @@ restore_node_schedulability_if_needed() {
     --type=json \
     --patch-file="${cordon_release_patch_file}" \
     >"${result_file}" 2>&1; then
+    if ((release_attempt < CORDON_RELEASE_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+      if restore_node_schedulability_if_needed \
+        "${node_name}" "${was_cordoned}" "${owner_token}" \
+        "${initial_node_uid}" "${initial_node_taints}" \
+        "${result_file}" "${expected_recovery}" \
+        "$((release_attempt + 1))"; then
+        return 0
+      fi
+      return 1
+    fi
     echo "::error::Cordon ownership changed or could not be released for Talos node ${node_name}; refusing to uncordon it."
     emit_safe_operation_output "uncordon" "${result_file}"
     return 1

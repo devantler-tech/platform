@@ -1288,6 +1288,16 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 	if len(patch) > 0 {
 		expectedOwner = fmt.Sprint(patch[0].Value)
 	}
+	if nodeName == os.Getenv("FAKE_NODE_RESOURCE_VERSION_ADVANCES_BEFORE_RELEASE_NODE") &&
+		!markerExists("resource-version-advanced-before-release-"+nodeName) {
+		setMarkerContent(
+			"resource-version-"+nodeName,
+			incrementDecimal(currentResourceVersion),
+		)
+		touchMarker("resource-version-advanced-before-release-" + nodeName)
+		appendEnvFile("OPERATION_LOG", "concurrent-node-resource-version:"+nodeName+"\n")
+		return commandFailure(56, "resourceVersion test failed during cordon release")
+	}
 	if nodeName == os.Getenv("FAKE_UNCORDON_FAIL_NODE") || markerContent("cordon-owner-"+nodeName) != expectedOwner {
 		return commandFailure(56, "cordon ownership changed; refusing to uncordon")
 	}
@@ -1321,6 +1331,11 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		touchMarker("uncordoned-" + nodeName)
 	} else {
 		appendEnvFile("OPERATION_LOG", "node-release-cordon-owner:"+nodeName+"\n")
+	}
+	if nodeName == os.Getenv("FAKE_NODE_RELEASE_RESPONSE_LOST_NODE") &&
+		!markerExists("node-release-response-lost-"+nodeName) {
+		touchMarker("node-release-response-lost-" + nodeName)
+		return commandFailure(54, "connection reset after cordon release")
 	}
 	return 0
 }
