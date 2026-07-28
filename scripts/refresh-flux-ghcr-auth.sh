@@ -2260,9 +2260,13 @@ sync_lease_is_available() {
     "${sync_lease_file}" >/dev/null
 }
 
+kubernetes_microtime_now() {
+  date -u +%Y-%m-%dT%H:%M:%S.000000Z
+}
+
 acquire_sync_lease() {
   local desired_revision="$1"
-  local attempt now resource_version current_holder transitions
+  local attempt now resource_version current_holder transitions failure_detail
 
   sync_lease_holder="${desired_revision:0:16}-$$-${RANDOM}"
   export FLUX_GHCR_SYNC_LEASE_HOLDER="${sync_lease_holder}"
@@ -2277,7 +2281,7 @@ acquire_sync_lease() {
       echo "::error::Could not inspect the GHCR synchronization lease."
       return 1
     fi
-    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    now="$(kubernetes_microtime_now)"
     if [[ ! -s "${sync_lease_file}" ]]; then
       jq -n \
         --arg name "${SYNC_LEASE_NAME}" \
@@ -2358,7 +2362,13 @@ acquire_sync_lease() {
     fi
   done
 
-  echo "::error::Could not atomically acquire the GHCR synchronization lease after concurrent updates."
+  failure_detail="$(head -c 1000 "${sync_lease_result_file}" | tr '\r\n' '  ')"
+  failure_detail="${failure_detail//'%'/'%25'}"
+  if [[ -n "${failure_detail}" ]]; then
+    echo "::error::Could not atomically acquire the GHCR synchronization lease. Last API error: ${failure_detail}"
+  else
+    echo "::error::Could not atomically acquire the GHCR synchronization lease after concurrent updates."
+  fi
   return 1
 }
 
@@ -2382,7 +2392,7 @@ renew_sync_lease() {
     select(.spec.holderIdentity == $holder)
     | .metadata.resourceVersion
   ' "${lease_file}")" || return 1
-  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  now="$(kubernetes_microtime_now)"
   jq -n \
     --arg resource_version "${resource_version}" \
     --arg holder "${sync_lease_holder}" \
@@ -2469,7 +2479,7 @@ release_sync_lease() {
     select(.spec.holderIdentity == $holder)
     | .metadata.resourceVersion
   ' "${lease_file}")" || return 1
-  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  now="$(kubernetes_microtime_now)"
   jq -n \
     --arg resource_version "${resource_version}" \
     --arg holder "${sync_lease_holder}" \

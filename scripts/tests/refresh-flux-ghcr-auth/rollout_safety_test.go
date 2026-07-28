@@ -68,6 +68,26 @@ func TestExpiredSynchronizationLeaseRequiresExplicitRecovery(t *testing.T) {
 	}
 }
 
+func TestSynchronizationLeaseUsesKubernetesMicroTime(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_REQUIRE_KUBERNETES_MICROTIME": "true",
+	})
+	requireSuccessResult(t, result)
+}
+
+func TestSynchronizationLeaseAcquisitionReportsTheAPICause(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_SYNC_LEASE_CREATE_ERROR": "admission denied: fixture Lease policy",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "admission denied: fixture Lease policy")
+	if pathExists(f.variablesPatchCapture) || pathExists(f.patchCapture) || pathExists(f.talosLog) {
+		t.Fatal("failed synchronization lease acquisition did not block every cluster mutation")
+	}
+}
+
 func TestSameHolderLeaseRenewalRaceDoesNotAbortTheTransaction(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{

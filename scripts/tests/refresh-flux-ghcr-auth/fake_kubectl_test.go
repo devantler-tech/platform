@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type jsonPatchOperation struct {
@@ -150,6 +151,15 @@ func fakeKubectlCreateSyncLease(namespace, manifestFile string) int {
 		holder == "" || holder != os.Getenv("FLUX_GHCR_SYNC_LEASE_HOLDER") {
 		return commandFailure(91, "invalid synchronization lease manifest")
 	}
+	if err := validateKubernetesMicroTimes(
+		fmt.Sprint(spec["acquireTime"]),
+		fmt.Sprint(spec["renewTime"]),
+	); err != nil {
+		return commandFailure(91, `Lease in version "v1" cannot be handled as a Lease: %v`, err)
+	}
+	if message := os.Getenv("FAKE_SYNC_LEASE_CREATE_ERROR"); message != "" {
+		return commandFailure(91, "%s", message)
+	}
 	setMarkerContent("sync-lease-holder", holder)
 	setMarkerContent("sync-lease-resource-version", "10")
 	setMarkerContent("sync-lease-duration", fmt.Sprint(spec["leaseDurationSeconds"]))
@@ -174,6 +184,13 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 	if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
 		!hasPatchOperation(patch, "test", "/spec/holderIdentity", currentHolder) {
 		return commandFailure(56, "synchronization lease CAS failed")
+	}
+	for _, path := range []string{"/spec/acquireTime", "/spec/renewTime"} {
+		if hasPatchPath(patch, "replace", path) {
+			if err := validateKubernetesMicroTimes(patchValueString(patch, "replace", path)); err != nil {
+				return commandFailure(91, `Lease in version "v1" cannot be handled as a Lease: %v`, err)
+			}
+		}
 	}
 	if os.Getenv("FAKE_SYNC_LEASE_RENEW_CONFLICT_ONCE") == "true" &&
 		!markerExists("sync-lease-renew-conflict") &&
@@ -200,6 +217,19 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 	setMarkerContent("sync-lease-resource-version", incrementDecimal(currentResourceVersion))
 	fmt.Println("lease.coordination.k8s.io/ghcr-auth-refresh patched")
 	return 0
+}
+
+func validateKubernetesMicroTimes(values ...string) error {
+	if os.Getenv("FAKE_REQUIRE_KUBERNETES_MICROTIME") != "true" {
+		return nil
+	}
+	const layout = "2006-01-02T15:04:05.000000Z07:00"
+	for _, value := range values {
+		if _, err := time.Parse(layout, value); err != nil {
+			return fmt.Errorf("parsing time %q as %q: %w", value, layout, err)
+		}
+	}
+	return nil
 }
 
 func fakeKubectlGetNodes() int {
