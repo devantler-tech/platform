@@ -255,6 +255,11 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 		incrementDecimal(currentResourceVersion),
 	)
 	appendEnvFile("OPERATION_LOG", "flux-policy-resume:infrastructure\n")
+	if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_RELEASE_RESPONSE_LOST") == "true" &&
+		!markerExists("flux-policy-handoff-release-response-lost") {
+		touchMarker("flux-policy-handoff-release-response-lost")
+		return commandFailure(54, "connection reset after policy handoff release")
+	}
 	fmt.Println("kustomization.kustomize.toolkit.fluxcd.io/infrastructure patched")
 	return 0
 }

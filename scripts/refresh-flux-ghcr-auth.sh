@@ -3013,6 +3013,18 @@ flux_policy_handoff_is_stable() {
     ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 
+flux_policy_handoff_is_released() {
+  jq -e \
+    --arg uid "${flux_policy_handoff_uid}" \
+    --arg owner_annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" \
+    --arg reconcile_annotation "${FLUX_RECONCILE_ANNOTATION}" '
+    .metadata.uid == $uid
+    and (((.metadata.annotations // {})[$owner_annotation] // "") == "")
+    and (((.metadata.annotations // {})[$reconcile_annotation] // "") == "")
+    and ((.spec.suspend // false) == false)
+  ' "${flux_policy_handoff_state_file}" >/dev/null
+}
+
 pause_flux_policy_handoff() {
   local resource_version attempt
 
@@ -3154,7 +3166,17 @@ resume_flux_policy_handoff() {
     --type=json \
     --patch-file="${flux_policy_handoff_patch_file}" \
     >"${flux_policy_handoff_result_file}" 2>&1; then
-    return 1
+    # Accept a lost release response only after re-reading the exact safe child
+    # state; otherwise retain local ownership and fail closed for recovery.
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+      -o json >"${flux_policy_handoff_state_file}" ||
+      ! flux_policy_handoff_is_released; then
+      return 1
+    fi
   fi
   flux_policy_handoff_acquired=false
   flux_policy_handoff_owner=""
