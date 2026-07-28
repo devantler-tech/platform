@@ -55,10 +55,15 @@ kubectl_prod() {
   "${kubectl_bin}" --context admin@prod "$@"
 }
 
-rollout_gate_active=false
+component_active=false
 if grep -Eq \
   '^[[:space:]]*-[[:space:]]*cilium/components/homogeneous-devices/?[[:space:]]*(#.*)?$' \
-  "${controllers_kustomization}" &&
+  "${controllers_kustomization}"; then
+  component_active=true
+fi
+
+rollout_gate_active=false
+if [[ "${component_active}" == true ]] &&
   grep -Eq '^[[:space:]]*type:[[:space:]]*OnDelete[[:space:]]*(#.*)?$' \
     "${component_kustomization}"; then
   rollout_gate_active=true
@@ -251,8 +256,12 @@ if [[ "${rollout_gate_active}" == true ]]; then
 elif [[ "${phase}" == '--after-deploy' ]]; then
   restore_autoscaler_if_owned
 elif [[ -n "$(get_previous_replicas)" ]]; then
-  require_cilium_fleet_current
-  printf 'Cilium homogeneous-device rollout is complete at the current DaemonSet generation; gate removal may publish.\n'
+  if [[ "${component_active}" == true ]]; then
+    require_cilium_fleet_current
+    printf 'Cilium homogeneous-device rollout is complete at the current DaemonSet generation; gate removal may publish.\n'
+  else
+    printf 'Cilium homogeneous-device rollback may publish while Cluster Autoscaler remains suspended.\n'
+  fi
 else
   printf 'Cilium homogeneous-device rollout gate inactive: leaving Cluster Autoscaler unchanged before publish.\n'
 fi

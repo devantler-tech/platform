@@ -126,7 +126,10 @@
 #   reverts to the private-only pin and RollingUpdate resumes, so every
 #   already-stepped node rolls BACK automatically. Un-stepped nodes keep the
 #   old config UNLESS their pod restarted during the window (the involuntary
-#   canaries above) — those roll back with the stepped ones.
+#   canaries above) — those roll back with the stepped ones. The pre-publish
+#   guard distinguishes this component-removal rollback from a successful
+#   OnDelete removal: it permits the rollback artifact while keeping autoscaling
+#   suspended, then restores the owned replica count only after reconciliation.
 #
 # MERGE-ORDER NOTE (load-bearing): parent `patches:` are applied AFTER all
 # component patches — a devices value carried by

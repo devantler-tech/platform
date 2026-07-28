@@ -181,6 +181,18 @@ run_guard --after-deploy
 [[ "$(<"${state_dir}/previous-replicas")" == '1' ]] ||
   fail 'reasserting the gate must not overwrite the remembered replica count'
 
+sed -i.bak '/cilium\/components\/homogeneous-devices\//d' \
+  "${fixture_controllers}/kustomization.yaml"
+run_guard --before-publish
+[[ "$(<"${state_dir}/replicas")" == '0' ]] ||
+  fail 'rolling back the component must keep autoscaling fenced before publish'
+run_guard --after-deploy
+[[ "$(<"${state_dir}/replicas")" == '1' ]] ||
+  fail 'a reconciled component rollback must restore the owned autoscaler replica count'
+cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" \
+  "${fixture_controllers}/kustomization.yaml"
+run_guard --before-publish
+
 sed -i.bak '/type: OnDelete/d' "${fixture_component}/kustomization.yaml"
 if run_guard --before-publish; then
   fail 'gate removal must reject a Cilium agent that has not consumed the current template'
