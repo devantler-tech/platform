@@ -43,6 +43,7 @@ readonly DRAIN_TIMEOUT="${FLUX_GHCR_DRAIN_TIMEOUT:-45m}"
 # timeout during a cold signature lookup. Keep retrying the same immutable Pod
 # name so an ambiguous admission response is reused instead of duplicated.
 readonly RUNTIME_PROBE_CREATE_ATTEMPTS=6
+readonly NODE_READY_TRANSPORT_RETRY_ATTEMPTS=3
 readonly IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS=30
 readonly IMAGE_VERIFICATION_POLICY="verify-app-images"
 readonly RETIRED_IMAGE_VERIFICATION_POLICY="verify-ksail-images"
@@ -1800,6 +1801,14 @@ drain_failed_for_transient_api_transport() {
     "${result_file}"
 }
 
+kubernetes_api_transport_interrupted() {
+  local result_file="$1"
+
+  LC_ALL=C grep -Eq \
+    'connection reset by peer|connect: connection refused|i/o timeout|TLS handshake timeout|http2: client connection lost|no route to host|network is unreachable|unexpected EOF' \
+    "${result_file}"
+}
+
 revalidate_selected_node_identity_before_mutation() {
   local node_name="$1" node_uid="$2" node_ip="$3" node_role="$4"
 
@@ -1844,6 +1853,7 @@ process_talos_node_target() {
   # fail-closed cleanup path when no bootstrap recovery record was required.
   local probe_image recovery_record=""
   local drain_attempt=1 api_attempt api_ready
+  local ready_attempt ready_transport_interrupted
 
   assert_sync_lease_held || return 1
 
@@ -2149,17 +2159,33 @@ process_talos_node_target() {
       emit_safe_operation_output "reboot" "${reboot_result_file}"
       return 1
     fi
-    if ! kubectl \
-      --context "${KUBE_CONTEXT}" \
-      wait \
-      --for=condition=Ready \
-      "node/${node_name}" \
-      --timeout=10m \
-      >"${reboot_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} did not return Ready after its GHCR auth reboot; it remains cordoned and the next node will not be rolled."
-      emit_safe_operation_output "ready" "${reboot_result_file}"
-      return 1
-    fi
+    ready_transport_interrupted=false
+    for ((ready_attempt = 1; ready_attempt <= NODE_READY_TRANSPORT_RETRY_ATTEMPTS; ready_attempt++)); do
+      if kubectl \
+        --context "${KUBE_CONTEXT}" \
+        wait \
+        --for=condition=Ready \
+        "node/${node_name}" \
+        --timeout=10m \
+        >"${reboot_result_file}" 2>&1; then
+        if [[ "${ready_transport_interrupted}" == "true" ]] &&
+          ! recover_sync_lease_heartbeat_after_transport_interruption; then
+          return 1
+        fi
+        break
+      fi
+      if ((ready_attempt >= NODE_READY_TRANSPORT_RETRY_ATTEMPTS)) ||
+        ! kubernetes_api_transport_interrupted \
+          "${reboot_result_file}"; then
+        echo "::error::Talos node ${node_name} did not return Ready after its GHCR auth reboot; it remains cordoned and the next node will not be rolled."
+        emit_safe_operation_output "ready" "${reboot_result_file}"
+        return 1
+      fi
+
+      ready_transport_interrupted=true
+      echo "::warning::Kubernetes API transport interrupted the post-reboot Ready wait for ${node_name}; retrying the read-only wait under the same cordon claim."
+      sleep "${SYNC_INTERVAL}"
+    done
     wait_for_node_lifecycle_taints_to_clear \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \

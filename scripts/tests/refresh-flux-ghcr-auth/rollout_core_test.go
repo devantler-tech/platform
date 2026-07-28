@@ -422,6 +422,26 @@ func TestTransientDrainAPITransportFailureRetriesUnderTheSameClaim(t *testing.T)
 	requireLine(t, operations, "root-patch")
 }
 
+func TestTransientAPITransportFailureDuringPostRebootReadyWaitRetries(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_NODE_READY_API_FAIL_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	if count := strings.Count(
+		strings.Join(operations, "\n"),
+		"node-ready:prod-worker-1",
+	); count != 2 {
+		t.Errorf("node readiness attempts = %d, want 2", count)
+	}
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "talos-revision:10.0.0.2")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+}
+
 func TestTransientDrainRecoversTheSameLeaseAfterHeartbeatInterruption(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

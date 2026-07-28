@@ -1359,6 +1359,17 @@ func fakeKubectlWaitForNode(args []string) int {
 		return commandFailure(91, "readiness target missing")
 	}
 	appendEnvFile("OPERATION_LOG", "node-ready:"+nodeName+"\n")
+	if nodeName == os.Getenv("FAKE_TRANSIENT_NODE_READY_API_FAIL_NODE") {
+		attemptMarker := "transient-node-ready-attempt-" + nodeName
+		attempt := parseInt(markerContent(attemptMarker), 0) + 1
+		setMarkerContent(attemptMarker, strconv.Itoa(attempt))
+		if attempt == 1 {
+			return commandFailure(
+				54,
+				"The connection to the server api.example.test:6443 was refused: connect: connection refused",
+			)
+		}
+	}
 	if nodeName == os.Getenv("FAKE_NODE_READY_FAIL_NODE") {
 		return commandFailure(50, "node did not become ready")
 	}
