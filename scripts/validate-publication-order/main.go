@@ -78,10 +78,15 @@ var (
 	// attesting before it would cover the previous artifact.
 	publish = marker{"publish the manifests (`workload push`)", runContains("workload push")}
 
+	// sign is named separately because its step is inspected again below, for
+	// the digest reference. Locating it by value rather than by matching its
+	// label keeps that second lookup correct when the wording changes.
+	sign = marker{"sign the published digest (`cosign sign`)", runContains("cosign sign ")}
+
 	// evidence is what must exist before production may look. Order among
 	// these is unconstrained.
 	evidence = []marker{
-		{"sign the published digest (`cosign sign`)", runContains("cosign sign ")},
+		sign,
 		{"attest the SBOM (`actions/attest`)", usesPrefix("actions/attest@")},
 		{"attest build provenance (`actions/attest-build-provenance`)", usesPrefix("actions/attest-build-provenance@")},
 	}
@@ -153,8 +158,6 @@ func validate(source []byte) error {
 		return err
 	}
 
-	signAt := -1
-
 	for _, m := range evidence {
 		at, err := locate(m)
 		if err != nil {
@@ -168,10 +171,12 @@ func validate(source []byte) error {
 		if err := mustPrecede(m, at, release, releaseAt); err != nil {
 			return err
 		}
+	}
 
-		if strings.Contains(m.label, "cosign sign") {
-			signAt = at
-		}
+	// sign is in evidence, so the loop above has already proved it resolves.
+	signAt, err := locate(sign)
+	if err != nil {
+		return err
 	}
 
 	if !strings.Contains(steps[signAt].Run, digestRef) {
