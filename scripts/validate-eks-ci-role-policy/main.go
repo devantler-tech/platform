@@ -56,6 +56,18 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
+// Measured against main f4579011 before approving this value: 511 documents
+// on both sides, with membership IDENTICAL — zero added, zero removed, zero
+// renamed. Exactly ONE entry's content moved:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  kube-system/cilium
+//
+// Its rendered delta adds only `nodePort.addresses: [10.0.0.0/16]`, narrowing
+// kube-proxy-replacement NodePort listeners from every selected device address
+// to the private node CIDR. The surface carries 64 Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount documents on BOTH sides;
+// none moved, and no permission or identity grant changed.
+//
 // Measured against main fa041449 before approving this value: the production
 // infrastructure overlay moves from 204 -> 210 documents, with exactly six
 // additive OpenCost usage-scraper resources and no existing document modified
@@ -117,7 +129,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "b1b8547b7a4826c100cbbbea860fc9688fc8b0f3472148a52f63bfeb27969e29"
+const expectedRenderedSurfaceSHA = "13ac33309d2f60f01d594b35f8fd95c454bbb8aaa243ebb90b009244dc9dbfb6"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
