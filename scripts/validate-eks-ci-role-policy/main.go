@@ -56,10 +56,29 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main fa041449 before approving this value: the production
-// infrastructure overlay moves from 204 -> 210 documents, with exactly six
-// additive OpenCost usage-scraper resources and no existing document modified
-// or removed. The authorization delta is one dedicated ServiceAccount, one
+// Measured against main 6e011890 before approving this value: 515 documents on
+// both sides, membership IDENTICAL — proven by set difference in BOTH
+// directions over apiVersion|kind|namespace|name across all five rendered
+// trees, not by count alone, which cannot see a rename. Exactly ONE entry's
+// content moved:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  headlamp/headlamp
+//
+// Its rendered delta is a single line — `hostUsers: false` — activating the
+// user-namespace pilot gated since #2650. That field places the pod in its own
+// user namespace; it constrains the workload and grants nothing.
+//
+// No grant-bearing object moved: 64 Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding / ServiceAccount documents on BOTH sides, none of them in
+// the moved set. All 116 `aws`-bearing lines are byte-identical across the two
+// trees, so nothing granted to the aws/aws service account this validator
+// exists to protect is touched.
+//
+// Measured against main fa041449 before approving the previous value: the
+// production infrastructure overlay moves from 204 -> 210 documents, with
+// exactly six additive OpenCost usage-scraper resources and no existing
+// document modified or removed. The authorization delta is one dedicated
+// ServiceAccount, one
 // ClusterRole limited to get/list/watch on nodes plus get on nodes/metrics, and
 // one binding between exactly those identities. The ConfigMap, Deployment, and
 // scraper-scoped CiliumNetworkPolicy carry the bounded scrape/remote-write path
@@ -117,7 +136,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "b1b8547b7a4826c100cbbbea860fc9688fc8b0f3472148a52f63bfeb27969e29"
+const expectedRenderedSurfaceSHA = "a00f3c5d3e5a1ab7418f543d52c15640c7a8777349d6ead63a25646e67c7c374"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
