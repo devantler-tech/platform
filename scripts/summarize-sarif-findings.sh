@@ -41,10 +41,12 @@ if [ ! -f "$sarif_file" ]; then
 fi
 
 # One jq pass builds the whole report. Rule metadata lives in
-# .runs[].tool.driver.rules and the findings in .runs[].results, so the rule
-# table is indexed by id first and each result counted against it. Results are
-# grouped by control rather than listed one per line: the same control on twenty
-# files is one thing to fix, and a per-result list would bury that.
+# .runs[].tool.driver.rules and the findings in .runs[].results, and both are
+# scoped to their run — so each result resolves its rule against its OWN run and
+# carries the answer forward, rather than against a table flattened across runs.
+# Results are then grouped by control rather than listed one per line: the same
+# control on twenty files is one thing to fix, and a per-result list would bury
+# that.
 report="$(
   jq -r '
     # A SARIF document MUST carry .runs as an array. Without this check `{}`,
@@ -56,43 +58,46 @@ report="$(
       error("not a SARIF document: .runs is absent or not an array")
     else . end
     | [.runs[]] as $runs
-    | ( [ $runs[].tool.driver.rules[]? ] | map({key: .id, value: .}) | from_entries ) as $rules
     # SARIF lets a result name its rule EITHER by .ruleId or by .ruleIndex into
-    # its own run.tool.driver.rules. Resolving only .ruleId collapses every
-    # ruleIndex result into one "<no rule id>" bucket and throws the metadata
-    # away, so resolve per run — the index is run-scoped and meaningless across
-    # a concatenated list. The bounds check keeps an out-of-range index a miss
-    # rather than a wrong attribution (jq would index backwards from -1).
+    # its OWN run.tool.driver.rules, and two runs may define the same rule id
+    # with different metadata. Both facts make rule resolution run-scoped, so
+    # each result is resolved against its own run and carries the answer with it.
+    #
+    # A global id-keyed table cannot do this: `from_entries` keeps the LAST
+    # definition of a duplicate key, so every finding for that id would be
+    # reported with the level and description from the LAST run — a wrong attribution,
+    # which is worse than an absent one. Same reason the index is bounds-checked:
+    # jq indexes backwards from -1, so an out-of-range index would silently
+    # borrow the last rule in the table.
     | [ $runs[]
         | ( .tool.driver.rules // [] ) as $runRules
+        | ( $runRules | map({key: .id, value: .}) | from_entries ) as $runRuleTable
         | ( .results // [] )[]
         | ( .ruleId
             // ( if (.ruleIndex | type) == "number"
                    and .ruleIndex >= 0
                    and .ruleIndex < ( $runRules | length )
                  then $runRules[.ruleIndex].id
-                 else null end ) )
-      ] as $ids
-    | ( $ids | length ) as $total
+                 else null end ) ) as $id
+        | ( if $id == null then null else $runRuleTable[$id] end ) as $rule
+        | {
+            id:    ( $id // "<no rule id>" ),
+            level: ( $rule.defaultConfiguration.level // "unknown" ),
+            desc:  ( $rule.shortDescription.text // "" )
+          }
+      ] as $findings
+    | ( $findings | length ) as $total
     | if $total == 0 then
         "Kubescape: 0 findings in this scan."
       else
-        ( $ids
-          | group_by(.)
-          | map(
-              # A result is not required to identify its rule at all, and indexing
-              # the rule table with null is an error rather than a miss — so look
-              # the rule up only when there is an id. A finding with none stays
-              # counted and visible instead of aborting the summary.
-              ( .[0] ) as $id
-              | ( if $id == null then null else $rules[$id] end ) as $rule
-              | {
-                  id:    ( $id // "<no rule id>" ),
-                  count: length,
-                  level: ( $rule.defaultConfiguration.level // "unknown" ),
-                  desc:  ( $rule.shortDescription.text // "" )
-                }
-            )
+        # Grouped on the resolved triple, not on the id alone. Runs that agree
+        # about a rule still merge into one control (the ordinary case, and the
+        # only one the single-run scans in this repository produce); runs that
+        # disagree are reported separately rather than one silently overwriting
+        # the other.
+        ( $findings
+          | group_by([.id, .level, .desc])
+          | map( .[0] + { count: length } )
           | sort_by(-.count)
         ) as $byControl
         | ( "Kubescape: \($total) finding(s) across \($byControl | length) control(s)."

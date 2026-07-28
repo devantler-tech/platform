@@ -322,6 +322,64 @@ if grep -Fq 'C-0002' <<<"${run_output}"; then
 fi
 
 # ---------------------------------------------------------------------------
+# Two runs may define the SAME rule id with different metadata.
+#
+# A rule table flattened across runs cannot represent that: `from_entries` keeps
+# the last definition of a duplicate key, so every finding for that id would be
+# reported with the last run's level and description — a confident, wrong
+# attribution rather than a visible gap. Resolution is per run for the same
+# reason ruleIndex is.
+# ---------------------------------------------------------------------------
+conflicting_runs_sarif="$(write_sarif conflicting-runs.sarif '{
+  "runs": [
+    {
+      "tool": { "driver": { "rules": [ { "id": "C-0001",
+        "shortDescription": { "text": "first-run-text" },
+        "defaultConfiguration": { "level": "error" } } ] } },
+      "results": [ { "ruleId": "C-0001" } ]
+    },
+    {
+      "tool": { "driver": { "rules": [ { "id": "C-0001",
+        "shortDescription": { "text": "second-run-text" },
+        "defaultConfiguration": { "level": "note" } } ] } },
+      "results": [ { "ruleId": "C-0001" } ]
+    }
+  ]
+}')"
+run_summary "${conflicting_runs_sarif}"
+[ "${run_status}" -eq 0 ] || fail "conflicting run metadata must not abort, got ${run_status}"
+require_text "${run_output}" 'Kubescape: 2 finding(s) across 2 control(s).' \
+  'runs disagreeing about a rule must report separately, not collapse onto the last definition'
+require_text "${run_output}" 'C-0001  error  first-run-text' \
+  "the first run's finding must keep the first run's metadata"
+require_text "${run_output}" 'C-0001  note  second-run-text' \
+  "the second run's finding must keep the second run's metadata"
+
+# The other half of that rule: runs that AGREE must still merge, or the fix
+# above would fragment every ordinary multi-run report.
+agreeing_runs_sarif="$(write_sarif agreeing-runs.sarif '{
+  "runs": [
+    {
+      "tool": { "driver": { "rules": [ { "id": "C-0009",
+        "shortDescription": { "text": "same-text" },
+        "defaultConfiguration": { "level": "error" } } ] } },
+      "results": [ { "ruleId": "C-0009" } ]
+    },
+    {
+      "tool": { "driver": { "rules": [ { "id": "C-0009",
+        "shortDescription": { "text": "same-text" },
+        "defaultConfiguration": { "level": "error" } } ] } },
+      "results": [ { "ruleId": "C-0009" } ]
+    }
+  ]
+}')"
+run_summary "${agreeing_runs_sarif}"
+require_text "${run_output}" 'Kubescape: 2 finding(s) across 1 control(s).' \
+  'runs agreeing about a rule must still merge into one control'
+require_text "${run_output}" 'C-0009  error  same-text  — 2 finding(s)' \
+  'a merged control must carry the shared metadata and the combined count'
+
+# ---------------------------------------------------------------------------
 # The summary must read the PRE-NORMALIZATION scan output, on BOTH paths.
 #
 # normalize-sarif-paths.sh drops results with an empty artifactLocation.uri —
