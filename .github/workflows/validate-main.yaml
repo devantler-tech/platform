@@ -165,6 +165,10 @@ jobs:
           # Code Scanning cannot anchor them, so the upload reads the normalized
           # file and the summary below reads this untouched copy.
           cp "${RUNNER_TEMP}/kubescape.sarif" "${RUNNER_TEMP}/kubescape.raw.sarif"
+          # Emitted before the normalizer: an unresolvable path aborts the step,
+          # so the summary would otherwise be skipped exactly when a path-shape
+          # change made the findings most worth reading.
+          echo "raw=ready" >> "${GITHUB_OUTPUT}"
           bash scripts/normalize-sarif-paths.sh "${RUNNER_TEMP}/kubescape.sarif" k8s .
           echo "sarif=ready" >> "${GITHUB_OUTPUT}"
 
@@ -201,7 +205,7 @@ jobs:
         continue-on-error: true
         if: >-
           !cancelled() &&
-          steps.normalize-sarif.outputs.sarif == 'ready'
+          steps.normalize-sarif.outputs.raw == 'ready'
         run: |
           shellcheck scripts/summarize-sarif-findings.sh
           bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.raw.sarif"

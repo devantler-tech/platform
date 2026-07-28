@@ -47,21 +47,44 @@ fi
 # files is one thing to fix, and a per-result list would bury that.
 report="$(
   jq -r '
-    [.runs[]? ] as $runs
+    # A SARIF document MUST carry .runs as an array. Without this check `{}`,
+    # `{"version":"2.1.0"}` and `{"runs":null}` all flow through the optional
+    # iteration below and report "0 findings" — a structurally unusable file
+    # reported as a clean scan, which is the exact ambiguity this script exists
+    # to remove. `"runs": []` is a different thing and stays a legitimate zero.
+    if (.runs | type) != "array" then
+      error("not a SARIF document: .runs is absent or not an array")
+    else . end
+    | [.runs[]] as $runs
     | ( [ $runs[].tool.driver.rules[]? ] | map({key: .id, value: .}) | from_entries ) as $rules
-    | [ $runs[].results[]? ] as $results
-    | ($results | length) as $total
+    # SARIF lets a result name its rule EITHER by .ruleId or by .ruleIndex into
+    # its own run.tool.driver.rules. Resolving only .ruleId collapses every
+    # ruleIndex result into one "<no rule id>" bucket and throws the metadata
+    # away, so resolve per run — the index is run-scoped and meaningless across
+    # a concatenated list. The bounds check keeps an out-of-range index a miss
+    # rather than a wrong attribution (jq would index backwards from -1).
+    | [ $runs[]
+        | ( .tool.driver.rules // [] ) as $runRules
+        | ( .results // [] )[]
+        | ( .ruleId
+            // ( if (.ruleIndex | type) == "number"
+                   and .ruleIndex >= 0
+                   and .ruleIndex < ( $runRules | length )
+                 then $runRules[.ruleIndex].id
+                 else null end ) )
+      ] as $ids
+    | ( $ids | length ) as $total
     | if $total == 0 then
         "Kubescape: 0 findings in this scan."
       else
-        ( $results
-          | group_by(.ruleId)
+        ( $ids
+          | group_by(.)
           | map(
-              # A result is not required to carry a ruleId, and indexing the rule
-              # table with null is an error rather than a miss — so resolve the id
-              # once and look the rule up only when there is one. A finding with no
-              # id stays counted and visible instead of aborting the summary.
-              ( .[0].ruleId ) as $id
+              # A result is not required to identify its rule at all, and indexing
+              # the rule table with null is an error rather than a miss — so look
+              # the rule up only when there is an id. A finding with none stays
+              # counted and visible instead of aborting the summary.
+              ( .[0] ) as $id
               | ( if $id == null then null else $rules[$id] end ) as $rule
               | {
                   id:    ( $id // "<no rule id>" ),

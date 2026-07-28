@@ -82,13 +82,31 @@ run_summary "${empty_sarif}"
 require_text "${run_output}" 'Kubescape: 0 findings in this scan.' \
   'an empty SARIF must state zero findings explicitly'
 
-# A SARIF with no runs at all is the same story, and reaches a different jq path
-# (`.runs[]?` yields nothing rather than an empty results array).
-no_runs_sarif="$(write_sarif no-runs.sarif '{"version":"2.1.0"}')"
-run_summary "${no_runs_sarif}"
-[ "${run_status}" -eq 0 ] || fail "a SARIF with no runs must exit 0, got ${run_status}"
+# An EMPTY runs array is still a well-formed SARIF, so it is a legitimate zero.
+empty_runs_sarif="$(write_sarif empty-runs.sarif '{"version":"2.1.0","runs":[]}')"
+run_summary "${empty_runs_sarif}"
+[ "${run_status}" -eq 0 ] || fail "a SARIF with an empty runs array must exit 0, got ${run_status}"
 require_text "${run_output}" 'Kubescape: 0 findings in this scan.' \
-  'a SARIF with no runs must state zero findings explicitly'
+  'a SARIF with an empty runs array must state zero findings explicitly'
+
+# ---------------------------------------------------------------------------
+# A file that is valid JSON but NOT a SARIF document must fail, never read clean.
+#
+# This is the one that matters most and the easiest to get backwards: `.runs[]?`
+# happily yields nothing for `{}`, so without an explicit shape check a
+# structurally unusable file reports "0 findings" and a broken scan is
+# indistinguishable from a clean one — precisely the ambiguity this script
+# exists to remove. An earlier revision of this test asserted the WRONG
+# behaviour here (exit 0); it was corrected after review.
+# ---------------------------------------------------------------------------
+for not_sarif in '{}' '{"version":"2.1.0"}' '{"runs":null}' '{"runs":{}}'; do
+  probe="$(write_sarif "not-sarif.sarif" "${not_sarif}")"
+  run_summary "${probe}"
+  [ "${run_status}" -eq 2 ] ||
+    fail "a non-SARIF document ${not_sarif} must exit 2, got ${run_status}"
+  require_text "${run_output}" 'not a SARIF document' \
+    "a non-SARIF document ${not_sarif} must name the reason"
+done
 
 # ---------------------------------------------------------------------------
 # Findings are grouped by control, counted, and ordered by count descending.
@@ -254,6 +272,56 @@ require_text "${workflow_body}" "- 'scripts/summarize-sarif-findings.sh'" \
   'the script under test must be in the k8s path filter'
 
 # ---------------------------------------------------------------------------
+# A result may name its rule by ruleIndex instead of ruleId.
+#
+# SARIF allows either. Grouping on .ruleId alone buckets every such result under
+# "<no rule id>" and discards the rule metadata, so two distinct controls report
+# as one unknown one — an under-report dressed as a finding. The index is scoped
+# to its OWN run, so it must be resolved per run, not against a concatenated
+# rule list.
+# ---------------------------------------------------------------------------
+rule_index_sarif="$(write_sarif rule-index.sarif '{
+  "runs": [
+    {
+      "tool": { "driver": { "rules": [
+        { "id": "C-0001", "shortDescription": { "text": "first" },
+          "defaultConfiguration": { "level": "warning" } },
+        { "id": "C-0002", "shortDescription": { "text": "second" },
+          "defaultConfiguration": { "level": "error" } }
+      ] } },
+      "results": [ { "ruleIndex": 0 }, { "ruleIndex": 1 }, { "ruleIndex": 1 } ]
+    }
+  ]
+}')"
+run_summary "${rule_index_sarif}"
+[ "${run_status}" -eq 0 ] || fail "a ruleIndex SARIF must exit 0, got ${run_status}"
+require_text "${run_output}" 'Kubescape: 3 finding(s) across 2 control(s).' \
+  'ruleIndex results must resolve to distinct controls, not collapse into one'
+require_text "${run_output}" 'C-0002  error  second  — 2 finding(s)' \
+  'a ruleIndex-identified control must carry its resolved level and description'
+require_text "${run_output}" 'C-0001  warning  first  — 1 finding(s)' \
+  'every ruleIndex-identified control must be reported'
+
+# An out-of-range ruleIndex is a miss, not a wrong attribution: jq indexes
+# backwards from -1, so an unguarded lookup would silently label the finding
+# with the LAST rule in the table.
+bad_index_sarif="$(write_sarif bad-index.sarif '{
+  "runs": [
+    {
+      "tool": { "driver": { "rules": [ { "id": "C-0001" }, { "id": "C-0002" } ] } },
+      "results": [ { "ruleIndex": -1 }, { "ruleIndex": 99 } ]
+    }
+  ]
+}')"
+run_summary "${bad_index_sarif}"
+[ "${run_status}" -eq 0 ] || fail "an out-of-range ruleIndex must not abort, got ${run_status}"
+require_text "${run_output}" '<no rule id>' \
+  'an out-of-range ruleIndex must report as unidentified rather than mis-attributed'
+if grep -Fq 'C-0002' <<<"${run_output}"; then
+  fail 'an out-of-range ruleIndex must not be attributed to a real control'
+fi
+
+# ---------------------------------------------------------------------------
 # The summary must read the PRE-NORMALIZATION scan output, on BOTH paths.
 #
 # normalize-sarif-paths.sh drops results with an empty artifactLocation.uri —
@@ -287,6 +355,22 @@ for wf_name in ci validate-main; do
   reject_normalized="$(grep -F 'summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.sarif"' <<<"${body}" || true)"
   [ -z "${reject_normalized}" ] ||
     fail "${wf_name}.yaml must not summarize the normalized SARIF (found: ${reject_normalized})"
+
+  # The summary's gate must be the raw copy's existence, NOT the normalizer's
+  # success. Gating it on `sarif=ready` skips the summary exactly when an
+  # unresolvable path aborts normalization — the moment the findings are most
+  # worth reading.
+  require_text "${body}" "steps.normalize-sarif.outputs.raw == 'ready'" \
+    "${wf_name}.yaml must gate the summary on the raw copy, not on normalization succeeding"
+
+  # And `raw=ready` must be emitted BEFORE the normalizer runs, or the abort
+  # takes the output with it and the gate above can never be true.
+  raw_line="$(grep -nF 'echo "raw=ready"' <<<"${body}" | head -1 | cut -d: -f1)"
+  norm_line="$(grep -nF 'bash scripts/normalize-sarif-paths.sh' <<<"${body}" | head -1 | cut -d: -f1)"
+  [ -n "${raw_line}" ] && [ -n "${norm_line}" ] ||
+    fail "${wf_name}.yaml must both emit raw=ready and call the normalizer"
+  [ "${raw_line}" -lt "${norm_line}" ] ||
+    fail "${wf_name}.yaml must emit raw=ready BEFORE the normalizer (raw at ${raw_line}, normalizer at ${norm_line})"
 done
 
 # The differential that makes the split load-bearing: the normalizer really does

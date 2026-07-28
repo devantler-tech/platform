@@ -417,6 +417,13 @@ jobs:
           # normalized file would under-report the very case this reporting
           # exists for. Upload reads the normalized file; the summary reads this.
           cp "${RUNNER_TEMP}/kubescape.sarif" "${RUNNER_TEMP}/kubescape.raw.sarif"
+          # Emitted BEFORE the normalizer runs, because it is the summary's gate
+          # and the summary must survive a normalizer failure. An unresolvable
+          # path aborts the step, so anything echoed after that line never
+          # happens — and gating the summary on `sarif=ready` would skip it
+          # exactly when an upstream path-shape change made the findings most
+          # worth reading.
+          echo "raw=ready" >> "${GITHUB_OUTPUT}"
           bash scripts/normalize-sarif-paths.sh "${RUNNER_TEMP}/kubescape.sarif" k8s .
           # Only now is the file both PRESENT and root-relative. The upload gates
           # on this output, so a normalizer hard-failure (an unresolvable path)
@@ -504,7 +511,7 @@ jobs:
         continue-on-error: true
         if: >-
           !cancelled() &&
-          steps.normalize-sarif.outputs.sarif == 'ready'
+          steps.normalize-sarif.outputs.raw == 'ready'
         run: |
           shellcheck scripts/summarize-sarif-findings.sh
           bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.raw.sarif"
