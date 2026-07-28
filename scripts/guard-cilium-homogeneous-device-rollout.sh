@@ -37,6 +37,7 @@ readonly rollout_wait_seconds="${ROLLOUT_WAIT_SECONDS:-120}"
 readonly rollout_poll_seconds="${ROLLOUT_POLL_SECONDS:-2}"
 readonly provider_stability_seconds="${PROVIDER_STABILITY_SECONDS:-30}"
 readonly provider_poll_seconds="${PROVIDER_POLL_SECONDS:-5}"
+readonly revision_ready="${CILIUM_ROLLOUT_REVISION_READY:-false}"
 
 fail() {
   printf 'ERROR: %s\n' "$1" >&2
@@ -55,6 +56,8 @@ fail() {
   fail "PROVIDER_STABILITY_SECONDS is not a non-negative integer: ${provider_stability_seconds}"
 [[ "${provider_poll_seconds}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
   fail "PROVIDER_POLL_SECONDS is not a non-negative number: ${provider_poll_seconds}"
+[[ "${revision_ready}" == true || "${revision_ready}" == false ]] ||
+  fail "CILIUM_ROLLOUT_REVISION_READY must be true or false: ${revision_ready}"
 
 kubectl_prod() {
   "${kubectl_bin}" --context admin@prod "$@"
@@ -263,7 +266,7 @@ restore_autoscaler_if_owned() {
 }
 
 require_cilium_fleet_current() {
-  local daemonset_json pods_json generation desired scheduled ready pod_count stale_nodes
+  local daemonset_json pods_json generation observed desired scheduled ready pod_count stale_nodes
   daemonset_json="$(
     kubectl_prod -n "${namespace}" get daemonset "${cilium_daemonset}" -o json
   )"
@@ -273,14 +276,17 @@ require_cilium_fleet_current() {
   generation="$(
     "${jq_bin}" -er '.metadata.generation | tostring' <<<"${daemonset_json}"
   )" || fail 'the Cilium DaemonSet has no observable template generation'
+  observed="$(
+    "${jq_bin}" -er '.status.observedGeneration | tostring' <<<"${daemonset_json}"
+  )" || fail 'the Cilium DaemonSet controller has not observed a generation'
   desired="$(
-    "${jq_bin}" -er '.status.desiredNumberScheduled // 0' <<<"${daemonset_json}"
+    "${jq_bin}" -er '.status.desiredNumberScheduled | tostring' <<<"${daemonset_json}"
   )" || fail 'the Cilium DaemonSet has no desired-agent count'
   scheduled="$(
-    "${jq_bin}" -er '.status.currentNumberScheduled // 0' <<<"${daemonset_json}"
+    "${jq_bin}" -er '.status.currentNumberScheduled | tostring' <<<"${daemonset_json}"
   )" || fail 'the Cilium DaemonSet has no scheduled-agent count'
   ready="$(
-    "${jq_bin}" -er '.status.numberReady // 0' <<<"${daemonset_json}"
+    "${jq_bin}" -er '.status.numberReady | tostring' <<<"${daemonset_json}"
   )" || fail 'the Cilium DaemonSet has no ready-agent count'
   pod_count="$(
     "${jq_bin}" -er '.items | length' <<<"${pods_json}"
@@ -302,18 +308,22 @@ require_cilium_fleet_current() {
   )" || fail 'the Cilium pod template generations are unreadable'
 
   require_replica_count "${generation}" 'Cilium DaemonSet generation'
+  require_replica_count "${observed}" 'observed Cilium DaemonSet generation'
   require_replica_count "${desired}" 'desired Cilium agent count'
   require_replica_count "${scheduled}" 'scheduled Cilium agent count'
   require_replica_count "${ready}" 'ready Cilium agent count'
   require_replica_count "${pod_count}" 'observed Cilium pod count'
-  [[ "${scheduled}" == "${desired}" && "${pod_count}" == "${desired}" &&
+  ((desired > 0)) ||
+    fail 'Cilium rollout cannot complete with zero desired agents'
+  [[ "${observed}" == "${generation}" && "${scheduled}" == "${desired}" &&
+    "${pod_count}" == "${desired}" &&
     "${ready}" == "${desired}" && -z "${stale_nodes}" ]] ||
-    fail "Cilium rollout is incomplete for DaemonSet generation ${generation}: desired=${desired} scheduled=${scheduled} pods=${pod_count} ready=${ready} stale_nodes=${stale_nodes:-<none>}"
+    fail "Cilium rollout is incomplete for DaemonSet generation ${generation}: observed=${observed} desired=${desired} scheduled=${scheduled} pods=${pod_count} ready=${ready} stale_nodes=${stale_nodes:-<none>}"
 }
 
 if [[ "${rollout_gate_active}" == true ]]; then
   suspend_autoscaler
-  if [[ "${phase}" == '--after-deploy' ]]; then
+  if [[ "${phase}" == '--after-deploy' && "${revision_ready}" == true ]]; then
     record_approved_template_sha
   fi
 elif [[ "${phase}" == '--after-deploy' ]]; then
