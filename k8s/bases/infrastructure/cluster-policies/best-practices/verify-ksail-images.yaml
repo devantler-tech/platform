@@ -23,11 +23,9 @@
 # root, so admission needs egress to ghcr.io + tuf-repo-cdn.sigstore.dev
 # only — no Rekor round-trip.
 #
-# Do NOT set spec.webhookConfiguration: a per-policy timeout switches Kyverno
-# to per-policy "finegrained" webhook registrations, which are broken for
-# multiple IVPOLs in v1.18.1 (one concatenated URL path; every admission then
-# fails with "policy not evaluated"). Both policies therefore share the
-# default 10s webhook timeout.
+# Kyverno v1.18.2 registers every timeout-bearing IVPOL on its own fine-grained
+# webhook path, so both first-party policies can use the maximum 30s timeout
+# without concatenating policy names. Keep their timeout values aligned.
 #
 # FAIL-OPEN for everything else, exactly like the Talos config: images that
 # match no matchImageReferences rule are skipped, even when passed to the
@@ -45,7 +43,7 @@
 #     private images need authenticated GHCR reads
 #   - kyverno egress to ghcr.io + the Sigstore TUF CDN (cilium-network-policy.yaml)
 # Trade-off accepted by design: creating/restarting a FIRST-PARTY pod while
-# GHCR is unreachable (or verification exceeds the 10s webhook timeout) is
+# GHCR is unreachable (or verification exceeds the 30s webhook timeout) is
 # denied until the owning controller retries.
 #
 # ksail images (incl. ksail-operator) — signed by ksail's OWN release
@@ -64,6 +62,8 @@ metadata:
 spec:
   failurePolicy: Fail
   validationActions: [Deny]
+  webhookConfiguration:
+    timeoutSeconds: 30
   evaluation:
     admission:
       enabled: true

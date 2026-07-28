@@ -917,6 +917,21 @@ func fakeKubectlCreateRuntimeProbe(namespace, manifestFile string) int {
 			"Error from server (InternalError): failed calling webhook: context deadline exceeded",
 		)
 	}
+	if wordListContains(
+		os.Getenv("FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_COUNT_NODES"),
+		probeNode,
+	) {
+		attemptMarker := "runtime-probe-create-timeout-count-" + probeNode
+		attempt := parseInt(markerContent(attemptMarker), 0) + 1
+		setMarkerContent(attemptMarker, strconv.Itoa(attempt))
+		timeoutCount := parseInt(os.Getenv("FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_COUNT"), 3)
+		if attempt <= timeoutCount {
+			return commandFailure(
+				75,
+				"Error from server (InternalError): failed calling webhook: context deadline exceeded",
+			)
+		}
+	}
 	if wordListContains(os.Getenv("FAKE_RUNTIME_PROBE_CREATE_ALWAYS_FAIL_NODES"), probeNode) {
 		return commandFailure(
 			75,

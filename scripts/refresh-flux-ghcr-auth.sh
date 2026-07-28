@@ -39,7 +39,10 @@ readonly SYNC_ATTEMPTS="${FLUX_GHCR_SYNC_ATTEMPTS:-60}"
 readonly SYNC_INTERVAL="${FLUX_GHCR_SYNC_INTERVAL:-2}"
 readonly TALOS_CONVERGENCE_ATTEMPTS="${FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS:-${SYNC_ATTEMPTS}}"
 readonly DRAIN_TIMEOUT="${FLUX_GHCR_DRAIN_TIMEOUT:-45m}"
-readonly RUNTIME_PROBE_CREATE_ATTEMPTS=3
+# Kyverno image verification is fail-closed and can consume its full webhook
+# timeout during a cold signature lookup. Keep retrying the same immutable Pod
+# name so an ambiguous admission response is reused instead of duplicated.
+readonly RUNTIME_PROBE_CREATE_ATTEMPTS=6
 readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
 readonly SYNC_LEASE_DURATION_SECONDS=120
 readonly SYNC_LEASE_HEARTBEAT_SECONDS=30

@@ -24,6 +24,10 @@ metadata:
 spec:
   failurePolicy: Fail
   validationActions: [Deny]
+  # Keyless verification can need more than the default 10s while GHCR or the
+  # Sigstore trust root is cold. Kyverno caps admission webhook timeouts at 30s.
+  webhookConfiguration:
+    timeoutSeconds: 30
   evaluation:
     admission:
       enabled: true

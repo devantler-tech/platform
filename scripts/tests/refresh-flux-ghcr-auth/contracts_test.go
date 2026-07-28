@@ -452,3 +452,25 @@ func TestTalosRegistryAuthUsesSupportedTalosDocument(t *testing.T) {
 	requireNotContains(t, registryAuth, "machine:\n")
 	requireNotContains(t, registryAuth, "\n---\n")
 }
+
+func TestImageVerificationPoliciesAllowSlowFailClosedAdmission(t *testing.T) {
+	for _, policy := range []string{
+		"k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml",
+		"k8s/bases/infrastructure/cluster-policies/best-practices/verify-ksail-images.yaml",
+	} {
+		t.Run(filepath.Base(policy), func(t *testing.T) {
+			timeout, err := yamlScalarAtPath(
+				readRepositoryFile(t, policy),
+				"spec",
+				"webhookConfiguration",
+				"timeoutSeconds",
+			)
+			if err != nil {
+				t.Fatalf("read image-verification webhook timeout: %v", err)
+			}
+			if timeout != "30" {
+				t.Errorf("image-verification webhook timeout = %q, want 30", timeout)
+			}
+		})
+	}
+}

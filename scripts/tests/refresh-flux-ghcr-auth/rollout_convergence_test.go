@@ -669,6 +669,25 @@ func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {
 	requireLine(t, operations, "root-patch")
 }
 
+func TestRuntimeProbeSurvivesThreeConsecutiveAdmissionTimeouts(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_COUNT_NODES": "prod-control-plane-2",
+		"FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_COUNT":       "3",
+	})
+	requireSuccessResult(t, result)
+	attempts := strings.TrimSpace(mustRead(filepath.Join(
+		f.syncStateDir,
+		"runtime-probe-create-timeout-count-prod-control-plane-2",
+	)))
+	if attempts != "5" {
+		t.Fatalf("runtime probe create attempts = %s, want 5", attempts)
+	}
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-drain:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+}
+
 func TestRuntimeProbeReusesPersistedPodAfterAmbiguousAdmissionTimeout(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
