@@ -45,6 +45,10 @@ set -euo pipefail
 readonly CI_CHECKOV_VERSION='3.3.2'
 readonly CI_TRIVY_VERSION='0.71.2'
 
+# The frameworks MegaLinter's checkov run reports. All four must appear locally or the total is not
+# comparable — see the dropped-framework guard in scan_checkov.
+readonly EXPECTED_CHECKOV_FRAMEWORKS=(cloudformation kubernetes secrets github_actions)
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
 OUT_DIR="$(mktemp -d)"
@@ -131,9 +135,20 @@ scan_checkov() {
     tail -n 5 "$out" >&2
     exit 2
   fi
-  if ! grep -aqE 'scan results:' "$out"; then
-    printf 'checkov emitted no framework sections — refusing to report a count\n' >&2
-    tail -n 5 "$out" >&2
+  # Every framework CI reports must be present. "At least one section" is not enough: a silently
+  # dropped framework is the failure mode already seen here — an absolute --directory removes the
+  # whole kubernetes framework and its 42 findings while the other three still report, so the run
+  # looks healthy and the total is simply 42 lower.
+  local missing=''
+  local fw
+  for fw in "${EXPECTED_CHECKOV_FRAMEWORKS[@]}"; do
+    if ! grep -aqE "^${fw} scan results:" "$out"; then
+      missing="$missing $fw"
+    fi
+  done
+  if [ -n "$missing" ]; then
+    printf 'checkov did not report these frameworks CI reports:%s\n' "$missing" >&2
+    printf 'Refusing to report a count — a dropped framework silently lowers the total.\n' >&2
     exit 2
   fi
 
@@ -182,9 +197,15 @@ scan_trivy() {
     grep -aE '\bFATAL\b' "$OUT_DIR/trivy.err" | tail -n 3 >&2
     exit 2
   fi
-  if ! grep -aqE '^Tests: [0-9]+ \(SUCCESSES' "$out"; then
-    printf 'trivy emitted no scan summaries (exit %d) — refusing to report a count.\n' "$rc" >&2
-    printf 'A genuinely clean scan still reports "Tests: N (SUCCESSES: N, FAILURES: 0)" per target.\n' >&2
+  # The discriminator is the exit status, NOT the presence of detail rows: trivy prints a
+  # "Tests:" summary only for targets that HAVE failures (measured — the current 458-target report
+  # contains zero "FAILURES: 0" lines), so a cleared backlog legitimately has no detail at all.
+  #   rc 0 — ran, found nothing. That IS the terminal state this script exists to report.
+  #   rc 1 — findings, OR an operational failure using the same status; demand the findings.
+  if [ "$rc" -eq 1 ] && ! grep -aqE '^(Tests: [0-9]+ \(SUCCESSES|Total: [0-9]+ \()' "$out"; then
+    printf 'trivy exited 1 but reported no findings — refusing to report a count.\n' >&2
+    printf 'Exit 1 means findings OR an operational failure, so with neither present the scan\n' >&2
+    printf 'cannot be assumed to have run. A genuinely clean scan exits 0.\n' >&2
     tail -n 5 "$OUT_DIR/trivy.err" >&2
     exit 2
   fi
