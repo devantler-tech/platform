@@ -43,8 +43,18 @@ jobs:
       # for concurrency.queue, which also removes its enum check. This restores it.
       - name: 🚦 Validate concurrency queue values
         run: |
+          # BOTH extensions: the actionlint ignore covers .github/workflows/**, so
+          # a .yml workflow left out here would have the "unexpected key"
+          # diagnostic suppressed with nothing restoring the enum check.
+          shopt -s nullglob
+          workflows=(.github/workflows/*.yaml .github/workflows/*.yml)
+          # Fail closed rather than pass vacuously if the glob ever matches nothing.
+          if [ ${#workflows[@]} -eq 0 ]; then
+            echo "::error::no workflow files matched; nothing was validated"
+            exit 1
+          fi
           go test ./scripts/validate-concurrency-queue
-          go run ./scripts/validate-concurrency-queue .github/workflows/*.yaml
+          go run ./scripts/validate-concurrency-queue "${workflows[@]}"
 
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
