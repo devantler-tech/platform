@@ -106,11 +106,23 @@ func fakeKubectlImplementation(args []string) int {
 }
 
 func fakeKubectlGetFluxPolicyKustomization(args []string, namespace string) int {
+	name := argumentAfter(args, "kustomizations.kustomize.toolkit.fluxcd.io")
+	if name == "flux-system" && containsArg(args, "infrastructure") {
+		return fakeKubectlGetFluxPolicyFences(args, namespace)
+	}
+	if name == "flux-system" {
+		return fakeKubectlGetFluxPolicyParent(args, namespace)
+	}
 	if namespace != "flux-system" ||
-		argumentAfter(args, "kustomizations.kustomize.toolkit.fluxcd.io") != "infrastructure" ||
+		name != "infrastructure" ||
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid Flux policy Kustomization lookup")
 	}
+	fmt.Println(encodeJSON(fakeFluxPolicyChildObject()))
+	return 0
+}
+
+func fakeFluxPolicyChildObject() map[string]any {
 	owner := markerContent("flux-policy-handoff-owner")
 	if owner == "" && os.Getenv("FAKE_FLUX_POLICY_HANDOFF_OWNED") == "true" {
 		owner = "other-live-transaction"
@@ -143,7 +155,7 @@ func fakeKubectlGetFluxPolicyKustomization(args []string, namespace string) int 
 			"reason": "Progressing",
 		})
 	}
-	fmt.Println(encodeJSON(map[string]any{
+	return map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata": map[string]any{
@@ -161,13 +173,16 @@ func fakeKubectlGetFluxPolicyKustomization(args []string, namespace string) int 
 			"observedGeneration": 13,
 			"conditions":         conditions,
 		},
-	}))
-	return 0
+	}
 }
 
 func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile string) int {
+	name := argumentAfter(args, "kustomizations.kustomize.toolkit.fluxcd.io")
+	if name == "flux-system" {
+		return fakeKubectlPatchFluxPolicyParent(args, namespace, patchFile)
+	}
 	if namespace != "flux-system" ||
-		argumentAfter(args, "kustomizations.kustomize.toolkit.fluxcd.io") != "infrastructure" ||
+		name != "infrastructure" ||
 		!containsArg(args, "--type=json") || patchFile == "" {
 		return commandFailure(91, "invalid Flux policy Kustomization patch")
 	}
@@ -205,6 +220,11 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 			incrementDecimal(currentResourceVersion),
 		)
 		appendEnvFile("OPERATION_LOG", "flux-policy-pause:infrastructure\n")
+		if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_PATCH_RESPONSE_LOST") == "true" &&
+			!markerExists("flux-policy-handoff-patch-response-lost") {
+			touchMarker("flux-policy-handoff-patch-response-lost")
+			return commandFailure(54, "connection reset after policy handoff patch")
+		}
 		return fakeKubectlGetFluxPolicyKustomization(
 			[]string{
 				"get",
@@ -236,6 +256,156 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 	)
 	appendEnvFile("OPERATION_LOG", "flux-policy-resume:infrastructure\n")
 	fmt.Println("kustomization.kustomize.toolkit.fluxcd.io/infrastructure patched")
+	return 0
+}
+
+func fakeKubectlGetFluxPolicyParent(args []string, namespace string) int {
+	if namespace != "flux-system" ||
+		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
+		return commandFailure(91, "invalid parent Flux Kustomization lookup")
+	}
+	fmt.Println(encodeJSON(fakeFluxPolicyParentObject()))
+	return 0
+}
+
+func fakeFluxPolicyParentObject() map[string]any {
+	owner := markerContent("flux-policy-parent-owner")
+	annotations := map[string]any{
+		"reconcile.fluxcd.io/requestedAt": "fixture",
+	}
+	if owner != "" {
+		annotations["platform.devantler.tech/ghcr-policy-parent-owner"] = owner
+	}
+	suspended := markerExists("flux-policy-parent-suspended")
+	conditions := []any{
+		map[string]any{
+			"type":   "Ready",
+			"status": "True",
+			"reason": "ReconciliationSucceeded",
+		},
+	}
+	if suspended {
+		readCount := parseInt(markerContent("flux-policy-parent-suspended-read-count"), 0) + 1
+		setMarkerContent("flux-policy-parent-suspended-read-count", strconv.Itoa(readCount))
+		if os.Getenv("FAKE_FLUX_PARENT_RECONCILING_AFTER_PAUSE") == "true" &&
+			readCount <= 2 {
+			conditions = append(conditions, map[string]any{
+				"type":   "Reconciling",
+				"status": "True",
+				"reason": "Progressing",
+			})
+			appendEnvFile("OPERATION_LOG", "flux-policy-parent-reconciling:flux-system\n")
+		} else if !markerExists("flux-policy-parent-stable-logged") {
+			touchMarker("flux-policy-parent-stable-logged")
+			appendEnvFile("OPERATION_LOG", "flux-policy-parent-stable:flux-system\n")
+		}
+	}
+	return map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata": map[string]any{
+			"name":            "flux-system",
+			"namespace":       "flux-system",
+			"uid":             "flux-system-kustomization-uid",
+			"resourceVersion": defaultString(markerContent("flux-policy-parent-resource-version"), "30"),
+			"generation":      1,
+			"annotations":     annotations,
+		},
+		"spec": map[string]any{
+			"suspend": suspended,
+		},
+		"status": map[string]any{
+			"observedGeneration": 1,
+			"conditions":         conditions,
+		},
+	}
+}
+
+func fakeKubectlGetFluxPolicyFences(args []string, namespace string) int {
+	if namespace != "flux-system" ||
+		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
+		return commandFailure(91, "invalid Flux policy fence list lookup")
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "List",
+		"items": []any{
+			fakeFluxPolicyParentObject(),
+			fakeFluxPolicyChildObject(),
+		},
+	}))
+	return 0
+}
+
+func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string) int {
+	if namespace != "flux-system" ||
+		!containsArg(args, "--type=json") || patchFile == "" {
+		return commandFailure(91, "invalid parent Flux Kustomization patch")
+	}
+	var patch []jsonPatchOperation
+	if err := json.Unmarshal([]byte(mustReadCommandFile(patchFile)), &patch); err != nil {
+		return commandFailure(91, "parse parent Flux Kustomization patch: %v", err)
+	}
+	currentResourceVersion := defaultString(
+		markerContent("flux-policy-parent-resource-version"),
+		"30",
+	)
+	if !hasPatchOperation(
+		patch,
+		"test",
+		"/metadata/uid",
+		"flux-system-kustomization-uid",
+	) {
+		return commandFailure(56, "parent Flux Kustomization UID test failed")
+	}
+	ownerPath := "/metadata/annotations/platform.devantler.tech~1ghcr-policy-parent-owner"
+	if hasPatchOperation(patch, "add", "/spec/suspend", true) {
+		owner := patchValueString(patch, "add", ownerPath)
+		if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
+			owner == "" || markerExists("flux-policy-parent-owner") {
+			return commandFailure(56, "invalid or conflicting parent Flux handoff acquisition")
+		}
+		setMarkerContent("flux-policy-parent-owner", owner)
+		touchMarker("flux-policy-parent-suspended")
+		setMarkerContent(
+			"flux-policy-parent-resource-version",
+			incrementDecimal(currentResourceVersion),
+		)
+		appendEnvFile("OPERATION_LOG", "flux-policy-parent-pause:flux-system\n")
+		if os.Getenv("FAKE_FLUX_POLICY_PARENT_PATCH_RESPONSE_LOST") == "true" &&
+			!markerExists("flux-policy-parent-patch-response-lost") {
+			touchMarker("flux-policy-parent-patch-response-lost")
+			return commandFailure(54, "connection reset after parent Flux handoff patch")
+		}
+		return fakeKubectlGetFluxPolicyKustomization(
+			[]string{
+				"get",
+				"kustomizations.kustomize.toolkit.fluxcd.io",
+				"flux-system",
+				"-o",
+				"json",
+			},
+			namespace,
+		)
+	}
+
+	currentOwner := markerContent("flux-policy-parent-owner")
+	if currentOwner == "" ||
+		!markerExists("flux-policy-parent-suspended") ||
+		!hasPatchOperation(patch, "test", ownerPath, currentOwner) ||
+		!hasPatchOperation(patch, "test", "/spec/suspend", true) ||
+		!hasPatchOperation(patch, "add", "/spec/suspend", false) ||
+		!hasPatchPath(patch, "remove", ownerPath) {
+		return commandFailure(56, "invalid parent Flux handoff release")
+	}
+	removeMarker("flux-policy-parent-owner")
+	removeMarker("flux-policy-parent-suspended")
+	setMarkerContent(
+		"flux-policy-parent-resource-version",
+		incrementDecimal(currentResourceVersion),
+	)
+	appendEnvFile("OPERATION_LOG", "flux-policy-parent-resume:flux-system\n")
+	fmt.Println("kustomization.kustomize.toolkit.fluxcd.io/flux-system patched")
 	return 0
 }
 

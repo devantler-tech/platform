@@ -9,6 +9,7 @@ import (
 )
 
 func TestSecondFanoutVerificationBlocksRootCutover(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_CONSUMER_MISMATCH_ON_SECOND_PASS_NAMESPACE": "wedding-app"})
 	requireFailureResult(t, result)
@@ -28,6 +29,7 @@ func TestSecondFanoutVerificationBlocksRootCutover(t *testing.T) {
 }
 
 func TestMissingCachedImageStillPullsAndRecordsRevision(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_TALOS_IMAGE_ABSENT_NODE": "10.0.0.2"})
 	requireSuccessResult(t, result)
@@ -42,6 +44,7 @@ func TestMissingCachedImageStillPullsAndRecordsRevision(t *testing.T) {
 }
 
 func TestCurrentTalosNodesSkipTalosAPI(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_TALOS_NODES_CURRENT": "true"})
 	requireSuccessResult(t, result)
@@ -54,6 +57,7 @@ func TestCurrentTalosNodesSkipTalosAPI(t *testing.T) {
 }
 
 func TestMatchingRevisionRevalidatesChangedDeclaredImage(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	previousImage := "ghcr.io/devantler-tech/ksail:v7.166.0"
 	result := f.runHelper(validConfig(), nil, map[string]string{
@@ -80,6 +84,7 @@ func TestMatchingRevisionRevalidatesChangedDeclaredImage(t *testing.T) {
 }
 
 func TestFailedImageOnlyPullKeepsNodeCordoned(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_TALOS_NODES_CURRENT":  "true",
@@ -96,6 +101,7 @@ func TestFailedImageOnlyPullKeepsNodeCordoned(t *testing.T) {
 }
 
 func TestNodeAddedMidRollIsProcessedBeforeRootCutover(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_NODE_APPEARS_AFTER_ROLL": "prod-worker-2"})
 	requireSuccessResult(t, result)
@@ -109,6 +115,7 @@ func TestNodeAddedMidRollIsProcessedBeforeRootCutover(t *testing.T) {
 }
 
 func TestNodeAddedDuringSecondFanoutIsProcessedBeforeCutover(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_NODE_APPEARS_DURING_SECOND_FANOUT": "prod-worker-2"})
 	requireSuccessResult(t, result)
@@ -125,6 +132,7 @@ func TestNodeAddedDuringSecondFanoutIsProcessedBeforeCutover(t *testing.T) {
 }
 
 func TestLateNodeRollReprovesFanoutBeforeRootCutover(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_NODE_APPEARS_DURING_SECOND_FANOUT":          "prod-worker-2",
@@ -154,6 +162,7 @@ func lineIndices(lines []string, target string) []int {
 }
 
 func TestRevokedPreviousCredentialBootstrapsThroughEmptyWorker(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_REVOKE_CURRENT_ROOT_TOKEN": "true",
@@ -198,6 +207,7 @@ func TestRevokedPreviousCredentialBootstrapsThroughEmptyWorker(t *testing.T) {
 }
 
 func TestAllStaleRuntimesWithoutEmptyWorkerFailClosed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_ALL_TALOS_NODES_STALE":   "true",
@@ -212,6 +222,7 @@ func TestAllStaleRuntimesWithoutEmptyWorkerFailClosed(t *testing.T) {
 }
 
 func TestAmbiguousRuntimePullFailureDoesNotBootstrap(t *testing.T) {
+	t.Parallel()
 	for name, message := range map[string]string{
 		"missing message":      "__EMPTY__",
 		"dns failure":          "dial tcp: lookup ghcr.io: no such host",
@@ -246,6 +257,7 @@ func TestAmbiguousRuntimePullFailureDoesNotBootstrap(t *testing.T) {
 }
 
 func TestBootstrapRejectsUnprovedCurrentMarkedDestination(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	ready := []any{map[string]any{"type": "Ready", "status": "True"}}
 	inventory := map[string]any{"items": []any{
@@ -275,6 +287,7 @@ func TestBootstrapRejectsUnprovedCurrentMarkedDestination(t *testing.T) {
 }
 
 func TestMalformedPodInventoryCannotAuthorizeBootstrapSeed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_ALL_TALOS_NODES_STALE":        "true",
@@ -292,6 +305,7 @@ func TestMalformedPodInventoryCannotAuthorizeBootstrapSeed(t *testing.T) {
 }
 
 func TestBootstrapWaitsForSeedReleaseTaintToClear(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_REVOKE_CURRENT_ROOT_TOKEN":                        "true",
@@ -315,6 +329,7 @@ func TestBootstrapWaitsForSeedReleaseTaintToClear(t *testing.T) {
 }
 
 func TestBootstrapAcceptsOmittedUnschedulableAfterSeedRelease(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_REVOKE_CURRENT_ROOT_TOKEN":             "true",
@@ -332,6 +347,7 @@ func TestBootstrapAcceptsOmittedUnschedulableAfterSeedRelease(t *testing.T) {
 }
 
 func TestBootstrapFailureBeforeRebootRestoresEveryOwnedCordon(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_REVOKE_CURRENT_ROOT_TOKEN": "true",
@@ -360,6 +376,7 @@ func TestBootstrapFailureBeforeRebootRestoresEveryOwnedCordon(t *testing.T) {
 }
 
 func TestBootstrapPullFailureRetainsOnlyUnprovedSeedCordon(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_REVOKE_CURRENT_ROOT_TOKEN": "true",
@@ -420,6 +437,7 @@ func TestBootstrapPullFailureRetainsOnlyUnprovedSeedCordon(t *testing.T) {
 }
 
 func TestBootstrapCleanupFailureRetainsDurableRecoveryAndNextRunReconciles(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	first := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_ALL_TALOS_NODES_STALE":   "true",
@@ -481,6 +499,7 @@ func TestBootstrapCleanupFailureRetainsDurableRecoveryAndNextRunReconciles(t *te
 }
 
 func TestRecoveryReconciliationRejectsConcurrentPhaseAdvance(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	const nodeName = "prod-worker-1"
 	const owner = "previous-roll-owner"
@@ -524,6 +543,7 @@ func TestRecoveryReconciliationRejectsConcurrentPhaseAdvance(t *testing.T) {
 }
 
 func TestRecoveryReconciliationKeepsActiveOwnerBatchQuarantined(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	const owner = "active-bootstrap-owner"
 	for nodeName, phase := range map[string]string{
@@ -565,6 +585,7 @@ func TestRecoveryReconciliationKeepsActiveOwnerBatchQuarantined(t *testing.T) {
 }
 
 func TestReleaseReadyRecoveryPreservesPreExistingCordonBeforeNewRoll(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	const nodeName = "prod-worker-1"
 	const owner = "completed-roll-owner"
@@ -610,6 +631,7 @@ func TestReleaseReadyRecoveryPreservesPreExistingCordonBeforeNewRoll(t *testing.
 }
 
 func TestTaintedPeersDoNotCountAsRuntimePullCapacity(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	ready := []any{map[string]any{"type": "Ready", "status": "True"}}
 	worker := nodeFixture("prod-worker-1", "prod-worker-1-uid", "10.0.0.2", false, ready, nil)
@@ -643,6 +665,7 @@ func TestTaintedPeersDoNotCountAsRuntimePullCapacity(t *testing.T) {
 }
 
 func TestRuntimeProbeRejectsInjectedImagePullSecret(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_RUNTIME_PROBE_INJECT_PULL_SECRET_NODES": "prod-control-plane-2"})
 	requireFailureResult(t, result)
@@ -653,12 +676,16 @@ func TestRuntimeProbeRejectsInjectedImagePullSecret(t *testing.T) {
 }
 
 func TestFluxPolicyHandoffSuspendsOwningReconcileAcrossRuntimeProof(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
-		"FAKE_LOG_RUNTIME_PROBE_SUCCESS": "true",
+		"FAKE_FLUX_PARENT_RECONCILING_AFTER_PAUSE": "true",
+		"FAKE_LOG_RUNTIME_PROBE_SUCCESS":           "true",
 	})
 	requireSuccessResult(t, result)
 	operations := readLines(f.operationLog)
+	parentPause := lineIndex(t, operations, "flux-policy-parent-pause:flux-system")
+	parentStable := lineIndex(t, operations, "flux-policy-parent-stable:flux-system")
 	pause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
 	firstPolicyApply := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
 	firstRuntimeProbe := lineIndex(
@@ -668,17 +695,24 @@ func TestFluxPolicyHandoffSuspendsOwningReconcileAcrossRuntimeProof(t *testing.T
 	)
 	rootPatch := lineIndex(t, operations, "root-patch")
 	resume := lineIndex(t, operations, "flux-policy-resume:infrastructure")
-	if pause >= firstPolicyApply ||
+	parentResume := lineIndex(t, operations, "flux-policy-parent-resume:flux-system")
+	if parentPause >= parentStable ||
+		parentStable >= pause ||
+		pause >= firstPolicyApply ||
 		firstPolicyApply >= firstRuntimeProbe ||
 		firstRuntimeProbe >= rootPatch ||
-		rootPatch >= resume {
+		rootPatch >= resume ||
+		resume >= parentResume {
 		t.Fatalf(
-			"unsafe Flux policy handoff ordering: pause=%d policy=%d probe=%d root=%d resume=%d",
+			"unsafe Flux policy handoff ordering: parent pause=%d parent stable=%d child pause=%d policy=%d probe=%d root=%d child resume=%d parent resume=%d",
+			parentPause,
+			parentStable,
 			pause,
 			firstPolicyApply,
 			firstRuntimeProbe,
 			rootPatch,
 			resume,
+			parentResume,
 		)
 	}
 	if pathExists(filepath.Join(f.syncStateDir, "flux-policy-handoff-owner")) {
@@ -686,7 +720,53 @@ func TestFluxPolicyHandoffSuspendsOwningReconcileAcrossRuntimeProof(t *testing.T
 	}
 }
 
+func TestAmbiguousFluxFenceAcquisitionIsAdoptedAndCleaned(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name        string
+		environment string
+		marker      string
+	}{
+		{
+			name:        "parent",
+			environment: "FAKE_FLUX_POLICY_PARENT_PATCH_RESPONSE_LOST",
+			marker:      "flux-policy-parent-patch-response-lost",
+		},
+		{
+			name:        "child",
+			environment: "FAKE_FLUX_POLICY_HANDOFF_PATCH_RESPONSE_LOST",
+			marker:      "flux-policy-handoff-patch-response-lost",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, map[string]string{
+				test.environment: "true",
+			})
+			requireSuccessResult(t, result)
+			if !pathExists(filepath.Join(f.syncStateDir, test.marker)) {
+				t.Fatal("fixture did not lose the applied fence patch response")
+			}
+			for _, residual := range []string{
+				"flux-policy-parent-owner",
+				"flux-policy-parent-suspended",
+				"flux-policy-handoff-owner",
+				"flux-policy-handoff-suspended",
+			} {
+				if pathExists(filepath.Join(f.syncStateDir, residual)) {
+					t.Fatalf("ambiguous acquisition left residual fence %s", residual)
+				}
+			}
+			operations := readLines(f.operationLog)
+			requireLine(t, operations, "root-patch")
+			requireLine(t, operations, "flux-policy-resume:infrastructure")
+			requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+		})
+	}
+}
+
 func TestFluxPolicyHandoffResumesAfterPolicyStageFailure(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_IMAGE_VERIFICATION_POLICY_DRY_RUN_FAILURE": "true",
@@ -706,6 +786,7 @@ func TestFluxPolicyHandoffResumesAfterPolicyStageFailure(t *testing.T) {
 }
 
 func TestExistingFluxPolicyHandoffOwnerBlocksBeforeMutation(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_FLUX_POLICY_HANDOFF_OWNED": "true",
@@ -722,6 +803,7 @@ func TestExistingFluxPolicyHandoffOwnerBlocksBeforeMutation(t *testing.T) {
 }
 
 func TestStaleImageVerificationWebhookBudgetIsStagedBeforeRuntimeProbe(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_IMAGE_VERIFICATION_WEBHOOKS_STALE": "true",
@@ -754,6 +836,7 @@ func TestStaleImageVerificationWebhookBudgetIsStagedBeforeRuntimeProbe(t *testin
 }
 
 func TestEveryRuntimeProbeReassertsImageVerificationPolicy(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_LOG_RUNTIME_PROBE_SUCCESS": "true",
@@ -796,6 +879,7 @@ func TestEveryRuntimeProbeReassertsImageVerificationPolicy(t *testing.T) {
 }
 
 func TestRejectedConsolidatedImageVerificationPolicyFailsBeforeMutation(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_IMAGE_VERIFICATION_POLICY_DRY_RUN_FAILURE": "true",
@@ -812,6 +896,7 @@ func TestRejectedConsolidatedImageVerificationPolicyFailsBeforeMutation(t *testi
 }
 
 func TestRetiredImageVerificationPolicyDeleteFailureFailsClosed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_IMAGE_VERIFICATION_POLICY_DELETE_FAILURE": "true",
@@ -826,6 +911,7 @@ func TestRetiredImageVerificationPolicyDeleteFailureFailsClosed(t *testing.T) {
 }
 
 func TestImageVerificationWebhookConvergenceFailureFailsClosed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_IMAGE_VERIFICATION_WEBHOOKS_STALE":          "true",
@@ -846,6 +932,7 @@ func TestImageVerificationWebhookConvergenceFailureFailsClosed(t *testing.T) {
 }
 
 func TestFailOpenEffectiveImageVerificationWebhookFailsClosed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_IMAGE_VERIFICATION_WEBHOOKS_FAIL_OPEN": "true",
@@ -866,6 +953,7 @@ func TestFailOpenEffectiveImageVerificationWebhookFailsClosed(t *testing.T) {
 }
 
 func TestFailOpenValidatingImageVerificationWebhookFailsClosed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_IMAGE_VERIFICATION_VALIDATING_WEBHOOK_FAIL_OPEN": "true",
@@ -884,6 +972,7 @@ func TestFailOpenValidatingImageVerificationWebhookFailsClosed(t *testing.T) {
 }
 
 func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_ONCE_NODES": "prod-control-plane-2",
@@ -916,6 +1005,7 @@ func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {
 }
 
 func TestRuntimeProbeSurvivesThreeConsecutiveAdmissionTimeouts(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_COUNT_NODES": "prod-control-plane-2",
@@ -935,6 +1025,7 @@ func TestRuntimeProbeSurvivesThreeConsecutiveAdmissionTimeouts(t *testing.T) {
 }
 
 func TestRuntimeProbeReusesPersistedPodAfterAmbiguousAdmissionTimeout(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_RUNTIME_PROBE_CREATE_PERSIST_THEN_TIMEOUT_ONCE_NODES": "prod-control-plane-2",
@@ -962,6 +1053,7 @@ func TestRuntimeProbeReusesPersistedPodAfterAmbiguousAdmissionTimeout(t *testing
 }
 
 func TestRuntimeProbePersistentAdmissionTimeoutFailsClosed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_RUNTIME_PROBE_CREATE_ALWAYS_FAIL_NODES": "prod-control-plane-2",
@@ -974,6 +1066,7 @@ func TestRuntimeProbePersistentAdmissionTimeoutFailsClosed(t *testing.T) {
 }
 
 func TestEachPrivateRuntimePackageACLMustPass(t *testing.T) {
+	t.Parallel()
 	for _, image := range []string{
 		"ghcr.io/devantler-tech/wedding-app:latest",
 		"ghcr.io/devantler-tech/ascoachingogvaner:latest",
@@ -991,6 +1084,7 @@ func TestEachPrivateRuntimePackageACLMustPass(t *testing.T) {
 }
 
 func TestDRWithoutFanoutDoesNotDrainNodes(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), []string{"--allow-incomplete-fanout"}, map[string]string{"FAKE_VARIABLES_BASE_ABSENT": "true"})
 	requireSuccessResult(t, result)
@@ -1003,6 +1097,7 @@ func TestDRWithoutFanoutDoesNotDrainNodes(t *testing.T) {
 }
 
 func TestInvalidNodeInventoryFailsClosed(t *testing.T) {
+	t.Parallel()
 	invalidInventories := []any{
 		map[string]any{"items": []any{}},
 		map[string]any{"items": []any{map[string]any{
@@ -1047,6 +1142,7 @@ func TestInvalidNodeInventoryFailsClosed(t *testing.T) {
 }
 
 func TestNodeDiscoveryFailureAfterSafeFanoutKeepsRootUnchanged(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_NODE_DISCOVERY_FAIL": "true"})
 	requireFailureResult(t, result)

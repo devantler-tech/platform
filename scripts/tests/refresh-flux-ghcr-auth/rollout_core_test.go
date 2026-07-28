@@ -56,6 +56,7 @@ func requireNoLine(t *testing.T, lines []string, target string) {
 }
 
 func TestRefreshesRootAndFanoutWithoutLeakingPlaintext(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	config := validConfig()
 	result := f.runHelper(config, nil, nil)
@@ -123,6 +124,7 @@ func TestRefreshesRootAndFanoutWithoutLeakingPlaintext(t *testing.T) {
 }
 
 func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, nil)
 	requireSuccessResult(t, result)
@@ -143,6 +145,8 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		readLines(f.operationLog),
 		"ivpol-policy-",
 	), []string{
+		"flux-policy-parent-pause:flux-system",
+		"flux-policy-parent-stable:flux-system",
 		"flux-policy-pause:infrastructure",
 		"variables-patch",
 		"fanout:pushsecret/flux-system/seed-ghcr",
@@ -174,6 +178,7 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		"fanout:externalsecret/kyverno/ghcr-auth",
 		"root-patch",
 		"flux-policy-resume:infrastructure",
+		"flux-policy-parent-resume:flux-system",
 	})
 	temporaryPatch := strings.TrimSpace(mustRead(f.talosPatchPathLog))
 	if pathExists(temporaryPatch) {
@@ -186,6 +191,7 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 }
 
 func TestUnhealthyControlPlaneBlocksTheControlPlaneReboot(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	ready := []any{map[string]any{"type": "Ready", "status": "True"}}
 	inventory := map[string]any{"items": []any{
@@ -232,6 +238,7 @@ func nodeFixture(name, uid, internalIP string, controlPlane bool, conditions []a
 }
 
 func TestControlPlaneQuorumIsRecheckedAfterTheDrain(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_ETCD_STATUS_FAIL_AFTER_DRAIN_NODE": "10.0.0.3"})
 	requireFailureResult(t, result)
@@ -245,6 +252,7 @@ func TestControlPlaneQuorumIsRecheckedAfterTheDrain(t *testing.T) {
 }
 
 func TestUnsafeEtcdMemberStatusBlocksControlPlaneReboot(t *testing.T) {
+	t.Parallel()
 	for _, variable := range []string{"FAKE_ETCD_LEARNER_NODE", "FAKE_ETCD_STATUS_ERROR_NODE"} {
 		t.Run(variable, func(t *testing.T) {
 			f := newFixture(t)
@@ -269,6 +277,7 @@ func withoutOperationPrefix(operations []string, prefix string) []string {
 }
 
 func TestCompactHealthyEtcdStatusPermitsControlPlaneReboot(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_ETCD_COMPACT_STATUS_NODE": "10.0.0.3"})
 	requireSuccessResult(t, result)
@@ -278,6 +287,7 @@ func TestCompactHealthyEtcdStatusPermitsControlPlaneReboot(t *testing.T) {
 }
 
 func TestPreExistingCordonSurvivesTheAuthReboot(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_CORDONED_NODES": "prod-worker-1"})
 	requireSuccessResult(t, result)
@@ -291,6 +301,7 @@ func TestPreExistingCordonSurvivesTheAuthReboot(t *testing.T) {
 }
 
 func TestSchedulableNodeIsUncordonedAfterTheAuthReboot(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, nil)
 	requireSuccessResult(t, result)
@@ -309,6 +320,7 @@ func TestSchedulableNodeIsUncordonedAfterTheAuthReboot(t *testing.T) {
 }
 
 func TestSchedulableNodeIsClaimedAndCordonedAtomically(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, nil)
 	requireSuccessResult(t, result)
@@ -322,6 +334,7 @@ func TestSchedulableNodeIsClaimedAndCordonedAtomically(t *testing.T) {
 }
 
 func TestConcurrentCordonBeforeAtomicClaimStopsTheRoll(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_CORDON_BEFORE_CLAIM_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -337,6 +350,7 @@ func TestConcurrentCordonBeforeAtomicClaimStopsTheRoll(t *testing.T) {
 }
 
 func TestPDBBlockedDrainRestoresOriginalSchedulability(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_DRAIN_FAIL_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -356,6 +370,7 @@ func TestPDBBlockedDrainRestoresOriginalSchedulability(t *testing.T) {
 }
 
 func TestPDBBlockedDrainPreservesPreExistingCordon(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_CORDONED_NODES":  "prod-worker-1",
@@ -371,6 +386,7 @@ func TestPDBBlockedDrainPreservesPreExistingCordon(t *testing.T) {
 }
 
 func TestDrainAPIFailureReleasesTheAtomicClaim(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_DRAIN_API_FAIL_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -387,6 +403,7 @@ func TestDrainAPIFailureReleasesTheAtomicClaim(t *testing.T) {
 }
 
 func TestTransientDrainAPITransportFailureRetriesUnderTheSameClaim(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_TRANSIENT_DRAIN_API_FAIL_NODE": "prod-worker-1",
@@ -406,6 +423,7 @@ func TestTransientDrainAPITransportFailureRetriesUnderTheSameClaim(t *testing.T)
 }
 
 func TestTransientDrainRecoversTheSameLeaseAfterHeartbeatInterruption(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_TRANSIENT_DRAIN_API_FAIL_NODE":               "prod-worker-1",
@@ -429,6 +447,7 @@ func TestTransientDrainRecoversTheSameLeaseAfterHeartbeatInterruption(t *testing
 }
 
 func TestTransientDrainRefusesHeartbeatRecoveryAfterLeaseReplacement(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_TRANSIENT_DRAIN_API_FAIL_NODE":                    "prod-worker-1",
