@@ -17,8 +17,52 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The merge-queue deploy in ci.yaml cannot run without this validator passing,
+  # so leaving it out here made the manual path the WAY AROUND the gate: a direct
+  # push to main plus a dispatch reconciled the manifests with no authorization
+  # check at all. Deliberately a separate job rather than a step folded into the
+  # shared deploy-prod action — that action runs inside the prod environment with
+  # deploy secrets in scope, and a gate belongs before that, not inside it.
+  validate-eks-authorization:
+    name: 🔐 Validate EKS Authorization
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ⚙️ Install pinned kubectl renderer
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: 🔐 Validate EKS authorization surface
+        run: |
+          go test ./scripts/validate-eks-ci-role-policy
+          go run ./scripts/validate-eks-ci-role-policy .
+
   deploy-prod:
     name: 🚀 Deploy to Production
+    needs: [validate-eks-authorization]
     runs-on: ubuntu-latest
     environment: prod
     permissions:
