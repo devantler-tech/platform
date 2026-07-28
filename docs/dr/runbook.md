@@ -555,7 +555,12 @@ The production deploy closes the bootstrap loop in this order:
    `--allow-incomplete-fanout` mode stages `variables-base` and repairs root auth
    so the first reconcile can create the chain. Normal mode fails closed on any
    missing fan-out resource.
-4. Push and sign the artifact with `GHCR_TOKEN`, revalidate the newly-published
+4. Push the artifact with `GHCR_TOKEN`, then cosign-sign the resolved digest
+   keyless: Fulcio mints the certificate from the workflow's OIDC identity
+   (`dr-rebuild.yaml@refs/heads/main`), and `GHCR_TOKEN` only pushes the
+   resulting signature. That identity must stay listed in `ksail.prod.yaml`'s
+   `matchOIDCIdentity`, or a recovery publishes an artifact a verifying cluster
+   refuses. Revalidate the newly-published
    artifact with `--check-only`, and only then explicitly reconcile Flux. DR
    runs the full bridge again after every Flux Kustomization is Ready, proving
    that bootstrap mode completed the entire fan-out, and once more after an

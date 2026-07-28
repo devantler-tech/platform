@@ -39,6 +39,11 @@ jobs:
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
+      - name: 🖋️ Validate DR signing contract
+        run: |
+          go test ./scripts/validate-dr-signing
+          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml
+
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
@@ -54,6 +59,7 @@ jobs:
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
               - 'scripts/generate-kubescape-exceptions/**'
+              - 'scripts/normalize-sarif-paths.sh'
               - 'go.mod'
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
@@ -155,6 +161,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
+      security-events: write # upload the Kubescape SARIF to Code Scanning
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -353,10 +360,98 @@ jobs:
         # (deliberate dev-only credential — tracked for a root-cause fix, not
         # an exception). Ratchet the floor up as genuine gaps close; never
         # lower it.
+        #
+        # --format sarif -o writes the findings to a file IN ADDITION to the
+        # human-readable posture table, which still goes to this log unchanged
+        # (verified on both a passing and a failing scan) — so the SARIF is a
+        # pure addition, not a swap. The upload step below turns those findings
+        # into Code Scanning alerts. The threshold flag is untouched and remains
+        # the merge gate; this step's pass/fail behaviour does not change.
         run: |
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
-          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95
+          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
+
+      - name: 🧭 Make the SARIF paths repo-root-relative
+        # Kubescape reports paths relative to the directory it scanned, so a
+        # finding in k8s/bases/... arrives as bases/... . Code Scanning resolves
+        # an alert against the REPO ROOT, so uploading those unchanged creates
+        # alerts pointing at files that do not exist — measured on this PR's
+        # first run: the upload was green, four alerts existed, all four dead.
+        #
+        # The same scan run locally emitted the k8s/ prefix, so the shape is not
+        # stable across ksail versions. The script resolves each path against
+        # the working tree rather than assuming either shape, so it is a no-op
+        # if ksail later emits root-relative paths, and it hard-fails rather
+        # than uploading a path it cannot resolve.
+        id: normalize-sarif
+        if: "!cancelled()"
+        run: |
+          shellcheck scripts/normalize-sarif-paths.sh
+          # `!cancelled()` also covers the scan step failing BEFORE ksail writes
+          # the SARIF — a failing `go test`, or a ksail crash. There is nothing to
+          # normalize then, and exiting 2 with "no such file" would make this the
+          # loudest error in the log and bury the one that actually matters.
+          if [ ! -f "${RUNNER_TEMP}/kubescape.sarif" ]; then
+            echo "::notice::No SARIF written — the scan step failed before producing one. Leaving its error as the visible failure."
+            echo "sarif=absent" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          bash scripts/normalize-sarif-paths.sh "${RUNNER_TEMP}/kubescape.sarif" k8s .
+          # Only now is the file both PRESENT and root-relative. The upload gates
+          # on this output, so a normalizer hard-failure (an unresolvable path)
+          # cannot fall through to publishing the un-normalized SARIF — which
+          # would create exactly the dead-path alerts this step exists to
+          # prevent. `exit 0` above deliberately leaves it `absent` instead:
+          # a missing SARIF is the scan's failure to report, not this step's.
+          echo "sarif=ready" >> "${GITHUB_OUTPUT}"
+
+      - name: 🛡️ Upload Kubescape findings to Code Scanning
+        # The score gate above answers "did posture regress"; it cannot show
+        # WHICH control failed on WHICH file, and a finding that does not move
+        # the score is invisible in it entirely. Code Scanning gives each
+        # control an alert with file and line, dedupes it across runs, and
+        # closes it automatically when the finding is gone (#2829).
+        #
+        # `!cancelled()` rather than `success()`: the findings are wanted most
+        # precisely when the gate above FAILED. ksail writes the SARIF before it
+        # applies the threshold, so the file exists on that path too.
+        #
+        # Skipped on fork PRs — this job deliberately runs on them (it needs no
+        # secrets), but a fork's GITHUB_TOKEN cannot be granted
+        # security-events: write, so attempting the upload there would fail the
+        # build for a permission no fork can have.
+        #
+        # The fork check is the ONLY narrowing: the scan step above is
+        # unconditional within this job, so gating this step on a path filter
+        # would silently drop the findings for any run the scan still made.
+        #
+        # KNOWN CHARACTERISTIC: cluster-RBAC controls that are not backed by a
+        # manifest file (C-0002 is the one observed) emit a result with an EMPTY
+        # artifactLocation.uri — there is no file for such a finding to anchor
+        # to. The step above drops those; with this repo's exceptions applied
+        # the scan produces none anyway (measured: 0 of 4 findings; the same
+        # scan with exceptions removed produces 1 of 70).
+        # Gated on the normalize step's OUTPUT, not merely on `!cancelled()`.
+        # `!cancelled()` stays true when normalization FAILS, which would upload
+        # the un-normalized SARIF and recreate the dead-path alerts that step
+        # exists to prevent; it is also true when no SARIF was written at all,
+        # which would invoke the uploader on a missing file. `sarif == 'ready'`
+        # is reached only after the file exists AND normalization succeeded.
+        # Note this deliberately still uploads when the SCAN step failed: a
+        # compliance-threshold failure exits non-zero but writes a valid SARIF,
+        # and those findings are precisely the ones worth publishing.
+        if: >-
+          !cancelled() &&
+          steps.normalize-sarif.outputs.sarif == 'ready' &&
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          sarif_file: ${{ runner.temp }}/kubescape.sarif
+          # Distinguishes these alerts from the CodeQL and zizmor analyses that
+          # already publish to this repository's Security tab, so each tool's
+          # results are tracked and closed independently.
+          category: kubescape-nsa
 
   naming:
     name: 🏷️ Validate Naming Conventions

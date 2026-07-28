@@ -24,12 +24,29 @@ const validatorInvocation = "go run ./scripts/validate-eks-ci-role-policy"
 // files describe this very trigger in their comments, so a text search would
 // pass on prose alone and keep passing after the trigger itself was deleted.
 type workflow struct {
-	On   triggerSet `yaml:"on"`
-	Jobs map[string]struct {
-		Steps []struct {
-			Run string `yaml:"run"`
-		} `yaml:"steps"`
-	} `yaml:"jobs"`
+	On   triggerSet     `yaml:"on"`
+	Jobs map[string]job `yaml:"jobs"`
+}
+
+// job and step are named rather than inlined so the workflow-coverage guards in
+// this package share ONE parser. The kubescape baseline guard needs `uses:` and
+// `with:` as well as `run:`; giving it a second, near-identical loader would
+// duplicate this file's parsing logic and trip the repository's duplication
+// gate for no benefit.
+type job struct {
+	Steps []step `yaml:"steps"`
+}
+
+type step struct {
+	Run  string     `yaml:"run"`
+	Uses string     `yaml:"uses"`
+	With stepInputs `yaml:"with"`
+}
+
+// stepInputs is the slice of an action's `with:` block these contracts read.
+// Actions inputs are heterogenous, so unknown keys are simply ignored.
+type stepInputs struct {
+	Category string `yaml:"category"`
 }
 
 // triggerSet is the `on:` block. GitHub accepts three spellings — a mapping
@@ -95,21 +112,25 @@ func (w workflow) runsValidator() bool {
 	return false
 }
 
-// coversPushToMain reports whether the workflow runs the gate on a direct push
-// to main.
-func (w workflow) coversPushToMain() bool {
+// triggersOnPushToMain reports whether the workflow fires on a direct push to
+// main. Shared by every push-to-main coverage guard in this package.
+func (w workflow) triggersOnPushToMain() bool {
 	push, ok := w.On["push"]
 	if !ok {
 		return false
 	}
-	onMain := false
 	for _, branch := range push.Branches {
 		if branch == "main" {
-			onMain = true
-			break
+			return true
 		}
 	}
-	return onMain && w.runsValidator()
+	return false
+}
+
+// coversPushToMain reports whether the workflow runs the gate on a direct push
+// to main.
+func (w workflow) coversPushToMain() bool {
+	return w.triggersOnPushToMain() && w.runsValidator()
 }
 
 func loadWorkflows(t *testing.T) map[string]workflow {
@@ -175,14 +196,8 @@ func TestAuthorizationGateRunsOnPushToMain(t *testing.T) {
 func TestAuthorizationGateGuardIsNotVacuous(t *testing.T) {
 	covering := workflow{
 		On: triggerSet{"push": {Branches: []string{"main"}}},
-		Jobs: map[string]struct {
-			Steps []struct {
-				Run string `yaml:"run"`
-			} `yaml:"steps"`
-		}{
-			"gate": {Steps: []struct {
-				Run string `yaml:"run"`
-			}{{Run: validatorInvocation + " ."}}},
+		Jobs: map[string]job{
+			"gate": {Steps: []step{{Run: validatorInvocation + " ."}}},
 		},
 	}
 	if !covering.coversPushToMain() {
@@ -208,14 +223,8 @@ func TestAuthorizationGateGuardIsNotVacuous(t *testing.T) {
 
 	t.Run("naming the gate without running it does not count", func(t *testing.T) {
 		perturbed := covering
-		perturbed.Jobs = map[string]struct {
-			Steps []struct {
-				Run string `yaml:"run"`
-			} `yaml:"steps"`
-		}{
-			"gate": {Steps: []struct {
-				Run string `yaml:"run"`
-			}{{Run: "echo validate-eks-ci-role-policy"}}},
+		perturbed.Jobs = map[string]job{
+			"gate": {Steps: []step{{Run: "echo validate-eks-ci-role-policy"}}},
 		}
 		if perturbed.coversPushToMain() {
 			t.Fatal("merely mentioning the validator must not count as running it")
