@@ -56,9 +56,10 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main f4579011 before approving this value: 511 documents
+// Measured against main 9b1990de before approving this value: 510 documents
 // on both sides, with membership IDENTICAL — zero added, zero removed, zero
-// renamed. Exactly ONE entry's content moved:
+// renamed (proven by set difference in both directions over the complete
+// apiVersion|kind|namespace|name identity). Exactly ONE entry's content moved:
 //
 //	helm.toolkit.fluxcd.io/v2  HelmRelease  kube-system/cilium
 //
@@ -68,10 +69,29 @@ const (
 // RoleBinding / ClusterRoleBinding / ServiceAccount documents on BOTH sides;
 // none moved, and no permission or identity grant changed.
 //
-// Measured against main fa041449 before approving this value: the production
-// infrastructure overlay moves from 204 -> 210 documents, with exactly six
-// additive OpenCost usage-scraper resources and no existing document modified
-// or removed. The authorization delta is one dedicated ServiceAccount, one
+// Measured against main 6e011890 before approving the previous value: 515 documents on
+// both sides, membership IDENTICAL — proven by set difference in BOTH
+// directions over apiVersion|kind|namespace|name across all five rendered
+// trees, not by count alone, which cannot see a rename. Exactly ONE entry's
+// content moved:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  headlamp/headlamp
+//
+// Its rendered delta is a single line — `hostUsers: false` — activating the
+// user-namespace pilot gated since #2650. That field places the pod in its own
+// user namespace; it constrains the workload and grants nothing.
+//
+// No grant-bearing object moved: 64 Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding / ServiceAccount documents on BOTH sides, none of them in
+// the moved set. All 116 `aws`-bearing lines are byte-identical across the two
+// trees, so nothing granted to the aws/aws service account this validator
+// exists to protect is touched.
+//
+// Measured against main fa041449 before approving the previous value: the
+// production infrastructure overlay moves from 204 -> 210 documents, with
+// exactly six additive OpenCost usage-scraper resources and no existing
+// document modified or removed. The authorization delta is one dedicated
+// ServiceAccount, one
 // ClusterRole limited to get/list/watch on nodes plus get on nodes/metrics, and
 // one binding between exactly those identities. The ConfigMap, Deployment, and
 // scraper-scoped CiliumNetworkPolicy carry the bounded scrape/remote-write path
@@ -129,7 +149,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "13ac33309d2f60f01d594b35f8fd95c454bbb8aaa243ebb90b009244dc9dbfb6"
+const expectedRenderedSurfaceSHA = "55c8985ee97715414dcd7ac18f27ca7942fbe339d6cb8119604388d3f793506e"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
