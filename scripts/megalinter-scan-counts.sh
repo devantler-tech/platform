@@ -35,12 +35,15 @@
 #      This is an OBSERVED difference, not an explained one — it is not caused by the kustomize
 #      binary being absent (it is absent on a machine that still runs the framework). If the totals
 #      ever stop matching, MegaLinter's bundled .checkov.yml is the first place to look.
-#
-# Scanner versions differ between CI and a developer machine (CI ran checkov 3.3.2 / trivy 0.71.2).
-# Verified across that gap: identical per-framework failed counts for checkov, and an identical
-# check-id distribution for trivy. Passed-check totals do differ, which is expected and harmless.
 
 set -euo pipefail
+
+# The versions CI ran when this script's equivalence was established. A different local version is
+# not fatal — verified across checkov 3.3.0/3.3.2 (identical FAILED counts, different PASSED) and
+# trivy 0.71.2/0.72.0 (identical) — but a large enough gap can add or retire rules, which would look
+# exactly like backlog movement. Report the gap rather than silently attributing it to a fix.
+readonly CI_CHECKOV_VERSION='3.3.2'
+readonly CI_TRIVY_VERSION='0.71.2'
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
@@ -48,8 +51,7 @@ OUT_DIR="$(mktemp -d)"
 readonly OUT_DIR
 trap 'rm -rf "$OUT_DIR"' EXIT
 
-run_checkov=true
-run_trivy=true
+scanner=both
 
 usage() {
   cat <<'EOF'
@@ -60,10 +62,21 @@ measured before it is pushed. Always exits 0 on a successful scan — this repor
 EOF
 }
 
+# One mutually exclusive value rather than two booleans: passing both --checkov-only and
+# --trivy-only used to disable each other and run no scan at all, printing a footer and exiting 0,
+# which is indistinguishable from a completed measurement.
 while [ $# -gt 0 ]; do
   case "$1" in
-    --checkov-only) run_trivy=false ;;
-    --trivy-only) run_checkov=false ;;
+    --checkov-only | --trivy-only)
+      local_choice="${1#--}"
+      local_choice="${local_choice%-only}"
+      if [ "$scanner" != both ] && [ "$scanner" != "$local_choice" ]; then
+        printf '%s contradicts the earlier --%s-only\n\n' "$1" "$scanner" >&2
+        usage >&2
+        exit 2
+      fi
+      scanner="$local_choice"
+      ;;
     -h | --help)
       usage
       exit 0
@@ -76,6 +89,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+readonly scanner
 
 # Fail closed with the fix, rather than reporting a count from a scanner that is not installed.
 require_tool() {
@@ -86,8 +100,23 @@ require_tool() {
   fi
 }
 
-# checkov exits non-zero whenever it has findings, which is the normal case here, so the exit status
-# is captured rather than allowed to abort the script.
+# A pipeline whose first stage legitimately matches nothing must not kill the script under
+# `set -o pipefail` — and "nothing matched" is exactly the terminal state this script exists to
+# demonstrate, so the zero case has to be the one that works.
+count_by() {
+  local pattern="$1" file="$2"
+  grep -aoE "$pattern" "$file" | sort | uniq -c | sort -rn | head -5 || true
+}
+
+# Same hazard, summing form: awk still prints 0 on empty input, but the unmatched grep would fail
+# the pipeline under pipefail and abort the script before the total is ever assigned.
+sum_by() {
+  local pattern="$1" file="$2"
+  grep -aoE "$pattern" "$file" | grep -aoE '[0-9]+$' | awk '{s+=$1} END {print s+0}' || true
+}
+
+# checkov exits 0 with no findings and 1 with findings; anything else is a real failure whose
+# partial output must not be reported as a count.
 scan_checkov() {
   local out="$OUT_DIR/checkov.txt" rc=0
   printf 'Running checkov (this takes ~1 minute)...\n' >&2
@@ -97,13 +126,19 @@ scan_checkov() {
   # with and without --skip-path, so it is the absolute path itself.
   (cd "$REPO_ROOT" && checkov --skip-path tests/ --skip-framework kustomize \
     --directory . --compact --quiet) >"$out" 2>&1 || rc=$?
-  if [ ! -s "$out" ]; then
-    printf 'checkov produced no output (exit %d) — cannot report a count\n' "$rc" >&2
+  if [ "$rc" -gt 1 ]; then
+    printf 'checkov exited %d — refusing to report a count from an incomplete run\n' "$rc" >&2
+    tail -n 5 "$out" >&2
+    exit 2
+  fi
+  if ! grep -aqE 'scan results:' "$out"; then
+    printf 'checkov emitted no framework sections — refusing to report a count\n' >&2
+    tail -n 5 "$out" >&2
     exit 2
   fi
 
   local total
-  total="$(grep -aoE 'Failed checks: [0-9]+' "$out" | awk -F': ' '{s+=$2} END {print s+0}')"
+  total="$(sum_by 'Failed checks: [0-9]+' "$out")"
 
   printf '\ncheckov — %s failing checks\n' "$total"
   printf '  per framework (failed / passed):\n'
@@ -117,42 +152,73 @@ scan_checkov() {
       fw = ""
     }
   ' "$out"
-  printf '  top checks:\n'
-  grep -aoE 'Check: (CKV[A-Z_0-9]*)' "$out" | sed 's/Check: //' | sort | uniq -c | sort -rn |
-    head -5 | awk '{printf "    %4s  %s\n", $1, $2}'
+  if [ "$total" -gt 0 ]; then
+    printf '  top checks:\n'
+    count_by 'Check: CKV[A-Z_0-9]*' "$out" | sed 's/Check: //' |
+      awk '{printf "    %4s  %s\n", $1, $2}'
+  fi
 }
 
-# trivy also exits non-zero on findings, by way of the --exit-code 1 that CI passes.
+# trivy is given --exit-code 1 by CI, so 1 means findings and 0 means clean; anything else is a real
+# failure. Both scanner categories are counted, because CI asks for both.
 scan_trivy() {
   local out="$OUT_DIR/trivy.txt" rc=0
   printf '\nRunning trivy (this takes ~1 minute)...\n' >&2
   (cd "$REPO_ROOT" && trivy fs --scanners vuln,misconfig --exit-code 1 --skip-dirs tests .) \
     >"$out" 2>"$OUT_DIR/trivy.err" || rc=$?
-  if [ ! -s "$out" ]; then
-    printf 'trivy produced no output (exit %d) — cannot report a count\n' "$rc" >&2
-    sed -n '1,5p' "$OUT_DIR/trivy.err" >&2
+  if [ "$rc" -gt 1 ]; then
+    printf 'trivy exited %d — refusing to report a count from an incomplete run\n' "$rc" >&2
+    tail -n 5 "$OUT_DIR/trivy.err" >&2
     exit 2
   fi
 
-  local failures targets
-  failures="$(grep -aoE 'FAILURES: [0-9]+' "$out" | awk -F': ' '{s+=$2} END {print s+0}')"
+  local misconfig vulns targets
+  # Misconfiguration results are summarised per target as "Tests: N (SUCCESSES: n, FAILURES: n)".
+  misconfig="$(sum_by 'FAILURES: [0-9]+' "$out")"
   targets="$(grep -acE '^Tests: [0-9]+ \(SUCCESSES' "$out" || true)"
+  # Vulnerabilities are summarised in a DIFFERENT shape — "Total: N (UNKNOWN: …)" — so a count that
+  # only sums FAILURES reports a clean trivy backlog while CI still finds vulnerabilities.
+  vulns="$(sum_by '^Total: [0-9]+' "$out")"
 
-  printf '\ntrivy — %s failing checks across %s targets\n' "$failures" "$targets"
+  printf '\ntrivy — %s misconfigurations across %s targets, %s vulnerabilities\n' \
+    "$misconfig" "$targets" "$vulns"
   printf '  NOTE: MegaLinter reports this scan as "1 non blocking error". That 1 is a counting\n'
-  printf '        artifact, not a finding count. The number above is what trivy actually found.\n'
-  printf '  top checks:\n'
-  grep -aoE '(KSV|AVD)-[0-9A-Z-]+' "$out" | sort | uniq -c | sort -rn |
-    head -5 | awk '{printf "    %4s  %s\n", $1, $2}'
+  printf '        artifact, not a finding count. The numbers above are what trivy actually found.\n'
+  if [ "$misconfig" -gt 0 ]; then
+    printf '  top misconfiguration checks:\n'
+    count_by '(KSV|AVD)-[0-9A-Z-]+' "$out" | awk '{printf "    %4s  %s\n", $1, $2}'
+  fi
 }
 
-if [ "$run_checkov" = true ]; then
+# A scanner version far from CI's can add or retire rules, which looks identical to backlog
+# movement. Report the comparison instead of leaving it to be discovered as a mystery delta.
+report_version() {
+  local tool="$1" ci_version="$2" local_version="$3"
+  if [ "$local_version" = "$ci_version" ]; then
+    printf '  %-8s %s (matches CI)\n' "$tool" "$local_version"
+  else
+    printf '  %-8s %s — CI ran %s; a rule-set difference between these can look like backlog movement\n' \
+      "$tool" "$local_version" "$ci_version"
+  fi
+}
+
+printf 'Scanner versions:\n'
+if [ "$scanner" != trivy ]; then
   require_tool checkov 'brew install checkov'
-  scan_checkov
+  report_version checkov "$CI_CHECKOV_VERSION" "$(checkov --version 2>/dev/null | tr -d '[:space:]')"
+fi
+if [ "$scanner" != checkov ]; then
+  require_tool trivy 'brew install trivy'
+  report_version trivy "$CI_TRIVY_VERSION" \
+    "$(trivy --version 2>/dev/null | awk '/^Version:/ {print $2; exit}')"
 fi
 
-if [ "$run_trivy" = true ]; then
-  require_tool trivy 'brew install trivy'
+# `if`, not `cond && scan_…`: a false condition makes the AND-list the script's last exit status, so
+# a --checkov-only run would end non-zero having done everything right.
+if [ "$scanner" != trivy ]; then
+  scan_checkov
+fi
+if [ "$scanner" != checkov ]; then
   scan_trivy
 fi
 
