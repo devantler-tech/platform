@@ -28,6 +28,15 @@
 #     Cloudflare records at the new load balancer once HTTPRoutes are Ready.
 name: DR - Rebuild Prod
 
+# The restore flag is published in the run name because that is the only way the
+# supersession gate can read it. The Actions API does not expose workflow_dispatch
+# inputs on a run object — no `inputs` key exists there — but it does expose the
+# rendered run name as `display_title`, so encoding the flag here is what lets one
+# run tell whether an earlier one restored data. Changing this format without
+# updating the guard's parser degrades every comparison to "unknown", which is
+# safe (nothing supersedes) but silently gives up the coalescing.
+run-name: DR - Rebuild Prod (restore=${{ inputs.restore }})
+
 on:
   # checkov:skip=CKV_GHA_7:The `confirm` input IS the safety interlock — an operator must type
   # REBUILD-PROD before this workflow will destroy and rebuild the production cluster. Removing

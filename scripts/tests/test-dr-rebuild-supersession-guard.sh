@@ -55,12 +55,23 @@ run_guard() {
 }
 
 # me is always present in the payload; extra runs are appended by each case.
-me="{\"id\": ${run_id}, \"created_at\": \"${created}\", \"status\": \"in_progress\", \"conclusion\": null, \"updated_at\": \"${created}\", \"html_url\": \"u/me\"}"
+# restore defaults to true, matching the workflow input's own default.
+me_with_restore() {
+  printf '{"id": %s, "created_at": "%s", "status": "in_progress", "conclusion": null, "updated_at": "%s", "html_url": "u/me", "display_title": "DR - Rebuild Prod (restore=%s)"}' \
+    "${run_id}" "${created}" "${created}" "$1"
+}
+me="$(me_with_restore true)"
 
 other() {
-  # other <id> <status> <conclusion> <updated_at>
-  printf '{"id": %s, "created_at": "2026-07-28T11:00:00Z", "status": "%s", "conclusion": %s, "updated_at": "%s", "html_url": "u/%s"}' \
-    "$1" "$2" "$(if [ "$3" = "null" ]; then printf 'null'; else printf '"%s"' "$3"; fi)" "$4" "$1"
+  # other <id> <status> <conclusion> <updated_at> [restore]
+  local title
+  if [ "${5-true}" = "unknown" ]; then
+    title="DR - Rebuild Prod"
+  else
+    title="DR - Rebuild Prod (restore=${5-true})"
+  fi
+  printf '{"id": %s, "created_at": "2026-07-28T11:00:00Z", "status": "%s", "conclusion": %s, "updated_at": "%s", "html_url": "u/%s", "display_title": "%s"}' \
+    "$1" "$2" "$(if [ "$3" = "null" ]; then printf 'null'; else printf '"%s"' "$3"; fi)" "$4" "$1" "${title}"
 }
 
 payload() {
@@ -104,6 +115,44 @@ ok 'a cancelled earlier rebuild does not supersede this one'
 [ "$(run_guard "$(payload "${me}" "$(other 1 in_progress null 2026-07-28T12:30:00Z)")")" = "false" ] ||
   fail 'an in-progress run must not supersede this one'
 ok 'an in-progress run does not supersede this one'
+
+# --- the restore dimension -------------------------------------------------
+#
+# `restore` decides whether the Velero and OpenBao recovery steps run at all, so
+# a rebuild that skipped them has not satisfied a request that asked for them.
+# Getting this wrong leaves prod up, empty, and reporting success.
+
+# The data-loss path: a restore=false rebuild must NOT satisfy this restore=true
+# request.
+[ "$(run_guard "$(payload "${me}" "$(other 1 completed success 2026-07-28T12:30:00Z false)")")" = "false" ] ||
+  fail 'a restore=false rebuild must not supersede a restore=true request'
+ok 'a restore=false rebuild does not supersede a restore=true request'
+
+# A restore=true rebuild did strictly more, so it satisfies a restore=false request.
+me="$(me_with_restore false)"
+[ "$(run_guard "$(payload "${me}" "$(other 1 completed success 2026-07-28T12:30:00Z true)")")" = "true" ] ||
+  fail 'a restore=true rebuild must supersede a restore=false request'
+ok 'a restore=true rebuild supersedes a restore=false request'
+
+# Matching flags supersede.
+[ "$(run_guard "$(payload "${me}" "$(other 1 completed success 2026-07-28T12:30:00Z false)")")" = "true" ] ||
+  fail 'matching restore flags must supersede'
+ok 'matching restore flags supersede'
+me="$(me_with_restore true)"
+
+# A run whose name does not publish the flag cannot be compared, so it must not
+# supersede anything — including a request that also predates the run name.
+[ "$(run_guard "$(payload "${me}" "$(other 1 completed success 2026-07-28T12:30:00Z unknown)")")" = "false" ] ||
+  fail 'a run with an unknown restore flag must not supersede'
+ok 'a run with an unknown restore flag does not supersede'
+
+# --- timestamp shape -------------------------------------------------------
+#
+# The comparison is a lexicographic string compare, so a non-timestamp sorts as
+# newer than any real instant and would skip a wanted rebuild.
+[ "$(run_guard "$(payload "${me}" "$(other 1 completed success not-a-timestamp true)")")" = "false" ] ||
+  fail 'a run with a malformed updated_at must not supersede this one'
+ok 'a malformed updated_at does not supersede'
 
 # --- fail-closed -----------------------------------------------------------
 
@@ -154,6 +203,21 @@ ok 'the guard names the workflow it gates, and that workflow exists'
 grep -Fq 'run: ./scripts/dr-rebuild-supersession-guard.sh' "${dr_workflow}" ||
   fail 'the DR workflow must invoke the supersession guard'
 ok 'the DR workflow invokes the guard'
+
+# The guard reads the restore flag out of display_title, which only carries it
+# because run-name publishes it. Without this line every comparison silently
+# degrades to "unknown" and the coalescing stops working.
+# shellcheck disable=SC2016  # GitHub renders this expression; match it literally.
+grep -Fq 'run-name: DR - Rebuild Prod (restore=${{ inputs.restore }})' "${dr_workflow}" ||
+  fail 'the DR workflow must publish the restore input in its run name'
+ok 'the run name publishes the restore input'
+
+# The parser and the publisher have to agree on the format; assert the rendered
+# name the workflow produces is one the guard can read.
+printf '%s' "DR - Rebuild Prod (restore=true)" |
+  grep -Eq 'restore=(true|false)' ||
+  fail 'the rendered run name must match the shape the guard parses'
+ok 'the rendered run name matches the parsed shape'
 
 # The gate must be a dependency of the destructive job, not merely present.
 grep -Fq 'needs: supersession-gate' "${dr_workflow}" ||
