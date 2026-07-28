@@ -210,6 +210,8 @@ jobs:
 
       - name: 🛡️ Reassert or release the Cilium rollout gate
         if: always() && steps.wait_flux.outcome == 'success'
+        env:
+          CILIUM_ROLLOUT_REVISION_READY: ${{ steps.wait_flux_revision.outcome == 'success' }}
         run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
 
       - name: 🔑 Verify completed GHCR credential fan-out

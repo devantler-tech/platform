@@ -6,6 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly guard_script="${root_dir}/scripts/guard-cilium-homogeneous-device-rollout.sh"
 readonly deploy_action="${root_dir}/.github/actions/deploy-prod/action.yml"
+readonly dr_rebuild_workflow="${root_dir}/.github/workflows/dr-rebuild.yaml"
 readonly dr_runbook="${root_dir}/docs/dr/runbook.md"
 
 fail() {
@@ -45,6 +46,9 @@ grep -Fq "steps.cilium_rollout_gate.outputs.active != 'true'" "${deploy_action}"
 grep -Fq "CILIUM_ROLLOUT_REVISION_READY: \${{ steps.wait_flux_revision.outcome == 'success' }}" \
   "${deploy_action}" ||
   fail 'the post-deploy guard must approve a candidate only after the exact revision is Ready'
+grep -Fq "CILIUM_ROLLOUT_REVISION_READY: \${{ steps.wait_flux_revision.outcome == 'success' }}" \
+  "${dr_rebuild_workflow}" ||
+  fail 'the DR rebuild guard must approve a candidate only after the exact revision is Ready'
 
 manual_dr_guard_calls="$(
   grep -nF './scripts/guard-cilium-homogeneous-device-rollout.sh' "${dr_runbook}" |
