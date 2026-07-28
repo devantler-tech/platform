@@ -400,6 +400,11 @@ runs:
           steps.wait_flux_revision.outcome == 'success'
         )
       shell: bash
+      env:
+        # The guard always reasserts suspension for an active rollout, including
+        # failure cleanup, but may approve the rendered candidate only after
+        # Flux proves this exact published revision Ready.
+        CILIUM_ROLLOUT_REVISION_READY: ${{ steps.wait_flux_revision.outcome == 'success' }}
       run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
 
     - name: 🔑 Reassert Flux and consumer GHCR pull credential
