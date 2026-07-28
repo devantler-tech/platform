@@ -7,12 +7,22 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type jsonPatchOperation struct {
 	Operation string `json:"op"`
 	Path      string `json:"path"`
 	Value     any    `json:"value"`
+}
+
+func isLeaseMicroTime(value any) bool {
+	timestamp, ok := value.(string)
+	if !ok {
+		return false
+	}
+	_, err := time.Parse("2006-01-02T15:04:05.000000Z07:00", timestamp)
+	return err == nil
 }
 
 func fakeKubectlImplementation(args []string) int {
@@ -147,7 +157,8 @@ func fakeKubectlCreateSyncLease(namespace, manifestFile string) int {
 	holder, _ := spec["holderIdentity"].(string)
 	if manifest["apiVersion"] != "coordination.k8s.io/v1" || manifest["kind"] != "Lease" ||
 		metadata["name"] != "ghcr-auth-refresh" || metadata["namespace"] != "flux-system" ||
-		holder == "" || holder != os.Getenv("FLUX_GHCR_SYNC_LEASE_HOLDER") {
+		holder == "" || holder != os.Getenv("FLUX_GHCR_SYNC_LEASE_HOLDER") ||
+		!isLeaseMicroTime(spec["acquireTime"]) || !isLeaseMicroTime(spec["renewTime"]) {
 		return commandFailure(91, "invalid synchronization lease manifest")
 	}
 	setMarkerContent("sync-lease-holder", holder)
@@ -174,6 +185,12 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 	if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
 		!hasPatchOperation(patch, "test", "/spec/holderIdentity", currentHolder) {
 		return commandFailure(56, "synchronization lease CAS failed")
+	}
+	for _, path := range []string{"/spec/acquireTime", "/spec/renewTime"} {
+		if hasPatchPath(patch, "replace", path) &&
+			!isLeaseMicroTime(patchValueString(patch, "replace", path)) {
+			return commandFailure(91, "invalid synchronization lease MicroTime at %s", path)
+		}
 	}
 	if os.Getenv("FAKE_SYNC_LEASE_RENEW_CONFLICT_ONCE") == "true" &&
 		!markerExists("sync-lease-renew-conflict") &&

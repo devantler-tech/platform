@@ -2260,6 +2260,12 @@ sync_lease_is_available() {
     "${sync_lease_file}" >/dev/null
 }
 
+lease_microtime() {
+  # coordination.k8s.io/v1 Lease timestamps use metav1.MicroTime. The API
+  # server rejects ordinary second-precision RFC3339 values.
+  date -u +%Y-%m-%dT%H:%M:%S.000000Z
+}
+
 acquire_sync_lease() {
   local desired_revision="$1"
   local attempt now resource_version current_holder transitions
@@ -2277,7 +2283,7 @@ acquire_sync_lease() {
       echo "::error::Could not inspect the GHCR synchronization lease."
       return 1
     fi
-    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    now="$(lease_microtime)"
     if [[ ! -s "${sync_lease_file}" ]]; then
       jq -n \
         --arg name "${SYNC_LEASE_NAME}" \
@@ -2382,7 +2388,7 @@ renew_sync_lease() {
     select(.spec.holderIdentity == $holder)
     | .metadata.resourceVersion
   ' "${lease_file}")" || return 1
-  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  now="$(lease_microtime)"
   jq -n \
     --arg resource_version "${resource_version}" \
     --arg holder "${sync_lease_holder}" \
@@ -2469,7 +2475,7 @@ release_sync_lease() {
     select(.spec.holderIdentity == $holder)
     | .metadata.resourceVersion
   ' "${lease_file}")" || return 1
-  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  now="$(lease_microtime)"
   jq -n \
     --arg resource_version "${resource_version}" \
     --arg holder "${sync_lease_holder}" \
