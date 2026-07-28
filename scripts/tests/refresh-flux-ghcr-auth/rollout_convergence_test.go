@@ -720,6 +720,22 @@ func TestFluxPolicyHandoffSuspendsOwningReconcileAcrossRuntimeProof(t *testing.T
 	}
 }
 
+func TestFluxFenceAcquisitionCreatesMissingAnnotationMaps(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_PARENT_NO_ANNOTATIONS":  "true",
+		"FAKE_FLUX_POLICY_HANDOFF_NO_ANNOTATIONS": "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "flux-policy-parent-pause:flux-system")
+	requireLine(t, operations, "flux-policy-pause:infrastructure")
+	requireLine(t, operations, "root-patch")
+	requireLine(t, operations, "flux-policy-resume:infrastructure")
+	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+}
+
 func TestAmbiguousFluxFenceAcquisitionIsAdoptedAndCleaned(t *testing.T) {
 	t.Parallel()
 	for _, test := range []struct {

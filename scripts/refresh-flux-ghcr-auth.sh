@@ -2890,7 +2890,7 @@ flux_policy_parent_is_released() {
 }
 
 pause_flux_policy_parent() {
-  local resource_version attempt
+  local resource_version attempt annotations_present
 
   # The parent/child ownership annotations are a separate fail-closed fence:
   # even if this process loses the synchronization Lease during acquisition, a
@@ -2934,14 +2934,23 @@ pause_flux_policy_parent() {
   flux_policy_parent_uid="$(jq -er '.metadata.uid' \
     "${flux_policy_parent_state_file}")"
   flux_policy_parent_owner="${sync_lease_holder}"
+  annotations_present="$(jq -r \
+    '(.metadata.annotations? | type) == "object"' \
+    "${flux_policy_parent_state_file}")"
   jq -n \
     --arg resource_version "${resource_version}" \
     --arg uid "${flux_policy_parent_uid}" \
     --arg owner_path "${FLUX_POLICY_PARENT_OWNER_JSON_PATH}" \
-    --arg owner "${flux_policy_parent_owner}" '
+    --arg owner "${flux_policy_parent_owner}" \
+    --argjson annotations_present "${annotations_present}" '
     [
       {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
-      {op: "test", path: "/metadata/uid", value: $uid},
+      {op: "test", path: "/metadata/uid", value: $uid}
+    ]
+    + (if $annotations_present then [] else
+      [{op: "add", path: "/metadata/annotations", value: {}}]
+    end)
+    + [
       {op: "add", path: $owner_path, value: $owner},
       {op: "add", path: "/spec/suspend", value: true}
     ]
@@ -3068,7 +3077,7 @@ flux_policy_handoff_is_released() {
 }
 
 pause_flux_policy_handoff() {
-  local resource_version attempt
+  local resource_version attempt annotations_present
 
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
@@ -3105,15 +3114,24 @@ pause_flux_policy_handoff() {
   flux_policy_handoff_uid="$(jq -er '.metadata.uid' \
     "${flux_policy_handoff_state_file}")"
   flux_policy_handoff_owner="${sync_lease_holder}"
+  annotations_present="$(jq -r \
+    '(.metadata.annotations? | type) == "object"' \
+    "${flux_policy_handoff_state_file}")"
   jq -n \
     --arg resource_version "${resource_version}" \
     --arg uid "${flux_policy_handoff_uid}" \
     --arg owner_path "${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}" \
     --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
-    --arg owner "${flux_policy_handoff_owner}" '
+    --arg owner "${flux_policy_handoff_owner}" \
+    --argjson annotations_present "${annotations_present}" '
     [
       {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
-      {op: "test", path: "/metadata/uid", value: $uid},
+      {op: "test", path: "/metadata/uid", value: $uid}
+    ]
+    + (if $annotations_present then [] else
+      [{op: "add", path: "/metadata/annotations", value: {}}]
+    end)
+    + [
       {op: "add", path: $owner_path, value: $owner},
       {op: "add", path: $reconcile_path, value: "disabled"},
       {op: "add", path: "/spec/suspend", value: true}

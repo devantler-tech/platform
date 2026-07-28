@@ -154,6 +154,16 @@ func fakeFluxPolicyChildObject() map[string]any {
 	if suspended {
 		generation = 14
 	}
+	metadata := map[string]any{
+		"name":            "infrastructure",
+		"namespace":       "flux-system",
+		"uid":             "infrastructure-kustomization-uid",
+		"resourceVersion": defaultString(markerContent("flux-policy-handoff-resource-version"), "20"),
+		"generation":      generation,
+	}
+	if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_NO_ANNOTATIONS") != "true" || owner != "" {
+		metadata["annotations"] = annotations
+	}
 	conditions := []any{
 		map[string]any{
 			"type":   "Ready",
@@ -171,14 +181,7 @@ func fakeFluxPolicyChildObject() map[string]any {
 	return map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
-		"metadata": map[string]any{
-			"name":            "infrastructure",
-			"namespace":       "flux-system",
-			"uid":             "infrastructure-kustomization-uid",
-			"resourceVersion": defaultString(markerContent("flux-policy-handoff-resource-version"), "20"),
-			"generation":      generation,
-			"annotations":     annotations,
-		},
+		"metadata":   metadata,
 		"spec": map[string]any{
 			"suspend": suspended,
 		},
@@ -223,6 +226,8 @@ func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile
 		if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
 			owner == "" ||
 			!hasPatchOperation(patch, "add", reconcilePath, "disabled") ||
+			(os.Getenv("FAKE_FLUX_POLICY_HANDOFF_NO_ANNOTATIONS") == "true" &&
+				!hasPatchOperation(patch, "add", "/metadata/annotations", map[string]any{})) ||
 			markerExists("flux-policy-handoff-owner") {
 			return commandFailure(56, "invalid or conflicting Flux policy handoff acquisition")
 		}
@@ -295,6 +300,16 @@ func fakeFluxPolicyParentObject() map[string]any {
 		annotations["platform.devantler.tech/ghcr-policy-parent-owner"] = owner
 	}
 	suspended := markerExists("flux-policy-parent-suspended")
+	metadata := map[string]any{
+		"name":            "flux-system",
+		"namespace":       "flux-system",
+		"uid":             "flux-system-kustomization-uid",
+		"resourceVersion": defaultString(markerContent("flux-policy-parent-resource-version"), "30"),
+		"generation":      1,
+	}
+	if os.Getenv("FAKE_FLUX_POLICY_PARENT_NO_ANNOTATIONS") != "true" || owner != "" {
+		metadata["annotations"] = annotations
+	}
 	conditions := []any{
 		map[string]any{
 			"type":   "Ready",
@@ -321,14 +336,7 @@ func fakeFluxPolicyParentObject() map[string]any {
 	return map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
-		"metadata": map[string]any{
-			"name":            "flux-system",
-			"namespace":       "flux-system",
-			"uid":             "flux-system-kustomization-uid",
-			"resourceVersion": defaultString(markerContent("flux-policy-parent-resource-version"), "30"),
-			"generation":      1,
-			"annotations":     annotations,
-		},
+		"metadata":   metadata,
 		"spec": map[string]any{
 			"suspend": suspended,
 		},
@@ -380,7 +388,10 @@ func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string
 	if hasPatchOperation(patch, "add", "/spec/suspend", true) {
 		owner := patchValueString(patch, "add", ownerPath)
 		if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
-			owner == "" || markerExists("flux-policy-parent-owner") {
+			owner == "" ||
+			(os.Getenv("FAKE_FLUX_POLICY_PARENT_NO_ANNOTATIONS") == "true" &&
+				!hasPatchOperation(patch, "add", "/metadata/annotations", map[string]any{})) ||
+			markerExists("flux-policy-parent-owner") {
 			return commandFailure(56, "invalid or conflicting parent Flux handoff acquisition")
 		}
 		setMarkerContent("flux-policy-parent-owner", owner)
