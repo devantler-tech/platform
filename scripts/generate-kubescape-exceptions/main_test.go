@@ -384,6 +384,174 @@ func TestGenerateRejectsEmptyDirectory(t *testing.T) {
 	}
 }
 
+// mirrorNames returns the policy names the Headlamp mirror would carry.
+func mirrorNames(t *testing.T, dir string) []string {
+	t.Helper()
+
+	policies, err := generate(dir)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	names := make([]string, 0, len(policies))
+	for _, kept := range mirrored(policies) {
+		names = append(names, kept.Name)
+	}
+
+	return names
+}
+
+// TestMirrorExcludesAnnotatedException verifies the annotation keeps a
+// host-scanner exception out of the Headlamp mirror while leaving it in the
+// Kubescape scan input — the two consumers must not be conflated.
+func TestMirrorExcludesAnnotatedException(t *testing.T) {
+	dir := writeCSE(t, `
+kind: ClusterSecurityException
+metadata:
+  name: host-only
+  annotations:
+    platform.devantler.tech/headlamp-mirror: exclude
+spec:
+  posture: [{controlID: C-0092, action: ignore}]
+---
+kind: ClusterSecurityException
+metadata:
+  name: workload-scoped
+spec:
+  posture: [{controlID: C-0002, action: ignore}]
+`)
+
+	policies, err := generate(dir)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	// The offline CI scan must still receive BOTH: excluding a host exception
+	// from the scan would make its controls fail the compliance gate.
+	if len(policies) != 2 {
+		t.Fatalf("Kubescape output must keep every exception, got %d", len(policies))
+	}
+
+	names := mirrorNames(t, dir)
+	if len(names) != 1 || names[0] != "workload-scoped" {
+		t.Errorf("mirror = %v, want only [workload-scoped]", names)
+	}
+}
+
+// TestMirrorDefaultsToIncluded verifies an unannotated CR is mirrored: dropping
+// an exception makes the dashboard report an excepted workload as failing.
+func TestMirrorDefaultsToIncluded(t *testing.T) {
+	dir := writeCSE(t, `
+kind: ClusterSecurityException
+metadata: {name: no-annotations}
+spec:
+  posture: [{controlID: C-0002, action: ignore}]
+`)
+
+	if names := mirrorNames(t, dir); len(names) != 1 {
+		t.Errorf("mirror = %v, want the unannotated exception to be mirrored", names)
+	}
+}
+
+// TestMirrorAnnotationFailsClosed verifies a marker this converter does not
+// recognise aborts instead of being read as "include" — a typo must never push
+// a cluster-wide host exception into the workload dashboard.
+func TestMirrorAnnotationFailsClosed(t *testing.T) {
+	t.Parallel()
+
+	cases := map[string]struct {
+		value string
+		want  string
+	}{
+		"unknown value":          {value: "excluded", want: "unsupported platform.devantler.tech/headlamp-mirror value"},
+		"include is not a value": {value: "include", want: "unsupported platform.devantler.tech/headlamp-mirror value"},
+		"empty value":            {value: `""`, want: "unsupported platform.devantler.tech/headlamp-mirror value"},
+		"boolean not string":     {value: "true", want: "must be a string"},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			_, err := generate(writeCSE(t, `
+kind: ClusterSecurityException
+metadata:
+  name: marked
+  annotations:
+    platform.devantler.tech/headlamp-mirror: `+tc.value+`
+spec:
+  posture: [{controlID: C-0002, action: ignore}]
+`))
+			if err == nil {
+				t.Fatalf("want a fail-closed error containing %q, got none", tc.want)
+			}
+
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestMirrorRefusesEmptyResult verifies an all-excluded set fails closed rather
+// than writing a ConfigMap that silently shows the dashboard no exceptions.
+func TestMirrorRefusesEmptyResult(t *testing.T) {
+	dir := writeCSE(t, `
+kind: ClusterSecurityException
+metadata:
+  name: host-only
+  annotations:
+    platform.devantler.tech/headlamp-mirror: exclude
+spec:
+  posture: [{controlID: C-0092, action: ignore}]
+`)
+
+	policies, err := generate(dir)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	if _, err := renderHeadlampConfigMap(policies); err == nil {
+		t.Fatal("want an error when every exception is excluded from the mirror")
+	}
+}
+
+// TestCommittedMirrorIsUpToDate is the drift gate. The Headlamp mirror used to
+// be hand-maintained and drifted in the direction that HIDES findings — it once
+// excepted C-0017 for every workload in the cluster while the CRs excepted it in
+// three narrow places (platform#2586, fixed by #2837). Regenerating here means a
+// CR change that is not mirrored fails CI instead of silently desynchronising
+// the dashboard from the exceptions actually in force.
+func TestCommittedMirrorIsUpToDate(t *testing.T) {
+	dir := filepath.Join("..", "..", defaultDir)
+	if _, err := os.Stat(dir); err != nil {
+		t.Skipf("exceptions dir not present: %v", err)
+	}
+
+	committedPath := filepath.Join("..", "..", mirrorConfigMapPath)
+
+	committed, err := os.ReadFile(committedPath)
+	if err != nil {
+		t.Fatalf("read committed mirror: %v", err)
+	}
+
+	policies, err := generate(dir)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	regenerated, err := renderHeadlampConfigMap(policies)
+	if err != nil {
+		t.Fatalf("render mirror: %v", err)
+	}
+
+	if string(committed) != string(regenerated) {
+		t.Errorf("%s is out of date.\n\nRegenerate it with:\n"+
+			"  go run ./scripts/generate-kubescape-exceptions -format %s -o %s\n",
+			mirrorConfigMapPath, formatConfigMap, mirrorConfigMapPath)
+	}
+}
+
 // TestGenerateAgainstRealExceptions is the behavioural check: the committed CRs
 // must actually convert, and the rendered file must be the JSON array of
 // PostureExceptionPolicy objects that `ksail workload scan --exceptions` reads.
