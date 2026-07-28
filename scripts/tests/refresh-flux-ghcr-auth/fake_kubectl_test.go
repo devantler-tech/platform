@@ -353,6 +353,19 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid synchronization lease lookup")
 	}
+	if os.Getenv("FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN") == "true" &&
+		markerExists("transient-drain-attempt-prod-worker-1") &&
+		!markerExists("sync-lease-heartbeat-interrupted") {
+		touchMarker("sync-lease-heartbeat-interrupted")
+		if os.Getenv("FAKE_REPLACE_SYNC_LEASE_DURING_HEARTBEAT_INTERRUPTION") == "true" {
+			setMarkerContent("sync-lease-holder", "newer-transaction")
+			setMarkerContent(
+				"sync-lease-resource-version",
+				incrementDecimal(defaultString(markerContent("sync-lease-resource-version"), "10")),
+			)
+		}
+		return commandFailure(54, "read: connection reset by peer")
+	}
 	holder := markerContent("sync-lease-holder")
 	if !markerExists("sync-lease-holder") {
 		if os.Getenv("FAKE_HELD_SYNC_LEASE") != "true" {
@@ -902,6 +915,15 @@ func fakeKubectlDrain(args []string) int {
 		attempt := parseInt(markerContent(attemptMarker), 0) + 1
 		setMarkerContent(attemptMarker, strconv.Itoa(attempt))
 		if attempt == 1 {
+			if os.Getenv("FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN") == "true" {
+				for wait := 0; wait < 40 &&
+					!markerExists("sync-lease-heartbeat-interrupted"); wait++ {
+					time.Sleep(100 * time.Millisecond)
+				}
+				// Let the heartbeat process persist its private sticky-loss
+				// marker before the foreground drain observes API recovery.
+				time.Sleep(500 * time.Millisecond)
+			}
 			return commandFailure(
 				54,
 				"error when evicting pod: Cannot evict pod as it would violate the pod's disruption budget.\n"+

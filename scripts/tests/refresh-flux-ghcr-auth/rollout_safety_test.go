@@ -545,6 +545,20 @@ func TestTalosConvergenceBudgetRequiresTargetAndTwoCleanReads(t *testing.T) {
 	}
 }
 
+func TestLeaseHeartbeatMustRemainBelowTheLeaseDuration(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS": "120",
+	})
+	if result.exitCode != 64 {
+		t.Errorf("exit = %d, want 64\n%s%s", result.exitCode, result.stdout, result.stderr)
+	}
+	requireContains(t, result.stdout+result.stderr, "must be a positive integer below the Lease duration")
+	if pathExists(f.kubectlCalled) {
+		t.Error("unsafe heartbeat budget reached kubectl")
+	}
+}
+
 func TestUncordonFailureKeepsRevisionMarkerAndOwnerFailClosed(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_UNCORDON_FAIL_NODE": "prod-worker-1"})

@@ -55,7 +55,7 @@ readonly FLUX_RECONCILE_ANNOTATION="kustomize.toolkit.fluxcd.io/reconcile"
 readonly FLUX_RECONCILE_JSON_PATH="/metadata/annotations/kustomize.toolkit.fluxcd.io~1reconcile"
 readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
 readonly SYNC_LEASE_DURATION_SECONDS=120
-readonly SYNC_LEASE_HEARTBEAT_SECONDS=30
+readonly SYNC_LEASE_HEARTBEAT_SECONDS="${FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS:-30}"
 readonly CORDON_OWNER_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-owner"
 readonly CORDON_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner"
 readonly CORDON_RECOVERY_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-recovery"
@@ -92,8 +92,10 @@ readonly -a FANOUT_NAMESPACES=(
 if ! [[ "${SYNC_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] ||
   ! [[ "${TALOS_CONVERGENCE_ATTEMPTS}" =~ ^[3-9]$|^[1-9][0-9]+$ ]] ||
   ! [[ "${SYNC_INTERVAL}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
-  ! [[ "${DRAIN_TIMEOUT}" =~ ^[1-9][0-9]*(s|m|h)$ ]]; then
-  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS must be positive, FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS must be at least 3, FLUX_GHCR_SYNC_INTERVAL must be non-negative, and FLUX_GHCR_DRAIN_TIMEOUT must be a positive whole number of seconds, minutes, or hours."
+  ! [[ "${DRAIN_TIMEOUT}" =~ ^[1-9][0-9]*(s|m|h)$ ]] ||
+  ! [[ "${SYNC_LEASE_HEARTBEAT_SECONDS}" =~ ^[1-9][0-9]*$ ]] ||
+  ((SYNC_LEASE_HEARTBEAT_SECONDS >= SYNC_LEASE_DURATION_SECONDS)); then
+  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS must be positive, FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS must be at least 3, FLUX_GHCR_SYNC_INTERVAL must be non-negative, FLUX_GHCR_DRAIN_TIMEOUT must be a positive whole number of seconds, minutes, or hours, and FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS must be a positive integer below the Lease duration."
   exit 64
 fi
 
@@ -2062,6 +2064,13 @@ process_talos_node_target() {
           "${drain_result_file}" "${recovery_record}" || return 1
         return 1
       fi
+      if ! recover_sync_lease_heartbeat_after_transport_interruption; then
+        restore_node_schedulability_if_needed \
+          "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+          "${initial_node_uid}" "${initial_node_taints}" \
+          "${drain_result_file}" "${recovery_record}" || return 1
+        return 1
+      fi
       revalidate_node_scheduling_guard \
         "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
         "${initial_node_uid}" "${initial_node_taints}" \
@@ -2705,6 +2714,27 @@ assert_sync_lease_held() {
     echo "::error::The GHCR synchronization lease was lost; refusing further cluster mutation."
     return 1
   fi
+}
+
+recover_sync_lease_heartbeat_after_transport_interruption() {
+  [[ -e "${sync_lease_lost_file}" ]] || return 0
+
+  # The heartbeat writes the sticky marker only after a failed renewal and
+  # exits immediately afterward. Reap that exact child before proving the same
+  # holder directly; never clear the marker based on API readiness alone.
+  if [[ -n "${sync_lease_heartbeat_pid}" ]]; then
+    wait "${sync_lease_heartbeat_pid}" 2>/dev/null || true
+    sync_lease_heartbeat_pid=""
+  fi
+  if ! renew_sync_lease; then
+    echo "::error::The Kubernetes API recovered, but this transaction could not re-prove and renew its synchronization Lease holder."
+    return 1
+  fi
+
+  rm -f "${sync_lease_lost_file}"
+  sync_lease_heartbeat_loop &
+  sync_lease_heartbeat_pid=$!
+  echo "::warning::Re-proved the same GHCR synchronization Lease holder and restarted its heartbeat after API recovery."
 }
 
 release_sync_lease() {
