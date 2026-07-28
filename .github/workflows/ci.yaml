@@ -60,6 +60,8 @@ jobs:
               - 'scripts/validate-embedded-json.py'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/normalize-sarif-paths.sh'
+              - 'scripts/summarize-sarif-findings.sh'
+              - 'scripts/tests/test-summarize-sarif-findings.sh'
               - 'go.mod'
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
@@ -247,6 +249,15 @@ jobs:
         # least-privilege delivery path cannot silently disappear.
         run: bash scripts/tests/test-opencost-usage-scraper.sh
 
+      - name: 📋 Validate Kubescape finding summary
+        if: needs.changes.outputs.k8s == 'true'
+        # The summary is what makes the CI log and the Security tab agree (#2846),
+        # and it fails by under-reporting rather than by crashing — a dropped
+        # control looks exactly like a clean scan. Pin the grouping, the counts and
+        # the two SARIF shapes that turn into hard jq errors if indexed naively: a
+        # result with no ruleId, and a ruleId absent from the rule table.
+        run: bash scripts/tests/test-summarize-sarif-findings.sh
+
       - name: 📢 Validate reconciliation-Alert namespace coverage
         if: needs.changes.outputs.k8s == 'true'
         # notification-controller has no namespace wildcard, so the Alert must list
@@ -397,6 +408,22 @@ jobs:
             echo "sarif=absent" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
+          # Keep the scan's own output before normalization touches it. The
+          # normalizer DROPS results with an empty artifactLocation.uri (see its
+          # CONTRACT) because Code Scanning cannot anchor an alert without a
+          # file. That is right for the upload and wrong for the summary: a
+          # cluster-level control with no manifest behind it is exactly the kind
+          # of finding that is otherwise invisible, so summarizing the
+          # normalized file would under-report the very case this reporting
+          # exists for. Upload reads the normalized file; the summary reads this.
+          cp "${RUNNER_TEMP}/kubescape.sarif" "${RUNNER_TEMP}/kubescape.raw.sarif"
+          # Emitted BEFORE the normalizer runs, because it is the summary's gate
+          # and the summary must survive a normalizer failure. An unresolvable
+          # path aborts the step, so anything echoed after that line never
+          # happens — and gating the summary on `sarif=ready` would skip it
+          # exactly when an upstream path-shape change made the findings most
+          # worth reading.
+          echo "raw=ready" >> "${GITHUB_OUTPUT}"
           bash scripts/normalize-sarif-paths.sh "${RUNNER_TEMP}/kubescape.sarif" k8s .
           # Only now is the file both PRESENT and root-relative. The upload gates
           # on this output, so a normalizer hard-failure (an unresolvable path)
@@ -452,6 +479,42 @@ jobs:
           # already publish to this repository's Security tab, so each tool's
           # results are tracked and closed independently.
           category: kubescape-nsa
+
+      - name: 📋 Summarize Kubescape findings
+        # Kubescape's own console table shows only a subset of what it finds:
+        # measured on this repository, a scan whose SARIF carried 4 findings
+        # printed "All controls passed. No issues found". Since the upload above
+        # turns those findings into alerts, the log and the Security tab
+        # disagreed — and the log is what a developer reads on a PR (#2846).
+        #
+        # This reports from the SARIF the run already produced, so the two
+        # surfaces cannot drift: same file, same findings.
+        #
+        # Gated on the normalizer's output rather than `!cancelled()` alone, for
+        # the same reason the upload is: that output is the only signal that the
+        # file both exists and is well-formed. It runs even when the upload step
+        # did not — a fork PR cannot upload, but its author still benefits from
+        # seeing what the scan found, which is why the script's wording does not
+        # assert that an upload happened.
+        #
+        # Informational only. The compliance threshold on the scan step remains
+        # the sole merge gate.
+        #
+        # The script exits non-zero on a usage error or a SARIF it cannot parse,
+        # and leaves it to the caller whether that is fatal. This caller says no:
+        # a summary that cannot be built says nothing about posture, and the gate
+        # that does — the compliance threshold — has already run against the same
+        # file. `continue-on-error` keeps the failure loud (the step is still
+        # marked failed and annotated on the run) without blocking a merge on a
+        # reporting bug. Without it, this step silently becomes a second gate,
+        # contradicting the sentence above it.
+        continue-on-error: true
+        if: >-
+          !cancelled() &&
+          steps.normalize-sarif.outputs.raw == 'ready'
+        run: |
+          shellcheck scripts/summarize-sarif-findings.sh
+          bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.raw.sarif"
 
   naming:
     name: 🏷️ Validate Naming Conventions
