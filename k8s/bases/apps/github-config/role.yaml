@@ -27,12 +27,29 @@ metadata:
 rules:
   - apiGroups:
       - repo.github.m.upbound.io
-      - team.github.m.upbound.io
       - actions.github.m.upbound.io
       - enterprise.github.m.upbound.io
       - github.m.upbound.io
     resources:
       - "*"
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  # Team resources are high-impact because they change real GitHub org
+  # authorization. Keep the RBAC surface explicit (no API-group wildcard) and
+  # rely on restrict-github-team-management Kyverno admission policy to constrain
+  # the allowed team names, reference style, and repository permissions.
+  - apiGroups:
+      - team.github.m.upbound.io
+    resources:
+      - teams
+      - teammemberships
+      - teamrepositories
     verbs:
       - get
       - list

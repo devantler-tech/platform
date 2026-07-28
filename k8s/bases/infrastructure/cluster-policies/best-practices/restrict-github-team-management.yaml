@@ -1,0 +1,99 @@
+# Constrains the high-impact GitHub team managed resources delegated to the
+# github-config tenant. The tenant's Flux Kustomization applies a separately
+# published OCI artifact as the github-config ServiceAccount, and those
+# Crossplane resources reconcile with an org-admin GitHub App. Namespace RBAC can
+# limit the API group, but it cannot restrict resource spec fields such as the
+# team, member, repository, role, or permission. This admission guard keeps that
+# delegation scoped to the intended CODEOWNERS teams and blocks direct numeric
+# team IDs/selectors that would bypass the allow-list enforced through
+# Crossplane references.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-github-team-management
+  annotations:
+    policies.kyverno.io/title: Restrict GitHub Team Management
+    policies.kyverno.io/category: Security, GitHub
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Team, TeamMembership, TeamRepository
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Restricts provider-upjet-github team resources in the github-config
+      namespace to the platform CODEOWNERS teams, requires TeamMembership and
+      TeamRepository resources to reference those Team objects by name, and
+      blocks repository admin grants. This prevents a compromised or unintended
+      github-config artifact from adding arbitrary users to arbitrary GitHub
+      teams or granting privileged repository access.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: teams-allow-listed
+      match:
+        any:
+          - resources:
+              kinds:
+                - Team.team.github.m.upbound.io
+              namespaces:
+                - github-config
+      validate:
+        message: GitHub Team resources managed by github-config must be one of platform or maintainers.
+        deny:
+          conditions:
+            all:
+              - key: "{{ request.object.metadata.name }}"
+                operator: AnyNotIn
+                value:
+                  - platform
+                  - maintainers
+    - name: teammemberships-reference-allow-listed-teams
+      match:
+        any:
+          - resources:
+              kinds:
+                - TeamMembership.team.github.m.upbound.io
+              namespaces:
+                - github-config
+      validate:
+        message: GitHub TeamMembership resources must use spec.forProvider.teamIdRef.name set to platform or maintainers; direct teamId values and selectors are not allowed.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.forProvider.teamId || '' }}"
+                operator: NotEquals
+                value: ""
+              - key: "{{ request.object.spec.forProvider.teamIdSelector || `{}` }}"
+                operator: NotEquals
+                value: {}
+              - key: "{{ request.object.spec.forProvider.teamIdRef.name || '' }}"
+                operator: AnyNotIn
+                value:
+                  - platform
+                  - maintainers
+    - name: teamrepositories-reference-allow-listed-teams
+      match:
+        any:
+          - resources:
+              kinds:
+                - TeamRepository.team.github.m.upbound.io
+              namespaces:
+                - github-config
+      validate:
+        message: GitHub TeamRepository resources must reference platform or maintainers by spec.forProvider.teamIdRef.name and may not grant admin permission.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.forProvider.teamId || '' }}"
+                operator: NotEquals
+                value: ""
+              - key: "{{ request.object.spec.forProvider.teamIdSelector || `{}` }}"
+                operator: NotEquals
+                value: {}
+              - key: "{{ request.object.spec.forProvider.teamIdRef.name || '' }}"
+                operator: AnyNotIn
+                value:
+                  - platform
+                  - maintainers
+              - key: "{{ request.object.spec.forProvider.permission || '' }}"
+                operator: Equals
+                value: admin
