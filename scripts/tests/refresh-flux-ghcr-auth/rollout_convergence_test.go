@@ -660,23 +660,58 @@ func TestStaleImageVerificationWebhookBudgetIsStagedBeforeRuntimeProbe(t *testin
 	})
 	requireSuccessResult(t, result)
 	operations := readLines(f.operationLog)
-	appPatch := lineIndex(t, operations, "ivpol-timeout-patch:verify-app-images")
-	ksailPatch := lineIndex(t, operations, "ivpol-timeout-patch:verify-ksail-images")
+	dryRun := lineIndex(t, operations, "ivpol-policy-dry-run:verify-app-images")
+	appApply := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
+	ksailDelete := lineIndex(t, operations, "ivpol-policy-delete:verify-ksail-images")
 	webhookReady := lineIndex(t, operations, "ivpol-webhooks-ready")
 	firstRuntimeProbe := lineIndex(
 		t,
 		operations,
 		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/wedding-app:latest",
 	)
-	if appPatch >= webhookReady || ksailPatch >= webhookReady || webhookReady >= firstRuntimeProbe {
+	if dryRun >= appApply ||
+		appApply >= ksailDelete ||
+		ksailDelete >= webhookReady ||
+		webhookReady >= firstRuntimeProbe {
 		t.Fatalf(
-			"unsafe image-verification bootstrap ordering: app patch=%d ksail patch=%d webhook ready=%d runtime probe=%d",
-			appPatch,
-			ksailPatch,
+			"unsafe image-verification bootstrap ordering: dry-run=%d app apply=%d ksail delete=%d webhook ready=%d runtime probe=%d",
+			dryRun,
+			appApply,
+			ksailDelete,
 			webhookReady,
 			firstRuntimeProbe,
 		)
 	}
+}
+
+func TestRejectedConsolidatedImageVerificationPolicyFailsBeforeMutation(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_IMAGE_VERIFICATION_POLICY_DRY_RUN_FAILURE": "true",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "API server rejected")
+	if pathExists(f.operationLog) {
+		operations := readLines(f.operationLog)
+		requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
+		requireNoLine(t, operations, "ivpol-policy-delete:verify-ksail-images")
+		requireNotContains(t, strings.Join(operations, "\n"), "runtime-probe-success:")
+		requireNoLine(t, operations, "root-patch")
+	}
+}
+
+func TestRetiredImageVerificationPolicyDeleteFailureFailsClosed(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_IMAGE_VERIFICATION_POLICY_DELETE_FAILURE": "true",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "Could not retire")
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "ivpol-policy-apply:verify-app-images")
+	requireNoLine(t, operations, "ivpol-policy-delete:verify-ksail-images")
+	requireNotContains(t, strings.Join(operations, "\n"), "runtime-probe-success:")
+	requireNoLine(t, operations, "root-patch")
 }
 
 func TestImageVerificationWebhookConvergenceFailureFailsClosed(t *testing.T) {
@@ -717,6 +752,24 @@ func TestFailOpenEffectiveImageVerificationWebhookFailsClosed(t *testing.T) {
 		requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
 		requireNoLine(t, operations, "root-patch")
 	}
+}
+
+func TestFailOpenValidatingImageVerificationWebhookFailsClosed(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_IMAGE_VERIFICATION_VALIDATING_WEBHOOK_FAIL_OPEN": "true",
+		"FLUX_GHCR_SYNC_ATTEMPTS":                              "3",
+		"FLUX_GHCR_SYNC_INTERVAL":                              "0",
+	})
+	requireFailureResult(t, result)
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"image-verification admission webhooks did not converge",
+	)
+	operations := readLines(f.operationLog)
+	requireNotContains(t, strings.Join(operations, "\n"), "runtime-probe-success:")
+	requireNoLine(t, operations, "root-patch")
 }
 
 func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {

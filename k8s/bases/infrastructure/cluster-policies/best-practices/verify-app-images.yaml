@@ -1,26 +1,26 @@
 ---
-# First-party APP images (wedding-app, ascoachingogvaner, …) — signed by the
-# shared publish-app.yaml workflow (in actions, or reusable-workflows before it
-# was archived into actions), the same identity their Flux OCIRepository verify
-# blocks pin. The match EXCLUDES ksail images:
-# a matched image is verified by this policy's attestor before the CEL
-# expression runs, so letting ksail images match here would fail them
-# against the wrong identity.
+# All first-party images share one IVPOL because Kyverno v1.18.2 replaces the
+# image-verification outcomes annotation rather than merging it when multiple
+# fine-grained mutating webhooks run. Splitting the app/provider and KSail
+# identities across timeout-bearing IVPOLs therefore makes the later webhook
+# erase the earlier policy's result and fail-closes validation with
+# "policy not evaluated". Keep the identities in separate attestors and CEL
+# filters inside this one policy so each image class remains independently
+# constrained while slow, cold signature lookups get the 30-second budget.
 apiVersion: policies.kyverno.io/v1
 kind: ImageValidatingPolicy
 metadata:
   name: verify-app-images
   annotations:
-    policies.kyverno.io/title: Verify First-Party App Image Signatures
+    policies.kyverno.io/title: Verify First-Party Image Signatures
     policies.kyverno.io/category: Supply Chain Security
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/description: >-
-      Requires keyless cosign signatures from a devantler-tech release
-      pipeline on all non-ksail ghcr.io/devantler-tech/* container images
-      at Pod admission — the shared publish-app workflow for app images,
-      and a Crossplane provider repo's own publish-provider-package
-      workflow for provider-upjet-* packages (each class verified ONLY
-      against its own identity). Third-party images admit unverified.
+      Requires keyless cosign signatures from the matching devantler-tech
+      release pipeline on first-party container images at Pod admission:
+      publish-app for app images, each Crossplane provider's own package
+      workflow, and KSail's release workflow. Each class is verified only
+      against its own identity; third-party images admit unverified.
 spec:
   failurePolicy: Fail
   validationActions: [Deny]
@@ -40,10 +40,12 @@ spec:
         operations: [CREATE]
         resources: [pods]
   matchImageReferences:
-    # The expression variable for image references is `ref`.
+    # The expression variable for image references is `ref`. Keep KSail in a
+    # separate matcher so the app expression cannot route it to publishapp.
     - expression: >-
         ref.startsWith('ghcr.io/devantler-tech/') &&
         !ref.startsWith('ghcr.io/devantler-tech/ksail')
+    - glob: ghcr.io/devantler-tech/ksail*
   credentials:
     secrets: [ghcr-auth]
   validationConfigurations:
@@ -90,6 +92,12 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@.+$
+    - name: ksailcd
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/ksail/\.github/workflows/cd\.yaml@refs/tags/v.+$
   validations:
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
@@ -108,3 +116,11 @@ spec:
       message: >-
         provider-upjet package image is not signed by its repo's
         publish-provider-package workflow (keyless cosign)
+    - expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image, image.startsWith('ghcr.io/devantler-tech/ksail'))
+        .map(image, verifyImageSignatures(image, [attestors.ksailcd]))
+        .all(e, e > 0)
+      message: >-
+        ksail image is not signed by the ksail release pipeline
+        (keyless cosign, ksail cd.yaml tag identity)

@@ -140,6 +140,9 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		"talos-revision:10.0.0.1",
 	})
 	requireLinesEqual(t, readLines(f.operationLog), []string{
+		"ivpol-policy-dry-run:verify-app-images",
+		"ivpol-policy-apply:verify-app-images",
+		"ivpol-policy-delete:verify-ksail-images",
 		"variables-patch",
 		"fanout:pushsecret/flux-system/seed-ghcr",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
