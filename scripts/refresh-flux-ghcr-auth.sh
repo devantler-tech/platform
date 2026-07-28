@@ -635,9 +635,97 @@ probe_node_runtime_pull() {
 # Applying the covering policy before deleting the old one preserves signature
 # enforcement throughout; the transient overlap can deny but cannot admit an
 # unverified image.
-stage_image_verification_webhook_budget() {
+read_image_verification_webhooks() {
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get mutatingwebhookconfigurations.admissionregistration.k8s.io \
+    -o json \
+    >"${image_verification_mutating_webhooks_file}" \
+    2>"${image_verification_policy_result_file}"; then
+    echo "::error::Could not inspect effective Kyverno mutating admission webhooks; refusing runtime pull probes."
+    emit_safe_operation_output \
+      "image-verification-mutating-webhook-read" \
+      "${image_verification_policy_result_file}"
+    return 1
+  fi
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get validatingwebhookconfigurations.admissionregistration.k8s.io \
+    -o json \
+    >"${image_verification_validating_webhooks_file}" \
+    2>"${image_verification_policy_result_file}"; then
+    echo "::error::Could not inspect effective Kyverno validating admission webhooks; refusing runtime pull probes."
+    emit_safe_operation_output \
+      "image-verification-validating-webhook-read" \
+      "${image_verification_policy_result_file}"
+    return 1
+  fi
+}
+
+image_verification_webhook_set_matches() {
+  local webhook_file="$1"
+  local operation="$2"
+  local exclusive="$3"
+
+  jq -e \
+    --argjson timeout "${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}" \
+    --arg expected_path "/ivpol/${operation}/${IMAGE_VERIFICATION_POLICY}" \
+    --arg retired "${RETIRED_IMAGE_VERIFICATION_POLICY}" \
+    --argjson exclusive "${exclusive}" '
+    [
+      .items[]?.webhooks[]?
+      | select(
+          (.clientConfig.service.name // "") == "kyverno-svc"
+          and (.clientConfig.service.namespace // "") == "kyverno"
+        )
+    ] as $webhooks
+    | any(
+        $webhooks[];
+        (.clientConfig.service.path // "") == $expected_path
+        and .failurePolicy == "Fail"
+        and .timeoutSeconds == $timeout
+      )
+    and (
+      if $exclusive then
+        all(
+          $webhooks[];
+          (.clientConfig.service.path // "") as $path
+          | if (($path | contains($expected_path)) or ($path | contains($retired))) then
+              $path == $expected_path
+              and .failurePolicy == "Fail"
+              and .timeoutSeconds == $timeout
+            else
+              true
+            end
+        )
+      else
+        true
+      end
+    )
+  ' "${webhook_file}" >/dev/null
+}
+
+wait_for_image_verification_webhooks() {
+  local exclusive="$1"
   local attempt
 
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    assert_sync_lease_held || return 1
+    read_image_verification_webhooks || return 1
+    if image_verification_webhook_set_matches \
+      "${image_verification_mutating_webhooks_file}" "mutate" "${exclusive}" &&
+      image_verification_webhook_set_matches \
+        "${image_verification_validating_webhooks_file}" "validate" "${exclusive}"; then
+      return 0
+    fi
+    if ((attempt < SYNC_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
+  done
+  return 1
+}
+
+stage_image_verification_webhook_budget() {
   if ! yq -e \
     '.apiVersion == "policies.kyverno.io/v1"
       and .kind == "ImageValidatingPolicy"
@@ -686,6 +774,16 @@ stage_image_verification_webhook_budget() {
     return 1
   fi
 
+  # The existing app-only policy can already own a webhook path with the same
+  # policy name. Require Kyverno to expose the new independent 30-second
+  # fail-closed mutate and validate paths while the retired KSail verifier is
+  # still present. This closes the policy-cache handoff gap: deletion is not
+  # evidence that the replacement has become effective.
+  if ! wait_for_image_verification_webhooks false; then
+    echo "::error::The consolidated fail-closed image-verification admission webhooks did not become effective before retirement of the existing KSail verifier."
+    return 1
+  fi
+
   assert_sync_lease_held || return 1
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
@@ -700,100 +798,12 @@ stage_image_verification_webhook_budget() {
     return 1
   fi
 
-  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
-    assert_sync_lease_held || return 1
-    if ! kubectl \
-      --context "${KUBE_CONTEXT}" \
-      get mutatingwebhookconfigurations.admissionregistration.k8s.io \
-      -o json \
-      >"${image_verification_mutating_webhooks_file}" \
-      2>"${image_verification_policy_result_file}"; then
-      echo "::error::Could not inspect effective Kyverno mutating admission webhooks; refusing runtime pull probes."
-      emit_safe_operation_output \
-        "image-verification-mutating-webhook-read" \
-        "${image_verification_policy_result_file}"
-      return 1
-    fi
-    if ! kubectl \
-      --context "${KUBE_CONTEXT}" \
-      get validatingwebhookconfigurations.admissionregistration.k8s.io \
-      -o json \
-      >"${image_verification_validating_webhooks_file}" \
-      2>"${image_verification_policy_result_file}"; then
-      echo "::error::Could not inspect effective Kyverno validating admission webhooks; refusing runtime pull probes."
-      emit_safe_operation_output \
-        "image-verification-validating-webhook-read" \
-        "${image_verification_policy_result_file}"
-      return 1
-    fi
-    if jq -e \
-      --argjson timeout "${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}" \
-      --arg expected_path "/ivpol/mutate/${IMAGE_VERIFICATION_POLICY}" \
-      --arg retired "${RETIRED_IMAGE_VERIFICATION_POLICY}" '
-      [
-        .items[]?.webhooks[]?
-        | select(
-            (.clientConfig.service.name // "") == "kyverno-svc"
-            and (.clientConfig.service.namespace // "") == "kyverno"
-          )
-      ] as $webhooks
-      | any(
-          $webhooks[];
-          (.clientConfig.service.path // "") == $expected_path
-          and .failurePolicy == "Fail"
-          and .timeoutSeconds == $timeout
-        )
-      and all(
-        $webhooks[];
-        (.clientConfig.service.path // "") as $path
-        | if (($path | contains("verify-app-images")) or ($path | contains($retired))) then
-            $path == $expected_path
-            and .failurePolicy == "Fail"
-            and .timeoutSeconds == $timeout
-          else
-            true
-          end
-      )
-    ' "${image_verification_mutating_webhooks_file}" >/dev/null &&
-      jq -e \
-        --argjson timeout "${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}" \
-        --arg expected_path "/ivpol/validate/${IMAGE_VERIFICATION_POLICY}" \
-        --arg retired "${RETIRED_IMAGE_VERIFICATION_POLICY}" '
-        [
-          .items[]?.webhooks[]?
-          | select(
-              (.clientConfig.service.name // "") == "kyverno-svc"
-              and (.clientConfig.service.namespace // "") == "kyverno"
-            )
-        ] as $webhooks
-        | any(
-            $webhooks[];
-            (.clientConfig.service.path // "") == $expected_path
-            and .failurePolicy == "Fail"
-            and .timeoutSeconds == $timeout
-          )
-        and all(
-          $webhooks[];
-          (.clientConfig.service.path // "") as $path
-          | if (($path | contains("verify-app-images")) or ($path | contains($retired))) then
-              $path == $expected_path
-              and .failurePolicy == "Fail"
-              and .timeoutSeconds == $timeout
-            else
-              true
-            end
-        )
-      ' "${image_verification_validating_webhooks_file}" >/dev/null; then
-      echo "✅ Consolidated fail-closed image-verification admission is effective at ${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}s."
-      return 0
-    fi
-    if ((attempt < SYNC_ATTEMPTS)); then
-      sleep "${SYNC_INTERVAL}"
-    fi
-  done
+  if ! wait_for_image_verification_webhooks true; then
+    echo "::error::The consolidated fail-closed image-verification admission webhooks did not converge to one ${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}s policy path; refusing runtime pull probes."
+    return 1
+  fi
 
-  echo "::error::The consolidated fail-closed image-verification admission webhooks did not converge to one ${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}s policy path; refusing runtime pull probes."
-  return 1
+  echo "✅ Consolidated fail-closed image-verification admission is effective at ${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}s."
 }
 
 verify_peer_runtime_pull_overlap() {
@@ -2733,12 +2743,12 @@ assert_sync_lease_held() {
 }
 
 recover_sync_lease_heartbeat_after_transport_interruption() {
-  [[ -e "${sync_lease_lost_file}" ]] || return 0
-
-  # The heartbeat writes the sticky marker only after a failed renewal and
-  # exits immediately afterward. Reap that exact child before proving the same
-  # holder directly; never clear the marker based on API readiness alone.
+  # API readiness can return while the heartbeat's failed renewal is still in
+  # flight and before it writes the sticky marker. Stop and reap the old child
+  # unconditionally so it cannot report a stale failure after the foreground
+  # path has re-proved the same holder.
   if [[ -n "${sync_lease_heartbeat_pid}" ]]; then
+    kill "${sync_lease_heartbeat_pid}" 2>/dev/null || true
     wait "${sync_lease_heartbeat_pid}" 2>/dev/null || true
     sync_lease_heartbeat_pid=""
   fi

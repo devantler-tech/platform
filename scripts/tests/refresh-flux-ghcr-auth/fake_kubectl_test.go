@@ -454,9 +454,13 @@ func fakeKubectlDeleteRetiredImageValidatingPolicy(args []string) int {
 
 func fakeKubectlGetImageVerificationWebhooks(operation string) int {
 	stale := os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_STALE") == "true"
-	converged := !stale ||
-		(markerExists("ivpol-policy-verify-app-images") &&
-			markerExists("ivpol-policy-verify-ksail-images-deleted"))
+	consolidated := markerExists("ivpol-policy-verify-app-images")
+	if stale && !markerExists("ivpol-consolidated-observed") {
+		consolidated = false
+		if operation == "validate" {
+			touchMarker("ivpol-consolidated-observed")
+		}
+	}
 	failurePolicy := "Fail"
 	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_FAIL_OPEN") == "true" ||
 		(operation == "validate" &&
@@ -464,39 +468,48 @@ func fakeKubectlGetImageVerificationWebhooks(operation string) int {
 		failurePolicy = "Ignore"
 	}
 	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_NEVER_CONVERGE") == "true" {
-		converged = false
+		consolidated = false
 	}
-	webhooks := []any{
-		map[string]any{
+	var webhooks []any
+	if !markerExists("ivpol-policy-verify-ksail-images-deleted") {
+		webhooks = append(webhooks, map[string]any{
 			"name": operation + ".ivpol.kyverno.svc-fail",
 			"clientConfig": map[string]any{
 				"service": map[string]any{
 					"name":      "kyverno-svc",
 					"namespace": "kyverno",
-					"path":      "/ivpol/" + operation + "/verify-app-images/verify-ksail-images",
+					"path":      "/ivpol/" + operation + "/verify-ksail-images",
 				},
 			},
 			"failurePolicy":  failurePolicy,
 			"timeoutSeconds": 10,
-		},
+		})
 	}
-	if converged {
-		webhooks = []any{
-			map[string]any{
-				"name": operation + ".verify-app-images.ivpol.kyverno.svc-fail",
-				"clientConfig": map[string]any{
-					"service": map[string]any{
-						"name":      "kyverno-svc",
-						"namespace": "kyverno",
-						"path":      "/ivpol/" + operation + "/verify-app-images",
-					},
+	if consolidated {
+		webhooks = append(webhooks, map[string]any{
+			"name": operation + ".verify-app-images.ivpol.kyverno.svc-fail",
+			"clientConfig": map[string]any{
+				"service": map[string]any{
+					"name":      "kyverno-svc",
+					"namespace": "kyverno",
+					"path":      "/ivpol/" + operation + "/verify-app-images",
 				},
-				"failurePolicy":  failurePolicy,
-				"timeoutSeconds": 30,
 			},
-		}
-		if stale && operation == "validate" {
-			appendEnvFile("OPERATION_LOG", "ivpol-webhooks-ready\n")
+			"failurePolicy":  failurePolicy,
+			"timeoutSeconds": 30,
+		})
+		if operation == "validate" {
+			if markerExists("ivpol-policy-verify-ksail-images-deleted") {
+				if !markerExists("ivpol-policy-webhooks-ready-logged") {
+					touchMarker("ivpol-policy-webhooks-ready-logged")
+					appendEnvFile("OPERATION_LOG", "ivpol-policy-webhooks-ready\n")
+				}
+			} else {
+				if !markerExists("ivpol-policy-consolidated-ready-logged") {
+					touchMarker("ivpol-policy-consolidated-ready-logged")
+					appendEnvFile("OPERATION_LOG", "ivpol-policy-consolidated-ready\n")
+				}
+			}
 		}
 	}
 	fmt.Println(encodeJSON(map[string]any{
@@ -525,8 +538,19 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 	}
 	if os.Getenv("FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN") == "true" &&
 		markerExists("transient-drain-attempt-prod-worker-1") &&
-		!markerExists("sync-lease-heartbeat-interrupted") {
-		touchMarker("sync-lease-heartbeat-interrupted")
+		!markerExists("sync-lease-heartbeat-interrupted") &&
+		!(os.Getenv("FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY") == "true" &&
+			markerExists("sync-lease-heartbeat-interruption-started")) {
+		if os.Getenv("FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY") == "true" {
+			if !markerExists("sync-lease-heartbeat-interruption-started") {
+				touchMarker("sync-lease-heartbeat-interruption-started")
+				time.Sleep(2 * time.Second)
+				touchMarker("sync-lease-heartbeat-interrupted")
+				return commandFailure(54, "read: connection reset by peer")
+			}
+		} else {
+			touchMarker("sync-lease-heartbeat-interrupted")
+		}
 		if os.Getenv("FAKE_REPLACE_SYNC_LEASE_DURING_HEARTBEAT_INTERRUPTION") == "true" {
 			setMarkerContent("sync-lease-holder", "newer-transaction")
 			setMarkerContent(
@@ -1086,13 +1110,18 @@ func fakeKubectlDrain(args []string) int {
 		setMarkerContent(attemptMarker, strconv.Itoa(attempt))
 		if attempt == 1 {
 			if os.Getenv("FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN") == "true" {
-				for wait := 0; wait < 40 &&
-					!markerExists("sync-lease-heartbeat-interrupted"); wait++ {
+				waitMarker := "sync-lease-heartbeat-interrupted"
+				if os.Getenv("FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY") == "true" {
+					waitMarker = "sync-lease-heartbeat-interruption-started"
+				}
+				for wait := 0; wait < 40 && !markerExists(waitMarker); wait++ {
 					time.Sleep(100 * time.Millisecond)
 				}
-				// Let the heartbeat process persist its private sticky-loss
-				// marker before the foreground drain observes API recovery.
-				time.Sleep(500 * time.Millisecond)
+				if os.Getenv("FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY") != "true" {
+					// Let the heartbeat process persist its private sticky-loss
+					// marker before the foreground drain observes API recovery.
+					time.Sleep(500 * time.Millisecond)
+				}
 			}
 			return commandFailure(
 				54,

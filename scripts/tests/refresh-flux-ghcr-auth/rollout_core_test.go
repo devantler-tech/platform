@@ -446,6 +446,31 @@ func TestTransientDrainRecoversTheSameLeaseAfterHeartbeatInterruption(t *testing
 	requireLine(t, operations, "root-patch")
 }
 
+func TestTransientDrainReapsHeartbeatBeforeItsDelayedFailureMarker(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_DRAIN_API_FAIL_NODE":                  "prod-worker-1",
+		"FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN":    "true",
+		"FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY": "true",
+		"FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS":              "1",
+	})
+	requireSuccessResult(t, result)
+	if !pathExists(filepath.Join(f.syncStateDir, "sync-lease-heartbeat-interruption-started")) {
+		t.Fatal("fixture did not hold the heartbeat renewal failure across API recovery")
+	}
+	operations := readLines(f.operationLog)
+	if count := strings.Count(
+		strings.Join(operations, "\n"),
+		"node-drain:prod-worker-1",
+	); count != 2 {
+		t.Errorf("node drain attempts = %d, want 2", count)
+	}
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+}
+
 func TestTransientDrainRefusesHeartbeatRecoveryAfterLeaseReplacement(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

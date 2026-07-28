@@ -813,21 +813,24 @@ func TestStaleImageVerificationWebhookBudgetIsStagedBeforeRuntimeProbe(t *testin
 	operations := readLines(f.operationLog)
 	dryRun := lineIndex(t, operations, "ivpol-policy-dry-run:verify-app-images")
 	appApply := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
+	consolidatedReady := lineIndex(t, operations, "ivpol-policy-consolidated-ready")
 	ksailDelete := lineIndex(t, operations, "ivpol-policy-delete:verify-ksail-images")
-	webhookReady := lineIndex(t, operations, "ivpol-webhooks-ready")
+	webhookReady := lineIndex(t, operations, "ivpol-policy-webhooks-ready")
 	firstRuntimeProbe := lineIndex(
 		t,
 		operations,
 		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/wedding-app:latest",
 	)
 	if dryRun >= appApply ||
-		appApply >= ksailDelete ||
+		appApply >= consolidatedReady ||
+		consolidatedReady >= ksailDelete ||
 		ksailDelete >= webhookReady ||
 		webhookReady >= firstRuntimeProbe {
 		t.Fatalf(
-			"unsafe image-verification bootstrap ordering: dry-run=%d app apply=%d ksail delete=%d webhook ready=%d runtime probe=%d",
+			"unsafe image-verification bootstrap ordering: dry-run=%d app apply=%d consolidated ready=%d ksail delete=%d webhook ready=%d runtime probe=%d",
 			dryRun,
 			appApply,
+			consolidatedReady,
 			ksailDelete,
 			webhookReady,
 			firstRuntimeProbe,
@@ -923,9 +926,10 @@ func TestImageVerificationWebhookConvergenceFailureFailsClosed(t *testing.T) {
 	requireContains(
 		t,
 		result.stdout+result.stderr,
-		"image-verification admission webhooks did not converge",
+		"image-verification admission webhooks did not become effective before retirement",
 	)
 	operations := readLines(f.operationLog)
+	requireNoLine(t, operations, "ivpol-policy-delete:verify-ksail-images")
 	requireNotContains(t, strings.Join(operations, "\n"), "runtime-probe-success:")
 	requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
 	requireNoLine(t, operations, "root-patch")
@@ -943,7 +947,7 @@ func TestFailOpenEffectiveImageVerificationWebhookFailsClosed(t *testing.T) {
 	requireContains(
 		t,
 		result.stdout+result.stderr,
-		"image-verification admission webhooks did not converge",
+		"image-verification admission webhooks did not become effective before retirement",
 	)
 	if pathExists(f.operationLog) {
 		operations := readLines(f.operationLog)
@@ -964,7 +968,7 @@ func TestFailOpenValidatingImageVerificationWebhookFailsClosed(t *testing.T) {
 	requireContains(
 		t,
 		result.stdout+result.stderr,
-		"image-verification admission webhooks did not converge",
+		"image-verification admission webhooks did not become effective before retirement",
 	)
 	operations := readLines(f.operationLog)
 	requireNotContains(t, strings.Join(operations, "\n"), "runtime-probe-success:")
