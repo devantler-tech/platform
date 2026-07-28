@@ -47,28 +47,28 @@ on:
 
 permissions: {}
 
-# Shared with ci.yaml's merge-queue deploy and cd.yaml's tag deploy so a DR
-# rebuild can never race a regular deploy against the prod cluster.
+# Two locks, because a DR rebuild has two different relationships to worry about
+# and one concurrency block cannot express both.
 #
-# queue: single is the DELIBERATE choice here, and the opposite of the
-# prod-deploy jobs that share this group. Apply the same test they do: is the
-# run an event-carrying state transition, or does it converge?
+# dr-rebuild (workflow level, queue: single) coalesces DR requests against EACH
+# OTHER. A rebuild converges: every dispatch means "make prod exist again from
+# zero", so the newest request subsumes any earlier one. Queueing them instead
+# would let two operators reaching for the button during one incident get TWO
+# from-zero rebuilds, the second tearing down and restoring over the cluster the
+# first had just recovered.
 #
-# A deploy carries a specific revision to the cluster, so dropping one loses
-# that revision — hence queue: max there. A DR rebuild converges: every dispatch
-# means "make prod exist again from zero", and the newest request subsumes any
-# earlier one. Under queue: max, two operators reaching for the button during
-# one incident would get TWO from-zero rebuilds, the second tearing down and
-# restoring over the cluster the first had just recovered. Coalescing to the
-# latest pending request is the safe behaviour for a convergent operation.
+# prod-deploy (job level, queue: max) serializes the rebuild against ci.yaml's
+# merge-queue deploy and cd.yaml's tag deploy, so a DR rebuild can never race a
+# regular deploy against the prod cluster. It queues rather than coalesces
+# because a deploy carries a specific revision, and dropping a pending one loses
+# that revision — the same reason those jobs use queue: max themselves.
 #
-# Accepted residual: a pending DR request is replaced if any newer run enters
-# this group, a merge deploy included. That is the pre-existing behaviour and it
-# is tolerable here because a DR rebuild is operator-attended — someone typed
-# REBUILD-PROD and is watching — so a dropped request is noticed immediately,
-# whereas a duplicate rebuild would run unattended against a recovered cluster.
+# The split is what keeps both true at once. A single shared prod-deploy block
+# would have to pick one policy for both relationships: queue: single there
+# would let a DR dispatch cancel a pending merge deploy, and queue: max there
+# would stack duplicate rebuilds.
 concurrency:
-  group: prod-deploy
+  group: dr-rebuild
   cancel-in-progress: false
   queue: single
 
@@ -77,6 +77,10 @@ jobs:
     name: 🚑 Rebuild prod from zero
     runs-on: ubuntu-latest
     environment: prod
+    concurrency:
+      group: prod-deploy
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read # checkout repository
       packages: write # push OCI artifacts to GHCR

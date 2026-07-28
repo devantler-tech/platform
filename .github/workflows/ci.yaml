@@ -39,6 +39,13 @@ jobs:
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
+      # .github/actionlint.yaml silences actionlint's "unexpected key" diagnostic
+      # for concurrency.queue, which also removes its enum check. This restores it.
+      - name: 🚦 Validate concurrency queue values
+        run: |
+          go test ./scripts/validate-concurrency-queue
+          go run ./scripts/validate-concurrency-queue .github/workflows/*.yaml
+
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter

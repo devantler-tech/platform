@@ -13,8 +13,9 @@
 # concurrency section is still reported, and every other actionlint check is
 # untouched.
 #
-# It does NOT validate the value — `queue: maxx` passes this lint and is caught
-# only by GitHub's own workflow validation at run time.
+# It does NOT validate the value. `scripts/validate-concurrency-queue` supplies
+# the missing enum check, so `queue: maxx` fails CI on the pull request that
+# introduces it rather than at run time on a production deploy.
 #
 # REMOVE THIS once actionlint ships support for the key; tracked per-repo on the
 # rollout epic devantler-tech/monorepo#2453.
