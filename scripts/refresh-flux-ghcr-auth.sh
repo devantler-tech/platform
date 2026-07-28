@@ -1750,10 +1750,7 @@ drain_failed_for_transient_api_transport() {
   # Classify only its terminal drain error so a real PDB timeout is never
   # converted into another eviction attempt.
   LC_ALL=C grep -Eq \
-    '^error: unable to drain node .*('\
-'connection reset by peer|connect: connection refused|'\
-'i/o timeout|TLS handshake timeout|http2: client connection lost|'\
-'no route to host|network is unreachable|unexpected EOF)' \
+    '^error: unable to drain node .*(''connection reset by peer|connect: connection refused|''i/o timeout|TLS handshake timeout|http2: client connection lost|''no route to host|network is unreachable|unexpected EOF)' \
     "${result_file}"
 }
 
