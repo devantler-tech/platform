@@ -53,35 +53,11 @@ extract_cilium_release() {
   '
 }
 
-extract_top_level_update_strategy() {
-  awk '
-    /^    updateStrategy:[[:space:]]*$/ {
-      found = 1
-      print
-      next
-    }
-    found && /^    [^[:space:]]/ { exit }
-    found { print }
-    END { exit !found }
-  '
-}
+extract_top_level_block() {
+  local key="$1"
 
-extract_top_level_encryption() {
-  awk '
-    /^    encryption:[[:space:]]*$/ {
-      found = 1
-      print
-      next
-    }
-    found && /^    [^[:space:]]/ { exit }
-    found { print }
-    END { exit !found }
-  '
-}
-
-extract_top_level_node_port() {
-  awk '
-    /^    nodePort:[[:space:]]*$/ {
+  awk -v key="${key}" '
+    $0 ~ "^    " key ":[[:space:]]*$" {
       found = 1
       print
       next
@@ -205,11 +181,11 @@ read -r private_line homogeneous_line < <(
 
 production_release="$(kubectl kustomize "${controllers_dir}" | extract_cilium_release)" ||
   fail 'the production controllers render has no Cilium HelmRelease'
-production_update_strategy="$(extract_top_level_update_strategy <<<"${production_release}")" ||
+production_update_strategy="$(extract_top_level_block updateStrategy <<<"${production_release}")" ||
   fail 'the production Cilium HelmRelease has no top-level update strategy'
-production_encryption="$(extract_top_level_encryption <<<"${production_release}")" ||
+production_encryption="$(extract_top_level_block encryption <<<"${production_release}")" ||
   fail 'the production Cilium HelmRelease has no top-level encryption settings'
-production_node_port="$(extract_top_level_node_port <<<"${production_release}")" ||
+production_node_port="$(extract_top_level_block nodePort <<<"${production_release}")" ||
   fail 'the production Cilium HelmRelease has no top-level NodePort settings'
 production_upgrade="$(extract_upgrade <<<"${production_release}")" ||
   fail 'the production Cilium HelmRelease has no temporary upgrade handoff'
