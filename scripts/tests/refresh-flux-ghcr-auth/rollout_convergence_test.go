@@ -818,7 +818,7 @@ func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_ONCE_NODES": "prod-control-plane-2",
-		"FAKE_LOG_RUNTIME_PROBE_SUCCESS":                "true",
+		"FAKE_LOG_RUNTIME_PROBE_SUCCESS":               "true",
 	})
 	requireSuccessResult(t, result)
 	if !pathExists(filepath.Join(
