@@ -1044,7 +1044,7 @@ data:
         "actions": [
           "alertOnly"
         ],
-        "reason": "The kubescape node-agent DaemonSet and storage Deployment require privileged host access to scan the node; matched by kind+name so no other workload inherits it.",
+        "reason": "node-agent needs privileged host access for eBPF runtime detection, and the storage aggregated APIserver writes its backing store at runtime; scoped to those two workloads so the operator, kubevuln and scheduler in the same namespace stay subject to these controls.",
         "resources": [
           {
             "designatorType": "Attributes",
@@ -1103,7 +1103,7 @@ data:
         "actions": [
           "alertOnly"
         ],
-        "reason": "C-0017 exceptions for the few NON-privileged workloads that still write to their root filesystem, scoped by namespace so it never suppresses C-0017 for the workloads that DO pass it.",
+        "reason": "opencost-UI (nginx) rewrites its baked /var/www assets in place at boot so it cannot run a read-only root; wedding-app is hardened in a follow-up app release. Scoped by namespace so C-0017 is never suppressed for the workloads that DO pass it.",
         "resources": [
           {
             "designatorType": "Attributes",
