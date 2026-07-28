@@ -104,11 +104,16 @@
 #      cilium-health reachability intact; no new policy-verdict DROPs or
 #      auth-timeout storms in Hubble/agent logs (a `dial <public-ip>:4250`
 #      RATE INCREASE beyond the known #46767 background is a regression).
-#   3. Repeat node by node across all nine; soak.
+#   3. Repeat node by node across all nine; soak. If ANY desired Cilium pod
+#      template value changes while this gate is active, compare every agent's
+#      `pod-template-generation` label with the Cilium DaemonSet generation and
+#      re-step + re-verify every stale node, including nodes verified before the
+#      change. A previous canary result never approves a newer template.
 #   4. After the soak, a follow-up PR removes the `updateStrategy` and
-#      `spec.upgrade.disableWait` overrides from this component — restoring
-#      normal rollout waiting and RollingUpdate changes no current pod template,
-#      so it rolls nothing.
+#      `spec.upgrade.disableWait` overrides from this component. Its pre-publish
+#      guard requires every agent to be Ready at the current DaemonSet generation
+#      before restoring normal rollout waiting, so changing back to RollingUpdate
+#      rolls nothing.
 #   5. The reviewed follow-up that removes the temporary OnDelete override
 #      releases the deploy gate only AFTER its safe artifact reconciles. KSail
 #      cluster update then runs again and the post-deploy guard restores the

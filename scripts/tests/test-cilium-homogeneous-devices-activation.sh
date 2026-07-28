@@ -222,10 +222,9 @@ reject_pattern \
   "${production_release}" \
   "${private_devices_pattern}" \
   'the active production render must not retain the private-only device pin'
-require_text \
-  "${production_node_port}" \
-  '- 10.0.0.0/16' \
-  'the public-NIC device set must restrict NodePort listeners to private node addresses'
+readonly expected_node_port=$'    nodePort:\n      addresses:\n      - 10.0.0.0/16'
+[[ "${production_node_port}" == "${expected_node_port}" ]] ||
+  fail 'the public-NIC device set must expose NodePort on only the private node CIDR'
 require_text \
   "${production_update_strategy}" \
   'rollingUpdate: null' \

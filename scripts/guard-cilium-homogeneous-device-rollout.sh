@@ -24,6 +24,8 @@ readonly jq_bin="${JQ:-jq}"
 readonly hcloud_api_url="${HCLOUD_API_URL:-https://api.hetzner.cloud/v1}"
 readonly namespace='kube-system'
 readonly deployment='cluster-autoscaler-hetzner-cluster-autoscaler'
+readonly cilium_daemonset='cilium'
+readonly cilium_selector='k8s-app=cilium'
 readonly previous_replicas_annotation='platform.devantler.tech/cilium-device-rollout-previous-replicas'
 readonly previous_replicas_jsonpath='{.metadata.annotations.platform\.devantler\.tech/cilium-device-rollout-previous-replicas}'
 readonly rollout_wait_seconds="${ROLLOUT_WAIT_SECONDS:-120}"
@@ -199,10 +201,58 @@ restore_autoscaler_if_owned() {
     "${previous_replicas}"
 }
 
+require_cilium_fleet_current() {
+  local daemonset_json pods_json generation scheduled ready pod_count stale_nodes
+  daemonset_json="$(
+    kubectl_prod -n "${namespace}" get daemonset "${cilium_daemonset}" -o json
+  )"
+  pods_json="$(
+    kubectl_prod -n "${namespace}" get pods -l "${cilium_selector}" -o json
+  )"
+  generation="$(
+    "${jq_bin}" -er '.metadata.generation | tostring' <<<"${daemonset_json}"
+  )" || fail 'the Cilium DaemonSet has no observable template generation'
+  scheduled="$(
+    "${jq_bin}" -er '.status.currentNumberScheduled // 0' <<<"${daemonset_json}"
+  )" || fail 'the Cilium DaemonSet has no scheduled-agent count'
+  ready="$(
+    "${jq_bin}" -er '.status.numberReady // 0' <<<"${daemonset_json}"
+  )" || fail 'the Cilium DaemonSet has no ready-agent count'
+  pod_count="$(
+    "${jq_bin}" -er '.items | length' <<<"${pods_json}"
+  )" || fail 'the Cilium pod inventory is unreadable'
+  stale_nodes="$(
+    # shellcheck disable=SC2016
+    "${jq_bin}" -er --arg generation "${generation}" '
+      [.items[]
+        | select(
+            .metadata.labels["pod-template-generation"] != $generation or
+            ([.status.containerStatuses[]?
+              | select(.name == "cilium-agent" and .ready == true)]
+              | length) != 1
+          )
+        | .spec.nodeName]
+      | sort
+      | join(",")
+    ' <<<"${pods_json}"
+  )" || fail 'the Cilium pod template generations are unreadable'
+
+  require_replica_count "${generation}" 'Cilium DaemonSet generation'
+  require_replica_count "${scheduled}" 'scheduled Cilium agent count'
+  require_replica_count "${ready}" 'ready Cilium agent count'
+  require_replica_count "${pod_count}" 'observed Cilium pod count'
+  [[ "${pod_count}" == "${scheduled}" && "${ready}" == "${scheduled}" &&
+    -z "${stale_nodes}" ]] ||
+    fail "Cilium rollout is incomplete for DaemonSet generation ${generation}: scheduled=${scheduled} pods=${pod_count} ready=${ready} stale_nodes=${stale_nodes:-<none>}"
+}
+
 if [[ "${rollout_gate_active}" == true ]]; then
   suspend_autoscaler
 elif [[ "${phase}" == '--after-deploy' ]]; then
   restore_autoscaler_if_owned
+elif [[ -n "$(get_previous_replicas)" ]]; then
+  require_cilium_fleet_current
+  printf 'Cilium homogeneous-device rollout is complete at the current DaemonSet generation; gate removal may publish.\n'
 else
   printf 'Cilium homogeneous-device rollout gate inactive: leaving Cluster Autoscaler unchanged before publish.\n'
 fi

@@ -86,6 +86,8 @@ printf '1\n' >"${state_dir}/status-replicas"
 : >"${state_dir}/commands"
 : >"${state_dir}/provider-commands"
 printf '123\n' >"${state_dir}/provider-id"
+printf '17\n' >"${state_dir}/cilium-generation"
+printf '16\n' >"${state_dir}/cilium-pod-generation"
 : >"${state_dir}/github-output"
 
 cat >"${fake_kubectl}" <<'FAKE_KUBECTL'
@@ -95,6 +97,16 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${KUBECTL_STATE}/commands"
 
 case "$*" in
+  *"get daemonset cilium"*"-o json"*)
+    generation="$(<"${KUBECTL_STATE}/cilium-generation")"
+    printf '{"metadata":{"generation":%s},"status":{"currentNumberScheduled":1,"numberReady":1}}\n' \
+      "${generation}"
+    ;;
+  *"get pods"*"-l k8s-app=cilium"*"-o json"*)
+    generation="$(<"${KUBECTL_STATE}/cilium-pod-generation")"
+    printf '{"items":[{"metadata":{"labels":{"pod-template-generation":"%s"}},"spec":{"nodeName":"prod-worker-1"},"status":{"containerStatuses":[{"name":"cilium-agent","ready":true}]}}]}\n' \
+      "${generation}"
+    ;;
   *"get nodes"*"-o json"*)
     printf '%s\n' '{"items":[{"metadata":{"name":"autoscale-test"},"spec":{"providerID":"hcloud://123"}}]}'
     ;;
@@ -170,6 +182,10 @@ run_guard --after-deploy
   fail 'reasserting the gate must not overwrite the remembered replica count'
 
 sed -i.bak '/type: OnDelete/d' "${fixture_component}/kustomization.yaml"
+if run_guard --before-publish; then
+  fail 'gate removal must reject a Cilium agent that has not consumed the current template'
+fi
+printf '17\n' >"${state_dir}/cilium-pod-generation"
 run_guard --before-publish
 [[ "$(tail -n 1 "${state_dir}/github-output")" == 'active=false' ]] ||
   fail 'the pre-publish phase must release cluster update after the safe gate removal'
