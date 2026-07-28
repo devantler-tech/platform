@@ -699,6 +699,26 @@ func TestImageVerificationWebhookConvergenceFailureFailsClosed(t *testing.T) {
 	requireNoLine(t, operations, "root-patch")
 }
 
+func TestFailOpenEffectiveImageVerificationWebhookFailsClosed(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_IMAGE_VERIFICATION_WEBHOOKS_FAIL_OPEN": "true",
+		"FLUX_GHCR_SYNC_ATTEMPTS":                    "3",
+		"FLUX_GHCR_SYNC_INTERVAL":                    "0",
+	})
+	requireFailureResult(t, result)
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"image-verification admission webhooks did not converge",
+	)
+	if pathExists(f.operationLog) {
+		operations := readLines(f.operationLog)
+		requireNotContains(t, strings.Join(operations, "\n"), "node-drain:")
+		requireNoLine(t, operations, "root-patch")
+	}
+}
+
 func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{

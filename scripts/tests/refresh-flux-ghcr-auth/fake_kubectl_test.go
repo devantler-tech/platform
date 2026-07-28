@@ -147,6 +147,10 @@ func fakeKubectlGetImageVerificationWebhooks() int {
 	converged := !stale ||
 		(markerExists("ivpol-timeout-verify-app-images") &&
 			markerExists("ivpol-timeout-verify-ksail-images"))
+	failurePolicy := "Fail"
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_FAIL_OPEN") == "true" {
+		failurePolicy = "Ignore"
+	}
 	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_NEVER_CONVERGE") == "true" {
 		converged = false
 	}
@@ -160,6 +164,7 @@ func fakeKubectlGetImageVerificationWebhooks() int {
 					"path":      "/ivpol/mutate/verify-app-images/verify-ksail-images",
 				},
 			},
+			"failurePolicy":  failurePolicy,
 			"timeoutSeconds": 10,
 		},
 	}
@@ -174,6 +179,7 @@ func fakeKubectlGetImageVerificationWebhooks() int {
 						"path":      "/ivpol/mutate/verify-app-images",
 					},
 				},
+				"failurePolicy":  failurePolicy,
 				"timeoutSeconds": 30,
 			},
 			map[string]any{
@@ -185,6 +191,7 @@ func fakeKubectlGetImageVerificationWebhooks() int {
 						"path":      "/ivpol/mutate/verify-ksail-images",
 					},
 				},
+				"failurePolicy":  failurePolicy,
 				"timeoutSeconds": 30,
 			},
 		}

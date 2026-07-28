@@ -679,12 +679,14 @@ stage_image_verification_webhook_budget() {
           $webhooks[];
           (.clientConfig.service.path // "")
             == "/ivpol/mutate/verify-app-images"
+          and .failurePolicy == "Fail"
           and .timeoutSeconds == $timeout
         )
       and any(
         $webhooks[];
         (.clientConfig.service.path // "")
           == "/ivpol/mutate/verify-ksail-images"
+        and .failurePolicy == "Fail"
         and .timeoutSeconds == $timeout
       )
       and all(
@@ -694,8 +696,12 @@ stage_image_verification_webhook_budget() {
             ($path | contains("verify-app-images"))
             or ($path | contains("verify-ksail-images"))
           ) then
-            $path == "/ivpol/mutate/verify-app-images"
-            or $path == "/ivpol/mutate/verify-ksail-images"
+            (
+              $path == "/ivpol/mutate/verify-app-images"
+              or $path == "/ivpol/mutate/verify-ksail-images"
+            )
+            and .failurePolicy == "Fail"
+            and .timeoutSeconds == $timeout
           else
             true
           end
