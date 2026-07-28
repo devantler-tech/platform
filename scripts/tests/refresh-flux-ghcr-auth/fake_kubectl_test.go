@@ -35,6 +35,10 @@ func fakeKubectlImplementation(args []string) int {
 	case containsArg(args, "--raw=/readyz"):
 		fmt.Println("ok")
 		return 0
+	case containsSequence(args, "get", "kustomizations.kustomize.toolkit.fluxcd.io"):
+		return fakeKubectlGetFluxPolicyKustomization(args, namespace)
+	case containsSequence(args, "patch", "kustomizations.kustomize.toolkit.fluxcd.io"):
+		return fakeKubectlPatchFluxPolicyKustomization(args, namespace, patchFile)
 	case containsSequence(args, "get", "lease"):
 		return fakeKubectlGetSyncLease(args, namespace)
 	case containsSequence(args, "patch", "lease"):
@@ -99,6 +103,140 @@ func fakeKubectlImplementation(args []string) int {
 	}
 
 	return commandFailure(91, "unexpected kubectl invocation: %s", strings.Join(args, " "))
+}
+
+func fakeKubectlGetFluxPolicyKustomization(args []string, namespace string) int {
+	if namespace != "flux-system" ||
+		argumentAfter(args, "kustomizations.kustomize.toolkit.fluxcd.io") != "infrastructure" ||
+		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
+		return commandFailure(91, "invalid Flux policy Kustomization lookup")
+	}
+	owner := markerContent("flux-policy-handoff-owner")
+	if owner == "" && os.Getenv("FAKE_FLUX_POLICY_HANDOFF_OWNED") == "true" {
+		owner = "other-live-transaction"
+	}
+	annotations := map[string]any{
+		"reconcile.fluxcd.io/requestedAt": "fixture",
+	}
+	if owner != "" {
+		annotations["platform.devantler.tech/ghcr-policy-handoff-owner"] = owner
+	}
+	if markerExists("flux-policy-handoff-suspended") {
+		annotations["kustomize.toolkit.fluxcd.io/reconcile"] = "disabled"
+	}
+	generation := 13
+	suspended := markerExists("flux-policy-handoff-suspended")
+	if suspended {
+		generation = 14
+	}
+	conditions := []any{
+		map[string]any{
+			"type":   "Ready",
+			"status": "True",
+			"reason": "ReconciliationSucceeded",
+		},
+	}
+	if os.Getenv("FAKE_FLUX_POLICY_RECONCILING") == "true" {
+		conditions = append(conditions, map[string]any{
+			"type":   "Reconciling",
+			"status": "True",
+			"reason": "Progressing",
+		})
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata": map[string]any{
+			"name":            "infrastructure",
+			"namespace":       "flux-system",
+			"uid":             "infrastructure-kustomization-uid",
+			"resourceVersion": defaultString(markerContent("flux-policy-handoff-resource-version"), "20"),
+			"generation":      generation,
+			"annotations":     annotations,
+		},
+		"spec": map[string]any{
+			"suspend": suspended,
+		},
+		"status": map[string]any{
+			"observedGeneration": 13,
+			"conditions":         conditions,
+		},
+	}))
+	return 0
+}
+
+func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile string) int {
+	if namespace != "flux-system" ||
+		argumentAfter(args, "kustomizations.kustomize.toolkit.fluxcd.io") != "infrastructure" ||
+		!containsArg(args, "--type=json") || patchFile == "" {
+		return commandFailure(91, "invalid Flux policy Kustomization patch")
+	}
+	var patch []jsonPatchOperation
+	if err := json.Unmarshal([]byte(mustReadCommandFile(patchFile)), &patch); err != nil {
+		return commandFailure(91, "parse Flux policy Kustomization patch: %v", err)
+	}
+	currentResourceVersion := defaultString(
+		markerContent("flux-policy-handoff-resource-version"),
+		"20",
+	)
+	if !hasPatchOperation(
+		patch,
+		"test",
+		"/metadata/uid",
+		"infrastructure-kustomization-uid",
+	) {
+		return commandFailure(56, "Flux policy Kustomization CAS failed")
+	}
+
+	ownerPath := "/metadata/annotations/platform.devantler.tech~1ghcr-policy-handoff-owner"
+	reconcilePath := "/metadata/annotations/kustomize.toolkit.fluxcd.io~1reconcile"
+	if hasPatchOperation(patch, "add", "/spec/suspend", true) {
+		owner := patchValueString(patch, "add", ownerPath)
+		if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
+			owner == "" ||
+			!hasPatchOperation(patch, "add", reconcilePath, "disabled") ||
+			markerExists("flux-policy-handoff-owner") {
+			return commandFailure(56, "invalid or conflicting Flux policy handoff acquisition")
+		}
+		setMarkerContent("flux-policy-handoff-owner", owner)
+		touchMarker("flux-policy-handoff-suspended")
+		setMarkerContent(
+			"flux-policy-handoff-resource-version",
+			incrementDecimal(currentResourceVersion),
+		)
+		appendEnvFile("OPERATION_LOG", "flux-policy-pause:infrastructure\n")
+		return fakeKubectlGetFluxPolicyKustomization(
+			[]string{
+				"get",
+				"kustomizations.kustomize.toolkit.fluxcd.io",
+				"infrastructure",
+				"-o",
+				"json",
+			},
+			namespace,
+		)
+	}
+
+	currentOwner := markerContent("flux-policy-handoff-owner")
+	if currentOwner == "" ||
+		!markerExists("flux-policy-handoff-suspended") ||
+		!hasPatchOperation(patch, "test", ownerPath, currentOwner) ||
+		!hasPatchOperation(patch, "test", reconcilePath, "disabled") ||
+		!hasPatchOperation(patch, "test", "/spec/suspend", true) ||
+		!hasPatchOperation(patch, "add", "/spec/suspend", false) ||
+		!hasPatchPath(patch, "remove", ownerPath) ||
+		!hasPatchPath(patch, "remove", reconcilePath) {
+		return commandFailure(56, "invalid Flux policy handoff release")
+	}
+	removeMarker("flux-policy-handoff-owner")
+	removeMarker("flux-policy-handoff-suspended")
+	setMarkerContent(
+		"flux-policy-handoff-resource-version",
+		incrementDecimal(currentResourceVersion),
+	)
+	appendEnvFile("OPERATION_LOG", "flux-policy-resume:infrastructure\n")
+	fmt.Println("kustomization.kustomize.toolkit.fluxcd.io/infrastructure patched")
+	return 0
 }
 
 func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile string) int {

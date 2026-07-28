@@ -143,6 +143,7 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		readLines(f.operationLog),
 		"ivpol-policy-",
 	), []string{
+		"flux-policy-pause:infrastructure",
 		"variables-patch",
 		"fanout:pushsecret/flux-system/seed-ghcr",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
@@ -172,6 +173,7 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		"fanout:externalsecret/ascoachingogvaner/ghcr-auth",
 		"fanout:externalsecret/kyverno/ghcr-auth",
 		"root-patch",
+		"flux-policy-resume:infrastructure",
 	})
 	temporaryPatch := strings.TrimSpace(mustRead(f.talosPatchPathLog))
 	if pathExists(temporaryPatch) {

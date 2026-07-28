@@ -568,6 +568,7 @@ func TestUnreadyNodeAfterRebootStopsTheRoll(t *testing.T) {
 		readLines(f.operationLog),
 		"ivpol-policy-",
 	), []string{
+		"flux-policy-pause:infrastructure",
 		"variables-patch",
 		"fanout:pushsecret/flux-system/seed-ghcr",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
@@ -578,6 +579,7 @@ func TestUnreadyNodeAfterRebootStopsTheRoll(t *testing.T) {
 		"node-drain:prod-worker-1",
 		"talos-reboot:10.0.0.2",
 		"node-ready:prod-worker-1",
+		"flux-policy-resume:infrastructure",
 	})
 	requireNotContains(t, result.stdout+result.stderr, "fixture-secret-token")
 }

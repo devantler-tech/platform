@@ -47,6 +47,12 @@ readonly IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS=30
 readonly IMAGE_VERIFICATION_POLICY="verify-app-images"
 readonly RETIRED_IMAGE_VERIFICATION_POLICY="verify-ksail-images"
 readonly IMAGE_VERIFICATION_POLICY_FILE="k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
+readonly IMAGE_VERIFICATION_FLUX_KUSTOMIZATION="infrastructure"
+readonly FLUX_KUSTOMIZATION_RESOURCE="kustomizations.kustomize.toolkit.fluxcd.io"
+readonly FLUX_POLICY_HANDOFF_OWNER_ANNOTATION="platform.devantler.tech/ghcr-policy-handoff-owner"
+readonly FLUX_POLICY_HANDOFF_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-policy-handoff-owner"
+readonly FLUX_RECONCILE_ANNOTATION="kustomize.toolkit.fluxcd.io/reconcile"
+readonly FLUX_RECONCILE_JSON_PATH="/metadata/annotations/kustomize.toolkit.fluxcd.io~1reconcile"
 readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
 readonly SYNC_LEASE_DURATION_SECONDS=120
 readonly SYNC_LEASE_HEARTBEAT_SECONDS=30
@@ -117,6 +123,12 @@ cleanup_refresh_work() {
       --wait=false \
       >/dev/null 2>&1 || true
   fi
+  if declare -F resume_flux_policy_handoff >/dev/null &&
+    [[ "${flux_policy_handoff_acquired:-false}" == "true" ]] &&
+    ! resume_flux_policy_handoff; then
+    cleanup_status=1
+    echo "::error::Could not safely resume Flux policy reconciliation; the ownership annotation was retained for explicit recovery."
+  fi
   if ! cleanup_bootstrap_quarantine; then
     cleanup_status=1
     echo "::error::Bootstrap quarantine cleanup was incomplete; durable recovery annotations remain on the affected nodes."
@@ -174,6 +186,9 @@ image_verification_policy_patch_file="${work_dir}/image-verification-policy-patc
 image_verification_policy_result_file="${work_dir}/image-verification-policy-result.txt"
 image_verification_mutating_webhooks_file="${work_dir}/image-verification-mutating-webhooks.json"
 image_verification_validating_webhooks_file="${work_dir}/image-verification-validating-webhooks.json"
+flux_policy_handoff_state_file="${work_dir}/flux-policy-handoff-state.json"
+flux_policy_handoff_patch_file="${work_dir}/flux-policy-handoff-patch.json"
+flux_policy_handoff_result_file="${work_dir}/flux-policy-handoff-result.txt"
 recovery_nodes_file="${work_dir}/recovery-nodes.json"
 recovery_node_file="${work_dir}/recovery-node.json"
 recovery_targets_file="${work_dir}/recovery-targets.jsonl"
@@ -191,6 +206,9 @@ variables_secret_cas_patch_file="${work_dir}/variables-secret-cas-patch.json"
 sync_lease_holder=""
 sync_lease_acquired=false
 sync_lease_heartbeat_pid=""
+flux_policy_handoff_acquired=false
+flux_policy_handoff_owner=""
+flux_policy_handoff_uid=""
 runtime_probe_sequence=0
 runtime_probe_bootstrap_needed=0
 
@@ -2739,6 +2757,152 @@ release_sync_lease() {
   sync_lease_acquired=false
 }
 
+# The live image-verification policies are owned by the infrastructure Flux
+# Kustomization, which is itself owned by the root flux-system Kustomization.
+# Fence both levels for the complete runtime-proof window: suspend the child
+# and add Flux's documented per-resource reconciliation exclusion so the parent
+# cannot restore the Git version between a policy check and Pod admission.
+flux_policy_handoff_is_stable() {
+  jq -e \
+    --arg uid "${flux_policy_handoff_uid}" \
+    --arg owner_annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" \
+    --arg reconcile_annotation "${FLUX_RECONCILE_ANNOTATION}" \
+    --arg owner "${flux_policy_handoff_owner}" '
+    .metadata.uid == $uid
+    and ((.metadata.annotations // {})[$owner_annotation] == $owner)
+    and ((.metadata.annotations // {})[$reconcile_annotation] == "disabled")
+    and .spec.suspend == true
+    and (any(.status.conditions[]?;
+      .type == "Reconciling" and .status == "True") | not)
+  ' "${flux_policy_handoff_state_file}" >/dev/null
+}
+
+pause_flux_policy_handoff() {
+  local resource_version attempt
+
+  assert_sync_lease_held || return 1
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+    "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+    -o json >"${flux_policy_handoff_state_file}"; then
+    echo "::error::Could not inspect the Flux owner of the image-verification policies."
+    return 1
+  fi
+  if jq -e \
+    --arg annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" '
+    ((.metadata.annotations // {})[$annotation] // "") != ""
+  ' "${flux_policy_handoff_state_file}" >/dev/null; then
+    echo "::error::Another transaction already owns the image-verification policy handoff; refusing cluster mutation."
+    return 1
+  fi
+  if ! jq -e \
+    --arg reconcile_annotation "${FLUX_RECONCILE_ANNOTATION}" '
+    .kind == "Kustomization"
+    and (.metadata.uid | type == "string" and length > 0)
+    and (.metadata.resourceVersion | type == "string" and length > 0)
+    and (.metadata.generation | type == "number" and . > 0)
+    and ((.metadata.annotations // {}) | type == "object")
+    and (((.metadata.annotations // {})[$reconcile_annotation] // "") == "")
+    and ((.spec.suspend // false) == false)
+  ' "${flux_policy_handoff_state_file}" >/dev/null; then
+    echo "::error::The Flux image-verification policy owner is malformed, already suspended, or already excluded from reconciliation."
+    return 1
+  fi
+
+  resource_version="$(jq -er '.metadata.resourceVersion' \
+    "${flux_policy_handoff_state_file}")"
+  flux_policy_handoff_uid="$(jq -er '.metadata.uid' \
+    "${flux_policy_handoff_state_file}")"
+  flux_policy_handoff_owner="${sync_lease_holder}"
+  jq -n \
+    --arg resource_version "${resource_version}" \
+    --arg uid "${flux_policy_handoff_uid}" \
+    --arg owner_path "${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}" \
+    --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
+    --arg owner "${flux_policy_handoff_owner}" '
+    [
+      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
+      {op: "test", path: "/metadata/uid", value: $uid},
+      {op: "add", path: $owner_path, value: $owner},
+      {op: "add", path: $reconcile_path, value: "disabled"},
+      {op: "add", path: "/spec/suspend", value: true}
+    ]
+  ' >"${flux_policy_handoff_patch_file}"
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
+    "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+    --type=json \
+    --patch-file="${flux_policy_handoff_patch_file}" \
+    -o json \
+    >"${flux_policy_handoff_state_file}" \
+    2>"${flux_policy_handoff_result_file}"; then
+    echo "::error::Could not atomically pause the Flux image-verification policy owner."
+    return 1
+  fi
+  flux_policy_handoff_acquired=true
+
+  # A suspended reconciliation intentionally does not advance
+  # status.observedGeneration. The atomic patch response proves both fences;
+  # only an already in-flight reconciliation needs polling until it quiesces.
+  if flux_policy_handoff_is_stable; then
+    return 0
+  fi
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+      -o json >"${flux_policy_handoff_state_file}"; then
+      sleep "${SYNC_INTERVAL}"
+      continue
+    fi
+    if flux_policy_handoff_is_stable; then
+      return 0
+    fi
+    sleep "${SYNC_INTERVAL}"
+  done
+
+  echo "::error::Flux did not acknowledge a stable pause of the image-verification policy owner."
+  return 1
+}
+
+resume_flux_policy_handoff() {
+  [[ "${flux_policy_handoff_acquired}" == "true" ]] || return 0
+  jq -n \
+    --arg uid "${flux_policy_handoff_uid}" \
+    --arg owner_path "${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}" \
+    --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
+    --arg owner "${flux_policy_handoff_owner}" '
+    [
+      {op: "test", path: "/metadata/uid", value: $uid},
+      {op: "test", path: $owner_path, value: $owner},
+      {op: "test", path: $reconcile_path, value: "disabled"},
+      {op: "test", path: "/spec/suspend", value: true},
+      {op: "add", path: "/spec/suspend", value: false},
+      {op: "remove", path: $owner_path},
+      {op: "remove", path: $reconcile_path}
+    ]
+  ' >"${flux_policy_handoff_patch_file}"
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
+    "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+    --type=json \
+    --patch-file="${flux_policy_handoff_patch_file}" \
+    >"${flux_policy_handoff_result_file}" 2>&1; then
+    return 1
+  fi
+  flux_policy_handoff_acquired=false
+  flux_policy_handoff_owner=""
+  flux_policy_handoff_uid=""
+}
+
 # Every Secret write is fenced by the resourceVersion observed after a
 # foreground lease renewal. A delayed request from an expired lease holder can
 # therefore never overwrite a newer transaction that has already updated the
@@ -2923,10 +3087,12 @@ fi
 # Existing clusters update and verify the whole SOPS -> variables-base ->
 # PushSecret -> OpenBao -> ExternalSecret chain before the first Talos drain.
 # Root Flux auth remains last so any failed node proof leaves it unchanged.
+pause_flux_policy_handoff
 stage_fanout_before_talos \
   "${pull_revision}" \
   "${KSAIL_OPERATOR_IMAGE}" \
   "${talos_stage_result_file}" \
   "${FANOUT_NAMESPACES[@]}"
+resume_flux_policy_handoff
 
 echo "✅ Synchronised every existing consumer and refreshed root Flux GHCR auth from Git/SOPS."

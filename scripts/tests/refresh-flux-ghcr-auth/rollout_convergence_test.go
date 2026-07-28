@@ -652,6 +652,75 @@ func TestRuntimeProbeRejectsInjectedImagePullSecret(t *testing.T) {
 	requireNoLine(t, operations, "root-patch")
 }
 
+func TestFluxPolicyHandoffSuspendsOwningReconcileAcrossRuntimeProof(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_LOG_RUNTIME_PROBE_SUCCESS": "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	pause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
+	firstPolicyApply := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
+	firstRuntimeProbe := lineIndex(
+		t,
+		operations,
+		"runtime-probe-success:prod-control-plane-2:ghcr.io/devantler-tech/wedding-app:latest",
+	)
+	rootPatch := lineIndex(t, operations, "root-patch")
+	resume := lineIndex(t, operations, "flux-policy-resume:infrastructure")
+	if pause >= firstPolicyApply ||
+		firstPolicyApply >= firstRuntimeProbe ||
+		firstRuntimeProbe >= rootPatch ||
+		rootPatch >= resume {
+		t.Fatalf(
+			"unsafe Flux policy handoff ordering: pause=%d policy=%d probe=%d root=%d resume=%d",
+			pause,
+			firstPolicyApply,
+			firstRuntimeProbe,
+			rootPatch,
+			resume,
+		)
+	}
+	if pathExists(filepath.Join(f.syncStateDir, "flux-policy-handoff-owner")) {
+		t.Fatal("successful run left Flux policy handoff ownership behind")
+	}
+}
+
+func TestFluxPolicyHandoffResumesAfterPolicyStageFailure(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_IMAGE_VERIFICATION_POLICY_DRY_RUN_FAILURE": "true",
+	})
+	requireFailureResult(t, result)
+	operations := readLines(f.operationLog)
+	pause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
+	resume := lineIndex(t, operations, "flux-policy-resume:infrastructure")
+	if pause >= resume {
+		t.Fatalf("Flux policy handoff resumed before it was acquired: pause=%d resume=%d", pause, resume)
+	}
+	requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
+	requireNoLine(t, operations, "root-patch")
+	if pathExists(filepath.Join(f.syncStateDir, "flux-policy-handoff-owner")) {
+		t.Fatal("failed policy stage left Flux policy handoff ownership behind")
+	}
+}
+
+func TestExistingFluxPolicyHandoffOwnerBlocksBeforeMutation(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_HANDOFF_OWNED": "true",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "already owns the image-verification policy handoff")
+	if pathExists(f.operationLog) {
+		operations := readLines(f.operationLog)
+		requireNoLine(t, operations, "flux-policy-pause:infrastructure")
+		requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
+		requireNoLine(t, operations, "node-claim-cordon:prod-worker-1")
+		requireNoLine(t, operations, "root-patch")
+	}
+}
+
 func TestStaleImageVerificationWebhookBudgetIsStagedBeforeRuntimeProbe(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
