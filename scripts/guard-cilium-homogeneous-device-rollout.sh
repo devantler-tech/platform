@@ -94,20 +94,23 @@ get_approved_template_sha() {
 
 candidate_template_sha() {
   local cilium_spec substitution_sources
+  # shellcheck disable=SC2016
   cilium_spec="$(
     "${kubectl_bin}" kustomize "${controllers_dir}" |
-      "${yq_bin}" -o=json -I=0 '
-        select(
-          .apiVersion == "helm.toolkit.fluxcd.io/v2" and
-          .kind == "HelmRelease" and
-          .metadata.namespace == "kube-system" and
-          .metadata.name == "cilium"
-        )
-        | .spec
-        | del(.values.updateStrategy, .upgrade.disableWait)
-      ' - |
-      "${jq_bin}" -csS '
-        if length == 1 then
+      "${yq_bin}" -o=json -I=0 '.' - |
+      "${jq_bin}" -csS --arg namespace "${namespace}" '
+        [
+          .[]
+          | select(
+              .apiVersion == "helm.toolkit.fluxcd.io/v2" and
+              .kind == "HelmRelease" and
+              .metadata.namespace == $namespace and
+              .metadata.name == "cilium"
+            )
+          | .spec
+          | del(.values.updateStrategy, .upgrade.disableWait)
+        ]
+        | if length == 1 then
           .[0]
         else
           error("expected exactly one rendered Cilium HelmRelease")
@@ -337,7 +340,7 @@ restore_autoscaler_if_owned() {
 }
 
 require_cilium_fleet_current() {
-  local daemonset_json pods_json generation observed desired scheduled ready pod_count stale_nodes
+  local daemonset_json pods_json generation observed desired scheduled updated ready pod_count stale_nodes
   daemonset_json="$(
     kubectl_prod -n "${namespace}" get daemonset "${cilium_daemonset}" -o json
   )"
@@ -356,6 +359,9 @@ require_cilium_fleet_current() {
   scheduled="$(
     "${jq_bin}" -er '.status.currentNumberScheduled | tostring' <<<"${daemonset_json}"
   )" || fail 'the Cilium DaemonSet has no scheduled-agent count'
+  updated="$(
+    "${jq_bin}" -er '.status.updatedNumberScheduled | tostring' <<<"${daemonset_json}"
+  )" || fail 'the Cilium DaemonSet has no updated-agent count'
   ready="$(
     "${jq_bin}" -er '.status.numberReady | tostring' <<<"${daemonset_json}"
   )" || fail 'the Cilium DaemonSet has no ready-agent count'
@@ -382,14 +388,16 @@ require_cilium_fleet_current() {
   require_replica_count "${observed}" 'observed Cilium DaemonSet generation'
   require_replica_count "${desired}" 'desired Cilium agent count'
   require_replica_count "${scheduled}" 'scheduled Cilium agent count'
+  require_replica_count "${updated}" 'updated Cilium agent count'
   require_replica_count "${ready}" 'ready Cilium agent count'
   require_replica_count "${pod_count}" 'observed Cilium pod count'
   ((desired > 0)) ||
     fail 'Cilium rollout cannot complete with zero desired agents'
   [[ "${observed}" == "${generation}" && "${scheduled}" == "${desired}" &&
+    "${updated}" == "${desired}" &&
     "${pod_count}" == "${desired}" &&
-    "${ready}" == "${desired}" && -z "${stale_nodes}" ]] ||
-    fail "Cilium rollout is incomplete for DaemonSet generation ${generation}: observed=${observed} desired=${desired} scheduled=${scheduled} pods=${pod_count} ready=${ready} stale_nodes=${stale_nodes:-<none>}"
+    "${ready}" == "${desired}" ]] ||
+    fail "Cilium rollout is incomplete for DaemonSet generation ${generation}: observed=${observed} desired=${desired} scheduled=${scheduled} updated=${updated} pods=${pod_count} ready=${ready} stale_nodes=${stale_nodes:-<none>}"
 }
 
 if [[ "${rollout_gate_active}" == true ]]; then

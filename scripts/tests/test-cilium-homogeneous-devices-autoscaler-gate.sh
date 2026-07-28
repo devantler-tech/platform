@@ -100,6 +100,7 @@ printf '17\n' >"${state_dir}/cilium-observed-generation"
 printf '16\n' >"${state_dir}/cilium-pod-generation"
 printf '1\n' >"${state_dir}/cilium-desired"
 printf '1\n' >"${state_dir}/cilium-current"
+printf '1\n' >"${state_dir}/cilium-updated"
 printf '1\n' >"${state_dir}/cilium-ready"
 printf 'true\n' >"${state_dir}/cilium-pod-present"
 printf 'approved\n' >"${state_dir}/cilium-template-value"
@@ -169,9 +170,10 @@ EOF
     observed_generation="$(<"${KUBECTL_STATE}/cilium-observed-generation")"
     desired="$(<"${KUBECTL_STATE}/cilium-desired")"
     current="$(<"${KUBECTL_STATE}/cilium-current")"
+    updated="$(<"${KUBECTL_STATE}/cilium-updated")"
     ready="$(<"${KUBECTL_STATE}/cilium-ready")"
-    printf '{"metadata":{"generation":%s},"status":{"observedGeneration":%s,"desiredNumberScheduled":%s,"currentNumberScheduled":%s,"numberReady":%s}}\n' \
-      "${generation}" "${observed_generation}" "${desired}" "${current}" "${ready}"
+    printf '{"metadata":{"generation":%s},"status":{"observedGeneration":%s,"desiredNumberScheduled":%s,"currentNumberScheduled":%s,"updatedNumberScheduled":%s,"numberReady":%s}}\n' \
+      "${generation}" "${observed_generation}" "${desired}" "${current}" "${updated}" "${ready}"
     ;;
   *"get pods"*"-l k8s-app=cilium"*"-o json"*)
     if [[ "$(<"${KUBECTL_STATE}/cilium-pod-present")" == 'true' ]]; then
@@ -305,6 +307,7 @@ fi
 printf '2\n' >"${state_dir}/cilium-substitution-value"
 printf '0\n' >"${state_dir}/cilium-desired"
 printf '0\n' >"${state_dir}/cilium-current"
+printf '0\n' >"${state_dir}/cilium-updated"
 printf '0\n' >"${state_dir}/cilium-ready"
 printf 'false\n' >"${state_dir}/cilium-pod-present"
 if run_guard --before-publish; then
@@ -315,6 +318,7 @@ if run_guard --before-publish; then
   fail 'gate removal must reject a fleet missing a desired Cilium agent'
 fi
 printf '1\n' >"${state_dir}/cilium-current"
+printf '1\n' >"${state_dir}/cilium-updated"
 printf '1\n' >"${state_dir}/cilium-ready"
 printf 'true\n' >"${state_dir}/cilium-pod-present"
 printf '16\n' >"${state_dir}/cilium-observed-generation"
@@ -324,10 +328,11 @@ if run_guard --before-publish; then
 fi
 printf '17\n' >"${state_dir}/cilium-observed-generation"
 printf '16\n' >"${state_dir}/cilium-pod-generation"
+printf '0\n' >"${state_dir}/cilium-updated"
 if run_guard --before-publish; then
-  fail 'gate removal must reject a Cilium agent that has not consumed the current template'
+  fail 'gate removal must reject a DaemonSet that has not updated every desired agent'
 fi
-printf '17\n' >"${state_dir}/cilium-pod-generation"
+printf '1\n' >"${state_dir}/cilium-updated"
 run_guard --before-publish
 [[ "$(tail -n 1 "${state_dir}/github-output")" == 'active=false' ]] ||
   fail 'the pre-publish phase must release cluster update after the safe gate removal'
