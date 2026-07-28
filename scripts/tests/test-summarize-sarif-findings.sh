@@ -54,11 +54,28 @@ write_sarif() {
   printf '%s' "${path}"
 }
 
+# Under Actions, GITHUB_STEP_SUMMARY is set for every step and inherited by child
+# processes — so an unguarded fixture run appends its output to the REAL job
+# summary. That is not cosmetic here: the fixtures print lines like
+# "Kubescape: 4 finding(s) across 2 control(s)", which are indistinguishable from
+# the genuine scan's report on the same run page. A test for a findings reporter
+# must not publish fabricated findings.
+#
+# This file therefore points the ambient variable at a sentinel that must stay
+# EMPTY, and every fixture run below clears the variable for the child. The
+# single case that exercises the step-summary output sets its own path
+# explicitly. The sentinel is asserted empty at the end, so the isolation is
+# proven rather than assumed.
+ambient_summary="${work_dir}/ambient-step-summary.md"
+readonly ambient_summary
+: >"${ambient_summary}"
+export GITHUB_STEP_SUMMARY="${ambient_summary}"
+
 # Runs the script under test, capturing combined output and exit status without
 # tripping `set -e`. Sets the globals `run_output` and `run_status`.
 run_summary() {
   run_status=0
-  run_output="$(bash "${script}" "$@" 2>&1)" || run_status=$?
+  run_output="$(env -u GITHUB_STEP_SUMMARY bash "${script}" "$@" 2>&1)" || run_status=$?
 }
 
 # The 1-based line number of the first line matching $2 in $1, or empty.
@@ -469,5 +486,20 @@ require_text "${run_output}" 'Kubescape: 2 finding(s) across 2 control(s).' \
   'the summary over the RAW scan output must keep the locationless finding'
 require_text "${run_output}" 'C-0002' \
   'the locationless control must be named in the report, not just counted'
+
+# ---------------------------------------------------------------------------
+# Nothing above may have written to the ambient step summary.
+#
+# Asserted last so it covers every case in the file. Under Actions this sentinel
+# stands in for the real job summary, so a failure here means the suite would
+# have published fixture output — fabricated Kubescape findings — onto the run
+# page of the very PR that adds trustworthy findings reporting.
+# ---------------------------------------------------------------------------
+ambient_bytes="$(wc -c <"${ambient_summary}" | tr -d ' ')"
+[ "${ambient_bytes}" -eq 0 ] || {
+  printf 'FAIL: the fixtures wrote %s bytes to the ambient GITHUB_STEP_SUMMARY\n--- leaked ---\n%s\n---\n' \
+    "${ambient_bytes}" "$(head -20 "${ambient_summary}")" >&2
+  exit 1
+}
 
 printf 'PASS: %s\n' "${BASH_SOURCE[0]##*/}"
