@@ -180,6 +180,14 @@ spec:
         # Manual prod deploy: cd.yaml is workflow_dispatch, run from main.
         - issuer: '^https://token\.actions\.githubusercontent\.com$'
           subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/cd\.yaml@refs/heads/main$'
+        # Disaster recovery: dr-rebuild.yaml is workflow_dispatch, run from main,
+        # and republishes this same artifact while rebuilding prod from zero.
+        # Without this entry a recovery produces a correctly-signed artifact that
+        # Flux still refuses — the one situation where a manual workaround is
+        # least available. Pinned to refs/heads/main, like cd.yaml above, so a DR
+        # run dispatched from any other ref is not trusted.
+        - issuer: '^https://token\.actions\.githubusercontent\.com$'
+          subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/dr-rebuild\.yaml@refs/heads/main$'
   provider:
     hetzner:
       # Hetzner account hard cap: at most 10 servers total. This mirrors the
