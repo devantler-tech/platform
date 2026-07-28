@@ -453,6 +453,32 @@ jobs:
           # results are tracked and closed independently.
           category: kubescape-nsa
 
+      - name: 📋 Summarize Kubescape findings
+        # Kubescape's own console table shows only a subset of what it finds:
+        # measured on this repository, a scan whose SARIF carried 4 findings
+        # printed "All controls passed. No issues found". Since the upload above
+        # turns those findings into alerts, the log and the Security tab
+        # disagreed — and the log is what a developer reads on a PR (#2846).
+        #
+        # This reports from the SARIF the run already produced, so the two
+        # surfaces cannot drift: same file, same findings.
+        #
+        # Gated on the normalizer's output rather than `!cancelled()` alone, for
+        # the same reason the upload is: that output is the only signal that the
+        # file both exists and is well-formed. It runs even when the upload step
+        # did not — a fork PR cannot upload, but its author still benefits from
+        # seeing what the scan found, which is why the script's wording does not
+        # assert that an upload happened.
+        #
+        # Informational only. The compliance threshold on the scan step remains
+        # the sole merge gate; this step cannot fail the build over findings.
+        if: >-
+          !cancelled() &&
+          steps.normalize-sarif.outputs.sarif == 'ready'
+        run: |
+          shellcheck scripts/summarize-sarif-findings.sh
+          bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.sarif"
+
   naming:
     name: 🏷️ Validate Naming Conventions
     needs: [changes]
