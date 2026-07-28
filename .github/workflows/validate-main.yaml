@@ -62,3 +62,122 @@ jobs:
         run: |
           go test ./scripts/validate-eks-ci-role-policy
           go run ./scripts/validate-eks-ci-role-policy .
+
+  kubescape-baseline:
+    name: 🛡️ Publish Kubescape Baseline
+    runs-on: ubuntu-latest
+    # ci.yaml scans and uploads on `pull_request` only, so every Kubescape
+    # analysis lands on an ephemeral `refs/pull/<n>/merge` ref. Code Scanning
+    # tracks alerts per (tool, category, ref): with no analysis for the default
+    # branch there is nothing for those findings to dedupe against and nothing
+    # to close, so the deployed tree has no durable posture baseline. Measured
+    # on 2026-07-28 — six kubescape analyses, all on PR refs, and ZERO
+    # default-branch kubescape alerts.
+    #
+    # This job publishes that baseline from main itself. It is the same scan
+    # ci.yaml runs, so a finding fixed on a PR closes here on merge, and a
+    # finding introduced by a direct push is reported where it is introduced.
+    permissions:
+      contents: read # checkout repository
+      security-events: write # publish the Kubescape SARIF to Code Scanning
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ⚙️ Setup KSail
+        # Kept at the version ci.yaml pins, so the baseline is produced by the
+        # same renderer as the PR-ref analyses it is the baseline for. Renovate
+        # updates both together (group 'ksail').
+        shell: bash
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.176.4"
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}"
+          ASSET="ksail_${KSAIL_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL "${BASE}/${ASSET}" -o /tmp/ksail.tar.gz
+          # A version-pinned URL is not an integrity check: this archive is
+          # `sudo install`ed and executed on a trusted `main` workflow, so a
+          # replaced release asset would run here. Verify against the release's
+          # published checksums before extracting.
+          #
+          # Checked against the published list rather than a literal SHA pinned
+          # in this file: Renovate bumps KSAIL_VERSION and cannot update an
+          # opaque digest beside it, so a pinned SHA would break every bump
+          # until a human hand-edited it — a control people end up removing.
+          # This costs nothing per bump. Its LIMIT, stated plainly: the archive
+          # and the checksum list come from the same origin, so this detects a
+          # corrupted, truncated or individually-substituted asset, not a fully
+          # compromised release. Provenance attestations would close that and
+          # are tracked separately.
+          curl -fsSL "${BASE}/ksail_${KSAIL_VERSION}_checksums.txt" -o /tmp/ksail_checksums.txt
+          # `|| true` is load-bearing under `set -e -o pipefail`: grep exits 1
+          # when the asset is absent, which would abort the step before the
+          # explicit check below and fail with no explanation of what to do.
+          expected=$(grep -E "  ${ASSET}\$" /tmp/ksail_checksums.txt | cut -d' ' -f1 || true)
+          # Fail closed on a MISSING entry too — otherwise a renamed asset
+          # silently skips verification instead of failing.
+          if [ -z "$expected" ]; then
+            echo "::error::no published checksum for ${ASSET} — refusing to install unverified"
+            exit 1
+          fi
+          actual=$(sha256sum /tmp/ksail.tar.gz | cut -d' ' -f1)
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::checksum mismatch for ${ASSET}: expected ${expected}, got ${actual}"
+            exit 1
+          fi
+          tar -xzf /tmp/ksail.tar.gz -C /tmp
+          sudo install /tmp/ksail /usr/local/bin/ksail
+          ksail --version
+
+      - name: 🔎 Scan manifests (Kubescape NSA)
+        # Same invocation and same justified exceptions as ci.yaml's gate, so
+        # the two analyses are comparable. The threshold is kept: main can only
+        # receive gated content, so a failure here means posture moved without
+        # a PR — which this workflow exists to report.
+        run: |
+          go test ./scripts/generate-kubescape-exceptions
+          go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
+          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
+
+      - name: 🧭 Make the SARIF paths repo-root-relative
+        # Kubescape reports paths relative to the directory it scanned; Code
+        # Scanning resolves them against the repo root. Uploading them unchanged
+        # creates alerts pointing at files that do not exist.
+        id: normalize-sarif
+        if: "!cancelled()"
+        run: |
+          if [ ! -f "${RUNNER_TEMP}/kubescape.sarif" ]; then
+            echo "::notice::No SARIF written — the scan failed before producing one. Leaving its error as the visible failure."
+            echo "sarif=absent" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          bash scripts/normalize-sarif-paths.sh "${RUNNER_TEMP}/kubescape.sarif" k8s .
+          echo "sarif=ready" >> "${GITHUB_OUTPUT}"
+
+      - name: 🛡️ Upload Kubescape findings to Code Scanning
+        # `!cancelled()` rather than `success()`: the findings are wanted most
+        # when the scan's threshold FAILED, and ksail writes the SARIF before
+        # applying it. Gated on the normalize OUTPUT so a normalizer failure
+        # cannot fall through to publishing dead paths. No fork check is needed
+        # — this runs on a push to main, which is never a fork.
+        if: >-
+          !cancelled() &&
+          steps.normalize-sarif.outputs.sarif == 'ready'
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          sarif_file: ${{ runner.temp }}/kubescape.sarif
+          # MUST match ci.yaml's category: Code Scanning dedupes and closes per
+          # (tool, category, ref), so a different category here would create a
+          # parallel alert set instead of a baseline the PR findings resolve
+          # against.
+          category: kubescape-nsa
