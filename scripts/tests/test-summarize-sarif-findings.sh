@@ -253,4 +253,79 @@ require_text "${workflow_body}" "- 'scripts/tests/test-summarize-sarif-findings.
 require_text "${workflow_body}" "- 'scripts/summarize-sarif-findings.sh'" \
   'the script under test must be in the k8s path filter'
 
+# ---------------------------------------------------------------------------
+# The summary must read the PRE-NORMALIZATION scan output, on BOTH paths.
+#
+# normalize-sarif-paths.sh drops results with an empty artifactLocation.uri —
+# correct for Code Scanning, which cannot anchor an alert without a file, and
+# wrong for a report whose entire purpose is that no finding goes unmentioned.
+# Summarizing the normalized file would silently under-report exactly the
+# cluster-level controls that have no manifest behind them.
+#
+# ci.yaml scans on pull_request only, so validate-main.yaml is the sole
+# push-to-main scan; a summary missing there leaves the log/alert contradiction
+# standing on the one path nobody opens a PR to read.
+# ---------------------------------------------------------------------------
+validate_main_workflow="${root_dir}/.github/workflows/validate-main.yaml"
+validate_main_body="$(cat "${validate_main_workflow}")"
+
+for wf_name in ci validate-main; do
+  case "${wf_name}" in
+    ci) body="${workflow_body}" ;;
+    *) body="${validate_main_body}" ;;
+  esac
+  # SC2016 is the point here, not a mistake: these are literal YAML fragments to
+  # find in the workflow, where `${RUNNER_TEMP}` is expanded by Actions at run
+  # time. Expanding it in this shell would search for the runner's path instead.
+  # shellcheck disable=SC2016
+  require_text "${body}" 'cp "${RUNNER_TEMP}/kubescape.sarif" "${RUNNER_TEMP}/kubescape.raw.sarif"' \
+    "${wf_name}.yaml must copy the scan output before normalization"
+  # shellcheck disable=SC2016
+  require_text "${body}" 'bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.raw.sarif"' \
+    "${wf_name}.yaml must summarize the raw copy, not the normalized file"
+  # shellcheck disable=SC2016
+  reject_normalized="$(grep -F 'summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.sarif"' <<<"${body}" || true)"
+  [ -z "${reject_normalized}" ] ||
+    fail "${wf_name}.yaml must not summarize the normalized SARIF (found: ${reject_normalized})"
+done
+
+# The differential that makes the split load-bearing: the normalizer really does
+# drop a locationless finding, and the summary really does keep it. If either
+# half stops being true, the two-file dance above is cargo cult and should go.
+locationless='{
+  "runs": [
+    {
+      "tool": { "driver": { "rules": [ { "id": "C-0002" }, { "id": "C-0009" } ] } },
+      "results": [
+        { "ruleId": "C-0009",
+          "locations": [ { "physicalLocation": { "artifactLocation": { "uri": "k8s/app.yaml" } } } ] },
+        { "ruleId": "C-0002",
+          "locations": [ { "physicalLocation": { "artifactLocation": { "uri": "" } } } ] }
+      ]
+    }
+  ]
+}'
+raw_fixture="$(write_sarif raw-locationless.sarif "${locationless}")"
+normalized_fixture="${work_dir}/normalized-locationless.sarif"
+cp "${raw_fixture}" "${normalized_fixture}"
+
+# Give the normalizer a tree its one real uri resolves against.
+mkdir -p "${work_dir}/tree/k8s"
+: >"${work_dir}/tree/k8s/app.yaml"
+norm_status=0
+bash "${root_dir}/scripts/normalize-sarif-paths.sh" "${normalized_fixture}" k8s "${work_dir}/tree" \
+  >/dev/null 2>&1 || norm_status=$?
+[ "${norm_status}" -eq 0 ] ||
+  fail "the normalizer must accept this fixture, got exit ${norm_status}"
+
+run_summary "${normalized_fixture}"
+require_text "${run_output}" 'Kubescape: 1 finding(s) across 1 control(s).' \
+  'PRECONDITION: the normalizer must drop the locationless finding (if this fails, the raw copy is no longer needed)'
+
+run_summary "${raw_fixture}"
+require_text "${run_output}" 'Kubescape: 2 finding(s) across 2 control(s).' \
+  'the summary over the RAW scan output must keep the locationless finding'
+require_text "${run_output}" 'C-0002' \
+  'the locationless control must be named in the report, not just counted'
+
 printf 'PASS: %s\n' "${BASH_SOURCE[0]##*/}"

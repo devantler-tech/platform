@@ -408,6 +408,15 @@ jobs:
             echo "sarif=absent" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
+          # Keep the scan's own output before normalization touches it. The
+          # normalizer DROPS results with an empty artifactLocation.uri (see its
+          # CONTRACT) because Code Scanning cannot anchor an alert without a
+          # file. That is right for the upload and wrong for the summary: a
+          # cluster-level control with no manifest behind it is exactly the kind
+          # of finding that is otherwise invisible, so summarizing the
+          # normalized file would under-report the very case this reporting
+          # exists for. Upload reads the normalized file; the summary reads this.
+          cp "${RUNNER_TEMP}/kubescape.sarif" "${RUNNER_TEMP}/kubescape.raw.sarif"
           bash scripts/normalize-sarif-paths.sh "${RUNNER_TEMP}/kubescape.sarif" k8s .
           # Only now is the file both PRESENT and root-relative. The upload gates
           # on this output, so a normalizer hard-failure (an unresolvable path)
@@ -498,7 +507,7 @@ jobs:
           steps.normalize-sarif.outputs.sarif == 'ready'
         run: |
           shellcheck scripts/summarize-sarif-findings.sh
-          bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.sarif"
+          bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.raw.sarif"
 
   naming:
     name: 🏷️ Validate Naming Conventions

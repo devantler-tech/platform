@@ -161,6 +161,10 @@ jobs:
             echo "sarif=absent" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
+          # Same split as ci.yaml: the normalizer drops empty-uri results because
+          # Code Scanning cannot anchor them, so the upload reads the normalized
+          # file and the summary below reads this untouched copy.
+          cp "${RUNNER_TEMP}/kubescape.sarif" "${RUNNER_TEMP}/kubescape.raw.sarif"
           bash scripts/normalize-sarif-paths.sh "${RUNNER_TEMP}/kubescape.sarif" k8s .
           echo "sarif=ready" >> "${GITHUB_OUTPUT}"
 
@@ -181,3 +185,23 @@ jobs:
           # parallel alert set instead of a baseline the PR findings resolve
           # against.
           category: kubescape-nsa
+
+      - name: 📋 Summarize Kubescape findings
+        # This job exists because ci.yaml scans on `pull_request` only, so a
+        # posture change that arrived without a PR is invisible until this run
+        # publishes it. That argument applies to the LOG as much as to the alert
+        # set: without this step the push-to-main log can still read as a clean
+        # scan while the same run uploads findings — the exact contradiction
+        # #2846 is about, on the one path nobody opens a PR to look at.
+        #
+        # Reads the pre-normalization copy for the same reason ci.yaml does.
+        # Informational only: this job's gate is the compliance threshold on the
+        # scan step, and a summary that cannot be built says nothing about
+        # posture, so it annotates rather than failing the baseline.
+        continue-on-error: true
+        if: >-
+          !cancelled() &&
+          steps.normalize-sarif.outputs.sarif == 'ready'
+        run: |
+          shellcheck scripts/summarize-sarif-findings.sh
+          bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.raw.sarif"
