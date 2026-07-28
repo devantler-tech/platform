@@ -175,13 +175,6 @@ data:
               "kind": "^RoleBinding$",
               "name": "^(ascoachingogvaner|kyverno:admission-controller|kyverno:cleanup-controller|longhorn|tf-runner|velero-server|wedding-app)$"
             }
-          },
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^Group$",
-              "name": "^crossplane-masters$"
-            }
           }
         ],
         "posturePolicies": [
@@ -463,9 +456,6 @@ data:
           },
           {
             "controlID": "^C-0016$"
-          },
-          {
-            "controlID": "^C-0017$"
           },
           {
             "controlID": "^C-0055$"
@@ -1045,6 +1035,86 @@ data:
         "posturePolicies": [
           {
             "controlID": "^C-0015$"
+          }
+        ]
+      },
+      {
+        "name": "kubescape-privileged",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "reason": "The kubescape node-agent DaemonSet and storage Deployment require privileged host access to scan the node; matched by kind+name so no other workload inherits it.",
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^node-agent$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Deployment$",
+              "name": "^storage$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0057$"
+          },
+          {
+            "controlID": "^C-0048$"
+          },
+          {
+            "controlID": "^C-0045$"
+          },
+          {
+            "controlID": "^C-0041$"
+          },
+          {
+            "controlID": "^C-0038$"
+          },
+          {
+            "controlID": "^C-0044$"
+          },
+          {
+            "controlID": "^C-0046$"
+          },
+          {
+            "controlID": "^C-0016$"
+          },
+          {
+            "controlID": "^C-0013$"
+          },
+          {
+            "controlID": "^C-0017$"
+          },
+          {
+            "controlID": "^C-0055$"
+          }
+        ]
+      },
+      {
+        "name": "readonly-rootfs-pending",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "reason": "C-0017 exceptions for the few NON-privileged workloads that still write to their root filesystem, scoped by namespace so it never suppresses C-0017 for the workloads that DO pass it.",
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "namespace": "^(opencost|wedding-app)$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0017$"
           }
         ]
       }
