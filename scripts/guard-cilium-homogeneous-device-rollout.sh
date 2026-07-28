@@ -17,6 +17,7 @@ esac
 root_dir="${PLATFORM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 readonly root_dir
 readonly controllers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
+readonly production_bootstrap_dir="${root_dir}/k8s/clusters/prod/bootstrap"
 readonly controllers_kustomization="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
 readonly component_kustomization="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/cilium/components/homogeneous-devices/kustomization.yaml"
 readonly kubectl_bin="${KUBECTL:-kubectl}"
@@ -92,23 +93,93 @@ get_approved_template_sha() {
 }
 
 candidate_template_sha() {
-  "${kubectl_bin}" kustomize "${controllers_dir}" |
-    "${yq_bin}" -o=json -I=0 '
-      select(
-        .apiVersion == "helm.toolkit.fluxcd.io/v2" and
-        .kind == "HelmRelease" and
-        .metadata.namespace == "kube-system" and
-        .metadata.name == "cilium"
-      )
-      | .spec
-      | del(.values.updateStrategy, .upgrade.disableWait)
-    ' - |
-    "${jq_bin}" -csS '
-      if length == 1 then
-        .[0]
-      else
-        error("expected exactly one rendered Cilium HelmRelease")
-      end
+  local cilium_spec substitution_sources
+  cilium_spec="$(
+    "${kubectl_bin}" kustomize "${controllers_dir}" |
+      "${yq_bin}" -o=json -I=0 '
+        select(
+          .apiVersion == "helm.toolkit.fluxcd.io/v2" and
+          .kind == "HelmRelease" and
+          .metadata.namespace == "kube-system" and
+          .metadata.name == "cilium"
+        )
+        | .spec
+        | del(.values.updateStrategy, .upgrade.disableWait)
+      ' - |
+      "${jq_bin}" -csS '
+        if length == 1 then
+          .[0]
+        else
+          error("expected exactly one rendered Cilium HelmRelease")
+        end
+      '
+  )"
+  substitution_sources="$(
+    "${kubectl_bin}" kustomize "${production_bootstrap_dir}" |
+      "${yq_bin}" -o=json -I=0 '
+        select(
+          .metadata.namespace == "flux-system" and
+          (
+            (
+              .kind == "ConfigMap" and
+              (
+                .metadata.name == "variables-base" or
+                .metadata.name == "variables-cluster"
+              )
+            ) or
+            (
+              .kind == "Secret" and
+              .metadata.name == "variables-cluster"
+            )
+          )
+        )
+      ' - |
+      "${jq_bin}" -csS '
+        map({
+          rank: (
+            if .kind == "ConfigMap" and .metadata.name == "variables-base" then 0
+            elif .kind == "ConfigMap" then 1
+            else 2
+            end
+          ),
+          values: (.data // .stringData // {})
+        })
+        | if length == 3 and ([.[].rank] | sort == [0, 1, 2]) then
+            .
+          else
+            error("expected all three ordered Flux substitution sources")
+          end
+      '
+  )"
+
+  # Bind only substitutions referenced by Cilium, in Flux's documented
+  # base ConfigMap -> cluster ConfigMap -> cluster Secret precedence. The raw
+  # spec remains part of the hash, so placeholder defaults are covered too.
+  # shellcheck disable=SC2016
+  "${jq_bin}" -cnS \
+    --argjson spec "${cilium_spec}" \
+    --argjson sources "${substitution_sources}" '
+      ([
+        $spec
+        | ..
+        | strings
+        | scan("\\$\\{([A-Za-z_][A-Za-z0-9_]*)(?::[-=][^}]*)?\\}")
+        | .[0]
+      ] | unique) as $keys
+      | (
+          $sources
+          | sort_by(.rank)
+          | reduce .[] as $source ({}; . * $source.values)
+        ) as $resolved
+      | {
+          spec: $spec,
+          substitutions: (
+            $resolved
+            | with_entries(
+                select(.key as $key | $keys | index($key))
+              )
+          )
+        }
     ' |
     "${shasum_bin}" -a 256 |
     awk '{print $1}'

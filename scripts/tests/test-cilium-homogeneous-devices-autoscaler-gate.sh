@@ -103,6 +103,7 @@ printf '1\n' >"${state_dir}/cilium-current"
 printf '1\n' >"${state_dir}/cilium-ready"
 printf 'true\n' >"${state_dir}/cilium-pod-present"
 printf 'approved\n' >"${state_dir}/cilium-template-value"
+printf '2\n' >"${state_dir}/cilium-substitution-value"
 : >"${state_dir}/approved-template-sha"
 : >"${state_dir}/github-output"
 
@@ -113,6 +114,34 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${KUBECTL_STATE}/commands"
 
 case "$*" in
+  kustomize*"clusters/prod/bootstrap"*)
+    substitution_value="$(<"${KUBECTL_STATE}/cilium-substitution-value")"
+    cat <<EOF
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: variables-base
+  namespace: flux-system
+data:
+  unrelated_base: unchanged
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: variables-cluster
+  namespace: flux-system
+data:
+  cilium_replicas: "${substitution_value}"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: variables-cluster
+  namespace: flux-system
+stringData:
+  unrelated_secret: unchanged
+EOF
+    ;;
   kustomize*)
     template_value="$(<"${KUBECTL_STATE}/cilium-template-value")"
     cat <<EOF
@@ -127,6 +156,8 @@ spec:
       version: 1.2.3
   values:
     devices: ${template_value}
+    operator:
+      replicas: \${cilium_replicas:=2}
     updateStrategy:
       type: OnDelete
   upgrade:
@@ -266,6 +297,12 @@ if run_guard --before-publish; then
   fail 'gate removal must reject an incoming non-strategy Cilium template change'
 fi
 printf 'approved\n' >"${state_dir}/cilium-template-value"
+printf '17\n' >"${state_dir}/cilium-pod-generation"
+printf '3\n' >"${state_dir}/cilium-substitution-value"
+if run_guard --before-publish; then
+  fail 'gate removal must reject a changed Flux substitution used by Cilium'
+fi
+printf '2\n' >"${state_dir}/cilium-substitution-value"
 printf '0\n' >"${state_dir}/cilium-desired"
 printf '0\n' >"${state_dir}/cilium-current"
 printf '0\n' >"${state_dir}/cilium-ready"
