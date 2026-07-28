@@ -427,6 +427,8 @@ func TestTransientAPITransportFailureDuringPostRebootReadyWaitRetries(t *testing
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_TRANSIENT_NODE_READY_API_FAIL_NODE": "prod-worker-1",
+		"FAKE_POST_REBOOT_API_READY_FAILURES":     "3",
+		"FLUX_GHCR_SYNC_ATTEMPTS":                 "4",
 	})
 	requireSuccessResult(t, result)
 	operations := readLines(f.operationLog)
@@ -435,6 +437,12 @@ func TestTransientAPITransportFailureDuringPostRebootReadyWaitRetries(t *testing
 		"node-ready:prod-worker-1",
 	); count != 2 {
 		t.Errorf("node readiness attempts = %d, want 2", count)
+	}
+	if count := strings.Count(
+		strings.Join(operations, "\n"),
+		"api-readyz",
+	); count != 4 {
+		t.Errorf("post-reboot API readiness attempts = %d, want 4", count)
 	}
 	requireLine(t, operations, "talos-reboot:10.0.0.2")
 	requireLine(t, operations, "talos-revision:10.0.0.2")

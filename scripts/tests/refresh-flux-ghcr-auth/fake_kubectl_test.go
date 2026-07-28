@@ -33,6 +33,19 @@ func fakeKubectlImplementation(args []string) int {
 
 	switch {
 	case containsArg(args, "--raw=/readyz"):
+		appendEnvFile("OPERATION_LOG", "api-readyz\n")
+		if markerExists("transient-node-ready-attempt-prod-worker-1") {
+			attemptMarker := "post-reboot-api-ready-attempt"
+			attempt := parseInt(markerContent(attemptMarker), 0) + 1
+			setMarkerContent(attemptMarker, strconv.Itoa(attempt))
+			failures := parseInt(os.Getenv("FAKE_POST_REBOOT_API_READY_FAILURES"), 0)
+			if attempt <= failures {
+				return commandFailure(
+					54,
+					"The connection to the server api.example.test:6443 was refused: connect: connection refused",
+				)
+			}
+		}
 		fmt.Println("ok")
 		return 0
 	case containsSequence(args, "get", "kustomizations.kustomize.toolkit.fluxcd.io"):

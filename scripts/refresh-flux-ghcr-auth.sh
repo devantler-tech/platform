@@ -1853,7 +1853,7 @@ process_talos_node_target() {
   # fail-closed cleanup path when no bootstrap recovery record was required.
   local probe_image recovery_record=""
   local drain_attempt=1 api_attempt api_ready
-  local ready_attempt ready_transport_interrupted
+  local ready_attempt
 
   assert_sync_lease_held || return 1
 
@@ -2159,7 +2159,6 @@ process_talos_node_target() {
       emit_safe_operation_output "reboot" "${reboot_result_file}"
       return 1
     fi
-    ready_transport_interrupted=false
     for ((ready_attempt = 1; ready_attempt <= NODE_READY_TRANSPORT_RETRY_ATTEMPTS; ready_attempt++)); do
       if kubectl \
         --context "${KUBE_CONTEXT}" \
@@ -2168,10 +2167,6 @@ process_talos_node_target() {
         "node/${node_name}" \
         --timeout=10m \
         >"${reboot_result_file}" 2>&1; then
-        if [[ "${ready_transport_interrupted}" == "true" ]] &&
-          ! recover_sync_lease_heartbeat_after_transport_interruption; then
-          return 1
-        fi
         break
       fi
       if ((ready_attempt >= NODE_READY_TRANSPORT_RETRY_ATTEMPTS)) ||
@@ -2182,9 +2177,30 @@ process_talos_node_target() {
         return 1
       fi
 
-      ready_transport_interrupted=true
-      echo "::warning::Kubernetes API transport interrupted the post-reboot Ready wait for ${node_name}; retrying the read-only wait under the same cordon claim."
-      sleep "${SYNC_INTERVAL}"
+      echo "::warning::Kubernetes API transport interrupted the post-reboot Ready wait for ${node_name}; waiting for API recovery before retrying under the same cordon claim."
+      api_ready=false
+      for ((api_attempt = 1; api_attempt <= SYNC_ATTEMPTS; api_attempt++)); do
+        if kubectl \
+          --context "${KUBE_CONTEXT}" \
+          get --raw=/readyz \
+          --request-timeout=30s \
+          >"${reboot_result_file}" 2>&1; then
+          api_ready=true
+          break
+        fi
+        if ((api_attempt < SYNC_ATTEMPTS)); then
+          sleep "${SYNC_INTERVAL}"
+        fi
+      done
+      if [[ "${api_ready}" != "true" ]]; then
+        echo "::error::Kubernetes API did not recover after rebooting ${node_name}; it remains cordoned and the next node will not be rolled."
+        emit_safe_operation_output "ready-api-recovery" \
+          "${reboot_result_file}"
+        return 1
+      fi
+      if ! recover_sync_lease_heartbeat_after_transport_interruption; then
+        return 1
+      fi
     done
     wait_for_node_lifecycle_taints_to_clear \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
