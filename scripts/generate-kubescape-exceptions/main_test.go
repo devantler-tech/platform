@@ -464,6 +464,7 @@ func TestMirrorAnnotationFailsClosed(t *testing.T) {
 		want  string
 	}{
 		"unknown value":          {value: "excluded", want: "unsupported platform.devantler.tech/headlamp-mirror value"},
+		"list not string":        {value: "[exclude]", want: "must be a string"},
 		"include is not a value": {value: "include", want: "unsupported platform.devantler.tech/headlamp-mirror value"},
 		"empty value":            {value: `""`, want: "unsupported platform.devantler.tech/headlamp-mirror value"},
 		"boolean not string":     {value: "true", want: "must be a string"},
@@ -490,6 +491,42 @@ spec:
 				t.Errorf("error = %q, want it to contain %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// TestMirrorMalformedAnnotationsFailClosed verifies a malformed annotations
+// block aborts instead of being read as "no marker". Reading it as absent would
+// silently drop the exclusion and mirror a host-scanner exception, whose
+// cluster-wide designator then excepts that control for every workload.
+func TestMirrorMalformedAnnotationsFailClosed(t *testing.T) {
+	_, err := generate(writeCSE(t, `
+kind: ClusterSecurityException
+metadata:
+  name: malformed-annotations
+  annotations: "platform.devantler.tech/headlamp-mirror=exclude"
+spec:
+  posture: [{controlID: C-0092, action: ignore}]
+`))
+	if err == nil || !strings.Contains(err.Error(), "metadata.annotations must be a mapping") {
+		t.Fatalf("want a fail-closed annotations error, got %v", err)
+	}
+}
+
+// TestMirrorEmptyAnnotationsAreNotAMarker verifies an explicitly-empty
+// annotations block is still just "no marker", so the fail-closed check above
+// does not reject ordinary CRs.
+func TestMirrorEmptyAnnotationsAreNotAMarker(t *testing.T) {
+	dir := writeCSE(t, `
+kind: ClusterSecurityException
+metadata:
+  name: empty-annotations
+  annotations:
+spec:
+  posture: [{controlID: C-0002, action: ignore}]
+`)
+
+	if names := mirrorNames(t, dir); len(names) != 1 {
+		t.Errorf("mirror = %v, want the CR mirrored (empty annotations are not a marker)", names)
 	}
 }
 

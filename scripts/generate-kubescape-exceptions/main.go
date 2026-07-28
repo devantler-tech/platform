@@ -63,8 +63,8 @@ const (
 	formatKubescape = "kubescape"
 	formatConfigMap = "headlamp-configmap"
 
-	// mirrorConfigMapPath is the generated mirror, repo-root-relative. The
-	// drift test regenerates it and the -format help text names it.
+	// mirrorConfigMapPath is the generated mirror, repo-root-relative. The drift
+	// test regenerates it and names it in the failure message it prints.
 	mirrorConfigMapPath = "k8s/bases/infrastructure/controllers/kubescape/config-map-headlamp-exceptions.yaml"
 )
 
@@ -330,9 +330,19 @@ func resolveMatch(match map[string]any, path, name string) ([]designator, error)
 // choice, whereas dropping one makes the dashboard report an excepted workload
 // as failing. Any value other than mirrorExclude fails closed.
 func resolveMirrorExclusion(metadata map[string]any, path, name string) (bool, error) {
-	annotations, ok := metadata["annotations"].(map[string]any)
-	if !ok {
+	rawAnnotations, present := metadata["annotations"]
+	if !present || rawAnnotations == nil {
 		return false, nil
+	}
+
+	// Present but not a mapping must fail closed rather than read as "no
+	// marker": silently ignoring a malformed annotations block would drop the
+	// exclusion and mirror a host exception, whose cluster-wide designator then
+	// excepts that control for every workload — the exact widening this marker
+	// exists to prevent.
+	annotations, ok := rawAnnotations.(map[string]any)
+	if !ok {
+		return false, cseErrorf(path, name, "metadata.annotations must be a mapping, got %v", rawAnnotations)
 	}
 
 	raw, ok := annotations[mirrorAnnotation]
