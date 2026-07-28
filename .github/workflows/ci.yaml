@@ -61,6 +61,7 @@ jobs:
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/normalize-sarif-paths.sh'
               - 'scripts/summarize-sarif-findings.sh'
+              - 'scripts/tests/test-summarize-sarif-findings.sh'
               - 'go.mod'
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
@@ -247,6 +248,15 @@ jobs:
         # Render the full component contract so the cAdvisor scrape and its
         # least-privilege delivery path cannot silently disappear.
         run: bash scripts/tests/test-opencost-usage-scraper.sh
+
+      - name: 📋 Validate Kubescape finding summary
+        if: needs.changes.outputs.k8s == 'true'
+        # The summary is what makes the CI log and the Security tab agree (#2846),
+        # and it fails by under-reporting rather than by crashing — a dropped
+        # control looks exactly like a clean scan. Pin the grouping, the counts and
+        # the two SARIF shapes that turn into hard jq errors if indexed naively: a
+        # result with no ruleId, and a ruleId absent from the rule table.
+        run: bash scripts/tests/test-summarize-sarif-findings.sh
 
       - name: 📢 Validate reconciliation-Alert namespace coverage
         if: needs.changes.outputs.k8s == 'true'
@@ -472,7 +482,17 @@ jobs:
         # assert that an upload happened.
         #
         # Informational only. The compliance threshold on the scan step remains
-        # the sole merge gate; this step cannot fail the build over findings.
+        # the sole merge gate.
+        #
+        # The script exits non-zero on a usage error or a SARIF it cannot parse,
+        # and leaves it to the caller whether that is fatal. This caller says no:
+        # a summary that cannot be built says nothing about posture, and the gate
+        # that does — the compliance threshold — has already run against the same
+        # file. `continue-on-error` keeps the failure loud (the step is still
+        # marked failed and annotated on the run) without blocking a merge on a
+        # reporting bug. Without it, this step silently becomes a second gate,
+        # contradicting the sentence above it.
+        continue-on-error: true
         if: >-
           !cancelled() &&
           steps.normalize-sarif.outputs.sarif == 'ready'
