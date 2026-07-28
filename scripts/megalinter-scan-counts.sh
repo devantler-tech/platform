@@ -171,6 +171,23 @@ scan_trivy() {
     tail -n 5 "$OUT_DIR/trivy.err" >&2
     exit 2
   fi
+  # The exit status alone CANNOT distinguish "findings found" from "the scan broke": --exit-code 1
+  # sets the status for findings, and trivy also exits 1 on operational failures such as a failed
+  # vulnerability-database download. A broken scan would otherwise be reported as
+  # "0 misconfigurations across 0 targets" — indistinguishable from a cleared backlog, which is the
+  # single most dangerous wrong answer this script could give. Require positive evidence that the
+  # scan actually ran instead.
+  if grep -aqE '\bFATAL\b' "$OUT_DIR/trivy.err"; then
+    printf 'trivy reported a fatal error — refusing to report a count\n' >&2
+    grep -aE '\bFATAL\b' "$OUT_DIR/trivy.err" | tail -n 3 >&2
+    exit 2
+  fi
+  if ! grep -aqE '^Tests: [0-9]+ \(SUCCESSES' "$out"; then
+    printf 'trivy emitted no scan summaries (exit %d) — refusing to report a count.\n' "$rc" >&2
+    printf 'A genuinely clean scan still reports "Tests: N (SUCCESSES: N, FAILURES: 0)" per target.\n' >&2
+    tail -n 5 "$OUT_DIR/trivy.err" >&2
+    exit 2
+  fi
 
   local misconfig vulns targets
   # Misconfiguration results are summarised per target as "Tests: N (SUCCESSES: n, FAILURES: n)".
