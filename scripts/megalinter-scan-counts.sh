@@ -49,6 +49,12 @@ readonly CI_TRIVY_VERSION='0.71.2'
 # comparable — see the dropped-framework guard in scan_checkov.
 readonly EXPECTED_CHECKOV_FRAMEWORKS=(cloudformation kubernetes secrets github_actions)
 
+# A parsing error means a file was NOT analysed, so findings can hide behind it. CI's run has
+# exactly one (in the cloudformation framework) and so does a correct local run, which is why this
+# is a ceiling rather than a zero check — refusing on any parsing error would refuse on the current,
+# CI-matching state. Anything above the ceiling is local-only and breaks comparability.
+readonly CI_CHECKOV_PARSING_ERRORS=1
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
 OUT_DIR="$(mktemp -d)"
@@ -152,10 +158,19 @@ scan_checkov() {
     exit 2
   fi
 
+  local parse_errors
+  parse_errors="$(sum_by 'Parsing errors: [0-9]+' "$out")"
+  if [ "$parse_errors" -gt "$CI_CHECKOV_PARSING_ERRORS" ]; then
+    printf 'checkov reported %d parsing errors, above CI'"'"'s %d — refusing to report a count.\n' \
+      "$parse_errors" "$CI_CHECKOV_PARSING_ERRORS" >&2
+    printf 'An unparsed file is not analysed, so findings can hide behind it.\n' >&2
+    exit 2
+  fi
+
   local total
   total="$(sum_by 'Failed checks: [0-9]+' "$out")"
 
-  printf '\ncheckov — %s failing checks\n' "$total"
+  printf '\ncheckov — %s failing checks (%s parsing error(s), same as CI)\n' "$total" "$parse_errors"
   printf '  per framework (failed / passed):\n'
   # Frameworks are reported as a "<name> scan results:" header followed by the counts line.
   awk '
