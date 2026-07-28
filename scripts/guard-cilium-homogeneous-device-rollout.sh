@@ -16,11 +16,14 @@ esac
 
 root_dir="${PLATFORM_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 readonly root_dir
+readonly controllers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
 readonly controllers_kustomization="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
 readonly component_kustomization="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/cilium/components/homogeneous-devices/kustomization.yaml"
 readonly kubectl_bin="${KUBECTL:-kubectl}"
 readonly curl_bin="${CURL:-curl}"
 readonly jq_bin="${JQ:-jq}"
+readonly yq_bin="${YQ:-yq}"
+readonly shasum_bin="${SHASUM:-shasum}"
 readonly hcloud_api_url="${HCLOUD_API_URL:-https://api.hetzner.cloud/v1}"
 readonly namespace='kube-system'
 readonly deployment='cluster-autoscaler-hetzner-cluster-autoscaler'
@@ -28,6 +31,8 @@ readonly cilium_daemonset='cilium'
 readonly cilium_selector='k8s-app=cilium'
 readonly previous_replicas_annotation='platform.devantler.tech/cilium-device-rollout-previous-replicas'
 readonly previous_replicas_jsonpath='{.metadata.annotations.platform\.devantler\.tech/cilium-device-rollout-previous-replicas}'
+readonly approved_template_annotation='platform.devantler.tech/cilium-device-rollout-approved-template-sha'
+readonly approved_template_jsonpath='{.metadata.annotations.platform\.devantler\.tech/cilium-device-rollout-approved-template-sha}'
 readonly rollout_wait_seconds="${ROLLOUT_WAIT_SECONDS:-120}"
 readonly rollout_poll_seconds="${ROLLOUT_POLL_SECONDS:-2}"
 readonly provider_stability_seconds="${PROVIDER_STABILITY_SECONDS:-30}"
@@ -76,6 +81,55 @@ fi
 get_previous_replicas() {
   kubectl_prod -n "${namespace}" get deployment "${deployment}" \
     -o "jsonpath=${previous_replicas_jsonpath}"
+}
+
+get_approved_template_sha() {
+  kubectl_prod -n "${namespace}" get deployment "${deployment}" \
+    -o "jsonpath=${approved_template_jsonpath}"
+}
+
+candidate_template_sha() {
+  "${kubectl_bin}" kustomize "${controllers_dir}" |
+    "${yq_bin}" -o=json -I=0 '
+      select(
+        .apiVersion == "helm.toolkit.fluxcd.io/v2" and
+        .kind == "HelmRelease" and
+        .metadata.namespace == "kube-system" and
+        .metadata.name == "cilium"
+      )
+      | .spec
+      | del(.values.updateStrategy, .upgrade.disableWait)
+    ' - |
+    "${jq_bin}" -csS '
+      if length == 1 then
+        .[0]
+      else
+        error("expected exactly one rendered Cilium HelmRelease")
+      end
+    ' |
+    "${shasum_bin}" -a 256 |
+    awk '{print $1}'
+}
+
+record_approved_template_sha() {
+  local approved_sha
+  approved_sha="$(candidate_template_sha)"
+  [[ "${approved_sha}" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "candidate Cilium template hash is invalid: ${approved_sha:-<empty>}"
+  kubectl_prod -n "${namespace}" annotate deployment "${deployment}" \
+    "${approved_template_annotation}=${approved_sha}" --overwrite
+}
+
+require_candidate_matches_approved_template() {
+  local approved_sha candidate_sha
+  approved_sha="$(get_approved_template_sha)"
+  [[ "${approved_sha}" =~ ^[0-9a-f]{64}$ ]] ||
+    fail 'the active Cilium rollout has no approved template hash'
+  candidate_sha="$(candidate_template_sha)"
+  [[ "${candidate_sha}" =~ ^[0-9a-f]{64}$ ]] ||
+    fail "candidate Cilium template hash is invalid: ${candidate_sha:-<empty>}"
+  [[ "${candidate_sha}" == "${approved_sha}" ]] ||
+    fail "gate removal changes the approved Cilium template: approved=${approved_sha} candidate=${candidate_sha}"
 }
 
 get_current_replicas() {
@@ -202,12 +256,14 @@ restore_autoscaler_if_owned() {
   wait_for_replicas "${previous_replicas}"
   kubectl_prod -n "${namespace}" annotate deployment "${deployment}" \
     "${previous_replicas_annotation}-"
+  kubectl_prod -n "${namespace}" annotate deployment "${deployment}" \
+    "${approved_template_annotation}-"
   printf 'Cilium homogeneous-device rollout gate released: Cluster Autoscaler restored to %s replicas.\n' \
     "${previous_replicas}"
 }
 
 require_cilium_fleet_current() {
-  local daemonset_json pods_json generation scheduled ready pod_count stale_nodes
+  local daemonset_json pods_json generation desired scheduled ready pod_count stale_nodes
   daemonset_json="$(
     kubectl_prod -n "${namespace}" get daemonset "${cilium_daemonset}" -o json
   )"
@@ -217,6 +273,9 @@ require_cilium_fleet_current() {
   generation="$(
     "${jq_bin}" -er '.metadata.generation | tostring' <<<"${daemonset_json}"
   )" || fail 'the Cilium DaemonSet has no observable template generation'
+  desired="$(
+    "${jq_bin}" -er '.status.desiredNumberScheduled // 0' <<<"${daemonset_json}"
+  )" || fail 'the Cilium DaemonSet has no desired-agent count'
   scheduled="$(
     "${jq_bin}" -er '.status.currentNumberScheduled // 0' <<<"${daemonset_json}"
   )" || fail 'the Cilium DaemonSet has no scheduled-agent count'
@@ -243,20 +302,25 @@ require_cilium_fleet_current() {
   )" || fail 'the Cilium pod template generations are unreadable'
 
   require_replica_count "${generation}" 'Cilium DaemonSet generation'
+  require_replica_count "${desired}" 'desired Cilium agent count'
   require_replica_count "${scheduled}" 'scheduled Cilium agent count'
   require_replica_count "${ready}" 'ready Cilium agent count'
   require_replica_count "${pod_count}" 'observed Cilium pod count'
-  [[ "${pod_count}" == "${scheduled}" && "${ready}" == "${scheduled}" &&
-    -z "${stale_nodes}" ]] ||
-    fail "Cilium rollout is incomplete for DaemonSet generation ${generation}: scheduled=${scheduled} pods=${pod_count} ready=${ready} stale_nodes=${stale_nodes:-<none>}"
+  [[ "${scheduled}" == "${desired}" && "${pod_count}" == "${desired}" &&
+    "${ready}" == "${desired}" && -z "${stale_nodes}" ]] ||
+    fail "Cilium rollout is incomplete for DaemonSet generation ${generation}: desired=${desired} scheduled=${scheduled} pods=${pod_count} ready=${ready} stale_nodes=${stale_nodes:-<none>}"
 }
 
 if [[ "${rollout_gate_active}" == true ]]; then
   suspend_autoscaler
+  if [[ "${phase}" == '--after-deploy' ]]; then
+    record_approved_template_sha
+  fi
 elif [[ "${phase}" == '--after-deploy' ]]; then
   restore_autoscaler_if_owned
 elif [[ -n "$(get_previous_replicas)" ]]; then
   if [[ "${component_active}" == true ]]; then
+    require_candidate_matches_approved_template
     require_cilium_fleet_current
     printf 'Cilium homogeneous-device rollout is complete at the current DaemonSet generation; gate removal may publish.\n'
   else

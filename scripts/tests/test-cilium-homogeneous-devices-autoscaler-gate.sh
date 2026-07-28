@@ -88,6 +88,12 @@ printf '1\n' >"${state_dir}/status-replicas"
 printf '123\n' >"${state_dir}/provider-id"
 printf '17\n' >"${state_dir}/cilium-generation"
 printf '16\n' >"${state_dir}/cilium-pod-generation"
+printf '1\n' >"${state_dir}/cilium-desired"
+printf '1\n' >"${state_dir}/cilium-current"
+printf '1\n' >"${state_dir}/cilium-ready"
+printf 'true\n' >"${state_dir}/cilium-pod-present"
+printf 'approved\n' >"${state_dir}/cilium-template-value"
+: >"${state_dir}/approved-template-sha"
 : >"${state_dir}/github-output"
 
 cat >"${fake_kubectl}" <<'FAKE_KUBECTL'
@@ -97,15 +103,42 @@ set -euo pipefail
 printf '%s\n' "$*" >>"${KUBECTL_STATE}/commands"
 
 case "$*" in
+  kustomize*)
+    template_value="$(<"${KUBECTL_STATE}/cilium-template-value")"
+    cat <<EOF
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  chart:
+    spec:
+      version: 1.2.3
+  values:
+    devices: ${template_value}
+    updateStrategy:
+      type: OnDelete
+  upgrade:
+    disableWait: true
+EOF
+    ;;
   *"get daemonset cilium"*"-o json"*)
     generation="$(<"${KUBECTL_STATE}/cilium-generation")"
-    printf '{"metadata":{"generation":%s},"status":{"currentNumberScheduled":1,"numberReady":1}}\n' \
-      "${generation}"
+    desired="$(<"${KUBECTL_STATE}/cilium-desired")"
+    current="$(<"${KUBECTL_STATE}/cilium-current")"
+    ready="$(<"${KUBECTL_STATE}/cilium-ready")"
+    printf '{"metadata":{"generation":%s},"status":{"desiredNumberScheduled":%s,"currentNumberScheduled":%s,"numberReady":%s}}\n' \
+      "${generation}" "${desired}" "${current}" "${ready}"
     ;;
   *"get pods"*"-l k8s-app=cilium"*"-o json"*)
-    generation="$(<"${KUBECTL_STATE}/cilium-pod-generation")"
-    printf '{"items":[{"metadata":{"labels":{"pod-template-generation":"%s"}},"spec":{"nodeName":"prod-worker-1"},"status":{"containerStatuses":[{"name":"cilium-agent","ready":true}]}}]}\n' \
-      "${generation}"
+    if [[ "$(<"${KUBECTL_STATE}/cilium-pod-present")" == 'true' ]]; then
+      generation="$(<"${KUBECTL_STATE}/cilium-pod-generation")"
+      printf '{"items":[{"metadata":{"labels":{"pod-template-generation":"%s"}},"spec":{"nodeName":"prod-worker-1"},"status":{"containerStatuses":[{"name":"cilium-agent","ready":true}]}}]}\n' \
+        "${generation}"
+    else
+      printf '%s\n' '{"items":[]}'
+    fi
     ;;
   *"get nodes"*"-o json"*)
     printf '%s\n' '{"items":[{"metadata":{"name":"autoscale-test"},"spec":{"providerID":"hcloud://123"}}]}'
@@ -118,6 +151,17 @@ case "$*" in
     ;;
   *"get deployment"*".status.replicas"*)
     cat "${KUBECTL_STATE}/status-replicas"
+    ;;
+  *"get deployment"*"cilium-device-rollout-approved-template-sha"*)
+    cat "${KUBECTL_STATE}/approved-template-sha"
+    ;;
+  *"annotate deployment"*"cilium-device-rollout-approved-template-sha-"*)
+    : >"${KUBECTL_STATE}/approved-template-sha"
+    ;;
+  *"annotate deployment"*"cilium-device-rollout-approved-template-sha="*)
+    printf '%s\n' "$*" |
+      sed 's/.*cilium-device-rollout-approved-template-sha=\([0-9a-f][0-9a-f]*\).*/\1/' \
+        >"${KUBECTL_STATE}/approved-template-sha"
     ;;
   *"annotate deployment"*"cilium-device-rollout-previous-replicas-"*)
     : >"${KUBECTL_STATE}/previous-replicas"
@@ -180,6 +224,8 @@ run_guard --after-deploy
   fail 'an active OnDelete rollout must remain suspended after cluster update'
 [[ "$(<"${state_dir}/previous-replicas")" == '1' ]] ||
   fail 'reasserting the gate must not overwrite the remembered replica count'
+[[ -s "${state_dir}/approved-template-sha" ]] ||
+  fail 'the reconciled active gate must record the approved Cilium template hash'
 
 sed -i.bak '/cilium\/components\/homogeneous-devices\//d' \
   "${fixture_controllers}/kustomization.yaml"
@@ -189,11 +235,28 @@ run_guard --before-publish
 run_guard --after-deploy
 [[ "$(<"${state_dir}/replicas")" == '1' ]] ||
   fail 'a reconciled component rollback must restore the owned autoscaler replica count'
+[[ ! -s "${state_dir}/approved-template-sha" ]] ||
+  fail 'a reconciled component rollback must clear the approved template hash'
 cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" \
   "${fixture_controllers}/kustomization.yaml"
 run_guard --before-publish
+run_guard --after-deploy
 
 sed -i.bak '/type: OnDelete/d' "${fixture_component}/kustomization.yaml"
+printf 'changed\n' >"${state_dir}/cilium-template-value"
+if run_guard --before-publish; then
+  fail 'gate removal must reject an incoming non-strategy Cilium template change'
+fi
+printf 'approved\n' >"${state_dir}/cilium-template-value"
+printf '0\n' >"${state_dir}/cilium-current"
+printf '0\n' >"${state_dir}/cilium-ready"
+printf 'false\n' >"${state_dir}/cilium-pod-present"
+if run_guard --before-publish; then
+  fail 'gate removal must reject a fleet missing a desired Cilium agent'
+fi
+printf '1\n' >"${state_dir}/cilium-current"
+printf '1\n' >"${state_dir}/cilium-ready"
+printf 'true\n' >"${state_dir}/cilium-pod-present"
 if run_guard --before-publish; then
   fail 'gate removal must reject a Cilium agent that has not consumed the current template'
 fi
@@ -214,7 +277,7 @@ run_guard --after-deploy
 [[ "$(<"${state_dir}/replicas")" == '0' ]] ||
   fail 'an unowned manual autoscaler suspension must remain untouched'
 
-if grep -Ev '(^|[[:space:]])--context admin@prod([[:space:]]|$)' "${state_dir}/commands" |
+if grep -Ev '(^kustomize[[:space:]]|(^|[[:space:]])--context admin@prod([[:space:]]|$))' "${state_dir}/commands" |
   grep -q .; then
   fail 'every autoscaler read and mutation must pin the admin@prod context'
 fi
