@@ -33,45 +33,78 @@ type finding struct {
 	value string
 }
 
-// collectInvalidQueues walks every mapping in the document and reports each
-// concurrency.queue whose value is outside the enum.
+// collectInvalidQueues reports each concurrency.queue whose value is outside the
+// enum, looking only where the Actions schema actually defines a concurrency
+// block: the workflow root, and each job.
 //
-// Walking the parsed tree rather than matching lines matters: it accepts quoted
-// scalars, ignores a queue key that belongs to anything other than a concurrency
-// block, and finds job-level blocks at any nesting depth without knowing the
-// workflow's shape.
+// Parsing the tree rather than matching lines is what accepts a quoted scalar
+// and ignores an inline comment. Restricting the traversal to those two
+// positions is what keeps the check from judging free-form data: `concurrency`
+// is not a reserved word, so a matrix include entry or a composite action's
+// inputs may carry an object of that name whose `queue` property means
+// something else entirely. GitHub does not read those as the enum, so neither
+// may this validator — flagging one would fail CI on valid configuration.
 func collectInvalidQueues(node *yaml.Node) []finding {
-	var findings []finding
+	root := mappingOf(node)
+	if root == nil {
+		return nil
+	}
 
-	var walk func(n *yaml.Node)
-	walk = func(n *yaml.Node) {
-		if n == nil {
-			return
-		}
+	findings := invalidQueueIn(childMapping(root, "concurrency"))
 
-		if n.Kind == yaml.MappingNode {
-			// Mapping content alternates key, value, key, value.
-			for i := 0; i+1 < len(n.Content); i += 2 {
-				key, value := n.Content[i], n.Content[i+1]
-				if key.Value == "concurrency" && value.Kind == yaml.MappingNode {
-					findings = append(findings, invalidQueueIn(value)...)
-				}
-			}
-		}
-
-		for _, child := range n.Content {
-			walk(child)
+	// jobs.<job_id>.concurrency — the only job-level position.
+	if jobs := childMapping(root, "jobs"); jobs != nil {
+		for i := 1; i < len(jobs.Content); i += 2 {
+			job := mappingOf(jobs.Content[i])
+			findings = append(findings, invalidQueueIn(childMapping(job, "concurrency"))...)
 		}
 	}
-	walk(node)
 
 	sort.Slice(findings, func(i, j int) bool { return findings[i].line < findings[j].line })
 
 	return findings
 }
 
-// invalidQueueIn inspects a single concurrency mapping.
+// mappingOf unwraps a document node to its root mapping, and returns nil for
+// anything that is not a mapping (a workflow may be empty, or `concurrency` may
+// be a bare group string with no queue at all).
+func mappingOf(n *yaml.Node) *yaml.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Kind == yaml.DocumentNode && len(n.Content) > 0 {
+		n = n.Content[0]
+	}
+	if n.Kind != yaml.MappingNode {
+		return nil
+	}
+
+	return n
+}
+
+// childMapping returns the mapping value stored under key, or nil when the key
+// is absent or holds a scalar.
+func childMapping(mapping *yaml.Node, key string) *yaml.Node {
+	if mapping == nil {
+		return nil
+	}
+	// Mapping content alternates key, value, key, value.
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mappingOf(mapping.Content[i+1])
+		}
+	}
+
+	return nil
+}
+
+// invalidQueueIn inspects a single concurrency mapping. A nil mapping means the
+// block is absent or is a bare group string, which carries no queue to check.
 func invalidQueueIn(concurrency *yaml.Node) []finding {
+	if concurrency == nil {
+		return nil
+	}
+
 	var findings []finding
 
 	for i := 0; i+1 < len(concurrency.Content); i += 2 {
@@ -88,7 +121,6 @@ func invalidQueueIn(concurrency *yaml.Node) []finding {
 	return findings
 }
 
-// validateFile reports every invalid concurrency.queue in one workflow file.
 // validateFile reports every invalid concurrency.queue in one workflow file. The
 // error is reserved for a file that could not be parsed at all; findings are
 // returned as data so the caller owns how they are rendered.

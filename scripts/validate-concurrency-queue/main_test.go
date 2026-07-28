@@ -84,6 +84,37 @@ jobs:
       queue: alsonope
 `
 
+// A matrix include entry is free-form job data. GitHub does not read a `queue`
+// inside one as the concurrency enum, so neither may this validator.
+const matrixEntryNamedConcurrency = `name: CI
+
+on: push
+
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - concurrency:
+              queue: 12
+`
+
+// Composite-action inputs are equally free-form.
+const stepInputNamedConcurrency = `name: CI
+
+on: push
+
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./.github/actions/thing
+        with:
+          concurrency:
+            queue: unlimited
+`
+
 func TestValidateFileAcceptsTheEnum(t *testing.T) {
 	t.Parallel()
 
@@ -100,6 +131,13 @@ func TestValidateFileAcceptsTheEnum(t *testing.T) {
 		"absent": "name: CI\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n",
 		// A queue key outside a concurrency block is none of this check's business.
 		"unrelated queue key": "name: CI\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    env:\n      queue: whatever\n",
+		// Only the two schema positions are Actions concurrency blocks. A matrix
+		// entry may legitimately be named "concurrency" and carry a "queue"
+		// property that is job data, not the Actions enum — rejecting it would
+		// fail CI on valid configuration this validator has no business judging.
+		"matrix entry named concurrency": matrixEntryNamedConcurrency,
+		// Same shape one level deeper: a step's `with:` inputs are free-form.
+		"step input named concurrency": stepInputNamedConcurrency,
 	}
 
 	for name, workflow := range cases {
