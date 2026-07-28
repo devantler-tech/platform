@@ -356,6 +356,7 @@ jobs:
         # the working tree rather than assuming either shape, so it is a no-op
         # if ksail later emits root-relative paths, and it hard-fails rather
         # than uploading a path it cannot resolve.
+        id: normalize-sarif
         if: "!cancelled()"
         run: |
           shellcheck scripts/normalize-sarif-paths.sh
@@ -365,9 +366,17 @@ jobs:
           # loudest error in the log and bury the one that actually matters.
           if [ ! -f "${RUNNER_TEMP}/kubescape.sarif" ]; then
             echo "::notice::No SARIF written — the scan step failed before producing one. Leaving its error as the visible failure."
+            echo "sarif=absent" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
           bash scripts/normalize-sarif-paths.sh "${RUNNER_TEMP}/kubescape.sarif" k8s .
+          # Only now is the file both PRESENT and root-relative. The upload gates
+          # on this output, so a normalizer hard-failure (an unresolvable path)
+          # cannot fall through to publishing the un-normalized SARIF — which
+          # would create exactly the dead-path alerts this step exists to
+          # prevent. `exit 0` above deliberately leaves it `absent` instead:
+          # a missing SARIF is the scan's failure to report, not this step's.
+          echo "sarif=ready" >> "${GITHUB_OUTPUT}"
 
       - name: 🛡️ Upload Kubescape findings to Code Scanning
         # The score gate above answers "did posture regress"; it cannot show
@@ -395,8 +404,18 @@ jobs:
         # to. The step above drops those; with this repo's exceptions applied
         # the scan produces none anyway (measured: 0 of 4 findings; the same
         # scan with exceptions removed produces 1 of 70).
+        # Gated on the normalize step's OUTPUT, not merely on `!cancelled()`.
+        # `!cancelled()` stays true when normalization FAILS, which would upload
+        # the un-normalized SARIF and recreate the dead-path alerts that step
+        # exists to prevent; it is also true when no SARIF was written at all,
+        # which would invoke the uploader on a missing file. `sarif == 'ready'`
+        # is reached only after the file exists AND normalization succeeded.
+        # Note this deliberately still uploads when the SCAN step failed: a
+        # compliance-threshold failure exits non-zero but writes a valid SARIF,
+        # and those findings are precisely the ones worth publishing.
         if: >-
           !cancelled() &&
+          steps.normalize-sarif.outputs.sarif == 'ready' &&
           github.event.pull_request.head.repo.full_name == github.repository
         uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
         with:
