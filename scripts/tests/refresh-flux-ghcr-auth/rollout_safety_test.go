@@ -439,6 +439,26 @@ func TestTransientLifecycleTaintsClearBeforeImageMutation(t *testing.T) {
 	requireLine(t, operations, "root-patch")
 }
 
+func TestTransientCiliumStartupTaintClearsBeforeImageMutation(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_CILIUM_STARTUP_TAINT_AFTER_READY_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	if reads := parseInt(mustRead(filepath.Join(f.syncStateDir, "post-ready-node-read-count-prod-worker-1")), 0); reads < 2 {
+		t.Errorf("post-Ready node reads = %d, want at least 2", reads)
+	}
+	operations := readLines(f.operationLog)
+	ready := lineIndex(t, operations, "node-ready:prod-worker-1")
+	remove := lineIndex(t, operations, "talos-remove:10.0.0.2:"+ksailTargetImage)
+	if ready >= remove {
+		t.Errorf("Ready index %d is not before image removal index %d", ready, remove)
+	}
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "talos-revision:10.0.0.2")
+	requireLine(t, operations, "root-patch")
+}
+
 func TestPersistentLifecycleTaintsKeepNodeCordoned(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{

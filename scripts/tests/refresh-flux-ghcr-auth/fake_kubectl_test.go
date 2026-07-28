@@ -666,6 +666,18 @@ func fakeKubectlGetNode(args []string) int {
 			)
 		}
 	}
+	if markerExists("ready-"+nodeName) &&
+		nodeName == os.Getenv("FAKE_TRANSIENT_CILIUM_STARTUP_TAINT_AFTER_READY_NODE") {
+		readMarker := "post-ready-node-read-count-" + nodeName
+		readCount := parseInt(markerContent(readMarker), 0) + 1
+		setMarkerContent(readMarker, strconv.Itoa(readCount))
+		if readCount == 1 {
+			taints = append(taints, map[string]any{
+				"key":    "node.cilium.io/agent-not-ready",
+				"effect": "NoSchedule",
+			})
+		}
+	}
 	readyStatus := "True"
 	if markerExists("ready-"+nodeName) &&
 		nodeName == os.Getenv("FAKE_NOT_READY_WITHOUT_LIFECYCLE_TAINT_NODE") {

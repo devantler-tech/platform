@@ -99,10 +99,11 @@ node_scheduling_state_is_safe_to_reboot() {
 }
 
 # Kubernetes may briefly retain its Ready-condition lifecycle taints after the
-# Ready condition itself turns True. While waiting for those controller-owned
-# taints to disappear, preserve every other part of the captured scheduling
-# intent exactly; a replacement, ownership change, uncordon, or unrelated taint
-# must still fail closed immediately.
+# Ready condition itself turns True. Cilium likewise owns its agent-not-ready
+# startup taint and can clear it just after kubelet reports Ready. While waiting
+# for those controller-owned taints to disappear, preserve every other part of
+# the captured scheduling intent exactly; a replacement, ownership change,
+# uncordon, or unrelated taint must still fail closed immediately.
 node_scheduling_state_is_safe_while_lifecycle_taints_clear() {
   local state_file="$1"
   local was_cordoned="$2"
@@ -124,6 +125,7 @@ node_scheduling_state_is_safe_while_lifecycle_taints_clear() {
           and (.value // "") == "")
         or .key == "node.kubernetes.io/not-ready"
         or .key == "node.kubernetes.io/unreachable"
+        or .key == "node.cilium.io/agent-not-ready"
       ) | not))
       | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]);
     .metadata.uid == $uid
@@ -141,7 +143,8 @@ node_has_lifecycle_taints() {
   jq -e '
     any(.spec.taints[]?;
       .key == "node.kubernetes.io/not-ready"
-      or .key == "node.kubernetes.io/unreachable")
+      or .key == "node.kubernetes.io/unreachable"
+      or .key == "node.cilium.io/agent-not-ready")
   ' "${state_file}" >/dev/null
 }
 
