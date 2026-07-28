@@ -24,14 +24,60 @@ const (
 
 // scansKubescapeToSarif reports whether this job runs the scan in the
 // SARIF-producing mode.
+//
+// Matched per LINE, and only on a line that actually executes the scan. A
+// whole-script `strings.Contains` counts `# ksail workload scan --format sarif`
+// in a comment, or an `echo` of the same text, as a scan — so a workflow could
+// stop scanning while this guard stayed green, which is the false-green it
+// exists to prevent. The file header already claims naming the command in a
+// comment is not enough; this is what makes that true.
 func (j job) scansKubescapeToSarif() bool {
 	for _, s := range j.Steps {
-		if strings.Contains(s.Run, kubescapeScanCommand) &&
-			strings.Contains(s.Run, kubescapeScanSarifFlag) {
-			return true
+		for _, line := range strings.Split(s.Run, "\n") {
+			if isKubescapeScanCommand(line) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// isKubescapeScanCommand reports whether ONE script line executes the scan in
+// SARIF mode. Deliberately conservative: it rejects rather than guesses, since
+// a false positive here re-opens the false-green.
+func isKubescapeScanCommand(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	// A comment executes nothing. This also covers a trailing-comment line whose
+	// command half is a comment, which is the shape CodeRabbit raised.
+	if strings.HasPrefix(trimmed, "#") {
+		return false
+	}
+	// `echo`/`printf` merely PRINT the command text. Strip any leading
+	// `VAR=x` assignments and shell prefixes before testing the verb, so
+	// `echo ksail workload scan --format sarif` cannot masquerade as a run.
+	verb := trimmed
+	if i := strings.IndexAny(verb, "|;&"); i >= 0 {
+		// Only the segment that would actually invoke ksail matters; check each.
+		for _, seg := range strings.FieldsFunc(trimmed, func(r rune) bool {
+			return r == '|' || r == ';' || r == '&'
+		}) {
+			if isKubescapeScanCommand(seg) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, w := range strings.Fields(verb) {
+		if strings.Contains(w, "=") && !strings.HasPrefix(w, "-") {
+			continue // leading VAR=value assignment
+		}
+		if w == "echo" || w == "printf" || w == ":" {
+			return false
+		}
+		break
+	}
+	return strings.Contains(trimmed, kubescapeScanCommand) &&
+		strings.Contains(trimmed, kubescapeScanSarifFlag)
 }
 
 // uploadsKubescapeSarif reports whether this job uploads that SARIF to Code
@@ -182,6 +228,54 @@ func TestKubescapeBaselineGuardIsNotVacuous(t *testing.T) {
 		if perturbed.publishesKubescapeBaselineOnPushToMain() {
 			t.Fatal("an upload under a different category creates a parallel alert set, " +
 				"not a baseline the PR-ref findings can close against")
+		}
+	})
+
+	// A step's script can NAME the scan without running it. Both shapes below
+	// keep every other condition satisfied, so each isolates the executes-vs-
+	// mentions distinction alone. Without them the guard reports the baseline as
+	// published by a workflow that scans nothing.
+	t.Run("a commented-out scan does not count", func(t *testing.T) {
+		perturbed := publishing
+		perturbed.Jobs = map[string]job{
+			"baseline": {Steps: []step{
+				{Run: "# " + kubescapeScanCommand + " --framework nsa " + kubescapeScanSarifFlag},
+				{Uses: uploadSarifAction + "@v4", With: stepInputs{Category: kubescapeCategory}},
+			}},
+		}
+		if perturbed.publishesKubescapeBaselineOnPushToMain() {
+			t.Fatal("a scan named only in a COMMENT executes nothing and must not count")
+		}
+	})
+
+	t.Run("an echoed scan command does not count", func(t *testing.T) {
+		perturbed := publishing
+		perturbed.Jobs = map[string]job{
+			"baseline": {Steps: []step{
+				{Run: "echo " + kubescapeScanCommand + " --framework nsa " + kubescapeScanSarifFlag},
+				{Uses: uploadSarifAction + "@v4", With: stepInputs{Category: kubescapeCategory}},
+			}},
+		}
+		if perturbed.publishesKubescapeBaselineOnPushToMain() {
+			t.Fatal("an echoed scan command only PRINTS the text and must not count")
+		}
+	})
+
+	// The complement: a real invocation surrounded by noise must still count, or
+	// the tightening above would be a false-negative in the other direction.
+	t.Run("a real scan among other lines still counts", func(t *testing.T) {
+		perturbed := publishing
+		perturbed.Jobs = map[string]job{
+			"baseline": {Steps: []step{
+				{Run: "# run the scan\n" +
+					"echo starting\n" +
+					kubescapeScanCommand + " --framework nsa " + kubescapeScanSarifFlag + " -o out.sarif\n"},
+				{Uses: uploadSarifAction + "@v4", With: stepInputs{Category: kubescapeCategory}},
+			}},
+		}
+		if !perturbed.publishesKubescapeBaselineOnPushToMain() {
+			t.Fatal("a genuine scan invocation must still count when a comment and an echo " +
+				"of similar text sit beside it")
 		}
 	})
 
