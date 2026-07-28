@@ -656,7 +656,7 @@ func TestStaleImageVerificationWebhookBudgetIsStagedBeforeRuntimeProbe(t *testin
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_IMAGE_VERIFICATION_WEBHOOKS_STALE": "true",
-		"FAKE_LOG_RUNTIME_PROBE_SUCCESS":          "true",
+		"FAKE_LOG_RUNTIME_PROBE_SUCCESS":         "true",
 	})
 	requireSuccessResult(t, result)
 	operations := readLines(f.operationLog)

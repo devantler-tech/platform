@@ -104,7 +104,7 @@ func fakeKubectlGetImageValidatingPolicy(args []string) int {
 	}
 	timeout := 30
 	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_STALE") == "true" &&
-		!markerExists("ivpol-timeout-" + name) {
+		!markerExists("ivpol-timeout-"+name) {
 		timeout = 10
 	}
 	fmt.Println(encodeJSON(map[string]any{
