@@ -1743,6 +1743,20 @@ talos_image_remove_reports_absent() {
     "${result_file}"
 }
 
+drain_failed_for_transient_api_transport() {
+  local result_file="$1"
+
+  # kubectl may log resolved PDB retries before an unrelated API outage.
+  # Classify only its terminal drain error so a real PDB timeout is never
+  # converted into another eviction attempt.
+  LC_ALL=C grep -Eq \
+    '^error: unable to drain node .*('\
+'connection reset by peer|connect: connection refused|'\
+'i/o timeout|TLS handshake timeout|http2: client connection lost|'\
+'no route to host|network is unreachable|unexpected EOF)' \
+    "${result_file}"
+}
+
 revalidate_selected_node_identity_before_mutation() {
   local node_name="$1" node_uid="$2" node_ip="$3" node_role="$4"
 
@@ -1786,6 +1800,7 @@ process_talos_node_target() {
   # Initialise the optional recovery payload so CI and operators get the same
   # fail-closed cleanup path when no bootstrap recovery record was required.
   local probe_image recovery_record=""
+  local drain_attempt=1 api_attempt api_ready
 
   assert_sync_lease_held || return 1
 
@@ -1988,21 +2003,57 @@ process_talos_node_target() {
     # this cluster's generated config targets an unreachable API endpoint.
     # kubectl also retries PDB-protected evictions, giving CloudNativePG time to
     # switch primaries and Longhorn time to enforce its data-safety policy.
-    if ! kubectl \
+    while ! kubectl \
       --context "${KUBE_CONTEXT}" \
       drain "${node_name}" \
       --ignore-daemonsets \
       --delete-emptydir-data \
       --timeout="${DRAIN_TIMEOUT}" \
-      >"${drain_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} could not be safely drained before its GHCR auth reboot."
-      emit_safe_operation_output "drain" "${drain_result_file}"
-      restore_node_schedulability_if_needed \
+      >"${drain_result_file}" 2>&1; do
+      if ((drain_attempt >= 2)) ||
+        ! drain_failed_for_transient_api_transport \
+          "${drain_result_file}"; then
+        echo "::error::Talos node ${node_name} could not be safely drained before its GHCR auth reboot."
+        emit_safe_operation_output "drain" "${drain_result_file}"
+        restore_node_schedulability_if_needed \
+          "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+          "${initial_node_uid}" "${initial_node_taints}" \
+          "${drain_result_file}" "${recovery_record}" || return 1
+        return 1
+      fi
+
+      echo "::warning::Kubernetes API transport interrupted the drain of ${node_name}; waiting for API readiness before one guarded retry."
+      api_ready=false
+      for ((api_attempt = 1; api_attempt <= SYNC_ATTEMPTS; api_attempt++)); do
+        if kubectl \
+          --context "${KUBE_CONTEXT}" \
+          get --raw=/readyz \
+          --request-timeout=30s \
+          >"${talos_result_file}" 2>&1; then
+          api_ready=true
+          break
+        fi
+        if ((api_attempt < SYNC_ATTEMPTS)); then
+          sleep "${SYNC_INTERVAL}"
+        fi
+      done
+      if [[ "${api_ready}" != "true" ]]; then
+        echo "::error::Kubernetes API did not recover after the interrupted drain of ${node_name}; refusing to retry."
+        emit_safe_operation_output "drain-api-readiness" \
+          "${talos_result_file}"
+        restore_node_schedulability_if_needed \
+          "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+          "${initial_node_uid}" "${initial_node_taints}" \
+          "${drain_result_file}" "${recovery_record}" || return 1
+        return 1
+      fi
+      revalidate_node_scheduling_guard \
         "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
         "${initial_node_uid}" "${initial_node_taints}" \
-        "${drain_result_file}" "${recovery_record}" || return 1
-      return 1
-    fi
+        "${drain_result_file}" "${node_ip}" "${node_role}" \
+        "drain retry" || return 1
+      drain_attempt=$((drain_attempt + 1))
+    done
 
     # A PDB-respecting drain can legitimately take most of DRAIN_TIMEOUT. An
     # etcd peer that was healthy before it began may fail while workloads move,

@@ -383,3 +383,22 @@ func TestDrainAPIFailureReleasesTheAtomicClaim(t *testing.T) {
 		t.Error("drain API failure left an owner marker")
 	}
 }
+
+func TestTransientDrainAPITransportFailureRetriesUnderTheSameClaim(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_DRAIN_API_FAIL_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	if count := strings.Count(
+		strings.Join(operations, "\n"),
+		"node-drain:prod-worker-1",
+	); count != 2 {
+		t.Errorf("node drain attempts = %d, want 2", count)
+	}
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "talos-revision:10.0.0.2")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+}

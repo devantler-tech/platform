@@ -32,6 +32,9 @@ func fakeKubectlImplementation(args []string) int {
 	}
 
 	switch {
+	case containsArg(args, "--raw=/readyz"):
+		fmt.Println("ok")
+		return 0
 	case containsSequence(args, "get", "lease"):
 		return fakeKubectlGetSyncLease(args, namespace)
 	case containsSequence(args, "patch", "lease"):
@@ -755,6 +758,19 @@ func fakeKubectlDrain(args []string) int {
 	}
 	if nodeName == os.Getenv("FAKE_DRAIN_API_FAIL_NODE") {
 		return commandFailure(54, "could not list pods before eviction")
+	}
+	if nodeName == os.Getenv("FAKE_TRANSIENT_DRAIN_API_FAIL_NODE") {
+		attemptMarker := "transient-drain-attempt-" + nodeName
+		attempt := parseInt(markerContent(attemptMarker), 0) + 1
+		setMarkerContent(attemptMarker, strconv.Itoa(attempt))
+		if attempt == 1 {
+			return commandFailure(
+				54,
+				"error when evicting pod: Cannot evict pod as it would violate the pod's disruption budget.\n"+
+					"error: unable to drain node %q due to error: Post https://api.example.test:6443/eviction: read: connection reset by peer",
+				nodeName,
+			)
+		}
 	}
 	if nodeName == os.Getenv("FAKE_CORDON_OWNER_REPLACED_NODE") {
 		setMarkerContent("cordon-owner-"+nodeName, "operator-cordon")
