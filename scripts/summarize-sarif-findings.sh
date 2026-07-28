@@ -56,12 +56,20 @@ report="$(
       else
         ( $results
           | group_by(.ruleId)
-          | map({
-              id:    .[0].ruleId,
-              count: length,
-              level: ( $rules[.[0].ruleId].defaultConfiguration.level // "unknown" ),
-              desc:  ( $rules[.[0].ruleId].shortDescription.text // "" )
-            })
+          | map(
+              # A result is not required to carry a ruleId, and indexing the rule
+              # table with null is an error rather than a miss — so resolve the id
+              # once and look the rule up only when there is one. A finding with no
+              # id stays counted and visible instead of aborting the summary.
+              ( .[0].ruleId ) as $id
+              | ( if $id == null then null else $rules[$id] end ) as $rule
+              | {
+                  id:    ( $id // "<no rule id>" ),
+                  count: length,
+                  level: ( $rule.defaultConfiguration.level // "unknown" ),
+                  desc:  ( $rule.shortDescription.text // "" )
+                }
+            )
           | sort_by(-.count)
         ) as $byControl
         | ( "Kubescape: \($total) finding(s) across \($byControl | length) control(s)."

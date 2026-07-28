@@ -60,6 +60,7 @@ jobs:
               - 'scripts/validate-embedded-json.py'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/normalize-sarif-paths.sh'
+              - 'scripts/summarize-sarif-findings.sh'
               - 'go.mod'
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
