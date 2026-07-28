@@ -359,6 +359,14 @@ jobs:
         if: "!cancelled()"
         run: |
           shellcheck scripts/normalize-sarif-paths.sh
+          # `!cancelled()` also covers the scan step failing BEFORE ksail writes
+          # the SARIF — a failing `go test`, or a ksail crash. There is nothing to
+          # normalize then, and exiting 2 with "no such file" would make this the
+          # loudest error in the log and bury the one that actually matters.
+          if [ ! -f "${RUNNER_TEMP}/kubescape.sarif" ]; then
+            echo "::notice::No SARIF written — the scan step failed before producing one. Leaving its error as the visible failure."
+            exit 0
+          fi
           bash scripts/normalize-sarif-paths.sh "${RUNNER_TEMP}/kubescape.sarif" k8s .
 
       - name: 🛡️ Upload Kubescape findings to Code Scanning

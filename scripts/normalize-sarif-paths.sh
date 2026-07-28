@@ -56,7 +56,11 @@ unresolved=()
 kept=0
 prefixed=0
 
-for uri in "${uris[@]}"; do
+# `${arr[@]+"${arr[@]}"}` rather than a bare `"${arr[@]}"`: under `set -u`, bash
+# 3.2 treats an empty array as unset and aborts with `uris[@]: unbound variable`.
+# A SARIF with zero results is the normal clean-scan case, so the unguarded form
+# fails exactly when there is nothing wrong.
+for uri in ${uris[@]+"${uris[@]}"}; do
   if [ -z "$uri" ]; then
     continue
   elif [ -e "$ROOT/$uri" ]; then
@@ -95,7 +99,13 @@ jq --arg prefix "$PREFIX" --argjson rewrite "$(printf '%s\n' "${rewrite_args[@]+
 ' "$SARIF" >"$tmp"
 mv "$tmp" "$SARIF"
 
-dropped=$(printf '%s\n' "${uris[@]+"${uris[@]}"}" | grep -c '^$' || true)
+# Counted from the array length, not from `printf | grep -c '^$'`: with no uris at
+# all, printf still emits one newline, so the grep form reports 1 dropped group on
+# a clean scan that had none.
+dropped=0
+for uri in ${uris[@]+"${uris[@]}"}; do
+  [ -n "$uri" ] || dropped=$((dropped + 1))
+done
 echo "normalize-sarif-paths: ${kept} already root-relative, ${prefixed} prefixed with '${PREFIX}/', ${dropped} empty-uri group(s) dropped."
 
 # Fail-closed re-check: every surviving path must now resolve.
@@ -104,7 +114,7 @@ while IFS= read -r line; do after+=("$line"); done < <(jq -r '
   [.runs[]?.results[]?.locations[]?.physicalLocation.artifactLocation.uri // empty] | unique[]
 ' "$SARIF")
 bad=0
-for uri in "${after[@]}"; do
+for uri in ${after[@]+"${after[@]}"}; do
   [ -n "$uri" ] || continue
   [ -e "$ROOT/$uri" ] || {
     echo "::error::normalize-sarif-paths: still unresolved after rewrite: $uri" >&2
