@@ -2,11 +2,26 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// checkFile is the command's own sequence — parse, then render any findings —
+// so these tests assert on the message an operator actually sees.
+func checkFile(path string, source []byte) error {
+	findings, err := validateFile(path, source)
+	if err != nil {
+		return err
+	}
+	if len(findings) == 0 {
+		return nil
+	}
+
+	return errors.New(formatReport(path, findings))
+}
 
 // Each case is a whole workflow so the test exercises the same traversal the
 // command runs, not a hand-built node tree.
@@ -90,7 +105,7 @@ func TestValidateFileAcceptsTheEnum(t *testing.T) {
 	for name, workflow := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if err := validateFile("w.yaml", []byte(workflow)); err != nil {
+			if err := checkFile("w.yaml", []byte(workflow)); err != nil {
 				t.Fatalf("expected %s to pass, got: %v", name, err)
 			}
 		})
@@ -113,7 +128,7 @@ func TestValidateFileRejectsValuesOutsideTheEnum(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			err := validateFile("w.yaml", []byte(tc.workflow))
+			err := checkFile("w.yaml", []byte(tc.workflow))
 			if err == nil {
 				t.Fatalf("expected %s to fail, but it passed", name)
 			}
@@ -131,7 +146,7 @@ func TestValidateFileRejectsValuesOutsideTheEnum(t *testing.T) {
 func TestValidateFileReportsEveryInvalidQueueNotJustTheFirst(t *testing.T) {
 	t.Parallel()
 
-	err := validateFile("w.yaml", []byte(bothTiersInvalid))
+	err := checkFile("w.yaml", []byte(bothTiersInvalid))
 	if err == nil {
 		t.Fatal("expected failure")
 	}
@@ -146,7 +161,7 @@ func TestValidateFileRejectsNonScalarQueue(t *testing.T) {
 	t.Parallel()
 
 	workflow := "name: CI\non: push\nconcurrency:\n  group: g\n  queue:\n    - max\n"
-	if err := validateFile("w.yaml", []byte(workflow)); err == nil {
+	if err := checkFile("w.yaml", []byte(workflow)); err == nil {
 		t.Fatal("a list-valued queue is not a valid enum member, expected failure")
 	}
 }

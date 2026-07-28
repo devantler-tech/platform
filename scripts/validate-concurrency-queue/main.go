@@ -89,17 +89,21 @@ func invalidQueueIn(concurrency *yaml.Node) []finding {
 }
 
 // validateFile reports every invalid concurrency.queue in one workflow file.
-func validateFile(path string, source []byte) error {
+// validateFile reports every invalid concurrency.queue in one workflow file. The
+// error is reserved for a file that could not be parsed at all; findings are
+// returned as data so the caller owns how they are rendered.
+func validateFile(path string, source []byte) ([]finding, error) {
 	var document yaml.Node
 	if err := yaml.Unmarshal(source, &document); err != nil {
-		return fmt.Errorf("%s: could not parse as YAML: %w", path, err)
+		return nil, fmt.Errorf("%s: could not parse as YAML: %w", path, err)
 	}
 
-	findings := collectInvalidQueues(&document)
-	if len(findings) == 0 {
-		return nil
-	}
+	return collectInvalidQueues(&document), nil
+}
 
+// formatReport renders findings as a fail-with-the-fix message: where the bad
+// value is, what it is, and what to put there instead.
+func formatReport(path string, findings []finding) string {
 	var message strings.Builder
 	for _, f := range findings {
 		fmt.Fprintf(&message,
@@ -110,12 +114,12 @@ func validateFile(path string, source []byte) error {
 		"Set each queue above to single (coalesce to the newest pending run) or " +
 			"max (queue up to 100 pending runs).")
 
-	return errors.New(message.String())
+	return message.String()
 }
 
 func run(paths []string, stderr io.Writer) error {
 	if len(paths) == 0 {
-		return errors.New("usage: validate-concurrency-queue <workflow.yaml>...")
+		return errors.New("usage: validate-concurrency-queue <workflow.yaml>")
 	}
 
 	failed := false
@@ -123,13 +127,21 @@ func run(paths []string, stderr io.Writer) error {
 		source, err := os.ReadFile(path)
 		if err != nil {
 			// Fail closed: an unreadable workflow is not a validated workflow.
-			fmt.Fprintf(stderr, "::error::%s: could not read: %v\n", path, err)
+			_, _ = fmt.Fprintf(stderr, "::error::%s: could not read: %v\n", path, err)
 			failed = true
 
 			continue
 		}
-		if err := validateFile(path, source); err != nil {
-			fmt.Fprintf(stderr, "::error::%v\n", err)
+
+		findings, err := validateFile(path, source)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "::error::%v\n", err)
+			failed = true
+
+			continue
+		}
+		if len(findings) > 0 {
+			_, _ = fmt.Fprintf(stderr, "::error::%s\n", formatReport(path, findings))
 			failed = true
 		}
 	}
@@ -143,7 +155,7 @@ func run(paths []string, stderr io.Writer) error {
 
 func main() {
 	if err := run(os.Args[1:], os.Stderr); err != nil {
-		fmt.Fprintf(os.Stderr, "::error::%v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "::error::%v\n", err)
 		os.Exit(1)
 	}
 }
