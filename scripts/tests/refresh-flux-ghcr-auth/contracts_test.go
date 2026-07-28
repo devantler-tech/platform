@@ -452,3 +452,35 @@ func TestTalosRegistryAuthUsesSupportedTalosDocument(t *testing.T) {
 	requireNotContains(t, registryAuth, "machine:\n")
 	requireNotContains(t, registryAuth, "\n---\n")
 }
+
+func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
+	policyPath := "k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
+	policy := readRepositoryFile(t, policyPath)
+	timeout, err := yamlScalarAtPath(
+		policy,
+		"spec",
+		"webhookConfiguration",
+		"timeoutSeconds",
+	)
+	if err != nil {
+		t.Fatalf("read image-verification webhook timeout: %v", err)
+	}
+	if timeout != "30" {
+		t.Errorf("image-verification webhook timeout = %q, want 30", timeout)
+	}
+	for _, expected := range []string{
+		"name: publishapp",
+		"name: publishprovider",
+		"name: ksailcd",
+		"image.startsWith('ghcr.io/devantler-tech/ksail')",
+	} {
+		requireContains(t, policy, expected)
+	}
+
+	kustomization := readRepositoryFile(
+		t,
+		"k8s/bases/infrastructure/cluster-policies/kustomization.yaml",
+	)
+	requireContains(t, kustomization, "best-practices/verify-app-images.yaml")
+	requireNotContains(t, kustomization, "best-practices/verify-ksail-images.yaml")
+}

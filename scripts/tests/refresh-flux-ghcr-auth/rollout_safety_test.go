@@ -8,6 +8,7 @@ import (
 )
 
 func TestRevisionFailureKeepsOwnedCordonAndBlocksRetry(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_TALOS_FAIL_NODE":      "10.0.0.2",
@@ -32,6 +33,7 @@ func TestRevisionFailureKeepsOwnedCordonAndBlocksRetry(t *testing.T) {
 }
 
 func TestCredentialPatchOccursUnderOwnedCordon(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, nil)
 	requireSuccessResult(t, result)
@@ -44,6 +46,7 @@ func TestCredentialPatchOccursUnderOwnedCordon(t *testing.T) {
 }
 
 func TestLiveSynchronizationLeaseBlocksEveryMutation(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_HELD_SYNC_LEASE": "true",
@@ -56,6 +59,7 @@ func TestLiveSynchronizationLeaseBlocksEveryMutation(t *testing.T) {
 }
 
 func TestExpiredSynchronizationLeaseRequiresExplicitRecovery(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_HELD_SYNC_LEASE":    "true",
@@ -68,7 +72,30 @@ func TestExpiredSynchronizationLeaseRequiresExplicitRecovery(t *testing.T) {
 	}
 }
 
+func TestSynchronizationLeaseUsesKubernetesMicroTime(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_REQUIRE_KUBERNETES_MICROTIME": "true",
+	})
+	requireSuccessResult(t, result)
+}
+
+func TestSynchronizationLeaseAcquisitionReportsTheAPICause(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_SYNC_LEASE_CREATE_ERROR": "admission denied: fixture Lease policy",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "admission denied: fixture Lease policy")
+	if pathExists(f.variablesPatchCapture) || pathExists(f.patchCapture) || pathExists(f.talosLog) {
+		t.Fatal("failed synchronization lease acquisition did not block every cluster mutation")
+	}
+}
+
 func TestSameHolderLeaseRenewalRaceDoesNotAbortTheTransaction(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_SYNC_LEASE_RENEW_CONFLICT_ONCE": "true",
@@ -81,6 +108,7 @@ func TestSameHolderLeaseRenewalRaceDoesNotAbortTheTransaction(t *testing.T) {
 }
 
 func TestCurrentLeaseHolderRetriesSecretCASConflicts(t *testing.T) {
+	t.Parallel()
 	for name, test := range map[string]struct {
 		environment string
 		marker      string
@@ -142,6 +170,7 @@ func TestCurrentLeaseHolderRetriesSecretCASConflicts(t *testing.T) {
 }
 
 func TestLeaseLossDuringSecretReadStopsBeforePatch(t *testing.T) {
+	t.Parallel()
 	for name, test := range map[string]struct {
 		environment string
 		marker      string
@@ -186,6 +215,7 @@ func TestLeaseLossDuringSecretReadStopsBeforePatch(t *testing.T) {
 }
 
 func TestLeaseLossAfterNodeClaimStopsBeforeTalosMutation(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_SYNC_LEASE_LOST_AFTER_FIRST_CLAIM": "true",
@@ -206,6 +236,7 @@ func TestLeaseLossAfterNodeClaimStopsBeforeTalosMutation(t *testing.T) {
 }
 
 func TestLeaseLossAfterPreCordonedNodeClaimPreservesSchedulingIntent(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_CORDONED_NODES":                    "prod-worker-1",
@@ -224,6 +255,7 @@ func TestLeaseLossAfterPreCordonedNodeClaimPreservesSchedulingIntent(t *testing.
 }
 
 func TestCredentialPatchFailureReleasesOwnedCordon(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_TALOS_FAIL_NODE":      "10.0.0.2",
@@ -246,6 +278,7 @@ func TestCredentialPatchFailureReleasesOwnedCordon(t *testing.T) {
 }
 
 func TestCredentialPatchFailurePreservesPreExistingCordon(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_CORDONED_NODES":       "prod-worker-1",
@@ -271,6 +304,7 @@ func TestCredentialPatchFailurePreservesPreExistingCordon(t *testing.T) {
 }
 
 func TestSchedulingDriftDuringCredentialPatchStopsBeforeDrain(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_EXTERNAL_UNCORDON_AFTER_AUTH_NODE": "prod-worker-1",
@@ -287,6 +321,7 @@ func TestSchedulingDriftDuringCredentialPatchStopsBeforeDrain(t *testing.T) {
 }
 
 func TestSchedulingDriftDuringImageMutationStopsAtNextGuard(t *testing.T) {
+	t.Parallel()
 	for name, test := range map[string]struct {
 		environment string
 		marker      string
@@ -328,6 +363,7 @@ func TestSchedulingDriftDuringImageMutationStopsAtNextGuard(t *testing.T) {
 }
 
 func TestChangedCordonOwnerIsNeverUncordoned(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_CORDON_OWNER_REPLACED_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -341,6 +377,7 @@ func TestChangedCordonOwnerIsNeverUncordoned(t *testing.T) {
 }
 
 func TestAutoscalerTaintIsNeverUncordoned(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_AUTOSCALER_CORDON_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -354,6 +391,7 @@ func TestAutoscalerTaintIsNeverUncordoned(t *testing.T) {
 }
 
 func TestExternalUncordonAfterDrainBlocksReboot(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_EXTERNAL_UNCORDON_AFTER_DRAIN_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -365,6 +403,7 @@ func TestExternalUncordonAfterDrainBlocksReboot(t *testing.T) {
 }
 
 func TestChangedInternalIPAfterDrainBlocksReboot(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_NODE_IP_CHANGED_AFTER_DRAIN_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -376,6 +415,7 @@ func TestChangedInternalIPAfterDrainBlocksReboot(t *testing.T) {
 }
 
 func TestReplacementAfterReadyBlocksImageMutation(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_NODE_REPLACED_AFTER_READY_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -388,6 +428,7 @@ func TestReplacementAfterReadyBlocksImageMutation(t *testing.T) {
 }
 
 func TestExternalUncordonAfterReadyBlocksImageMutation(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_EXTERNAL_UNCORDON_AFTER_READY_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -400,6 +441,7 @@ func TestExternalUncordonAfterReadyBlocksImageMutation(t *testing.T) {
 }
 
 func TestTransientLifecycleTaintsClearBeforeImageMutation(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_TRANSIENT_LIFECYCLE_TAINT_AFTER_READY_NODE": "prod-worker-1",
@@ -419,7 +461,29 @@ func TestTransientLifecycleTaintsClearBeforeImageMutation(t *testing.T) {
 	requireLine(t, operations, "root-patch")
 }
 
+func TestTransientCiliumStartupTaintClearsBeforeImageMutation(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_CILIUM_STARTUP_TAINT_AFTER_READY_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	if reads := parseInt(mustRead(filepath.Join(f.syncStateDir, "post-ready-node-read-count-prod-worker-1")), 0); reads < 2 {
+		t.Errorf("post-Ready node reads = %d, want at least 2", reads)
+	}
+	operations := readLines(f.operationLog)
+	ready := lineIndex(t, operations, "node-ready:prod-worker-1")
+	remove := lineIndex(t, operations, "talos-remove:10.0.0.2:"+ksailTargetImage)
+	if ready >= remove {
+		t.Errorf("Ready index %d is not before image removal index %d", ready, remove)
+	}
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "talos-revision:10.0.0.2")
+	requireLine(t, operations, "root-patch")
+}
+
 func TestPersistentLifecycleTaintsKeepNodeCordoned(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_PERSISTENT_LIFECYCLE_TAINT_AFTER_READY_NODE": "prod-worker-1",
@@ -446,6 +510,7 @@ func TestPersistentLifecycleTaintsKeepNodeCordoned(t *testing.T) {
 }
 
 func TestReadyFalseWithoutLifecycleTaintKeepsNodeCordoned(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_NOT_READY_WITHOUT_LIFECYCLE_TAINT_NODE": "prod-worker-1",
@@ -472,6 +537,7 @@ func TestReadyFalseWithoutLifecycleTaintKeepsNodeCordoned(t *testing.T) {
 }
 
 func TestReplacementAfterUncordonBlocksConvergence(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_NODE_REPLACED_AFTER_UNCORDON_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -483,6 +549,7 @@ func TestReplacementAfterUncordonBlocksConvergence(t *testing.T) {
 }
 
 func TestReplacedNodeIsRejectedBeforeTalosMutation(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_NODE_REPLACED_BEFORE_PROCESS_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -494,6 +561,7 @@ func TestReplacedNodeIsRejectedBeforeTalosMutation(t *testing.T) {
 }
 
 func TestTalosConvergenceBudgetRequiresTargetAndTwoCleanReads(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS": "2"})
 	if result.exitCode != 64 {
@@ -505,7 +573,23 @@ func TestTalosConvergenceBudgetRequiresTargetAndTwoCleanReads(t *testing.T) {
 	}
 }
 
+func TestLeaseHeartbeatMustRemainBelowTheLeaseDuration(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS": "120",
+	})
+	if result.exitCode != 64 {
+		t.Errorf("exit = %d, want 64\n%s%s", result.exitCode, result.stdout, result.stderr)
+	}
+	requireContains(t, result.stdout+result.stderr, "must be a positive integer below the Lease duration")
+	if pathExists(f.kubectlCalled) {
+		t.Error("unsafe heartbeat budget reached kubectl")
+	}
+}
+
 func TestUncordonFailureKeepsRevisionMarkerAndOwnerFailClosed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_UNCORDON_FAIL_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -520,11 +604,52 @@ func TestUncordonFailureKeepsRevisionMarkerAndOwnerFailClosed(t *testing.T) {
 	}
 }
 
+func TestTransientNodeRevisionAdvanceRetriesCordonRelease(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_NODE_RESOURCE_VERSION_ADVANCES_BEFORE_RELEASE_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "concurrent-node-resource-version:prod-worker-1")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+	if pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-1")) {
+		t.Error("successful release retry left owner marker")
+	}
+}
+
+func TestLostCordonReleaseResponseAdoptsExactReleasedState(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_NODE_RELEASE_RESPONSE_LOST_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	if !pathExists(filepath.Join(f.syncStateDir, "node-release-response-lost-prod-worker-1")) {
+		t.Fatal("fixture did not lose the applied cordon release response")
+	}
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+	if pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-1")) {
+		t.Error("adopted release left owner marker")
+	}
+}
+
 func TestUnreadyNodeAfterRebootStopsTheRoll(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_NODE_READY_FAIL_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
-	requireLinesEqual(t, readLines(f.operationLog), []string{
+	requireLinesEqual(t, withoutOperationPrefix(
+		readLines(f.operationLog),
+		"ivpol-policy-",
+	), []string{
+		"flux-policy-parent-pause:flux-system",
+		"flux-policy-parent-stable:flux-system",
+		"flux-policy-pause:infrastructure",
 		"variables-patch",
 		"fanout:pushsecret/flux-system/seed-ghcr",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
@@ -535,11 +660,14 @@ func TestUnreadyNodeAfterRebootStopsTheRoll(t *testing.T) {
 		"node-drain:prod-worker-1",
 		"talos-reboot:10.0.0.2",
 		"node-ready:prod-worker-1",
+		"flux-policy-resume:infrastructure",
+		"flux-policy-parent-resume:flux-system",
 	})
 	requireNotContains(t, result.stdout+result.stderr, "fixture-secret-token")
 }
 
 func TestUnreadyNodePreservesItsPreExistingCordon(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_CORDONED_NODES":       "prod-worker-1",
@@ -555,6 +683,7 @@ func TestUnreadyNodePreservesItsPreExistingCordon(t *testing.T) {
 }
 
 func TestTalosFailureAfterSafeFanoutKeepsRootAuthUnchanged(t *testing.T) {
+	t.Parallel()
 	for _, operation := range []string{"auth", "reboot", "remove", "pull", "revision"} {
 		t.Run(operation, func(t *testing.T) {
 			f := newFixture(t)

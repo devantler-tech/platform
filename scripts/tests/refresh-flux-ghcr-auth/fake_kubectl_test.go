@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type jsonPatchOperation struct {
@@ -31,12 +32,40 @@ func fakeKubectlImplementation(args []string) int {
 	}
 
 	switch {
+	case containsArg(args, "--raw=/readyz"):
+		appendEnvFile("OPERATION_LOG", "api-readyz\n")
+		if markerExists("transient-node-ready-attempt-prod-worker-1") {
+			attemptMarker := "post-reboot-api-ready-attempt"
+			attempt := parseInt(markerContent(attemptMarker), 0) + 1
+			setMarkerContent(attemptMarker, strconv.Itoa(attempt))
+			failures := parseInt(os.Getenv("FAKE_POST_REBOOT_API_READY_FAILURES"), 0)
+			if attempt <= failures {
+				return commandFailure(
+					54,
+					"The connection to the server api.example.test:6443 was refused: connect: connection refused",
+				)
+			}
+		}
+		fmt.Println("ok")
+		return 0
+	case containsSequence(args, "get", "kustomizations.kustomize.toolkit.fluxcd.io"):
+		return fakeKubectlGetFluxPolicyKustomization(args, namespace)
+	case containsSequence(args, "patch", "kustomizations.kustomize.toolkit.fluxcd.io"):
+		return fakeKubectlPatchFluxPolicyKustomization(args, namespace, patchFile)
 	case containsSequence(args, "get", "lease"):
 		return fakeKubectlGetSyncLease(args, namespace)
 	case containsSequence(args, "patch", "lease"):
 		return fakeKubectlPatchSyncLease(args, namespace, patchFile)
 	case containsArg(args, "create") && manifestFile != "" && fakeManifestKind(manifestFile) == "Lease":
 		return fakeKubectlCreateSyncLease(namespace, manifestFile)
+	case containsSequence(args, "delete", "imagevalidatingpolicy.policies.kyverno.io"):
+		return fakeKubectlDeleteRetiredImageValidatingPolicy(args)
+	case containsSequence(args, "patch", "imagevalidatingpolicy.policies.kyverno.io"):
+		return fakeKubectlPatchConsolidatedImageValidatingPolicy(args, patchFile)
+	case containsSequence(args, "get", "mutatingwebhookconfigurations.admissionregistration.k8s.io"):
+		return fakeKubectlGetImageVerificationWebhooks("mutate")
+	case containsSequence(args, "get", "validatingwebhookconfigurations.admissionregistration.k8s.io"):
+		return fakeKubectlGetImageVerificationWebhooks("validate")
 	case containsSequence(args, "get", "nodes"):
 		return fakeKubectlGetNodes()
 	case containsSequence(args, "get", "pods"):
@@ -89,6 +118,447 @@ func fakeKubectlImplementation(args []string) int {
 	return commandFailure(91, "unexpected kubectl invocation: %s", strings.Join(args, " "))
 }
 
+func fakeKubectlGetFluxPolicyKustomization(args []string, namespace string) int {
+	name := argumentAfter(args, "kustomizations.kustomize.toolkit.fluxcd.io")
+	if name == "flux-system" && containsArg(args, "infrastructure") {
+		return fakeKubectlGetFluxPolicyFences(args, namespace)
+	}
+	if name == "flux-system" {
+		return fakeKubectlGetFluxPolicyParent(args, namespace)
+	}
+	if namespace != "flux-system" ||
+		name != "infrastructure" ||
+		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
+		return commandFailure(91, "invalid Flux policy Kustomization lookup")
+	}
+	fmt.Println(encodeJSON(fakeFluxPolicyChildObject()))
+	return 0
+}
+
+func fakeFluxPolicyChildObject() map[string]any {
+	owner := markerContent("flux-policy-handoff-owner")
+	if owner == "" && os.Getenv("FAKE_FLUX_POLICY_HANDOFF_OWNED") == "true" {
+		owner = "other-live-transaction"
+	}
+	annotations := map[string]any{
+		"reconcile.fluxcd.io/requestedAt": "fixture",
+	}
+	if owner != "" {
+		annotations["platform.devantler.tech/ghcr-policy-handoff-owner"] = owner
+	}
+	if markerExists("flux-policy-handoff-suspended") {
+		annotations["kustomize.toolkit.fluxcd.io/reconcile"] = "disabled"
+	}
+	generation := 13
+	suspended := markerExists("flux-policy-handoff-suspended")
+	if suspended {
+		generation = 14
+	}
+	metadata := map[string]any{
+		"name":            "infrastructure",
+		"namespace":       "flux-system",
+		"uid":             "infrastructure-kustomization-uid",
+		"resourceVersion": defaultString(markerContent("flux-policy-handoff-resource-version"), "20"),
+		"generation":      generation,
+	}
+	if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_NO_ANNOTATIONS") != "true" || owner != "" {
+		metadata["annotations"] = annotations
+	}
+	conditions := []any{
+		map[string]any{
+			"type":   "Ready",
+			"status": "True",
+			"reason": "ReconciliationSucceeded",
+		},
+	}
+	if os.Getenv("FAKE_FLUX_POLICY_RECONCILING") == "true" {
+		conditions = append(conditions, map[string]any{
+			"type":   "Reconciling",
+			"status": "True",
+			"reason": "Progressing",
+		})
+	}
+	return map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata":   metadata,
+		"spec": map[string]any{
+			"suspend": suspended,
+		},
+		"status": map[string]any{
+			"observedGeneration": 13,
+			"conditions":         conditions,
+		},
+	}
+}
+
+func fakeKubectlPatchFluxPolicyKustomization(args []string, namespace, patchFile string) int {
+	name := argumentAfter(args, "kustomizations.kustomize.toolkit.fluxcd.io")
+	if name == "flux-system" {
+		return fakeKubectlPatchFluxPolicyParent(args, namespace, patchFile)
+	}
+	if namespace != "flux-system" ||
+		name != "infrastructure" ||
+		!containsArg(args, "--type=json") || patchFile == "" {
+		return commandFailure(91, "invalid Flux policy Kustomization patch")
+	}
+	var patch []jsonPatchOperation
+	if err := json.Unmarshal([]byte(mustReadCommandFile(patchFile)), &patch); err != nil {
+		return commandFailure(91, "parse Flux policy Kustomization patch: %v", err)
+	}
+	currentResourceVersion := defaultString(
+		markerContent("flux-policy-handoff-resource-version"),
+		"20",
+	)
+	if !hasPatchOperation(
+		patch,
+		"test",
+		"/metadata/uid",
+		"infrastructure-kustomization-uid",
+	) {
+		return commandFailure(56, "Flux policy Kustomization CAS failed")
+	}
+
+	ownerPath := "/metadata/annotations/platform.devantler.tech~1ghcr-policy-handoff-owner"
+	reconcilePath := "/metadata/annotations/kustomize.toolkit.fluxcd.io~1reconcile"
+	if hasPatchOperation(patch, "add", "/spec/suspend", true) {
+		owner := patchValueString(patch, "add", ownerPath)
+		if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
+			owner == "" ||
+			!hasPatchOperation(patch, "add", reconcilePath, "disabled") ||
+			(os.Getenv("FAKE_FLUX_POLICY_HANDOFF_NO_ANNOTATIONS") == "true" &&
+				!hasPatchOperation(patch, "add", "/metadata/annotations", map[string]any{})) ||
+			markerExists("flux-policy-handoff-owner") {
+			return commandFailure(56, "invalid or conflicting Flux policy handoff acquisition")
+		}
+		setMarkerContent("flux-policy-handoff-owner", owner)
+		touchMarker("flux-policy-handoff-suspended")
+		setMarkerContent(
+			"flux-policy-handoff-resource-version",
+			incrementDecimal(currentResourceVersion),
+		)
+		appendEnvFile("OPERATION_LOG", "flux-policy-pause:infrastructure\n")
+		if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_PATCH_RESPONSE_LOST") == "true" &&
+			!markerExists("flux-policy-handoff-patch-response-lost") {
+			touchMarker("flux-policy-handoff-patch-response-lost")
+			return commandFailure(54, "connection reset after policy handoff patch")
+		}
+		return fakeKubectlGetFluxPolicyKustomization(
+			[]string{
+				"get",
+				"kustomizations.kustomize.toolkit.fluxcd.io",
+				"infrastructure",
+				"-o",
+				"json",
+			},
+			namespace,
+		)
+	}
+
+	currentOwner := markerContent("flux-policy-handoff-owner")
+	if currentOwner == "" ||
+		!markerExists("flux-policy-handoff-suspended") ||
+		!hasPatchOperation(patch, "test", ownerPath, currentOwner) ||
+		!hasPatchOperation(patch, "test", reconcilePath, "disabled") ||
+		!hasPatchOperation(patch, "test", "/spec/suspend", true) ||
+		!hasPatchOperation(patch, "add", "/spec/suspend", false) ||
+		!hasPatchPath(patch, "remove", ownerPath) ||
+		!hasPatchPath(patch, "remove", reconcilePath) {
+		return commandFailure(56, "invalid Flux policy handoff release")
+	}
+	if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_RELEASE_FAIL") == "true" {
+		return commandFailure(56, "persistent Flux policy handoff release failure")
+	}
+	removeMarker("flux-policy-handoff-owner")
+	removeMarker("flux-policy-handoff-suspended")
+	setMarkerContent(
+		"flux-policy-handoff-resource-version",
+		incrementDecimal(currentResourceVersion),
+	)
+	appendEnvFile("OPERATION_LOG", "flux-policy-resume:infrastructure\n")
+	if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_RELEASE_RESPONSE_LOST") == "true" &&
+		!markerExists("flux-policy-handoff-release-response-lost") {
+		touchMarker("flux-policy-handoff-release-response-lost")
+		return commandFailure(54, "connection reset after policy handoff release")
+	}
+	fmt.Println("kustomization.kustomize.toolkit.fluxcd.io/infrastructure patched")
+	return 0
+}
+
+func fakeKubectlGetFluxPolicyParent(args []string, namespace string) int {
+	if namespace != "flux-system" ||
+		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
+		return commandFailure(91, "invalid parent Flux Kustomization lookup")
+	}
+	fmt.Println(encodeJSON(fakeFluxPolicyParentObject()))
+	return 0
+}
+
+func fakeFluxPolicyParentObject() map[string]any {
+	owner := markerContent("flux-policy-parent-owner")
+	annotations := map[string]any{
+		"reconcile.fluxcd.io/requestedAt": "fixture",
+	}
+	if owner != "" {
+		annotations["platform.devantler.tech/ghcr-policy-parent-owner"] = owner
+	}
+	suspended := markerExists("flux-policy-parent-suspended")
+	metadata := map[string]any{
+		"name":            "flux-system",
+		"namespace":       "flux-system",
+		"uid":             "flux-system-kustomization-uid",
+		"resourceVersion": defaultString(markerContent("flux-policy-parent-resource-version"), "30"),
+		"generation":      1,
+	}
+	if os.Getenv("FAKE_FLUX_POLICY_PARENT_NO_ANNOTATIONS") != "true" || owner != "" {
+		metadata["annotations"] = annotations
+	}
+	conditions := []any{
+		map[string]any{
+			"type":   "Ready",
+			"status": "True",
+			"reason": "ReconciliationSucceeded",
+		},
+	}
+	if suspended {
+		readCount := parseInt(markerContent("flux-policy-parent-suspended-read-count"), 0) + 1
+		setMarkerContent("flux-policy-parent-suspended-read-count", strconv.Itoa(readCount))
+		if os.Getenv("FAKE_FLUX_PARENT_RECONCILING_AFTER_PAUSE") == "true" &&
+			readCount <= 2 {
+			conditions = append(conditions, map[string]any{
+				"type":   "Reconciling",
+				"status": "True",
+				"reason": "Progressing",
+			})
+			appendEnvFile("OPERATION_LOG", "flux-policy-parent-reconciling:flux-system\n")
+		} else if !markerExists("flux-policy-parent-stable-logged") {
+			touchMarker("flux-policy-parent-stable-logged")
+			appendEnvFile("OPERATION_LOG", "flux-policy-parent-stable:flux-system\n")
+		}
+	}
+	return map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata":   metadata,
+		"spec": map[string]any{
+			"suspend": suspended,
+		},
+		"status": map[string]any{
+			"observedGeneration": 1,
+			"conditions":         conditions,
+		},
+	}
+}
+
+func fakeKubectlGetFluxPolicyFences(args []string, namespace string) int {
+	if namespace != "flux-system" ||
+		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
+		return commandFailure(91, "invalid Flux policy fence list lookup")
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "List",
+		"items": []any{
+			fakeFluxPolicyParentObject(),
+			fakeFluxPolicyChildObject(),
+		},
+	}))
+	return 0
+}
+
+func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string) int {
+	if namespace != "flux-system" ||
+		!containsArg(args, "--type=json") || patchFile == "" {
+		return commandFailure(91, "invalid parent Flux Kustomization patch")
+	}
+	var patch []jsonPatchOperation
+	if err := json.Unmarshal([]byte(mustReadCommandFile(patchFile)), &patch); err != nil {
+		return commandFailure(91, "parse parent Flux Kustomization patch: %v", err)
+	}
+	currentResourceVersion := defaultString(
+		markerContent("flux-policy-parent-resource-version"),
+		"30",
+	)
+	if !hasPatchOperation(
+		patch,
+		"test",
+		"/metadata/uid",
+		"flux-system-kustomization-uid",
+	) {
+		return commandFailure(56, "parent Flux Kustomization UID test failed")
+	}
+	ownerPath := "/metadata/annotations/platform.devantler.tech~1ghcr-policy-parent-owner"
+	if hasPatchOperation(patch, "add", "/spec/suspend", true) {
+		owner := patchValueString(patch, "add", ownerPath)
+		if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
+			owner == "" ||
+			(os.Getenv("FAKE_FLUX_POLICY_PARENT_NO_ANNOTATIONS") == "true" &&
+				!hasPatchOperation(patch, "add", "/metadata/annotations", map[string]any{})) ||
+			markerExists("flux-policy-parent-owner") {
+			return commandFailure(56, "invalid or conflicting parent Flux handoff acquisition")
+		}
+		setMarkerContent("flux-policy-parent-owner", owner)
+		touchMarker("flux-policy-parent-suspended")
+		setMarkerContent(
+			"flux-policy-parent-resource-version",
+			incrementDecimal(currentResourceVersion),
+		)
+		appendEnvFile("OPERATION_LOG", "flux-policy-parent-pause:flux-system\n")
+		if os.Getenv("FAKE_FLUX_POLICY_PARENT_PATCH_RESPONSE_LOST") == "true" &&
+			!markerExists("flux-policy-parent-patch-response-lost") {
+			touchMarker("flux-policy-parent-patch-response-lost")
+			return commandFailure(54, "connection reset after parent Flux handoff patch")
+		}
+		return fakeKubectlGetFluxPolicyKustomization(
+			[]string{
+				"get",
+				"kustomizations.kustomize.toolkit.fluxcd.io",
+				"flux-system",
+				"-o",
+				"json",
+			},
+			namespace,
+		)
+	}
+
+	currentOwner := markerContent("flux-policy-parent-owner")
+	if currentOwner == "" ||
+		!markerExists("flux-policy-parent-suspended") ||
+		!hasPatchOperation(patch, "test", ownerPath, currentOwner) ||
+		!hasPatchOperation(patch, "test", "/spec/suspend", true) ||
+		!hasPatchOperation(patch, "add", "/spec/suspend", false) ||
+		!hasPatchPath(patch, "remove", ownerPath) {
+		return commandFailure(56, "invalid parent Flux handoff release")
+	}
+	removeMarker("flux-policy-parent-owner")
+	removeMarker("flux-policy-parent-suspended")
+	setMarkerContent(
+		"flux-policy-parent-resource-version",
+		incrementDecimal(currentResourceVersion),
+	)
+	appendEnvFile("OPERATION_LOG", "flux-policy-parent-resume:flux-system\n")
+	if os.Getenv("FAKE_FLUX_POLICY_PARENT_RELEASE_RESPONSE_LOST") == "true" &&
+		!markerExists("flux-policy-parent-release-response-lost") {
+		touchMarker("flux-policy-parent-release-response-lost")
+		return commandFailure(54, "connection reset after parent Flux handoff release")
+	}
+	fmt.Println("kustomization.kustomize.toolkit.fluxcd.io/flux-system patched")
+	return 0
+}
+
+func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile string) int {
+	if argumentAfter(args, "imagevalidatingpolicy.policies.kyverno.io") != "verify-app-images" ||
+		!containsArg(args, "--type=merge") || patchFile == "" {
+		return commandFailure(91, "invalid consolidated image-validating policy patch")
+	}
+	var patch map[string]any
+	if err := json.Unmarshal([]byte(mustReadCommandFile(patchFile)), &patch); err != nil {
+		return commandFailure(91, "parse consolidated image-validating policy patch: %v", err)
+	}
+	spec, _ := patch["spec"].(map[string]any)
+	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
+	attestors, _ := spec["attestors"].([]any)
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 3 {
+		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
+	}
+	if containsArg(args, "--dry-run=server") {
+		if os.Getenv("FAKE_IMAGE_VERIFICATION_POLICY_DRY_RUN_FAILURE") == "true" {
+			return commandFailure(92, "candidate consolidated image-validating policy rejected")
+		}
+		appendEnvFile("OPERATION_LOG", "ivpol-policy-dry-run:verify-app-images\n")
+		fmt.Println("imagevalidatingpolicy.policies.kyverno.io/verify-app-images server-side patch dry-run")
+		return 0
+	}
+	touchMarker("ivpol-policy-verify-app-images")
+	appendEnvFile("OPERATION_LOG", "ivpol-policy-apply:verify-app-images\n")
+	fmt.Println("imagevalidatingpolicy.policies.kyverno.io/verify-app-images serverside-applied")
+	return 0
+}
+
+func fakeKubectlDeleteRetiredImageValidatingPolicy(args []string) int {
+	if argumentAfter(args, "imagevalidatingpolicy.policies.kyverno.io") != "verify-ksail-images" ||
+		!containsArg(args, "--ignore-not-found") {
+		return commandFailure(91, "invalid retired image-validating policy delete")
+	}
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_POLICY_DELETE_FAILURE") == "true" {
+		return commandFailure(92, "retired image-validating policy delete failed")
+	}
+	touchMarker("ivpol-policy-verify-ksail-images-deleted")
+	appendEnvFile("OPERATION_LOG", "ivpol-policy-delete:verify-ksail-images\n")
+	fmt.Println("imagevalidatingpolicy.policies.kyverno.io/verify-ksail-images deleted")
+	return 0
+}
+
+func fakeKubectlGetImageVerificationWebhooks(operation string) int {
+	stale := os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_STALE") == "true"
+	consolidated := markerExists("ivpol-policy-verify-app-images")
+	if stale && !markerExists("ivpol-consolidated-observed") {
+		consolidated = false
+		if operation == "validate" {
+			touchMarker("ivpol-consolidated-observed")
+		}
+	}
+	failurePolicy := "Fail"
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_FAIL_OPEN") == "true" ||
+		(operation == "validate" &&
+			os.Getenv("FAKE_IMAGE_VERIFICATION_VALIDATING_WEBHOOK_FAIL_OPEN") == "true") {
+		failurePolicy = "Ignore"
+	}
+	if os.Getenv("FAKE_IMAGE_VERIFICATION_WEBHOOKS_NEVER_CONVERGE") == "true" {
+		consolidated = false
+	}
+	var webhooks []any
+	if !markerExists("ivpol-policy-verify-ksail-images-deleted") {
+		webhooks = append(webhooks, map[string]any{
+			"name": operation + ".ivpol.kyverno.svc-fail",
+			"clientConfig": map[string]any{
+				"service": map[string]any{
+					"name":      "kyverno-svc",
+					"namespace": "kyverno",
+					"path":      "/ivpol/" + operation + "/verify-ksail-images",
+				},
+			},
+			"failurePolicy":  failurePolicy,
+			"timeoutSeconds": 10,
+		})
+	}
+	if consolidated {
+		webhooks = append(webhooks, map[string]any{
+			"name": operation + ".verify-app-images.ivpol.kyverno.svc-fail",
+			"clientConfig": map[string]any{
+				"service": map[string]any{
+					"name":      "kyverno-svc",
+					"namespace": "kyverno",
+					"path":      "/ivpol/" + operation + "/verify-app-images",
+				},
+			},
+			"failurePolicy":  failurePolicy,
+			"timeoutSeconds": 30,
+		})
+		if operation == "validate" {
+			if markerExists("ivpol-policy-verify-ksail-images-deleted") {
+				if !markerExists("ivpol-policy-webhooks-ready-logged") {
+					touchMarker("ivpol-policy-webhooks-ready-logged")
+					appendEnvFile("OPERATION_LOG", "ivpol-policy-webhooks-ready\n")
+				}
+			} else {
+				if !markerExists("ivpol-policy-consolidated-ready-logged") {
+					touchMarker("ivpol-policy-consolidated-ready-logged")
+					appendEnvFile("OPERATION_LOG", "ivpol-policy-consolidated-ready\n")
+				}
+			}
+		}
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "List",
+		"items": []any{
+			map[string]any{"webhooks": webhooks},
+		},
+	}))
+	return 0
+}
+
 func fakeManifestKind(path string) string {
 	var manifest map[string]any
 	if err := json.Unmarshal([]byte(mustReadCommandFile(path)), &manifest); err != nil {
@@ -102,6 +572,29 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 	if namespace != "flux-system" || argumentAfter(args, "lease") != "ghcr-auth-refresh" ||
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid synchronization lease lookup")
+	}
+	if os.Getenv("FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN") == "true" &&
+		markerExists("transient-drain-attempt-prod-worker-1") &&
+		!markerExists("sync-lease-heartbeat-interrupted") &&
+		(os.Getenv("FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY") != "true" || !markerExists("sync-lease-heartbeat-interruption-started")) {
+		if os.Getenv("FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY") == "true" {
+			if !markerExists("sync-lease-heartbeat-interruption-started") {
+				touchMarker("sync-lease-heartbeat-interruption-started")
+				time.Sleep(2 * time.Second)
+				touchMarker("sync-lease-heartbeat-interrupted")
+				return commandFailure(54, "read: connection reset by peer")
+			}
+		} else {
+			touchMarker("sync-lease-heartbeat-interrupted")
+		}
+		if os.Getenv("FAKE_REPLACE_SYNC_LEASE_DURING_HEARTBEAT_INTERRUPTION") == "true" {
+			setMarkerContent("sync-lease-holder", "newer-transaction")
+			setMarkerContent(
+				"sync-lease-resource-version",
+				incrementDecimal(defaultString(markerContent("sync-lease-resource-version"), "10")),
+			)
+		}
+		return commandFailure(54, "read: connection reset by peer")
 	}
 	holder := markerContent("sync-lease-holder")
 	if !markerExists("sync-lease-holder") {
@@ -150,6 +643,15 @@ func fakeKubectlCreateSyncLease(namespace, manifestFile string) int {
 		holder == "" || holder != os.Getenv("FLUX_GHCR_SYNC_LEASE_HOLDER") {
 		return commandFailure(91, "invalid synchronization lease manifest")
 	}
+	if err := validateKubernetesMicroTimes(
+		fmt.Sprint(spec["acquireTime"]),
+		fmt.Sprint(spec["renewTime"]),
+	); err != nil {
+		return commandFailure(91, `Lease in version "v1" cannot be handled as a Lease: %v`, err)
+	}
+	if message := os.Getenv("FAKE_SYNC_LEASE_CREATE_ERROR"); message != "" {
+		return commandFailure(91, "%s", message)
+	}
 	setMarkerContent("sync-lease-holder", holder)
 	setMarkerContent("sync-lease-resource-version", "10")
 	setMarkerContent("sync-lease-duration", fmt.Sprint(spec["leaseDurationSeconds"]))
@@ -174,6 +676,13 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 	if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
 		!hasPatchOperation(patch, "test", "/spec/holderIdentity", currentHolder) {
 		return commandFailure(56, "synchronization lease CAS failed")
+	}
+	for _, path := range []string{"/spec/acquireTime", "/spec/renewTime"} {
+		if hasPatchPath(patch, "replace", path) {
+			if err := validateKubernetesMicroTimes(patchValueString(patch, "replace", path)); err != nil {
+				return commandFailure(91, `Lease in version "v1" cannot be handled as a Lease: %v`, err)
+			}
+		}
 	}
 	if os.Getenv("FAKE_SYNC_LEASE_RENEW_CONFLICT_ONCE") == "true" &&
 		!markerExists("sync-lease-renew-conflict") &&
@@ -200,6 +709,19 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 	setMarkerContent("sync-lease-resource-version", incrementDecimal(currentResourceVersion))
 	fmt.Println("lease.coordination.k8s.io/ghcr-auth-refresh patched")
 	return 0
+}
+
+func validateKubernetesMicroTimes(values ...string) error {
+	if os.Getenv("FAKE_REQUIRE_KUBERNETES_MICROTIME") != "true" {
+		return nil
+	}
+	const layout = "2006-01-02T15:04:05.000000Z07:00"
+	for _, value := range values {
+		if _, err := time.Parse(layout, value); err != nil {
+			return fmt.Errorf("parsing time %q as %q: %w", value, layout, err)
+		}
+	}
+	return nil
 }
 
 func fakeKubectlGetNodes() int {
@@ -528,6 +1050,18 @@ func fakeKubectlGetNode(args []string) int {
 			)
 		}
 	}
+	if markerExists("ready-"+nodeName) &&
+		nodeName == os.Getenv("FAKE_TRANSIENT_CILIUM_STARTUP_TAINT_AFTER_READY_NODE") {
+		readMarker := "post-ready-node-read-count-" + nodeName
+		readCount := parseInt(markerContent(readMarker), 0) + 1
+		setMarkerContent(readMarker, strconv.Itoa(readCount))
+		if readCount == 1 {
+			taints = append(taints, map[string]any{
+				"key":    "node.cilium.io/agent-not-ready",
+				"effect": "NoSchedule",
+			})
+		}
+	}
 	readyStatus := "True"
 	if markerExists("ready-"+nodeName) &&
 		nodeName == os.Getenv("FAKE_NOT_READY_WITHOUT_LIFECYCLE_TAINT_NODE") {
@@ -605,6 +1139,33 @@ func fakeKubectlDrain(args []string) int {
 	}
 	if nodeName == os.Getenv("FAKE_DRAIN_API_FAIL_NODE") {
 		return commandFailure(54, "could not list pods before eviction")
+	}
+	if nodeName == os.Getenv("FAKE_TRANSIENT_DRAIN_API_FAIL_NODE") {
+		attemptMarker := "transient-drain-attempt-" + nodeName
+		attempt := parseInt(markerContent(attemptMarker), 0) + 1
+		setMarkerContent(attemptMarker, strconv.Itoa(attempt))
+		if attempt == 1 {
+			if os.Getenv("FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN") == "true" {
+				waitMarker := "sync-lease-heartbeat-interrupted"
+				if os.Getenv("FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY") == "true" {
+					waitMarker = "sync-lease-heartbeat-interruption-started"
+				}
+				for wait := 0; wait < 40 && !markerExists(waitMarker); wait++ {
+					time.Sleep(100 * time.Millisecond)
+				}
+				if os.Getenv("FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY") != "true" {
+					// Let the heartbeat process persist its private sticky-loss
+					// marker before the foreground drain observes API recovery.
+					time.Sleep(500 * time.Millisecond)
+				}
+			}
+			return commandFailure(
+				54,
+				"error when evicting pod: Cannot evict pod as it would violate the pod's disruption budget.\n"+
+					"error: unable to drain node %q due to error: Post https://api.example.test:6443/eviction: read: connection reset by peer",
+				nodeName,
+			)
+		}
 	}
 	if nodeName == os.Getenv("FAKE_CORDON_OWNER_REPLACED_NODE") {
 		setMarkerContent("cordon-owner-"+nodeName, "operator-cordon")
@@ -730,6 +1291,16 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 	if len(patch) > 0 {
 		expectedOwner = fmt.Sprint(patch[0].Value)
 	}
+	if nodeName == os.Getenv("FAKE_NODE_RESOURCE_VERSION_ADVANCES_BEFORE_RELEASE_NODE") &&
+		!markerExists("resource-version-advanced-before-release-"+nodeName) {
+		setMarkerContent(
+			"resource-version-"+nodeName,
+			incrementDecimal(currentResourceVersion),
+		)
+		touchMarker("resource-version-advanced-before-release-" + nodeName)
+		appendEnvFile("OPERATION_LOG", "concurrent-node-resource-version:"+nodeName+"\n")
+		return commandFailure(56, "resourceVersion test failed during cordon release")
+	}
 	if nodeName == os.Getenv("FAKE_UNCORDON_FAIL_NODE") || markerContent("cordon-owner-"+nodeName) != expectedOwner {
 		return commandFailure(56, "cordon ownership changed; refusing to uncordon")
 	}
@@ -763,6 +1334,11 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		touchMarker("uncordoned-" + nodeName)
 	} else {
 		appendEnvFile("OPERATION_LOG", "node-release-cordon-owner:"+nodeName+"\n")
+	}
+	if nodeName == os.Getenv("FAKE_NODE_RELEASE_RESPONSE_LOST_NODE") &&
+		!markerExists("node-release-response-lost-"+nodeName) {
+		touchMarker("node-release-response-lost-" + nodeName)
+		return commandFailure(54, "connection reset after cordon release")
 	}
 	return 0
 }
@@ -825,6 +1401,17 @@ func fakeKubectlWaitForNode(args []string) int {
 		return commandFailure(91, "readiness target missing")
 	}
 	appendEnvFile("OPERATION_LOG", "node-ready:"+nodeName+"\n")
+	if nodeName == os.Getenv("FAKE_TRANSIENT_NODE_READY_API_FAIL_NODE") {
+		attemptMarker := "transient-node-ready-attempt-" + nodeName
+		attempt := parseInt(markerContent(attemptMarker), 0) + 1
+		setMarkerContent(attemptMarker, strconv.Itoa(attempt))
+		if attempt == 1 {
+			return commandFailure(
+				54,
+				"The connection to the server api.example.test:6443 was refused: connect: connection refused",
+			)
+		}
+	}
 	if nodeName == os.Getenv("FAKE_NODE_READY_FAIL_NODE") {
 		return commandFailure(50, "node did not become ready")
 	}
@@ -886,6 +1473,21 @@ func fakeKubectlCreateRuntimeProbe(namespace, manifestFile string) int {
 			75,
 			"Error from server (InternalError): failed calling webhook: context deadline exceeded",
 		)
+	}
+	if wordListContains(
+		os.Getenv("FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_COUNT_NODES"),
+		probeNode,
+	) {
+		attemptMarker := "runtime-probe-create-timeout-count-" + probeNode
+		attempt := parseInt(markerContent(attemptMarker), 0) + 1
+		setMarkerContent(attemptMarker, strconv.Itoa(attempt))
+		timeoutCount := parseInt(os.Getenv("FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_COUNT"), 3)
+		if attempt <= timeoutCount {
+			return commandFailure(
+				75,
+				"Error from server (InternalError): failed calling webhook: context deadline exceeded",
+			)
+		}
 	}
 	if wordListContains(os.Getenv("FAKE_RUNTIME_PROBE_CREATE_ALWAYS_FAIL_NODES"), probeNode) {
 		return commandFailure(

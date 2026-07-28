@@ -56,6 +56,7 @@ func requireNoLine(t *testing.T, lines []string, target string) {
 }
 
 func TestRefreshesRootAndFanoutWithoutLeakingPlaintext(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	config := validConfig()
 	result := f.runHelper(config, nil, nil)
@@ -123,6 +124,7 @@ func TestRefreshesRootAndFanoutWithoutLeakingPlaintext(t *testing.T) {
 }
 
 func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, nil)
 	requireSuccessResult(t, result)
@@ -139,7 +141,13 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		"talos-pull:10.0.0.1:" + target,
 		"talos-revision:10.0.0.1",
 	})
-	requireLinesEqual(t, readLines(f.operationLog), []string{
+	requireLinesEqual(t, withoutOperationPrefix(
+		readLines(f.operationLog),
+		"ivpol-policy-",
+	), []string{
+		"flux-policy-parent-pause:flux-system",
+		"flux-policy-parent-stable:flux-system",
+		"flux-policy-pause:infrastructure",
 		"variables-patch",
 		"fanout:pushsecret/flux-system/seed-ghcr",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
@@ -169,6 +177,8 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		"fanout:externalsecret/ascoachingogvaner/ghcr-auth",
 		"fanout:externalsecret/kyverno/ghcr-auth",
 		"root-patch",
+		"flux-policy-resume:infrastructure",
+		"flux-policy-parent-resume:flux-system",
 	})
 	temporaryPatch := strings.TrimSpace(mustRead(f.talosPatchPathLog))
 	if pathExists(temporaryPatch) {
@@ -181,6 +191,7 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 }
 
 func TestUnhealthyControlPlaneBlocksTheControlPlaneReboot(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	ready := []any{map[string]any{"type": "Ready", "status": "True"}}
 	inventory := map[string]any{"items": []any{
@@ -227,6 +238,7 @@ func nodeFixture(name, uid, internalIP string, controlPlane bool, conditions []a
 }
 
 func TestControlPlaneQuorumIsRecheckedAfterTheDrain(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_ETCD_STATUS_FAIL_AFTER_DRAIN_NODE": "10.0.0.3"})
 	requireFailureResult(t, result)
@@ -240,6 +252,7 @@ func TestControlPlaneQuorumIsRecheckedAfterTheDrain(t *testing.T) {
 }
 
 func TestUnsafeEtcdMemberStatusBlocksControlPlaneReboot(t *testing.T) {
+	t.Parallel()
 	for _, variable := range []string{"FAKE_ETCD_LEARNER_NODE", "FAKE_ETCD_STATUS_ERROR_NODE"} {
 		t.Run(variable, func(t *testing.T) {
 			f := newFixture(t)
@@ -253,7 +266,18 @@ func TestUnsafeEtcdMemberStatusBlocksControlPlaneReboot(t *testing.T) {
 	}
 }
 
+func withoutOperationPrefix(operations []string, prefix string) []string {
+	filtered := make([]string, 0, len(operations))
+	for _, operation := range operations {
+		if !strings.HasPrefix(operation, prefix) {
+			filtered = append(filtered, operation)
+		}
+	}
+	return filtered
+}
+
 func TestCompactHealthyEtcdStatusPermitsControlPlaneReboot(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_ETCD_COMPACT_STATUS_NODE": "10.0.0.3"})
 	requireSuccessResult(t, result)
@@ -263,6 +287,7 @@ func TestCompactHealthyEtcdStatusPermitsControlPlaneReboot(t *testing.T) {
 }
 
 func TestPreExistingCordonSurvivesTheAuthReboot(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_CORDONED_NODES": "prod-worker-1"})
 	requireSuccessResult(t, result)
@@ -276,6 +301,7 @@ func TestPreExistingCordonSurvivesTheAuthReboot(t *testing.T) {
 }
 
 func TestSchedulableNodeIsUncordonedAfterTheAuthReboot(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, nil)
 	requireSuccessResult(t, result)
@@ -294,6 +320,7 @@ func TestSchedulableNodeIsUncordonedAfterTheAuthReboot(t *testing.T) {
 }
 
 func TestSchedulableNodeIsClaimedAndCordonedAtomically(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, nil)
 	requireSuccessResult(t, result)
@@ -307,6 +334,7 @@ func TestSchedulableNodeIsClaimedAndCordonedAtomically(t *testing.T) {
 }
 
 func TestConcurrentCordonBeforeAtomicClaimStopsTheRoll(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_CORDON_BEFORE_CLAIM_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -322,6 +350,7 @@ func TestConcurrentCordonBeforeAtomicClaimStopsTheRoll(t *testing.T) {
 }
 
 func TestPDBBlockedDrainRestoresOriginalSchedulability(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_DRAIN_FAIL_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -341,6 +370,7 @@ func TestPDBBlockedDrainRestoresOriginalSchedulability(t *testing.T) {
 }
 
 func TestPDBBlockedDrainPreservesPreExistingCordon(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_CORDONED_NODES":  "prod-worker-1",
@@ -356,6 +386,7 @@ func TestPDBBlockedDrainPreservesPreExistingCordon(t *testing.T) {
 }
 
 func TestDrainAPIFailureReleasesTheAtomicClaim(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_DRAIN_API_FAIL_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
@@ -369,4 +400,123 @@ func TestDrainAPIFailureReleasesTheAtomicClaim(t *testing.T) {
 	if pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-1")) {
 		t.Error("drain API failure left an owner marker")
 	}
+}
+
+func TestTransientDrainAPITransportFailureRetriesUnderTheSameClaim(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_DRAIN_API_FAIL_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	if count := strings.Count(
+		strings.Join(operations, "\n"),
+		"node-drain:prod-worker-1",
+	); count != 2 {
+		t.Errorf("node drain attempts = %d, want 2", count)
+	}
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "talos-revision:10.0.0.2")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+}
+
+func TestTransientAPITransportFailureDuringPostRebootReadyWaitRetries(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_NODE_READY_API_FAIL_NODE": "prod-worker-1",
+		"FAKE_POST_REBOOT_API_READY_FAILURES":     "3",
+		"FLUX_GHCR_SYNC_ATTEMPTS":                 "4",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	if count := strings.Count(
+		strings.Join(operations, "\n"),
+		"node-ready:prod-worker-1",
+	); count != 2 {
+		t.Errorf("node readiness attempts = %d, want 2", count)
+	}
+	if count := strings.Count(
+		strings.Join(operations, "\n"),
+		"api-readyz",
+	); count != 4 {
+		t.Errorf("post-reboot API readiness attempts = %d, want 4", count)
+	}
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "talos-revision:10.0.0.2")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+}
+
+func TestTransientDrainRecoversTheSameLeaseAfterHeartbeatInterruption(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_DRAIN_API_FAIL_NODE":               "prod-worker-1",
+		"FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN": "true",
+		"FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS":           "1",
+	})
+	requireSuccessResult(t, result)
+	if !pathExists(filepath.Join(f.syncStateDir, "sync-lease-heartbeat-interrupted")) {
+		t.Fatal("fixture did not interrupt the synchronization Lease heartbeat during drain")
+	}
+	operations := readLines(f.operationLog)
+	if count := strings.Count(
+		strings.Join(operations, "\n"),
+		"node-drain:prod-worker-1",
+	); count != 2 {
+		t.Errorf("node drain attempts = %d, want 2", count)
+	}
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+}
+
+func TestTransientDrainReapsHeartbeatBeforeItsDelayedFailureMarker(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_DRAIN_API_FAIL_NODE":                  "prod-worker-1",
+		"FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN":    "true",
+		"FAKE_DELAY_SYNC_LEASE_HEARTBEAT_FAILURE_ON_RECOVERY": "true",
+		"FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS":              "1",
+	})
+	requireSuccessResult(t, result)
+	if !pathExists(filepath.Join(f.syncStateDir, "sync-lease-heartbeat-interruption-started")) {
+		t.Fatal("fixture did not hold the heartbeat renewal failure across API recovery")
+	}
+	operations := readLines(f.operationLog)
+	if count := strings.Count(
+		strings.Join(operations, "\n"),
+		"node-drain:prod-worker-1",
+	); count != 2 {
+		t.Errorf("node drain attempts = %d, want 2", count)
+	}
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+}
+
+func TestTransientDrainRefusesHeartbeatRecoveryAfterLeaseReplacement(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_DRAIN_API_FAIL_NODE":                    "prod-worker-1",
+		"FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN":      "true",
+		"FAKE_REPLACE_SYNC_LEASE_DURING_HEARTBEAT_INTERRUPTION": "true",
+		"FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS":                "1",
+	})
+	requireFailureResult(t, result)
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"could not re-prove and renew its synchronization Lease holder",
+	)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-drain:prod-worker-1")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireNoLine(t, operations, "talos-reboot:10.0.0.2")
+	requireNoLine(t, operations, "root-patch")
 }

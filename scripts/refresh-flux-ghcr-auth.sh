@@ -39,10 +39,28 @@ readonly SYNC_ATTEMPTS="${FLUX_GHCR_SYNC_ATTEMPTS:-60}"
 readonly SYNC_INTERVAL="${FLUX_GHCR_SYNC_INTERVAL:-2}"
 readonly TALOS_CONVERGENCE_ATTEMPTS="${FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS:-${SYNC_ATTEMPTS}}"
 readonly DRAIN_TIMEOUT="${FLUX_GHCR_DRAIN_TIMEOUT:-45m}"
-readonly RUNTIME_PROBE_CREATE_ATTEMPTS=3
+# Kyverno image verification is fail-closed and can consume its full webhook
+# timeout during a cold signature lookup. Keep retrying the same immutable Pod
+# name so an ambiguous admission response is reused instead of duplicated.
+readonly RUNTIME_PROBE_CREATE_ATTEMPTS=6
+readonly NODE_READY_TRANSPORT_RETRY_ATTEMPTS=3
+readonly CORDON_RELEASE_ATTEMPTS=3
+readonly IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS=30
+readonly IMAGE_VERIFICATION_POLICY="verify-app-images"
+readonly RETIRED_IMAGE_VERIFICATION_POLICY="verify-ksail-images"
+readonly IMAGE_VERIFICATION_POLICY_FILE="k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
+readonly IMAGE_VERIFICATION_FLUX_KUSTOMIZATION="infrastructure"
+readonly IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION="flux-system"
+readonly FLUX_KUSTOMIZATION_RESOURCE="kustomizations.kustomize.toolkit.fluxcd.io"
+readonly FLUX_POLICY_HANDOFF_OWNER_ANNOTATION="platform.devantler.tech/ghcr-policy-handoff-owner"
+readonly FLUX_POLICY_HANDOFF_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-policy-handoff-owner"
+readonly FLUX_POLICY_PARENT_OWNER_ANNOTATION="platform.devantler.tech/ghcr-policy-parent-owner"
+readonly FLUX_POLICY_PARENT_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-policy-parent-owner"
+readonly FLUX_RECONCILE_ANNOTATION="kustomize.toolkit.fluxcd.io/reconcile"
+readonly FLUX_RECONCILE_JSON_PATH="/metadata/annotations/kustomize.toolkit.fluxcd.io~1reconcile"
 readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
 readonly SYNC_LEASE_DURATION_SECONDS=120
-readonly SYNC_LEASE_HEARTBEAT_SECONDS=30
+readonly SYNC_LEASE_HEARTBEAT_SECONDS="${FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS:-30}"
 readonly CORDON_OWNER_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-owner"
 readonly CORDON_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner"
 readonly CORDON_RECOVERY_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-recovery"
@@ -79,8 +97,10 @@ readonly -a FANOUT_NAMESPACES=(
 if ! [[ "${SYNC_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] ||
   ! [[ "${TALOS_CONVERGENCE_ATTEMPTS}" =~ ^[3-9]$|^[1-9][0-9]+$ ]] ||
   ! [[ "${SYNC_INTERVAL}" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
-  ! [[ "${DRAIN_TIMEOUT}" =~ ^[1-9][0-9]*(s|m|h)$ ]]; then
-  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS must be positive, FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS must be at least 3, FLUX_GHCR_SYNC_INTERVAL must be non-negative, and FLUX_GHCR_DRAIN_TIMEOUT must be a positive whole number of seconds, minutes, or hours."
+  ! [[ "${DRAIN_TIMEOUT}" =~ ^[1-9][0-9]*(s|m|h)$ ]] ||
+  ! [[ "${SYNC_LEASE_HEARTBEAT_SECONDS}" =~ ^[1-9][0-9]*$ ]] ||
+  ((SYNC_LEASE_HEARTBEAT_SECONDS >= SYNC_LEASE_DURATION_SECONDS)); then
+  echo "::error::FLUX_GHCR_SYNC_ATTEMPTS must be positive, FLUX_GHCR_TALOS_CONVERGENCE_ATTEMPTS must be at least 3, FLUX_GHCR_SYNC_INTERVAL must be non-negative, FLUX_GHCR_DRAIN_TIMEOUT must be a positive whole number of seconds, minutes, or hours, and FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS must be a positive integer below the Lease duration."
   exit 64
 fi
 
@@ -109,6 +129,22 @@ cleanup_refresh_work() {
       --ignore-not-found \
       --wait=false \
       >/dev/null 2>&1 || true
+  fi
+  if declare -F resume_flux_policy_handoff >/dev/null &&
+    [[ "${flux_policy_handoff_acquired:-false}" == "true" ]] &&
+    ! resume_flux_policy_handoff; then
+    cleanup_status=1
+    echo "::error::Could not safely resume Flux policy reconciliation; the ownership annotation was retained for explicit recovery."
+  fi
+  if declare -F resume_flux_policy_parent >/dev/null &&
+    [[ "${flux_policy_parent_acquired:-false}" == "true" ]]; then
+    if [[ "${flux_policy_handoff_acquired:-false}" == "true" ]]; then
+      cleanup_status=1
+      echo "::error::The child Flux policy handoff remains fenced; retaining the parent fence for explicit recovery."
+    elif ! resume_flux_policy_parent; then
+      cleanup_status=1
+      echo "::error::Could not safely resume the parent Flux reconciliation; its ownership annotation was retained for explicit recovery."
+    fi
   fi
   if ! cleanup_bootstrap_quarantine; then
     cleanup_status=1
@@ -163,6 +199,17 @@ runtime_proved_targets_file="${work_dir}/runtime-proved-targets.txt"
 runtime_probe_manifest_file="${work_dir}/runtime-probe-pod.json"
 runtime_probe_state_file="${work_dir}/runtime-probe-state.json"
 runtime_probe_result_file="${work_dir}/runtime-probe-result.txt"
+image_verification_policy_patch_file="${work_dir}/image-verification-policy-patch.json"
+image_verification_policy_result_file="${work_dir}/image-verification-policy-result.txt"
+image_verification_mutating_webhooks_file="${work_dir}/image-verification-mutating-webhooks.json"
+image_verification_validating_webhooks_file="${work_dir}/image-verification-validating-webhooks.json"
+flux_policy_handoff_state_file="${work_dir}/flux-policy-handoff-state.json"
+flux_policy_handoff_patch_file="${work_dir}/flux-policy-handoff-patch.json"
+flux_policy_handoff_result_file="${work_dir}/flux-policy-handoff-result.txt"
+flux_policy_parent_state_file="${work_dir}/flux-policy-parent-state.json"
+flux_policy_parent_patch_file="${work_dir}/flux-policy-parent-patch.json"
+flux_policy_parent_result_file="${work_dir}/flux-policy-parent-result.txt"
+flux_policy_fences_state_file="${work_dir}/flux-policy-fences-state.json"
 recovery_nodes_file="${work_dir}/recovery-nodes.json"
 recovery_node_file="${work_dir}/recovery-node.json"
 recovery_targets_file="${work_dir}/recovery-targets.jsonl"
@@ -180,6 +227,12 @@ variables_secret_cas_patch_file="${work_dir}/variables-secret-cas-patch.json"
 sync_lease_holder=""
 sync_lease_acquired=false
 sync_lease_heartbeat_pid=""
+flux_policy_handoff_acquired=false
+flux_policy_handoff_owner=""
+flux_policy_handoff_uid=""
+flux_policy_parent_acquired=false
+flux_policy_parent_owner=""
+flux_policy_parent_uid=""
 runtime_probe_sequence=0
 runtime_probe_bootstrap_needed=0
 
@@ -469,6 +522,12 @@ probe_node_runtime_pull() {
 
   active_runtime_probe="${probe_name}"
   for ((create_attempt = 1; create_attempt <= RUNTIME_PROBE_CREATE_ATTEMPTS; create_attempt++)); do
+    # The published infrastructure artifact still declares the legacy
+    # two-policy topology until this transaction publishes its candidate. Flux
+    # can reconcile that artifact during a long multi-node roll, so reassert
+    # and verify the candidate policy immediately before every admission
+    # attempt, including retries after an ambiguous timeout.
+    stage_image_verification_webhook_budget || return 1
     assert_sync_lease_held || return 1
     if kubectl \
       --context "${KUBE_CONTEXT}" \
@@ -572,6 +631,185 @@ probe_node_runtime_pull() {
   delete_runtime_pull_probe "${probe_name}" || true
   echo "::error::Timed out proving the running containerd GHCR credential on ${node_name}; refusing to drain workloads onto an unproved runtime."
   return 1
+}
+
+# The credential bridge runs before the candidate artifact is published, so a
+# policy fix carried by that artifact cannot repair admission for the runtime
+# probes that protect the publish. Bootstrap the exact declarative consolidated
+# IVPOL under the same synchronization lease, then retire the superseded KSail
+# IVPOL and wait for its one effective fail-closed mutating/validating path.
+# Applying the covering policy before deleting the old one preserves signature
+# enforcement throughout; the transient overlap can deny but cannot admit an
+# unverified image.
+read_image_verification_webhooks() {
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get mutatingwebhookconfigurations.admissionregistration.k8s.io \
+    -o json \
+    >"${image_verification_mutating_webhooks_file}" \
+    2>"${image_verification_policy_result_file}"; then
+    echo "::error::Could not inspect effective Kyverno mutating admission webhooks; refusing runtime pull probes."
+    emit_safe_operation_output \
+      "image-verification-mutating-webhook-read" \
+      "${image_verification_policy_result_file}"
+    return 1
+  fi
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get validatingwebhookconfigurations.admissionregistration.k8s.io \
+    -o json \
+    >"${image_verification_validating_webhooks_file}" \
+    2>"${image_verification_policy_result_file}"; then
+    echo "::error::Could not inspect effective Kyverno validating admission webhooks; refusing runtime pull probes."
+    emit_safe_operation_output \
+      "image-verification-validating-webhook-read" \
+      "${image_verification_policy_result_file}"
+    return 1
+  fi
+}
+
+image_verification_webhook_set_matches() {
+  local webhook_file="$1"
+  local operation="$2"
+  local exclusive="$3"
+
+  jq -e \
+    --argjson timeout "${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}" \
+    --arg expected_path "/ivpol/${operation}/${IMAGE_VERIFICATION_POLICY}" \
+    --arg retired "${RETIRED_IMAGE_VERIFICATION_POLICY}" \
+    --argjson exclusive "${exclusive}" '
+    [
+      .items[]?.webhooks[]?
+      | select(
+          (.clientConfig.service.name // "") == "kyverno-svc"
+          and (.clientConfig.service.namespace // "") == "kyverno"
+        )
+    ] as $webhooks
+    | any(
+        $webhooks[];
+        (.clientConfig.service.path // "") == $expected_path
+        and .failurePolicy == "Fail"
+        and .timeoutSeconds == $timeout
+      )
+    and (
+      if $exclusive then
+        all(
+          $webhooks[];
+          (.clientConfig.service.path // "") as $path
+          | if (($path | contains($expected_path)) or ($path | contains($retired))) then
+              $path == $expected_path
+              and .failurePolicy == "Fail"
+              and .timeoutSeconds == $timeout
+            else
+              true
+            end
+        )
+      else
+        true
+      end
+    )
+  ' "${webhook_file}" >/dev/null
+}
+
+wait_for_image_verification_webhooks() {
+  local exclusive="$1"
+  local attempt
+
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    assert_sync_lease_held || return 1
+    read_image_verification_webhooks || return 1
+    if image_verification_webhook_set_matches \
+      "${image_verification_mutating_webhooks_file}" "mutate" "${exclusive}" &&
+      image_verification_webhook_set_matches \
+        "${image_verification_validating_webhooks_file}" "validate" "${exclusive}"; then
+      return 0
+    fi
+    if ((attempt < SYNC_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
+  done
+  return 1
+}
+
+stage_image_verification_webhook_budget() {
+  if ! yq -e \
+    '.apiVersion == "policies.kyverno.io/v1"
+      and .kind == "ImageValidatingPolicy"
+      and .metadata.name == "verify-app-images"
+      and .spec.failurePolicy == "Fail"
+      and .spec.webhookConfiguration.timeoutSeconds == 30' \
+    "${IMAGE_VERIFICATION_POLICY_FILE}" >/dev/null; then
+    echo "::error::The candidate consolidated image-verification policy is malformed or not fail-closed; refusing runtime pull probes."
+    return 1
+  fi
+
+  if ! yq -o=json '{"spec": .spec}' \
+    "${IMAGE_VERIFICATION_POLICY_FILE}" \
+    >"${image_verification_policy_patch_file}"; then
+    echo "::error::Could not build the consolidated image-verification policy patch; refusing runtime pull probes."
+    return 1
+  fi
+
+  assert_sync_lease_held || return 1
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    patch imagevalidatingpolicy.policies.kyverno.io \
+    "${IMAGE_VERIFICATION_POLICY}" \
+    --type=merge --dry-run=server \
+    --patch-file="${image_verification_policy_patch_file}" \
+    >"${image_verification_policy_result_file}" 2>&1; then
+    echo "::error::The API server rejected the candidate consolidated image-verification policy; refusing runtime pull probes."
+    emit_safe_operation_output \
+      "image-verification-policy-dry-run" \
+      "${image_verification_policy_result_file}"
+    return 1
+  fi
+
+  assert_sync_lease_held || return 1
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    patch imagevalidatingpolicy.policies.kyverno.io \
+    "${IMAGE_VERIFICATION_POLICY}" \
+    --type=merge \
+    --patch-file="${image_verification_policy_patch_file}" \
+    >"${image_verification_policy_result_file}" 2>&1; then
+    echo "::error::Could not stage the consolidated fail-closed image-verification policy; refusing runtime pull probes."
+    emit_safe_operation_output \
+      "image-verification-policy-apply" \
+      "${image_verification_policy_result_file}"
+    return 1
+  fi
+
+  # The existing app-only policy can already own a webhook path with the same
+  # policy name. Require Kyverno to expose the new independent 30-second
+  # fail-closed mutate and validate paths while the retired KSail verifier is
+  # still present. This closes the policy-cache handoff gap: deletion is not
+  # evidence that the replacement has become effective.
+  if ! wait_for_image_verification_webhooks false; then
+    echo "::error::The consolidated fail-closed image-verification admission webhooks did not become effective before retirement of the existing KSail verifier."
+    return 1
+  fi
+
+  assert_sync_lease_held || return 1
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    delete imagevalidatingpolicy.policies.kyverno.io \
+    "${RETIRED_IMAGE_VERIFICATION_POLICY}" \
+    --ignore-not-found \
+    >"${image_verification_policy_result_file}" 2>&1; then
+    echo "::error::Could not retire the superseded image-verification policy; refusing runtime pull probes."
+    emit_safe_operation_output \
+      "image-verification-policy-delete" \
+      "${image_verification_policy_result_file}"
+    return 1
+  fi
+
+  if ! wait_for_image_verification_webhooks true; then
+    echo "::error::The consolidated fail-closed image-verification admission webhooks did not converge to one ${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}s policy path; refusing runtime pull probes."
+    return 1
+  fi
+
+  echo "✅ Consolidated fail-closed image-verification admission is effective at ${IMAGE_VERIFICATION_WEBHOOK_TIMEOUT_SECONDS}s."
 }
 
 verify_peer_runtime_pull_overlap() {
@@ -745,10 +983,26 @@ claim_node_cordon_ownership() {
 # The atomic claim cordons the node before kubectl drain. Restore schedulability
 # only when this bridge owns that cordon; a pre-existing operator cordon must
 # remain untouched.
+node_schedulability_release_is_complete() {
+  local state_file="$1" node_uid="$2" was_cordoned="$3"
+
+  jq -e \
+    --arg uid "${node_uid}" \
+    --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
+    --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
+    --argjson was_cordoned "${was_cordoned}" '
+    .metadata.uid == $uid
+    and (((.metadata.annotations // {})[$owner_annotation] // "") == "")
+    and (((.metadata.annotations // {})[$recovery_annotation] // "") == "")
+    and ((.spec.unschedulable // false) == ($was_cordoned == 1))
+  ' "${state_file}" >/dev/null
+}
+
 restore_node_schedulability_if_needed() {
   local node_name="$1" was_cordoned="$2" owner_token="$3"
   local initial_node_uid="$4" initial_node_taints="$5" result_file="$6"
   local expected_recovery="${7:-}"
+  local release_attempt="${8:-1}"
   local current_resource_version current_recovery
 
   if [[ -z "${owner_token}" ]]; then
@@ -764,6 +1018,15 @@ restore_node_schedulability_if_needed() {
     echo "::error::Could not re-read Talos node ${node_name}; refusing to uncordon it."
     emit_safe_operation_output "uncordon-read" "${result_file}"
     return 1
+  fi
+  if node_schedulability_release_is_complete \
+    "${cordon_state_file}" "${initial_node_uid}" "${was_cordoned}"; then
+    if [[ "${was_cordoned}" == "0" ]]; then
+      echo "Restored schedulability on ${node_name}."
+    else
+      echo "Released bridge ownership while preserving the pre-existing cordon on ${node_name}."
+    fi
+    return 0
   fi
   if ! node_scheduling_state_is_safe_to_reboot \
     "${cordon_state_file}" \
@@ -838,6 +1101,17 @@ restore_node_schedulability_if_needed() {
     --type=json \
     --patch-file="${cordon_release_patch_file}" \
     >"${result_file}" 2>&1; then
+    if ((release_attempt < CORDON_RELEASE_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+      if restore_node_schedulability_if_needed \
+        "${node_name}" "${was_cordoned}" "${owner_token}" \
+        "${initial_node_uid}" "${initial_node_taints}" \
+        "${result_file}" "${expected_recovery}" \
+        "$((release_attempt + 1))"; then
+        return 0
+      fi
+      return 1
+    fi
     echo "::error::Cordon ownership changed or could not be released for Talos node ${node_name}; refusing to uncordon it."
     emit_safe_operation_output "uncordon" "${result_file}"
     return 1
@@ -1557,6 +1831,25 @@ talos_image_remove_reports_absent() {
     "${result_file}"
 }
 
+drain_failed_for_transient_api_transport() {
+  local result_file="$1"
+
+  # kubectl may log resolved PDB retries before an unrelated API outage.
+  # Classify only its terminal drain error so a real PDB timeout is never
+  # converted into another eviction attempt.
+  LC_ALL=C grep -Eq \
+    '^error: unable to drain node .*(''connection reset by peer|connect: connection refused|''i/o timeout|TLS handshake timeout|http2: client connection lost|''no route to host|network is unreachable|unexpected EOF)' \
+    "${result_file}"
+}
+
+kubernetes_api_transport_interrupted() {
+  local result_file="$1"
+
+  LC_ALL=C grep -Eq \
+    'connection reset by peer|connect: connection refused|i/o timeout|TLS handshake timeout|http2: client connection lost|no route to host|network is unreachable|unexpected EOF' \
+    "${result_file}"
+}
+
 revalidate_selected_node_identity_before_mutation() {
   local node_name="$1" node_uid="$2" node_ip="$3" node_role="$4"
 
@@ -1600,6 +1893,8 @@ process_talos_node_target() {
   # Initialise the optional recovery payload so CI and operators get the same
   # fail-closed cleanup path when no bootstrap recovery record was required.
   local probe_image recovery_record=""
+  local drain_attempt=1 api_attempt api_ready
+  local ready_attempt
 
   assert_sync_lease_held || return 1
 
@@ -1802,21 +2097,64 @@ process_talos_node_target() {
     # this cluster's generated config targets an unreachable API endpoint.
     # kubectl also retries PDB-protected evictions, giving CloudNativePG time to
     # switch primaries and Longhorn time to enforce its data-safety policy.
-    if ! kubectl \
+    while ! kubectl \
       --context "${KUBE_CONTEXT}" \
       drain "${node_name}" \
       --ignore-daemonsets \
       --delete-emptydir-data \
       --timeout="${DRAIN_TIMEOUT}" \
-      >"${drain_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} could not be safely drained before its GHCR auth reboot."
-      emit_safe_operation_output "drain" "${drain_result_file}"
-      restore_node_schedulability_if_needed \
+      >"${drain_result_file}" 2>&1; do
+      if ((drain_attempt >= 2)) ||
+        ! drain_failed_for_transient_api_transport \
+          "${drain_result_file}"; then
+        echo "::error::Talos node ${node_name} could not be safely drained before its GHCR auth reboot."
+        emit_safe_operation_output "drain" "${drain_result_file}"
+        restore_node_schedulability_if_needed \
+          "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+          "${initial_node_uid}" "${initial_node_taints}" \
+          "${drain_result_file}" "${recovery_record}" || return 1
+        return 1
+      fi
+
+      echo "::warning::Kubernetes API transport interrupted the drain of ${node_name}; waiting for API readiness before one guarded retry."
+      api_ready=false
+      for ((api_attempt = 1; api_attempt <= SYNC_ATTEMPTS; api_attempt++)); do
+        if kubectl \
+          --context "${KUBE_CONTEXT}" \
+          get --raw=/readyz \
+          --request-timeout=30s \
+          >"${talos_result_file}" 2>&1; then
+          api_ready=true
+          break
+        fi
+        if ((api_attempt < SYNC_ATTEMPTS)); then
+          sleep "${SYNC_INTERVAL}"
+        fi
+      done
+      if [[ "${api_ready}" != "true" ]]; then
+        echo "::error::Kubernetes API did not recover after the interrupted drain of ${node_name}; refusing to retry."
+        emit_safe_operation_output "drain-api-readiness" \
+          "${talos_result_file}"
+        restore_node_schedulability_if_needed \
+          "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+          "${initial_node_uid}" "${initial_node_taints}" \
+          "${drain_result_file}" "${recovery_record}" || return 1
+        return 1
+      fi
+      if ! recover_sync_lease_heartbeat_after_transport_interruption; then
+        restore_node_schedulability_if_needed \
+          "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+          "${initial_node_uid}" "${initial_node_taints}" \
+          "${drain_result_file}" "${recovery_record}" || return 1
+        return 1
+      fi
+      revalidate_node_scheduling_guard \
         "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
         "${initial_node_uid}" "${initial_node_taints}" \
-        "${drain_result_file}" "${recovery_record}" || return 1
-      return 1
-    fi
+        "${drain_result_file}" "${node_ip}" "${node_role}" \
+        "drain retry" || return 1
+      drain_attempt=$((drain_attempt + 1))
+    done
 
     # A PDB-respecting drain can legitimately take most of DRAIN_TIMEOUT. An
     # etcd peer that was healthy before it began may fail while workloads move,
@@ -1862,17 +2200,49 @@ process_talos_node_target() {
       emit_safe_operation_output "reboot" "${reboot_result_file}"
       return 1
     fi
-    if ! kubectl \
-      --context "${KUBE_CONTEXT}" \
-      wait \
-      --for=condition=Ready \
-      "node/${node_name}" \
-      --timeout=10m \
-      >"${reboot_result_file}" 2>&1; then
-      echo "::error::Talos node ${node_name} did not return Ready after its GHCR auth reboot; it remains cordoned and the next node will not be rolled."
-      emit_safe_operation_output "ready" "${reboot_result_file}"
-      return 1
-    fi
+    for ((ready_attempt = 1; ready_attempt <= NODE_READY_TRANSPORT_RETRY_ATTEMPTS; ready_attempt++)); do
+      if kubectl \
+        --context "${KUBE_CONTEXT}" \
+        wait \
+        --for=condition=Ready \
+        "node/${node_name}" \
+        --timeout=10m \
+        >"${reboot_result_file}" 2>&1; then
+        break
+      fi
+      if ((ready_attempt >= NODE_READY_TRANSPORT_RETRY_ATTEMPTS)) ||
+        ! kubernetes_api_transport_interrupted \
+          "${reboot_result_file}"; then
+        echo "::error::Talos node ${node_name} did not return Ready after its GHCR auth reboot; it remains cordoned and the next node will not be rolled."
+        emit_safe_operation_output "ready" "${reboot_result_file}"
+        return 1
+      fi
+
+      echo "::warning::Kubernetes API transport interrupted the post-reboot Ready wait for ${node_name}; waiting for API recovery before retrying under the same cordon claim."
+      api_ready=false
+      for ((api_attempt = 1; api_attempt <= SYNC_ATTEMPTS; api_attempt++)); do
+        if kubectl \
+          --context "${KUBE_CONTEXT}" \
+          get --raw=/readyz \
+          --request-timeout=30s \
+          >"${reboot_result_file}" 2>&1; then
+          api_ready=true
+          break
+        fi
+        if ((api_attempt < SYNC_ATTEMPTS)); then
+          sleep "${SYNC_INTERVAL}"
+        fi
+      done
+      if [[ "${api_ready}" != "true" ]]; then
+        echo "::error::Kubernetes API did not recover after rebooting ${node_name}; it remains cordoned and the next node will not be rolled."
+        emit_safe_operation_output "ready-api-recovery" \
+          "${reboot_result_file}"
+        return 1
+      fi
+      if ! recover_sync_lease_heartbeat_after_transport_interruption; then
+        return 1
+      fi
+    done
     wait_for_node_lifecycle_taints_to_clear \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
@@ -2260,9 +2630,13 @@ sync_lease_is_available() {
     "${sync_lease_file}" >/dev/null
 }
 
+kubernetes_microtime_now() {
+  date -u +%Y-%m-%dT%H:%M:%S.000000Z
+}
+
 acquire_sync_lease() {
   local desired_revision="$1"
-  local attempt now resource_version current_holder transitions
+  local attempt now resource_version current_holder transitions failure_detail
 
   sync_lease_holder="${desired_revision:0:16}-$$-${RANDOM}"
   export FLUX_GHCR_SYNC_LEASE_HOLDER="${sync_lease_holder}"
@@ -2277,7 +2651,7 @@ acquire_sync_lease() {
       echo "::error::Could not inspect the GHCR synchronization lease."
       return 1
     fi
-    now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    now="$(kubernetes_microtime_now)"
     if [[ ! -s "${sync_lease_file}" ]]; then
       jq -n \
         --arg name "${SYNC_LEASE_NAME}" \
@@ -2358,7 +2732,13 @@ acquire_sync_lease() {
     fi
   done
 
-  echo "::error::Could not atomically acquire the GHCR synchronization lease after concurrent updates."
+  failure_detail="$(head -c 1000 "${sync_lease_result_file}" | tr '\r\n' '  ')"
+  failure_detail="${failure_detail//'%'/'%25'}"
+  if [[ -n "${failure_detail}" ]]; then
+    echo "::error::Could not atomically acquire the GHCR synchronization lease. Last API error: ${failure_detail}"
+  else
+    echo "::error::Could not atomically acquire the GHCR synchronization lease after concurrent updates."
+  fi
   return 1
 }
 
@@ -2382,7 +2762,7 @@ renew_sync_lease() {
     select(.spec.holderIdentity == $holder)
     | .metadata.resourceVersion
   ' "${lease_file}")" || return 1
-  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  now="$(kubernetes_microtime_now)"
   jq -n \
     --arg resource_version "${resource_version}" \
     --arg holder "${sync_lease_holder}" \
@@ -2445,6 +2825,27 @@ assert_sync_lease_held() {
   fi
 }
 
+recover_sync_lease_heartbeat_after_transport_interruption() {
+  # API readiness can return while the heartbeat's failed renewal is still in
+  # flight and before it writes the sticky marker. Stop and reap the old child
+  # unconditionally so it cannot report a stale failure after the foreground
+  # path has re-proved the same holder.
+  if [[ -n "${sync_lease_heartbeat_pid}" ]]; then
+    kill "${sync_lease_heartbeat_pid}" 2>/dev/null || true
+    wait "${sync_lease_heartbeat_pid}" 2>/dev/null || true
+    sync_lease_heartbeat_pid=""
+  fi
+  if ! renew_sync_lease; then
+    echo "::error::The Kubernetes API recovered, but this transaction could not re-prove and renew its synchronization Lease holder."
+    return 1
+  fi
+
+  rm -f "${sync_lease_lost_file}"
+  sync_lease_heartbeat_loop &
+  sync_lease_heartbeat_pid=$!
+  echo "::warning::Re-proved the same GHCR synchronization Lease holder and restarted its heartbeat after API recovery."
+}
+
 release_sync_lease() {
   local lease_file="${work_dir}/sync-lease-release.json"
   local patch_file_local="${work_dir}/sync-lease-release-patch.json"
@@ -2469,7 +2870,7 @@ release_sync_lease() {
     select(.spec.holderIdentity == $holder)
     | .metadata.resourceVersion
   ' "${lease_file}")" || return 1
-  now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  now="$(kubernetes_microtime_now)"
   jq -n \
     --arg resource_version "${resource_version}" \
     --arg holder "${sync_lease_holder}" \
@@ -2493,6 +2894,394 @@ release_sync_lease() {
   fi
   sync_lease_holder=""
   sync_lease_acquired=false
+}
+
+# The live image-verification policies are owned by the infrastructure Flux
+# Kustomization, which is itself owned by the root flux-system Kustomization.
+# Fence both levels for the complete runtime-proof window: suspend the child
+# and add Flux's documented per-resource reconciliation exclusion so the parent
+# cannot restore the Git version between a policy check and Pod admission.
+flux_policy_parent_is_owned() {
+  jq -e \
+    --arg uid "${flux_policy_parent_uid}" \
+    --arg owner_annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" \
+    --arg owner "${flux_policy_parent_owner}" '
+    .metadata.uid == $uid
+    and ((.metadata.annotations // {})[$owner_annotation] == $owner)
+    and .spec.suspend == true
+  ' "${flux_policy_parent_state_file}" >/dev/null
+}
+
+flux_policy_parent_is_stable() {
+  flux_policy_parent_is_owned &&
+    jq -e '
+      any(.status.conditions[]?;
+        .type == "Reconciling" and .status == "True") | not
+    ' "${flux_policy_parent_state_file}" >/dev/null
+}
+
+flux_policy_parent_is_released() {
+  jq -e \
+    --arg uid "${flux_policy_parent_uid}" \
+    --arg owner_annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" '
+    .metadata.uid == $uid
+    and (((.metadata.annotations // {})[$owner_annotation] // "") == "")
+    and ((.spec.suspend // false) == false)
+  ' "${flux_policy_parent_state_file}" >/dev/null
+}
+
+pause_flux_policy_parent() {
+  local resource_version attempt annotations_present
+
+  # The parent/child ownership annotations are a separate fail-closed fence:
+  # even if this process loses the synchronization Lease during acquisition, a
+  # new holder sees the durable owner and stops. The first credential/policy
+  # mutation below still renews the Lease normally before it can proceed.
+  if [[ "${sync_lease_acquired}" != "true" ||
+    -z "${sync_lease_holder}" ||
+    -e "${sync_lease_lost_file}" ]]; then
+    echo "::error::The GHCR synchronization transaction is not locally active; refusing to fence Flux reconciliation."
+    return 1
+  fi
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+    "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+    -o json >"${flux_policy_parent_state_file}"; then
+    echo "::error::Could not inspect the parent Flux reconciliation before the image-verification policy handoff."
+    return 1
+  fi
+  if jq -e \
+    --arg annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" '
+    ((.metadata.annotations // {})[$annotation] // "") != ""
+  ' "${flux_policy_parent_state_file}" >/dev/null; then
+    echo "::error::Another transaction already owns the parent Flux policy handoff; refusing cluster mutation."
+    return 1
+  fi
+  if ! jq -e '
+    .kind == "Kustomization"
+    and (.metadata.uid | type == "string" and length > 0)
+    and (.metadata.resourceVersion | type == "string" and length > 0)
+    and ((.metadata.annotations // {}) | type == "object")
+    and ((.spec.suspend // false) == false)
+  ' "${flux_policy_parent_state_file}" >/dev/null; then
+    echo "::error::The parent Flux reconciliation is malformed or already suspended."
+    return 1
+  fi
+
+  resource_version="$(jq -er '.metadata.resourceVersion' \
+    "${flux_policy_parent_state_file}")"
+  flux_policy_parent_uid="$(jq -er '.metadata.uid' \
+    "${flux_policy_parent_state_file}")"
+  flux_policy_parent_owner="${sync_lease_holder}"
+  annotations_present="$(jq -r \
+    '(.metadata.annotations? | type) == "object"' \
+    "${flux_policy_parent_state_file}")"
+  jq -n \
+    --arg resource_version "${resource_version}" \
+    --arg uid "${flux_policy_parent_uid}" \
+    --arg owner_path "${FLUX_POLICY_PARENT_OWNER_JSON_PATH}" \
+    --arg owner "${flux_policy_parent_owner}" \
+    --argjson annotations_present "${annotations_present}" '
+    [
+      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
+      {op: "test", path: "/metadata/uid", value: $uid}
+    ]
+    + (if $annotations_present then [] else
+      [{op: "add", path: "/metadata/annotations", value: {}}]
+    end)
+    + [
+      {op: "add", path: $owner_path, value: $owner},
+      {op: "add", path: "/spec/suspend", value: true}
+    ]
+  ' >"${flux_policy_parent_patch_file}"
+  if kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
+    "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+    --type=json \
+    --patch-file="${flux_policy_parent_patch_file}" \
+    -o json \
+    >"${flux_policy_parent_state_file}" \
+    2>"${flux_policy_parent_result_file}"; then
+    flux_policy_parent_acquired=true
+  else
+    # A lost patch response is ambiguous. Re-read and adopt only the exact
+    # UID/owner/suspend tuple written by this transaction so EXIT cleanup owns
+    # the durable fence even when kubectl reported failure.
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+      -o json >"${flux_policy_parent_state_file}" ||
+      ! flux_policy_parent_is_owned; then
+      echo "::error::Could not atomically pause or adopt the parent Flux policy handoff."
+      return 1
+    fi
+    flux_policy_parent_acquired=true
+  fi
+
+  # New parent reconciliations now stop at spec.suspend. After a mandatory
+  # quiet interval, require a fresh observation without an in-flight
+  # Reconciling condition before touching the child that this parent owns.
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS + 2; attempt++)); do
+    sleep "${SYNC_INTERVAL}"
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+      -o json >"${flux_policy_parent_state_file}" &&
+      flux_policy_parent_is_stable; then
+      return 0
+    fi
+  done
+
+  echo "::error::The parent Flux reconciliation did not quiesce before the image-verification policy handoff."
+  return 1
+}
+
+resume_flux_policy_parent() {
+  [[ "${flux_policy_parent_acquired}" == "true" ]] || return 0
+  jq -n \
+    --arg uid "${flux_policy_parent_uid}" \
+    --arg owner_path "${FLUX_POLICY_PARENT_OWNER_JSON_PATH}" \
+    --arg owner "${flux_policy_parent_owner}" '
+    [
+      {op: "test", path: "/metadata/uid", value: $uid},
+      {op: "test", path: $owner_path, value: $owner},
+      {op: "test", path: "/spec/suspend", value: true},
+      {op: "add", path: "/spec/suspend", value: false},
+      {op: "remove", path: $owner_path}
+    ]
+  ' >"${flux_policy_parent_patch_file}"
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
+    "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+    --type=json \
+    --patch-file="${flux_policy_parent_patch_file}" \
+    >"${flux_policy_parent_result_file}" 2>&1; then
+    # A successful release can lose its API response just like acquisition.
+    # Adopt only the exact desired post-release UID/owner/suspend state; any
+    # other outcome retains local ownership and fails closed for recovery.
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+      -o json >"${flux_policy_parent_state_file}" ||
+      ! flux_policy_parent_is_released; then
+      return 1
+    fi
+  fi
+  flux_policy_parent_acquired=false
+  flux_policy_parent_owner=""
+  flux_policy_parent_uid=""
+}
+
+flux_policy_handoff_is_owned() {
+  jq -e \
+    --arg uid "${flux_policy_handoff_uid}" \
+    --arg owner_annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" \
+    --arg reconcile_annotation "${FLUX_RECONCILE_ANNOTATION}" \
+    --arg owner "${flux_policy_handoff_owner}" '
+    .metadata.uid == $uid
+    and ((.metadata.annotations // {})[$owner_annotation] == $owner)
+    and ((.metadata.annotations // {})[$reconcile_annotation] == "disabled")
+    and .spec.suspend == true
+  ' "${flux_policy_handoff_state_file}" >/dev/null
+}
+
+flux_policy_handoff_is_stable() {
+  flux_policy_handoff_is_owned &&
+    jq -e '
+      any(.status.conditions[]?;
+        .type == "Reconciling" and .status == "True") | not
+    ' "${flux_policy_handoff_state_file}" >/dev/null
+}
+
+flux_policy_handoff_is_released() {
+  jq -e \
+    --arg uid "${flux_policy_handoff_uid}" \
+    --arg owner_annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" \
+    --arg reconcile_annotation "${FLUX_RECONCILE_ANNOTATION}" '
+    .metadata.uid == $uid
+    and (((.metadata.annotations // {})[$owner_annotation] // "") == "")
+    and (((.metadata.annotations // {})[$reconcile_annotation] // "") == "")
+    and ((.spec.suspend // false) == false)
+  ' "${flux_policy_handoff_state_file}" >/dev/null
+}
+
+pause_flux_policy_handoff() {
+  local resource_version attempt annotations_present
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+    "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+    -o json >"${flux_policy_handoff_state_file}"; then
+    echo "::error::Could not inspect the Flux owner of the image-verification policies."
+    return 1
+  fi
+  if jq -e \
+    --arg annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" '
+    ((.metadata.annotations // {})[$annotation] // "") != ""
+  ' "${flux_policy_handoff_state_file}" >/dev/null; then
+    echo "::error::Another transaction already owns the image-verification policy handoff; refusing cluster mutation."
+    return 1
+  fi
+  if ! jq -e \
+    --arg reconcile_annotation "${FLUX_RECONCILE_ANNOTATION}" '
+    .kind == "Kustomization"
+    and (.metadata.uid | type == "string" and length > 0)
+    and (.metadata.resourceVersion | type == "string" and length > 0)
+    and (.metadata.generation | type == "number" and . > 0)
+    and ((.metadata.annotations // {}) | type == "object")
+    and (((.metadata.annotations // {})[$reconcile_annotation] // "") == "")
+    and ((.spec.suspend // false) == false)
+  ' "${flux_policy_handoff_state_file}" >/dev/null; then
+    echo "::error::The Flux image-verification policy owner is malformed, already suspended, or already excluded from reconciliation."
+    return 1
+  fi
+
+  resource_version="$(jq -er '.metadata.resourceVersion' \
+    "${flux_policy_handoff_state_file}")"
+  flux_policy_handoff_uid="$(jq -er '.metadata.uid' \
+    "${flux_policy_handoff_state_file}")"
+  flux_policy_handoff_owner="${sync_lease_holder}"
+  annotations_present="$(jq -r \
+    '(.metadata.annotations? | type) == "object"' \
+    "${flux_policy_handoff_state_file}")"
+  jq -n \
+    --arg resource_version "${resource_version}" \
+    --arg uid "${flux_policy_handoff_uid}" \
+    --arg owner_path "${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}" \
+    --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
+    --arg owner "${flux_policy_handoff_owner}" \
+    --argjson annotations_present "${annotations_present}" '
+    [
+      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
+      {op: "test", path: "/metadata/uid", value: $uid}
+    ]
+    + (if $annotations_present then [] else
+      [{op: "add", path: "/metadata/annotations", value: {}}]
+    end)
+    + [
+      {op: "add", path: $owner_path, value: $owner},
+      {op: "add", path: $reconcile_path, value: "disabled"},
+      {op: "add", path: "/spec/suspend", value: true}
+    ]
+  ' >"${flux_policy_handoff_patch_file}"
+  if kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
+    "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+    --type=json \
+    --patch-file="${flux_policy_handoff_patch_file}" \
+    -o json \
+    >"${flux_policy_handoff_state_file}" \
+    2>"${flux_policy_handoff_result_file}"; then
+    flux_policy_handoff_acquired=true
+  else
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+      -o json >"${flux_policy_handoff_state_file}" ||
+      ! flux_policy_handoff_is_owned; then
+      echo "::error::Could not atomically pause or adopt the Flux image-verification policy owner."
+      return 1
+    fi
+    flux_policy_handoff_acquired=true
+  fi
+
+  # A suspended reconciliation intentionally does not advance
+  # status.observedGeneration. Re-read the exact child fence only after the
+  # parent has quiesced, and re-prove the parent in the same polling pass.
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    sleep "${SYNC_INTERVAL}"
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+      "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+      -o json >"${flux_policy_fences_state_file}" ||
+      ! jq -e \
+        --arg parent "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+        --arg child "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" '
+        .kind == "List"
+        and ([.items[] | select(.metadata.name == $parent)] | length) == 1
+        and ([.items[] | select(.metadata.name == $child)] | length) == 1
+      ' "${flux_policy_fences_state_file}" >/dev/null; then
+      continue
+    fi
+    jq -e \
+      --arg child "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" '
+      .items[] | select(.metadata.name == $child)
+    ' "${flux_policy_fences_state_file}" >"${flux_policy_handoff_state_file}"
+    jq -e \
+      --arg parent "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" '
+      .items[] | select(.metadata.name == $parent)
+    ' "${flux_policy_fences_state_file}" >"${flux_policy_parent_state_file}"
+    if flux_policy_handoff_is_stable &&
+      flux_policy_parent_is_stable; then
+      return 0
+    fi
+  done
+
+  echo "::error::Flux did not acknowledge a stable pause of the image-verification policy owner."
+  return 1
+}
+
+resume_flux_policy_handoff() {
+  [[ "${flux_policy_handoff_acquired}" == "true" ]] || return 0
+  jq -n \
+    --arg uid "${flux_policy_handoff_uid}" \
+    --arg owner_path "${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}" \
+    --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
+    --arg owner "${flux_policy_handoff_owner}" '
+    [
+      {op: "test", path: "/metadata/uid", value: $uid},
+      {op: "test", path: $owner_path, value: $owner},
+      {op: "test", path: $reconcile_path, value: "disabled"},
+      {op: "test", path: "/spec/suspend", value: true},
+      {op: "add", path: "/spec/suspend", value: false},
+      {op: "remove", path: $owner_path},
+      {op: "remove", path: $reconcile_path}
+    ]
+  ' >"${flux_policy_handoff_patch_file}"
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
+    "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+    --type=json \
+    --patch-file="${flux_policy_handoff_patch_file}" \
+    >"${flux_policy_handoff_result_file}" 2>&1; then
+    # Accept a lost release response only after re-reading the exact safe child
+    # state; otherwise retain local ownership and fail closed for recovery.
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+      -o json >"${flux_policy_handoff_state_file}" ||
+      ! flux_policy_handoff_is_released; then
+      return 1
+    fi
+  fi
+  flux_policy_handoff_acquired=false
+  flux_policy_handoff_owner=""
+  flux_policy_handoff_uid=""
 }
 
 # Every Secret write is fenced by the resourceVersion observed after a
@@ -2679,10 +3468,14 @@ fi
 # Existing clusters update and verify the whole SOPS -> variables-base ->
 # PushSecret -> OpenBao -> ExternalSecret chain before the first Talos drain.
 # Root Flux auth remains last so any failed node proof leaves it unchanged.
+pause_flux_policy_parent
+pause_flux_policy_handoff
 stage_fanout_before_talos \
   "${pull_revision}" \
   "${KSAIL_OPERATOR_IMAGE}" \
   "${talos_stage_result_file}" \
   "${FANOUT_NAMESPACES[@]}"
+resume_flux_policy_handoff
+resume_flux_policy_parent
 
 echo "✅ Synchronised every existing consumer and refreshed root Flux GHCR auth from Git/SOPS."

@@ -186,7 +186,7 @@ jobs:
             scripts/run-ksail-prod-with-pull-auth.sh \
             scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
           bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
-          go test ./scripts/tests/refresh-flux-ghcr-auth
+          go test -timeout=20m ./scripts/tests/refresh-flux-ghcr-auth
 
       - name: 🧩 Validate embedded JSON blobs
         # ConfigMaps that embed whole JSON documents as block scalars (e.g. the
