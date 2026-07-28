@@ -44,6 +44,14 @@ jobs:
           go test ./scripts/validate-dr-signing
           go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml
 
+      # The deploy path's counterpart to the DR signing contract above: that one
+      # pins that DR signs at all, this pins that no step advances what
+      # production can see before the evidence exists.
+      - name: 🔏 Validate publication ordering
+        run: |
+          go test ./scripts/validate-publication-order
+          go run ./scripts/validate-publication-order .github/actions/deploy-prod/action.yml
+
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
