@@ -95,5 +95,5 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     echo '```text'
     printf '%s\n' "$report"
     echo '```'
-  } >> "$GITHUB_STEP_SUMMARY"
+  } >>"$GITHUB_STEP_SUMMARY"
 fi
