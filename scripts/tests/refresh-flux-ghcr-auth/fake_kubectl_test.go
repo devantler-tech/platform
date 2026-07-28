@@ -405,6 +405,11 @@ func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string
 		incrementDecimal(currentResourceVersion),
 	)
 	appendEnvFile("OPERATION_LOG", "flux-policy-parent-resume:flux-system\n")
+	if os.Getenv("FAKE_FLUX_POLICY_PARENT_RELEASE_RESPONSE_LOST") == "true" &&
+		!markerExists("flux-policy-parent-release-response-lost") {
+		touchMarker("flux-policy-parent-release-response-lost")
+		return commandFailure(54, "connection reset after parent Flux handoff release")
+	}
 	fmt.Println("kustomization.kustomize.toolkit.fluxcd.io/flux-system patched")
 	return 0
 }

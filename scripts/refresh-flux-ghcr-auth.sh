@@ -2837,6 +2837,16 @@ flux_policy_parent_is_stable() {
     ' "${flux_policy_parent_state_file}" >/dev/null
 }
 
+flux_policy_parent_is_released() {
+  jq -e \
+    --arg uid "${flux_policy_parent_uid}" \
+    --arg owner_annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" '
+    .metadata.uid == $uid
+    and (((.metadata.annotations // {})[$owner_annotation] // "") == "")
+    and ((.spec.suspend // false) == false)
+  ' "${flux_policy_parent_state_file}" >/dev/null
+}
+
 pause_flux_policy_parent() {
   local resource_version attempt
 
@@ -2964,7 +2974,18 @@ resume_flux_policy_parent() {
     --type=json \
     --patch-file="${flux_policy_parent_patch_file}" \
     >"${flux_policy_parent_result_file}" 2>&1; then
-    return 1
+    # A successful release can lose its API response just like acquisition.
+    # Adopt only the exact desired post-release UID/owner/suspend state; any
+    # other outcome retains local ownership and fails closed for recovery.
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+      -o json >"${flux_policy_parent_state_file}" ||
+      ! flux_policy_parent_is_released; then
+      return 1
+    fi
   fi
   flux_policy_parent_acquired=false
   flux_policy_parent_owner=""

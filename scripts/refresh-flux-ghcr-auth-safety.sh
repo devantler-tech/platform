@@ -382,7 +382,11 @@ other_control_planes_safe_to_reboot() {
         }
         rows++
       }
-      END { exit !(header && rows == 0) }
+      END {
+        # Talos 1.13 emits no bytes for a successful empty alarm list, while
+        # older clients emit a header-only table. Both shapes prove no alarms.
+        exit !((nonempty == 0) || (header && rows == 0))
+      }
     ' "${alarms_file}"; then
       echo "Control-plane peer ${peer_name} has an etcd alarm or returned an unrecognized alarm response."
       return 1

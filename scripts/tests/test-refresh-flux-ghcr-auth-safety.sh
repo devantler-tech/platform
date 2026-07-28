@@ -282,6 +282,9 @@ talosctl() {
   fi
 
   if [[ "${arguments}" == *" etcd alarm list "* ]]; then
+    if [[ "${node}" == "${ETCD_EMPTY_ALARM_NODE:-}" ]]; then
+      return 0
+    fi
     printf 'NODE MEMBER ALARM\n'
     if [[ "${node}" == "${ETCD_ALARM_NODE:-}" ]]; then
       printf '%s member-id NOSPACE\n' "${node}"
@@ -298,6 +301,7 @@ if declare -F other_control_planes_safe_to_reboot >/dev/null; then
   ETCD_LEARNER_NODE=""
   ETCD_STATUS_ERROR_NODE=""
   ETCD_ALARM_NODE=""
+  ETCD_EMPTY_ALARM_NODE=""
   if other_control_planes_safe_to_reboot \
     prod-control-plane-1 test-context "${work_dir}" >/dev/null; then
     pass "healthy alarm-free etcd peers permit a control-plane reboot"
@@ -313,8 +317,17 @@ if declare -F other_control_planes_safe_to_reboot >/dev/null; then
     fail "compact healthy etcd status permits a control-plane reboot"
   fi
 
-  ETCD_STATUS_FAIL_NODE="10.0.0.2"
   ETCD_COMPACT_STATUS_NODE=""
+  ETCD_EMPTY_ALARM_NODE="10.0.0.2"
+  if other_control_planes_safe_to_reboot \
+    prod-control-plane-1 test-context "${work_dir}" >/dev/null; then
+    pass "empty successful etcd alarm output permits a control-plane reboot"
+  else
+    fail "empty successful etcd alarm output permits a control-plane reboot"
+  fi
+
+  ETCD_STATUS_FAIL_NODE="10.0.0.2"
+  ETCD_EMPTY_ALARM_NODE=""
   ETCD_LEARNER_NODE=""
   ETCD_STATUS_ERROR_NODE=""
   ETCD_ALARM_NODE=""
