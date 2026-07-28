@@ -684,6 +684,48 @@ func TestStaleImageVerificationWebhookBudgetIsStagedBeforeRuntimeProbe(t *testin
 	}
 }
 
+func TestEveryRuntimeProbeReassertsImageVerificationPolicy(t *testing.T) {
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_LOG_RUNTIME_PROBE_SUCCESS": "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	applyPositions := lineIndices(operations, "ivpol-policy-apply:verify-app-images")
+	var probePositions []int
+	for index, operation := range operations {
+		if strings.HasPrefix(operation, "runtime-probe-success:") {
+			probePositions = append(probePositions, index)
+		}
+	}
+	if len(probePositions) == 0 {
+		t.Fatal("fixture did not exercise runtime probes")
+	}
+	if len(applyPositions) != len(probePositions) {
+		t.Fatalf(
+			"policy reassertions = %d, runtime probes = %d",
+			len(applyPositions),
+			len(probePositions),
+		)
+	}
+	for index := range probePositions {
+		previousProbe := -1
+		if index > 0 {
+			previousProbe = probePositions[index-1]
+		}
+		if applyPositions[index] <= previousProbe ||
+			applyPositions[index] >= probePositions[index] {
+			t.Fatalf(
+				"runtime probe %d was not immediately fenced by a fresh policy reassertion: previous probe=%d apply=%d probe=%d",
+				index,
+				previousProbe,
+				applyPositions[index],
+				probePositions[index],
+			)
+		}
+	}
+}
+
 func TestRejectedConsolidatedImageVerificationPolicyFailsBeforeMutation(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
@@ -776,6 +818,7 @@ func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_RUNTIME_PROBE_CREATE_TIMEOUT_ONCE_NODES": "prod-control-plane-2",
+		"FAKE_LOG_RUNTIME_PROBE_SUCCESS":                "true",
 	})
 	requireSuccessResult(t, result)
 	if !pathExists(filepath.Join(
@@ -785,6 +828,20 @@ func TestRuntimeProbeRetriesTransientAdmissionTimeout(t *testing.T) {
 		t.Fatal("transient runtime-probe timeout was not exercised")
 	}
 	operations := readLines(f.operationLog)
+	applyCount := len(lineIndices(operations, "ivpol-policy-apply:verify-app-images"))
+	probeCount := 0
+	for _, operation := range operations {
+		if strings.HasPrefix(operation, "runtime-probe-success:") {
+			probeCount++
+		}
+	}
+	if applyCount != probeCount+1 {
+		t.Fatalf(
+			"policy reassertions = %d, successful probes = %d; timeout retry was not freshly fenced",
+			applyCount,
+			probeCount,
+		)
+	}
 	requireLine(t, operations, "node-drain:prod-worker-1")
 	requireLine(t, operations, "root-patch")
 }

@@ -480,6 +480,12 @@ probe_node_runtime_pull() {
 
   active_runtime_probe="${probe_name}"
   for ((create_attempt = 1; create_attempt <= RUNTIME_PROBE_CREATE_ATTEMPTS; create_attempt++)); do
+    # The published infrastructure artifact still declares the legacy
+    # two-policy topology until this transaction publishes its candidate. Flux
+    # can reconcile that artifact during a long multi-node roll, so reassert
+    # and verify the candidate policy immediately before every admission
+    # attempt, including retries after an ambiguous timeout.
+    stage_image_verification_webhook_budget || return 1
     assert_sync_lease_held || return 1
     if kubectl \
       --context "${KUBE_CONTEXT}" \
@@ -2865,11 +2871,6 @@ if [[ "${fanout_complete}" != "true" ]]; then
   echo "✅ Staged the Git/SOPS credential and refreshed root Flux auth; the first reconcile will complete the missing downstream fan-out."
   exit 0
 fi
-
-# The live policies gate the runtime probes below. Stage their candidate
-# timeout budget before any node drain, because the candidate artifact that
-# declares the same state has not been published yet.
-stage_image_verification_webhook_budget
 
 # Existing clusters update and verify the whole SOPS -> variables-base ->
 # PushSecret -> OpenBao -> ExternalSecret chain before the first Talos drain.

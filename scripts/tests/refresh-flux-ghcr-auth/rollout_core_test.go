@@ -139,10 +139,10 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		"talos-pull:10.0.0.1:" + target,
 		"talos-revision:10.0.0.1",
 	})
-	requireLinesEqual(t, readLines(f.operationLog), []string{
-		"ivpol-policy-dry-run:verify-app-images",
-		"ivpol-policy-apply:verify-app-images",
-		"ivpol-policy-delete:verify-ksail-images",
+	requireLinesEqual(t, withoutOperationPrefix(
+		readLines(f.operationLog),
+		"ivpol-policy-",
+	), []string{
 		"variables-patch",
 		"fanout:pushsecret/flux-system/seed-ghcr",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
@@ -254,6 +254,16 @@ func TestUnsafeEtcdMemberStatusBlocksControlPlaneReboot(t *testing.T) {
 			requireNoLine(t, operations, "root-patch")
 		})
 	}
+}
+
+func withoutOperationPrefix(operations []string, prefix string) []string {
+	filtered := make([]string, 0, len(operations))
+	for _, operation := range operations {
+		if !strings.HasPrefix(operation, prefix) {
+			filtered = append(filtered, operation)
+		}
+	}
+	return filtered
 }
 
 func TestCompactHealthyEtcdStatusPermitsControlPlaneReboot(t *testing.T) {

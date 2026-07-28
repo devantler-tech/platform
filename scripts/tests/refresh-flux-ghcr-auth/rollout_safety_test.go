@@ -544,10 +544,10 @@ func TestUnreadyNodeAfterRebootStopsTheRoll(t *testing.T) {
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_NODE_READY_FAIL_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
-	requireLinesEqual(t, readLines(f.operationLog), []string{
-		"ivpol-policy-dry-run:verify-app-images",
-		"ivpol-policy-apply:verify-app-images",
-		"ivpol-policy-delete:verify-ksail-images",
+	requireLinesEqual(t, withoutOperationPrefix(
+		readLines(f.operationLog),
+		"ivpol-policy-",
+	), []string{
 		"variables-patch",
 		"fanout:pushsecret/flux-system/seed-ghcr",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
