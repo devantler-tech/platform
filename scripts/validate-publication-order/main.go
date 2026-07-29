@@ -353,51 +353,32 @@ func valueResolvedFrom(word *syntax.Word, name string) bool {
 // outright — that is the conservative direction, and it is what makes this terminal instead of one
 // more round.
 //
-// A pipeline stays accepted because it has no branches: every stage runs, and the first stage is the
-// one that reads the tag and produces the data the rest transforms. A retry belongs around the
-// ASSIGNMENT (`for … do DIGEST=$(…) && break; done`), which is unaffected — assignmentsTo already
-// finds it at any depth — so the idiomatic spelling still passes.
+// A single call is the ONLY construct whose output can be bound without evaluating the script, which
+// is why it is the whole accepted set. Everything else was tried and each admitted a bypass:
+//
+//   - a compound (`if`/`for`/`while`/`case`/subshell/`&&`) emits the output of whichever branch or
+//     iteration ran, so a resolver in an untaken branch satisfied a search while bash returned a
+//     constant;
+//   - a PIPELINE is no better, though it looks it. `crane digest "${REF_TAG}" | printf '%s' 'sha256:…'`
+//     is a pipeline of plain calls whose first stage reads the tag — and `printf` never reads stdin,
+//     so the constant is what becomes DIGEST. "Later stages only reshape the resolver's output" reads
+//     as obviously true and is not a property shell syntax enforces.
+//
+// A retry belongs around the ASSIGNMENT (`for … do DIGEST=$(…) && break; done`), which is unaffected:
+// assignmentsTo finds it at any depth, so the idiomatic spelling still passes.
 func consumes(stmt *syntax.Stmt, name string) bool {
-	stages, simple := pipelineStages(stmt.Cmd)
-	if !simple || len(stages) == 0 {
+	call, isCall := stmt.Cmd.(*syntax.CallExpr)
+	if !isCall {
 		return false
 	}
 
-	// The first stage is the resolver; later stages only reshape what it emitted.
-	for _, arg := range stages[0].Args {
+	for _, arg := range call.Args {
 		if expands(arg, name) {
 			return true
 		}
 	}
 
 	return false
-}
-
-// pipelineStages flattens a plain command or a pipeline of plain commands into its stages, in order.
-//
-// simple is false for every other construct — `if`, `for`, `while`, `case`, a subshell, a block, a
-// function body, and the `&&`/`||` operators — because each of those can produce its output from a
-// command that did not run, which is precisely the gap consumes exists to close.
-func pipelineStages(cmd syntax.Command) (stages []*syntax.CallExpr, simple bool) {
-	switch typed := cmd.(type) {
-	case *syntax.CallExpr:
-		return []*syntax.CallExpr{typed}, true
-	case *syntax.BinaryCmd:
-		if typed.Op != syntax.Pipe && typed.Op != syntax.PipeAll {
-			return nil, false
-		}
-
-		left, leftOK := pipelineStages(typed.X.Cmd)
-		right, rightOK := pipelineStages(typed.Y.Cmd)
-
-		if !leftOK || !rightOK {
-			return nil, false
-		}
-
-		return append(left, right...), true
-	default:
-		return nil, false
-	}
 }
 
 // expands reports whether a word contains a parameter expansion of name.
@@ -760,11 +741,18 @@ func validate(source []byte) error {
 
 		if !resolvesDigestFromPublishedTag(steps[at].Run) {
 			return fmt.Errorf(
-				"the signing step must resolve DIGEST from the tag it just published (a command "+
-					"substitution reading %s); a digest that is written down rather than resolved "+
-					"lets cosign and both attestations cover an older artifact in full while the "+
-					"newly pushed tag is released unsigned",
-				publishedTagRef)
+				"the signing step must resolve DIGEST from the tag it just published; a digest that "+
+					"is written down rather than resolved lets cosign and both attestations cover an "+
+					"older artifact in full while the newly pushed tag is released unsigned.\n"+
+					"Required shape: DIGEST=$(<command> … %s …) — a command substitution whose LAST "+
+					"statement is a single command taking %s as an argument, for example\n"+
+					"  DIGEST=$(docker buildx imagetools inspect \"%s\" --format '{{.Manifest.Digest}}')\n"+
+					"Any tool may resolve it. What is not accepted is a pipeline, an if/for/while/case, "+
+					"a subshell or a && chain as that last statement: each of those can emit a value "+
+					"the tag-reading command never produced, which is the exact substitution this "+
+					"check exists to catch. Retry around the assignment instead "+
+					"(for … do DIGEST=$(…) && break; done), which is supported",
+				publishedTagRef, publishedTagRef, publishedTagRef)
 		}
 
 		if !signsTheResolvedDigest(steps[at]) {

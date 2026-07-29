@@ -943,18 +943,23 @@ func TestRejectsADigestThatOnlyCONCATENATESThePublishedTag(t *testing.T) {
 	}
 }
 
-// TestAllowsResolvingThroughAPipeline is an over-tightening control. Reading the tag inside a
-// pipeline, a subshell or a redirection is ordinary scripting — the expansion still reaches the
-// program that resolves the digest — so the check must find it at any depth inside the substitution
-// rather than only in its first command.
-func TestAllowsResolvingThroughAPipeline(t *testing.T) {
+// TestRejectsAPipelineResolver pins the last construct this guard accepted on an unenforceable
+// claim. A pipeline of plain calls has no branches, so it LOOKS provenance-preserving, and an
+// earlier round accepted it on the reasoning that later stages "only reshape" the resolver output.
+// Shell syntax does not enforce that: `crane digest "${REF_TAG}" | printf '%s' 'sha256:…'`
+// reads the tag in its first stage, and printf never reads stdin, so the constant becomes DIGEST.
+//
+// A single call is therefore the whole accepted set — the only construct whose output is bound to a
+// command that demonstrably consumed the tag. The cost is real and deliberate: a pipeline resolver
+// must be rewritten as one command, and the error message says so.
+func TestRejectsAPipelineResolver(t *testing.T) {
 	piped := strings.Replace(validAction,
 		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
-		`        DIGEST=$(crane manifest "${REF_TAG}" | sha256sum | cut -d' ' -f1)`, 1)
+		`        DIGEST=$(crane digest "${REF_TAG}" | printf '%s' 'sha256:1111111111111111111111111111111111111111111111111111111111111111')`, 1)
 	mustChange(t, validAction, piped)
 
-	if err := validate([]byte(piped)); err != nil {
-		t.Fatalf("resolving through a pipeline still reads the published tag; got: %v", err)
+	if err := validate([]byte(piped)); err == nil {
+		t.Fatal("a later pipeline stage can emit a digest the resolver never produced")
 	}
 }
 
