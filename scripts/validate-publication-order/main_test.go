@@ -1007,3 +1007,60 @@ func TestRejectsAProcessSubstitution(t *testing.T) {
 		t.Fatal("a process substitution yields a file descriptor path, not the resolved digest")
 	}
 }
+
+// TestRejectsAResolverThatDISCARDSThePublishedTag closes what an earlier round documented as a
+// boundary and left open. Requiring only that SOME command inside the substitution receives
+// `${REF_TAG}` lets a no-op consume it while a later command prints the value that actually becomes
+// the digest — a real provenance bypass with a green CI, which is the worst combination a security
+// guard can have. "It would need dataflow analysis" argued for the wrong fix: the lesson from this
+// guard's first five rounds is that enumerating BAD shapes never converges, and the answer is to
+// narrow the ACCEPTED one instead.
+func TestRejectsAResolverThatDISCARDSThePublishedTag(t *testing.T) {
+	discarded := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST="$(`+"\n"+
+			`          : "${REF_TAG}"`+"\n"+
+			`          printf '%s' 'sha256:1111111111111111111111111111111111111111111111111111111111111111'`+"\n"+
+			`        )"`, 1)
+	mustChange(t, validAction, discarded)
+
+	if err := validate([]byte(discarded)); err == nil {
+		t.Fatal("a no-op that consumes the tag does not make the constant it precedes a resolved digest")
+	}
+}
+
+// TestAllowsSetupBeforeTheResolver is that rule's over-tightening control. Only the command whose
+// output BECOMES the digest has to read the published tag; ordinary setup in front of it — shell
+// options, a variable, a guard — is correct scripting and must still pass.
+func TestAllowsSetupBeforeTheResolver(t *testing.T) {
+	withSetup := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST="$(`+"\n"+
+			`          set -euo pipefail`+"\n"+
+			`          command -v crane >/dev/null`+"\n"+
+			`          crane digest "${REF_TAG}"`+"\n"+
+			`        )"`, 1)
+	mustChange(t, validAction, withSetup)
+
+	if err := validate([]byte(withSetup)); err != nil {
+		t.Fatalf("setup before the resolver is ordinary scripting; got: %v", err)
+	}
+}
+
+// TestAllowsAResolverInsideARetryLoop is the second over-tightening control. A resolver wrapped in a
+// retry is correct code whose output still terminates in the digest, so requiring the LAST statement
+// to consume the tag must recurse into compound commands rather than demanding a bare call.
+func TestAllowsAResolverInsideARetryLoop(t *testing.T) {
+	retried := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST="$(`+"\n"+
+			`          for _ in 1 2 3; do`+"\n"+
+			`            crane digest "${REF_TAG}" && break`+"\n"+
+			`          done`+"\n"+
+			`        )"`, 1)
+	mustChange(t, validAction, retried)
+
+	if err := validate([]byte(retried)); err != nil {
+		t.Fatalf("a retry around the resolver still ends in the resolved digest; got: %v", err)
+	}
+}

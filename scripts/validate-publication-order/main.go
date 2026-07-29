@@ -311,12 +311,8 @@ func sourceOf(src string, from, to syntax.Pos) string {
 // spelling it has no stake in: `$REF_TAG` is the same expansion, and rejecting it would fail correct
 // code.
 //
-// BOUNDARY, stated rather than implied: this proves the published tag is CONSUMED by a command the
-// resolution runs. It does not prove that command's output is what the substitution returns — that
-// is dataflow through the shell, not a property of the syntax, so a command given the tag and then
-// discarded (`: "${REF_TAG}"; printf '%s' 'sha256:…'`) satisfies this check. Chasing that with
-// another shape rule is what made this guard a blocklist five rounds running; the structural
-// boundary is deliberate, and closing it needs reachability analysis rather than a sixth pattern.
+// The tag must be read by the statement whose output BECOMES the value, not merely by something
+// somewhere inside the substitution — see consumes for why that distinction is load-bearing.
 func valueResolvedFrom(word *syntax.Word, name string) bool {
 	resolved := false
 
@@ -326,30 +322,53 @@ func valueResolvedFrom(word *syntax.Word, name string) bool {
 			return !resolved
 		}
 
-		// Any depth inside the substitution: a pipeline, a subshell, a loop or a redirection around
-		// the resolution is ordinary scripting, and the expansion still reaches the program that
-		// resolves the digest.
-		syntax.Walk(subst, func(inner syntax.Node) bool {
-			call, isCall := inner.(*syntax.CallExpr)
-			if !isCall {
-				return !resolved
-			}
-
-			for _, arg := range call.Args {
-				if expands(arg, name) {
-					resolved = true
-
-					return false
-				}
-			}
-
-			return !resolved
-		})
+		if len(subst.Stmts) > 0 && consumes(subst.Stmts[len(subst.Stmts)-1], name) {
+			resolved = true
+		}
 
 		return !resolved
 	})
 
 	return resolved
+}
+
+// consumes reports whether the statement whose output becomes the substitution's value reads name.
+//
+// Scoping this to the LAST statement is what ties the resolution to the RESULT. Accepting the tag
+// anywhere inside the substitution let a no-op consume it while a later command printed the value
+// that actually became the digest:
+//
+//	DIGEST="$( : "${REF_TAG}"; printf '%s' 'sha256:…' )"
+//
+// Cosign and both attestations then cover that constant in full while the tag this run published
+// ships unsigned — a bypass with a GREEN result, which is the worst shape a security guard can have.
+//
+// It recurses to any depth WITHIN that statement rather than demanding a bare call, because a
+// pipeline, a retry loop, a subshell or a redirection around the resolver is ordinary correct code
+// and the output still terminates in the digest. That is the deliberate split: the accepted SHAPE is
+// narrowed to one statement, and the freedom inside it is kept — narrowing what is accepted, rather
+// than enumerating what is forbidden, which is what left this guard bypassable for five rounds.
+func consumes(stmt *syntax.Stmt, name string) bool {
+	found := false
+
+	syntax.Walk(stmt, func(node syntax.Node) bool {
+		call, isCall := node.(*syntax.CallExpr)
+		if !isCall {
+			return !found
+		}
+
+		for _, arg := range call.Args {
+			if expands(arg, name) {
+				found = true
+
+				return false
+			}
+		}
+
+		return !found
+	})
+
+	return found
 }
 
 // expands reports whether a word contains a parameter expansion of name.
