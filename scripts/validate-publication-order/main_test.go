@@ -464,3 +464,21 @@ func TestAllowsAHeredocAlongsideTheRequiredInvocation(t *testing.T) {
 		t.Fatalf("a step may use a heredoc and still sign; got: %v", err)
 	}
 }
+
+// TestAllowsAHereStringInARequiredStep pins the here-string exclusion, which shipped WRONG in the
+// first version of heredoc skipping. `<<<` contains two overlapping `<<` pairs, so a pattern that
+// merely starts at `<<` matches one character later and reads the here-string's operand as a
+// delimiter — swallowing every line after it, including the real `cosign sign`, and failing a
+// perfectly valid action. The claim "a here-string is not an opener" therefore needs a test rather
+// than a comment: the comment was there, and it was false.
+func TestAllowsAHereStringInARequiredStep(t *testing.T) {
+	withHereString := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		"        grep -q x <<<\"sentinel\"\n"+
+			`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`, 1)
+	mustChange(t, validAction, withHereString)
+
+	if err := validate([]byte(withHereString)); err != nil {
+		t.Fatalf("a here-string is not a here-document opener; got: %v", err)
+	}
+}

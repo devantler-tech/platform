@@ -177,11 +177,17 @@ func executable(run string) string {
 
 // heredocOpener matches a here-document redirection and captures its delimiter, quoted or bare.
 //
-// A here-STRING (`<<<`) is deliberately not matched: its operand is a value on the same line rather
-// than a body, so treating it as an opener would swallow every following line until something
-// happened to equal it. The bare form requires an identifier start, which also keeps an arithmetic
-// shift such as `$((1 << 2))` from registering a delimiter.
-var heredocOpener = regexp.MustCompile(`<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
+// A here-STRING (`<<<`) must NOT match: its operand is a value on the same line rather than a body,
+// so treating it as an opener swallows every following line until one happens to equal it — hiding
+// the real invocation and failing a valid action. Excluding it needs the leading `[^<]`, because
+// `<<<` contains two overlapping `<<` pairs: without it the match simply starts one character later
+// and `<<<"sentinel"` registers `sentinel` as a delimiter.
+//
+// The bare form requires an identifier start, which also keeps an arithmetic shift such as
+// `$((1 << 2))` from registering a delimiter.
+var heredocOpener = regexp.MustCompile(
+	`(?:^|[^<])<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`,
+)
 
 // heredocDelimiters returns the delimiters a line opens, in the order bash will close them.
 func heredocDelimiters(line string) []string {
