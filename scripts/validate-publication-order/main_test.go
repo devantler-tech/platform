@@ -286,3 +286,22 @@ func TestAllowsEvidenceSharingTheReleaseCondition(t *testing.T) {
 		t.Fatalf("evidence sharing the release condition must stay legal, got: %v", err)
 	}
 }
+
+// TestAllowsACommentedAlternativeBesideARealSigningInvocation pins the other half of comment
+// handling. Stripping comments before matching is what stops a `#` from disabling the guard; it is
+// ALSO what stops a commented-out alternative from failing a composite that signs correctly.
+//
+// Without it, signsTheResolvedDigest walks the raw text, finds "cosign sign " on the commented line,
+// sees no "${REF}" there, and rejects a file whose real invocation is exactly right — a guard that
+// fails valid input gets suppressed, which is how the real one stops being enforced.
+func TestAllowsACommentedAlternativeBesideARealSigningInvocation(t *testing.T) {
+	withAlternative := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        cosign sign --yes --recursive "${REF}"`+"\n"+
+			`        # cosign sign --yes --recursive "${REF_TAG}"  # pre-digest form, kept for reference`, 1)
+	mustChange(t, validAction, withAlternative)
+
+	if err := validate([]byte(withAlternative)); err != nil {
+		t.Fatalf("a commented alternative beside a correct invocation must stay legal, got: %v", err)
+	}
+}
