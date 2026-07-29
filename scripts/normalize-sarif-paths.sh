@@ -112,7 +112,15 @@ jq --arg prefix "$PREFIX" --argjson rewrite "$(printf '%s\n' "${rewrite_args[@]+
         # `[]?` rather than `//= []`: a result without fixes must stay without
         # fixes. Creating an empty array here would change the shape of every
         # finding that has no suggested change.
-        | ((.fixes[]?.artifactChanges[]?.artifactLocation.uri) |= fix(.))
+        #
+        # The select() is load-bearing: an artifactLocation may reference the
+        # run artifacts[] table by index and carry no uri at all. `|=` visits an
+        # absent path and writes the result back, so without this guard such an
+        # entry gains `"uri": null` — invalid against a schema that requires a
+        # string, which can make Code Scanning reject the entire upload.
+        | (.fixes[]?.artifactChanges[]?.artifactLocation
+           | select(.uri? | type == "string")
+           | .uri) |= fix(.)
       )
   )
 ' "$SARIF" >"$tmp"

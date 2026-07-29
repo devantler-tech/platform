@@ -180,7 +180,43 @@ bash "${script}" "${clean_sarif}" k8s "${fixture_root}" >/dev/null ||
   fail "a zero-result SARIF should succeed; the clean-scan case must not fail closed"
 
 # ---------------------------------------------------------------------------
-# 6. CI actually runs this test, so the gate cannot be added and then orphaned.
+
+# ---------------------------------------------------------------------------
+# 6. An artifactChange that identifies its artifact by INDEX has no uri, and
+#    must not acquire one.
+#
+#    SARIF lets an artifactLocation reference the run's artifacts[] table by
+#    index instead of carrying a uri. jq's `|=` visits an absent path and writes
+#    the result back, so rewriting `.artifactLocation.uri` on such an entry
+#    CREATES `"uri": null`. The schema requires uri to be a string when present,
+#    so the document becomes invalid and Code Scanning can reject the whole
+#    upload — turning a path fix into a total findings outage.
+#
+#    Both shapes sit in one artifactChanges[] so the control is exact: the
+#    uri-identified entry must still be re-rooted in the same pass that leaves
+#    the index-identified one alone. Skipping fixes[] wholesale would satisfy
+#    the first assertion and reintroduce the very bug #2863 fixed.
+# ---------------------------------------------------------------------------
+index_sarif="${work_dir}/index.sarif"
+write_sarif "${index_sarif}"
+jq '.runs[0].results[0].fixes[0].artifactChanges += [{"artifactLocation": {"index": 0}}]' \
+  "${index_sarif}" >"${index_sarif}.tmp" && mv "${index_sarif}.tmp" "${index_sarif}"
+
+bash "${script}" "${index_sarif}" k8s "${fixture_root}" >/dev/null ||
+  fail "an index-identified artifactChange should not fail the run"
+
+jq -e '.runs[0].results[0].fixes[0].artifactChanges[1].artifactLocation | has("uri") | not' \
+  "${index_sarif}" >/dev/null ||
+  fail "rewriting an index-identified artifactLocation created a uri key; SARIF requires uri to be a string when present, so the document is now schema-invalid"
+
+jq -e '.runs[0].results[0].fixes[0].artifactChanges[1].artifactLocation.index == 0' \
+  "${index_sarif}" >/dev/null ||
+  fail "the index reference was lost"
+
+[ "$(jq -r '.runs[0].results[0].fixes[0].artifactChanges[0].artifactLocation.uri' "${index_sarif}")" \
+  = "k8s/bases/apps/demo/cm.yaml" ] ||
+  fail "the uri-identified artifactChange beside it was left un-rooted; the index guard is too broad"
+# 7. CI actually runs this test, so the gate cannot be added and then orphaned.
 # ---------------------------------------------------------------------------
 grep -Fq 'scripts/tests/test-normalize-sarif-paths.sh' "${ci_workflow}" ||
   fail "ci.yaml does not reference this test; adding it without wiring it in gates nothing"
