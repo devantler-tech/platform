@@ -28,8 +28,13 @@
 # the headlamp pod, which differs per pod by design.
 #
 # The component is deliberately omitted from the parent kustomization until a
-# short-lived activation PR, matching userns-longhorn-smoke (#2619). Activate,
-# capture the completed Job's logs onto #2651, then remove it again.
+# short-lived activation PR, matching userns-longhorn-smoke (#2619). The apps
+# Flux Kustomization runs `wait: true` with no explicit healthChecks, so kstatus
+# evaluates every applied resource: a Job reporting Failed takes the whole apps
+# layer not-Ready. That is reachable here by design — a negative result is
+# exactly what the assertions below produce — so activation is deliberate and
+# watched rather than standing. Activate, capture the completed Job's logs onto
+# #2651, then remove the component again (#2858).
 apiVersion: batch/v1
 kind: Job
 metadata:
