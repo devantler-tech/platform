@@ -43,6 +43,7 @@ metadata:
     # Jobs are immutable, so without this Flux cannot reapply spec changes.
     # The Job script itself is idempotent — each command checks state first.
     kustomize.toolkit.fluxcd.io/force: enabled
+    checkov.io/skip1: CKV_K8S_38=the store-keys container writes the openbao-unseal Secret through kubectl
 spec:
   # Auto-delete the Job (and its pods) 10 minutes after completion. Without
   # this, the `kustomize.toolkit.fluxcd.io/force: enabled` annotation above
@@ -63,6 +64,11 @@ spec:
         app: vault-config
     spec:
       serviceAccountName: vault-config
+      # The token is required: the store-keys container persists the unseal key
+      # and root token by piping `kubectl create secret` into `kubectl apply`,
+      # which authenticates to the API server with it. Left at the
+      # mount-by-default value rather than set explicitly — an explicit `true`
+      # reads identically to Kubernetes and trips Kubescape C-0034.
       restartPolicy: OnFailure
       # The full restricted-PSS context is set explicitly (not left to the
       # add-security-context Kyverno mutation) so the pod stays hardened
