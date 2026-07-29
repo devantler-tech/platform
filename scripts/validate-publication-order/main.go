@@ -27,11 +27,11 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
+	"mvdan.cc/sh/v3/syntax"
 )
 
 // step is one entry of runs.steps, reduced to what identifies it here.
@@ -62,204 +62,132 @@ type marker struct {
 	match func(step) bool
 }
 
-// opensBlock and closesBlock are the shell keywords that make a line conditional on something.
-// Matching the first WORD keeps `iffy=1` or a path ending in `done` from being read as control flow.
-var (
-	opensBlock  = []string{"if", "elif", "else", "while", "until", "for", "case", "then", "do"}
-	closesBlock = []string{"fi", "done", "esac"}
-)
-
-func firstWord(line string) string {
-	fields := strings.Fields(line)
-	if len(fields) == 0 {
-		return ""
-	}
-
-	return strings.TrimSuffix(fields[0], ";")
+// executedCommand is one command the shell will actually run, reduced to what the markers ask
+// about: its words exactly as written.
+//
+// Deciding "actually run" from the shell GRAMMAR rather than from the text is what collapses a whole
+// family of bypasses into one rule. A comment is not a word; a here-document body is an argument to
+// the command that opened it, whatever quoting the delimiter uses; and `||`, `&&`, pipelines,
+// subshells, function bodies, backgrounding, negation and every conditional construct produce a
+// statement that is not a plain call. None of them can therefore present a required operation as an
+// executed command.
+//
+// Earlier revisions enumerated those shapes one at a time — a comment, then a step condition, then a
+// block, then a one-line `if`, then `&&`, then `echo`, then a here-document — and each omission was a
+// silent bypass rather than a failure. That is a blocklist, and the list never ended. Asking the
+// parser what runs is the allowlist equivalent.
+type executedCommand struct {
+	// words is argv as written in the source, quoting included, so an argument can be compared
+	// against the exact form the contract requires (`"${REF}"`) rather than against its expansion.
+	words []string
 }
 
-// executable reduces a shell script to the lines that are matched: whole-line comments are dropped,
-// and so is anything a control-flow construct could stop from running.
-//
-// Comments matter because every matcher works on raw text, so a `#` in front of the invocation
-// satisfies them all at once — the comment still contains the command AND the reference. Only
-// whole-line comments are removed; a trailing `#` is left alone, because separating one from a `#`
-// inside a string literal needs a shell parser and guessing wrong would drop a real invocation.
-//
-// Nesting matters for the same reason at one remove. A step can carry no `if:`, keep its position,
-// build REF from the resolved digest, and still produce no signature:
-//
-//	if false; then
-//	  cosign sign --yes --recursive "${REF}"
-//	fi
-//
-// Every check above is satisfied while the deploy attests and reconciles an unsigned artifact.
-//
-// This is a deliberately CONSERVATIVE structural check, not a shell parser: it does not decide
-// whether a branch is reachable, it declines to treat anything inside one as an executed command.
-// Required operations on this path are unconditional by design, so rejecting a conditional one is
-// the intended answer rather than a limitation. Control flow around other work in the same step is
-// untouched — only the lines the matchers read are filtered.
-func executable(run string) string {
-	lines := strings.Split(run, "\n")
-	kept := make([]string, 0, len(lines))
-	depth := 0
-
-	var heredocs []string
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		// A here-document body is INPUT to a command, not a sequence of commands. Without this the
-		// body reads as ordinary top-level lines, so `: <<'X'` followed by the real invocation
-		// satisfies every rule while bash only feeds those words to `:`. Checked before the comment
-		// and block logic because a body line may itself look like `#`, `}` or `fi`, and letting one
-		// close a block would mis-track nesting for every line after it.
-		if len(heredocs) > 0 {
-			if trimmed == heredocs[0] {
-				heredocs = heredocs[1:]
-			}
-
-			continue
-		}
-
-		if strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-
-		// Registered before this line is classified, so a redirection on a line that also opens a
-		// block still hides its body. The opener itself stays a candidate: it is a real command.
-		heredocs = append(heredocs, heredocDelimiters(line)...)
-
-		word := firstWord(trimmed)
-		opens := slices.Contains(opensBlock, word)
-
-		// A line ending in `{` opens a function body or a group. Its contents are only reached if
-		// something invokes it, which this check cannot know, so they are not executed commands.
-		if strings.HasSuffix(trimmed, "{") {
-			depth++
-
-			continue
-		}
-
-		if trimmed == "}" && depth > 0 {
-			depth--
-
-			continue
-		}
-
-		if slices.Contains(closesBlock, word) && depth > 0 {
-			depth--
-
-			continue
-		}
-
-		// A line that OPENS a block is skipped whatever else it carries. That is what catches the
-		// one-line form `if false; then cosign sign ...; fi`, where a depth counter alone would be
-		// back at zero by the end of the line and read it as unnested.
-		if opens {
-			if word == "if" || word == "while" || word == "until" || word == "for" || word == "case" {
-				depth++
-			}
-
-			continue
-		}
-
-		if depth > 0 {
-			continue
-		}
-
-		kept = append(kept, line)
-	}
-
-	return strings.Join(kept, "\n")
+// assignment is one variable assignment, kept with enough provenance to tell a resolved value from a
+// written-down one.
+type assignment struct {
+	// text is the value's source, so an exact required form can be compared.
+	text string
+	// fromCommand reports whether the value came from a command substitution. A digest that was
+	// typed is not a digest that was resolved, and only the second binds a signature to this run.
+	fromCommand bool
 }
 
-// heredocOpener matches a here-document redirection and captures its delimiter, quoted or bare.
+// parseExecuted returns the commands a run block executes at top level.
 //
-// A here-STRING (`<<<`) must NOT match: its operand is a value on the same line rather than a body,
-// so treating it as an opener swallows every following line until one happens to equal it — hiding
-// the real invocation and failing a valid action. Excluding it needs the leading `[^<]`, because
-// `<<<` contains two overlapping `<<` pairs: without it the match simply starts one character later
-// and `<<<"sentinel"` registers `sentinel` as a delimiter.
-//
-// The bare form requires an identifier start, which also keeps an arithmetic shift such as
-// `$((1 << 2))` from registering a delimiter.
-var heredocOpener = regexp.MustCompile(
-	`(?:^|[^<])<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`,
-)
+// A parse failure yields none, so an unparseable script can never satisfy a required marker: the
+// guard fails closed rather than falling back to matching text.
+func parseExecuted(run string) []executedCommand {
+	file, err := syntax.NewParser().Parse(strings.NewReader(run), "")
+	if err != nil {
+		return nil
+	}
 
-// heredocDelimiters returns the delimiters a line opens, in the order bash will close them.
-func heredocDelimiters(line string) []string {
-	var out []string
+	out := make([]executedCommand, 0, len(file.Stmts))
 
-	for _, match := range heredocOpener.FindAllStringSubmatch(line, -1) {
-		for _, group := range match[1:] {
-			if group != "" {
-				out = append(out, group)
-
-				break
-			}
+	for _, stmt := range file.Stmts {
+		call, isCall := stmt.Cmd.(*syntax.CallExpr)
+		if !isCall {
+			continue
 		}
+
+		// `! cmd` inverts the exit status and `cmd &` detaches it. Neither lets the step fail when
+		// the operation does, which is the only reason requiring the operation means anything.
+		if stmt.Negated || stmt.Background {
+			continue
+		}
+
+		out = append(out, newExecutedCommand(run, call))
 	}
 
 	return out
 }
 
-// commandPrefix is what may precede a required match on its line: whitespace and at most a plain
-// command path. Anything else — an operator, a quote, an assignment, a substitution — means the
-// match is not itself the command being run.
-var commandPrefix = regexp.MustCompile(`^\s*[A-Za-z0-9_./-]*\s*$`)
+func newExecutedCommand(src string, call *syntax.CallExpr) executedCommand {
+	cmd := executedCommand{words: make([]string, 0, len(call.Args))}
 
-// carriedBy reports whether a given executable may carry a required operation. The empty string
-// means the operation began the line, i.e. the matched text names the executable itself.
-type carriedBy func(exec string) bool
-
-// directly accepts only a line that starts with the operation, for matches that already name their
-// own executable (`cosign sign`).
-func directly(exec string) bool { return exec == "" }
-
-// viaKsail accepts the authenticated wrapper the composite publishes through. `workload push` is a
-// SUBCOMMAND, so it is legitimately preceded by a command — the real step runs
-// `./scripts/run-ksail-prod-with-pull-auth.sh workload push` — which is why the prefix cannot simply
-// be banned the way it can for cosign. It is restricted to ksail or a script rather than pinned to
-// one path, so renaming the wrapper stays a legal refactor.
-func viaKsail(exec string) bool {
-	return exec == "ksail" || strings.HasSuffix(exec, ".sh")
-}
-
-// isInvocation reports whether substr occurs on line as a plain top-level command carried by an
-// executable ok accepts.
-//
-// The plain-command half inverts the question earlier versions asked. Enumerating the ways an
-// invocation can fail to run — a comment, a step condition, a block, `&&`, `||`, a pipeline, a
-// string literal, a command substitution, an uninvoked function — is a list that keeps growing, and
-// each omission is a silent bypass. Requiring the match to BE a command closes that class.
-//
-// The executable half closes what remained: being a command is not enough when the match is only
-// part of one. Allowing any plain word in front accepted `echo cosign sign --yes "${REF}"`, which
-// bash merely prints. That distinction is not syntactic — `ksail workload push` and
-// `echo workload push` have identical shape — so the rule has to know which executable each
-// operation actually belongs to rather than reasoning about the line alone.
-func isInvocation(line, substr string, ok carriedBy) bool {
-	idx := strings.Index(line, substr)
-	if idx < 0 {
-		return false
+	for _, arg := range call.Args {
+		cmd.words = append(cmd.words, sourceOf(src, arg.Pos(), arg.End()))
 	}
 
-	prefix := line[:idx]
-	if !commandPrefix.MatchString(prefix) {
-		return false
-	}
-
-	return ok(strings.TrimSpace(prefix))
+	return cmd
 }
 
-// containsCommand reports whether any executable line of run invokes substr as a plain command
-// carried by an accepted executable.
-func containsCommand(run, substr string, ok carriedBy) bool {
-	for _, line := range strings.Split(executable(run), "\n") {
-		if isInvocation(line, substr, ok) {
+// assignmentsTo returns every assignment to name anywhere in run, at any nesting depth.
+//
+// Depth is deliberately ignored here, unlike for the required OPERATIONS. Those must be top-level
+// because a conditional one may simply not run; an assignment is different — what matters is that no
+// value of this variable can come from somewhere untrustworthy. Restricting it to the top level
+// would reject a plain retry loop around the digest resolution, which is correct code, and a guard
+// that fails correct input gets suppressed rather than fixed.
+//
+// Here-document bodies contain no commands, so a resolution "found" inside one is not found at all.
+func assignmentsTo(run, name string) []assignment {
+	file, err := syntax.NewParser().Parse(strings.NewReader(run), "")
+	if err != nil {
+		return nil
+	}
+
+	var out []assignment
+
+	syntax.Walk(file, func(node syntax.Node) bool {
+		call, isCall := node.(*syntax.CallExpr)
+		if !isCall {
+			return true
+		}
+
+		for _, assign := range call.Assigns {
+			if assign.Name == nil || assign.Value == nil || assign.Name.Value != name {
+				continue
+			}
+
+			out = append(out, assignment{
+				text:        sourceOf(run, assign.Value.Pos(), assign.Value.End()),
+				fromCommand: valueFromCommand(assign.Value),
+			})
+		}
+
+		return true
+	})
+
+	return out
+}
+
+// sourceOf returns the source text a node spans. Comparing what was WRITTEN keeps the required
+// argument checks exact: `"${REF}"` and `"${REF_TAG}"` expand to different things at run time, and
+// the guard has to distinguish them without expanding anything.
+func sourceOf(src string, from, to syntax.Pos) string {
+	start, end := int(from.Offset()), int(to.Offset())
+	if start < 0 || end > len(src) || start > end {
+		return ""
+	}
+
+	return src[start:end]
+}
+
+// valueFromCommand reports whether any part of a value is a command substitution.
+func valueFromCommand(word *syntax.Word) bool {
+	for _, part := range word.Parts {
+		if _, ok := part.(*syntax.CmdSubst); ok {
 			return true
 		}
 	}
@@ -267,8 +195,53 @@ func containsCommand(run, substr string, ok carriedBy) bool {
 	return false
 }
 
-func runContains(substr string, ok carriedBy) func(step) bool {
-	return func(s step) bool { return containsCommand(s.Run, substr, ok) }
+// viaKsail accepts the authenticated wrapper the composite publishes through. `workload push` is a
+// SUBCOMMAND, so it is legitimately preceded by a command — the real step runs
+// `./scripts/run-ksail-prod-with-pull-auth.sh workload push` — which is why the executable cannot
+// simply be required to be the operation itself, the way it can for cosign. It is restricted to
+// ksail or a script rather than pinned to one path, so renaming the wrapper stays a legal refactor.
+func viaKsail(exec string) bool {
+	return exec == "ksail" || strings.HasSuffix(exec, ".sh")
+}
+
+// ksailWorkload matches a step that runs `workload <op>` through that wrapper.
+//
+// The executable matters as much as the words: `ksail workload push` and `echo workload push` have
+// identical shape, so a rule reading only the operation's words would accept a step that merely
+// prints it.
+func ksailWorkload(op string) func(step) bool {
+	return func(s step) bool {
+		for _, cmd := range parseExecuted(s.Run) {
+			if len(cmd.words) == 0 || !viaKsail(cmd.words[0]) {
+				continue
+			}
+
+			for i := 1; i+1 < len(cmd.words); i++ {
+				if cmd.words[i] == "workload" && cmd.words[i+1] == op {
+					return true
+				}
+			}
+		}
+
+		return false
+	}
+}
+
+// cosignSignCommands returns every executed `cosign sign` invocation in run.
+func cosignSignCommands(run string) []executedCommand {
+	var out []executedCommand
+
+	for _, cmd := range parseExecuted(run) {
+		if len(cmd.words) >= 2 && cmd.words[0] == "cosign" && cmd.words[1] == "sign" {
+			out = append(out, cmd)
+		}
+	}
+
+	return out
+}
+
+func runsCosignSign(s step) bool {
+	return len(cosignSignCommands(s.Run)) > 0
 }
 
 func usesPrefix(prefix string) func(step) bool {
@@ -286,12 +259,12 @@ func usesPrefix(prefix string) func(step) bool {
 var (
 	// publish makes new bytes reachable and must come first — signing or
 	// attesting before it would cover the previous artifact.
-	publish = marker{"publish the manifests (`workload push`)", runContains("workload push", viaKsail)}
+	publish = marker{"publish the manifests (`workload push`)", ksailWorkload("push")}
 
 	// sign is named separately because its step is inspected again below, for
 	// the digest reference. Locating it by value rather than by matching its
 	// label keeps that second lookup correct when the wording changes.
-	sign = marker{"sign the published digest (`cosign sign`)", runContains("cosign sign ", directly)}
+	sign = marker{"sign the published digest (`cosign sign`)", runsCosignSign}
 
 	// evidence is what must exist before production may look. Order among
 	// these is unconstrained.
@@ -302,13 +275,20 @@ var (
 	}
 
 	// release is the step that advances what production can see.
-	release = marker{"tell Flux to reconcile (`workload reconcile`)", runContains("workload reconcile", viaKsail)}
+	release = marker{"tell Flux to reconcile (`workload reconcile`)", ksailWorkload("reconcile")}
 )
 
 // digestRef is the form the signing step must use. Signing the mutable tag
 // instead would let a concurrent deploy move it between resolve and sign, so
 // the signature would cover bytes this run never published.
-const digestRef = `REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"`
+const (
+	// digestRefValue is the value REF must be assigned, as written.
+	digestRefValue = `"ghcr.io/devantler-tech/platform/manifests@${DIGEST}"`
+	// digestRef is the whole assignment, used in error messages.
+	digestRef = `REF=` + digestRefValue
+	// publishedTagRef is the tag this run just pushed. DIGEST must be derived from it.
+	publishedTagRef = `${REF_TAG}`
+)
 
 // indicesOf returns the position of EVERY step matching m, in file order.
 //
@@ -337,43 +317,103 @@ const signRefArg = `"${REF}"`
 
 // signsTheResolvedDigest reports whether every cosign invocation in run signs
 // the reference built from the resolved digest.
+//
+// The reference must be an ARGUMENT, which is why this reads parsed words rather than the line. A
+// substring test cannot tell an argument from a comment, so
+// `cosign sign --yes --recursive "${REF_TAG}" # "${REF}"` satisfied it while bash passed only the
+// mutable tag — restoring the exact tag-resolution race the check exists to prevent.
 func signsTheResolvedDigest(run string) bool {
-	signed := false
+	signing := cosignSignCommands(run)
 
-	for _, line := range strings.Split(executable(run), "\n") {
-		if !isInvocation(line, "cosign sign ", directly) {
-			continue
-		}
-
-		if !strings.Contains(line, signRefArg) {
-			return false
-		}
-
-		signed = true
+	// No executed invocation at all means nothing signs, whatever the text contains.
+	if len(signing) == 0 {
+		return false
 	}
 
-	// No plain invocation at all means nothing signs, whatever the text contains.
-	return signed
+	for _, cmd := range signing {
+		if !slices.Contains(cmd.words, signRefArg) {
+			return false
+		}
+	}
+
+	return true
 }
 
-// mustNotSkipIndependently rejects a required step whose condition lets it be skipped while the
-// release still runs. releaseIdx[0] is the binding release for ordering, so its condition is the one
-// a required step must share to stand or fall with it.
-func mustNotSkipIndependently(steps []step, m marker, idx []int, releaseIdx []int) error {
-	releaseIf := strings.TrimSpace(steps[releaseIdx[0]].If)
+// assignsResolvedRef reports whether EVERY assignment to REF builds it from the resolved digest.
+//
+// "Every" rather than "some": a later assignment overwrites an earlier one, so accepting the
+// presence of one correct assignment would let a second, wrong one decide what cosign actually
+// signs.
+func assignsResolvedRef(run string) bool {
+	refs := assignmentsTo(run, "REF")
+	if len(refs) == 0 {
+		return false
+	}
 
-	for _, at := range idx {
-		stepIf := strings.TrimSpace(steps[at].If)
-		if stepIf == "" || stepIf == releaseIf {
-			continue
+	for _, assigned := range refs {
+		if assigned.text != digestRefValue {
+			return false
 		}
+	}
 
-		return fmt.Errorf(
-			"the step that must %s carries `if: %s`, which does not match the release step's"+
-				" condition (%q), so it can be skipped while the release still runs.\n"+
-				"GitHub skips a false-conditioned step without failing the composite, so the ordering"+
-				" above would still hold while production is released without that evidence",
-			m.label, stepIf, releaseIf)
+	return true
+}
+
+// resolvesDigestFromPublishedTag reports whether run derives DIGEST by inspecting the tag it just
+// published, rather than naming a digest outright.
+//
+// Without this, DIGEST's provenance was unbound: every ordering check still held while a constant
+// digest for an OLDER manifest was signed and attested in full, and reconciliation released the
+// newly pushed — and unsigned — `latest`. That is the most dangerous shape the guard can miss,
+// because the evidence it produces is genuine, just about the wrong artifact.
+//
+// The requirement is that the value is RESOLVED from the published tag, not that one specific tool
+// resolves it: `docker buildx imagetools`, `crane` and a cosign equivalent are all legitimate, and a
+// guard that failed a correct switch between them would be suppressed rather than fixed.
+// EVERY assignment must qualify, for the same reason as REF: one resolved assignment sitting beside
+// a constant one proves nothing about which value cosign ends up signing.
+func resolvesDigestFromPublishedTag(run string) bool {
+	digests := assignmentsTo(run, "DIGEST")
+	if len(digests) == 0 {
+		return false
+	}
+
+	for _, assigned := range digests {
+		if !assigned.fromCommand || !strings.Contains(assigned.text, publishedTagRef) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// mustNotSkipIndependently rejects a required step whose condition lets it be skipped while a
+// release still runs.
+//
+// The comparison is against EVERY release, not just the binding one for ordering. Checking only the
+// first left a gap with the same shape as the one indicesOf closes for ordering: evidence guarded by
+// the same never-firing condition as a first reconcile looked correctly coupled, while a second,
+// unconditional reconcile released the artifact with all of that evidence skipped. A required step
+// has to stand or fall with each release, so one it cannot gate is a failure.
+func mustNotSkipIndependently(steps []step, m marker, idx []int, releaseIdx []int) error {
+	for _, releaseAt := range releaseIdx {
+		releaseIf := strings.TrimSpace(steps[releaseAt].If)
+
+		for _, at := range idx {
+			stepIf := strings.TrimSpace(steps[at].If)
+			if stepIf == "" || stepIf == releaseIf {
+				continue
+			}
+
+			return fmt.Errorf(
+				"the step that must %s carries `if: %s`, which does not match the release step's"+
+					" condition (%q) at position %d, so it can be skipped while that release still"+
+					" runs.\n"+
+					"GitHub skips a false-conditioned step without failing the composite, so the"+
+					" ordering above would still hold while production is released without that"+
+					" evidence",
+				m.label, stepIf, releaseIf, releaseAt+1)
+		}
 	}
 
 	return nil
@@ -476,11 +516,20 @@ func validate(source []byte) error {
 	}
 
 	for _, at := range signAt {
-		if !strings.Contains(executable(steps[at].Run), digestRef) {
+		if !assignsResolvedRef(steps[at].Run) {
 			return fmt.Errorf(
 				"the signing step must build its reference from the resolved digest (%s); "+
 					"signing the mutable tag lets a concurrent deploy move it between resolve and sign",
 				digestRef)
+		}
+
+		if !resolvesDigestFromPublishedTag(steps[at].Run) {
+			return fmt.Errorf(
+				"the signing step must resolve DIGEST from the tag it just published (a command "+
+					"substitution reading %s); a digest that is written down rather than resolved "+
+					"lets cosign and both attestations cover an older artifact in full while the "+
+					"newly pushed tag is released unsigned",
+				publishedTagRef)
 		}
 
 		if !signsTheResolvedDigest(steps[at].Run) {

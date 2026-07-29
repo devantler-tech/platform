@@ -482,3 +482,218 @@ func TestAllowsAHereStringInARequiredStep(t *testing.T) {
 		t.Fatalf("a here-string is not a here-document opener; got: %v", err)
 	}
 }
+
+// The five tests below are the Codex round at 5add867d. Three of them —
+// backslash-quoted heredoc, swallowed failure, trailing comment — are the SAME root cause wearing
+// three disguises: the matchers read the `run:` block as TEXT, so anything that changes whether a
+// line runs, or what a word actually is, was invisible. Patching each shape individually is the
+// blocklist this guard has already been bitten by, so they are fixed together by parsing the script
+// as shell. Each still gets its own test: a shared cause is not a shared proof.
+
+// TestRejectsSigningInsideABackslashQuotedHeredoc covers the delimiter form bash accepts and a
+// hand-rolled matcher missed. `<<\UNSIGNED` quotes the delimiter with a backslash rather than quotes,
+// so a pattern enumerating '...', "..." and bare identifiers does not recognise it — and the body it
+// opens then reads as ordinary top-level lines. Bash feeds those words to `:` and signs nothing.
+func TestRejectsSigningInsideABackslashQuotedHeredoc(t *testing.T) {
+	hidden := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        : <<\\UNSIGNED\n"+
+			`        cosign sign --yes --recursive "${REF}"`+"\n"+
+			"        UNSIGNED", 1)
+	mustChange(t, validAction, hidden)
+
+	err := validate([]byte(hidden))
+	if err == nil {
+		t.Fatal("a signing command inside a backslash-quoted heredoc body is input to `:`, not a signature")
+	}
+
+	if !strings.Contains(err.Error(), "sign") {
+		t.Errorf("error should name the signing step, got: %v", err)
+	}
+}
+
+// TestRejectsSigningWhoseFailureIsSwallowed covers `|| true`. The invocation is real and its
+// arguments are right, so every text-level check passes — but the step succeeds even when cosign
+// fails, the attestations still run, and reconciliation releases an artifact carrying no signature.
+// The guard exists to prove a signature was produced, not that a signing command was written down.
+func TestRejectsSigningWhoseFailureIsSwallowed(t *testing.T) {
+	swallowed := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        cosign sign --yes --recursive "${REF}" || true`, 1)
+	mustChange(t, validAction, swallowed)
+
+	err := validate([]byte(swallowed))
+	if err == nil {
+		t.Fatal("a signing failure that cannot fail the step does not evidence a signature")
+	}
+
+	if !strings.Contains(err.Error(), "sign") {
+		t.Errorf("error should name the signing step, got: %v", err)
+	}
+}
+
+// TestRejectsSigningTheMutableTagWithTheDigestInAComment covers the trailing comment. Substring
+// matching for `"${REF}"` cannot tell an argument from a comment, so signing the mutable tag while
+// merely MENTIONING the resolved reference satisfied the digest check — restoring precisely the
+// tag-resolution race the check was added to prevent.
+func TestRejectsSigningTheMutableTagWithTheDigestInAComment(t *testing.T) {
+	commented := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        cosign sign --yes --recursive "${REF_TAG}" # "${REF}"`, 1)
+	mustChange(t, validAction, commented)
+
+	err := validate([]byte(commented))
+	if err == nil {
+		t.Fatal("a resolved reference named only in a comment is not passed to cosign")
+	}
+
+	if !strings.Contains(err.Error(), signRefArg) {
+		t.Errorf("error should name the required argument, got: %v", err)
+	}
+}
+
+// TestRejectsASecondReleaseThatEvidenceCannotGate covers condition checking against only the FIRST
+// release. Conditions were compared to releaseIdx[0], so evidence guarded by the same condition as a
+// never-firing first reconcile looked correctly coupled — while a second, unconditional reconcile
+// released the artifact with every piece of evidence skipped.
+//
+// A required step must stand or fall with EVERY release, not with whichever one happens to come
+// first.
+func TestRejectsASecondReleaseThatEvidenceCannotGate(t *testing.T) {
+	const falseCondition = "      if: ${{ false }}\n"
+
+	// The evidence and the first release share a condition that never fires, so the existing
+	// same-condition allowance accepts them as coupled.
+	gated := strings.Replace(validAction, sbomStep,
+		`    - name: Attest SBOM
+`+falseCondition+`      uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26
+`, 1)
+	mustChange(t, validAction, gated)
+
+	withGatedRelease := strings.Replace(gated, reconcileStep,
+		`    - name: Reconcile
+`+falseCondition+`      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
+`, 1)
+	mustChange(t, gated, withGatedRelease)
+
+	// ...and then an unconditional second release publishes anyway.
+	broken := withGatedRelease + reconcileStep
+	mustChange(t, withGatedRelease, broken)
+
+	err := validate([]byte(broken))
+	if err == nil {
+		t.Fatal("a second unconditional release runs with the gated evidence skipped")
+	}
+}
+
+// TestRejectsADigestNotResolvedFromThePublishedTag covers DIGEST's provenance, which nothing bound.
+// The validator required the REF assignment's exact text but never asked where DIGEST came from, so
+// substituting a constant digest for an older manifest passed: cosign and both attestations then
+// cover that old artifact in full, while reconciliation releases the newly pushed — and unsigned —
+// `latest`. Every ordering check still holds, which is what makes this the worst of the five.
+func TestRejectsADigestNotResolvedFromThePublishedTag(t *testing.T) {
+	constant := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST="sha256:1111111111111111111111111111111111111111111111111111111111111111"`, 1)
+	mustChange(t, validAction, constant)
+
+	err := validate([]byte(constant))
+	if err == nil {
+		t.Fatal("a constant digest signs whatever it names, not what this run published")
+	}
+
+	if !strings.Contains(err.Error(), "DIGEST") {
+		t.Errorf("error should name the unbound variable, got: %v", err)
+	}
+}
+
+// TestAllowsResolvingTheDigestWithAnotherTool is the negative control for the provenance check. The
+// requirement is that DIGEST is derived from the published tag, NOT that one specific tool derives
+// it — pinning `docker buildx imagetools` would fail a legitimate switch to crane or a cosign
+// equivalent, and a guard that rejects correct input gets suppressed.
+func TestAllowsResolvingTheDigestWithAnotherTool(t *testing.T) {
+	otherTool := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST=$(crane digest "${REF_TAG}")`, 1)
+	mustChange(t, validAction, otherTool)
+
+	if err := validate([]byte(otherTool)); err != nil {
+		t.Fatalf("any tool may resolve the digest so long as it reads the published tag; got: %v", err)
+	}
+}
+
+// TestRejectsAConstantDigestBesideAResolvedOne is the "every assignment" rule's own proof. Accepting
+// the mere PRESENCE of a correct resolution would be a bypass in one move: a later assignment
+// overwrites an earlier one, so a constant sitting beside a resolved digest decides what cosign
+// actually signs while the resolution makes the step look right.
+func TestRejectsAConstantDigestBesideAResolvedOne(t *testing.T) {
+	shadowed := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`+"\n"+
+			`        DIGEST="sha256:1111111111111111111111111111111111111111111111111111111111111111"`, 1)
+	mustChange(t, validAction, shadowed)
+
+	if err := validate([]byte(shadowed)); err == nil {
+		t.Fatal("a constant assignment after the resolution decides what is signed")
+	}
+}
+
+// TestRejectsASecondRefAssignmentAfterTheResolvedOne is the same rule for REF, which cosign consumes
+// directly. Reassigning it to the mutable tag after building the digest reference restores the race
+// while leaving the required assignment textually present.
+func TestRejectsASecondRefAssignmentAfterTheResolvedOne(t *testing.T) {
+	shadowed := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        REF="${REF_TAG}"`+"\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, shadowed)
+
+	if err := validate([]byte(shadowed)); err == nil {
+		t.Fatal("a later REF assignment decides what cosign signs")
+	}
+}
+
+// TestAllowsRetryingTheDigestResolution pins the freedom the provenance check must NOT take away.
+// Wrapping the resolution in a retry is correct code — if every attempt fails, DIGEST stays empty,
+// REF is malformed and cosign fails the step — so requiring the assignment to sit at the top level
+// would reject a legitimate action. A guard that fails correct input gets suppressed, not fixed.
+func TestAllowsRetryingTheDigestResolution(t *testing.T) {
+	withRetry := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		"        for attempt in 1 2 3; do\n"+
+			`          DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}') && break`+"\n"+
+			"        done", 1)
+	mustChange(t, validAction, withRetry)
+
+	if err := validate([]byte(withRetry)); err != nil {
+		t.Fatalf("a retry around the digest resolution is correct code; got: %v", err)
+	}
+}
+
+// TestRejectsSigningWhoseFailureIsDetached covers `&`, the sibling of `|| true`. A backgrounded
+// cosign cannot fail the step either: the shell moves on, the attestations run, and reconciliation
+// releases before the signature is known to exist — if it ever does.
+func TestRejectsSigningWhoseFailureIsDetached(t *testing.T) {
+	detached := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        cosign sign --yes --recursive "${REF}" &`, 1)
+	mustChange(t, validAction, detached)
+
+	if err := validate([]byte(detached)); err == nil {
+		t.Fatal("a backgrounded signing command cannot fail the step")
+	}
+}
+
+// TestRejectsAnUnparseableRunBlock pins the fail-closed direction. If the shell cannot be parsed the
+// guard learns nothing about what runs, so it must report a missing operation rather than fall back
+// to matching text — the fallback is what every bypass in this file exploited.
+func TestRejectsAnUnparseableRunBlock(t *testing.T) {
+	broken := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        cosign sign --yes --recursive "${REF}" $(`, 1)
+	mustChange(t, validAction, broken)
+
+	if err := validate([]byte(broken)); err == nil {
+		t.Fatal("an unparseable run block must not satisfy a required marker")
+	}
+}
