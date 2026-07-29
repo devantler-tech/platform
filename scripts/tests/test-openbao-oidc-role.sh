@@ -47,12 +47,20 @@ role_payload="$(
 )" || fail 'the OpenBao admin role must be written as one JSON stdin payload'
 
 jq -e '
-  (.bound_claims | type) == "object" and
-  .bound_claims.groups == ["devantler-tech:maintainers"] and
-  .groups_claim == "groups" and
+  .bound_claims == {
+    "groups": ["devantler-tech:maintainers"]
+  } and
   .bound_audiences == ["public-client"] and
-  .policies == ["vault-admin"]
+  .allowed_redirect_uris == [
+    "https://vault.${domain}/ui/vault/auth/oidc/oidc/callback",
+    "http://localhost:8250/oidc/callback"
+  ] and
+  .user_claim == "email" and
+  .groups_claim == "groups" and
+  .oidc_scopes == ["openid", "email", "profile", "groups"] and
+  .policies == ["vault-admin"] and
+  .ttl == "8h"
 ' <<<"${role_payload}" >/dev/null ||
-  fail 'the OpenBao admin role must bind the maintainer group as a JSON map'
+  fail 'the OpenBao admin role JSON must preserve every authorization field'
 
 printf 'PASS: OpenBao OIDC admin access is bound to the maintainer group with a typed JSON payload\n'
