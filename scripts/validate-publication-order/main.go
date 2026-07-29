@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -60,22 +61,76 @@ type marker struct {
 	match func(step) bool
 }
 
-// executable drops comment-only lines from a shell script before it is matched.
+// opensBlock and closesBlock are the shell keywords that make a line conditional on something.
+// Matching the first WORD keeps `iffy=1` or a path ending in `done` from being read as control flow.
+var (
+	opensBlock  = []string{"if", "elif", "else", "while", "until", "for", "case", "then", "do"}
+	closesBlock = []string{"fi", "done", "esac"}
+)
+
+func firstWord(line string) string {
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return ""
+	}
+
+	return strings.TrimSuffix(fields[0], ";")
+}
+
+// executable reduces a shell script to the lines that are matched: whole-line comments are dropped,
+// and so is anything a control-flow construct could stop from running.
 //
-// Every matcher here works on raw script text, so without this a `#` in front of the invocation
-// satisfies them all: the comment still contains the command AND the reference. The deploy would
-// publish and reconcile an artifact nothing signed while this check stayed green — a guard that a
-// single character disables is not a guard.
+// Comments matter because every matcher works on raw text, so a `#` in front of the invocation
+// satisfies them all at once — the comment still contains the command AND the reference. Only
+// whole-line comments are removed; a trailing `#` is left alone, because separating one from a `#`
+// inside a string literal needs a shell parser and guessing wrong would drop a real invocation.
 //
-// Only whole-line comments are removed. A trailing `#` is left alone deliberately: deciding whether
-// one opens a comment or sits inside a string literal needs a shell parser, and guessing wrong would
-// silently drop a real invocation.
+// Nesting matters for the same reason at one remove. A step can carry no `if:`, keep its position,
+// build REF from the resolved digest, and still produce no signature:
+//
+//	if false; then
+//	  cosign sign --yes --recursive "${REF}"
+//	fi
+//
+// Every check above is satisfied while the deploy attests and reconciles an unsigned artifact.
+//
+// This is a deliberately CONSERVATIVE structural check, not a shell parser: it does not decide
+// whether a branch is reachable, it declines to treat anything inside one as an executed command.
+// Required operations on this path are unconditional by design, so rejecting a conditional one is
+// the intended answer rather than a limitation. Control flow around other work in the same step is
+// untouched — only the lines the matchers read are filtered.
 func executable(run string) string {
 	lines := strings.Split(run, "\n")
 	kept := make([]string, 0, len(lines))
+	depth := 0
 
 	for _, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		word := firstWord(trimmed)
+		opens := slices.Contains(opensBlock, word)
+
+		if slices.Contains(closesBlock, word) && depth > 0 {
+			depth--
+
+			continue
+		}
+
+		// A line that OPENS a block is skipped whatever else it carries. That is what catches the
+		// one-line form `if false; then cosign sign ...; fi`, where a depth counter alone would be
+		// back at zero by the end of the line and read it as unnested.
+		if opens {
+			if word == "if" || word == "while" || word == "until" || word == "for" || word == "case" {
+				depth++
+			}
+
+			continue
+		}
+
+		if depth > 0 {
 			continue
 		}
 

@@ -305,3 +305,50 @@ func TestAllowsACommentedAlternativeBesideARealSigningInvocation(t *testing.T) {
 		t.Fatalf("a commented alternative beside a correct invocation must stay legal, got: %v", err)
 	}
 }
+
+// TestRejectsSigningInsideAStaticallyFalseBranch is the last bypass of the matcher family: the step
+// carries no `if:`, keeps its position, and builds REF from the resolved digest, so every check above
+// is satisfied — while the invocation sits in a branch that never runs. GitHub attests and reconciles
+// an unsigned artifact.
+func TestRejectsSigningInsideAStaticallyFalseBranch(t *testing.T) {
+	nested := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        if false; then\n"+
+			`          cosign sign --yes --recursive "${REF}"`+"\n"+
+			"        fi", 1)
+	mustChange(t, validAction, nested)
+
+	if err := validate([]byte(nested)); err == nil {
+		t.Fatal("expected a signing invocation inside a conditional branch to be rejected")
+	}
+}
+
+// TestRejectsSigningInAOneLineConditional is the same bypass written on one line, where the block
+// opens and closes before the line ends. A depth counter alone returns to zero by the end of it, so
+// the line would look unnested.
+func TestRejectsSigningInAOneLineConditional(t *testing.T) {
+	inline := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        if false; then cosign sign --yes --recursive "${REF}"; fi`, 1)
+	mustChange(t, validAction, inline)
+
+	if err := validate([]byte(inline)); err == nil {
+		t.Fatal("expected a one-line conditional around the signing invocation to be rejected")
+	}
+}
+
+// TestAllowsControlFlowElsewhereInAStep keeps the rule from banning shell control flow outright.
+// Only the required invocations must be unconditional; a retry loop or a precondition check
+// alongside them is ordinary scripting and stays legal.
+func TestAllowsControlFlowElsewhereInAStep(t *testing.T) {
+	withLoop := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		"        for attempt in 1 2 3; do\n"+
+			`          DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}') && break`+"\n"+
+			"        done", 1)
+	mustChange(t, validAction, withLoop)
+
+	if err := validate([]byte(withLoop)); err != nil {
+		t.Fatalf("control flow around non-required work must stay legal, got: %v", err)
+	}
+}
