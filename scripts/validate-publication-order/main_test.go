@@ -364,6 +364,10 @@ var signingReplacements = map[string]string{
 	"command substitution": `RESULT=$(cosign sign --yes --recursive "${REF}")`,
 	"uninvoked function":   "sign_it() {\n          cosign sign --yes --recursive \"${REF}\"\n        }",
 	"trailing semicolon":   `false; cosign sign --yes --recursive "${REF}" && true`,
+	// An arbitrary command in front of the match, with the invocation as its unquoted ARGUMENTS.
+	// The quoted "string literal" case above was rejected incidentally, by its quote — this one has
+	// no quote to catch, so it isolates the prefix rule itself.
+	"printed as arguments": `echo cosign sign --yes --recursive "${REF}"`,
 }
 
 // TestRejectsSigningThatIsNotAPlainTopLevelCommand is the general form of the comment, conditional
@@ -390,5 +394,38 @@ func TestRejectsSigningThatIsNotAPlainTopLevelCommand(t *testing.T) {
 func TestAllowsAPlainInvocationWithArguments(t *testing.T) {
 	if err := validate([]byte(validAction)); err != nil {
 		t.Fatalf("the reference sequence invokes a script with arguments and must pass, got: %v", err)
+	}
+}
+
+// operationReplacements covers the same prefix bypass on the OTHER two required operations. `echo`
+// is a plain command path, so a rule that allows any word before the match accepts these while bash
+// only prints them. They need their own table because they are matched as subcommands of a wrapper
+// (`./scripts/run-ksail-prod-with-pull-auth.sh workload push`), where — unlike `cosign sign` — a
+// preceding word is legitimate and cannot simply be banned.
+var operationReplacements = map[string]struct{ from, to string }{
+	"publish printed as arguments": {
+		"./scripts/run-ksail-prod-with-pull-auth.sh workload push",
+		"echo workload push",
+	},
+	"release printed as arguments": {
+		"./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile",
+		"echo workload reconcile",
+	},
+}
+
+// TestRejectsOperationsPrintedRatherThanRun extends the plain-command rule to publish and release.
+// Requiring the match to be a command is not enough on its own when the match is a SUBCOMMAND: the
+// check also has to know which executable carries it, or `echo` passes for the same reason `ksail`
+// does.
+func TestRejectsOperationsPrintedRatherThanRun(t *testing.T) {
+	for name, replacement := range operationReplacements {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(validAction, replacement.from, replacement.to, 1)
+			mustChange(t, validAction, mutated)
+
+			if err := validate([]byte(mutated)); err == nil {
+				t.Fatalf("expected %q to be rejected; bash only prints it", replacement.to)
+			}
+		})
 	}
 }

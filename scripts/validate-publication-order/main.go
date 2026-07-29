@@ -160,25 +160,55 @@ func executable(run string) string {
 // match is not itself the command being run.
 var commandPrefix = regexp.MustCompile(`^\s*[A-Za-z0-9_./-]*\s*$`)
 
-// isPlainCommand reports whether substr occurs on line as part of a plain top-level command.
+// carriedBy reports whether a given executable may carry a required operation. The empty string
+// means the operation began the line, i.e. the matched text names the executable itself.
+type carriedBy func(exec string) bool
+
+// directly accepts only a line that starts with the operation, for matches that already name their
+// own executable (`cosign sign`).
+func directly(exec string) bool { return exec == "" }
+
+// viaKsail accepts the authenticated wrapper the composite publishes through. `workload push` is a
+// SUBCOMMAND, so it is legitimately preceded by a command — the real step runs
+// `./scripts/run-ksail-prod-with-pull-auth.sh workload push` — which is why the prefix cannot simply
+// be banned the way it can for cosign. It is restricted to ksail or a script rather than pinned to
+// one path, so renaming the wrapper stays a legal refactor.
+func viaKsail(exec string) bool {
+	return exec == "ksail" || strings.HasSuffix(exec, ".sh")
+}
+
+// isInvocation reports whether substr occurs on line as a plain top-level command carried by an
+// executable ok accepts.
 //
-// This inverts the question the earlier versions asked. Enumerating the ways an invocation can fail
-// to run — a comment, a step condition, a block, `&&`, `||`, a pipeline, a string literal, a command
-// substitution, an uninvoked function — is a list that keeps growing, and each omission is a silent
-// bypass. Requiring the match to BE a command closes the class instead of another instance of it.
-func isPlainCommand(line, substr string) bool {
+// The plain-command half inverts the question earlier versions asked. Enumerating the ways an
+// invocation can fail to run — a comment, a step condition, a block, `&&`, `||`, a pipeline, a
+// string literal, a command substitution, an uninvoked function — is a list that keeps growing, and
+// each omission is a silent bypass. Requiring the match to BE a command closes that class.
+//
+// The executable half closes what remained: being a command is not enough when the match is only
+// part of one. Allowing any plain word in front accepted `echo cosign sign --yes "${REF}"`, which
+// bash merely prints. That distinction is not syntactic — `ksail workload push` and
+// `echo workload push` have identical shape — so the rule has to know which executable each
+// operation actually belongs to rather than reasoning about the line alone.
+func isInvocation(line, substr string, ok carriedBy) bool {
 	idx := strings.Index(line, substr)
 	if idx < 0 {
 		return false
 	}
 
-	return commandPrefix.MatchString(line[:idx])
+	prefix := line[:idx]
+	if !commandPrefix.MatchString(prefix) {
+		return false
+	}
+
+	return ok(strings.TrimSpace(prefix))
 }
 
-// containsCommand reports whether any executable line of run invokes substr as a plain command.
-func containsCommand(run, substr string) bool {
+// containsCommand reports whether any executable line of run invokes substr as a plain command
+// carried by an accepted executable.
+func containsCommand(run, substr string, ok carriedBy) bool {
 	for _, line := range strings.Split(executable(run), "\n") {
-		if isPlainCommand(line, substr) {
+		if isInvocation(line, substr, ok) {
 			return true
 		}
 	}
@@ -186,8 +216,8 @@ func containsCommand(run, substr string) bool {
 	return false
 }
 
-func runContains(substr string) func(step) bool {
-	return func(s step) bool { return containsCommand(s.Run, substr) }
+func runContains(substr string, ok carriedBy) func(step) bool {
+	return func(s step) bool { return containsCommand(s.Run, substr, ok) }
 }
 
 func usesPrefix(prefix string) func(step) bool {
@@ -205,12 +235,12 @@ func usesPrefix(prefix string) func(step) bool {
 var (
 	// publish makes new bytes reachable and must come first — signing or
 	// attesting before it would cover the previous artifact.
-	publish = marker{"publish the manifests (`workload push`)", runContains("workload push")}
+	publish = marker{"publish the manifests (`workload push`)", runContains("workload push", viaKsail)}
 
 	// sign is named separately because its step is inspected again below, for
 	// the digest reference. Locating it by value rather than by matching its
 	// label keeps that second lookup correct when the wording changes.
-	sign = marker{"sign the published digest (`cosign sign`)", runContains("cosign sign ")}
+	sign = marker{"sign the published digest (`cosign sign`)", runContains("cosign sign ", directly)}
 
 	// evidence is what must exist before production may look. Order among
 	// these is unconstrained.
@@ -221,7 +251,7 @@ var (
 	}
 
 	// release is the step that advances what production can see.
-	release = marker{"tell Flux to reconcile (`workload reconcile`)", runContains("workload reconcile")}
+	release = marker{"tell Flux to reconcile (`workload reconcile`)", runContains("workload reconcile", viaKsail)}
 )
 
 // digestRef is the form the signing step must use. Signing the mutable tag
@@ -260,7 +290,7 @@ func signsTheResolvedDigest(run string) bool {
 	signed := false
 
 	for _, line := range strings.Split(executable(run), "\n") {
-		if !isPlainCommand(line, "cosign sign ") {
+		if !isInvocation(line, "cosign sign ", directly) {
 			continue
 		}
 
