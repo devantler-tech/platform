@@ -105,11 +105,31 @@ func executable(run string) string {
 	kept := make([]string, 0, len(lines))
 	depth := 0
 
+	var heredocs []string
+
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
+
+		// A here-document body is INPUT to a command, not a sequence of commands. Without this the
+		// body reads as ordinary top-level lines, so `: <<'X'` followed by the real invocation
+		// satisfies every rule while bash only feeds those words to `:`. Checked before the comment
+		// and block logic because a body line may itself look like `#`, `}` or `fi`, and letting one
+		// close a block would mis-track nesting for every line after it.
+		if len(heredocs) > 0 {
+			if trimmed == heredocs[0] {
+				heredocs = heredocs[1:]
+			}
+
+			continue
+		}
+
 		if strings.HasPrefix(trimmed, "#") {
 			continue
 		}
+
+		// Registered before this line is classified, so a redirection on a line that also opens a
+		// block still hides its body. The opener itself stays a candidate: it is a real command.
+		heredocs = append(heredocs, heredocDelimiters(line)...)
 
 		word := firstWord(trimmed)
 		opens := slices.Contains(opensBlock, word)
@@ -153,6 +173,31 @@ func executable(run string) string {
 	}
 
 	return strings.Join(kept, "\n")
+}
+
+// heredocOpener matches a here-document redirection and captures its delimiter, quoted or bare.
+//
+// A here-STRING (`<<<`) is deliberately not matched: its operand is a value on the same line rather
+// than a body, so treating it as an opener would swallow every following line until something
+// happened to equal it. The bare form requires an identifier start, which also keeps an arithmetic
+// shift such as `$((1 << 2))` from registering a delimiter.
+var heredocOpener = regexp.MustCompile(`<<-?\s*(?:'([^']*)'|"([^"]*)"|([A-Za-z_][A-Za-z0-9_]*))`)
+
+// heredocDelimiters returns the delimiters a line opens, in the order bash will close them.
+func heredocDelimiters(line string) []string {
+	var out []string
+
+	for _, match := range heredocOpener.FindAllStringSubmatch(line, -1) {
+		for _, group := range match[1:] {
+			if group != "" {
+				out = append(out, group)
+
+				break
+			}
+		}
+	}
+
+	return out
 }
 
 // commandPrefix is what may precede a required match on its line: whitespace and at most a plain

@@ -368,6 +368,10 @@ var signingReplacements = map[string]string{
 	// The quoted "string literal" case above was rejected incidentally, by its quote — this one has
 	// no quote to catch, so it isolates the prefix rule itself.
 	"printed as arguments": `echo cosign sign --yes --recursive "${REF}"`,
+	// A here-document body is INPUT, not commands. The invocation has no prefix and carries the
+	// resolved reference, so every line-level rule accepts it while bash feeds it to `:`.
+	"heredoc body":     ": <<'UNSIGNED'\n          cosign sign --yes --recursive \"${REF}\"\n          UNSIGNED",
+	"heredoc unquoted": ": <<UNSIGNED\n          cosign sign --yes --recursive \"${REF}\"\n          UNSIGNED",
 }
 
 // TestRejectsSigningThatIsNotAPlainTopLevelCommand is the general form of the comment, conditional
@@ -411,6 +415,18 @@ var operationReplacements = map[string]struct{ from, to string }{
 		"./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile",
 		"echo workload reconcile",
 	},
+	// These replace the whole `run:` line with a BLOCK scalar. Substituting a bare heredoc into the
+	// existing plain scalar would fold its lines into one, so the delimiter would end up inside the
+	// prefix and the case would be rejected for the wrong reason — passing without ever exercising
+	// heredoc handling.
+	"publish inside a heredoc": {
+		"      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push",
+		"      run: |\n        : <<'NOPE'\n        ./scripts/run-ksail-prod-with-pull-auth.sh workload push\n        NOPE",
+	},
+	"release inside a heredoc": {
+		"      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile",
+		"      run: |\n        : <<'NOPE'\n        ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile\n        NOPE",
+	},
 }
 
 // TestRejectsOperationsPrintedRatherThanRun extends the plain-command rule to publish and release.
@@ -427,5 +443,24 @@ func TestRejectsOperationsPrintedRatherThanRun(t *testing.T) {
 				t.Fatalf("expected %q to be rejected; bash only prints it", replacement.to)
 			}
 		})
+	}
+}
+
+// TestAllowsAHeredocAlongsideTheRequiredInvocation is the over-tightening control for heredoc
+// skipping. Hiding a here-document body must not cost a step the ability to USE one: a step that
+// writes an unrelated payload with a heredoc and then signs normally is legitimate, and rejecting it
+// would train people to treat this check as noise. The delimiter must also stop the skipping — if it
+// did not, everything after the heredoc (including the real invocation) would vanish with it.
+func TestAllowsAHeredocAlongsideTheRequiredInvocation(t *testing.T) {
+	withHeredoc := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        cat <<'NOTES' > /tmp/notes.txt\n"+
+			"        cosign sign is described here but not run\n"+
+			"        NOTES\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, withHeredoc)
+
+	if err := validate([]byte(withHeredoc)); err != nil {
+		t.Fatalf("a step may use a heredoc and still sign; got: %v", err)
 	}
 }
