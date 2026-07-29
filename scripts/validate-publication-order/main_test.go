@@ -352,3 +352,43 @@ func TestAllowsControlFlowElsewhereInAStep(t *testing.T) {
 		t.Fatalf("control flow around non-required work must stay legal, got: %v", err)
 	}
 }
+
+// signingReplacements are the ways a required invocation can appear in the text while not running as
+// a plain top-level command. Enumerated together rather than one per review round: they are one
+// class, and a matcher that reads raw text is blind to all of them for the same reason.
+var signingReplacements = map[string]string{
+	"short-circuit &&":     `false && cosign sign --yes --recursive "${REF}"`,
+	"short-circuit ||":     `true || cosign sign --yes --recursive "${REF}"`,
+	"pipeline":             `printf '' | cosign sign --yes --recursive "${REF}"`,
+	"string literal":       `echo "would run: cosign sign --yes --recursive ${REF}"`,
+	"command substitution": `RESULT=$(cosign sign --yes --recursive "${REF}")`,
+	"uninvoked function":   "sign_it() {\n          cosign sign --yes --recursive \"${REF}\"\n        }",
+	"trailing semicolon":   `false; cosign sign --yes --recursive "${REF}" && true`,
+}
+
+// TestRejectsSigningThatIsNotAPlainTopLevelCommand is the general form of the comment, conditional
+// and control-flow bypasses: the step keeps its position and its digest assignment, the text contains
+// the invocation, and no signature is produced. The guard requires the invocation to BE a command,
+// rather than trying to enumerate every way it can fail to be one.
+func TestRejectsSigningThatIsNotAPlainTopLevelCommand(t *testing.T) {
+	for name, replacement := range signingReplacements {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(validAction,
+				`        cosign sign --yes --recursive "${REF}"`,
+				"        "+replacement, 1)
+			mustChange(t, validAction, mutated)
+
+			if err := validate([]byte(mutated)); err == nil {
+				t.Fatalf("expected %q to be rejected; it produces no signature", replacement)
+			}
+		})
+	}
+}
+
+// TestAllowsAPlainInvocationWithArguments keeps the rule usable: the real steps invoke a script with
+// arguments, so a command path preceding the matched text must stay legal.
+func TestAllowsAPlainInvocationWithArguments(t *testing.T) {
+	if err := validate([]byte(validAction)); err != nil {
+		t.Fatalf("the reference sequence invokes a script with arguments and must pass, got: %v", err)
+	}
+}

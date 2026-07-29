@@ -27,6 +27,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -113,6 +114,20 @@ func executable(run string) string {
 		word := firstWord(trimmed)
 		opens := slices.Contains(opensBlock, word)
 
+		// A line ending in `{` opens a function body or a group. Its contents are only reached if
+		// something invokes it, which this check cannot know, so they are not executed commands.
+		if strings.HasSuffix(trimmed, "{") {
+			depth++
+
+			continue
+		}
+
+		if trimmed == "}" && depth > 0 {
+			depth--
+
+			continue
+		}
+
 		if slices.Contains(closesBlock, word) && depth > 0 {
 			depth--
 
@@ -140,8 +155,39 @@ func executable(run string) string {
 	return strings.Join(kept, "\n")
 }
 
+// commandPrefix is what may precede a required match on its line: whitespace and at most a plain
+// command path. Anything else — an operator, a quote, an assignment, a substitution — means the
+// match is not itself the command being run.
+var commandPrefix = regexp.MustCompile(`^\s*[A-Za-z0-9_./-]*\s*$`)
+
+// isPlainCommand reports whether substr occurs on line as part of a plain top-level command.
+//
+// This inverts the question the earlier versions asked. Enumerating the ways an invocation can fail
+// to run — a comment, a step condition, a block, `&&`, `||`, a pipeline, a string literal, a command
+// substitution, an uninvoked function — is a list that keeps growing, and each omission is a silent
+// bypass. Requiring the match to BE a command closes the class instead of another instance of it.
+func isPlainCommand(line, substr string) bool {
+	idx := strings.Index(line, substr)
+	if idx < 0 {
+		return false
+	}
+
+	return commandPrefix.MatchString(line[:idx])
+}
+
+// containsCommand reports whether any executable line of run invokes substr as a plain command.
+func containsCommand(run, substr string) bool {
+	for _, line := range strings.Split(executable(run), "\n") {
+		if isPlainCommand(line, substr) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func runContains(substr string) func(step) bool {
-	return func(s step) bool { return strings.Contains(executable(s.Run), substr) }
+	return func(s step) bool { return containsCommand(s.Run, substr) }
 }
 
 func usesPrefix(prefix string) func(step) bool {
@@ -211,17 +257,22 @@ const signRefArg = `"${REF}"`
 // signsTheResolvedDigest reports whether every cosign invocation in run signs
 // the reference built from the resolved digest.
 func signsTheResolvedDigest(run string) bool {
+	signed := false
+
 	for _, line := range strings.Split(executable(run), "\n") {
-		if !strings.Contains(line, "cosign sign ") {
+		if !isPlainCommand(line, "cosign sign ") {
 			continue
 		}
 
 		if !strings.Contains(line, signRefArg) {
 			return false
 		}
+
+		signed = true
 	}
 
-	return true
+	// No plain invocation at all means nothing signs, whatever the text contains.
+	return signed
 }
 
 // mustNotSkipIndependently rejects a required step whose condition lets it be skipped while the
