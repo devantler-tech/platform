@@ -46,9 +46,24 @@ PREFIX="${PREFIX%/}"
 
 # `while read` rather than `mapfile`, which is bash 4+ and so unavailable on the
 # macOS bash 3.2 a maintainer may run this under locally.
+#
+# Collected separately because the two lists mean different things: the empty-uri
+# DROP is a property of a result's location (a finding with no manifest to anchor
+# to), whereas RESOLUTION must cover every path-bearing field in the document.
+location_uris=()
+while IFS= read -r line; do location_uris+=("$line"); done < <(jq -r '
+  [.runs[]?.results[]?.locations[]?.physicalLocation.artifactLocation.uri // empty] | unique[]
+' "$SARIF")
+
+# BOTH path-bearing fields. Kubescape repeats a finding's path under
+# fixes[].artifactChanges[], so normalising only locations[] leaves a dead path
+# inside a document this script then certifies as clean — the guard reports
+# success while the defect it exists to prevent survives in the other field
+# (#2863).
 uris=()
 while IFS= read -r line; do uris+=("$line"); done < <(jq -r '
-  [.runs[]?.results[]?.locations[]?.physicalLocation.artifactLocation.uri // empty] | unique[]
+  [.runs[]?.results[]?.locations[]?.physicalLocation.artifactLocation.uri // empty,
+   .runs[]?.results[]?.fixes[]?.artifactChanges[]?.artifactLocation.uri // empty] | unique[]
 ' "$SARIF")
 
 rewrite_args=()
@@ -91,9 +106,13 @@ jq --arg prefix "$PREFIX" --argjson rewrite "$(printf '%s\n' "${rewrite_args[@]+
     (.results //= [])
     | .results |= map(select((.locations[0].physicalLocation.artifactLocation.uri // "") != ""))
     | .results |= map(
-        .locations |= map(
+        (.locations |= map(
           .physicalLocation.artifactLocation.uri |= fix(.)
-        )
+        ))
+        # `[]?` rather than `//= []`: a result without fixes must stay without
+        # fixes. Creating an empty array here would change the shape of every
+        # finding that has no suggested change.
+        | ((.fixes[]?.artifactChanges[]?.artifactLocation.uri) |= fix(.))
       )
   )
 ' "$SARIF" >"$tmp"
@@ -103,15 +122,19 @@ mv "$tmp" "$SARIF"
 # all, printf still emits one newline, so the grep form reports 1 dropped group on
 # a clean scan that had none.
 dropped=0
-for uri in ${uris[@]+"${uris[@]}"}; do
+for uri in ${location_uris[@]+"${location_uris[@]}"}; do
   [ -n "$uri" ] || dropped=$((dropped + 1))
 done
 echo "normalize-sarif-paths: ${kept} already root-relative, ${prefixed} prefixed with '${PREFIX}/', ${dropped} empty-uri group(s) dropped."
 
-# Fail-closed re-check: every surviving path must now resolve.
+# Fail-closed re-check: every surviving path must now resolve. This reads the
+# SAME field set as the resolve loop above — a re-check narrower than the
+# rewrite is how a dead path got certified as clean in the first place (#2863),
+# so the two lists must not drift apart again.
 after=()
 while IFS= read -r line; do after+=("$line"); done < <(jq -r '
-  [.runs[]?.results[]?.locations[]?.physicalLocation.artifactLocation.uri // empty] | unique[]
+  [.runs[]?.results[]?.locations[]?.physicalLocation.artifactLocation.uri // empty,
+   .runs[]?.results[]?.fixes[]?.artifactChanges[]?.artifactLocation.uri // empty] | unique[]
 ' "$SARIF")
 bad=0
 for uri in ${after[@]+"${after[@]}"}; do
