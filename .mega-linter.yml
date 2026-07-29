@@ -83,8 +83,16 @@ DISABLE_ERRORS_LINTERS:
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (286) and trivy (1): Kubernetes misconfiguration in k8s/, which the section above
+  # checkov (73) and trivy (620): Kubernetes misconfiguration in k8s/, which the section above
   # explains is NOT covered elsewhere. Tracked by #2787.
+  #
+  # Reproduce both counts before pushing with `scripts/megalinter-scan-counts.sh` — it runs the
+  # exact commands this job runs, so a slice can show the number moved without a CI round trip.
+  #
+  # ⚠️ Read trivy's number from that script, NOT from the MegaLinter summary. MegaLinter reports
+  # this trivy scan as "1 non blocking error" while the scan actually fails 620 checks across 458
+  # targets; the 1 is an artifact of how MegaLinter counts trivy's output. checkov's number is a
+  # genuine sum of "Failed checks:" and needs no such caveat.
   - REPOSITORY_CHECKOV
   - REPOSITORY_TRIVY
   # jscpd (17): all in test files — scripts/validate-eks-ci-role-policy/main_test.go (#2777) and

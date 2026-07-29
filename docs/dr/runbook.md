@@ -202,7 +202,8 @@ Flux reconciliation.
 >     --for=condition=Ready --timeout=20m
 > done
 > ./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out + every stale node
-> ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
+> CILIUM_ROLLOUT_REVISION_READY=true \
+>   ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
 >
 > # 6. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
 > #     in R2 — the vault came up fresh): re-feed the user-fed secrets that
