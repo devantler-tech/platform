@@ -38,6 +38,9 @@ type step struct {
 	ID   string `yaml:"id"`
 	Uses string `yaml:"uses"`
 	Run  string `yaml:"run"`
+	// If is read because ordering is positional: a step keeps its position while carrying a
+	// condition that never fires, so the sequence can be satisfied by steps that do not run.
+	If string `yaml:"if"`
 }
 
 type action struct {
@@ -57,8 +60,33 @@ type marker struct {
 	match func(step) bool
 }
 
+// executable drops comment-only lines from a shell script before it is matched.
+//
+// Every matcher here works on raw script text, so without this a `#` in front of the invocation
+// satisfies them all: the comment still contains the command AND the reference. The deploy would
+// publish and reconcile an artifact nothing signed while this check stayed green — a guard that a
+// single character disables is not a guard.
+//
+// Only whole-line comments are removed. A trailing `#` is left alone deliberately: deciding whether
+// one opens a comment or sits inside a string literal needs a shell parser, and guessing wrong would
+// silently drop a real invocation.
+func executable(run string) string {
+	lines := strings.Split(run, "\n")
+	kept := make([]string, 0, len(lines))
+
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+
+		kept = append(kept, line)
+	}
+
+	return strings.Join(kept, "\n")
+}
+
 func runContains(substr string) func(step) bool {
-	return func(s step) bool { return strings.Contains(s.Run, substr) }
+	return func(s step) bool { return strings.Contains(executable(s.Run), substr) }
 }
 
 func usesPrefix(prefix string) func(step) bool {
@@ -128,7 +156,7 @@ const signRefArg = `"${REF}"`
 // signsTheResolvedDigest reports whether every cosign invocation in run signs
 // the reference built from the resolved digest.
 func signsTheResolvedDigest(run string) bool {
-	for _, line := range strings.Split(run, "\n") {
+	for _, line := range strings.Split(executable(run), "\n") {
 		if !strings.Contains(line, "cosign sign ") {
 			continue
 		}
@@ -139,6 +167,29 @@ func signsTheResolvedDigest(run string) bool {
 	}
 
 	return true
+}
+
+// mustNotSkipIndependently rejects a required step whose condition lets it be skipped while the
+// release still runs. releaseIdx[0] is the binding release for ordering, so its condition is the one
+// a required step must share to stand or fall with it.
+func mustNotSkipIndependently(steps []step, m marker, idx []int, releaseIdx []int) error {
+	releaseIf := strings.TrimSpace(steps[releaseIdx[0]].If)
+
+	for _, at := range idx {
+		stepIf := strings.TrimSpace(steps[at].If)
+		if stepIf == "" || stepIf == releaseIf {
+			continue
+		}
+
+		return fmt.Errorf(
+			"the step that must %s carries `if: %s`, which does not match the release step's"+
+				" condition (%q), so it can be skipped while the release still runs.\n"+
+				"GitHub skips a false-conditioned step without failing the composite, so the ordering"+
+				" above would still hold while production is released without that evidence",
+			m.label, stepIf, releaseIf)
+	}
+
+	return nil
 }
 
 func validate(source []byte) error {
@@ -209,6 +260,28 @@ func validate(source []byte) error {
 		}
 	}
 
+	// Ordering is positional, so a step satisfies every comparison while carrying a condition that
+	// never fires. GitHub then skips it WITHOUT failing the composite and runs the unconditional
+	// release anyway, publishing without evidence the sequence claims is there.
+	//
+	// The test is not "may it have a condition" but "may it skip while the release still runs". A
+	// step guarded by the SAME condition as the release stands or falls with it, so that stays legal;
+	// anything else can vanish on its own.
+	if err := mustNotSkipIndependently(steps, publish, publishAt, releaseAt); err != nil {
+		return err
+	}
+
+	for _, m := range evidence {
+		at, err := locate(m)
+		if err != nil {
+			return err
+		}
+
+		if err := mustNotSkipIndependently(steps, m, at, releaseAt); err != nil {
+			return err
+		}
+	}
+
 	// sign is in evidence, so the loop above has already proved it resolves.
 	signAt, err := locate(sign)
 	if err != nil {
@@ -216,7 +289,7 @@ func validate(source []byte) error {
 	}
 
 	for _, at := range signAt {
-		if !strings.Contains(steps[at].Run, digestRef) {
+		if !strings.Contains(executable(steps[at].Run), digestRef) {
 			return fmt.Errorf(
 				"the signing step must build its reference from the resolved digest (%s); "+
 					"signing the mutable tag lets a concurrent deploy move it between resolve and sign",

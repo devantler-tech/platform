@@ -237,3 +237,52 @@ func TestRejectsSigningTheMutableTagWhileAssigningTheDigest(t *testing.T) {
 		t.Fatal("expected signing the mutable tag to be rejected even though REF is assigned the digest")
 	}
 }
+
+// TestRejectsACommentedOutSigningInvocation covers a hole in the matchers themselves: both
+// runContains("cosign sign ") and the digest check work on the raw script text, so commenting the
+// invocation out leaves BOTH satisfied — the comment still contains the command and the reference.
+// The deploy would then publish and reconcile an artifact nothing signed, while this check stays
+// green. A guard that a `#` disables is not a guard.
+func TestRejectsACommentedOutSigningInvocation(t *testing.T) {
+	commented := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        # cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, commented)
+
+	if err := validate([]byte(commented)); err == nil {
+		t.Fatal("expected a commented-out cosign invocation to be rejected")
+	}
+}
+
+// TestRejectsEvidenceThatCanSkipWhileTheReleaseRuns covers the other way the order can hold while the
+// guarantee does not. Ordering is positional, so an evidence step keeps its position while carrying a
+// condition that never fires; GitHub skips it without failing the composite and runs the unconditional
+// reconcile anyway. Production is then released without that evidence, with every ordering comparison
+// still satisfied.
+func TestRejectsEvidenceThatCanSkipWhileTheReleaseRuns(t *testing.T) {
+	skippable := strings.Replace(validAction,
+		"    - name: Attest provenance\n",
+		"    - name: Attest provenance\n      if: ${{ false }}\n", 1)
+	mustChange(t, validAction, skippable)
+
+	if err := validate([]byte(skippable)); err == nil {
+		t.Fatal("expected an evidence step that can skip independently of the release to be rejected")
+	}
+}
+
+// TestAllowsEvidenceSharingTheReleaseCondition is the companion that keeps the rule from becoming a
+// blanket ban on conditions. Evidence guarded by the SAME condition as the release cannot be skipped
+// while the release runs — they stand or fall together — so that arrangement stays legal.
+func TestAllowsEvidenceSharingTheReleaseCondition(t *testing.T) {
+	shared := strings.Replace(validAction,
+		"    - name: Attest provenance\n",
+		"    - name: Attest provenance\n      if: ${{ inputs.deploy }}\n", 1)
+	shared = strings.Replace(shared,
+		"    - name: Reconcile\n",
+		"    - name: Reconcile\n      if: ${{ inputs.deploy }}\n", 1)
+	mustChange(t, validAction, shared)
+
+	if err := validate([]byte(shared)); err != nil {
+		t.Fatalf("evidence sharing the release condition must stay legal, got: %v", err)
+	}
+}
