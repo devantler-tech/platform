@@ -77,7 +77,10 @@ jobs:
               - 'scripts/validate-embedded-json.py'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/generate-kubescape-exceptions/**'
+              # Both halves, so editing the guard alone — or its test alone —
+              # still runs the check that covers it.
               - 'scripts/normalize-sarif-paths.sh'
+              - 'scripts/tests/test-normalize-sarif-paths.sh'
               - 'scripts/summarize-sarif-findings.sh'
               - 'scripts/tests/test-summarize-sarif-findings.sh'
               - 'go.mod'
@@ -293,6 +296,15 @@ jobs:
         # the two SARIF shapes that turn into hard jq errors if indexed naively: a
         # result with no ruleId, and a ruleId absent from the rule table.
         run: bash scripts/tests/test-summarize-sarif-findings.sh
+
+      - name: 🧭 Validate SARIF path normalisation
+        if: needs.changes.outputs.k8s == 'true'
+        # normalize-sarif-paths.sh is a fail-closed guard, and until now shellcheck
+        # was its only gate — which cannot see a jq path that was never written.
+        # That is exactly how fixes[] stayed un-rooted while the guard reported
+        # success (#2863). Pin the rewrite over BOTH path-bearing fields, plus
+        # idempotency, the hard error, and the clean-scan case.
+        run: bash scripts/tests/test-normalize-sarif-paths.sh
 
       - name: 📢 Validate reconciliation-Alert namespace coverage
         if: needs.changes.outputs.k8s == 'true'
