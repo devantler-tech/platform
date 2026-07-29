@@ -44,6 +44,10 @@ metadata:
     app.kubernetes.io/name: userns-headlamp-mapping-probe
     app.kubernetes.io/component: user-namespace-probe
 spec:
+  # Deliberately no ttlSecondsAfterFinished: the TTL controller deletes the Job
+  # AND its pod, and the pod's log is the entire deliverable here. The component
+  # is removed by hand once that log is recorded on #2651 (#2858), which is the
+  # cleanup path — a TTL would race it and could destroy the measurement.
   backoffLimit: 0
   activeDeadlineSeconds: 300
   template:
