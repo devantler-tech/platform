@@ -75,6 +75,7 @@ jobs:
               - 'talos/**'
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
+              - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/normalize-sarif-paths.sh'
               - 'scripts/summarize-sarif-findings.sh'
@@ -227,6 +228,12 @@ jobs:
         # second, so it goes first — before the ksail download. See
         # scripts/validate-embedded-json.py (#2480).
         run: python3 scripts/validate-embedded-json.py
+
+      - name: 🔐 Validate OpenBao OIDC admin role
+        if: needs.changes.outputs.k8s == 'true'
+        # bound_claims is a map. Passing JSON-looking text as one CLI argument
+        # serializes it as a string and leaves the role unenforced.
+        run: bash scripts/tests/test-openbao-oidc-role.sh
 
       - name: ⚖️ Install Kyverno CLI
         if: needs.changes.outputs.k8s == 'true'
