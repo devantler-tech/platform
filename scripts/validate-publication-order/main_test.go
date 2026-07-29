@@ -804,3 +804,56 @@ func TestAllowsAnotherShellThatEnablesErrexitItself(t *testing.T) {
 		t.Fatalf("an explicit `set -e` gates the step whatever the shell; got: %v", err)
 	}
 }
+
+// TestRejectsSigningShadowedByAShellFunction covers the third axis: NAME RESOLUTION. The grammar says
+// the command runs and errexit says its failure would matter, but bash looks up functions before
+// PATH — so a script can define `cosign` as a no-op and then issue a textually perfect invocation
+// that signs nothing.
+func TestRejectsSigningShadowedByAShellFunction(t *testing.T) {
+	shadowed := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		"        cosign() {\n"+
+			"          true\n"+
+			"        }\n"+
+			`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`, 1)
+	mustChange(t, validAction, shadowed)
+
+	if err := validate([]byte(shadowed)); err == nil {
+		t.Fatal("a `cosign` shell function shadows the real binary and produces no signature")
+	}
+}
+
+// TestRejectsPublishShadowedByAShellFunction pins that the rule is not cosign-specific. The wrapper
+// the composite publishes through is an ordinary command name too, so the same trick hides a push.
+func TestRejectsPublishShadowedByAShellFunction(t *testing.T) {
+	shadowed := strings.Replace(validAction,
+		`      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push`,
+		"      run: |\n"+
+			"        ./scripts/run-ksail-prod-with-pull-auth.sh() {\n"+
+			"          true\n"+
+			"        }\n"+
+			"        ./scripts/run-ksail-prod-with-pull-auth.sh workload push", 1)
+	mustChange(t, validAction, shadowed)
+
+	if err := validate([]byte(shadowed)); err == nil {
+		t.Fatal("a function shadowing the publish wrapper hides the push")
+	}
+}
+
+// TestAllowsAnUnrelatedShellFunction is the over-tightening control. Defining helpers is ordinary,
+// correct scripting; only a function that shadows a REQUIRED operation's own name is a problem, and
+// banning functions outright would fail legitimate actions.
+func TestAllowsAnUnrelatedShellFunction(t *testing.T) {
+	withHelper := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		"        log() {\n"+
+			"          echo \"$@\" >&2\n"+
+			"        }\n"+
+			"        log resolving digest\n"+
+			`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`, 1)
+	mustChange(t, validAction, withHelper)
+
+	if err := validate([]byte(withHelper)); err != nil {
+		t.Fatalf("an unrelated helper function is ordinary scripting; got: %v", err)
+	}
+}

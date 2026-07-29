@@ -107,6 +107,7 @@ func parseExecuted(run string, errexit bool) []executedCommand {
 	}
 
 	out := make([]executedCommand, 0, len(file.Stmts))
+	shadowed := declaredFunctions(file)
 
 	for _, stmt := range file.Stmts {
 		call, isCall := stmt.Cmd.(*syntax.CallExpr)
@@ -138,8 +139,41 @@ func parseExecuted(run string, errexit bool) []executedCommand {
 			continue
 		}
 
+		// ...and name resolution says the words actually reach the program they name. Bash looks up
+		// functions before PATH, so `cosign() { true; }` turns the required invocation into a no-op
+		// that is otherwise indistinguishable from the real thing.
+		if len(cmd.words) > 0 && shadowed[cmd.words[0]] {
+			continue
+		}
+
 		out = append(out, cmd)
 	}
+
+	return out
+}
+
+// declaredFunctions returns every name the script defines as a shell function.
+//
+// This is a third axis, after "does it run" (grammar) and "does its failure matter" (errexit): what
+// the words actually resolve to. Bash looks up functions before PATH, so a script can define
+// `cosign() { true; }` and then issue a textually perfect, failure-propagating, top-level
+// `cosign sign … "${REF}"` that produces no signature.
+//
+// The whole script is searched rather than the statements before the call, and a declaration nested
+// inside a conditional counts too. Deciding whether a nested declaration executed is the reachability
+// analysis this guard deliberately does not attempt, so it fails closed: a required operation whose
+// name is defined as a function anywhere in the same block is not provably the real program. The
+// remedy is in the error message — name the wrapper something else, or invoke the real command.
+func declaredFunctions(file *syntax.File) map[string]bool {
+	out := map[string]bool{}
+
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if decl, isDecl := node.(*syntax.FuncDecl); isDecl && decl.Name != nil {
+			out[decl.Name.Value] = true
+		}
+
+		return true
+	})
 
 	return out
 }
@@ -495,8 +529,14 @@ func validate(source []byte) error {
 		if len(at) == 0 {
 			return nil, fmt.Errorf(
 				"no step appears to %s.\n"+
-					"If that step was renamed, this check follows what a step does rather than what it is called — "+
-					"restore the command or action it matches on, or update the marker here deliberately",
+					"This check follows what a step does rather than what it is called, so it also reports"+
+					" a command that is present but will not take effect. Check, in order: the command or"+
+					" action it matches on is still there; it runs unconditionally at the top level (not"+
+					" inside `if`/`&&`/`||`/a pipeline/a function body/a here-document);"+
+					" its failure can still fail the step (no `set +e`, no trailing `|| true`, no `&`,"+
+					" and `shell: bash`); and its name is not shadowed by a shell function defined in the"+
+					" same step, which bash resolves before PATH.\n"+
+					"If the step was genuinely renamed or restructured, update the marker here deliberately",
 				m.label)
 		}
 
