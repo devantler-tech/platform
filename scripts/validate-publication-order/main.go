@@ -91,9 +91,10 @@ type executedCommand struct {
 type assignment struct {
 	// text is the value's source, so an exact required form can be compared.
 	text string
-	// fromCommand reports whether the value came from a command substitution. A digest that was
-	// typed is not a digest that was resolved, and only the second binds a signature to this run.
-	fromCommand bool
+	// consumesPublishedTag reports whether the value was RESOLVED by running something that reads
+	// the tag this run just published. A digest that was typed is not a digest that was resolved,
+	// and only the second binds a signature to this run.
+	consumesPublishedTag bool
 }
 
 // parseExecuted returns the commands a run block executes at top level.
@@ -250,8 +251,8 @@ func assignmentsTo(run, name string) []assignment {
 			}
 
 			out = append(out, assignment{
-				text:        sourceOf(run, assign.Value.Pos(), assign.Value.End()),
-				fromCommand: valueFromCommand(assign.Value),
+				text:                 sourceOf(run, assign.Value.Pos(), assign.Value.End()),
+				consumesPublishedTag: valueResolvedFrom(assign.Value, publishedTagVar),
 			})
 		}
 	}
@@ -287,17 +288,81 @@ func sourceOf(src string, from, to syntax.Pos) string {
 	return src[start:end]
 }
 
-// valueFromCommand reports whether a value contains a command substitution, at any nesting depth.
+// valueResolvedFrom reports whether a value is produced by RUNNING something that reads name.
 //
-// Depth matters because `DIGEST="$(…)"` wraps the substitution in a *syntax.DblQuoted, so scanning
-// only the word's top-level parts sees a plain quoted string. Quoting a command substitution is
-// BETTER practice than leaving it bare, so a shallow scan rejected the more careful spelling of
-// correct code — the exact way a guard earns itself a suppression.
-func valueFromCommand(word *syntax.Word) bool {
+// Both halves are load-bearing, and each closes a different bypass:
+//
+//   - The value must come from a command substitution, so a digest that was written down cannot
+//     pass as one that was resolved. Depth matters here because `DIGEST="$(…)"` wraps the
+//     substitution in a *syntax.DblQuoted; quoting one is BETTER practice than leaving it bare, so
+//     a shallow scan rejected the more careful spelling of correct code.
+//   - name must be EXPANDED as an argument of a command that substitution runs — not merely
+//     present in its source text. A source span covers the comments inside the substitution, so
+//     `DIGEST="$(printf '%s' 'sha256:…'  # ${REF_TAG}
+//     )"` satisfied a substring test while bash expanded nothing: cosign and both attestations then
+//     cover an OLDER manifest in full while the tag this run published ships unsigned. Requiring an
+//     argument also settles the neighbouring shape, `"${REF_TAG}$(…constant…)"`, where the tag is
+//     genuinely expanded but the substitution that decides the value never sees it.
+//
+// This is the same distinction the parser already draws for the required OPERATIONS — a mention is
+// not an execution — applied one level down to the values they consume.
+//
+// Reading the parsed expansion rather than the written `${REF_TAG}` also stops the guard enforcing a
+// spelling it has no stake in: `$REF_TAG` is the same expansion, and rejecting it would fail correct
+// code.
+//
+// BOUNDARY, stated rather than implied: this proves the published tag is CONSUMED by a command the
+// resolution runs. It does not prove that command's output is what the substitution returns — that
+// is dataflow through the shell, not a property of the syntax, so a command given the tag and then
+// discarded (`: "${REF_TAG}"; printf '%s' 'sha256:…'`) satisfies this check. Chasing that with
+// another shape rule is what made this guard a blocklist five rounds running; the structural
+// boundary is deliberate, and closing it needs reachability analysis rather than a sixth pattern.
+func valueResolvedFrom(word *syntax.Word, name string) bool {
+	resolved := false
+
+	syntax.Walk(word, func(node syntax.Node) bool {
+		subst, isSubst := node.(*syntax.CmdSubst)
+		if !isSubst {
+			return !resolved
+		}
+
+		// Any depth inside the substitution: a pipeline, a subshell, a loop or a redirection around
+		// the resolution is ordinary scripting, and the expansion still reaches the program that
+		// resolves the digest.
+		syntax.Walk(subst, func(inner syntax.Node) bool {
+			call, isCall := inner.(*syntax.CallExpr)
+			if !isCall {
+				return !resolved
+			}
+
+			for _, arg := range call.Args {
+				if expands(arg, name) {
+					resolved = true
+
+					return false
+				}
+			}
+
+			return !resolved
+		})
+
+		return !resolved
+	})
+
+	return resolved
+}
+
+// expands reports whether a word contains a parameter expansion of name.
+//
+// A comment's text is never parsed into an expansion node, and neither is a single-quoted string, so
+// walking the tree distinguishes what bash will substitute from what merely reads that way. Both
+// spellings are the same expansion: `$REF_TAG` is a short ParamExp, `${REF_TAG}` a braced one.
+func expands(word *syntax.Word, name string) bool {
 	found := false
 
 	syntax.Walk(word, func(node syntax.Node) bool {
-		if _, isSubst := node.(*syntax.CmdSubst); isSubst {
+		param, isParam := node.(*syntax.ParamExp)
+		if isParam && param.Param != nil && param.Param.Value == name {
 			found = true
 		}
 
@@ -398,8 +463,12 @@ const (
 	digestRefValue = `"ghcr.io/devantler-tech/platform/manifests@${DIGEST}"`
 	// digestRef is the whole assignment, used in error messages.
 	digestRef = `REF=` + digestRefValue
-	// publishedTagRef is the tag this run just pushed. DIGEST must be derived from it.
-	publishedTagRef = `${REF_TAG}`
+	// publishedTagVar is the variable holding the tag this run just pushed. DIGEST must be derived
+	// from it. This is the NAME, not a spelling of the expansion: the check reads the parsed
+	// expansion, so `$REF_TAG` and `${REF_TAG}` both qualify.
+	publishedTagVar = `REF_TAG`
+	// publishedTagRef is that expansion as an operator would write it, for error messages.
+	publishedTagRef = `${` + publishedTagVar + `}`
 )
 
 // indicesOf returns the position of EVERY step matching m, in file order.
@@ -491,7 +560,7 @@ func resolvesDigestFromPublishedTag(run string) bool {
 	}
 
 	for _, assigned := range digests {
-		if !assigned.fromCommand || !strings.Contains(assigned.text, publishedTagRef) {
+		if !assigned.consumesPublishedTag {
 			return false
 		}
 	}

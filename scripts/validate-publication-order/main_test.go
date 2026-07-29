@@ -901,3 +901,109 @@ func TestAllowsExportingTheResolvedDigest(t *testing.T) {
 		t.Fatalf("exporting a correctly resolved digest is ordinary scripting; got: %v", err)
 	}
 }
+
+// TestRejectsADigestWhoseResolutionOnlyMENTIONSThePublishedTag closes the provenance check's last
+// text-shaped hole. `resolvesDigestFromPublishedTag` compared the assignment's raw SOURCE SPAN, and
+// a source span includes the comments inside a command substitution — so a substitution that emits a
+// constant digest and merely names `${REF_TAG}` in a comment satisfied it. Bash never expands that
+// comment, so cosign and both attestations complete in full over an OLDER manifest while the tag
+// this run actually published ships unsigned. This is the same class the parser closed for the
+// required OPERATIONS, arriving one level down: a mention is not an expansion.
+func TestRejectsADigestWhoseResolutionOnlyMENTIONSThePublishedTag(t *testing.T) {
+	mentioned := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST="$(`+"\n"+
+			`          printf '%s' 'sha256:1111111111111111111111111111111111111111111111111111111111111111'`+"\n"+
+			`          # ${REF_TAG}`+"\n"+
+			`        )"`, 1)
+	mustChange(t, validAction, mentioned)
+
+	err := validate([]byte(mentioned))
+	if err == nil {
+		t.Fatal("a commented mention of the published tag resolves nothing; the digest is still a constant")
+	}
+
+	if !strings.Contains(err.Error(), "DIGEST") {
+		t.Errorf("error should name the unbound variable, got: %v", err)
+	}
+}
+
+// TestRejectsADigestThatOnlyCONCATENATESThePublishedTag is the same rule read from the other side.
+// The published tag has to be consumed by the command that resolves the digest, not merely stand
+// next to its output: `${REF_TAG}$(…constant…)` expands the tag for real, yet the value cosign ends
+// up signing is still whatever the substitution printed.
+func TestRejectsADigestThatOnlyCONCATENATESThePublishedTag(t *testing.T) {
+	concatenated := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST="${REF_TAG}$(printf '%s' 'sha256:1111111111111111111111111111111111111111111111111111111111111111')"`, 1)
+	mustChange(t, validAction, concatenated)
+
+	if err := validate([]byte(concatenated)); err == nil {
+		t.Fatal("expanding the tag beside a constant does not make the constant derived from it")
+	}
+}
+
+// TestAllowsResolvingThroughAPipeline is an over-tightening control. Reading the tag inside a
+// pipeline, a subshell or a redirection is ordinary scripting — the expansion still reaches the
+// program that resolves the digest — so the check must find it at any depth inside the substitution
+// rather than only in its first command.
+func TestAllowsResolvingThroughAPipeline(t *testing.T) {
+	piped := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST=$(crane manifest "${REF_TAG}" | sha256sum | cut -d' ' -f1)`, 1)
+	mustChange(t, validAction, piped)
+
+	if err := validate([]byte(piped)); err != nil {
+		t.Fatalf("resolving through a pipeline still reads the published tag; got: %v", err)
+	}
+}
+
+// TestAllowsTheUnbracedExpansion is the second over-tightening control. `$REF_TAG` and `${REF_TAG}`
+// are the SAME expansion; only the spelling differs. Requiring the braced source text made the guard
+// enforce a style rule it has no stake in, and a guard that rejects an equivalent spelling of correct
+// code gets suppressed rather than fixed.
+func TestAllowsTheUnbracedExpansion(t *testing.T) {
+	unbraced := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST=$(docker buildx imagetools inspect "$REF_TAG" --format '{{.Manifest.Digest}}')`, 1)
+	mustChange(t, validAction, unbraced)
+
+	if err := validate([]byte(unbraced)); err != nil {
+		t.Fatalf("$REF_TAG and ${REF_TAG} are the same expansion; got: %v", err)
+	}
+}
+
+// TestRejectsThePublishedTagExpandedOnlyInAHereDocument pins the "as an ARGUMENT" half of the
+// provenance rule, which nothing else covers: a here-document body IS parsed for expansions, so
+// `${REF_TAG}` inside one is a real expansion node rather than a mention. Accepting any expansion
+// found anywhere inside the substitution would therefore let a body fed to a discarding command
+// stand in for the resolution. The tag has to reach a command that runs, as an argument.
+func TestRejectsThePublishedTagExpandedOnlyInAHereDocument(t *testing.T) {
+	inHereDoc := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST="$(cat >/dev/null <<EOF`+"\n"+
+			`        ${REF_TAG}`+"\n"+
+			`        EOF`+"\n"+
+			`        printf '%s' 'sha256:1111111111111111111111111111111111111111111111111111111111111111')"`, 1)
+	mustChange(t, validAction, inHereDoc)
+
+	if err := validate([]byte(inHereDoc)); err == nil {
+		t.Fatal("a here-document body is not an argument to the command that resolves the digest")
+	}
+}
+
+// TestRejectsAProcessSubstitution pins the "command SUBSTITUTION" half of the provenance rule. A
+// process substitution also runs a command that reads the published tag, but it expands to a
+// `/dev/fd/…` path rather than that command's output — so the digest would be a file descriptor
+// name, and nothing would have resolved. Only the form whose VALUE is the command's output proves
+// the digest came from this run's publication.
+func TestRejectsAProcessSubstitution(t *testing.T) {
+	procSubst := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST=<(crane digest "${REF_TAG}")`, 1)
+	mustChange(t, validAction, procSubst)
+
+	if err := validate([]byte(procSubst)); err == nil {
+		t.Fatal("a process substitution yields a file descriptor path, not the resolved digest")
+	}
+}
