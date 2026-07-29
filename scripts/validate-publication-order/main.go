@@ -343,32 +343,61 @@ func valueResolvedFrom(word *syntax.Word, name string) bool {
 // Cosign and both attestations then cover that constant in full while the tag this run published
 // ships unsigned — a bypass with a GREEN result, which is the worst shape a security guard can have.
 //
-// It recurses to any depth WITHIN that statement rather than demanding a bare call, because a
-// pipeline, a retry loop, a subshell or a redirection around the resolver is ordinary correct code
-// and the output still terminates in the digest. That is the deliberate split: the accepted SHAPE is
-// narrowed to one statement, and the freedom inside it is kept — narrowing what is accepted, rather
-// than enumerating what is forbidden, which is what left this guard bypassable for five rounds.
+// The accepted shape is ENUMERATED rather than searched. Recursing through every nested call was
+// still too loose: a branch that never runs is part of the last statement, so
+//
+//	DIGEST="$( if false; then crane digest "${REF_TAG}"; else printf '%s' 'sha256:…'; fi )"
+//
+// contained a consuming call while bash returned the constant. Anything whose output depends on
+// which branch or iteration executes cannot be bound without evaluating it, so it is rejected
+// outright — that is the conservative direction, and it is what makes this terminal instead of one
+// more round.
+//
+// A pipeline stays accepted because it has no branches: every stage runs, and the first stage is the
+// one that reads the tag and produces the data the rest transforms. A retry belongs around the
+// ASSIGNMENT (`for … do DIGEST=$(…) && break; done`), which is unaffected — assignmentsTo already
+// finds it at any depth — so the idiomatic spelling still passes.
 func consumes(stmt *syntax.Stmt, name string) bool {
-	found := false
+	stages, simple := pipelineStages(stmt.Cmd)
+	if !simple || len(stages) == 0 {
+		return false
+	}
 
-	syntax.Walk(stmt, func(node syntax.Node) bool {
-		call, isCall := node.(*syntax.CallExpr)
-		if !isCall {
-			return !found
+	// The first stage is the resolver; later stages only reshape what it emitted.
+	for _, arg := range stages[0].Args {
+		if expands(arg, name) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// pipelineStages flattens a plain command or a pipeline of plain commands into its stages, in order.
+//
+// simple is false for every other construct — `if`, `for`, `while`, `case`, a subshell, a block, a
+// function body, and the `&&`/`||` operators — because each of those can produce its output from a
+// command that did not run, which is precisely the gap consumes exists to close.
+func pipelineStages(cmd syntax.Command) (stages []*syntax.CallExpr, simple bool) {
+	switch typed := cmd.(type) {
+	case *syntax.CallExpr:
+		return []*syntax.CallExpr{typed}, true
+	case *syntax.BinaryCmd:
+		if typed.Op != syntax.Pipe && typed.Op != syntax.PipeAll {
+			return nil, false
 		}
 
-		for _, arg := range call.Args {
-			if expands(arg, name) {
-				found = true
+		left, leftOK := pipelineStages(typed.X.Cmd)
+		right, rightOK := pipelineStages(typed.Y.Cmd)
 
-				return false
-			}
+		if !leftOK || !rightOK {
+			return nil, false
 		}
 
-		return !found
-	})
-
-	return found
+		return append(left, right...), true
+	default:
+		return nil, false
+	}
 }
 
 // expands reports whether a word contains a parameter expansion of name.

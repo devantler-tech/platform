@@ -1047,20 +1047,24 @@ func TestAllowsSetupBeforeTheResolver(t *testing.T) {
 	}
 }
 
-// TestAllowsAResolverInsideARetryLoop is the second over-tightening control. A resolver wrapped in a
-// retry is correct code whose output still terminates in the digest, so requiring the LAST statement
-// to consume the tag must recurse into compound commands rather than demanding a bare call.
-func TestAllowsAResolverInsideARetryLoop(t *testing.T) {
-	retried := strings.Replace(validAction,
+// TestRejectsAResolverInAnUNTAKENBranch is the reason the accepted shape is enumerated rather than
+// searched. A branch that never runs is still part of the last statement, so recursing through every
+// nested call found `crane digest` inside a dead `if` while bash returned the constant from the
+// `else`. Any construct whose output depends on which branch or iteration executes is rejected: it
+// cannot be bound without evaluating it, and guessing is what this guard keeps being bypassed by.
+func TestRejectsAResolverInAnUNTAKENBranch(t *testing.T) {
+	deadBranch := strings.Replace(validAction,
 		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
 		`        DIGEST="$(`+"\n"+
-			`          for _ in 1 2 3; do`+"\n"+
-			`            crane digest "${REF_TAG}" && break`+"\n"+
-			`          done`+"\n"+
+			`          if false; then`+"\n"+
+			`            crane digest "${REF_TAG}"`+"\n"+
+			`          else`+"\n"+
+			`            printf '%s' 'sha256:1111111111111111111111111111111111111111111111111111111111111111'`+"\n"+
+			`          fi`+"\n"+
 			`        )"`, 1)
-	mustChange(t, validAction, retried)
+	mustChange(t, validAction, deadBranch)
 
-	if err := validate([]byte(retried)); err != nil {
-		t.Fatalf("a retry around the resolver still ends in the resolved digest; got: %v", err)
+	if err := validate([]byte(deadBranch)); err == nil {
+		t.Fatal("a resolver in an untaken branch never runs; the constant beside it is what gets signed")
 	}
 }
