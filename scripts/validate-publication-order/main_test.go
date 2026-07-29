@@ -184,3 +184,56 @@ func TestRealDeployActionSatisfiesTheContract(t *testing.T) {
 		t.Fatalf("the shipped deploy-prod action violates the publication ordering contract: %v", err)
 	}
 }
+
+// TestRejectsASecondPushAfterReconcile pins that the order holds across EVERY
+// occurrence, not just the first of each kind. Locating one publish step and
+// stopping leaves a later `workload push` invisible: the earlier sequence still
+// validates while the deploy republishes bytes that nothing signed or attested,
+// which is the exact window this guard exists to close.
+func TestRejectsASecondPushAfterReconcile(t *testing.T) {
+	const latePush = `    - name: Push again
+      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push
+`
+
+	withLatePush := validAction + latePush
+	mustChange(t, validAction, withLatePush)
+
+	if err := validate([]byte(withLatePush)); err == nil {
+		t.Fatal("expected a second publish after the reconcile to be rejected")
+	}
+}
+
+// TestRejectsASecondReconcileBeforeSigning is the mirror: an added release step
+// that runs before the evidence must fail even though a correctly-placed
+// reconcile also exists later.
+func TestRejectsASecondReconcileBeforeSigning(t *testing.T) {
+	early := strings.Replace(validAction,
+		"    - name: Sign",
+		reconcileStep+"    - name: Sign", 1)
+	mustChange(t, validAction, early)
+
+	if err := validate([]byte(early)); err == nil {
+		t.Fatal("expected a reconcile placed before the signing step to be rejected")
+	}
+}
+
+// TestRejectsSigningTheMutableTagWhileAssigningTheDigest is the finding that a
+// contains-check on the assignment cannot catch: REF is still assigned the
+// resolved digest, so the old check passes, but the cosign invocation consumes
+// the mutable tag instead. The signature then covers whatever the tag points at
+// when cosign resolves it, which is the TOCTOU the digest resolve exists to
+// remove. Only the command argument changes here.
+func TestRejectsSigningTheMutableTagWhileAssigningTheDigest(t *testing.T) {
+	deadAssignment := strings.Replace(validAction,
+		`cosign sign --yes --recursive "${REF}"`,
+		`cosign sign --yes --recursive "${REF_TAG}"`, 1)
+	mustChange(t, validAction, deadAssignment)
+
+	if !strings.Contains(deadAssignment, `REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"`) {
+		t.Fatal("fixture must keep the digest assignment, or it does not isolate the command argument")
+	}
+
+	if err := validate([]byte(deadAssignment)); err == nil {
+		t.Fatal("expected signing the mutable tag to be rejected even though REF is assigned the digest")
+	}
+}

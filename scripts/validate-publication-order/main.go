@@ -100,15 +100,45 @@ var (
 // the signature would cover bytes this run never published.
 const digestRef = `REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"`
 
-// indexOf returns the position of the first step matching m.
-func indexOf(steps []step, m marker) (int, bool) {
+// indicesOf returns the position of EVERY step matching m, in file order.
+//
+// Every occurrence matters, not just the first. A composite that pushes, signs,
+// reconciles and then pushes again satisfies the contract on its first push
+// while republishing bytes nothing signed or attested — so locating one step of
+// each kind and stopping would validate exactly the window this guard exists to
+// close.
+func indicesOf(steps []step, m marker) []int {
+	var at []int
+
 	for i, s := range steps {
 		if m.match(s) {
-			return i, true
+			at = append(at, i)
 		}
 	}
 
-	return 0, false
+	return at
+}
+
+// signRefArg is the argument the cosign invocation must consume. Asserting the
+// assignment of digestRef alone is not enough: a step can resolve the digest
+// into REF and still sign "${REF_TAG}", leaving the assignment dead and the
+// signature covering whatever the mutable tag resolves to at sign time.
+const signRefArg = `"${REF}"`
+
+// signsTheResolvedDigest reports whether every cosign invocation in run signs
+// the reference built from the resolved digest.
+func signsTheResolvedDigest(run string) bool {
+	for _, line := range strings.Split(run, "\n") {
+		if !strings.Contains(line, "cosign sign ") {
+			continue
+		}
+
+		if !strings.Contains(line, signRefArg) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func validate(source []byte) error {
@@ -122,10 +152,10 @@ func validate(source []byte) error {
 		return errors.New("no runs.steps; this does not look like a composite action")
 	}
 
-	locate := func(m marker) (int, error) {
-		at, ok := indexOf(steps, m)
-		if !ok {
-			return 0, fmt.Errorf(
+	locate := func(m marker) ([]int, error) {
+		at := indicesOf(steps, m)
+		if len(at) == 0 {
+			return nil, fmt.Errorf(
 				"no step appears to %s.\n"+
 					"If that step was renamed, this check follows what a step does rather than what it is called — "+
 					"restore the command or action it matches on, or update the marker here deliberately",
@@ -135,7 +165,13 @@ func validate(source []byte) error {
 		return at, nil
 	}
 
-	mustPrecede := func(earlier marker, earlierAt int, later marker, laterAt int) error {
+	// Comparing the LAST occurrence of the earlier kind against the FIRST of the
+	// later kind is what makes this hold across every pair: if even the latest
+	// publish precedes the earliest piece of evidence, all of them do.
+	mustPrecede := func(earlier marker, earlierIdx []int, later marker, laterIdx []int) error {
+		earlierAt := earlierIdx[len(earlierIdx)-1]
+		laterAt := laterIdx[0]
+
 		if earlierAt < laterAt {
 			return nil
 		}
@@ -179,11 +215,21 @@ func validate(source []byte) error {
 		return err
 	}
 
-	if !strings.Contains(steps[signAt].Run, digestRef) {
-		return fmt.Errorf(
-			"the signing step must build its reference from the resolved digest (%s); "+
-				"signing the mutable tag lets a concurrent deploy move it between resolve and sign",
-			digestRef)
+	for _, at := range signAt {
+		if !strings.Contains(steps[at].Run, digestRef) {
+			return fmt.Errorf(
+				"the signing step must build its reference from the resolved digest (%s); "+
+					"signing the mutable tag lets a concurrent deploy move it between resolve and sign",
+				digestRef)
+		}
+
+		if !signsTheResolvedDigest(steps[at].Run) {
+			return fmt.Errorf(
+				"the signing step resolves the digest into %s but does not pass %s to `cosign sign`; "+
+					"the assignment is dead and the signature would cover whatever the mutable tag "+
+					"resolves to at sign time",
+				digestRef, signRefArg)
+		}
 	}
 
 	return nil
