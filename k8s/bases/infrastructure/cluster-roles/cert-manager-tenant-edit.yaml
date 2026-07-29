@@ -14,8 +14,10 @@
 # controller mints them from a tenant's Certificate under its own identity, so a
 # tenant never creates them directly — read access covers issuance debugging.
 # NOTE: RBAC alone cannot stop a tenant Certificate from *referencing* a
-# ClusterIssuer via `spec.issuerRef.kind` — that boundary needs admission
-# enforcement, tracked separately.
+# ClusterIssuer via `spec.issuerRef.kind` — cert-manager's controller resolves
+# that reference under its own identity, not the tenant's. That half of the
+# boundary is enforced at admission by the
+# `restrict-tenant-issuer-refs` ClusterPolicy.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:

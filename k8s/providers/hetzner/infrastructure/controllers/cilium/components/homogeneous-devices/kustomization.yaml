@@ -104,11 +104,18 @@
 #      cilium-health reachability intact; no new policy-verdict DROPs or
 #      auth-timeout storms in Hubble/agent logs (a `dial <public-ip>:4250`
 #      RATE INCREASE beyond the known #46767 background is a regression).
-#   3. Repeat node by node across all nine; soak.
+#   3. Repeat node by node across all nine; soak. If ANY desired Cilium pod
+#      template value changes while this gate is active, compare every agent's
+#      `pod-template-generation` label with the Cilium DaemonSet generation and
+#      re-step + re-verify every stale node, including nodes verified before the
+#      change. A previous canary result never approves a newer template.
 #   4. After the soak, a follow-up PR removes the `updateStrategy` and
-#      `spec.upgrade.disableWait` overrides from this component — restoring
-#      normal rollout waiting and RollingUpdate changes no current pod template,
-#      so it rolls nothing.
+#      `spec.upgrade.disableWait` overrides from this component. Its pre-publish
+#      guard requires every agent to be Ready at the current DaemonSet generation
+#      and the incoming normalized Cilium spec to match the hash recorded after
+#      the last active-gate reconciliation, ignoring only those two gate fields.
+#      A chart or other Helm-value change must stage and soak separately; changing
+#      back to RollingUpdate therefore rolls nothing.
 #   5. The reviewed follow-up that removes the temporary OnDelete override
 #      releases the deploy gate only AFTER its safe artifact reconciles. KSail
 #      cluster update then runs again and the post-deploy guard restores the
@@ -121,7 +128,10 @@
 #   reverts to the private-only pin and RollingUpdate resumes, so every
 #   already-stepped node rolls BACK automatically. Un-stepped nodes keep the
 #   old config UNLESS their pod restarted during the window (the involuntary
-#   canaries above) — those roll back with the stepped ones.
+#   canaries above) — those roll back with the stepped ones. The pre-publish
+#   guard distinguishes this component-removal rollback from a successful
+#   OnDelete removal: it permits the rollback artifact while keeping autoscaling
+#   suspended, then restores the owned replica count only after reconciliation.
 #
 # MERGE-ORDER NOTE (load-bearing): parent `patches:` are applied AFTER all
 # component patches — a devices value carried by
@@ -145,6 +155,14 @@ patches:
       - op: replace
         path: /spec/values/devices
         value: "en+ eth+"
+      # The wildcard device set includes each node's public NIC. Keep Cilium's
+      # kube-proxy-replacement NodePort listeners on private node addresses so
+      # tenant-created Services cannot bypass the Gateway exposure boundary.
+      - op: add
+        path: /spec/values/nodePort
+        value:
+          addresses:
+            - 10.0.0.0/16
       # Operator-stepped rollout gate — see ROLLOUT GATE above. Removed
       # by a follow-up PR once all nodes are verified (strategy-only
       # change; rolls nothing). Replacing the whole value preserves the

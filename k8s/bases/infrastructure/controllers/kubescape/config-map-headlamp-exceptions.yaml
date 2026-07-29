@@ -1,43 +1,56 @@
 ---
-# Mirror of the platform's kubescape ClusterSecurityException CRs
-# (k8s/bases/infrastructure/cluster-security-exceptions/) into the format the
-# Headlamp Kubescape plugin reads.
+# GENERATED FILE — DO NOT EDIT BY HAND.
 #
-# WHY: the pinned plugin (headlamp_kubescape v0.11.2) has its OWN exception
-# mechanism — ConfigMaps labelled `kubescape.io/custom-object: exceptions` — and
-# does NOT read the kubescape.io ClusterSecurityException/SecurityException CRDs.
+# Regenerate with, from the repository root:
+#   go run ./scripts/generate-kubescape-exceptions \
+#     -format headlamp-configmap \
+#     -o k8s/bases/infrastructure/controllers/kubescape/config-map-headlamp-exceptions.yaml
+#
+# CI regenerates this file and fails on any difference, so a hand edit is
+# reverted by the next run rather than silently kept. Change the
+# ClusterSecurityException CRs in k8s/bases/infrastructure/cluster-security-exceptions/
+# instead — they are the single source of truth — or the template at
+# scripts/generate-kubescape-exceptions/headlamp-configmap.yaml.tmpl for this
+# prose.
+#
+# WHY THIS FILE EXISTS: the pinned plugin (headlamp_kubescape v0.11.2) has its OWN
+# exception mechanism — ConfigMaps labelled `kubescape.io/custom-object: exceptions` —
+# and does NOT read the kubescape.io ClusterSecurityException/SecurityException CRDs.
 # (The CRD-native "Security Exceptions" view exists only on the plugin's unreleased
 # main branch.) Without this ConfigMap the plugin's Exceptions page shows
 # "No data to be shown" and its compliance view recomputes scores client-side
 # with zero exceptions, so every control the CRs except still renders as failing.
 #
-# The CRs remain the source of truth. With the scanner at kubescape >= v4.0.10
-# (see the HelmRelease `kubescape.image.tag` override) the operator now applies the
-# CRs at scan time and writes status=passed/subStatus=w-exceptions into the stored
-# workloadconfigurationscansummaries — which the plugin renders directly, so once a
-# post-bump scan has run this mirror is redundant even without a group selection.
-# This file is a presentation-layer FALLBACK for the Headlamp dashboard ONLY; keep
-# it in sync by hand while it lives, and DELETE it (plus the manual step below) once
-# the v4.0.10 scanner is confirmed marking excepted controls in prod, OR once the
-# plugin is bumped to a release that reads the CRDs natively — whichever lands first.
+# This file is a presentation-layer FALLBACK for the Headlamp dashboard ONLY.
+# DELETE it (plus the manual step below, and the -format headlamp-configmap mode)
+# once the scanner is confirmed marking excepted controls in prod, OR once the
+# plugin is bumped to a release that reads the CRDs natively — whichever lands
+# first. As of 2026-07-28 neither holds: the deployed scanner is v4.0.10, which
+# should write status=passed/subStatus=w-exceptions into the stored
+# workloadconfigurationscansummaries, but a sweep of all ~2200 summaries found no
+# object carrying that subStatus (platform#2586, platform#2823).
 #
-# NOTE: the plugin only evaluates workload posture scans, so the two host/CIS
-# false-positive CRs (talos-cis-control-plane-false-positives,
-# talos-cis-worker-false-positives) are intentionally NOT mirrored — their
-# controls (file permissions/ownership, kubelet/API-server flags) are never
-# attached to a workload and cannot be expressed as a workload exception.
+# WHAT IS MIRRORED: every ClusterSecurityException CR, except those annotated
+# `platform.devantler.tech/headlamp-mirror: exclude`. That marker is for
+# host-scanner exceptions (CIS file permissions/ownership, kubelet and API-server
+# flags) whose controls never attach to a workload, so they cannot be expressed as
+# a workload exception — and whose cluster-wide designator would otherwise except
+# those controls for every workload in the cluster. The exclusion is declared on
+# the CR because there is no structural way to infer it: nine legitimately-mirrored
+# policies also render a bare wildcard.
 #
 # Matching semantics (apply-exceptions.ts): a control is excepted for a workload
 # when a policy's posturePolicies regex matches the controlID AND a resources
 # regex matches the workload's kind/name/namespace. Values are JS RegExp, anchored
-# here for exactness. `namespace: ".*"` mirrors a cluster-wide (unscoped) CR.
+# by the generator for exactness. A CR with no `spec.match` renders as
+# `kind: ".*"`, which matches every workload.
 #
-# IMPORTANT (interim manual step, needed ONLY until a v4.0.10 scan has run): the
-# v0.11.2 plugin applies ONE selected group at a time and recomputes scores
-# client-side, so before the scanner marks the stored summaries a viewer must pick
-# the "platform-exceptions" group from the Compliance page's exceptions selector for
-# these to take effect. Once the v4.0.10 scanner writes the exception status this is
-# no longer required (the plugin renders the summary status directly).
+# IMPORTANT (interim manual step, needed ONLY until a scan marks the summaries):
+# the v0.11.2 plugin applies ONE selected group at a time and recomputes scores
+# client-side, so a viewer must pick the "platform-exceptions" group from the
+# Compliance page's exceptions selector for these to take effect. Once the scanner
+# writes the exception status this is no longer required (the plugin renders the
+# summary status directly).
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -55,12 +68,92 @@ data:
   exceptionPolicies: |
     [
       {
+        "name": "admission-controllers",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": ".*"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0036$"
+          },
+          {
+            "controlID": "^C-0039$"
+          }
+        ],
+        "reason": "Admission webhook timeouts are configured by upstream Helm charts (Kyverno, cert-manager, VPA, KEDA) at appropriate values for their operation. Changing these would cause admission failures."
+      },
+      {
+        "name": "batch-workloads",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Job$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^CronJob$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0018$"
+          },
+          {
+            "controlID": "^C-0056$"
+          }
+        ],
+        "reason": "Readiness and liveness probes are inapplicable to run-to-completion batch workloads (Jobs/CronJobs): the pod terminates on completion and never serves traffic. Matched by workload kind so long-running workloads still require probes."
+      },
+      {
+        "name": "cilium-network-policies",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": ".*"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0054$"
+          },
+          {
+            "controlID": "^C-0030$"
+          },
+          {
+            "controlID": "^C-0260$"
+          }
+        ],
+        "reason": "Platform uses CiliumNetworkPolicies for all network segmentation. Kubescape does not recognise CiliumNetworkPolicy as equivalent to Kubernetes NetworkPolicy."
+      },
+      {
         "name": "controller-rbac",
         "policyType": "postureExceptionPolicy",
         "actions": [
           "alertOnly"
         ],
-        "reason": "Infrastructure controllers and platform middleware require broad RBAC by design.",
         "resources": [
           {
             "designatorType": "Attributes",
@@ -88,7 +181,205 @@ data:
           {
             "controlID": "^C-0188$"
           }
-        ]
+        ],
+        "reason": "Infrastructure controllers and platform middleware require broad RBAC to manage their target resources cluster-wide. This includes GitOps (Flux), policy engines (Kyverno), certificate managers (cert-manager), database operators (CNPG), backup controllers (Velero), autoscalers (KEDA), observability (Coroot/opencost), virtualisation (KubeVirt, CDI), storage (Longhorn), cluster dashboards (headlamp), service discovery (homepage), device management (fleetdm), identity (dex), auth proxies (oauth2-proxy), and config watchers (reloader)."
+      },
+      {
+        "name": "delete-capable-rbac-by-design",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cdi-sa$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cert-manager-controller-issuers$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cert-manager-controller-clusterissuers$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cert-manager-controller-certificates$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cert-manager-controller-challenges$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cloudnative-pg$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cluster-reconciler-flux-system$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^flux-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^coroot-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^crossplane-admin$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^crossplane:provider:provider-upjet-github-[0-9a-f]+:system$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^flagger$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^kro:controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^ksail-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^kube-prometheus-stack-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^kubevirt-apiserver$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^kubevirt-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^longhorn-bind$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^reloader-reloader-role-binding$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^ascoachingogvaner$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^kyverno:admission-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^kyverno:cleanup-controller$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^longhorn$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^tf-runner$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^velero-server$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^wedding-app$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0007$"
+          }
+        ],
+        "reason": "Infrastructure controllers, operators and tenant deployers legitimately require delete permissions by design (GitOps reconciliation, operator lifecycle, backup/restore, storage, virtualisation, cert/DB/secret management). Each offending Role/binding is matched by kind+name so C-0007 still catches any new or accidental delete-capable grant."
       },
       {
         "name": "exec-into-container-rbac",
@@ -96,7 +387,6 @@ data:
         "actions": [
           "alertOnly"
         ],
-        "reason": "Infra controllers (Velero, CloudNativePG, Flux kustomize-/helm-controller and flux-operator, and KubeVirt's virt-operator) legitimately hold pods/exec by design; matched by kind+name on the RBAC binding so C-0002 still catches new exec grants. Tenant SAs are scoped at the root instead, not excepted here.",
         "resources": [
           {
             "designatorType": "Attributes",
@@ -152,43 +442,29 @@ data:
           {
             "controlID": "^C-0002$"
           }
-        ]
+        ],
+        "reason": "Velero (all-or-nothing backup/restore RBAC + cluster-admin), CloudNativePG (operator execs into Postgres pods — explicit pods/exec grant), the Flux GitOps reconcilers kustomize-controller, helm-controller (both via the cluster-reconciler-flux-system binding), and flux-operator (cluster-admin trust model), and KubeVirt's virt-operator (explicit pods/exec grant to manage VM lifecycles) legitimately hold pods/exec by design. The specific RBAC bindings are matched by kind+name so C-0002 still catches any new exec grant."
       },
       {
-        "name": "delete-capable-rbac-by-design",
+        "name": "gitops-managed-cronjobs",
         "policyType": "postureExceptionPolicy",
         "actions": [
           "alertOnly"
         ],
-        "reason": "Controllers, operators and tenant deployers require delete permissions by design (C-0007). Mirrors the operator CSE (delete-rbac.yaml) by kind+name: C-0007 findings terminate on the RBAC binding objects themselves (19 of 26 on cluster-scoped ClusterRoleBindings whose namespace is empty), so a namespace designator can never cover them.",
         "resources": [
           {
             "designatorType": "Attributes",
             "attributes": {
-              "kind": "^ClusterRoleBinding$",
-              "name": "^(cdi-sa|cert-manager-controller-(issuers|clusterissuers|certificates|challenges)|cloudnative-pg|cluster-reconciler-flux-system|flux-operator|coroot-operator|crossplane-admin|crossplane:provider:provider-upjet-github-[0-9a-f]+:system|flagger|kro:controller|ksail-operator|kube-prometheus-stack-operator|kubevirt-apiserver|kubevirt-controller|longhorn-bind|reloader-reloader-role-binding)$"
-            }
-          },
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^RoleBinding$",
-              "name": "^(ascoachingogvaner|kyverno:admission-controller|kyverno:cleanup-controller|longhorn|tf-runner|velero-server|wedding-app)$"
-            }
-          },
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^Group$",
-              "name": "^crossplane-masters$"
+              "namespace": "^(kube-system|kubescape|longhorn-system|observability|openbao|umami|fleetdm)$"
             }
           }
         ],
         "posturePolicies": [
           {
-            "controlID": "^C-0007$"
+            "controlID": "^C-0026$"
           }
-        ]
+        ],
+        "reason": "C-0026 lists every CronJob for manual approval and has no hardening remedy. All CronJobs on this cluster are GitOps-managed platform components delivered by Flux after PR review (the review is the approval): Cilium Hubble cert rotation, the Kubescape scan schedulers, Longhorn stale-node cleanup, the observability heartbeat / Coroot alert-autosuppressor / Coroot cloud-pricing jobs, the OpenBao raft-snapshot backup, and Umami tenant provisioning. Namespace-scoped to the infrastructure namespaces that run these, so a CronJob in any unexpected namespace still surfaces for review."
       },
       {
         "name": "health-probes",
@@ -196,7 +472,6 @@ data:
         "actions": [
           "alertOnly"
         ],
-        "reason": "Infra controllers, middleware, sidecars and init containers often lack health-probe endpoints.",
         "resources": [
           {
             "designatorType": "Attributes",
@@ -212,31 +487,53 @@ data:
           {
             "controlID": "^C-0056$"
           }
-        ]
+        ],
+        "reason": "Infrastructure controllers, middleware, sidecars, and init containers often lack health probe endpoints. Upstream charts manage availability through leader election and watch mechanisms. App namespaces are included for their init containers and sidecars, not main containers."
       },
       {
-        "name": "batch-workloads",
+        "name": "helm-chart-metadata",
         "policyType": "postureExceptionPolicy",
         "actions": [
           "alertOnly"
         ],
-        "reason": "Readiness/liveness probes are inapplicable to run-to-completion Jobs/CronJobs; matched by workload kind so long-running workloads still require probes.",
         "resources": [
           {
             "designatorType": "Attributes",
             "attributes": {
-              "kind": "^(Job|CronJob)$"
+              "kind": ".*"
             }
           }
         ],
         "posturePolicies": [
           {
-            "controlID": "^C-0018$"
+            "controlID": "^C-0076$"
           },
           {
-            "controlID": "^C-0056$"
+            "controlID": "^C-0077$"
           }
-        ]
+        ],
+        "reason": "Third-party Helm charts use their own label conventions. Adding all kubescape-expected labels would require patching every chart and would break on upgrades."
+      },
+      {
+        "name": "image-verification",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": ".*"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0237$"
+          }
+        ],
+        "reason": "First-party images (ghcr.io/devantler-tech/*) are cosign-signed and verified at both the Flux OCI source layer and the Talos containerd pull layer (ImageVerificationConfig). Third-party chart images are not all signed and there is no admission-layer signature enforcement, so this cluster-wide control still fails on unsigned workload images."
       },
       {
         "name": "infrastructure-privileged",
@@ -244,7 +541,6 @@ data:
         "actions": [
           "alertOnly"
         ],
-        "reason": "CNI, distributed storage, node telemetry, identity agent, backup node-agent and virtualisation require host-level access by design.",
         "resources": [
           {
             "designatorType": "Attributes",
@@ -287,160 +583,67 @@ data:
           {
             "controlID": "^C-0055$"
           }
-        ]
+        ],
+        "reason": "CNI (Cilium), distributed storage (Longhorn), node telemetry (Coroot node-agent), identity (SPIRE agent), backup (Velero node-agent), and virtualisation (KubeVirt, CDI) require host-level access by design."
       },
       {
-        "name": "service-account-tokens",
+        "name": "kubescape-privileged",
         "policyType": "postureExceptionPolicy",
         "actions": [
           "alertOnly"
         ],
-        "reason": "Infra controllers and platform middleware need Kubernetes API access via SA tokens; RBAC restricts what each SA can do.",
         "resources": [
           {
             "designatorType": "Attributes",
             "attributes": {
-              "namespace": "^(kube-system|kube-public|kube-node-lease|flux-system|kyverno|cert-manager|cnpg-system|velero|keda|observability|kubescape|vertical-pod-autoscaler|kubevirt|cdi|longhorn-system|kubelet-serving-cert-approver|external-dns|reloader|opencost|dex|fleetdm|homepage|headlamp|oauth2-proxy|external-secrets|crossplane-system|ksail-operator|flagger-system|crossview)$"
+              "kind": "^DaemonSet$",
+              "name": "^node-agent$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Deployment$",
+              "name": "^storage$"
             }
           }
         ],
         "posturePolicies": [
           {
-            "controlID": "^C-0261$"
+            "controlID": "^C-0057$"
           },
           {
-            "controlID": "^C-0207$"
+            "controlID": "^C-0048$"
           },
           {
-            "controlID": "^C-0012$"
+            "controlID": "^C-0045$"
           },
           {
-            "controlID": "^C-0255$"
+            "controlID": "^C-0041$"
           },
           {
-            "controlID": "^C-0034$"
+            "controlID": "^C-0038$"
           },
           {
-            "controlID": "^C-0190$"
-          }
-        ]
-      },
-      {
-        "name": "gitops-managed-cronjobs",
-        "policyType": "postureExceptionPolicy",
-        "actions": [
-          "alertOnly"
-        ],
-        "reason": "C-0026 lists every CronJob for manual approval and has no hardening remedy; all CronJobs are GitOps-managed platform components delivered by Flux after PR review (the review is the approval). Namespace-scoped so a CronJob in any unexpected namespace still surfaces for review. fleetdm is pre-listed (disabled on prod, but its chart ships a fleet-vulnprocessing CronJob).",
-        "resources": [
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "namespace": "^(kube-system|kubescape|longhorn-system|observability|openbao|umami|fleetdm)$"
-            }
-          }
-        ],
-        "posturePolicies": [
-          {
-            "controlID": "^C-0026$"
-          }
-        ]
-      },
-      {
-        "name": "admission-controllers",
-        "policyType": "postureExceptionPolicy",
-        "actions": [
-          "alertOnly"
-        ],
-        "reason": "Admission webhook timeouts are set by upstream Helm charts at appropriate values.",
-        "resources": [
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "namespace": ".*"
-            }
-          }
-        ],
-        "posturePolicies": [
-          {
-            "controlID": "^C-0036$"
+            "controlID": "^C-0044$"
           },
           {
-            "controlID": "^C-0039$"
-          }
-        ]
-      },
-      {
-        "name": "cilium-network-policies",
-        "policyType": "postureExceptionPolicy",
-        "actions": [
-          "alertOnly"
-        ],
-        "reason": "Platform uses CiliumNetworkPolicies for segmentation; Kubescape does not recognise them as NetworkPolicy.",
-        "resources": [
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "namespace": ".*"
-            }
-          }
-        ],
-        "posturePolicies": [
-          {
-            "controlID": "^C-0054$"
+            "controlID": "^C-0046$"
           },
           {
-            "controlID": "^C-0030$"
+            "controlID": "^C-0016$"
           },
           {
-            "controlID": "^C-0260$"
-          }
-        ]
-      },
-      {
-        "name": "helm-chart-metadata",
-        "policyType": "postureExceptionPolicy",
-        "actions": [
-          "alertOnly"
-        ],
-        "reason": "Third-party charts use their own label conventions.",
-        "resources": [
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "namespace": ".*"
-            }
-          }
-        ],
-        "posturePolicies": [
-          {
-            "controlID": "^C-0076$"
+            "controlID": "^C-0013$"
           },
           {
-            "controlID": "^C-0077$"
-          }
-        ]
-      },
-      {
-        "name": "image-verification",
-        "policyType": "postureExceptionPolicy",
-        "actions": [
-          "alertOnly"
-        ],
-        "reason": "First-party images are cosign-verified at Flux/containerd; third-party chart images are not all signed and there is no admission-layer enforcement.",
-        "resources": [
+            "controlID": "^C-0017$"
+          },
           {
-            "designatorType": "Attributes",
-            "attributes": {
-              "namespace": ".*"
-            }
+            "controlID": "^C-0055$"
           }
         ],
-        "posturePolicies": [
-          {
-            "controlID": "^C-0237$"
-          }
-        ]
+        "reason": "Kubescape's node-agent needs privileged host access (eBPF runtime detection) and the storage aggregated APIserver writes its backing store at runtime; scoped to those two workloads so the operator, kubevuln, and scheduler in the same namespace stay subject to these controls."
       },
       {
         "name": "pod-security-mutations",
@@ -448,12 +651,11 @@ data:
         "actions": [
           "alertOnly"
         ],
-        "reason": "Kyverno add-security-context mutates these at pod admission; Kubescape scans the stored spec, not the live pod.",
         "resources": [
           {
             "designatorType": "Attributes",
             "attributes": {
-              "namespace": ".*"
+              "kind": ".*"
             }
           }
         ],
@@ -465,118 +667,34 @@ data:
             "controlID": "^C-0016$"
           },
           {
-            "controlID": "^C-0017$"
-          },
-          {
             "controlID": "^C-0055$"
           },
           {
             "controlID": "^C-0013$"
           }
-        ]
+        ],
+        "reason": "Kyverno mutate policy \"add-security-context\" injects these controls (seccompProfile, allowPrivilegeEscalation: false, drop ALL capabilities, runAsNonRoot) at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. readOnlyRootFilesystem (C-0017) is handled separately — set in-spec per workload."
       },
       {
-        "name": "upstream-chart-defaults",
+        "name": "readonly-rootfs-pending",
         "policyType": "postureExceptionPolicy",
         "actions": [
           "alertOnly"
         ],
-        "reason": "Behaviours defined by upstream charts or underlying infrastructure (etcd encryption, base-image UIDs, operator hostPath).",
         "resources": [
           {
             "designatorType": "Attributes",
             "attributes": {
-              "namespace": ".*"
+              "namespace": "^(opencost|wedding-app)$"
             }
           }
         ],
         "posturePolicies": [
           {
-            "controlID": "^C-0210$"
-          },
-          {
-            "controlID": "^C-0258$"
-          },
-          {
-            "controlID": "^C-0259$"
-          },
-          {
-            "controlID": "^C-0266$"
-          }
-        ]
-      },
-      {
-        "name": "vpa-managed-resources",
-        "policyType": "postureExceptionPolicy",
-        "actions": [
-          "alertOnly"
-        ],
-        "reason": "VPA manages requests/limits at pod admission; Deployment specs omit static values; Kubescape scans the stored spec.",
-        "resources": [
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "namespace": ".*"
-            }
+            "controlID": "^C-0017$"
           }
         ],
-        "posturePolicies": [
-          {
-            "controlID": "^C-0268$"
-          },
-          {
-            "controlID": "^C-0269$"
-          },
-          {
-            "controlID": "^C-0270$"
-          },
-          {
-            "controlID": "^C-0271$"
-          }
-        ]
-      },
-      {
-        "name": "wildcard-rbac-by-design",
-        "policyType": "postureExceptionPolicy",
-        "actions": [
-          "alertOnly"
-        ],
-        "reason": "Flux GitOps controllers and Velero legitimately require cluster-admin/wildcard RBAC by design; matched by kind+name so C-0187 still catches new grants.",
-        "resources": [
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^ClusterRoleBinding$",
-              "name": "^cluster-reconciler-flux-system$"
-            }
-          },
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^ClusterRoleBinding$",
-              "name": "^flux-operator$"
-            }
-          },
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^ClusterRoleBinding$",
-              "name": "^velero-server$"
-            }
-          },
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^Role$",
-              "name": "^velero-server$"
-            }
-          }
-        ],
-        "posturePolicies": [
-          {
-            "controlID": "^C-0187$"
-          }
-        ]
+        "reason": "opencost-UI (nginx) rewrites its baked /var/www assets in place at boot so it cannot run a read-only root (upstream opencost/opencost#2655); wedding-app's container securityContext lives in its own OCI artifact and is hardened in a follow-up app release. Every other non-privileged workload sets readOnlyRootFilesystem in-spec, so C-0017 genuinely passes for them."
       },
       {
         "name": "secret-reader-rbac",
@@ -584,7 +702,6 @@ data:
         "actions": [
           "alertOnly"
         ],
-        "reason": "Controllers, operators and databases that read Secrets by design; matched by RBAC object (Role/ClusterRole, or binding for cluster-admin holders) so a new secret-reader still trips C-0015. Unused tenant edit SAs, crossview wildcard read, and the cluster-admin/crossplane admin groups are intentionally left flagged.",
         "resources": [
           {
             "designatorType": "Attributes",
@@ -1046,6 +1163,146 @@ data:
           {
             "controlID": "^C-0015$"
           }
-        ]
+        ],
+        "reason": "Controllers, operators and databases that read Kubernetes Secrets by design (cert-manager, External Secrets, CloudNativePG + Barman backups, Crossplane and its providers, Kyverno, Flux/tofu, KEDA, Longhorn, Cilium, the Kubescape operator, the built-in kube-controller-manager controllers, and the tenant databases). Matched by the specific RBAC object (Role/ClusterRole, or the binding for cluster-admin holders) so a new/accidental secret-reader elsewhere still trips C-0015. Over-privileged or admin identities (unused tenant `edit` SAs, crossview's wildcard read, the cluster-admin / crossplane admin groups) are intentionally left flagged."
+      },
+      {
+        "name": "service-account-tokens",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "namespace": "^(kube-system|kube-public|kube-node-lease|flux-system|kyverno|cert-manager|cnpg-system|velero|keda|observability|kubescape|vertical-pod-autoscaler|kubevirt|cdi|longhorn-system|kubelet-serving-cert-approver|external-dns|reloader|opencost|dex|fleetdm|homepage|headlamp|oauth2-proxy|external-secrets|crossplane-system|ksail-operator|flagger-system|crossview)$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0261$"
+          },
+          {
+            "controlID": "^C-0207$"
+          },
+          {
+            "controlID": "^C-0012$"
+          },
+          {
+            "controlID": "^C-0255$"
+          },
+          {
+            "controlID": "^C-0034$"
+          },
+          {
+            "controlID": "^C-0190$"
+          }
+        ],
+        "reason": "Infrastructure controllers and platform middleware need Kubernetes API access via SA tokens. This includes GitOps controllers, policy engines, certificate managers, autoscalers, monitoring, cluster dashboards (headlamp), service discovery (homepage), device management (fleetdm), identity providers (dex), auth proxies (oauth2-proxy), and config watchers (reloader). The platform uses RBAC to restrict what each SA can do."
+      },
+      {
+        "name": "upstream-chart-defaults",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": ".*"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0210$"
+          },
+          {
+            "controlID": "^C-0258$"
+          },
+          {
+            "controlID": "^C-0259$"
+          },
+          {
+            "controlID": "^C-0266$"
+          }
+        ],
+        "reason": "These controls flag behaviors defined by upstream Helm charts or the underlying infrastructure (Talos etcd encryption, container base image UIDs, hostPath usage by operators). Fixing them requires forking charts or changing infrastructure-level configuration."
+      },
+      {
+        "name": "vpa-managed-resources",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": ".*"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0268$"
+          },
+          {
+            "controlID": "^C-0269$"
+          },
+          {
+            "controlID": "^C-0270$"
+          },
+          {
+            "controlID": "^C-0271$"
+          }
+        ],
+        "reason": "VPA manages resource requests and limits at pod admission time. Deployment specs intentionally omit static values to allow VPA right-sizing. Kubescape scans the stored Deployment spec, not the mutated pod spec."
+      },
+      {
+        "name": "wildcard-rbac-by-design",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cluster-reconciler-flux-system$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^flux-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^velero-server$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^velero-server$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0187$"
+          }
+        ],
+        "reason": "Flux GitOps controllers and Velero legitimately require cluster-admin / wildcard RBAC by design: arbitrary-manifest reconciliation (Flux) and cluster-wide backup/restore (Velero). The specific bindings are matched by kind+name so C-0187 still catches any new wildcard or cluster-admin grant."
       }
     ]
