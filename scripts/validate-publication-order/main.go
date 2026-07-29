@@ -243,13 +243,8 @@ func assignmentsTo(run, name string) []assignment {
 
 	var out []assignment
 
-	syntax.Walk(file, func(node syntax.Node) bool {
-		call, isCall := node.(*syntax.CallExpr)
-		if !isCall {
-			return true
-		}
-
-		for _, assign := range call.Assigns {
+	collect := func(assigns []*syntax.Assign) {
+		for _, assign := range assigns {
 			if assign.Name == nil || assign.Value == nil || assign.Name.Value != name {
 				continue
 			}
@@ -258,6 +253,20 @@ func assignmentsTo(run, name string) []assignment {
 				text:        sourceOf(run, assign.Value.Pos(), assign.Value.End()),
 				fromCommand: valueFromCommand(assign.Value),
 			})
+		}
+	}
+
+	syntax.Walk(file, func(node syntax.Node) bool {
+		switch typed := node.(type) {
+		case *syntax.CallExpr:
+			collect(typed.Assigns)
+		// `export`, `declare`, `local`, `readonly` and `typeset` assign too, and the parser models
+		// them as a DeclClause rather than a CallExpr. Reading only CallExpr made
+		// `declare -g DIGEST="sha256:…"` invisible, so a constant could silently override a correct
+		// resolution — and an action that legitimately exported REF would have been rejected for
+		// having no assignment at all.
+		case *syntax.DeclClause:
+			collect(typed.Args)
 		}
 
 		return true
@@ -278,15 +287,24 @@ func sourceOf(src string, from, to syntax.Pos) string {
 	return src[start:end]
 }
 
-// valueFromCommand reports whether any part of a value is a command substitution.
+// valueFromCommand reports whether a value contains a command substitution, at any nesting depth.
+//
+// Depth matters because `DIGEST="$(…)"` wraps the substitution in a *syntax.DblQuoted, so scanning
+// only the word's top-level parts sees a plain quoted string. Quoting a command substitution is
+// BETTER practice than leaving it bare, so a shallow scan rejected the more careful spelling of
+// correct code — the exact way a guard earns itself a suppression.
 func valueFromCommand(word *syntax.Word) bool {
-	for _, part := range word.Parts {
-		if _, ok := part.(*syntax.CmdSubst); ok {
-			return true
-		}
-	}
+	found := false
 
-	return false
+	syntax.Walk(word, func(node syntax.Node) bool {
+		if _, isSubst := node.(*syntax.CmdSubst); isSubst {
+			found = true
+		}
+
+		return !found
+	})
+
+	return found
 }
 
 // viaKsail accepts the authenticated wrapper the composite publishes through. `workload push` is a

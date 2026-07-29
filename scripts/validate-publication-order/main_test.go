@@ -857,3 +857,47 @@ func TestAllowsAnUnrelatedShellFunction(t *testing.T) {
 		t.Fatalf("an unrelated helper function is ordinary scripting; got: %v", err)
 	}
 }
+
+// TestAllowsAQuotedCommandSubstitution is an over-tightening control for the provenance check.
+// `DIGEST="$(…)"` wraps the substitution in a DblQuoted node, and quoting it is BETTER practice than
+// leaving it bare — so scanning only the word's top-level parts rejected the more careful spelling of
+// correct code. A guard that fails a correct refactor gets suppressed rather than fixed.
+func TestAllowsAQuotedCommandSubstitution(t *testing.T) {
+	quoted := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        DIGEST="$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')"`, 1)
+	mustChange(t, validAction, quoted)
+
+	if err := validate([]byte(quoted)); err != nil {
+		t.Fatalf("quoting a command substitution is good practice, not a defect; got: %v", err)
+	}
+}
+
+// TestRejectsAConstantDigestViaDeclare covers the declaration builtins. `export`, `declare`, `local`,
+// `readonly` and `typeset` all assign, but the parser models them as a DeclClause rather than a
+// CallExpr — so reading only CallExpr made a constant override invisible, and it silently won over a
+// correct resolution earlier in the same script.
+func TestRejectsAConstantDigestViaDeclare(t *testing.T) {
+	overridden := strings.Replace(validAction,
+		`        REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"`,
+		`        declare -g DIGEST="sha256:1111111111111111111111111111111111111111111111111111111111111111"`+"\n"+
+			`        REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"`, 1)
+	mustChange(t, validAction, overridden)
+
+	if err := validate([]byte(overridden)); err == nil {
+		t.Fatal("a `declare -g` constant overrides the resolved digest and decides what is signed")
+	}
+}
+
+// TestAllowsExportingTheResolvedDigest is that rule's control: a declaration builtin is not itself
+// suspicious. Exporting a correctly resolved value is ordinary scripting and must still pass.
+func TestAllowsExportingTheResolvedDigest(t *testing.T) {
+	exported := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        export DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`, 1)
+	mustChange(t, validAction, exported)
+
+	if err := validate([]byte(exported)); err != nil {
+		t.Fatalf("exporting a correctly resolved digest is ordinary scripting; got: %v", err)
+	}
+}
