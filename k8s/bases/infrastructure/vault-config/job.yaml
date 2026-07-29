@@ -1059,7 +1059,7 @@ spec:
                     "policies": ["vault-admin"],
                     "ttl": "8h"
                   }
-                  OIDC_ROLE_JSON
+              OIDC_ROLE_JSON
 
                   # Make OIDC the default auth method on the login page
                   bao auth tune -listing-visibility=unauth oidc/

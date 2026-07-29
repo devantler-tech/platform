@@ -25,6 +25,18 @@ grep -Fq \
 rendered="$(kubectl kustomize "${vault_config_dir}")" ||
   fail 'the OpenBao vault-config base must render'
 
+config_script="$(
+  yq eval -r '
+    select(.kind == "Job" and .metadata.name == "vault-config") |
+    .spec.template.spec.containers[] |
+    select(.name == "vault-config") |
+    .command[-1]
+  ' - <<<"${rendered}"
+)" || fail 'the rendered vault-config shell script must be extractable'
+
+sh -n <<<"${config_script}" ||
+  fail 'the rendered vault-config shell script must parse'
+
 role_payload="$(
   awk '
     /bao write auth\/oidc\/role\/admin - <<.*OIDC_ROLE_JSON/ {
@@ -43,7 +55,7 @@ role_payload="$(
         exit 1
       }
     }
-  ' <<<"${rendered}"
+  ' <<<"${config_script}"
 )" || fail 'the OpenBao admin role must be written as one JSON stdin payload'
 
 jq -e '
