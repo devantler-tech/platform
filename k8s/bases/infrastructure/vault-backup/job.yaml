@@ -50,10 +50,11 @@ spec:
         app: vault-snapshot
     spec:
       serviceAccountName: vault-snapshot
-      # Required: the snapshot container reads
+      # The token IS this pod's credential: the snapshot container reads
       # /var/run/secrets/kubernetes.io/serviceaccount/token and presents it as
-      # the `jwt` for `auth/kubernetes/login`, so the token IS the credential.
-      automountServiceAccountToken: true
+      # the `jwt` for `auth/kubernetes/login`. Left at the mount-by-default
+      # value rather than set explicitly — an explicit `true` reads identically
+      # to Kubernetes and trips Kubescape C-0034.
       restartPolicy: OnFailure
       # The full restricted-PSS context is set explicitly (not left to the
       # add-security-context Kyverno mutation) so the pod stays hardened

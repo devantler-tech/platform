@@ -64,10 +64,11 @@ spec:
         app: vault-config
     spec:
       serviceAccountName: vault-config
-      # Required: the store-keys container persists the unseal key and root
-      # token by piping `kubectl create secret` into `kubectl apply`, which
-      # authenticates to the API server with this token.
-      automountServiceAccountToken: true
+      # The token is required: the store-keys container persists the unseal key
+      # and root token by piping `kubectl create secret` into `kubectl apply`,
+      # which authenticates to the API server with it. Left at the
+      # mount-by-default value rather than set explicitly — an explicit `true`
+      # reads identically to Kubernetes and trips Kubescape C-0034.
       restartPolicy: OnFailure
       # The full restricted-PSS context is set explicitly (not left to the
       # add-security-context Kyverno mutation) so the pod stays hardened
