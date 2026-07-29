@@ -25,8 +25,14 @@ runs:
         cosign sign --yes --recursive "${REF}"
     - name: Attest SBOM
       uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26
+      with:
+        subject-digest: ${{ steps.cosign-sign.outputs.digest }}
+        push-to-registry: "true"
     - name: Attest provenance
       uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+      with:
+        subject-digest: ${{ steps.cosign-sign.outputs.digest }}
+        push-to-registry: "true"
     - name: Reconcile
       run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
 `
@@ -51,9 +57,15 @@ const (
 `
 	sbomStep = `    - name: Attest SBOM
       uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26
+      with:
+        subject-digest: ${{ steps.cosign-sign.outputs.digest }}
+        push-to-registry: "true"
 `
 	provenanceStep = `    - name: Attest provenance
       uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32
+      with:
+        subject-digest: ${{ steps.cosign-sign.outputs.digest }}
+        push-to-registry: "true"
 `
 )
 
@@ -1071,5 +1083,156 @@ func TestRejectsAResolverInAnUNTAKENBranch(t *testing.T) {
 
 	if err := validate([]byte(deadBranch)); err == nil {
 		t.Fatal("a resolver in an untaken branch never runs; the constant beside it is what gets signed")
+	}
+}
+
+// The tests below cover a sixth axis and three refinements of earlier ones, all found by review at
+// `fa710581`. Each names the property that breaks, because each was a GREEN result over a deploy
+// that published nothing — the shape this guard exists to make impossible.
+
+const signCall = `        cosign sign --yes --recursive "${REF}"`
+
+// TestRejectsQuotedSetPlusE covers WORD INTERPRETATION: bash removes quotes before reading a word,
+// so `set '+e'` disables errexit exactly as `set +e` does. Comparing the source form left errexit
+// tracked as enabled, and a cosign failure could then be followed by a succeeding command with the
+// step still green.
+func TestRejectsQuotedSetPlusE(t *testing.T) {
+	broken := strings.Replace(validAction, signCall, "        set '+e'\n"+signCall, 1)
+	mustChange(t, validAction, broken)
+
+	if err := validate([]byte(broken)); err == nil {
+		t.Fatal("expected a quoted `set '+e'` to disable failure propagation and be rejected")
+	}
+}
+
+// TestAllowsQuotedSetMinusE is the over-tightening control for the test above: quote removal has to
+// work in BOTH directions, or an ordinary `set '-e'` would start failing.
+func TestAllowsQuotedSetMinusE(t *testing.T) {
+	fixture := strings.Replace(validAction, signCall, "        set '-e'\n"+signCall, 1)
+	mustChange(t, validAction, fixture)
+
+	if err := validate([]byte(fixture)); err != nil {
+		t.Fatalf("a quoted `set '-e'` enables errexit and is correct code, got: %v", err)
+	}
+}
+
+// TestRejectsAnAliasShadowingARequiredCommand covers NAME RESOLUTION. Bash resolves aliases before
+// functions and PATH, so with `shopt -s expand_aliases` a textually perfect, failure-propagating,
+// top-level cosign invocation expands to `true` and signs nothing.
+func TestRejectsAnAliasShadowingARequiredCommand(t *testing.T) {
+	broken := strings.Replace(validAction, signCall,
+		"        shopt -s expand_aliases\n        alias cosign=true\n"+signCall, 1)
+	mustChange(t, validAction, broken)
+
+	if err := validate([]byte(broken)); err == nil {
+		t.Fatal("expected an alias shadowing cosign to be rejected")
+	}
+}
+
+// TestAllowsAnUnrelatedAlias is the over-tightening control: defining an alias is ordinary
+// scripting, and only one that rebinds a REQUIRED name may fail the check.
+func TestAllowsAnUnrelatedAlias(t *testing.T) {
+	fixture := strings.Replace(validAction, signCall,
+		"        alias ll='ls -l'\n"+signCall, 1)
+	mustChange(t, validAction, fixture)
+
+	if err := validate([]byte(fixture)); err != nil {
+		t.Fatalf("an unrelated alias is ordinary scripting, got: %v", err)
+	}
+}
+
+const resolverCall = `        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`
+
+// TestRejectsAResolverThatIgnoresTheTag closes the last hole in the digest-provenance axis. A single
+// direct call taking the tag as an argument still proves nothing about the OUTPUT: printf ignores
+// extra arguments when its format carries no conversion, so this returns a constant digest for an
+// older manifest, which cosign and both attestations then cover in full.
+func TestRejectsAResolverThatIgnoresTheTag(t *testing.T) {
+	broken := strings.Replace(validAction, resolverCall,
+		`        DIGEST=$(printf 'sha256:0000000000000000000000000000000000000000000000000000000000000000' "${REF_TAG}")`, 1)
+	mustChange(t, validAction, broken)
+
+	if err := validate([]byte(broken)); err == nil {
+		t.Fatal("expected a resolver whose output ignores the published tag to be rejected")
+	}
+}
+
+// TestAllowsAnotherResolverTool is the over-tightening control. The accepted set is about a
+// program's contract, not about which tool this repo currently uses; switching to crane is a
+// legitimate refactor and must not fail CI.
+func TestAllowsAnotherResolverTool(t *testing.T) {
+	fixture := strings.Replace(validAction, resolverCall,
+		`        DIGEST=$(crane digest "${REF_TAG}")`, 1)
+	mustChange(t, validAction, fixture)
+
+	if err := validate([]byte(fixture)); err != nil {
+		t.Fatalf("crane is a legitimate digest resolver, got: %v", err)
+	}
+}
+
+// TestRejectsSigningWithUploadDisabled covers the SIGNING OPTION surface. `--upload=false` produces
+// the signature locally and never writes it to the registry: the command succeeds, carries the exact
+// required reference, and leaves the artifact unsigned.
+func TestRejectsSigningWithUploadDisabled(t *testing.T) {
+	broken := strings.Replace(validAction, signCall,
+		`        cosign sign --yes --recursive --upload=false "${REF}"`, 1)
+	mustChange(t, validAction, broken)
+
+	if err := validate([]byte(broken)); err == nil {
+		t.Fatal("expected `cosign sign --upload=false` to be rejected: it publishes no signature")
+	}
+}
+
+// TestRejectsAnAttestationOfAnotherDigest covers the ATTESTATION SUBJECT. The action reference says
+// only which program runs; subject-digest is free, so a step can keep its position, its pinned
+// `uses:` and its green result while attesting an older artifact.
+func TestRejectsAnAttestationOfAnotherDigest(t *testing.T) {
+	broken := strings.Replace(validAction,
+		"        subject-digest: ${{ steps.cosign-sign.outputs.digest }}",
+		"        subject-digest: sha256:0000000000000000000000000000000000000000000000000000000000000000", 1)
+	mustChange(t, validAction, broken)
+
+	if err := validate([]byte(broken)); err == nil {
+		t.Fatal("expected an attestation of a digest this run did not resolve to be rejected")
+	}
+}
+
+// TestRejectsAnAttestationThatIsNeverPushed is the same axis from the other side: evidence that is
+// generated but not published leaves the registry with nothing attached, while the step succeeds.
+func TestRejectsAnAttestationThatIsNeverPushed(t *testing.T) {
+	broken := strings.Replace(validAction,
+		`        push-to-registry: "true"`, `        push-to-registry: "false"`, 1)
+	mustChange(t, validAction, broken)
+
+	if err := validate([]byte(broken)); err == nil {
+		t.Fatal("expected an attestation that is never pushed to the registry to be rejected")
+	}
+}
+
+// TestRejectsAReleaseThatRunsAfterFailure covers FAILURE COUPLING, which every ordering guarantee
+// here silently assumes. A step's `if:` is implicitly `success() && …` unless it calls a status
+// check function; `always()` removes that, so the release runs precisely when the evidence failed.
+func TestRejectsAReleaseThatRunsAfterFailure(t *testing.T) {
+	broken := strings.Replace(validAction, reconcileStep,
+		"    - name: Reconcile\n      if: always()\n"+
+			"      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile\n", 1)
+	mustChange(t, validAction, broken)
+
+	if err := validate([]byte(broken)); err == nil {
+		t.Fatal("expected a release conditioned with always() to be rejected")
+	}
+}
+
+// TestAllowsANonStatusCheckReleaseCondition is the over-tightening control. An ordinary condition
+// keeps the implicit success() and therefore keeps the coupling, so gating the release on a branch
+// or an input stays legal.
+func TestAllowsANonStatusCheckReleaseCondition(t *testing.T) {
+	fixture := strings.Replace(validAction, reconcileStep,
+		"    - name: Reconcile\n      if: github.ref == 'refs/heads/main'\n"+
+			"      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile\n", 1)
+	mustChange(t, validAction, fixture)
+
+	if err := validate([]byte(fixture)); err != nil {
+		t.Fatalf("an ordinary release condition keeps the implicit success(), got: %v", err)
 	}
 }

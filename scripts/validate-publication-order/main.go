@@ -47,6 +47,10 @@ type step struct {
 	// If is read because ordering is positional: a step keeps its position while carrying a
 	// condition that never fires, so the sequence can be satisfied by steps that do not run.
 	If string `yaml:"if"`
+	// With carries an action's inputs, which is where an attestation says WHAT it attests. Position
+	// and action reference together still leave the subject free, and an attestation of the wrong
+	// subject is evidence that looks complete and covers nothing this run published.
+	With map[string]string `yaml:"with"`
 }
 
 type action struct {
@@ -64,6 +68,11 @@ type marker struct {
 	label string
 	// match reports whether a step is this one.
 	match func(step) bool
+	// hint replaces the generic "why did my step stop matching" guidance when this marker needs
+	// different advice. The default text is about shell commands, which is useless for a step that
+	// runs no shell: an attestation stops matching because of its INPUTS, and being told to check
+	// for `set +e` sends the reader looking in the wrong place entirely.
+	hint string
 }
 
 // executedCommand is one command the shell will actually run, reduced to what the markers ask
@@ -84,6 +93,49 @@ type executedCommand struct {
 	// words is argv as written in the source, quoting included, so an argument can be compared
 	// against the exact form the contract requires (`"${REF}"`) rather than against its expansion.
 	words []string
+	// lits is argv after QUOTE REMOVAL, for the questions that are about what bash will do rather
+	// than about how the contract is spelled. The two differ, and reading the source form for a
+	// shell decision is a bypass: `set '+e'` disables errexit, because bash strips the quotes before
+	// interpreting the word, while the source form `'+e'` matches no flag pattern at all.
+	//
+	// A word whose value is not statically known — it expands a parameter or runs a substitution —
+	// has no entry here, which is what litOK records. Callers must fail closed on that rather than
+	// silently comparing against an empty string.
+	lits  []string
+	litOK []bool
+}
+
+// literalOf returns a word's value after quote removal, and whether that value is static.
+//
+// Single quotes, double quotes and backslash escapes all disappear before bash interprets a word, so
+// `+e`, `'+e'`, `"+e"` and `\+e` are the same argument. Anything whose value depends on the
+// environment — a parameter expansion, a command substitution, arithmetic — is NOT static, and is
+// reported as such so a caller can refuse to guess.
+func literalOf(w *syntax.Word) (string, bool) {
+	var sb strings.Builder
+
+	for _, part := range w.Parts {
+		switch p := part.(type) {
+		case *syntax.SglQuoted:
+			sb.WriteString(p.Value)
+		case *syntax.Lit:
+			// A backslash escape survives into Lit.Value; bash removes it.
+			sb.WriteString(strings.ReplaceAll(p.Value, "\\", ""))
+		case *syntax.DblQuoted:
+			for _, inner := range p.Parts {
+				lit, isLit := inner.(*syntax.Lit)
+				if !isLit {
+					return "", false
+				}
+
+				sb.WriteString(lit.Value)
+			}
+		default:
+			return "", false
+		}
+	}
+
+	return sb.String(), true
 }
 
 // assignment is one variable assignment, kept with enough provenance to tell a resolved value from a
@@ -108,7 +160,7 @@ func parseExecuted(run string, errexit bool) []executedCommand {
 	}
 
 	out := make([]executedCommand, 0, len(file.Stmts))
-	shadowed := declaredFunctions(file)
+	shadowed := declaredNames(file)
 
 	for _, stmt := range file.Stmts {
 		call, isCall := stmt.Cmd.(*syntax.CallExpr)
@@ -127,7 +179,7 @@ func parseExecuted(run string, errexit bool) []executedCommand {
 		// `set` changes how the shell treats a later failure, so it has to be tracked as state
 		// rather than matched as a shape. Applied before the errexit test so `set -e` enables
 		// itself, which is what makes an explicit re-enable after `set +e` work.
-		if toggled, ok := errexitToggle(cmd.words); ok {
+		if toggled, ok := errexitToggle(cmd); ok {
 			errexit = toggled
 
 			continue
@@ -141,14 +193,63 @@ func parseExecuted(run string, errexit bool) []executedCommand {
 		}
 
 		// ...and name resolution says the words actually reach the program they name. Bash looks up
-		// functions before PATH, so `cosign() { true; }` turns the required invocation into a no-op
-		// that is otherwise indistinguishable from the real thing.
-		if len(cmd.words) > 0 && shadowed[cmd.words[0]] {
+		// aliases, then functions, before PATH, so either `cosign() { true; }` or
+		// `alias cosign=true` turns the required invocation into a no-op that is otherwise
+		// indistinguishable from the real thing.
+		//
+		// A command whose executable is not statically known (`"${SIGNER}" sign …`) cannot be proved
+		// to reach the real program either, so it does not count as one.
+		exec, known := cmd.name()
+		if !known || shadowed[exec] {
 			continue
 		}
 
 		out = append(out, cmd)
 	}
+
+	return out
+}
+
+// declaredNames returns every name the script rebinds ahead of PATH — as a function or as an alias.
+//
+// Bash resolves an alias first, a function next, and only then searches PATH, so both rebindings
+// have the same consequence for this guard: the words of a required operation stop reaching the
+// program they name. `alias cosign=true` combined with `shopt -s expand_aliases` (which a run block
+// may set, and which the parser does not apply) expands a textually perfect, failure-propagating,
+// top-level `cosign sign … "${REF}"` to `true`, producing no signature.
+//
+// Aliases expand at READ time rather than at execution time, so an alias defined and used inside the
+// same compound command does not take effect — but that distinction is not worth encoding. Treating
+// any rebinding of a required name as disqualifying is the conservative direction and matches how
+// functions are already handled: the remedy, given in the error message, is to name the wrapper
+// something else.
+func declaredNames(file *syntax.File) map[string]bool {
+	out := declaredFunctions(file)
+
+	syntax.Walk(file, func(node syntax.Node) bool {
+		call, isCall := node.(*syntax.CallExpr)
+		if !isCall || len(call.Args) < 2 {
+			return true
+		}
+
+		if name, ok := literalOf(call.Args[0]); !ok || name != "alias" {
+			return true
+		}
+
+		for _, arg := range call.Args[1:] {
+			definition, ok := literalOf(arg)
+			if !ok {
+				continue
+			}
+
+			// `alias -p` lists aliases rather than defining one; only a NAME=VALUE word binds.
+			if name, _, isBinding := strings.Cut(definition, "="); isBinding && name != "" {
+				out[name] = true
+			}
+		}
+
+		return true
+	})
 
 	return out
 }
@@ -183,22 +284,38 @@ func declaredFunctions(file *syntax.File) map[string]bool {
 //
 // Both spellings count (`set -e` / `set -o errexit`), in either direction, and a combined form such
 // as `set -euo pipefail` carries the flag among others.
-func errexitToggle(words []string) (bool, bool) {
-	if len(words) < 2 || words[0] != "set" {
+//
+// The words are read AFTER quote removal, because that is the form bash interprets. `set '+e'`,
+// `set "+e"` and `set \+e` all disable errexit exactly as `set +e` does, while their source spellings
+// match no flag pattern — so comparing source text here silently left errexit tracked as enabled and
+// accepted a required operation whose failure could no longer fail the step.
+//
+// A `set` whose flags are not statically known (`set "${OPTS}"`) yields "errexit off", the
+// conservative direction: the guard then cannot prove any later operation gates the step, and says
+// so, rather than assuming the safe case.
+func errexitToggle(cmd executedCommand) (bool, bool) {
+	exec, known := cmd.name()
+	if !known || exec != "set" || len(cmd.lits) < 2 {
 		return false, false
+	}
+
+	for i := 1; i < len(cmd.lits); i++ {
+		if !cmd.litOK[i] {
+			return false, true
+		}
 	}
 
 	state, found := false, false
 
-	for i := 1; i < len(words); i++ {
-		word := words[i]
+	for i := 1; i < len(cmd.lits); i++ {
+		word := cmd.lits[i]
 
 		switch {
 		case strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--") && strings.Contains(word, "e"):
 			state, found = true, true
 		case strings.HasPrefix(word, "+") && strings.Contains(word, "e"):
 			state, found = false, true
-		case (word == "-o" || word == "+o") && i+1 < len(words) && words[i+1] == "errexit":
+		case (word == "-o" || word == "+o") && i+1 < len(cmd.lits) && cmd.lits[i+1] == "errexit":
 			state, found = word == "-o", true
 			i++
 		}
@@ -218,13 +335,34 @@ func errexitAtStart(s step) bool {
 }
 
 func newExecutedCommand(src string, call *syntax.CallExpr) executedCommand {
-	cmd := executedCommand{words: make([]string, 0, len(call.Args))}
+	cmd := executedCommand{
+		words: make([]string, 0, len(call.Args)),
+		lits:  make([]string, 0, len(call.Args)),
+		litOK: make([]bool, 0, len(call.Args)),
+	}
 
 	for _, arg := range call.Args {
 		cmd.words = append(cmd.words, sourceOf(src, arg.Pos(), arg.End()))
+
+		lit, ok := literalOf(arg)
+		cmd.lits = append(cmd.lits, lit)
+		cmd.litOK = append(cmd.litOK, ok)
 	}
 
 	return cmd
+}
+
+// name returns the command's executable as bash resolves it, after quote removal.
+//
+// Reading the source form here would let `'cosign' sign …` — a perfectly ordinary invocation of the
+// real program — fail to match, which is the over-tightening direction of the same defect that makes
+// `set '+e'` slip through.
+func (c executedCommand) name() (string, bool) {
+	if len(c.lits) == 0 || !c.litOK[0] {
+		return "", false
+	}
+
+	return c.lits[0], true
 }
 
 // assignmentsTo returns every assignment to name anywhere in run, at any nesting depth.
@@ -368,17 +506,52 @@ func valueResolvedFrom(word *syntax.Word, name string) bool {
 // assignmentsTo finds it at any depth, so the idiomatic spelling still passes.
 func consumes(stmt *syntax.Stmt, name string) bool {
 	call, isCall := stmt.Cmd.(*syntax.CallExpr)
-	if !isCall {
+	if !isCall || len(call.Args) == 0 {
 		return false
 	}
 
-	for _, arg := range call.Args {
+	// Taking the tag as an argument does not mean the output depends on it. `printf` accepts extra
+	// arguments and ignores every one of them when the format string carries no conversion, so
+	//
+	//	DIGEST=$(printf 'sha256:<old-digest>' "${REF_TAG}")
+	//
+	// is a single direct call that reads the published tag and returns a constant — the same bypass
+	// as the pipeline and the untaken branch, in the one shape that survived narrowing the
+	// STRUCTURE. Structure alone cannot distinguish them: what separates a resolver from `printf` is
+	// what the program does, not how the call is written.
+	//
+	// So the executable is pinned to the small set whose documented contract is "resolve a reference
+	// to a digest". This is an allowlist and it is deliberately not exhaustive — a tool missing from
+	// it fails loudly with the list in the message, which is a one-line, reviewed edit. The
+	// alternative direction, rejecting known no-ops, has been tried on this predicate five times and
+	// each round found another one.
+	exec, known := literalOf(call.Args[0])
+	if !known || !digestResolvers[exec] {
+		return false
+	}
+
+	for _, arg := range call.Args[1:] {
 		if expands(arg, name) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// digestResolvers are the executables accepted as resolving a reference to a digest.
+//
+// Membership is about the program's contract, not about which one this repo happens to use: the
+// deploy runs `docker buildx imagetools inspect`, and switching to crane, skopeo, oras, regctl or
+// cosign is a legitimate refactor that must not fail CI. What is excluded is everything whose output
+// is unrelated to its arguments — `printf`, `echo`, `cat`, `true` — which is the whole bypass.
+var digestResolvers = map[string]bool{
+	"cosign": true,
+	"crane":  true,
+	"docker": true,
+	"oras":   true,
+	"regctl": true,
+	"skopeo": true,
 }
 
 // expands reports whether a word contains a parameter expansion of name.
@@ -418,12 +591,13 @@ func viaKsail(exec string) bool {
 func ksailWorkload(op string) func(step) bool {
 	return func(s step) bool {
 		for _, cmd := range parseExecuted(s.Run, errexitAtStart(s)) {
-			if len(cmd.words) == 0 || !viaKsail(cmd.words[0]) {
+			exec, known := cmd.name()
+			if !known || !viaKsail(exec) {
 				continue
 			}
 
-			for i := 1; i+1 < len(cmd.words); i++ {
-				if cmd.words[i] == "workload" && cmd.words[i+1] == op {
+			for i := 1; i+1 < len(cmd.lits); i++ {
+				if cmd.litOK[i] && cmd.lits[i] == "workload" && cmd.litOK[i+1] && cmd.lits[i+1] == op {
 					return true
 				}
 			}
@@ -438,12 +612,69 @@ func cosignSignCommands(s step) []executedCommand {
 	var out []executedCommand
 
 	for _, cmd := range parseExecuted(s.Run, errexitAtStart(s)) {
-		if len(cmd.words) >= 2 && cmd.words[0] == "cosign" && cmd.words[1] == "sign" {
+		exec, known := cmd.name()
+		if known && exec == "cosign" && len(cmd.lits) >= 2 && cmd.lits[1] == "sign" {
 			out = append(out, cmd)
 		}
 	}
 
 	return out
+}
+
+// signFlags are the options `cosign sign` may carry here, as an ALLOWLIST.
+//
+// Cosign has options that make a successful, correctly-referenced signing command publish nothing:
+// `--upload=false` generates the signature and never writes it to the registry, so the invocation
+// contains the exact required reference, exits zero, and leaves the artifact unsigned. Rejecting
+// that one flag would be a blocklist over an interface this repo does not control — the next option
+// with the same effect arrives with the next cosign release and is silently accepted.
+//
+// So the accepted set is enumerated instead: the two flags the deploy actually uses. An unfamiliar
+// flag fails with the list in the message, which is a deliberate, reviewed one-line edit here rather
+// than a silent change in what the evidence means.
+var signFlags = map[string]bool{
+	"--yes":       true,
+	"-y":          true,
+	"--recursive": true,
+	"-r":          true,
+}
+
+// unexpectedSignFlag returns the first option in the invocation that is not on the allowlist.
+//
+// The reference argument is exempt: it is required to be `"${REF}"` and is asserted separately, and
+// it is the one word here that is legitimately not statically known.
+//
+// Any OTHER word whose value is not statically known is reported, because a word that expands at run
+// time can supply an option this allowlist would otherwise reject — `cosign sign ${EXTRA} "${REF}"`
+// must not be a way around the list. A literal positional is left alone; it is not an option, and
+// cosign's own argument handling is not this guard's business.
+func unexpectedSignFlag(cmd executedCommand) (string, bool) {
+	// Skip the executable and the `sign` subcommand.
+	for i := 2; i < len(cmd.lits); i++ {
+		if cmd.words[i] == signRefArg {
+			continue
+		}
+
+		if !cmd.litOK[i] {
+			return cmd.words[i], true
+		}
+
+		word := cmd.lits[i]
+		if !strings.HasPrefix(word, "-") {
+			continue
+		}
+
+		// `--flag=value` and `--flag` are the same option.
+		if name, _, hasValue := strings.Cut(word, "="); hasValue {
+			word = name
+		}
+
+		if !signFlags[word] {
+			return word, true
+		}
+	}
+
+	return "", false
 }
 
 func runsCosignSign(s step) bool {
@@ -465,24 +696,77 @@ func usesPrefix(prefix string) func(step) bool {
 var (
 	// publish makes new bytes reachable and must come first — signing or
 	// attesting before it would cover the previous artifact.
-	publish = marker{"publish the manifests (`workload push`)", ksailWorkload("push")}
+	publish = marker{label: "publish the manifests (`workload push`)", match: ksailWorkload("push")}
 
 	// sign is named separately because its step is inspected again below, for
 	// the digest reference. Locating it by value rather than by matching its
 	// label keeps that second lookup correct when the wording changes.
-	sign = marker{"sign the published digest (`cosign sign`)", runsCosignSign}
-
-	// evidence is what must exist before production may look. Order among
-	// these is unconstrained.
-	evidence = []marker{
-		sign,
-		{"attest the SBOM (`actions/attest`)", usesPrefix("actions/attest@")},
-		{"attest build provenance (`actions/attest-build-provenance`)", usesPrefix("actions/attest-build-provenance@")},
-	}
+	sign = marker{label: "sign the published digest (`cosign sign`)", match: runsCosignSign}
 
 	// release is the step that advances what production can see.
-	release = marker{"tell Flux to reconcile (`workload reconcile`)", ksailWorkload("reconcile")}
+	release = marker{label: "tell Flux to reconcile (`workload reconcile`)", match: ksailWorkload("reconcile")}
 )
+
+// evidenceMarkers is what must exist before production may look. Order among these is unconstrained.
+//
+// The attestation markers are built from the signing step's id rather than declared as constants,
+// because what makes an attestation evidence is that its subject is the digest THIS run resolved and
+// signed. Pinning the subject to a literal would break the moment the step is renamed; binding it to
+// the signing step's output keeps the two moving together.
+func evidenceMarkers(signStepID string) []marker {
+	coversSubject := attestsSignedDigest(signStepID)
+
+	attests := func(label, prefix string) marker {
+		return marker{
+			label: label,
+			match: func(s step) bool { return usesPrefix(prefix)(s) && coversSubject(s) },
+			hint: fmt.Sprintf(
+				"This step is matched on its action reference AND on what it attests, because the"+
+					" reference alone does not say which artifact the evidence covers. Check that it"+
+					" still uses `%s…`, that `subject-digest` is `${{ steps.%s.outputs.digest }}`"+
+					" (the digest this run resolved and signed — a literal or an older digest"+
+					" produces real evidence about the wrong artifact), and that"+
+					" `push-to-registry` is `true`, without which the attestation is generated but"+
+					" never reaches the registry",
+				prefix, signStepID),
+		}
+	}
+
+	return []marker{
+		sign,
+		attests("attest the SBOM (`actions/attest`)", "actions/attest@"),
+		attests(
+			"attest build provenance (`actions/attest-build-provenance`)",
+			"actions/attest-build-provenance@",
+		),
+	}
+}
+
+// attestsSignedDigest reports whether an attestation step covers the digest this run resolved and
+// publishes the result where a consumer can find it.
+//
+// The action reference alone says only which program runs. `subject-digest` is a free input, so an
+// attestation step can keep its position, its pinned `uses:`, and its green result while covering an
+// OLDER digest — evidence that is genuine, verifiable, and about the wrong artifact. That is the
+// same failure the DIGEST provenance check exists to prevent, one layer up.
+//
+// `push-to-registry` matters for the same reason `--upload` does on the signature: an attestation
+// that is generated but never pushed leaves the registry with no evidence attached, while the step
+// succeeds.
+//
+// The subject must be bound to the signing step's OUTPUT rather than to any particular text, so
+// renaming the step is a legal refactor as long as the binding follows it.
+func attestsSignedDigest(signStepID string) func(step) bool {
+	wantDigest := fmt.Sprintf("${{ steps.%s.outputs.digest }}", signStepID)
+
+	return func(s step) bool {
+		if strings.TrimSpace(s.With["subject-digest"]) != wantDigest {
+			return false
+		}
+
+		return strings.TrimSpace(s.With["push-to-registry"]) == "true"
+	}
+}
 
 // digestRef is the form the signing step must use. Signing the mutable tag
 // instead would let a concurrent deploy move it between resolve and sign, so
@@ -629,6 +913,50 @@ func mustNotSkipIndependently(steps []step, m marker, idx []int, releaseIdx []in
 	return nil
 }
 
+// statusChecks are the GitHub expression functions that decouple a step from earlier failures.
+//
+// A step's `if:` is implicitly `success() && <expr>` — UNLESS the expression itself calls a status
+// check function, which replaces that default. So `if: github.ref == 'refs/heads/main'` still
+// requires every earlier step to have succeeded, while `if: always()` does not, and neither does
+// `if: !cancelled()`.
+var statusChecks = []string{"always(", "failure(", "cancelled("}
+
+// mustNotReleaseAfterFailure rejects a release whose condition survives a failed evidence step.
+//
+// Every ordering guarantee in this file assumes that a failing signature or attestation stops the
+// deploy before reconciliation. GitHub provides that for free — but only while the release step
+// keeps its implicit `success()`. Add `if: always()` and the sequence still reads correctly, every
+// evidence step still precedes the release, and production is released precisely when the evidence
+// FAILED, which is the one case all of this exists to prevent.
+//
+// The condition is rejected outright rather than compared against the evidence steps' conditions:
+// matching conditions couple the steps' SKIPPING, not their success, so evidence and release both
+// running under `always()` is equally broken.
+func mustNotReleaseAfterFailure(steps []step, releaseIdx []int) error {
+	for _, at := range releaseIdx {
+		condition := strings.TrimSpace(steps[at].If)
+
+		for _, check := range statusChecks {
+			if !strings.Contains(strings.ReplaceAll(condition, " ", ""), check) {
+				continue
+			}
+
+			return fmt.Errorf(
+				"the step that must %s carries `if: %s` at position %d, which calls a status check"+
+					" function and so replaces the implicit `success()` that couples it to the"+
+					" evidence above it.\n"+
+					"GitHub skips the remaining evidence steps when signing or attestation fails, but"+
+					" a release conditioned this way still runs — releasing production at exactly the"+
+					" moment the evidence is known to be missing.\n"+
+					"Gate the release on success instead: drop the condition, or express it without"+
+					" always()/failure()/cancelled()",
+				release.label, condition, at+1)
+		}
+	}
+
+	return nil
+}
+
 func validate(source []byte) error {
 	var parsed action
 	if err := yaml.Unmarshal(source, &parsed); err != nil {
@@ -643,6 +971,10 @@ func validate(source []byte) error {
 	locate := func(m marker) ([]int, error) {
 		at := indicesOf(steps, m)
 		if len(at) == 0 {
+			if m.hint != "" {
+				return nil, fmt.Errorf("no step appears to %s.\n%s", m.label, m.hint)
+			}
+
 			return nil, fmt.Errorf(
 				"no step appears to %s.\n"+
 					"This check follows what a step does rather than what it is called, so it also reports"+
@@ -688,6 +1020,20 @@ func validate(source []byte) error {
 		return err
 	}
 
+	// Every ordering comparison below assumes a failed evidence step stops the deploy. That is
+	// GitHub's default and a condition on the release can remove it, so it is established first —
+	// otherwise the whole sequence can hold while production is released from a failed run.
+	if err := mustNotReleaseAfterFailure(steps, releaseAt); err != nil {
+		return err
+	}
+
+	signAt, err := locate(sign)
+	if err != nil {
+		return err
+	}
+
+	evidence := evidenceMarkers(steps[signAt[0]].ID)
+
 	for _, m := range evidence {
 		at, err := locate(m)
 		if err != nil {
@@ -725,12 +1071,6 @@ func validate(source []byte) error {
 		}
 	}
 
-	// sign is in evidence, so the loop above has already proved it resolves.
-	signAt, err := locate(sign)
-	if err != nil {
-		return err
-	}
-
 	for _, at := range signAt {
 		if !assignsResolvedRef(steps[at].Run) {
 			return fmt.Errorf(
@@ -761,6 +1101,26 @@ func validate(source []byte) error {
 					"the assignment is dead and the signature would cover whatever the mutable tag "+
 					"resolves to at sign time",
 				digestRef, signRefArg)
+		}
+
+		// Checked after the reference contract above, deliberately. Until `"${REF}"` is known to be
+		// present, a stray expansion is more likely to be a wrong reference than a smuggled option,
+		// and reporting it as an unrecognised OPTION would name the wrong defect.
+		for _, cmd := range cosignSignCommands(steps[at]) {
+			flag, unexpected := unexpectedSignFlag(cmd)
+			if !unexpected {
+				continue
+			}
+
+			return fmt.Errorf(
+				"`cosign sign` carries the unrecognised option %q.\n"+
+					"Options are allow-listed here because some of them make a successful signing "+
+					"command publish nothing — `--upload=false` produces the signature and never "+
+					"writes it to the registry, leaving the artifact unsigned while this step and "+
+					"every ordering check pass.\n"+
+					"Accepted today: --yes/-y, --recursive/-r. If this option is intended, add it to "+
+					"signFlags in %s with a note on why it does not affect what reaches the registry",
+				flag, "scripts/validate-publication-order/main.go")
 		}
 	}
 
