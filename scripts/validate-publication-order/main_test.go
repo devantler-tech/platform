@@ -697,3 +697,110 @@ func TestRejectsAnUnparseableRunBlock(t *testing.T) {
 		t.Fatal("an unparseable run block must not satisfy a required marker")
 	}
 }
+
+// The tests below cover CodeRabbit's round-6 P1 and its siblings. They are a different AXIS from
+// everything above: the grammar says the command runs, and it does — but `set +e` stops its failure
+// from reaching the step's exit status, so cosign can fail while the step succeeds and the deploy
+// releases unsigned. Syntax alone cannot see that; the shell's failure MODE has to be tracked too.
+
+// TestRejectsSigningAfterErrexitIsDisabled is the reported case.
+func TestRejectsSigningAfterErrexitIsDisabled(t *testing.T) {
+	disabled := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        set +e\n"+
+			`        cosign sign --yes --recursive "${REF}"`+"\n"+
+			`        echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"`, 1)
+	mustChange(t, validAction, disabled)
+
+	if err := validate([]byte(disabled)); err == nil {
+		t.Fatal("under `set +e` a failing cosign does not fail the step")
+	}
+}
+
+// TestRejectsSigningAfterErrexitIsDisabledTheLongWay covers `set +o errexit`, the same instruction
+// spelled differently. Matching only `+e` would be a blocklist with one entry.
+func TestRejectsSigningAfterErrexitIsDisabledTheLongWay(t *testing.T) {
+	disabled := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        set +o errexit\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, disabled)
+
+	if err := validate([]byte(disabled)); err == nil {
+		t.Fatal("`set +o errexit` disables failure propagation exactly as `set +e` does")
+	}
+}
+
+// TestAllowsErrexitDisabledThenRestored is the negative control, and it is why this is tracked as
+// STATE rather than matched as a shape. Turning errexit off around unrelated work and back on before
+// the signing call is correct code; rejecting it would fail a legitimate action.
+func TestAllowsErrexitDisabledThenRestored(t *testing.T) {
+	restored := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        set +e\n"+
+			"        docker logout ghcr.io\n"+
+			"        set -e\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, restored)
+
+	if err := validate([]byte(restored)); err != nil {
+		t.Fatalf("errexit restored before the signing call is correct code; got: %v", err)
+	}
+}
+
+// TestAllowsTheCombinedSetFlagsForm pins that `set -euo pipefail` — what the real composite uses —
+// reads as enabling errexit. A parser that only recognised a bare `set -e` would treat the real
+// action's own hardening as unrecognised.
+func TestAllowsTheCombinedSetFlagsForm(t *testing.T) {
+	hardened := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		"        set -euo pipefail\n"+
+			`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`, 1)
+	mustChange(t, validAction, hardened)
+
+	if err := validate([]byte(hardened)); err != nil {
+		t.Fatalf("`set -euo pipefail` enables errexit; got: %v", err)
+	}
+}
+
+// TestRejectsSigningInAShellThatDoesNotPropagateFailure covers the step-level sibling of `set +e`.
+// GitHub runs `shell: bash` as `bash --noprofile --norc -eo pipefail`, but a step may name another
+// shell — and then nothing promises that a failing cosign fails the step, without a single `set` line
+// appearing anywhere in the script.
+func TestRejectsSigningInAShellThatDoesNotPropagateFailure(t *testing.T) {
+	otherShell := strings.Replace(validAction,
+		`    - name: Sign
+      id: cosign-sign
+      run: |`,
+		`    - name: Sign
+      id: cosign-sign
+      shell: sh
+      run: |`, 1)
+	mustChange(t, validAction, otherShell)
+
+	if err := validate([]byte(otherShell)); err == nil {
+		t.Fatal("a shell GitHub does not run with -e cannot be assumed to gate the step")
+	}
+}
+
+// TestAllowsAnotherShellThatEnablesErrexitItself is that rule's negative control: naming a different
+// shell is not itself the defect, failing to propagate is. A script that turns errexit on explicitly
+// gates the step regardless of how the shell was launched.
+func TestAllowsAnotherShellThatEnablesErrexitItself(t *testing.T) {
+	explicit := strings.Replace(validAction,
+		`    - name: Sign
+      id: cosign-sign
+      run: |
+        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`    - name: Sign
+      id: cosign-sign
+      shell: sh
+      run: |
+        set -e
+        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`, 1)
+	mustChange(t, validAction, explicit)
+
+	if err := validate([]byte(explicit)); err != nil {
+		t.Fatalf("an explicit `set -e` gates the step whatever the shell; got: %v", err)
+	}
+}

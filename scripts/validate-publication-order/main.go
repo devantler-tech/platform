@@ -40,6 +40,10 @@ type step struct {
 	ID   string `yaml:"id"`
 	Uses string `yaml:"uses"`
 	Run  string `yaml:"run"`
+	// Shell decides whether a failing command fails the step at all. GitHub runs `shell: bash` with
+	// `-e`; any other shell is not guaranteed to, so a required operation there cannot be assumed to
+	// gate the step. Composite actions require this field on every run step.
+	Shell string `yaml:"shell"`
 	// If is read because ordering is positional: a step keeps its position while carrying a
 	// condition that never fires, so the sequence can be satisfied by steps that do not run.
 	If string `yaml:"if"`
@@ -96,7 +100,7 @@ type assignment struct {
 //
 // A parse failure yields none, so an unparseable script can never satisfy a required marker: the
 // guard fails closed rather than falling back to matching text.
-func parseExecuted(run string) []executedCommand {
+func parseExecuted(run string, errexit bool) []executedCommand {
 	file, err := syntax.NewParser().Parse(strings.NewReader(run), "")
 	if err != nil {
 		return nil
@@ -116,10 +120,66 @@ func parseExecuted(run string) []executedCommand {
 			continue
 		}
 
-		out = append(out, newExecutedCommand(run, call))
+		cmd := newExecutedCommand(run, call)
+
+		// `set` changes how the shell treats a later failure, so it has to be tracked as state
+		// rather than matched as a shape. Applied before the errexit test so `set -e` enables
+		// itself, which is what makes an explicit re-enable after `set +e` work.
+		if toggled, ok := errexitToggle(cmd.words); ok {
+			errexit = toggled
+
+			continue
+		}
+
+		// Grammar says this command runs; errexit says its failure reaches the step status. A
+		// required operation needs both — under `set +e` cosign can fail, the next command succeed,
+		// and the step still exit zero.
+		if !errexit {
+			continue
+		}
+
+		out = append(out, cmd)
 	}
 
 	return out
+}
+
+// errexitToggle reports the new errexit state a `set` command establishes, if it establishes one.
+//
+// Both spellings count (`set -e` / `set -o errexit`), in either direction, and a combined form such
+// as `set -euo pipefail` carries the flag among others.
+func errexitToggle(words []string) (bool, bool) {
+	if len(words) < 2 || words[0] != "set" {
+		return false, false
+	}
+
+	state, found := false, false
+
+	for i := 1; i < len(words); i++ {
+		word := words[i]
+
+		switch {
+		case strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--") && strings.Contains(word, "e"):
+			state, found = true, true
+		case strings.HasPrefix(word, "+") && strings.Contains(word, "e"):
+			state, found = false, true
+		case (word == "-o" || word == "+o") && i+1 < len(words) && words[i+1] == "errexit":
+			state, found = word == "-o", true
+			i++
+		}
+	}
+
+	return state, found
+}
+
+// errexitAtStart reports whether the step begins with failure propagation on.
+//
+// GitHub runs `shell: bash` as `bash --noprofile --norc -eo pipefail`, so errexit is on before the
+// script's first line. Any other shell makes no such promise — and a step may still turn it on
+// explicitly, which the toggle tracking above picks up, so this is a starting value rather than a
+// verdict.
+func errexitAtStart(s step) bool {
+	return s.Shell == "" || s.Shell == "bash"
 }
 
 func newExecutedCommand(src string, call *syntax.CallExpr) executedCommand {
@@ -211,7 +271,7 @@ func viaKsail(exec string) bool {
 // prints it.
 func ksailWorkload(op string) func(step) bool {
 	return func(s step) bool {
-		for _, cmd := range parseExecuted(s.Run) {
+		for _, cmd := range parseExecuted(s.Run, errexitAtStart(s)) {
 			if len(cmd.words) == 0 || !viaKsail(cmd.words[0]) {
 				continue
 			}
@@ -228,10 +288,10 @@ func ksailWorkload(op string) func(step) bool {
 }
 
 // cosignSignCommands returns every executed `cosign sign` invocation in run.
-func cosignSignCommands(run string) []executedCommand {
+func cosignSignCommands(s step) []executedCommand {
 	var out []executedCommand
 
-	for _, cmd := range parseExecuted(run) {
+	for _, cmd := range parseExecuted(s.Run, errexitAtStart(s)) {
 		if len(cmd.words) >= 2 && cmd.words[0] == "cosign" && cmd.words[1] == "sign" {
 			out = append(out, cmd)
 		}
@@ -241,7 +301,7 @@ func cosignSignCommands(run string) []executedCommand {
 }
 
 func runsCosignSign(s step) bool {
-	return len(cosignSignCommands(s.Run)) > 0
+	return len(cosignSignCommands(s)) > 0
 }
 
 func usesPrefix(prefix string) func(step) bool {
@@ -322,8 +382,8 @@ const signRefArg = `"${REF}"`
 // substring test cannot tell an argument from a comment, so
 // `cosign sign --yes --recursive "${REF_TAG}" # "${REF}"` satisfied it while bash passed only the
 // mutable tag — restoring the exact tag-resolution race the check exists to prevent.
-func signsTheResolvedDigest(run string) bool {
-	signing := cosignSignCommands(run)
+func signsTheResolvedDigest(s step) bool {
+	signing := cosignSignCommands(s)
 
 	// No executed invocation at all means nothing signs, whatever the text contains.
 	if len(signing) == 0 {
@@ -532,7 +592,7 @@ func validate(source []byte) error {
 				publishedTagRef)
 		}
 
-		if !signsTheResolvedDigest(steps[at].Run) {
+		if !signsTheResolvedDigest(steps[at]) {
 			return fmt.Errorf(
 				"the signing step resolves the digest into %s but does not pass %s to `cosign sign`; "+
 					"the assignment is dead and the signature would cover whatever the mutable tag "+
