@@ -1202,3 +1202,62 @@ func TestEqualSeverityRanksAreOrderIndependent(t *testing.T) {
 			forward[0].Severity, reverse[0].Severity)
 	}
 }
+
+// A summary with no workload kind must be refused BEFORE exceptions are
+// applied: a generated cluster-wide designator uses `kind: ".*"`, which
+// full-matches the empty string, so the finding would be suppressed against an
+// identity that was never established.
+func TestPostureSummaryWithoutWorkloadIdentityIsRejected(t *testing.T) {
+	raw := `{"metadata":{"name":"api","namespace":"app",` +
+		`"labels":{"kubescape.io/workload-name":"api","kubescape.io/workload-namespace":"app"}},` +
+		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},` +
+		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":0}}}`
+
+	items := itemsOf(t, raw)
+
+	if _, err := derivePosture(items, nil); !errors.Is(err, errUnrecognisedDocument) {
+		t.Fatalf("want errUnrecognisedDocument for a summary with no workload kind, got %v", err)
+	}
+}
+
+// A document identifying as BOTH scan surfaces is not decidable. surface()
+// returns on the first key it finds, so without this a CVE summary carrying an
+// empty `controls: {}` would pass -posture and report an all-clear from the
+// empty control map.
+func TestDocumentCarryingBothSurfacesIsRejected(t *testing.T) {
+	raw := `{"metadata":{"name":"api","namespace":"app",` +
+		`"labels":{"kubescape.io/workload-kind":"Deployment","kubescape.io/workload-name":"api",` +
+		`"kubescape.io/workload-namespace":"app"}},` +
+		`"spec":{"controls":{},"vulnerabilitiesRef":{"all":{"name":"manifest-x"}},` +
+		`"severities":{"critical":0,"high":0}}}`
+
+	items := itemsOf(t, raw)
+
+	for _, want := range []surface{surfacePosture, surfaceCVE} {
+		if err := checkSurface(items, want); !errors.Is(err, errUnrecognisedDocument) {
+			t.Fatalf("want errUnrecognisedDocument for -%s, got %v", want, err)
+		}
+	}
+}
+
+// A failed control with no severity must not render as `severity=`: that is
+// malformed scanner output presented as a valid, prioritisable report.
+func TestFailedControlWithoutSeverityIsRejected(t *testing.T) {
+	items := itemsOf(t, postureDocSev("app", "Deployment", "api",
+		map[string]string{"C-0016": "failed"}, ""))
+
+	if _, err := derivePosture(items, nil); !errors.Is(err, errUnrecognisedDocument) {
+		t.Fatalf("want errUnrecognisedDocument for a failed control with no severity, got %v", err)
+	}
+}
+
+// An unknown but NONEMPTY severity stays tolerated, so a future severity name
+// does not become a hard failure.
+func TestFailedControlWithUnknownSeverityIsAccepted(t *testing.T) {
+	items := itemsOf(t, postureDocSev("app", "Deployment", "api",
+		map[string]string{"C-0016": "failed"}, "Catastrophic"))
+
+	if got := mustDerivePosture(t, items, nil); len(got) != 1 {
+		t.Fatalf("want the control reported, got %+v", got)
+	}
+}

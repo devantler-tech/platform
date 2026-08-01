@@ -35,6 +35,10 @@ var errBadExceptions = errors.New("cannot read the generated Kubescape exception
 // generator emits others for surfaces this bridge does not derive.
 const posturePolicyType = "postureExceptionPolicy"
 
+// exceptionActionAlertOnly is the only exception action this command
+// understands, and the only one the generator emits.
+const exceptionActionAlertOnly = "alertOnly"
+
 // attributesDesignator is the only resource designator type this command
 // implements; the generator emits no other today.
 const attributesDesignator = "Attributes"
@@ -127,7 +131,12 @@ func excepted(exceptions []exception, controlID string, c component) bool {
 type rawPolicy struct {
 	Name       string `json:"name"`
 	PolicyType string `json:"policyType"`
-	Resources  []struct {
+	// Actions is what the policy asks Kubescape to DO with a matched control.
+	// The generator emits exactly ["alertOnly"]; discarding the field would let
+	// an artifact declaring some other action still act as a full suppressor
+	// here — see compilePolicy, which requires it rather than assuming it.
+	Actions   []string `json:"actions"`
+	Resources []struct {
 		DesignatorType string            `json:"designatorType"`
 		Attributes     map[string]string `json:"attributes"`
 	} `json:"resources"`
@@ -196,6 +205,20 @@ func compileFullMatch(pattern string) (*regexp.Regexp, error) {
 
 func compilePolicy(p rawPolicy, path string) (exception, error) {
 	e := exception{name: p.Name}
+
+	// The action is what makes a policy an exception at all. The generator emits
+	// exactly ["alertOnly"] for every policy it writes, so anything else did not
+	// come from it — a stale, hand-edited or schema-changed artifact. Applying it
+	// anyway would suppress findings under semantics this command never checked,
+	// which is the same silent-widening direction the anchoring rules below guard.
+	//
+	// Requiring it is fail-closed and cannot fire on today's artifact.
+	if len(p.Actions) != 1 || p.Actions[0] != exceptionActionAlertOnly {
+		return exception{}, fmt.Errorf("%w: %s: policy %q declares actions %v, but this command only "+
+			"understands exactly [%q]; a policy carrying any other action would be applied as a full "+
+			"suppressor under semantics that were never validated",
+			errBadExceptions, path, p.Name, p.Actions, exceptionActionAlertOnly)
+	}
 
 	for _, pp := range p.PosturePolicies {
 		if pp.ControlID == "" {

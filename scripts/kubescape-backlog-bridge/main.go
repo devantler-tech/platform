@@ -331,6 +331,22 @@ func checkExamined(items []item) error {
 // checkSurface rejects a document handed to the wrong scan surface.
 func checkSurface(items []item, want surface) error {
 	for _, it := range items {
+		// The two surfaces are disjoint by key in genuine scanner output, but
+		// nothing upstream enforces that. surface() returns on the first key it
+		// finds, so a document carrying BOTH would be classified posture and its
+		// CVE half silently ignored — and a CVE summary that also carried an empty
+		// `controls: {}` would pass -posture, clear the wrong-surface guard, and
+		// report an all-clear from the empty control map.
+		//
+		// Refusing the ambiguity is the fail-closed reading: a document that
+		// identifies as both surfaces is malformed, not a posture document.
+		if it.Spec.Controls != nil && it.Spec.VulnerabilitiesRef != nil {
+			return fmt.Errorf("%w: %s carries both `spec.controls` and `spec.vulnerabilitiesRef`, "+
+				"so which scan surface it belongs to is not decidable; genuine Kubescape output "+
+				"carries exactly one",
+				errUnrecognisedDocument, it.component())
+		}
+
 		got, ok := it.surface()
 		if !ok {
 			return fmt.Errorf("%w: %s carries neither `spec.controls` nor `spec.vulnerabilitiesRef`",
@@ -407,6 +423,24 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 
 		comp := it.component()
 
+		// Exception designators are matched against this identity, and a
+		// generated cluster-wide designator uses `kind: ".*"`, which full-matches
+		// the EMPTY string. So a summary missing `kubescape.io/workload-kind` —
+		// malformed input, or an upstream label rename — would have its failed
+		// controls suppressed by a broad exception while its identity was never
+		// established, and the run would report clean.
+		//
+		// Establishing identity before applying any exception is the fail-closed
+		// order. Namespace is deliberately not required: a cluster-scoped object
+		// legitimately has none, and it is not what a broad designator turns on.
+		if comp.Kind == "" || comp.Name == "" {
+			return nil, fmt.Errorf("%w: a posture summary carries no workload %s "+
+				"(`kubescape.io/workload-kind` / `kubescape.io/workload-name`); exceptions are matched "+
+				"against that identity and a cluster-wide designator matches an empty value, so its "+
+				"findings could be suppressed without ever identifying the resource",
+				errUnrecognisedDocument, missingIdentityFields(comp))
+		}
+
 		for id, ctrl := range ctrls {
 			// Only failures are backlog work. The other recognised statuses are
 			// not findings, and filing them is the issue-spam failure mode.
@@ -425,6 +459,20 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 
 			if !failed {
 				continue
+			}
+
+			// Severity is a failed control's prioritisation, and it is the one
+			// field a theme is ordered and triaged by. JSON decoding turns a
+			// missing, null or empty `severity.severity` into "", which the
+			// accumulator would carry straight through to a rendered
+			// `severity=` — malformed scanner output presented as a valid
+			// report. Unknown NONEMPTY names stay tolerated, so a future
+			// severity does not become a hard failure.
+			if strings.TrimSpace(ctrl.Severity.Severity) == "" {
+				return nil, fmt.Errorf("%w: %s reports failed control %s with no severity; "+
+					"a genuine posture summary always carries one, and a theme without it "+
+					"loses the prioritisation the backlog is ordered by",
+					errUnrecognisedDocument, comp, id)
 			}
 
 			// An empty embedded ID falls back to the map key. But when BOTH are
@@ -871,4 +919,19 @@ func missingSeverityBuckets(got map[string]json.RawMessage) []string {
 	}
 
 	return missing
+}
+
+// missingIdentityFields names which identity labels a summary lacks, so the
+// error points at the field to fix rather than at the concept.
+func missingIdentityFields(c component) string {
+	var missing []string
+	if c.Kind == "" {
+		missing = append(missing, "kind")
+	}
+
+	if c.Name == "" {
+		missing = append(missing, "name")
+	}
+
+	return strings.Join(missing, " and ")
 }

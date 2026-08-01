@@ -375,3 +375,49 @@ func TestUnknownDesignatorTypeIsRejected(t *testing.T) {
 		t.Errorf("want errBadExceptions, got %v", err)
 	}
 }
+
+// A policy that does not declare the generator's action must not be applied.
+// The action is what makes it an exception; without it the loader would be
+// suppressing findings under semantics it never checked.
+func TestPolicyWithoutAlertOnlyActionIsRejected(t *testing.T) {
+	for name, actions := range map[string]string{
+		"absent":     ``,
+		"empty":      `"actions":[],`,
+		"other":      `"actions":["disable"],`,
+		"extra":      `"actions":["alertOnly","disable"],`,
+		"wrong case": `"actions":["ALERTONLY"],`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := `[{"name":"p","policyType":"postureExceptionPolicy",` + actions +
+				`"resources":[{"designatorType":"Attributes","attributes":{"kind":".*"}}],` +
+				`"posturePolicies":[{"controlID":"^C-0016$"}]}]`
+
+			path := filepath.Join(t.TempDir(), "exceptions.json")
+			writeRaw(t, path, raw)
+
+			if _, err := loadExceptions(path); !errors.Is(err, errBadExceptions) {
+				t.Fatalf("want errBadExceptions, got %v", err)
+			}
+		})
+	}
+}
+
+// The generator's own shape must keep loading, so the guard above cannot be
+// satisfied by simply refusing everything.
+func TestGeneratorActionIsAccepted(t *testing.T) {
+	raw := `[{"name":"p","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":".*"}}],` +
+		`"posturePolicies":[{"controlID":"^C-0016$"}]}]`
+
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, raw)
+
+	got, err := loadExceptions(path)
+	if err != nil {
+		t.Fatalf("generator shape must load: %v", err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("want 1 compiled policy, got %d", len(got))
+	}
+}
