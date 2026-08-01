@@ -34,6 +34,10 @@ var errBadExceptions = errors.New("cannot read the generated Kubescape exception
 // generator emits others for surfaces this bridge does not derive.
 const posturePolicyType = "postureExceptionPolicy"
 
+// attributesDesignator is the only resource designator type this command
+// implements; the generator emits no other today.
+const attributesDesignator = "Attributes"
+
 // exception is one compiled exception policy.
 type exception struct {
 	name string
@@ -123,7 +127,8 @@ type rawPolicy struct {
 	Name       string `json:"name"`
 	PolicyType string `json:"policyType"`
 	Resources  []struct {
-		Attributes map[string]string `json:"attributes"`
+		DesignatorType string            `json:"designatorType"`
+		Attributes     map[string]string `json:"attributes"`
 	} `json:"resources"`
 	PosturePolicies []struct {
 		ControlID string `json:"controlID"`
@@ -207,6 +212,16 @@ func compilePolicy(p rawPolicy, path string) (exception, error) {
 	}
 
 	for _, r := range p.Resources {
+		// The discriminator must be honoured, not discarded. An unknown
+		// designator type whose attributes happen to parse would compile into a
+		// working attribute matcher and could suppress real controls under
+		// semantics this command does not implement.
+		if r.DesignatorType != attributesDesignator {
+			return exception{}, fmt.Errorf("%w: %s: policy %q uses designator type %q, "+
+				"but this command only implements %q",
+				errBadExceptions, path, p.Name, r.DesignatorType, attributesDesignator)
+		}
+
 		d := designator{}
 
 		for key, pattern := range r.Attributes {

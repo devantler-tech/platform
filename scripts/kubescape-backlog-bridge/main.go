@@ -371,7 +371,14 @@ func severityRank(s string) int {
 // make this field depend on iteration order. Keeping the maximum is
 // order-independent, which is what every other field here already guarantees.
 func (a *acc) raiseSeverity(s string) {
-	if severityRank(s) > severityRank(a.severity) {
+	switch {
+	case severityRank(s) > severityRank(a.severity):
+		a.severity = s
+	case severityRank(s) == severityRank(a.severity) && s < a.severity:
+		// Equal ranks still need a deterministic winner: "High" and "HIGH"
+		// rank the same, as do two unknown names that both rank zero. Keeping
+		// whichever arrived first made the rendered bytes depend on input
+		// order, which is precisely what the anti-churn guarantee forbids.
 		a.severity = s
 	}
 }
@@ -409,8 +416,19 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 				continue
 			}
 
+			// An empty embedded ID falls back to the map key. But when BOTH are
+			// present and disagree, silently preferring the embedded one applies
+			// exceptions to a different control than the one keyed — a failed
+			// C-9999 carrying controlID C-0036 would be suppressed by a declared
+			// C-0036 exception.
 			key := id
 			if ctrl.ControlID != "" {
+				if ctrl.ControlID != id {
+					return nil, fmt.Errorf("%w: %s keys a control as %q but its controlID is %q; "+
+						"refusing to guess which control an exception should match",
+						errUnrecognisedDocument, comp, id, ctrl.ControlID)
+				}
+
 				key = ctrl.ControlID
 			}
 
@@ -448,9 +466,11 @@ func deriveCVE(items []item) ([]theme, error) {
 		// all six of them, zero-valued when the image is clean (measured live).
 		// An absent or empty map is therefore malformed input, not a clean
 		// result, and iterating it zero times would report exactly that.
-		if len(it.Spec.Severities) == 0 {
-			return nil, fmt.Errorf("%w: %s carries no severity buckets; a clean CVE summary still "+
-				"reports zero-valued ones", errUnrecognisedDocument, comp)
+		if missing := missingSeverityBuckets(it.Spec.Severities); len(missing) > 0 {
+			return nil, fmt.Errorf("%w: %s is missing severity bucket(s) %s; a genuine CVE summary "+
+				"reports all of them, zero-valued when the image is clean, so a truncated set "+
+				"could hide findings in the omitted buckets",
+				errUnrecognisedDocument, comp, strings.Join(missing, ", "))
 		}
 
 		for class, raw := range it.Spec.Severities {
@@ -562,6 +582,16 @@ func run(args []string, out io.Writer) error {
 
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	// Go stops flag parsing at the first non-flag argument, so
+	// `-posture a.json b.json -cve c.json` silently drops b.json AND the -cve
+	// flag after it, then exits 0 having read only a.json — a partial report
+	// from a plausible cluster-wide invocation. Reproduced on live data.
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument %q: each input needs its own flag "+
+			"(-posture a.json -posture b.json), because flag parsing stops at the first "+
+			"non-flag argument and would silently ignore everything after it", fs.Arg(0))
 	}
 
 	if *mode != "report" {
@@ -771,4 +801,30 @@ func controlFailed(status string) (failed, known bool) {
 	default:
 		return false, false
 	}
+}
+
+// cveSeverityBuckets is the bucket set a genuine vulnerabilitymanifestsummary
+// reports — measured against the live cluster, where every per-object response
+// carried all six, zero-valued when the image is clean.
+//
+// (The posture summaries carry a DIFFERENT set of five, without "negligible",
+// which is why this is checked only on the CVE surface.)
+var cveSeverityBuckets = []string{"critical", "high", "low", "medium", "negligible", "unknown"}
+
+// missingSeverityBuckets reports which expected buckets a document omits.
+//
+// A non-empty map is not sufficient: a response retaining one bucket while
+// truncating another passes a length check, and the omitted bucket's findings
+// are simply never seen. Extra buckets are tolerated so an upstream addition
+// does not break the run.
+func missingSeverityBuckets(got map[string]json.RawMessage) []string {
+	var missing []string
+
+	for _, want := range cveSeverityBuckets {
+		if _, ok := got[want]; !ok {
+			missing = append(missing, want)
+		}
+	}
+
+	return missing
 }

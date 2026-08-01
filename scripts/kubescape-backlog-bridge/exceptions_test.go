@@ -261,3 +261,21 @@ func TestExceptionsFlagChangesTheReportEndToEnd(t *testing.T) {
 		t.Errorf("want an explicit empty report, got %q", with.String())
 	}
 }
+
+// An unknown designator type must not be compiled as an attribute matcher: it
+// would suppress real controls under semantics this command does not implement.
+func TestUnknownDesignatorTypeIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, `[{"name":"future","policyType":"postureExceptionPolicy","actions":["alertOnly"],`+
+		`"resources":[{"designatorType":"future-type","attributes":{"kind":".*"}}],`+
+		`"posturePolicies":[{"controlID":"^C-0016$"}]}]`)
+
+	_, err := loadExceptions(path)
+	if err == nil {
+		t.Fatal("an unknown designator type must be refused, not compiled as Attributes")
+	}
+
+	if !errors.Is(err, errBadExceptions) {
+		t.Errorf("want errBadExceptions, got %v", err)
+	}
+}

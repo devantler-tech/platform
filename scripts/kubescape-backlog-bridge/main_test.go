@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -59,9 +60,13 @@ func strippedPostureDoc(ns, kind, name string) string {
 // cveDoc builds a hydrated vulnerabilitymanifestsummary object, using the
 // {"all": N} spelling the real objects use and naming a real manifest.
 func cveDoc(ns, name string, counts map[string]int) string {
-	classes := make([]string, 0, len(counts))
+	// A genuine response carries ALL the buckets, zero-valued when clean, so
+	// fixtures do too — otherwise they exercise a shape the parser rejects.
+	classes := append([]string(nil), cveSeverityBuckets...)
 	for class := range counts {
-		classes = append(classes, class)
+		if !slices.Contains(classes, class) {
+			classes = append(classes, class)
+		}
 	}
 
 	sort.Strings(classes)
@@ -1007,5 +1012,113 @@ func TestNegativeSeverityCountIsRejected(t *testing.T) {
 
 	if strings.Contains(out.String(), "nothing to file") {
 		t.Errorf("must not print an all-clear, got %q", out.String())
+	}
+}
+
+// A response retaining one bucket while truncating another passes a mere
+// length check, and the omitted bucket's findings are never seen.
+func TestPartialSeverityBucketSetIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "partial.json")
+	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app"},`+
+		`"spec":{"severities":{"low":{"all":0}},`+
+		`"vulnerabilitiesRef":{"all":{"kind":"vulnerabilitymanifests","name":"img","namespace":"app"}}}}`)
+
+	var out bytes.Buffer
+
+	err := run([]string{"-cve", path}, &out)
+	if err == nil {
+		t.Fatal("a truncated severity bucket set must be rejected")
+	}
+
+	if !strings.Contains(err.Error(), "critical") {
+		t.Errorf("the error should name a missing bucket, got %v", err)
+	}
+
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Errorf("must not print an all-clear, got %q", out.String())
+	}
+}
+
+// Go stops flag parsing at the first non-flag argument, so a second path
+// written without repeating its flag silently drops that path AND every flag
+// after it — reproduced on live data, where the whole -cve input vanished and
+// the command still exited 0.
+func TestLeftoverPositionalArgumentIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	a := filepath.Join(dir, "a.json")
+	b := filepath.Join(dir, "b.json")
+	writeBare(t, a, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+	writeBare(t, b, postureDoc("data", "StatefulSet", "db", map[string]string{"C-0016": "failed"}))
+
+	var out bytes.Buffer
+
+	err := run([]string{"-posture", a, b}, &out)
+	if err == nil {
+		t.Fatal("a leftover positional argument must be rejected, not silently ignored")
+	}
+
+	if !strings.Contains(err.Error(), "b.json") {
+		t.Errorf("the error should name the ignored argument, got %v", err)
+	}
+
+	// Control: the correct form is accepted and reads both inputs.
+	out.Reset()
+
+	if err := run([]string{"-posture", a, "-posture", b}, &out); err != nil {
+		t.Fatalf("control: the repeated-flag form must work, got %v", err)
+	}
+
+	if themeLines(out.String()) != 1 {
+		t.Errorf("control: both inputs must be read and grouped, got %q", out.String())
+	}
+}
+
+// A control keyed as one ID while embedding another makes exception matching
+// ambiguous: a failed C-9999 carrying controlID C-0036 would be suppressed by
+// a declared C-0036 exception.
+func TestControlIDMismatchIsRejected(t *testing.T) {
+	doc := `{"metadata":{"name":"api","namespace":"app",` +
+		`"labels":{"kubescape.io/workload-namespace":"app","kubescape.io/workload-kind":"Deployment",` +
+		`"kubescape.io/workload-name":"api"}},` +
+		`"spec":{"controls":{"C-9999":{"controlID":"C-0036","severity":{"severity":"High"},` +
+		`"status":{"status":"failed"}}},"severities":{"critical":0}}}`
+
+	_, err := derivePosture(itemsOf(t, doc), nil)
+	if err == nil {
+		t.Fatal("a key/controlID mismatch must be rejected")
+	}
+}
+
+// The control: an EMPTY embedded ID still falls back to the map key, which is
+// the pre-existing behaviour the guard must not break.
+func TestEmptyEmbeddedControlIDFallsBackToTheKey(t *testing.T) {
+	doc := `{"metadata":{"name":"api","namespace":"app",` +
+		`"labels":{"kubescape.io/workload-namespace":"app","kubescape.io/workload-kind":"Deployment",` +
+		`"kubescape.io/workload-name":"api"}},` +
+		`"spec":{"controls":{"C-0016":{"controlID":"","severity":{"severity":"High"},` +
+		`"status":{"status":"failed"}}},"severities":{"critical":0}}}`
+
+	got, err := derivePosture(itemsOf(t, doc), nil)
+	if err != nil {
+		t.Fatalf("an empty embedded controlID must still fall back, got %v", err)
+	}
+
+	if len(got) != 1 || got[0].Key != "C-0016" {
+		t.Errorf("want the map key C-0016, got %+v", got)
+	}
+}
+
+// Equal ranks still need a deterministic winner, or identical findings render
+// differently depending on input order.
+func TestEqualSeverityRanksAreOrderIndependent(t *testing.T) {
+	upper := postureDocSev("app", "Deployment", "a", map[string]string{"C-0016": "failed"}, "HIGH")
+	title := postureDocSev("app", "Deployment", "b", map[string]string{"C-0016": "failed"}, "High")
+
+	forward := mustDerivePosture(t, itemsOf(t, upper, title), nil)
+	reverse := mustDerivePosture(t, itemsOf(t, title, upper), nil)
+
+	if forward[0].Severity != reverse[0].Severity {
+		t.Errorf("equal-ranked severities must not depend on input order: %q vs %q",
+			forward[0].Severity, reverse[0].Severity)
 	}
 }
