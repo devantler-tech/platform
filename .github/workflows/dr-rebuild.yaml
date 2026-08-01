@@ -28,35 +28,109 @@
 #     Cloudflare records at the new load balancer once HTTPRoutes are Ready.
 name: DR - Rebuild Prod
 
+# The restore flag is published in the run name because that is the only way the
+# supersession gate can read it. The Actions API does not expose workflow_dispatch
+# inputs on a run object — no `inputs` key exists there — but it does expose the
+# rendered run name as `display_title`, so encoding the flag here is what lets one
+# run tell whether an earlier one restored data. Changing this format without
+# updating the guard's parser degrades every comparison to "unknown", which is
+# safe (nothing supersedes) but silently gives up the coalescing.
+run-name: DR - Rebuild Prod (restore=${{ inputs.restore }})
+
 on:
+  # checkov:skip=CKV_GHA_7:The `confirm` input IS the safety interlock — an operator must type
+  # REBUILD-PROD before this workflow will destroy and rebuild the production cluster. Removing
+  # the inputs to satisfy the check would delete that guard and make an accidental dispatch
+  # destructive, so the check is scoped off here rather than obeyed.
   workflow_dispatch:
     inputs:
       confirm:
-        description: 'Type REBUILD-PROD to confirm a from-zero rebuild of the production cluster'
+        description: "Type REBUILD-PROD to confirm a from-zero rebuild of the production cluster"
         required: true
         type: string
       restore:
-        description: 'Restore data after the rebuild (Velero resources + OpenBao raft snapshot)'
+        description: "Restore data after the rebuild (Velero resources + OpenBao raft snapshot)"
         required: false
         type: boolean
         default: true
 
 permissions: {}
 
-# Shared with ci.yaml's merge-queue deploy and cd.yaml's tag deploy so a DR
-# rebuild can never race a regular deploy against the prod cluster.
+# Two locks, because a DR rebuild has two different relationships to worry about
+# and one concurrency block cannot express both.
+#
+# dr-rebuild (workflow level, queue: single) bounds DR requests against EACH
+# OTHER to one in progress plus one pending: a third and later dispatch during
+# the same incident replaces the pending one instead of stacking up.
+#
+# prod-deploy (job level, queue: max) serializes the rebuild against ci.yaml's
+# merge-queue deploy and cd.yaml's tag deploy, so a DR rebuild can never race a
+# regular deploy against the prod cluster. It queues rather than coalesces
+# because a deploy carries a specific revision, and dropping a pending one loses
+# that revision — the same reason those jobs use queue: max themselves.
+#
+# The split is what keeps both true at once. A single shared prod-deploy block
+# would have to pick one policy for both relationships: queue: single there
+# would let a DR dispatch cancel a pending merge deploy, and queue: max there
+# would stack duplicate rebuilds.
+#
+# What the split does NOT do — and why the gate job below exists. queue: single
+# bounds the PENDING count; it never discards a request because another is
+# already running. When a regular deploy holds prod-deploy, dispatch #1 takes
+# the dr-rebuild slot and sits IN PROGRESS waiting on the job lock, so dispatch
+# #2 lands pending behind it rather than replacing it, and runs a second
+# from-zero rebuild over the cluster #1 just recovered. Coalescing DR-against-DR
+# and queueing deploys-against-each-other are different policies for one lock,
+# so no queue: value expresses both. The supersession gate supplies the missing
+# half at execution time.
 concurrency:
-  group: prod-deploy
+  group: dr-rebuild
   cancel-in-progress: false
+  queue: single
 
 jobs:
+  # Runs before the destructive job and gates it. The workflow-level dr-rebuild
+  # lock means a pending run does not start until the previous run has reached a
+  # terminal state, so by the time this job executes, any earlier rebuild has
+  # definitively finished and its outcome is observable. Checking here rather
+  # than cancelling at dispatch keeps the worst case a redundant no-op instead of
+  # a teardown interrupted halfway.
+  supersession-gate:
+    name: 🧭 Check whether this rebuild was superseded
+    runs-on: ubuntu-latest
+    outputs:
+      superseded: ${{ steps.check.outputs.superseded }}
+    permissions:
+      contents: read # checkout repository
+      actions: read # list this workflow's runs to compare completion times
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: 🧭 Decide whether an equivalent rebuild already completed
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/dr-rebuild-supersession-guard.sh
+
   rebuild:
     name: 🚑 Rebuild prod from zero
     runs-on: ubuntu-latest
     environment: prod
+    # A failed gate leaves this unrun: the guard fails closed, so an undecided
+    # supersession check never reaches the cluster.
+    needs: supersession-gate
+    if: needs.supersession-gate.outputs.superseded != 'true'
+    concurrency:
+      group: prod-deploy
+      cancel-in-progress: false
+      queue: max
     permissions:
       contents: read # checkout repository
       packages: write # push OCI artifacts to GHCR
+      id-token: write # keyless cosign signing (Fulcio OIDC)
     steps:
       - name: 🛑 Verify confirmation phrase
         env:
@@ -78,7 +152,7 @@ jobs:
         # pin current in both places.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.175.2"
+          KSAIL_VERSION: "7.176.4"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -124,6 +198,14 @@ jobs:
           # renders an empty key and Talos rejects the whole machine config.
           WG_SERVER_PRIVATE_KEY: ${{ secrets.WG_SERVER_PRIVATE_KEY }}
 
+      - name: 🛡️ Suspend autoscaling for the Cilium rollout gate
+        id: cilium_rollout_gate
+        # A rebuilt cluster must preserve the same staged OnDelete safety
+        # boundary as a normal deployment before publishing the mutable tag.
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
+
       - name: 🔑 Stage Flux and consumer GHCR pull credential
         id: stage_flux_ghcr_auth
         # cluster create already uses the Git/SOPS pull token. Reassert it on
@@ -140,6 +222,68 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
+      - name: 🔐 Configure GHCR auth for digest resolution
+        env:
+          GITHUB_ACTOR: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.docker
+          AUTH=$(printf '%s:%s' "${GITHUB_ACTOR}" "${GHCR_TOKEN}" | base64 -w0)
+          echo "::add-mask::${AUTH}"
+          jq -n --arg auth "${AUTH}" \
+            '{auths: {"ghcr.io": {auth: $auth}}}' \
+            > ~/.docker/config.json
+          chmod 600 ~/.docker/config.json
+
+      - name: 🔎 Resolve the newly published platform manifest
+        id: platform_manifest
+        run: |
+          set -euo pipefail
+          REF_TAG='ghcr.io/devantler-tech/platform/manifests:latest'
+          DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Published platform digest is invalid: ${DIGEST:-<empty>}"
+            exit 1
+          fi
+          echo "digest=${DIGEST}" >>"${GITHUB_OUTPUT}"
+
+      - name: ⚙️ Install cosign
+        # Same installer and pinned release as the deploy-prod composite, so a
+        # DR-published artifact is signed by the identical toolchain a normal
+        # deploy uses. Renovate bumps COSIGN_VERSION via the custom regex
+        # manager in .github/renovate.json.
+        env:
+          # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
+          COSIGN_VERSION: "3.1.2"
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: "v${{ env.COSIGN_VERSION }}"
+
+      - name: 🖋️ Sign OCI manifest with cosign (keyless)
+        # A DR rebuild writes the same mutable tag as a normal deploy, so it
+        # must produce the same supply-chain evidence — otherwise enabling
+        # verification on the root source turns every recovery into a rejected
+        # artifact at the exact moment manual repair is hardest.
+        #
+        # Signs the digest resolved by the step above rather than the tag: a
+        # concurrent deploy could move `latest` between resolve and sign, and
+        # signing the tag would then attest bytes we never published. The
+        # signing identity is this workflow at its dispatch ref
+        # (dr-rebuild.yaml@refs/heads/main), which ksail.prod.yaml's
+        # matchOIDCIdentity allow-list names explicitly.
+        env:
+          # Keyless is the default when --key is omitted (COSIGN_EXPERIMENTAL
+          # was retired in cosign 2.x). GHCR credentials come from
+          # ~/.docker/config.json written by the auth step above.
+          COSIGN_YES: "true"
+          DIGEST: ${{ steps.platform_manifest.outputs.digest }}
+        run: |
+          set -euo pipefail
+          REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"
+          cosign sign --yes --recursive "${REF}"
+
       - name: 🔎 Verify Flux GHCR pull credential after publish
         id: verify_flux_ghcr_auth_after_push
         # Prove the newly-published artifact is readable before reconciliation;
@@ -147,12 +291,20 @@ jobs:
         run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
 
       - name: 🔁 Trigger Flux reconciliation
+        id: reconcile
         run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
 
+      - name: ⏳ Wait for the newly published Flux revision
+        id: wait_flux_revision
+        env:
+          PLATFORM_MANIFEST_DIGEST: ${{ steps.platform_manifest.outputs.digest }}
+        run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
+
       - name: ⏳ Wait for Flux to settle
+        id: wait_flux
         run: |
           for k in bootstrap infrastructure-controllers infrastructure apps; do
             echo "Waiting for Kustomization ${k}..."
@@ -160,6 +312,12 @@ jobs:
               --for=condition=Ready --timeout=20m
           done
           echo "✅ All Flux Kustomizations Ready — fresh platform converged."
+
+      - name: 🛡️ Reassert or release the Cilium rollout gate
+        if: always() && steps.wait_flux.outcome == 'success'
+        env:
+          CILIUM_ROLLOUT_REVISION_READY: ${{ steps.wait_flux_revision.outcome == 'success' }}
+        run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
 
       - name: 🔑 Verify completed GHCR credential fan-out
         id: verify_flux_ghcr_fanout

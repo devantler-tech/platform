@@ -133,7 +133,7 @@ ClusterSecretStore.
 ## 4. How publishing & trust fit together
 
 On every `v*` tag, the tenant's `cd.yaml` calls the
-[`publish-app.yaml`](https://github.com/devantler-tech/reusable-workflows/blob/main/.github/workflows/publish-app.yaml)
+[`publish-app.yaml`](https://github.com/devantler-tech/actions/blob/main/.github/workflows/publish-app.yaml)
 reusable workflow, which builds and pushes the image, pins its digest into
 `deploy/deployment.yaml`, pushes the manifests as an OCI artifact, and
 **cosign-signs** both (keyless, via GitHub OIDC). The platform's `OCIRepository`
@@ -162,7 +162,7 @@ external-dns** for its custom domain, with the extra external-dns RBAC
 grants below) and rename — with:
 
 | File | Purpose |
-|---|---|
+| --- | --- |
 | `kustomization.yaml` | Kustomize entrypoint listing the resources in this directory |
 | `namespace.yaml` | Namespace, `pod-security.kubernetes.io/enforce: restricted` |
 | `service-account.yaml` | SA with `automountServiceAccountToken: false` + `imagePullSecrets: [ghcr-auth]` |
