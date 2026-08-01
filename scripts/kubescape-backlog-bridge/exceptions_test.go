@@ -1,0 +1,263 @@
+package main
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// The fixtures below use the exact shape `scripts/generate-kubescape-exceptions`
+// emits — anchored regexes for both the control IDs and the resource
+// attributes — so a change to the generator's output surfaces here.
+
+func exceptionsDoc(policies ...string) string {
+	return "[" + strings.Join(policies, ",") + "]"
+}
+
+// policyDoc builds one postureExceptionPolicy. Attributes are given as a raw
+// JSON object so a fixture can express any designator shape.
+func policyDoc(name string, controlIDs []string, resourceAttrs ...string) string {
+	controls := make([]string, 0, len(controlIDs))
+	for _, id := range controlIDs {
+		controls = append(controls, fmt.Sprintf(`{"controlID":"^%s$"}`, id))
+	}
+
+	resources := make([]string, 0, len(resourceAttrs))
+	for _, attrs := range resourceAttrs {
+		resources = append(resources, fmt.Sprintf(`{"designatorType":"Attributes","attributes":%s}`, attrs))
+	}
+
+	return fmt.Sprintf(`{"name":%q,"policyType":"postureExceptionPolicy","actions":["alertOnly"],`+
+		`"resources":[%s],"posturePolicies":[%s],"reason":"test fixture"}`,
+		name, strings.Join(resources, ","), strings.Join(controls, ","))
+}
+
+func loadFixture(t *testing.T, raw string) []exception {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, raw)
+
+	got, err := loadExceptions(path)
+	if err != nil {
+		t.Fatalf("loadExceptions: %v", err)
+	}
+
+	return got
+}
+
+// A control the platform has deliberately accepted is not actionable backlog
+// work. Without this filter the bridge queues every matching exception as a new
+// issue, recreating exactly the noise the exception pipeline removes.
+func TestClusterWideExceptionSuppressesAcceptedControl(t *testing.T) {
+	exceptions := loadFixture(t, exceptionsDoc(policyDoc("admission-controllers", []string{"C-0036"}, `{"kind":".*"}`)))
+
+	items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0036": "failed"}))
+
+	got := mustDerivePosture(t, items, exceptions)
+	if len(got) != 0 {
+		t.Errorf("an accepted control must not become backlog work, got %+v", got)
+	}
+}
+
+// THE control that makes the test above meaningful. Filtering per-CONTROL
+// instead of per-COMPONENT would suppress this finding too — turning an
+// exception scoped to Jobs into a cluster-wide silence, which is itself the
+// false all-clear class this command exists to prevent.
+func TestScopedExceptionDoesNotSuppressAWorkloadItDoesNotName(t *testing.T) {
+	exceptions := loadFixture(t, exceptionsDoc(policyDoc("batch-workloads", []string{"C-0016"}, `{"kind":"^Job$"}`)))
+
+	items := itemsOf(t,
+		postureDoc("app", "Job", "nightly", map[string]string{"C-0016": "failed"}),
+		postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}),
+	)
+
+	got := mustDerivePosture(t, items, exceptions)
+	if len(got) != 1 {
+		t.Fatalf("the Deployment finding must survive, got %d themes: %+v", len(got), got)
+	}
+
+	if got[0].Components[0] != "app/Deployment/api" {
+		t.Errorf("want only the un-excepted Deployment, got %v", got[0].Components)
+	}
+
+	for _, c := range got[0].Components {
+		if strings.Contains(c, "Job") {
+			t.Errorf("the excepted Job must be filtered out, got %v", got[0].Components)
+		}
+	}
+}
+
+// A kind+name designator must match BOTH fields, so a same-kind workload with a
+// different name keeps its finding.
+func TestNameScopedExceptionMatchesOnlyThatName(t *testing.T) {
+	exceptions := loadFixture(t, exceptionsDoc(
+		policyDoc("one-workload", []string{"C-0016"}, `{"kind":"^Deployment$","name":"^api$"}`)))
+
+	items := itemsOf(t,
+		postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}),
+		postureDoc("app", "Deployment", "web", map[string]string{"C-0016": "failed"}),
+	)
+
+	got := mustDerivePosture(t, items, exceptions)
+	if len(got) != 1 || len(got[0].Components) != 1 || got[0].Components[0] != "app/Deployment/web" {
+		t.Errorf("only the named workload may be excepted, got %+v", got)
+	}
+}
+
+// An exception for a DIFFERENT control must not suppress this one.
+func TestExceptionForAnotherControlDoesNotSuppress(t *testing.T) {
+	exceptions := loadFixture(t, exceptionsDoc(policyDoc("other", []string{"C-0999"}, `{"kind":".*"}`)))
+
+	items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+
+	got := mustDerivePosture(t, items, exceptions)
+	if len(got) != 1 {
+		t.Errorf("an unrelated exception must not suppress a real finding, got %+v", got)
+	}
+}
+
+// The control IDs are anchored regexes in the generated document, so a prefix
+// must not match a longer ID.
+func TestAnchoredControlIDDoesNotMatchByPrefix(t *testing.T) {
+	exceptions := loadFixture(t, exceptionsDoc(policyDoc("prefix", []string{"C-001"}, `{"kind":".*"}`)))
+
+	items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+
+	got := mustDerivePosture(t, items, exceptions)
+	if len(got) != 1 {
+		t.Errorf("^C-001$ must not except C-0016, got %+v", got)
+	}
+}
+
+// An attribute this command does not model must NOT be treated as satisfied:
+// doing so would widen the exception and hide a real finding.
+func TestUnknownDesignatorAttributeDoesNotExcept(t *testing.T) {
+	exceptions := loadFixture(t, exceptionsDoc(
+		policyDoc("future", []string{"C-0016"}, `{"someFutureAttribute":".*"}`)))
+
+	items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+
+	got := mustDerivePosture(t, items, exceptions)
+	if len(got) != 1 {
+		t.Errorf("an unmodelled designator attribute must not except anything, got %+v", got)
+	}
+}
+
+// A policy with no designators matches nothing, so an unscoped-by-accident
+// policy cannot silently suppress the whole cluster.
+func TestPolicyWithNoResourcesExceptsNothing(t *testing.T) {
+	exceptions := loadFixture(t, exceptionsDoc(policyDoc("scopeless", []string{"C-0016"})))
+
+	items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+
+	got := mustDerivePosture(t, items, exceptions)
+	if len(got) != 1 {
+		t.Errorf("a policy with no resource designators must except nothing, got %+v", got)
+	}
+}
+
+// Only posture exception policies are applied; the generator emits others.
+func TestNonPosturePolicyTypeIsIgnored(t *testing.T) {
+	raw := `[{"name":"other","policyType":"somethingElse","actions":["alertOnly"],` +
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":".*"}}],` +
+		`"posturePolicies":[{"controlID":"^C-0016$"}]}]`
+
+	exceptions := loadFixture(t, raw)
+	if len(exceptions) != 0 {
+		t.Fatalf("a non-posture policy type must be ignored, got %d", len(exceptions))
+	}
+}
+
+// Silently ignoring a malformed exceptions file would re-file accepted
+// controls; silently widening one would hide real findings. Both are hard
+// errors.
+func TestMalformedExceptionsDocumentIsAHardError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, `{"not":"an array"}`)
+
+	_, err := loadExceptions(path)
+	if err == nil {
+		t.Fatal("a malformed exceptions document must be rejected")
+	}
+
+	if !errors.Is(err, errBadExceptions) {
+		t.Errorf("want errBadExceptions, got %v", err)
+	}
+}
+
+func TestUncompilablePatternIsAHardError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, `[{"name":"bad","policyType":"postureExceptionPolicy","actions":["alertOnly"],`+
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":"("}}],`+
+		`"posturePolicies":[{"controlID":"^C-0016$"}]}]`)
+
+	_, err := loadExceptions(path)
+	if err == nil {
+		t.Fatal("an uncompilable designator pattern must be rejected")
+	}
+
+	if !errors.Is(err, errBadExceptions) {
+		t.Errorf("want errBadExceptions, got %v", err)
+	}
+}
+
+func TestMissingExceptionsFileIsAHardError(t *testing.T) {
+	_, err := loadExceptions(filepath.Join(t.TempDir(), "absent.json"))
+	if err == nil {
+		t.Fatal("a named but unreadable exceptions file must be an error, not silently skipped")
+	}
+
+	if !errors.Is(err, errBadExceptions) {
+		t.Errorf("want errBadExceptions, got %v", err)
+	}
+}
+
+// No -exceptions flag is a legitimate configuration: every failed control is
+// reported.
+func TestAbsentExceptionsFlagFiltersNothing(t *testing.T) {
+	got, err := loadExceptions("")
+	if err != nil {
+		t.Fatalf("an empty path must be accepted, got %v", err)
+	}
+
+	if len(got) != 0 {
+		t.Errorf("an empty path must yield no exceptions, got %d", len(got))
+	}
+}
+
+// End-to-end through the real CLI surface: the same input reports a finding
+// without -exceptions and reports nothing with it.
+func TestExceptionsFlagChangesTheReportEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	posture := filepath.Join(dir, "posture.json")
+	writeBare(t, posture, postureDoc("app", "Deployment", "api", map[string]string{"C-0036": "failed"}))
+
+	exceptions := filepath.Join(dir, "exceptions.json")
+	writeRaw(t, exceptions, exceptionsDoc(policyDoc("admission-controllers", []string{"C-0036"}, `{"kind":".*"}`)))
+
+	var without bytes.Buffer
+	if err := run([]string{"-posture", posture}, &without); err != nil {
+		t.Fatalf("without exceptions: %v", err)
+	}
+
+	if !strings.Contains(without.String(), "C-0036") {
+		t.Fatalf("guard: the baseline must report the control, got %q", without.String())
+	}
+
+	var with bytes.Buffer
+	if err := run([]string{"-posture", posture, "-exceptions", exceptions}, &with); err != nil {
+		t.Fatalf("with exceptions: %v", err)
+	}
+
+	if strings.Contains(with.String(), "C-0036") {
+		t.Errorf("the accepted control must not be reported, got %q", with.String())
+	}
+
+	if !strings.Contains(with.String(), "nothing to file") {
+		t.Errorf("want an explicit empty report, got %q", with.String())
+	}
+}
