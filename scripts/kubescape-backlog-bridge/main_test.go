@@ -1273,9 +1273,9 @@ func TestFailedControlWithUnknownSeverityIsAccepted(t *testing.T) {
 // The discriminator is structural: a message that can name the COMPONENT has
 // necessarily decoded the object, so it is content that is wrong, not shape.
 func TestWellFormedDocumentWithUnusableContentIsNotReportedAsUnrecognised(t *testing.T) {
-	noKind := fmt.Sprintf(`{"metadata":{"name":"api","namespace":"app",`+
-		`"labels":{"kubescape.io/workload-namespace":"app","kubescape.io/workload-name":"api"}},`+
-		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},`+
+	noKind := fmt.Sprintf(`{"metadata":{"name":"api","namespace":"app",` +
+		`"labels":{"kubescape.io/workload-namespace":"app","kubescape.io/workload-name":"api"}},` +
+		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},` +
 		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":1}}}`)
 
 	bothSurfaces := fmt.Sprintf(`{"metadata":{"name":"api","namespace":"app",%s},`+
