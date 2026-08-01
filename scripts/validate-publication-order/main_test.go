@@ -1392,21 +1392,24 @@ func TestAllowsANamerefToAnUnrelatedVariable(t *testing.T) {
 // separate bypasses at once. All four shapes below were verified to pass the validator before the
 // prefix stripping went in.
 func TestRejectsPrefixedBuiltinBypasses(t *testing.T) {
-	for _, testCase := range []struct{ name, inject string }{
+	for _, testCase := range []struct{ name, inject, wantErr string }{
 		{
 			"builtin printf -v",
 			`        builtin printf -v REF '%s' 'ghcr.io/devantler-tech/platform/manifests:latest'`,
+			"resolved digest",
 		},
 		{
 			"command printf -v",
 			`        command printf -v REF '%s' 'ghcr.io/devantler-tech/platform/manifests:latest'`,
+			"resolved digest",
 		},
 		{
 			"builtin declare -n",
 			"        builtin declare -n target=REF\n" +
 				`        target='ghcr.io/devantler-tech/platform/manifests:latest'`,
+			"resolved digest",
 		},
-		{"builtin set +e", "        builtin set +e"},
+		{"builtin set +e", "        builtin set +e", "no step appears to"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			bypass := strings.Replace(validAction,
@@ -1414,8 +1417,56 @@ func TestRejectsPrefixedBuiltinBypasses(t *testing.T) {
 				testCase.inject+"\n"+`        cosign sign --yes --recursive "${REF}"`, 1)
 			mustChange(t, validAction, bypass)
 
-			if err := validate([]byte(bypass)); err == nil {
+			err := validate([]byte(bypass))
+			if err == nil {
 				t.Fatal("a builtin/command prefix must not hide the write or the errexit toggle")
+			}
+
+			// Assert WHICH contract rejected it. A bare non-nil check passes for any reason at all,
+			// so a case could stop exercising the prefix stripping it names and still look green.
+			if !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("want an error naming %q; got: %v", testCase.wantErr, err)
+			}
+		})
+	}
+}
+
+// TestRejectsNamerefWithASubscriptTarget covers a nameref target that carries an array subscript.
+//
+// Bash accepts a subscript on a nameref target, and on a scalar `REF[0]` denotes REF itself, so
+// `declare -n target=REF[0]` followed by a write through target assigns REF. Both write detectors
+// compared the target to the protected name EXACTLY, so the subscript slipped past each of them.
+//
+// Both spellings are covered because they are separate code paths: the unprefixed form is modelled
+// as a DeclClause, while a `builtin`/`command` prefix stops the parser doing that and falls through
+// to the word scanner. Only the prefixed shape was reported; fixing that one alone would have left
+// the commoner unprefixed spelling open.
+func TestRejectsNamerefWithASubscriptTarget(t *testing.T) {
+	for _, testCase := range []struct{ name, inject string }{
+		{
+			"declare -n subscript",
+			"        declare -n target=REF[0]\n" +
+				`        target='ghcr.io/devantler-tech/platform/manifests:latest'`,
+		},
+		{
+			"builtin declare -n subscript",
+			"        builtin declare -n target=REF[0]\n" +
+				`        target='ghcr.io/devantler-tech/platform/manifests:latest'`,
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			bypass := strings.Replace(validAction,
+				`        cosign sign --yes --recursive "${REF}"`,
+				testCase.inject+"\n"+`        cosign sign --yes --recursive "${REF}"`, 1)
+			mustChange(t, validAction, bypass)
+
+			err := validate([]byte(bypass))
+			if err == nil {
+				t.Fatal("a subscripted nameref target must not hide the write to REF")
+			}
+
+			if !strings.Contains(err.Error(), "resolved digest") {
+				t.Fatalf("want the resolved-digest contract to reject it; got: %v", err)
 			}
 		})
 	}

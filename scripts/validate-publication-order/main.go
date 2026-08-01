@@ -478,12 +478,30 @@ func declarationWordsWriteTo(lits []string, litOK []bool, name string) bool {
 
 		// `export REF=…` writes REF directly; `declare -n target=REF` makes target an alias FOR REF,
 		// so there the protected name appears on the right.
-		if lhs == name || (nameref && rhs == name) {
+		if lhs == name || (nameref && namerefBase(rhs) == name) {
 			return true
 		}
 	}
 
 	return false
+}
+
+// namerefBase strips an array subscript from a nameref target.
+//
+// Bash accepts a subscript on a nameref target, and on a scalar `REF[0]` denotes REF itself — so
+// `declare -n target=REF[0]` followed by a write through target assigns REF. Comparing the raw
+// target misses that.
+//
+// Stripping can only ever ADD detections, never remove one: it widens what counts as aliasing the
+// protected name, which is the direction this collector already errs in. A target that is genuinely
+// a distinct array (`OTHER[0]`) reduces to `OTHER` and still does not match the protected name.
+func namerefBase(target string) string {
+	base, _, found := strings.Cut(target, "[")
+	if !found {
+		return target
+	}
+
+	return base
 }
 
 // declaresNamerefTo reports whether decl creates a nameref aliasing the protected variable.
@@ -525,7 +543,7 @@ func declaresNamerefTo(decl *syntax.DeclClause, name string) bool {
 		}
 
 		target, readable := literalOf(assign.Value)
-		if !readable || target == name {
+		if !readable || namerefBase(target) == name {
 			return true
 		}
 	}
