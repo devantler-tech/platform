@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -245,14 +246,34 @@ func TestUnknownDesignatorAttributeDoesNotExcept(t *testing.T) {
 
 // A policy with no designators matches nothing, so an unscoped-by-accident
 // policy cannot silently suppress the whole cluster.
-func TestPolicyWithNoResourcesExceptsNothing(t *testing.T) {
-	exceptions := loadFixture(t, exceptionsDoc(policyDoc("scopeless", []string{"C-0016"})))
+//
+// The LOADER now refuses such a policy outright
+// (TestExceptionPolicyThatCanCoverNothingIsRejected), which is strictly
+// stronger than tolerating one that matches nothing. This test therefore pins
+// the property one layer DOWN, at covers() itself, constructing the value
+// directly instead of loading it — so if the loader guard is ever loosened, the
+// matcher must still fail closed rather than the guarantee vanishing along with
+// the guard that superseded it.
+func TestPolicyWithNoResourcesCoversNothing(t *testing.T) {
+	scopeless := exception{
+		name:     "scopeless",
+		controls: []*regexp.Regexp{regexp.MustCompile("^C-0016$")},
+	}
 
-	items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+	if scopeless.covers("C-0016", component{Namespace: "app", Kind: "Deployment", Name: "api"}) {
+		t.Error("a policy with no resource designators must cover nothing, even for a control it names")
+	}
+}
 
-	got := mustDerivePosture(t, items, exceptions)
-	if len(got) != 1 {
-		t.Errorf("a policy with no resource designators must except nothing, got %+v", got)
+// The same guarantee for the other half: designators but no controls.
+func TestPolicyWithNoControlsCoversNothing(t *testing.T) {
+	uncontrolled := exception{
+		name:      "no-controls",
+		resources: []designator{{"kind": regexp.MustCompile("^(?:.*)$")}},
+	}
+
+	if uncontrolled.covers("C-0016", component{Namespace: "app", Kind: "Deployment", Name: "api"}) {
+		t.Error("a policy naming no controls must cover nothing, even for a workload it matches")
 	}
 }
 
@@ -428,5 +449,52 @@ func TestGeneratorActionIsAccepted(t *testing.T) {
 
 	if len(got) != 1 {
 		t.Fatalf("want 1 compiled policy, got %d", len(got))
+	}
+}
+
+// A policy that compiles but can never match anything is not harmless. covers()
+// already fails closed on it — no controls or no designators means it suppresses
+// nothing — so the SUPPRESSION direction is safe. The damage is to the REPORT:
+// run() passes `len(exceptions) > 0` as proof that filtering occurred, so one
+// vacuous policy suppresses the "exceptions were NOT applied" caveat while
+// accepted controls still render as ordinary backlog work. The operator is told
+// the output is a filed-work list with accepted controls removed, when nothing
+// was removed at all.
+func TestExceptionPolicyThatCanCoverNothingIsRejected(t *testing.T) {
+	for name, raw := range map[string]string{
+		"no posturePolicies": `[{"name":"p","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+			`"resources":[{"designatorType":"Attributes","attributes":{"kind":".*"}}],` +
+			`"posturePolicies":[]}]`,
+		"every controlID empty": `[{"name":"p","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+			`"resources":[{"designatorType":"Attributes","attributes":{"kind":".*"}}],` +
+			`"posturePolicies":[{"controlID":""}]}]`,
+		"no resources": `[{"name":"p","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+			`"resources":[],"posturePolicies":[{"controlID":"^C-0016$"}]}]`,
+		"designator with no attributes": `[{"name":"p","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+			`"resources":[{"designatorType":"Attributes","attributes":{}}],` +
+			`"posturePolicies":[{"controlID":"^C-0016$"}]}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "exceptions.json")
+			writeRaw(t, path, raw)
+
+			if _, err := loadExceptions(path); !errors.Is(err, errBadExceptions) {
+				t.Fatalf("want errBadExceptions, got %v", err)
+			}
+		})
+	}
+}
+
+// The over-tightening control for the guard above: a policy that names a
+// control AND a designator still loads and still suppresses. Without this, the
+// guard could be satisfied by refusing every policy.
+func TestPolicyThatCanCoverSomethingStillSuppresses(t *testing.T) {
+	exceptions := loadFixture(t, exceptionsDoc(policyDoc("admission-controllers", []string{"C-0036"}, `{"kind":".*"}`)))
+
+	items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0036": "failed"}))
+
+	got := mustDerivePosture(t, items, exceptions)
+	if len(got) != 0 {
+		t.Errorf("an accepted control must still be suppressed, got %+v", got)
 	}
 }

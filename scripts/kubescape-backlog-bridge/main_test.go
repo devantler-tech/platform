@@ -627,13 +627,65 @@ func TestUnrecognisedDocumentShapeIsRejected(t *testing.T) {
 	}
 }
 
-func TestExplicitlyEmptyListIsAcceptedAsGenuinelyEmpty(t *testing.T) {
+// An empty list is genuinely empty about its COUNT but says nothing about its
+// SURFACE, and this command reports the surface it was ASKED for. checkSurface
+// decides the surface by inspecting objects, so an empty list gives it nothing
+// to judge and it passed vacuously — the guard was present and inert rather
+// than absent. The command then reported the requested surface as clean on a
+// document that never identified itself as belonging to it.
+//
+// The top-level `kind` cannot rescue this. `kubectl get <crd> -o json` emits a
+// GENERIC `apiVersion: v1, kind: List` for BOTH surfaces — measured against
+// prod 2026-08-01: 2215 posture objects and 359 CVE objects, `kind: List` in
+// every case, for both `-A` and a single namespace — so a real list carries no
+// surface marker to check. Refusing an input whose surface cannot be
+// established is therefore the only fail-closed reading available.
+func TestEmptyListCannotEstablishItsSurfaceAndIsRejected(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "empty.json")
 	writeRaw(t, path, `{"items":[]}`)
 
 	var out bytes.Buffer
-	if err := run([]string{"-cve", path}, &out); err != nil {
-		t.Errorf("an explicitly empty list must be accepted, got %v", err)
+
+	err := run([]string{"-cve", path}, &out)
+	if err == nil {
+		t.Fatal("an empty list establishes no surface and must be rejected")
+	}
+
+	if !errors.Is(err, errSurfaceNotEstablished) {
+		t.Errorf("want errSurfaceNotEstablished, got %v", err)
+	}
+
+	// The sentinel must not overstate what is known. An empty list is not a
+	// surface MISMATCH (we cannot tell which surface it is), not malformed
+	// CONTENT (there is no object), and not an unrecognised DOCUMENT (kubectl
+	// emits exactly this shape), so reporting it as any of those would send the
+	// operator to inspect something that is not wrong.
+	for _, wrong := range []error{errSurfaceMismatch, errMalformedScanContent, errUnrecognisedDocument} {
+		if errors.Is(err, wrong) {
+			t.Errorf("must not report an unestablished surface as %v", wrong)
+		}
+	}
+
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Errorf("must not print an all-clear for a surfaceless input, got %q", out.String())
+	}
+}
+
+// The exact document the reviewer reproduced with: a CVE list, empty, handed to
+// -posture. It exited 0 reporting the posture input clean.
+func TestEmptyCVEListPassedToPostureDoesNotReportPostureClean(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "empty-cve.json")
+	writeRaw(t, path, `{"kind":"VulnerabilityManifestSummaryList","items":[]}`)
+
+	var out bytes.Buffer
+
+	err := run([]string{"-posture", path}, &out)
+	if err == nil {
+		t.Fatal("an empty CVE list must not report the posture surface clean")
+	}
+
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Errorf("must not print an all-clear, got %q", out.String())
 	}
 }
 

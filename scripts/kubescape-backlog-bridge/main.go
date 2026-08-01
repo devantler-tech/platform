@@ -42,6 +42,15 @@ var errMalformedScanContent = errors.New("recognised scan object carries unusabl
 // derives no themes and exits 0, which is a false all-clear reached by a typo.
 var errSurfaceMismatch = errors.New("input does not belong to the requested scan surface")
 
+// errSurfaceNotEstablished reports an input whose surface cannot be DETERMINED,
+// which is a weaker claim than errSurfaceMismatch and needs its own sentinel for
+// exactly that reason: "does not belong" asserts knowledge this case does not
+// have. It is also not errMalformedScanContent — there is no scan object to
+// carry unusable content — and not errUnrecognisedDocument, because an empty
+// list is a perfectly well-formed thing for kubectl to emit. Reporting it as
+// any of the three would describe the operator's input as something it is not.
+var errSurfaceNotEstablished = errors.New("input's scan surface cannot be established")
+
 // errDuplicateObject reports one scan object supplied more than once. It is its
 // own sentinel because the document is perfectly well-formed — reporting it
 // under errUnrecognisedDocument would tell an operator their input was
@@ -339,7 +348,33 @@ func checkExamined(items []item) error {
 }
 
 // checkSurface rejects a document handed to the wrong scan surface.
+//
+// It decides the surface by inspecting OBJECTS, so an input carrying none gave
+// it nothing to judge and it returned nil — present but inert. The command then
+// reported the surface it was ASKED for as clean, on a document that never
+// identified itself as belonging to it: an empty CVE list passed to -posture
+// exited 0 with "nothing to file". That is the same false all-clear as
+// `items: null` and the `items`+`spec` hybrid, reached where the guard is
+// vacuous rather than absent.
+//
+// The list's top-level `kind` cannot establish it either: `kubectl get <crd>
+// -o json` emits a GENERIC `apiVersion: v1, kind: List` for BOTH surfaces
+// (measured against prod 2026-08-01 — 2215 posture and 359 CVE objects, `kind:
+// List` in every case, for both `-A` and a single namespace), so a genuine list
+// carries no surface marker at all. Refusing an input whose surface cannot be
+// established is therefore the only fail-closed reading, and it costs the
+// operator nothing this command documents: its usage is per-object GETs, which
+// are never empty.
 func checkSurface(items []item, want surface) error {
+	if len(items) == 0 {
+		return fmt.Errorf("%w: it carries no objects, so it cannot be shown to belong to the %s "+
+			"surface; an empty list carries no surface marker (kubectl emits a generic "+
+			"`kind: List` for both), so accepting it would report %s as clean on evidence "+
+			"that never mentioned it. Pass per-object "+
+			"`kubectl get <crd> <name> -n <ns> -o json` output, or drop the -%s flag",
+			errSurfaceNotEstablished, want, want, want)
+	}
+
 	for _, it := range items {
 		// The two surfaces are disjoint by key in genuine scanner output, but
 		// nothing upstream enforces that. surface() returns on the first key it

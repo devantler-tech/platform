@@ -288,6 +288,14 @@ func compilePolicy(p rawPolicy, path string) (exception, error) {
 				errBadExceptions, path, p.Name, r.DesignatorType, attributesDesignator)
 		}
 
+		if len(r.Attributes) == 0 {
+			return exception{}, fmt.Errorf("%w: %s: policy %q carries a resource designator with no "+
+				"attributes, which names no workload and can never match; a policy that cannot "+
+				"cover anything still counts as filtering applied and would suppress the "+
+				"unfiltered-report caveat",
+				errBadExceptions, path, p.Name)
+		}
+
 		d := designator{}
 
 		for key, pattern := range r.Attributes {
@@ -301,6 +309,33 @@ func compilePolicy(p rawPolicy, path string) (exception, error) {
 		}
 
 		e.resources = append(e.resources, d)
+	}
+
+	// A policy needs BOTH halves to cover anything: covers() requires a control
+	// match AND a designator match. Missing either, it suppresses nothing — so
+	// the suppression direction is already safe and this guard is not about
+	// hidden findings.
+	//
+	// The damage is to the REPORT. run() passes `len(exceptions) > 0` as proof
+	// that filtering occurred, so a single vacuous policy suppresses the
+	// "declared exceptions were NOT applied" caveat while accepted controls
+	// still render as ordinary backlog work. The operator is told the output is
+	// a filed-work list with accepted controls removed, when nothing was
+	// removed — a report that misstates its own provenance.
+	//
+	// Both halves are fail-closed and cannot fire on today's artifact: every one
+	// of the generator's 21 policies names at least one control and one
+	// designator.
+	if len(e.controls) == 0 {
+		return exception{}, fmt.Errorf("%w: %s: policy %q resolves to no control patterns, so it can "+
+			"never cover a finding, yet it would still count as filtering applied",
+			errBadExceptions, path, p.Name)
+	}
+
+	if len(e.resources) == 0 {
+		return exception{}, fmt.Errorf("%w: %s: policy %q names no resource designators, so it can "+
+			"never cover a finding, yet it would still count as filtering applied",
+			errBadExceptions, path, p.Name)
 	}
 
 	return e, nil
