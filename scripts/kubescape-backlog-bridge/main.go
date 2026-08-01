@@ -583,6 +583,16 @@ func readList(path string) ([]item, error) {
 	}
 
 	if rawItems, ok := probe["items"]; ok {
+		// `items: null` decodes into a nil slice WITHOUT error, so it would
+		// otherwise pass every guard vacuously and report a clean cluster —
+		// the same false all-clear as the stripped skeleton, reached by a
+		// different shape. An explicitly empty list is `items: []`.
+		if isJSONNull(rawItems) {
+			return nil, fmt.Errorf("%w: %s carries `items: null`, which is not an empty result; "+
+				"pass the document `kubectl get <crd> -o json` emits (an empty list is `items: []`)",
+				errUnrecognisedDocument, path)
+		}
+
 		var items []item
 		if err := json.Unmarshal(rawItems, &items); err != nil {
 			return nil, fmt.Errorf("parse %s: \"items\" is not an array of objects: %w", path, err)

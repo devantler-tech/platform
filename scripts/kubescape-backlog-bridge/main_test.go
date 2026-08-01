@@ -593,3 +593,47 @@ func TestRepeatedCVEFlagsAreAllRead(t *testing.T) {
 		t.Errorf("want the summed total across both inputs, got %q", out.String())
 	}
 }
+
+// `items: null` decodes into a nil slice WITHOUT error, so every guard passes
+// vacuously and the command reports a clean cluster at exit 0 — the same false
+// all-clear as the stripped skeleton, reached by a different shape. An
+// explicitly empty list is `items: []`, and only that stays a legitimate pass.
+func TestItemsNullIsRejectedNotTreatedAsEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "null.json")
+	writeRaw(t, path, `{"items":null}`)
+
+	for _, flag := range []string{"-cve", "-posture"} {
+		var out bytes.Buffer
+
+		err := run([]string{flag, path}, &out)
+		if err == nil {
+			t.Fatalf("%s: `items: null` must be rejected, not reported clean", flag)
+		}
+
+		if !errors.Is(err, errUnrecognisedDocument) {
+			t.Errorf("%s: want errUnrecognisedDocument, got %v", flag, err)
+		}
+
+		if strings.Contains(out.String(), "nothing to file") {
+			t.Errorf("%s: must not print an all-clear, got %q", flag, out.String())
+		}
+	}
+}
+
+// A bare object whose spec is null carries no payload structure and must not be
+// credited either.
+func TestSpecNullIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "specnull.json")
+	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app"},"spec":null}`)
+
+	var out bytes.Buffer
+
+	err := run([]string{"-cve", path}, &out)
+	if err == nil {
+		t.Fatal("`spec: null` must be rejected, not reported clean")
+	}
+
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Errorf("must not print an all-clear, got %q", out.String())
+	}
+}
