@@ -533,3 +533,59 @@ func TestEmptyControlIDEntryIsRejectedEvenBesideAValidSibling(t *testing.T) {
 		t.Fatalf("want errBadExceptions, got %v", err)
 	}
 }
+
+// A cluster-scoped component deliberately carries an EMPTY namespace, and
+// component()'s doc comment states the invariant that "no namespace designator
+// matches" it. That claim is false for any pattern that accepts the empty
+// string: `.*`, `^$`, or the `^()$` an empty namespace selector can generate.
+// Such a policy silently reaches cluster-scoped findings — ClusterRoleBinding,
+// PersistentVolume, Node, webhook configurations — and suppresses them, which
+// is the exact class the namespace fallback was removed to prevent.
+//
+// This is namespace-ONLY on purpose. An empty kind or name is now impossible
+// (the identity guards reject it), and `kind: ".*"` is real generator output
+// used 115 times, so a blanket "reject any pattern matching empty" would break
+// today's artifact. Empty namespace is the one case where the empty value is
+// LEGITIMATE rather than malformed, which is why it needs a pattern-level guard.
+func TestNamespacePatternMatchingClusterScopeIsRejected(t *testing.T) {
+	for name, pattern := range map[string]string{
+		"dot-star":          `.*`,
+		"explicit empty":    `^$`,
+		"empty alternation": `^()$`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := `[{"name":"broad","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+				`"resources":[{"designatorType":"Attributes","attributes":{"namespace":"` + pattern + `"}}],` +
+				`"posturePolicies":[{"controlID":"^C-0016$"}]}]`
+
+			path := filepath.Join(t.TempDir(), "exceptions.json")
+			writeRaw(t, path, raw)
+
+			if _, err := loadExceptions(path); !errors.Is(err, errBadExceptions) {
+				t.Fatalf("want errBadExceptions, got %v", err)
+			}
+		})
+	}
+}
+
+// The over-tightening controls. A real namespace alternation must still load,
+// and `kind: ".*"` — genuine generator output, 115 uses — must be UNAFFECTED,
+// since the guard is namespace-only.
+func TestRealNamespaceAndWildcardKindStillLoad(t *testing.T) {
+	raw := `[{"name":"ok","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+		`"resources":[{"designatorType":"Attributes","attributes":{"namespace":"^(kube-system|velero)$"}},` +
+		`{"designatorType":"Attributes","attributes":{"kind":".*"}}],` +
+		`"posturePolicies":[{"controlID":"^C-0016$"}]}]`
+
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, raw)
+
+	got, err := loadExceptions(path)
+	if err != nil {
+		t.Fatalf("real generator shapes must still load: %v", err)
+	}
+
+	if len(got) != 1 || len(got[0].resources) != 2 {
+		t.Fatalf("want 1 policy with 2 designators, got %+v", got)
+	}
+}

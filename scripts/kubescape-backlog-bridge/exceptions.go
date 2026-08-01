@@ -353,6 +353,33 @@ func compilePolicy(p rawPolicy, path string) (exception, error) {
 					errBadExceptions, path, p.Name, key, pattern, err)
 			}
 
+			// A cluster-scoped component deliberately carries an EMPTY
+			// namespace — that is component()'s stated invariant, and the reason
+			// its namespace fallback was removed. But the invariant claims more
+			// than it can deliver: "no namespace designator matches" is false
+			// for any pattern accepting the empty string (`.*`, `^$`, or the
+			// `^()$` an empty namespace selector generates). Such a policy
+			// reaches cluster-scoped findings — ClusterRoleBinding,
+			// PersistentVolume, Node, webhook configurations — and suppresses
+			// them, which is exactly the class removing that fallback prevented.
+			//
+			// Deliberately namespace-ONLY. An empty kind or name is impossible
+			// now that the identity guards reject it, and `kind: ".*"` is real
+			// generator output (115 uses), so refusing every empty-matching
+			// pattern would break today's artifact. Namespace is the one field
+			// where empty is LEGITIMATE rather than malformed, so it is the one
+			// that needs checking at the pattern level.
+			//
+			// Fail-closed on today's artifact: all 6 generated namespace
+			// patterns are explicit alternations of named namespaces, none of
+			// which matches the empty string.
+			if key == "namespace" && re.MatchString("") {
+				return exception{}, fmt.Errorf("%w: %s: policy %q: namespace pattern %q also matches the "+
+					"EMPTY namespace, which is how a cluster-scoped resource is represented; it would "+
+					"silently suppress cluster-scoped findings. Name the namespaces explicitly",
+					errBadExceptions, path, p.Name, pattern)
+			}
+
 			d[key] = re
 		}
 
