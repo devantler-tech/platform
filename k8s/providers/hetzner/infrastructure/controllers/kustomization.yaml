@@ -67,21 +67,22 @@ components:
   - ../../../../bases/components/helmrelease-drift-detection
   - ../../../../bases/components/helmrelease-flux-defaults
   # ALWAYS-ON: the live private-NIC Cilium device pin (moved out of the
-  # strict-mode patch so the staged homogeneous-devices/ successor below can
+  # strict-mode patch so the homogeneous-devices/ successor below can
   # override it — parent `patches:` apply after component patches, so a value
   # they carry is un-overridable by any component; see the component header).
-  # Keep referenced until homogeneous-devices/ is activated AND soaked.
+  # Keep referenced during the operator-stepped activation and soak; the
+  # later homogeneous component wins because it is listed after this one.
   - cilium/components/private-nic-devices/
-  # Default-off homogeneous device selection (#2610): widens the device set to
+  # ACTIVE homogeneous device selection (#2610): widens the device set to
   # the public default-route NICs via wildcards ("en+ eth+") so
   # ebpf-host-routing's BPF masquerade can attach where pod egress actually
   # leaves. MUST stay listed AFTER private-nic-devices/ when enabled (later
   # component wins). The component also sets updateStrategy OnDelete, so
-  # enabling it stages config without rolling any agent — the operator steps
+  # referencing it stages config without rolling any agent — the operator steps
   # the roll pod-by-pod per the component's runbook (verify each node keeps a
   # private primary address before the next). Rollback = re-comment (stepped
   # nodes roll back automatically under the restored RollingUpdate).
-  # - cilium/components/homogeneous-devices/
+  - cilium/components/homogeneous-devices/
   # Default-off Cilium bandwidth-manager + host-only BBR staging component
   # (#2607). It is not activation-ready: #2609 must prove pod-BBR datapath
   # prerequisites and #2610's homogeneous-devices/ must be activated first.
