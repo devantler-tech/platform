@@ -276,8 +276,17 @@ func TestDuplicateInputObjectIsRejected(t *testing.T) {
 	writeDocs(t, path, cveDoc("app", "api", map[string]int{"critical": 1}))
 
 	var out bytes.Buffer
-	if err := run([]string{"-cve", path, "-cve", path}, &out); err == nil {
+
+	err := run([]string{"-cve", path, "-cve", path}, &out)
+	if err == nil {
 		t.Fatalf("the same object passed twice must be rejected, not double counted; got: %s", out.String())
+	}
+
+	// The classification is part of the fix. Reported as errUnrecognisedDocument this reads as
+	// "your file is unparseable" and sends an operator to inspect the document, when the document
+	// is fine and the arguments are what repeated.
+	if !errors.Is(err, errDuplicateObject) {
+		t.Errorf("a duplicate must report errDuplicateObject, not a parse failure; got: %v", err)
 	}
 }
 

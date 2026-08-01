@@ -32,6 +32,12 @@ var errUnrecognisedDocument = errors.New("input is neither a kubectl list nor a 
 // derives no themes and exits 0, which is a false all-clear reached by a typo.
 var errSurfaceMismatch = errors.New("input does not belong to the requested scan surface")
 
+// errDuplicateObject reports one scan object supplied more than once. It is its
+// own sentinel because the document is perfectly well-formed — reporting it
+// under errUnrecognisedDocument would tell an operator their input was
+// unparseable and send them to inspect the file rather than their arguments.
+var errDuplicateObject = errors.New("the same scan object was supplied more than once")
+
 // surface is the Kubescape scan surface a document belongs to.
 type surface string
 
@@ -694,9 +700,17 @@ func readSurface(paths []string, want surface) ([]item, error) {
 		for _, it := range items {
 			id := it.Metadata.Namespace + "/" + it.Metadata.Name
 			if first, dup := seen[id]; dup {
-				return nil, fmt.Errorf("%w: %s object %s appears in both %s and %s; "+
+				// Naming the same path twice is the likelier operator slip, and
+				// "appears in both X and X" reads as a bug in the tool rather
+				// than as a repeated argument.
+				where := fmt.Sprintf("in both %s and %s", first, path)
+				if first == path {
+					where = fmt.Sprintf("twice in %s (passed more than once?)", path)
+				}
+
+				return nil, fmt.Errorf("%w: %s object %s appears %s; "+
 					"severity counts are summed, so counting it twice would overstate the finding",
-					errUnrecognisedDocument, want, id, first, path)
+					errDuplicateObject, want, id, where)
 			}
 
 			seen[id] = path
