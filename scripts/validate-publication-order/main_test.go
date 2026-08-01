@@ -1801,3 +1801,35 @@ func TestAllowsOrdinaryAssignments(t *testing.T) {
 		t.Fatalf("ordinary assignments are how the real block works, got: %v", err)
 	}
 }
+
+// TestRejectsAnUnparseableStep closes the same fail-open shape as the unmodeled-construct rule.
+// parseExecuted returns no commands for an unparseable block, which correctly refuses to CREDIT a
+// required operation but silently hides a forbidden one — so a step that does not parse could carry a
+// second publish after the evidence steps and still be reported as satisfying the contract.
+func TestRejectsAnUnparseableStep(t *testing.T) {
+	mutated := strings.Replace(validAction, reconcileStep,
+		"    - name: Sneak\n      run: |\n"+
+			"        ./scripts/run-ksail-prod-with-pull-auth.sh workload push\n"+
+			"        if [ -z \"$X\"\n"+
+			reconcileStep, 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err == nil {
+		t.Fatal("an unparseable step hides everything in it, including a second publish")
+	}
+}
+
+// TestRejectsAnUnparseableSigningStep records the case that was ALREADY covered, so the two are not
+// confused. An unparseable step carrying a required operation is caught on the satisfy side —
+// parseExecuted yields nothing, so no step appears to sign — and removing the rule above leaves this
+// test green. That asymmetry is precisely why the rule above is needed: only the forbidding side was
+// open.
+func TestRejectsAnUnparseableSigningStep(t *testing.T) {
+	mutated := strings.Replace(validAction, signCall,
+		signCall+"\n        if [ -z \"$X\"\n", 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err == nil {
+		t.Fatal("an unparseable signing step cannot be certified either way")
+	}
+}

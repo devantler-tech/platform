@@ -1606,9 +1606,17 @@ func mustModelEveryRunStep(steps []step) error {
 			}
 		}
 
+		// A parse failure is the same fail-open shape as an unmodeled construct, for the same reason:
+		// parseExecuted yields no commands, which correctly refuses to CREDIT a required operation but
+		// silently hides a forbidden one. An unparseable step could therefore carry a second
+		// `workload push` after the evidence steps and be reported as satisfying the contract.
 		file, err := syntax.NewParser().Parse(strings.NewReader(s.Run), "")
 		if err != nil {
-			continue
+			return fmt.Errorf(
+				"step %q is not parseable as shell: %w.\n"+
+					"Nothing in it can be checked, including whether it publishes again after the"+
+					" evidence steps, so it is rejected rather than skipped",
+				label, err)
 		}
 
 		if construct, unmodeled := unmodeledShellState(file); unmodeled {
