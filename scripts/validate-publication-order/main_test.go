@@ -1761,3 +1761,43 @@ func TestAllowsAnUnrelatedInterpretedScript(t *testing.T) {
 		t.Fatalf("running a helper script through bash is ordinary, got: %v", err)
 	}
 }
+
+// resolutionAssignments are the names whose VALUE decides what a later command resolves to, or what
+// the shell reads before running. They need their own table because they are assignments rather than
+// commands: the construct walk above sees calls, and an assignment is not one.
+//
+// The environment-prefix form is the interesting member — `PATH=… cosign sign …` is one statement
+// that both rebinds the lookup and issues the required command, so a rule keyed on statements that
+// "only assign" would miss it.
+var resolutionAssignments = map[string]string{
+	"PATH prepend":       `        PATH=/tmp/fake:$PATH` + "\n" + signCall,
+	"PATH exported":      `        export PATH=/tmp/fake:$PATH` + "\n" + signCall,
+	"BASH_ENV assigned":  `        BASH_ENV=./setup.sh` + "\n" + signCall,
+	"PATH as env prefix": `        PATH=/tmp/fake cosign sign --yes --recursive "${REF}"`,
+}
+
+func TestRejectsAssignmentsThatRedirectResolution(t *testing.T) {
+	for name, replacement := range resolutionAssignments {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(validAction, signCall, replacement, 1)
+			mustChange(t, validAction, mutated)
+
+			if err := validate([]byte(mutated)); err == nil {
+				t.Fatalf("expected %q to be rejected: it decides what `cosign` resolves to", name)
+			}
+		})
+	}
+}
+
+// TestAllowsOrdinaryAssignments is that rule's over-tightening control. The reference signing block
+// is mostly assignments — REF and DIGEST — so a rule that treated assignment itself as suspicious
+// would reject every real deploy.
+func TestAllowsOrdinaryAssignments(t *testing.T) {
+	mutated := strings.Replace(validAction, signCall,
+		"        export COSIGN_YES=true\n        SUBJECT=\"${REF}\"\n"+signCall, 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err != nil {
+		t.Fatalf("ordinary assignments are how the real block works, got: %v", err)
+	}
+}
