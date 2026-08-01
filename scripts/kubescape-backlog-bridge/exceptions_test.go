@@ -256,15 +256,24 @@ func TestPolicyWithNoResourcesExceptsNothing(t *testing.T) {
 	}
 }
 
-// Only posture exception policies are applied; the generator emits others.
-func TestNonPosturePolicyTypeIsIgnored(t *testing.T) {
-	raw := `[{"name":"other","policyType":"somethingElse","actions":["alertOnly"],` +
-		`"resources":[{"designatorType":"Attributes","attributes":{"kind":".*"}}],` +
+// This test previously asserted that an unknown policyType is silently ignored,
+// on the stated premise that "the generator emits others". That premise is
+// false: generate-kubescape-exceptions hard-codes "postureExceptionPolicy" for
+// every policy it emits, its own test pins that for every policy, and the real
+// generated artifact is 21 policies of exactly that one type. Skipping was
+// therefore never reading a legitimate other type — it could only ever swallow
+// a stale or schema-changed artifact, quietly narrowing what counts as accepted
+// so accepted controls reappear as backlog work. Rejection is covered by
+// TestUnknownExceptionPolicyTypeIsRejected; this is the over-tightening control
+// that the one type the generator DOES emit still loads.
+func TestGeneratedPolicyTypeIsAccepted(t *testing.T) {
+	raw := `[{"name":"ok","policyType":"` + posturePolicyType + `","actions":["alertOnly"],` +
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":"^Deployment$"}}],` +
 		`"posturePolicies":[{"controlID":"^C-0016$"}]}]`
 
 	exceptions := loadFixture(t, raw)
-	if len(exceptions) != 0 {
-		t.Fatalf("a non-posture policy type must be ignored, got %d", len(exceptions))
+	if len(exceptions) != 1 {
+		t.Fatalf("the generator's own policy type must load, got %d", len(exceptions))
 	}
 }
 

@@ -1099,9 +1099,10 @@ func TestNegativeSeverityCountIsRejected(t *testing.T) {
 // length check, and the omitted bucket's findings are never seen.
 func TestPartialSeverityBucketSetIsRejected(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "partial.json")
-	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app"},`+
+	writeRaw(t, path, fmt.Sprintf(`{"metadata":{"name":"api","namespace":"app",%s},`+
 		`"spec":{"severities":{"low":{"all":0}},`+
-		`"vulnerabilitiesRef":{"all":{"kind":"vulnerabilitymanifests","name":"img","namespace":"app"}}}}`)
+		`"vulnerabilitiesRef":{"all":{"kind":"vulnerabilitymanifests","name":"img","namespace":"app"}}}}`,
+		labels("app", "Deployment", "api")))
 
 	var out bytes.Buffer
 
@@ -1323,5 +1324,89 @@ func TestWellFormedDocumentWithUnusableContentIsNotReportedAsUnrecognised(t *tes
 				t.Errorf("a parsed document must not be reported as unrecognised: %v", err)
 			}
 		})
+	}
+}
+
+// A document carrying BOTH `items` and a single-object `spec` is malformed, and
+// the items branch returned first without ever looking at spec. An empty or
+// partial `items` alongside a real `spec` therefore reported a clean cluster —
+// the same false all-clear as `items: null`, reached by a different shape.
+func TestDocumentCarryingBothItemsAndSpecIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "both.json")
+	writeRaw(t, path, fmt.Sprintf(`{"items":[],"spec":{"controls":{"C-0016":`+
+		`{"controlID":"C-0016","severity":{"severity":"High"},"status":{"status":"failed"}}},`+
+		`"severities":{"critical":0,"high":1}},"metadata":{"name":"api","namespace":"app",%s}}`,
+		labels("app", "Deployment", "api")))
+
+	var out bytes.Buffer
+
+	err := run([]string{"-posture", path}, &out)
+	if err == nil {
+		t.Fatal("a document carrying both `items` and `spec` must be rejected")
+	}
+
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Errorf("must not print an all-clear, got %q", out.String())
+	}
+}
+
+// The posture path rejects a summary with no workload kind/name, because a
+// cluster-wide exception designator matches an empty value. The CVE path read
+// the same identity and did not check it, so the guard covered one of two
+// paths — and CVE entries could render against an identity never established.
+func TestCVESummaryWithoutWorkloadIdentityIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cve.json")
+	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app",`+
+		`"labels":{"kubescape.io/workload-namespace":"app"}},`+
+		`"spec":{"vulnerabilitiesRef":{"all":{"name":"m"}},"severities":{"critical":{"all":3},`+
+		`"high":{"all":0},"medium":{"all":0},"low":{"all":0},"negligible":{"all":0},`+
+		`"unknown":{"all":0}}}}`)
+
+	var out bytes.Buffer
+
+	err := run([]string{"-cve", path}, &out)
+	if err == nil {
+		t.Fatal("a CVE summary with no workload identity must be rejected")
+	}
+
+	if !errors.Is(err, errMalformedScanContent) {
+		t.Errorf("want errMalformedScanContent, got %v", err)
+	}
+}
+
+// With both the control map key and the embedded controlID empty, the fallback
+// left the key empty and the tool emitted "security(posture):  fails" with a
+// stable fingerprint for a blank control — a backlog entry naming nothing.
+func TestFailedControlWithEmptyIdentifierIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "blank.json")
+	writeRaw(t, path, fmt.Sprintf(`{"metadata":{"name":"api","namespace":"app",%s},`+
+		`"spec":{"controls":{"":{"controlID":"","severity":{"severity":"High"},`+
+		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":1}}}`,
+		labels("app", "Deployment", "api")))
+
+	var out bytes.Buffer
+
+	err := run([]string{"-posture", path}, &out)
+	if err == nil {
+		t.Fatalf("a failed control with an empty identifier must be rejected, got: %s", out.String())
+	}
+
+	if !errors.Is(err, errMalformedScanContent) {
+		t.Errorf("want errMalformedScanContent, got %v", err)
+	}
+}
+
+// An unknown policyType was silently skipped, so a stale or schema-changed
+// exceptions artifact quietly narrowed what counts as accepted. The generator
+// emits exactly one type, so anything else means the artifact and this reader
+// disagree — which must be loud, not silently dropped.
+func TestUnknownExceptionPolicyTypeIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, `[{"name":"x","policyType":"postureExceptionPolicyV2",`+
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":"^Deployment$"}}],`+
+		`"posturePolicies":[{"controlID":"^C-0016$"}],"reason":"stale artifact"}]`)
+
+	if _, err := loadExceptions(path); err == nil {
+		t.Fatal("an unknown policyType must be rejected, not silently discarded")
 	}
 }

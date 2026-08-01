@@ -174,7 +174,15 @@ func loadExceptions(path string) ([]exception, error) {
 
 	for _, p := range policies {
 		if p.PolicyType != posturePolicyType {
-			continue
+			// Silently skipping meant a stale or schema-changed artifact
+			// quietly narrowed what counts as accepted: controls it was meant
+			// to cover reappear as backlog work, and the write path would
+			// re-file findings the platform has already accepted. The
+			// generator emits exactly one type, so anything else means the
+			// artifact and this reader disagree.
+			return nil, fmt.Errorf("%w: %s declares policy %q with unknown policyType %q; "+
+				"expected %q — regenerate the artifact rather than reading it partially",
+				errBadExceptions, path, p.Name, p.PolicyType, posturePolicyType)
 		}
 
 		compiled, err := compilePolicy(p, path)

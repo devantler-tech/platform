@@ -501,6 +501,16 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 				key = ctrl.ControlID
 			}
 
+			// With both the map key and the embedded controlID empty the
+			// fallback leaves key empty, and the theme renders as
+			// "security(posture):  fails" with a stable fingerprint for a
+			// control that names nothing.
+			if strings.TrimSpace(key) == "" {
+				return nil, fmt.Errorf("%w: %s reports a failed control with an empty identifier; "+
+					"a backlog entry keyed on it would name no control and could not be matched "+
+					"against an exception", errMalformedScanContent, comp)
+			}
+
 			// An accepted control is not actionable work. Filtering is
 			// per-COMPONENT, never per-control: a kind/name-scoped exception
 			// must not suppress the same control on a workload it does not
@@ -530,6 +540,18 @@ func deriveCVE(items []item) ([]theme, error) {
 
 	for _, it := range items {
 		comp := it.component()
+
+		// The posture path rejects a summary with no workload kind/name because
+		// a cluster-wide exception designator matches an empty value. The same
+		// identity feeds CVE entries and the same suppression applies, so the
+		// check belongs on both paths or it covers only one of two.
+		if comp.Kind == "" || comp.Name == "" {
+			return nil, fmt.Errorf("%w: a CVE summary carries no workload %s "+
+				"(`kubescape.io/workload-kind` / `kubescape.io/workload-name`); exceptions are "+
+				"matched against that identity and a cluster-wide designator matches an empty "+
+				"value, so its findings could be suppressed without ever identifying the resource",
+				errMalformedScanContent, missingIdentityFields(comp))
+		}
 
 		// A real per-object CVE response always carries its severity buckets —
 		// all six of them, zero-valued when the image is clean (measured live).
@@ -803,6 +825,18 @@ func readList(path string) ([]item, error) {
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+
+	_, hasItems := probe["items"]
+	if _, hasSpec := probe["spec"]; hasItems && hasSpec {
+		// The items branch returns first, so a document carrying both would be
+		// read as a list and its `spec` never examined. An empty or partial
+		// `items` beside a real `spec` then reports a clean cluster — the same
+		// false all-clear as `items: null`, reached by a different shape.
+		return nil, fmt.Errorf("%w: %s carries both `items` and a single-object `spec`, "+
+			"so whether it is a list or one object is not decidable; pass either "+
+			"`kubectl get <crd> -o json` list output or one object, not a hybrid",
+			errUnrecognisedDocument, path)
 	}
 
 	if rawItems, ok := probe["items"]; ok {
