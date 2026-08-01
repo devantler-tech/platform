@@ -1,0 +1,44 @@
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: intended-hostname
+  namespace: doggy-countdown
+spec:
+  hostnames:
+    - "simba.${domain}"
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: arbitrary-hostname
+  namespace: doggy-countdown
+spec:
+  hostnames:
+    - login.platform.devantler.tech
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: hostname-less
+  namespace: doggy-countdown
+spec: {}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: mixed-hostnames
+  namespace: doggy-countdown
+spec:
+  hostnames:
+    - "simba.${domain}"
+    - login.platform.devantler.tech
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: arbitrary-hostname
+  namespace: another-tenant
+spec:
+  hostnames:
+    - login.platform.devantler.tech

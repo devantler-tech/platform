@@ -1,0 +1,31 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-doggy-countdown-hostnames
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-doggy-countdown-hostnames.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: restrict-doggy-countdown-hostnames
+    rule: require-doggy-countdown-hostname
+    resources:
+      - doggy-countdown/intended-hostname
+    kind: HTTPRoute
+    result: pass
+  - policy: restrict-doggy-countdown-hostnames
+    rule: require-doggy-countdown-hostname
+    resources:
+      - doggy-countdown/arbitrary-hostname
+      - doggy-countdown/hostname-less
+      - doggy-countdown/mixed-hostnames
+    kind: HTTPRoute
+    result: fail
+  - policy: restrict-doggy-countdown-hostnames
+    rule: require-doggy-countdown-hostname
+    resources:
+      - another-tenant/arbitrary-hostname
+    kind: HTTPRoute
+    result: skip

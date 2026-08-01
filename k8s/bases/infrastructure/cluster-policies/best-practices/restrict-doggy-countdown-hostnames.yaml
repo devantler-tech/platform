@@ -1,0 +1,43 @@
+# The doggy-countdown deployment is sourced from a separately published OCI
+# artifact and is applied as a ServiceAccount with permission to manage
+# HTTPRoutes in this namespace. Keep that publishing path from claiming another
+# hostname on the shared, cross-namespace Gateway (and from making external-dns
+# publish that claim). Requiring exactly one hostname also rejects a hostname-
+# less route, which Gateway API would otherwise match against every hostname.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-doggy-countdown-hostnames
+  annotations:
+    policies.kyverno.io/title: Restrict Doggy Countdown Hostnames
+    policies.kyverno.io/category: Security, Gateway API
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: HTTPRoute
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Restricts HTTPRoutes in the doggy-countdown namespace to the tenant's
+      assigned simba hostname so its remote manifest source cannot claim other
+      names on the shared platform Gateway.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-doggy-countdown-hostname
+      match:
+        any:
+          - resources:
+              kinds:
+                - HTTPRoute
+              namespaces:
+                - doggy-countdown
+      validate:
+        message: >-
+          Doggy countdown HTTPRoutes must declare exactly one hostname:
+          simba.${domain}.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.hostnames || `[]` }}"
+                operator: NotEquals
+                value:
+                  - "simba.${domain}"
