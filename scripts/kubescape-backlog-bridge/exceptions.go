@@ -1,13 +1,5 @@
-package main
-
-import (
-	"encoding/json"
-	"errors"
-	"fmt"
-	"os"
-	"regexp"
-)
-
+// This file applies the platform's declared ClusterSecurityExceptions.
+//
 // A declared ClusterSecurityException records a control the platform has
 // deliberately accepted — runtime-enforced elsewhere (Kyverno mutation, a
 // CiliumNetworkPolicy) or irreducible. Queueing one as backlog work recreates
@@ -22,6 +14,15 @@ import (
 // In that format both the control IDs and the resource attributes are anchored
 // REGEXES (`^C-0036$`, `kind: ^Job$`, `kind: .*`), which is why matching here
 // compiles them rather than comparing strings.
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"regexp"
+)
 
 // errBadExceptions reports an exceptions document this command cannot apply.
 // It is a hard error: silently ignoring a malformed exceptions file would
