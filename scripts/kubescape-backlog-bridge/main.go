@@ -174,11 +174,6 @@ type item struct {
 	} `json:"spec"`
 }
 
-// list is a `kubectl get ... -o json` document.
-type list struct {
-	Items []item `json:"items"`
-}
-
 // surface reports which scan surface this object belongs to, structurally.
 //
 // The two surfaces are disjoint by key: only a posture summary carries
