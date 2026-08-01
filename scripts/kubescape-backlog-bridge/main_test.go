@@ -859,3 +859,114 @@ func TestCVEOnlyRunHasNoExceptionsNote(t *testing.T) {
 		t.Errorf("a cve-only run must not carry the posture-exceptions note, got %q", out.String())
 	}
 }
+
+// A control whose status is missing or unrecognised must fail closed. Treating
+// "not failed" as "fine" silently absorbs malformed scanner output into a clean
+// report — measured live, every real control carries a recognised status.
+func TestUnrecognisedControlStatusFailsClosed(t *testing.T) {
+	for _, status := range []string{"", "  ", "weird-new-status"} {
+		items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": status}))
+
+		_, err := derivePosture(items, nil)
+		if err == nil {
+			t.Errorf("status %q must fail closed, got no error", status)
+		}
+	}
+}
+
+// The control: every recognised non-failure status is still silently skipped,
+// so the guard above does not simply reject everything.
+func TestRecognisedNonFailureStatusesAreSkipped(t *testing.T) {
+	for _, status := range []string{"passed", "skipped", "irrelevant", "excluded", "ignored", "PASSED"} {
+		items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": status}))
+
+		got, err := derivePosture(items, nil)
+		if err != nil {
+			t.Errorf("status %q must be accepted, got %v", status, err)
+		}
+
+		if len(got) != 0 {
+			t.Errorf("status %q must raise no theme, got %+v", status, got)
+		}
+	}
+}
+
+// A real per-object CVE response always carries its severity buckets, zero-valued
+// when clean. An absent map is malformed input, and iterating it zero times would
+// report exactly the clean result it is not.
+func TestCVEDocumentWithoutSeverityBucketsIsRejected(t *testing.T) {
+	for _, spec := range []string{
+		`"spec":{"vulnerabilitiesRef":{"all":{"kind":"vulnerabilitymanifests","name":"img","namespace":"app"}}}`,
+		`"spec":{"severities":{},"vulnerabilitiesRef":{"all":{"kind":"vulnerabilitymanifests","name":"img","namespace":"app"}}}`,
+	} {
+		path := filepath.Join(t.TempDir(), "nobuckets.json")
+		writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app"},`+spec+`}`)
+
+		var out bytes.Buffer
+
+		err := run([]string{"-cve", path}, &out)
+		if err == nil {
+			t.Errorf("a CVE document with no severity buckets must be rejected: %s", spec)
+		}
+
+		if strings.Contains(out.String(), "nothing to file") {
+			t.Errorf("must not print an all-clear, got %q", out.String())
+		}
+	}
+}
+
+// A framework-scoped exception cannot be honoured: the scan summaries carry no
+// framework. Applying it anyway would widen a deliberately narrow exception
+// across every framework, so it is refused rather than silently widened.
+func TestFrameworkScopedExceptionIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, `[{"name":"fw","policyType":"postureExceptionPolicy","actions":["alertOnly"],`+
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":".*"}}],`+
+		`"posturePolicies":[{"controlID":"^C-0016$","frameworkName":"^nsa$"}]}]`)
+
+	_, err := loadExceptions(path)
+	if err == nil {
+		t.Fatal("a framework-scoped exception must be refused, not applied across every framework")
+	}
+
+	if !errors.Is(err, errBadExceptions) {
+		t.Errorf("want errBadExceptions, got %v", err)
+	}
+}
+
+// The control: an unscoped policy — the shape every current CSE uses — still loads.
+func TestUnscopedExceptionStillLoads(t *testing.T) {
+	got := loadFixture(t, exceptionsDoc(policyDoc("ok", []string{"C-0016"}, `{"kind":".*"}`)))
+	if len(got) != 1 {
+		t.Fatalf("an unscoped policy must still load, got %d", len(got))
+	}
+}
+
+// The clean report must not claim anything about the cluster — this command has
+// no inventory, so it can only speak for the objects it was handed.
+func TestAllClearDoesNotClaimClusterWideCoverage(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "posture.json")
+	writeBare(t, path, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "passed"}))
+
+	var out bytes.Buffer
+	if err := run([]string{"-posture", path, "-exceptions", filepath.Join(t.TempDir(), "none")}, &out); err == nil {
+		t.Fatal("guard: a missing exceptions file must error, keeping this test honest")
+	}
+
+	out.Reset()
+
+	if err := run([]string{"-posture", path}, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	// Key on text unique to the all-clear line. Asserting on "supplied" alone
+	// was VACUOUS: the unfiltered-exceptions note also contains that word, so
+	// the assertion passed through unrelated output (caught by ablation).
+	if !strings.Contains(out.String(), "only the objects passed on the command line") {
+		t.Errorf("the all-clear must scope itself to the supplied inputs, got %q", out.String())
+	}
+
+	if strings.Contains(out.String(), "surface(s) — nothing to file") {
+		t.Errorf("the all-clear must not claim whole-surface coverage, got %q", out.String())
+	}
+}

@@ -127,6 +127,10 @@ type rawPolicy struct {
 	} `json:"resources"`
 	PosturePolicies []struct {
 		ControlID string `json:"controlID"`
+		// FrameworkName scopes an exception to one framework. The generator
+		// supports it, so it must be read even though no current policy uses it
+		// — see compilePolicy, which refuses rather than silently widening.
+		FrameworkName string `json:"frameworkName"`
 	} `json:"posturePolicies"`
 }
 
@@ -175,6 +179,22 @@ func compilePolicy(p rawPolicy, path string) (exception, error) {
 	for _, pp := range p.PosturePolicies {
 		if pp.ControlID == "" {
 			continue
+		}
+
+		// A framework-scoped exception accepts a control only within one
+		// framework. The scan summaries this command reads carry no framework,
+		// so the scope cannot be honoured — and applying the policy anyway
+		// would widen a deliberately narrow exception across every framework,
+		// suppressing controls the platform never accepted.
+		//
+		// Refusing is the fail-closed half of that choice: it is a loud, fixable
+		// error, where widening is silent. No current policy uses the field
+		// (0 of 93 measured), so this cannot fire on today's artifact.
+		if pp.FrameworkName != "" {
+			return exception{}, fmt.Errorf("%w: %s: policy %q scopes control %q to framework %q, "+
+				"but the scan input carries no framework to match it against; "+
+				"applying it would widen the exception across every framework",
+				errBadExceptions, path, p.Name, pp.ControlID, pp.FrameworkName)
 		}
 
 		re, err := regexp.Compile(pp.ControlID)

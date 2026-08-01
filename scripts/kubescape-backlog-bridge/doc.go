@@ -23,17 +23,20 @@
 //
 // # Fingerprints
 //
-// Each theme carries a fingerprint derived from its kind, key, and the SORTED
-// set of affected components. It deliberately excludes counts, timestamps,
-// resource versions and UIDs, so:
+// Each theme carries a fingerprint derived from its SURFACE and KEY, and
+// nothing else. Affected components, their count, totals, timestamps, resource
+// versions and UIDs are all excluded, so:
 //
 //   - unchanged cluster state yields a byte-identical fingerprint across runs
-//     (the anti-churn guarantee), and
+//     (the anti-churn guarantee),
 //   - a fluctuating severity COUNT updates an existing entry rather than
-//     re-filing a new one.
+//     re-filing a new one, and
+//   - a workload joining or leaving a theme likewise updates it, rather than
+//     minting a new identity and stranding the old entry.
 //
-// The count is still ACCUMULATED and RENDERED, just never fingerprinted: an
-// entry that cannot show 1 critical becoming 999 is not worth updating.
+// The affected components and counts are still ACCUMULATED and RENDERED, just
+// never fingerprinted: an entry that cannot show 1 critical becoming 999, or a
+// second workload picking up the same failed control, is not worth updating.
 //
 // # Every input is identified structurally, never assumed
 //

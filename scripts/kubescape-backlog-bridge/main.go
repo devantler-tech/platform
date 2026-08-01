@@ -386,9 +386,22 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 		comp := it.component()
 
 		for id, ctrl := range ctrls {
-			// Only failures are backlog work. "passed" and "skipped" are not
-			// findings, and filing them is the issue-spam failure mode.
-			if !strings.EqualFold(ctrl.Status.Status, "failed") {
+			// Only failures are backlog work. The other recognised statuses are
+			// not findings, and filing them is the issue-spam failure mode.
+			//
+			// An EMPTY or unrecognised status is neither: skipping it silently
+			// would let malformed or changed scanner output read as a clean
+			// control. Measured on live data, every control carries one of the
+			// recognised values, so an unrecognised one means the input — not
+			// the cluster — is wrong.
+			failed, known := controlFailed(ctrl.Status.Status)
+			if !known {
+				return nil, fmt.Errorf("%w: %s reports control %s with status %q, "+
+					"which is neither a failure nor a recognised non-failure",
+					errUnrecognisedDocument, comp, id, ctrl.Status.Status)
+			}
+
+			if !failed {
 				continue
 			}
 
@@ -426,6 +439,15 @@ func deriveCVE(items []item) ([]theme, error) {
 
 	for _, it := range items {
 		comp := it.component()
+
+		// A real per-object CVE response always carries its severity buckets —
+		// all six of them, zero-valued when the image is clean (measured live).
+		// An absent or empty map is therefore malformed input, not a clean
+		// result, and iterating it zero times would report exactly that.
+		if len(it.Spec.Severities) == 0 {
+			return nil, fmt.Errorf("%w: %s carries no severity buckets; a clean CVE summary still "+
+				"reports zero-valued ones", errUnrecognisedDocument, comp)
+		}
 
 		for class, raw := range it.Spec.Severities {
 			n, ok := severityCount(raw)
@@ -695,10 +717,12 @@ func report(themes []theme, examined []surface, filtered bool, out io.Writer) er
 	}
 
 	if len(themes) == 0 {
-		// Name the surfaces actually examined. A bare "no live-only findings"
-		// claims a clean bill of health for surfaces this invocation never
-		// looked at — a partial-input false all-clear reachable through an
-		// entirely normal CLI call, since each surface flag is optional.
+		// Scope the all-clear to what was actually read: the SUPPLIED INPUTS,
+		// not the surface. Two claims are being avoided here. A bare "no
+		// live-only findings" covers surfaces this invocation never looked at;
+		// naming the surface still implies the whole surface was covered, when
+		// the caller may have passed a single per-object GET. This command has
+		// no cluster inventory, so it cannot claim completeness at all.
 		names := make([]string, 0, len(examined))
 		for _, s := range examined {
 			names = append(names, string(s))
@@ -706,8 +730,9 @@ func report(themes []theme, examined []surface, filtered bool, out io.Writer) er
 
 		sort.Strings(names)
 
-		_, err := fmt.Fprintf(out, "no live-only findings in the %s surface(s) — nothing to file "+
-			"(surfaces not supplied were not examined)\n", strings.Join(names, " and "))
+		_, err := fmt.Fprintf(out, "no live-only findings in the supplied %s input(s) — nothing to file "+
+			"(only the objects passed on the command line were examined; "+
+			"this is not a statement about the whole cluster)\n", strings.Join(names, " and "))
 
 		return err
 	}
@@ -731,4 +756,21 @@ func containsSurface(surfaces []surface, want surface) bool {
 	}
 
 	return false
+}
+
+// controlFailed classifies a Kubescape control status.
+//
+// It returns known=false for an empty or unrecognised value so the caller can
+// fail closed. The non-failure set is explicit rather than "anything that is
+// not failed": that catch-all silently absorbed a missing status, which is
+// exactly how malformed scanner output becomes a clean report.
+func controlFailed(status string) (failed, known bool) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed":
+		return true, true
+	case "passed", "skipped", "irrelevant", "excluded", "ignored":
+		return false, true
+	default:
+		return false, false
+	}
 }
