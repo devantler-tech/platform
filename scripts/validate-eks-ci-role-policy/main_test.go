@@ -874,6 +874,7 @@ spec:
 		new  string
 	}{
 		{name: "floating version range", old: "version: 1.2.3", new: "version: '>=1.2.3'"},
+		{name: "wildcard version", old: "version: 1.2.3", new: "version: '1.2.x'"},
 		{name: "substituted version", old: "version: 1.2.3", new: "version: ${chart_version}"},
 		{name: "missing version pin", old: "      version: 1.2.3\n", new: ""},
 		{name: "chart identity", old: "chart: controller", new: "chart: controller-shadow"},
