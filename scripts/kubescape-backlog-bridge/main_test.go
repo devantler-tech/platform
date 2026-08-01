@@ -999,15 +999,20 @@ func TestNamespaceNamedClusterDoesNotCollideWithClusterScope(t *testing.T) {
 // A negative severity count is not a finding count, it is malformed input.
 func TestNegativeSeverityCountIsRejected(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "neg.json")
-	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app"},`+
-		`"spec":{"severities":{"critical":{"all":-3}},`+
-		`"vulnerabilitiesRef":{"all":{"kind":"vulnerabilitymanifests","name":"img","namespace":"app"}}}}`)
+	// Every required bucket must be present, or missingSeverityBuckets rejects the
+	// document first and the negative-count guard is never reached — the test would
+	// then pass with that guard deleted.
+	writeBare(t, path, cveDoc("app", "api", map[string]int{"critical": -3}))
 
 	var out bytes.Buffer
 
 	err := run([]string{"-cve", path}, &out)
 	if err == nil {
 		t.Fatal("a negative severity count must be rejected")
+	}
+
+	if !strings.Contains(err.Error(), "cannot be negative") {
+		t.Errorf("want the negative-count error, got %v", err)
 	}
 
 	if strings.Contains(out.String(), "nothing to file") {
