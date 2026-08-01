@@ -312,17 +312,26 @@ func severityCount(raw json.RawMessage) (int, bool) {
 // namespace designator matches. If a namespaced object ever arrives without the
 // label it also gets an empty namespace, which fails safe: the exception stops
 // applying and the finding is kept rather than hidden.
+// The NAME is read the same way, and for the same reason. It previously fell
+// back to the summary CR's own metadata.name, which is the identical
+// fabrication one field over: the CR is the scanner's object, not the workload,
+// so the substituted value is a different thing that merely looks populated.
+// Worse than useless — it defeats the identity guards on BOTH derivation paths,
+// because each inspects the assembled component, so a summary that lost its
+// label passes as identified and a broad generated designator (`kind: ".*"`)
+// can suppress its finding against an identity never established.
+//
+// Measured over the live cluster: 2215/2215 posture and 117/117 CVE summaries
+// carry the label, and in EVERY one of those 2332 the label DIFFERS from
+// metadata.name. So the fallback never once fired legitimately, and wherever it
+// would fire it could only substitute a wrong name. An absent label now yields
+// an empty name, which the identity guards reject.
 func (i item) component() component {
-	c := component{
+	return component{
 		Namespace: i.Metadata.Labels["kubescape.io/workload-namespace"],
 		Kind:      i.Metadata.Labels["kubescape.io/workload-kind"],
 		Name:      i.Metadata.Labels["kubescape.io/workload-name"],
 	}
-	if c.Name == "" {
-		c.Name = i.Metadata.Name
-	}
-
-	return c
 }
 
 // checkExamined fails closed when ANY object in the input carries the stripped

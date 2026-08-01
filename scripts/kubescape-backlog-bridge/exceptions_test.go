@@ -232,15 +232,21 @@ func TestUnanchoredAttributeDoesNotMatchBySubstring(t *testing.T) {
 
 // An attribute this command does not model must NOT be treated as satisfied:
 // doing so would widen the exception and hide a real finding.
-func TestUnknownDesignatorAttributeDoesNotExcept(t *testing.T) {
-	exceptions := loadFixture(t, exceptionsDoc(
-		policyDoc("future", []string{"C-0016"}, `{"someFutureAttribute":".*"}`)))
+//
+// This previously asserted the weaker form — the policy LOADS and then matches
+// nothing. Safe for suppression, but it leaves the misreported-provenance hole:
+// a designator built only from an unmodelled key is non-empty, so it survives
+// the empty-designator guard, covers nothing, and still makes run() treat
+// `len(exceptions) > 0` as proof that filtering occurred. Refusing the key at
+// load is strictly stronger, and the original guarantee is not lost with the
+// mechanism — it is pinned one layer down, at the matcher, by
+// TestUnknownDesignatorKeyNeverMatches.
+func TestUnknownDesignatorAttributeIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, exceptionsDoc(policyDoc("future", []string{"C-0016"}, `{"someFutureAttribute":".*"}`)))
 
-	items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
-
-	got := mustDerivePosture(t, items, exceptions)
-	if len(got) != 1 {
-		t.Errorf("an unmodelled designator attribute must not except anything, got %+v", got)
+	if _, err := loadExceptions(path); !errors.Is(err, errBadExceptions) {
+		t.Fatalf("want errBadExceptions, got %v", err)
 	}
 }
 
@@ -496,5 +502,34 @@ func TestPolicyThatCanCoverSomethingStillSuppresses(t *testing.T) {
 	got := mustDerivePosture(t, items, exceptions)
 	if len(got) != 0 {
 		t.Errorf("an accepted control must still be suppressed, got %+v", got)
+	}
+}
+
+// Defence in depth for TestUnknownDesignatorAttributeIsRejected, pinned at the matcher rather than the
+// loader: an unmodelled key must never be treated as satisfied, because doing
+// so would WIDEN the exception and hide a real finding.
+func TestUnknownDesignatorKeyNeverMatches(t *testing.T) {
+	d := designator{"someFutureAttribute": regexp.MustCompile("^(?:.*)$")}
+
+	if d.matches(component{Namespace: "app", Kind: "Deployment", Name: "api"}) {
+		t.Error("an unmodelled designator attribute must never match")
+	}
+}
+
+// One malformed entry beside a valid sibling was silently dropped, and the
+// nonempty-controls guard then passed on the strength of the sibling — so an
+// invalid artifact applied PARTIALLY while the report still claimed exceptions
+// were applied. The generator emits no empty controlID (0 of 93 measured), so
+// refusing is fail-closed.
+func TestEmptyControlIDEntryIsRejectedEvenBesideAValidSibling(t *testing.T) {
+	raw := `[{"name":"partial","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":".*"}}],` +
+		`"posturePolicies":[{"controlID":"^C-0016$"},{"controlID":""}]}]`
+
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, raw)
+
+	if _, err := loadExceptions(path); !errors.Is(err, errBadExceptions) {
+		t.Fatalf("want errBadExceptions, got %v", err)
 	}
 }

@@ -1462,3 +1462,66 @@ func TestUnknownExceptionPolicyTypeIsRejected(t *testing.T) {
 		t.Fatal("an unknown policyType must be rejected, not silently discarded")
 	}
 }
+
+// The workload NAME must come only from the label, exactly as the namespace
+// already does. Falling back to the summary CR's own metadata.name fabricates
+// an identity: the CR is the scanner's object, not the workload, so the
+// substituted value is a different thing that merely looks populated.
+//
+// That fabrication defeats the identity guards on BOTH derivation paths, since
+// each inspects the assembled component — a summary that lost its label passes
+// as identified, and a broad generated designator such as `kind: ".*"` can then
+// suppress its finding against an identity never established.
+//
+// Measured over the live cluster: 2215/2215 posture summaries and 117/117 CVE
+// summaries carry the label, and in EVERY one of those 2332 the label differs
+// from metadata.name. So the fallback never fired legitimately, and wherever it
+// would fire it could only substitute a wrong name.
+func TestMissingWorkloadNameLabelIsRejectedNotSubstituted(t *testing.T) {
+	// metadata.name is present and plausible; only the label is gone.
+	doc := `{"metadata":{"name":"scan-summary-abc123","namespace":"kubescape",` +
+		`"labels":{"kubescape.io/workload-namespace":"app","kubescape.io/workload-kind":"Deployment"}},` +
+		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},` +
+		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":0}}}`
+
+	_, err := derivePosture(itemsOf(t, doc), nil)
+	if err == nil {
+		t.Fatal("a summary with no workload-name label must be rejected, not renamed to the CR's own name")
+	}
+
+	if !errors.Is(err, errMalformedScanContent) {
+		t.Errorf("want errMalformedScanContent, got %v", err)
+	}
+
+	if strings.Contains(err.Error(), "scan-summary-abc123") {
+		t.Errorf("the CR's own name must not be presented as the workload identity: %v", err)
+	}
+}
+
+// The same guarantee on the CVE path, which reads the same two labels.
+func TestMissingWorkloadNameLabelIsRejectedOnCVEPath(t *testing.T) {
+	doc := `{"metadata":{"name":"vuln-summary-def456","namespace":"kubescape",` +
+		`"labels":{"kubescape.io/workload-namespace":"app","kubescape.io/workload-kind":"Deployment"}},` +
+		`"spec":{"vulnerabilitiesRef":{"name":"m"},"severities":{"critical":{"all":1},"high":{"all":0},` +
+		`"low":{"all":0},"medium":{"all":0},"negligible":{"all":0},"unknown":{"all":0}}}}`
+
+	if _, err := deriveCVE(itemsOf(t, doc)); err == nil {
+		t.Fatal("a CVE summary with no workload-name label must be rejected")
+	}
+}
+
+// The over-tightening control: a summary that DOES carry the label still
+// derives normally, so the guard above cannot be satisfied by refusing
+// everything.
+func TestLabelledSummaryStillDerives(t *testing.T) {
+	items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+
+	got := mustDerivePosture(t, items, nil)
+	if len(got) != 1 {
+		t.Fatalf("a correctly labelled summary must still derive, got %+v", got)
+	}
+
+	if got[0].Components[0] != "app/Deployment/api" {
+		t.Errorf("want the LABEL's workload name, got %v", got[0].Components)
+	}
+}

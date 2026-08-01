@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -63,26 +64,43 @@ type designator map[string]*regexp.Regexp
 // An UNKNOWN attribute key never matches. That is deliberate and conservative:
 // an attribute this command does not model must not be treated as satisfied,
 // because doing so would widen the exception and hide a real finding.
+// matchableAttributes is the SINGLE definition of which designator attributes
+// this command can match on, mapping each to the component field it reads.
+//
+// The loader's validation and the matcher both resolve through this map, so
+// there is no second list to fall out of step with it: an attribute is
+// rejected at load precisely when the matcher could not have honoured it.
+var matchableAttributes = map[string]func(component) string{
+	"kind":      func(c component) string { return c.Kind },
+	"name":      func(c component) string { return c.Name },
+	"namespace": func(c component) string { return c.Namespace },
+}
+
+// matchableAttributeNames lists the supported keys for error messages, derived
+// from the map itself and sorted so the message is deterministic.
+func matchableAttributeNames() []string {
+	names := make([]string, 0, len(matchableAttributes))
+	for key := range matchableAttributes {
+		names = append(names, key)
+	}
+
+	sort.Strings(names)
+
+	return names
+}
+
 func (d designator) matches(c component) bool {
 	if len(d) == 0 {
 		return false
 	}
 
 	for key, re := range d {
-		var value string
-
-		switch key {
-		case "kind":
-			value = c.Kind
-		case "name":
-			value = c.Name
-		case "namespace":
-			value = c.Namespace
-		default:
+		read, ok := matchableAttributes[key]
+		if !ok {
 			return false
 		}
 
-		if !re.MatchString(value) {
+		if !re.MatchString(read(c)) {
 			return false
 		}
 	}
@@ -229,8 +247,19 @@ func compilePolicy(p rawPolicy, path string) (exception, error) {
 	}
 
 	for _, pp := range p.PosturePolicies {
+		// Skipping a malformed entry applied the artifact PARTIALLY: with one
+		// valid sibling the nonempty-controls check below still passed, so a
+		// truncated or schema-changed policy quietly accepted fewer controls
+		// than it names while the report continued to claim exceptions were
+		// applied — an accepted control reappearing as backlog work.
+		//
+		// The generator rejects entries without a control ID and emits none
+		// (0 of 93 measured), so refusing is fail-closed.
 		if pp.ControlID == "" {
-			continue
+			return exception{}, fmt.Errorf("%w: %s: policy %q carries a posturePolicies entry with no "+
+				"controlID; applying the rest would accept fewer controls than the policy names "+
+				"while still counting as filtering applied",
+				errBadExceptions, path, p.Name)
 		}
 
 		// A framework-scoped exception accepts a control only within one
@@ -299,6 +328,25 @@ func compilePolicy(p rawPolicy, path string) (exception, error) {
 		d := designator{}
 
 		for key, pattern := range r.Attributes {
+			// An attribute this command does not model can never be satisfied —
+			// designator.matches returns false for an unknown key — so a
+			// designator built only from such keys is non-empty yet covers
+			// nothing, passing the guard below while still counting as
+			// filtering applied. Refusing the key is the fail-closed reading,
+			// and it keeps the loader honest about what it can actually
+			// enforce rather than accepting a scope it will silently ignore.
+			//
+			// The generator emits only these three (measured across the real 21
+			// policies: kind=115, name=104, namespace=6, and zero designators
+			// made solely of anything else), so this cannot fire on today's
+			// artifact.
+			if _, ok := matchableAttributes[key]; !ok {
+				return exception{}, fmt.Errorf("%w: %s: policy %q: designator attribute %q is not one "+
+					"this command matches on (%s); a designator resting on it can never apply, yet it "+
+					"would still count as filtering applied",
+					errBadExceptions, path, p.Name, key, strings.Join(matchableAttributeNames(), ", "))
+			}
+
 			re, err := compileFullMatch(pattern)
 			if err != nil {
 				return exception{}, fmt.Errorf("%w: %s: policy %q: attribute %s=%q: %w",
