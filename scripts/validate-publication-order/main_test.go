@@ -1352,3 +1352,36 @@ func TestAllowsReadIntoAnUnrelatedVariable(t *testing.T) {
 		t.Fatalf("read into an unrelated variable is correct code; got: %v", err)
 	}
 }
+
+// TestRejectsANamerefOverwriteOfTheSignedReference covers the same overwrite one level of indirection
+// out. `declare -n target=REF` makes every later `target=…` write REF, but a collector matching only
+// assignments literally named REF sees just the correct one — so cosign signs whatever went through
+// the alias while the validator reports the resolution intact.
+func TestRejectsANamerefOverwriteOfTheSignedReference(t *testing.T) {
+	shadowed := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        declare -n target=REF\n"+
+			`        target='ghcr.io/devantler-tech/platform/manifests:latest'`+"\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, shadowed)
+
+	if err := validate([]byte(shadowed)); err == nil {
+		t.Fatal("`declare -n target=REF` is a handle on REF; writes through it decide what cosign signs")
+	}
+}
+
+// TestAllowsANamerefToAnUnrelatedVariable is the over-tightening control: namerefs are a normal bash
+// feature, and refusing every one of them would reject correct code. Only an alias whose TARGET is
+// the protected variable is a write to it.
+func TestAllowsANamerefToAnUnrelatedVariable(t *testing.T) {
+	unrelated := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        declare -n target=GITHUB_OUTPUT\n"+
+			`        printf '%s\n' "${REF}" >>"${target}"`+"\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, unrelated)
+
+	if err := validate([]byte(unrelated)); err != nil {
+		t.Fatalf("a nameref to an unrelated variable is correct code; got: %v", err)
+	}
+}

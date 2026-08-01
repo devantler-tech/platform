@@ -430,12 +430,67 @@ func assignmentsTo(run, name string) []assignment {
 		// having no assignment at all.
 		case *syntax.DeclClause:
 			collect(typed.Args)
+
+			// A NAMEREF is the same overwrite one level of indirection out. `declare -n target=REF`
+			// makes every later `target=…` write REF, but the collector above only matches
+			// assignments whose literal name is REF — so the one correct assignment satisfied the
+			// validator while cosign signed whatever was written through the alias.
+			if declaresNamerefTo(typed, name) {
+				out = append(out, assignment{text: "", consumesPublishedTag: false})
+			}
 		}
 
 		return true
 	})
 
 	return out
+}
+
+// declaresNamerefTo reports whether decl creates a nameref aliasing the protected variable.
+//
+// It does not try to follow the alias. Tracking every later write through an arbitrary alias name is
+// a dataflow problem, and getting it subtly wrong here is worse than refusing: the whole point of
+// this collector is that the CONSUMERS require every assignment to qualify, so recording the
+// aliasing itself as an unprovable write is both sound and small.
+//
+// The alias TARGET is what matters, not the alias name — `declare -n anything=REF` is a handle on
+// REF whatever it is called. A nameref whose target is not readable is also refused, since it could
+// be the protected name assembled at run time.
+func declaresNamerefTo(decl *syntax.DeclClause, name string) bool {
+	if decl.Variant == nil {
+		return false
+	}
+
+	switch decl.Variant.Value {
+	case "declare", "typeset", "local":
+	default:
+		return false
+	}
+
+	nameref := false
+
+	for _, assign := range decl.Args {
+		// Options arrive as valueless Args, e.g. the `-n` of `declare -n target=REF`.
+		if assign.Name == nil && assign.Value != nil {
+			if word, readable := literalOf(assign.Value); readable &&
+				strings.HasPrefix(word, "-") && strings.Contains(word, "n") {
+				nameref = true
+			}
+
+			continue
+		}
+
+		if !nameref || assign.Value == nil {
+			continue
+		}
+
+		target, readable := literalOf(assign.Value)
+		if !readable || target == name {
+			return true
+		}
+	}
+
+	return false
 }
 
 // builtinWritesTo reports whether call writes the shell variable name through a builtin that takes
