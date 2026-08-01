@@ -27,6 +27,16 @@ var errWritesNotEnabled = errors.New("issue writes are not enabled in this slice
 // single Kubescape object.
 var errUnrecognisedDocument = errors.New("input is neither a kubectl list nor a Kubescape object")
 
+// errMalformedScanContent reports a document that decoded as a Kubescape
+// object but whose content cannot be used — a missing workload identity, a
+// blank or unrecognised severity, an undecidable scan surface, a bad count.
+// It is its own sentinel for the same reason errDuplicateObject is: the file's
+// SHAPE is fine, so reporting it under errUnrecognisedDocument would tell an
+// operator their input was unparseable and send them to inspect the document
+// rather than the field the message actually names. The discriminator is
+// structural — a message that can name the component has already decoded it.
+var errMalformedScanContent = errors.New("recognised scan object carries unusable content")
+
 // errSurfaceMismatch reports a document handed to the wrong scan surface — a
 // CVE summary passed to -posture, or the inverse. Without this the wrong file
 // derives no themes and exits 0, which is a false all-clear reached by a typo.
@@ -344,13 +354,13 @@ func checkSurface(items []item, want surface) error {
 			return fmt.Errorf("%w: %s carries both `spec.controls` and `spec.vulnerabilitiesRef`, "+
 				"so which scan surface it belongs to is not decidable; genuine Kubescape output "+
 				"carries exactly one",
-				errUnrecognisedDocument, it.component())
+				errMalformedScanContent, it.component())
 		}
 
 		got, ok := it.surface()
 		if !ok {
 			return fmt.Errorf("%w: %s carries neither `spec.controls` nor `spec.vulnerabilitiesRef`",
-				errUnrecognisedDocument, it.component())
+				errMalformedScanContent, it.component())
 		}
 
 		if got != want {
@@ -438,7 +448,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 				"(`kubescape.io/workload-kind` / `kubescape.io/workload-name`); exceptions are matched "+
 				"against that identity and a cluster-wide designator matches an empty value, so its "+
 				"findings could be suppressed without ever identifying the resource",
-				errUnrecognisedDocument, missingIdentityFields(comp))
+				errMalformedScanContent, missingIdentityFields(comp))
 		}
 
 		for id, ctrl := range ctrls {
@@ -454,7 +464,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 			if !known {
 				return nil, fmt.Errorf("%w: %s reports control %s with status %q, "+
 					"which is neither a failure nor a recognised non-failure",
-					errUnrecognisedDocument, comp, id, ctrl.Status.Status)
+					errMalformedScanContent, comp, id, ctrl.Status.Status)
 			}
 
 			if !failed {
@@ -472,7 +482,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 				return nil, fmt.Errorf("%w: %s reports failed control %s with no severity; "+
 					"a genuine posture summary always carries one, and a theme without it "+
 					"loses the prioritisation the backlog is ordered by",
-					errUnrecognisedDocument, comp, id)
+					errMalformedScanContent, comp, id)
 			}
 
 			// An empty embedded ID falls back to the map key. But when BOTH are
@@ -485,7 +495,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 				if ctrl.ControlID != id {
 					return nil, fmt.Errorf("%w: %s keys a control as %q but its controlID is %q; "+
 						"refusing to guess which control an exception should match",
-						errUnrecognisedDocument, comp, id, ctrl.ControlID)
+						errMalformedScanContent, comp, id, ctrl.ControlID)
 				}
 
 				key = ctrl.ControlID
@@ -529,19 +539,19 @@ func deriveCVE(items []item) ([]theme, error) {
 			return nil, fmt.Errorf("%w: %s is missing severity bucket(s) %s; a genuine CVE summary "+
 				"reports all of them, zero-valued when the image is clean, so a truncated set "+
 				"could hide findings in the omitted buckets",
-				errUnrecognisedDocument, comp, strings.Join(missing, ", "))
+				errMalformedScanContent, comp, strings.Join(missing, ", "))
 		}
 
 		for class, raw := range it.Spec.Severities {
 			n, ok := severityCount(raw)
 			if !ok {
 				return nil, fmt.Errorf("%w: %s reports severity %q in an unrecognised shape; "+
-					"expected an integer or {\"all\": N}", errUnrecognisedDocument, comp, class)
+					"expected an integer or {\"all\": N}", errMalformedScanContent, comp, class)
 			}
 
 			if n < 0 {
 				return nil, fmt.Errorf("%w: %s reports severity %q as %d; a count cannot be negative",
-					errUnrecognisedDocument, comp, class, n)
+					errMalformedScanContent, comp, class, n)
 			}
 
 			if n == 0 {

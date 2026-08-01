@@ -1215,8 +1215,8 @@ func TestPostureSummaryWithoutWorkloadIdentityIsRejected(t *testing.T) {
 
 	items := itemsOf(t, raw)
 
-	if _, err := derivePosture(items, nil); !errors.Is(err, errUnrecognisedDocument) {
-		t.Fatalf("want errUnrecognisedDocument for a summary with no workload kind, got %v", err)
+	if _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
+		t.Fatalf("want errMalformedScanContent for a summary with no workload kind, got %v", err)
 	}
 }
 
@@ -1234,8 +1234,8 @@ func TestDocumentCarryingBothSurfacesIsRejected(t *testing.T) {
 	items := itemsOf(t, raw)
 
 	for _, want := range []surface{surfacePosture, surfaceCVE} {
-		if err := checkSurface(items, want); !errors.Is(err, errUnrecognisedDocument) {
-			t.Fatalf("want errUnrecognisedDocument for -%s, got %v", want, err)
+		if err := checkSurface(items, want); !errors.Is(err, errMalformedScanContent) {
+			t.Fatalf("want errMalformedScanContent for -%s, got %v", want, err)
 		}
 	}
 }
@@ -1246,8 +1246,8 @@ func TestFailedControlWithoutSeverityIsRejected(t *testing.T) {
 	items := itemsOf(t, postureDocSev("app", "Deployment", "api",
 		map[string]string{"C-0016": "failed"}, ""))
 
-	if _, err := derivePosture(items, nil); !errors.Is(err, errUnrecognisedDocument) {
-		t.Fatalf("want errUnrecognisedDocument for a failed control with no severity, got %v", err)
+	if _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
+		t.Fatalf("want errMalformedScanContent for a failed control with no severity, got %v", err)
 	}
 }
 
@@ -1259,5 +1259,69 @@ func TestFailedControlWithUnknownSeverityIsAccepted(t *testing.T) {
 
 	if got := mustDerivePosture(t, items, nil); len(got) != 1 {
 		t.Fatalf("want the control reported, got %+v", got)
+	}
+}
+
+// A document that PARSED as a Kubescape object but whose content is unusable
+// must not be reported under errUnrecognisedDocument. That sentinel says the
+// input is "neither a kubectl list nor a Kubescape object", which sends an
+// operator to inspect the file's shape — when the file's shape is fine and the
+// problem is a missing label, a blank severity, or a bad count. The code
+// already states this rule: errDuplicateObject exists as its own sentinel for
+// exactly this reason. These guards were added under the wrong one.
+//
+// The discriminator is structural: a message that can name the COMPONENT has
+// necessarily decoded the object, so it is content that is wrong, not shape.
+func TestWellFormedDocumentWithUnusableContentIsNotReportedAsUnrecognised(t *testing.T) {
+	noKind := fmt.Sprintf(`{"metadata":{"name":"api","namespace":"app",`+
+		`"labels":{"kubescape.io/workload-namespace":"app","kubescape.io/workload-name":"api"}},`+
+		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},`+
+		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":1}}}`)
+
+	bothSurfaces := fmt.Sprintf(`{"metadata":{"name":"api","namespace":"app",%s},`+
+		`"spec":{"controls":{},"vulnerabilitiesRef":{"all":{"name":"m"}},`+
+		`"severities":{"critical":0,"high":0}}}`, labels("app", "Deployment", "api"))
+
+	neitherSurface := fmt.Sprintf(`{"metadata":{"name":"api","namespace":"app",%s},`+
+		`"spec":{"severities":{"critical":0,"high":0}}}`, labels("app", "Deployment", "api"))
+
+	cases := []struct {
+		name string
+		flag string
+		doc  string
+	}{
+		{"missing workload identity", "-posture", noKind},
+		{"carries both surface keys", "-posture", bothSurfaces},
+		{"carries neither surface key", "-posture", neitherSurface},
+		{"blank severity", "-posture", postureDocSev(
+			"app", "Deployment", "api", map[string]string{"C-0016": "failed"}, "")},
+		{"unrecognised control status", "-posture", postureDoc(
+			"app", "Deployment", "api", map[string]string{"C-0016": "banana"})},
+		{"missing severity buckets", "-cve", fmt.Sprintf(
+			`{"metadata":{"name":"api","namespace":"app",%s},`+
+				`"spec":{"vulnerabilitiesRef":{"all":{"name":"m"}},`+
+				`"severities":{"critical":{"all":1}}}}`, labels("app", "Deployment", "api"))},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "doc.json")
+			writeRaw(t, path, tc.doc)
+
+			var out bytes.Buffer
+
+			err := run([]string{tc.flag, path}, &out)
+			if err == nil {
+				t.Fatalf("%s must be rejected", tc.name)
+			}
+
+			if !errors.Is(err, errMalformedScanContent) {
+				t.Errorf("want errMalformedScanContent, got %v", err)
+			}
+
+			if errors.Is(err, errUnrecognisedDocument) {
+				t.Errorf("a parsed document must not be reported as unrecognised: %v", err)
+			}
+		})
 	}
 }
