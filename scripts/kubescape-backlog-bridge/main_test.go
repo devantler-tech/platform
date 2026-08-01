@@ -317,6 +317,67 @@ func TestNoInputIsAnErrorNotACleanBillOfHealth(t *testing.T) {
 	}
 }
 
+// A per-object `kubectl get <crd> <name> -n <ns> -o json` emits a BARE object
+// with no "items" key — which is exactly what this command's own documentation
+// tells the operator to produce. Decoding that into a list left Items nil and
+// printed "nothing to file" with exit 0 while the object carried real findings:
+// the precise false all-clear the stripped-LIST guard exists to prevent,
+// reached by following the instructions. It must yield the finding instead.
+func TestBareSingleObjectInputIsParsedNotSilentlyEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bare.json")
+	raw, err := json.Marshal(cveItem("app", "api", map[string]int{"critical": 18}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := run([]string{"-cve", path}, &out); err != nil {
+		t.Fatalf("a bare per-object document must be accepted, got %v", err)
+	}
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Fatalf("bare object with critical=18 reported an all-clear: %q", out.String())
+	}
+	if !strings.Contains(out.String(), "critical") {
+		t.Errorf("want the critical theme, got %q", out.String())
+	}
+}
+
+// Input that is neither a list nor a recognisable Kubescape object must be an
+// error — never zero findings and a successful exit.
+func TestUnrecognisedDocumentShapeIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "junk.json")
+	if err := os.WriteFile(path, []byte(`{"unrelated":true}`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var out bytes.Buffer
+	err := run([]string{"-cve", path}, &out)
+	if err == nil {
+		t.Fatal("an unrecognised document shape must be rejected, not reported clean")
+	}
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Errorf("must not print an all-clear for junk input, got %q", out.String())
+	}
+}
+
+// An explicitly empty list is unambiguous — the query genuinely returned
+// nothing — so it stays a legitimate pass rather than a hard error.
+func TestExplicitlyEmptyListIsAcceptedAsGenuinelyEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty.json")
+	if err := os.WriteFile(path, []byte(`{"items":[]}`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var out bytes.Buffer
+	if err := run([]string{"-cve", path}, &out); err != nil {
+		t.Errorf("an explicitly empty list must be accepted, got %v", err)
+	}
+}
+
 func writeList(t *testing.T, path string, items []item) {
 	t.Helper()
 	raw, err := json.Marshal(list{Items: items})

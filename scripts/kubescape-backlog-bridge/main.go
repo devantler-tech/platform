@@ -404,16 +404,55 @@ func run(args []string, out io.Writer) error {
 	return report(themes, out)
 }
 
+// errUnrecognisedDocument reports input that is neither a kubectl list nor a
+// single Kubescape object.
+var errUnrecognisedDocument = errors.New("input is neither a kubectl list nor a Kubescape object")
+
+// readList accepts BOTH shapes kubectl can produce, and rejects anything else.
+//
+// `kubectl get <crd> -A -o json` emits {"items":[…]}, while a per-object
+// `kubectl get <crd> <name> -n <ns> -o json` — the form this command's own
+// documentation asks for — emits a BARE object with no "items" key. Decoding
+// the bare form into a list silently left Items nil, so a document carrying
+// real findings reported "nothing to file" and exited 0. That is the same
+// false all-clear checkHydration exists to prevent, reached by following the
+// instructions, so the shape is now determined explicitly rather than assumed.
+//
+// An explicitly empty {"items":[]} stays a legitimate pass: the query
+// unambiguously returned nothing. Anything unrecognisable is a hard error,
+// never zero findings and a clean exit.
 func readList(path string) ([]item, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(path) // #nosec G304 -- operator-supplied scan output path; this is a CLI argument by design
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-	var l list
-	if err := json.Unmarshal(raw, &l); err != nil {
+
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	return l.Items, nil
+
+	if rawItems, ok := probe["items"]; ok {
+		var items []item
+		if err := json.Unmarshal(rawItems, &items); err != nil {
+			return nil, fmt.Errorf("parse %s: \"items\" is not an array of objects: %w", path, err)
+		}
+		return items, nil
+	}
+
+	// A single object identifies itself by carrying a spec — the only part this
+	// command reads. Requiring it keeps an unrelated JSON document from being
+	// accepted as an empty scan.
+	if _, ok := probe["spec"]; ok {
+		var single item
+		if err := json.Unmarshal(raw, &single); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		return []item{single}, nil
+	}
+
+	return nil, fmt.Errorf("%w: %s has neither an \"items\" array nor a \"spec\"; "+
+		"pass `kubectl get <crd> -o json` output (list or single object)", errUnrecognisedDocument, path)
 }
 
 // report prints the themes this run would file, newest surface first. The
