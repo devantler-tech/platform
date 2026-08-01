@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -61,7 +62,10 @@ type component struct {
 func (c component) String() string {
 	scope := c.Namespace
 	if scope == "" {
-		scope = "cluster"
+		// Angle brackets cannot occur in an RFC 1123 namespace name, so this
+		// marker cannot collide with a real namespace literally called
+		// "cluster" — which would otherwise render identically to cluster scope.
+		scope = "<cluster>"
 	}
 
 	if c.Kind == "" {
@@ -456,6 +460,11 @@ func deriveCVE(items []item) ([]theme, error) {
 					"expected an integer or {\"all\": N}", errUnrecognisedDocument, comp, class)
 			}
 
+			if n < 0 {
+				return nil, fmt.Errorf("%w: %s reports severity %q as %d; a count cannot be negative",
+					errUnrecognisedDocument, comp, class, n)
+			}
+
 			if n == 0 {
 				continue
 			}
@@ -708,7 +717,7 @@ func report(themes []theme, examined []surface, filtered bool, out io.Writer) er
 	// platform has already accepted. That is a legitimate view to ask for, but it
 	// must not be mistaken for a drainable backlog — so the report says which one
 	// it is rather than leaving the reader to infer it from the command line.
-	if !filtered && containsSurface(examined, surfacePosture) {
+	if !filtered && slices.Contains(examined, surfacePosture) {
 		if _, err := fmt.Fprintln(out,
 			"note: no -exceptions supplied, so declared ClusterSecurityExceptions were NOT applied; "+
 				"accepted controls are included below and this output is not a filed-work list"); err != nil {
@@ -745,17 +754,6 @@ func report(themes []theme, examined []surface, filtered bool, out io.Writer) er
 	}
 
 	return nil
-}
-
-// containsSurface reports whether a surface was among those examined.
-func containsSurface(surfaces []surface, want surface) bool {
-	for _, s := range surfaces {
-		if s == want {
-			return true
-		}
-	}
-
-	return false
 }
 
 // controlFailed classifies a Kubescape control status.

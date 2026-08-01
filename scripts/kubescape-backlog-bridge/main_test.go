@@ -304,8 +304,15 @@ func TestFingerprintDiffersByKeyAndSurface(t *testing.T) {
 		t.Error("different controls must have different identities")
 	}
 
+	// Assert the theme EXISTS rather than guarding on it: `len(cve) > 0 &&`
+	// makes the comparison skip silently if derivation ever returns nothing,
+	// which is the vacuity this control exists to rule out.
 	cve := mustDeriveCVE(t, itemsOf(t, cveDoc("app", "api", map[string]int{"C-0016": 1})))
-	if len(cve) > 0 && cve[0].Fingerprint() == a[0].Fingerprint() {
+	if len(cve) != 1 {
+		t.Fatalf("want exactly 1 cve theme to compare against, got %d", len(cve))
+	}
+
+	if cve[0].Fingerprint() == a[0].Fingerprint() {
 		t.Error("the same key on a different surface must have a different identity")
 	}
 }
@@ -968,5 +975,37 @@ func TestAllClearDoesNotClaimClusterWideCoverage(t *testing.T) {
 
 	if strings.Contains(out.String(), "surface(s) — nothing to file") {
 		t.Errorf("the all-clear must not claim whole-surface coverage, got %q", out.String())
+	}
+}
+
+// A real namespace may legitimately be called "cluster", so the cluster-scope
+// marker must not be a bare word a namespace could equal — otherwise two
+// distinct components render identically.
+func TestNamespaceNamedClusterDoesNotCollideWithClusterScope(t *testing.T) {
+	namespaced := component{Namespace: "cluster", Kind: "Deployment", Name: "api"}
+	clusterScoped := component{Kind: "Deployment", Name: "api"}
+
+	if namespaced.String() == clusterScoped.String() {
+		t.Errorf("a namespace called %q must not render as cluster scope: both are %q",
+			"cluster", namespaced.String())
+	}
+}
+
+// A negative severity count is not a finding count, it is malformed input.
+func TestNegativeSeverityCountIsRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "neg.json")
+	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app"},`+
+		`"spec":{"severities":{"critical":{"all":-3}},`+
+		`"vulnerabilitiesRef":{"all":{"kind":"vulnerabilitymanifests","name":"img","namespace":"app"}}}}`)
+
+	var out bytes.Buffer
+
+	err := run([]string{"-cve", path}, &out)
+	if err == nil {
+		t.Fatal("a negative severity count must be rejected")
+	}
+
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Errorf("must not print an all-clear, got %q", out.String())
 	}
 }
