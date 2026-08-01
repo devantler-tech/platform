@@ -1598,13 +1598,21 @@ func mustNotReleaseAfterFailure(steps []step, releaseIdx []int) error {
 	return nil
 }
 
-// shellStartupEnv are the step-level names that change the shell before the run block's first line.
+// shellStartupEnv are the step-level names that decide how the run block is interpreted or resolved,
+// before and while it executes — set from outside the script, so the run block stays textually
+// perfect either way.
 //
 // Bash expands BASH_ENV in a non-interactive shell and reads the resulting file before executing the
-// script, so `BASH_ENV: ./setup.sh` with `cosign() { true; }` inside it shadows the required command
-// while the run block stays textually perfect. ENV is the same mechanism under POSIX mode, and
-// SHELLOPTS/BASHOPTS set shell options — including noexec — from outside the script.
-var shellStartupEnv = []string{"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS"}
+// script, so `BASH_ENV: ./setup.sh` with `cosign() { true; }` inside it shadows the required command.
+// ENV is the same mechanism under POSIX mode, and SHELLOPTS/BASHOPTS set shell options — including
+// noexec — from outside the script.
+//
+// PATH belongs here for the same reason it is already rejected as an in-script assignment above
+// ("PATH decides where every unqualified name resolves"): `env: PATH: /tmp/fake` resolves the
+// textually perfect `cosign sign …` to whatever `cosign` sits in that directory. The script-level
+// spellings were covered while the step-level one was not, which left the same shadowing reachable
+// without touching the script at all.
+var shellStartupEnv = []string{"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "PATH"}
 
 // mustModelEveryRunStep rejects an action carrying a construct this guard cannot interpret.
 //
@@ -1626,9 +1634,11 @@ func mustModelEveryRunStep(steps []step) error {
 		for _, name := range shellStartupEnv {
 			if _, set := s.Env[name]; set {
 				return fmt.Errorf(
-					"step %q sets %s, which changes the shell before the step's first line runs.\n"+
-						"Bash reads that file (or applies those options) ahead of the script, so a required"+
-						" command can be shadowed by something this check never sees. Configure the step"+
+					"step %q sets %s, which decides how the run block is interpreted or resolved from"+
+						" outside the script.\n"+
+						"Bash reads that startup file, applies those options, or resolves unqualified names"+
+						" through that PATH, so a required command can be shadowed by something this check"+
+						" never sees while the run block stays textually correct. Configure the step"+
 						" without it",
 					label, name)
 			}

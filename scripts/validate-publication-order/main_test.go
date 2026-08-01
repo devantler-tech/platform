@@ -1660,6 +1660,23 @@ func TestRejectsBashEnvOnASigningStep(t *testing.T) {
 	}
 }
 
+// TestRejectsPathOnASigningStep closes the step-level half of command resolution. The script-level
+// forms are already covered by resolutionAssignments below, but PATH set through the STEP's `env:`
+// never appears in the run block at all: bash then resolves the textually perfect
+// `cosign sign …` to whatever `cosign` sits in that directory. Same shadowing as BASH_ENV, reached
+// without touching the script — and this file already treats PATH as resolution state when it is
+// assigned inside one.
+func TestRejectsPathOnASigningStep(t *testing.T) {
+	withEnv := strings.Replace(validAction,
+		"      id: cosign-sign\n",
+		"      id: cosign-sign\n      env:\n        PATH: /tmp/fake\n", 1)
+	mustChange(t, validAction, withEnv)
+
+	if err := validate([]byte(withEnv)); err == nil {
+		t.Fatal("a step-level PATH decides which binary the required command resolves to")
+	}
+}
+
 // TestAllowsOrdinarySigningStepEnv is the over-tightening control: the real signing step carries
 // `env: COSIGN_YES`, so rejecting env wholesale would reject the action this guard exists to protect.
 func TestAllowsOrdinarySigningStepEnv(t *testing.T) {
