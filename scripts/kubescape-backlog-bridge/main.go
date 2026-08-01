@@ -55,12 +55,20 @@ type component struct {
 	Name      string
 }
 
+// String renders the component. A cluster-scoped object has no namespace, and
+// is rendered with an explicit "cluster" scope marker rather than an empty
+// leading segment, so a reader cannot mistake it for a missing value.
 func (c component) String() string {
-	if c.Kind == "" {
-		return c.Namespace + "/" + c.Name
+	scope := c.Namespace
+	if scope == "" {
+		scope = "cluster"
 	}
 
-	return c.Namespace + "/" + c.Kind + "/" + c.Name
+	if c.Kind == "" {
+		return scope + "/" + c.Name
+	}
+
+	return scope + "/" + c.Kind + "/" + c.Name
 }
 
 // control is one posture control's state within a summary object.
@@ -179,12 +187,18 @@ type theme struct {
 
 // Fingerprint is the theme's stable identity across runs.
 //
-// It covers the kind, the key, and the sorted component set — and nothing
-// else. Counts, totals, timestamps, resource versions and UIDs are excluded so
-// that unchanged state re-derives the same value and a count change updates
-// rather than re-files.
+// It covers the surface and the key, and NOTHING else — not the affected
+// components, their count, totals, timestamps, resource versions or UIDs.
+//
+// The component set is deliberately excluded. A theme is "this control fails"
+// or "this severity class is present"; which workloads exhibit it is mutable
+// state ABOUT that theme, not part of its identity. Including it meant one
+// workload starting or stopping to exhibit an unchanged theme minted a new
+// identity, so the write path would re-file the theme and strand the old entry
+// — exactly the churn excluding the count was meant to prevent, since the
+// component set implicitly encodes that count anyway.
 func (t theme) Fingerprint() string {
-	canonical := t.Kind + "|" + t.Key + "|" + strings.Join(t.Components, ",")
+	canonical := t.Kind + "|" + t.Key
 	sum := sha256.Sum256([]byte(canonical))
 
 	return hex.EncodeToString(sum[:])[:16]
@@ -211,34 +225,65 @@ func pluralComponents(n int) string {
 
 // severityCount normalises the two spellings Kubescape uses for a severity
 // count: a bare integer, or an object with an "all" member.
-func severityCount(raw json.RawMessage) int {
+//
+// It reports ok=false for anything else rather than returning zero. Returning
+// zero would make corrupt or changed scanner output indistinguishable from a
+// clean result — the same false all-clear this command exists to prevent, one
+// level down. Note `null` decodes into an int as a silent no-op success, so it
+// is rejected explicitly rather than caught by the decode error.
+func severityCount(raw json.RawMessage) (int, bool) {
+	if len(raw) == 0 || isJSONNull(raw) {
+		return 0, false
+	}
+
 	var n int
 	if err := json.Unmarshal(raw, &n); err == nil {
-		return n
+		return n, true
 	}
 
-	var wrapped struct {
-		All int `json:"all"`
+	var wrapped map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &wrapped); err != nil {
+		return 0, false
 	}
 
-	if err := json.Unmarshal(raw, &wrapped); err == nil {
-		return wrapped.All
+	all, ok := wrapped["all"]
+	if !ok || isJSONNull(all) {
+		return 0, false
 	}
 
-	return 0
+	var n2 int
+	if err := json.Unmarshal(all, &n2); err != nil {
+		return 0, false
+	}
+
+	return n2, true
 }
 
 // component renders the sanitized public identity of a scanned object.
+//
+// The workload namespace comes ONLY from the label, never from the summary CR's
+// own metadata.namespace. Those are different things: the CR is stored in the
+// scanner's namespace, so falling back to it fabricates a namespace for every
+// cluster-scoped object.
+//
+// That fallback was never correct. Measured over the live cluster's 2215 posture
+// summaries: 1808 carry the label (1652 of them equal to metadata.namespace, 156
+// deliberately different), and all 407 that do not are cluster-scoped kinds —
+// ClusterRoleBinding, PersistentVolume, Namespace, Node, webhook configurations.
+// So the fallback fired only where it invented an answer, and it assigned them
+// the scanner's namespace, which a namespace-scoped ClusterSecurityException
+// then matched — silently suppressing real cluster-scoped findings.
+//
+// A cluster-scoped component therefore has an EMPTY namespace, which no
+// namespace designator matches. If a namespaced object ever arrives without the
+// label it also gets an empty namespace, which fails safe: the exception stops
+// applying and the finding is kept rather than hidden.
 func (i item) component() component {
 	c := component{
 		Namespace: i.Metadata.Labels["kubescape.io/workload-namespace"],
 		Kind:      i.Metadata.Labels["kubescape.io/workload-kind"],
 		Name:      i.Metadata.Labels["kubescape.io/workload-name"],
 	}
-	if c.Namespace == "" {
-		c.Namespace = i.Metadata.Namespace
-	}
-
 	if c.Name == "" {
 		c.Name = i.Metadata.Name
 	}
@@ -376,14 +421,19 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 }
 
 // deriveCVE groups CVE counts into one theme per severity class.
-func deriveCVE(items []item) []theme {
+func deriveCVE(items []item) ([]theme, error) {
 	bySeverity := map[string]*acc{}
 
 	for _, it := range items {
 		comp := it.component()
 
 		for class, raw := range it.Spec.Severities {
-			n := severityCount(raw)
+			n, ok := severityCount(raw)
+			if !ok {
+				return nil, fmt.Errorf("%w: %s reports severity %q in an unrecognised shape; "+
+					"expected an integer or {\"all\": N}", errUnrecognisedDocument, comp, class)
+			}
+
 			if n == 0 {
 				continue
 			}
@@ -402,7 +452,7 @@ func deriveCVE(items []item) []theme {
 		}
 	}
 
-	return assemble(surfaceCVE, bySeverity)
+	return assemble(surfaceCVE, bySeverity), nil
 }
 
 // assemble turns the accumulator map into sorted, deterministic themes.
@@ -504,32 +554,42 @@ func run(args []string, out io.Writer) error {
 		return err
 	}
 
-	var themes []theme
-
-	postureItems, err := readSurface(posturePaths, surfacePosture)
-	if err != nil {
-		return err
-	}
+	var (
+		themes   []theme
+		examined []surface
+	)
 
 	if len(posturePaths) > 0 {
+		postureItems, err := readSurface(posturePaths, surfacePosture)
+		if err != nil {
+			return err
+		}
+
 		derived, err := derivePosture(postureItems, exceptions)
 		if err != nil {
 			return err
 		}
 
 		themes = append(themes, derived...)
-	}
-
-	cveItems, err := readSurface(cvePaths, surfaceCVE)
-	if err != nil {
-		return err
+		examined = append(examined, surfacePosture)
 	}
 
 	if len(cvePaths) > 0 {
-		themes = append(themes, deriveCVE(cveItems)...)
+		cveItems, err := readSurface(cvePaths, surfaceCVE)
+		if err != nil {
+			return err
+		}
+
+		derived, err := deriveCVE(cveItems)
+		if err != nil {
+			return err
+		}
+
+		themes = append(themes, derived...)
+		examined = append(examined, surfaceCVE)
 	}
 
-	return report(themes, out)
+	return report(themes, examined, len(exceptions) > 0, out)
 }
 
 // readSurface reads every file for one surface, validating each against that
@@ -621,9 +681,33 @@ func readList(path string) ([]item, error) {
 // two consecutive runs on unchanged state are byte-identical — that equality IS
 // the acceptance check. `total` is rendered but never fingerprinted, so a
 // changed count updates an entry instead of re-filing one.
-func report(themes []theme, out io.Writer) error {
+func report(themes []theme, examined []surface, filtered bool, out io.Writer) error {
+	// A posture report derived WITHOUT the declared exceptions lists controls the
+	// platform has already accepted. That is a legitimate view to ask for, but it
+	// must not be mistaken for a drainable backlog — so the report says which one
+	// it is rather than leaving the reader to infer it from the command line.
+	if !filtered && containsSurface(examined, surfacePosture) {
+		if _, err := fmt.Fprintln(out,
+			"note: no -exceptions supplied, so declared ClusterSecurityExceptions were NOT applied; "+
+				"accepted controls are included below and this output is not a filed-work list"); err != nil {
+			return err
+		}
+	}
+
 	if len(themes) == 0 {
-		_, err := fmt.Fprintln(out, "no live-only findings — nothing to file")
+		// Name the surfaces actually examined. A bare "no live-only findings"
+		// claims a clean bill of health for surfaces this invocation never
+		// looked at — a partial-input false all-clear reachable through an
+		// entirely normal CLI call, since each surface flag is optional.
+		names := make([]string, 0, len(examined))
+		for _, s := range examined {
+			names = append(names, string(s))
+		}
+
+		sort.Strings(names)
+
+		_, err := fmt.Fprintf(out, "no live-only findings in the %s surface(s) — nothing to file "+
+			"(surfaces not supplied were not examined)\n", strings.Join(names, " and "))
 
 		return err
 	}
@@ -636,4 +720,15 @@ func report(themes []theme, out io.Writer) error {
 	}
 
 	return nil
+}
+
+// containsSurface reports whether a surface was among those examined.
+func containsSurface(surfaces []surface, want surface) bool {
+	for _, s := range surfaces {
+		if s == want {
+			return true
+		}
+	}
+
+	return false
 }

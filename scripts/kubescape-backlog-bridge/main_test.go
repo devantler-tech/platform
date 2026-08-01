@@ -131,6 +131,17 @@ func writeRaw(t *testing.T, path, raw string) {
 	}
 }
 
+func mustDeriveCVE(t *testing.T, items []item) []theme {
+	t.Helper()
+
+	got, err := deriveCVE(items)
+	if err != nil {
+		t.Fatalf("deriveCVE: %v", err)
+	}
+
+	return got
+}
+
 func mustDerivePosture(t *testing.T, items []item, exceptions []exception) []theme {
 	t.Helper()
 
@@ -203,8 +214,8 @@ func TestFingerprintIsStableAcrossRunsAndInputOrder(t *testing.T) {
 // A changing severity COUNT must update the existing theme, not mint a new
 // identity — otherwise every scan re-files.
 func TestFingerprintIgnoresCounts(t *testing.T) {
-	few := deriveCVE(itemsOf(t, cveDoc("app", "api", map[string]int{"critical": 1})))
-	many := deriveCVE(itemsOf(t, cveDoc("app", "api", map[string]int{"critical": 999})))
+	few := mustDeriveCVE(t, itemsOf(t, cveDoc("app", "api", map[string]int{"critical": 1})))
+	many := mustDeriveCVE(t, itemsOf(t, cveDoc("app", "api", map[string]int{"critical": 999})))
 
 	if len(few) != 1 || len(many) != 1 {
 		t.Fatalf("want one theme each, got %d and %d", len(few), len(many))
@@ -220,19 +231,19 @@ func TestFingerprintIgnoresCounts(t *testing.T) {
 // correct, but the count must still be carried, or an update to an existing
 // entry cannot show 1 critical becoming 999 and the update is pointless.
 func TestTotalIsAccumulatedEvenThoughItIsNotFingerprinted(t *testing.T) {
-	few := deriveCVE(itemsOf(t, cveDoc("app", "api", map[string]int{"critical": 1})))
-	many := deriveCVE(itemsOf(t, cveDoc("app", "api", map[string]int{"critical": 999})))
+	few := mustDeriveCVE(t, itemsOf(t, cveDoc("app", "api", map[string]int{"critical": 1})))
+	many := mustDeriveCVE(t, itemsOf(t, cveDoc("app", "api", map[string]int{"critical": 999})))
 
 	if few[0].Total != 1 || many[0].Total != 999 {
 		t.Fatalf("totals must reflect the real counts, got %d and %d", few[0].Total, many[0].Total)
 	}
 
 	var a, b bytes.Buffer
-	if err := report(few, &a); err != nil {
+	if err := report(few, []surface{surfaceCVE}, true, &a); err != nil {
 		t.Fatalf("report: %v", err)
 	}
 
-	if err := report(many, &b); err != nil {
+	if err := report(many, []surface{surfaceCVE}, true, &b); err != nil {
 		t.Fatalf("report: %v", err)
 	}
 
@@ -243,7 +254,7 @@ func TestTotalIsAccumulatedEvenThoughItIsNotFingerprinted(t *testing.T) {
 
 // Totals are summed across workloads, not overwritten by the last one seen.
 func TestTotalSumsAcrossWorkloads(t *testing.T) {
-	got := deriveCVE(itemsOf(t,
+	got := mustDeriveCVE(t, itemsOf(t,
 		cveDoc("app", "api", map[string]int{"critical": 2}),
 		cveDoc("app", "web", map[string]int{"critical": 5}),
 	))
@@ -256,9 +267,11 @@ func TestTotalSumsAcrossWorkloads(t *testing.T) {
 	}
 }
 
-// A changing component SET must change the identity — the converse control,
-// without which the test above would pass for a constant fingerprint.
-func TestFingerprintChangesWhenComponentsChange(t *testing.T) {
+// A changing component SET must NOT change the identity. Which workloads
+// exhibit a theme is mutable state about it, not part of what it IS — so a
+// workload joining or leaving updates the existing entry instead of minting a
+// new one and stranding the old.
+func TestFingerprintIsStableWhenTheComponentSetChanges(t *testing.T) {
 	one := mustDerivePosture(t, itemsOf(t,
 		postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}),
 	), nil)
@@ -267,24 +280,49 @@ func TestFingerprintChangesWhenComponentsChange(t *testing.T) {
 		postureDoc("app", "Deployment", "web", map[string]string{"C-0016": "failed"}),
 	), nil)
 
-	if one[0].Fingerprint() == two[0].Fingerprint() {
-		t.Error("a different affected-component set must yield a different fingerprint")
+	if one[0].Fingerprint() != two[0].Fingerprint() {
+		t.Errorf("a workload joining a theme must not change its identity: %s vs %s",
+			one[0].Fingerprint(), two[0].Fingerprint())
+	}
+
+	if one[0].Count == two[0].Count {
+		t.Error("guard: the component sets must actually differ, or the test is vacuous")
+	}
+}
+
+// The converse control: a DIFFERENT theme must have a different identity, without
+// which the test above would pass for a constant fingerprint.
+func TestFingerprintDiffersByKeyAndSurface(t *testing.T) {
+	a := mustDerivePosture(t, itemsOf(t,
+		postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}),
+	), nil)
+	b := mustDerivePosture(t, itemsOf(t,
+		postureDoc("app", "Deployment", "api", map[string]string{"C-0087": "failed"}),
+	), nil)
+
+	if a[0].Fingerprint() == b[0].Fingerprint() {
+		t.Error("different controls must have different identities")
+	}
+
+	cve := mustDeriveCVE(t, itemsOf(t, cveDoc("app", "api", map[string]int{"C-0016": 1})))
+	if len(cve) > 0 && cve[0].Fingerprint() == a[0].Fingerprint() {
+		t.Error("the same key on a different surface must have a different identity")
 	}
 }
 
 func TestZeroCountSeveritiesRaiseNoTheme(t *testing.T) {
-	got := deriveCVE(itemsOf(t, cveDoc("app", "api", map[string]int{"critical": 0, "high": 0})))
+	got := mustDeriveCVE(t, itemsOf(t, cveDoc("app", "api", map[string]int{"critical": 0, "high": 0})))
 	if len(got) != 0 {
 		t.Errorf("all-zero severities must raise no theme, got %+v", got)
 	}
 }
 
 func TestSeverityCountAcceptsBothSpellings(t *testing.T) {
-	if got := severityCount(json.RawMessage(`7`)); got != 7 {
+	if got, ok := severityCount(json.RawMessage(`7`)); !ok || got != 7 {
 		t.Errorf("bare integer: want 7, got %d", got)
 	}
 
-	if got := severityCount(json.RawMessage(`{"all":7}`)); got != 7 {
+	if got, ok := severityCount(json.RawMessage(`{"all":7}`)); !ok || got != 7 {
 		t.Errorf(`{"all":N} form: want 7, got %d`, got)
 	}
 }
@@ -572,7 +610,7 @@ func TestSurfaceFlagsAreRepeatableAndAllInputsAreRead(t *testing.T) {
 		}
 	}
 
-	if strings.Count(out.String(), "\n") != 1 {
+	if themeLines(out.String()) != 1 {
 		t.Errorf("both workloads failing one control must group into ONE theme, got %q", out.String())
 	}
 }
@@ -635,5 +673,189 @@ func TestSpecNullIsRejected(t *testing.T) {
 
 	if strings.Contains(out.String(), "nothing to file") {
 		t.Errorf("must not print an all-clear, got %q", out.String())
+	}
+}
+
+// clusterScopedDoc is the shape a cluster-scoped object really has: the
+// workload-namespace label is ABSENT (not empty), while the summary CR itself is
+// stored in the scanner's namespace. Measured on the live cluster — all 407
+// posture summaries lacking that label were cluster-scoped kinds.
+func clusterScopedDoc(kind, name, storedIn string, controls map[string]string) string {
+	ids := make([]string, 0, len(controls))
+	for id := range controls {
+		ids = append(ids, id)
+	}
+
+	sort.Strings(ids)
+
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, fmt.Sprintf(
+			`%q:{"controlID":%q,"severity":{"severity":"High"},"status":{"status":%q}}`,
+			id, id, controls[id]))
+	}
+
+	return fmt.Sprintf(`{"metadata":{"name":%q,"namespace":%q,`+
+		`"labels":{"kubescape.io/workload-kind":%q,"kubescape.io/workload-name":%q}},`+
+		`"spec":{"controls":{%s},"severities":{"critical":0}}}`,
+		name, storedIn, kind, name, strings.Join(parts, ","))
+}
+
+// A cluster-scoped object has no namespace. Taking the summary CR's own
+// metadata.namespace invents one — the scanner's — and a namespace-scoped
+// exception then matches it.
+func TestClusterScopedComponentHasNoFabricatedNamespace(t *testing.T) {
+	it := itemOf(t, clusterScopedDoc("ClusterRoleBinding", "some-binding", "kubescape",
+		map[string]string{"C-0016": "failed"}))
+
+	got := it.component()
+	if got.Namespace != "" {
+		t.Errorf("a cluster-scoped object must have no namespace, got %q", got.Namespace)
+	}
+
+	if strings.Contains(got.String(), "kubescape") {
+		t.Errorf("the scanner's storage namespace must not appear in the component: %s", got)
+	}
+}
+
+// The consequence, end to end: a namespace-only ClusterSecurityException must
+// NOT suppress a cluster-scoped finding. The live `controller-rbac` policy is
+// namespace-only and lists `kubescape`, so fabricating that namespace hid real
+// cluster-scoped RBAC findings.
+func TestNamespaceOnlyExceptionDoesNotSuppressClusterScopedFindings(t *testing.T) {
+	exceptions := loadFixture(t, exceptionsDoc(
+		policyDoc("controller-rbac", []string{"C-0016"}, `{"namespace":"^(flux-system|kubescape)$"}`)))
+
+	items := itemsOf(t, clusterScopedDoc("ClusterRoleBinding", "some-binding", "kubescape",
+		map[string]string{"C-0016": "failed"}))
+
+	got := mustDerivePosture(t, items, exceptions)
+	if len(got) != 1 {
+		t.Fatalf("a cluster-scoped finding must survive a namespace-only exception, got %+v", got)
+	}
+
+	// Control: the same exception MUST still suppress a genuinely namespaced
+	// workload in one of the listed namespaces, or this test would pass simply
+	// because exceptions stopped working.
+	nsScoped := mustDerivePosture(t, itemsOf(t,
+		postureDoc("flux-system", "Deployment", "controller", map[string]string{"C-0016": "failed"}),
+	), exceptions)
+	if len(nsScoped) != 0 {
+		t.Errorf("control: the namespaced workload must still be excepted, got %+v", nsScoped)
+	}
+}
+
+// A severity count in an unrecognised shape must be an error, not zero: zero
+// makes corrupt scanner output indistinguishable from a clean result.
+func TestSeverityCountRejectsUnrecognisedShapes(t *testing.T) {
+	for _, raw := range []string{`null`, `{}`, `{"foo":1}`, `"7"`, `{"all":null}`, `[]`} {
+		if got, ok := severityCount(json.RawMessage(raw)); ok {
+			t.Errorf("%s must be rejected, got %d ok=true", raw, got)
+		}
+	}
+}
+
+func TestUnrecognisedSeverityShapeFailsTheRun(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bad.json")
+	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app"},`+
+		`"spec":{"severities":{"critical":{"foo":1}},`+
+		`"vulnerabilitiesRef":{"all":{"kind":"vulnerabilitymanifests","name":"img","namespace":"app"}}}}`)
+
+	var out bytes.Buffer
+
+	err := run([]string{"-cve", path}, &out)
+	if err == nil {
+		t.Fatal("an unrecognised severity shape must fail the run, not report clean")
+	}
+
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Errorf("must not print an all-clear, got %q", out.String())
+	}
+}
+
+// A clean report must say WHICH surfaces it examined. Each surface flag is
+// optional, so a bare "no live-only findings" claims a clean bill of health for
+// a surface this invocation never looked at.
+func TestAllClearNamesOnlyTheExaminedSurfaces(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "posture.json")
+	writeBare(t, path, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "passed"}))
+
+	var out bytes.Buffer
+	if err := run([]string{"-posture", path}, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "posture") {
+		t.Errorf("the all-clear must name the examined surface, got %q", out.String())
+	}
+
+	if strings.Contains(out.String(), "cve") {
+		t.Errorf("must not claim anything about the unexamined cve surface, got %q", out.String())
+	}
+}
+
+// themeLines counts rendered theme rows, ignoring advisory lines such as the
+// unfiltered-report note. The point of the assertion is how many THEMES were
+// emitted, which a raw newline count conflates with commentary.
+func themeLines(out string) int {
+	n := 0
+
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.Contains(line, "\t"+string(surfacePosture)+"\t") ||
+			strings.Contains(line, "\t"+string(surfaceCVE)+"\t") {
+			n++
+		}
+	}
+
+	return n
+}
+
+// A posture report derived WITHOUT the declared exceptions includes controls the
+// platform has already accepted. That is a legitimate view, but it must announce
+// itself so it is not mistaken for a drainable backlog.
+func TestUnfilteredPostureReportSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	posture := filepath.Join(dir, "posture.json")
+	writeBare(t, posture, postureDoc("app", "Deployment", "api", map[string]string{"C-0036": "failed"}))
+
+	var without bytes.Buffer
+	if err := run([]string{"-posture", posture}, &without); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if !strings.Contains(without.String(), "-exceptions") {
+		t.Errorf("an unfiltered posture report must say the exceptions were not applied, got %q", without.String())
+	}
+
+	// Control: supplying exceptions removes the note.
+	exceptions := filepath.Join(dir, "exceptions.json")
+	writeRaw(t, exceptions, exceptionsDoc(policyDoc("other", []string{"C-0999"}, `{"kind":".*"}`)))
+
+	var with bytes.Buffer
+	if err := run([]string{"-posture", posture, "-exceptions", exceptions}, &with); err != nil {
+		t.Fatalf("run with exceptions: %v", err)
+	}
+
+	if strings.Contains(with.String(), "were NOT applied") {
+		t.Errorf("a filtered report must not carry the note, got %q", with.String())
+	}
+
+	if themeLines(with.String()) != 1 {
+		t.Errorf("control: the finding itself must still be reported, got %q", with.String())
+	}
+}
+
+// A CVE-only run carries no posture note — the exceptions artifact is posture-only.
+func TestCVEOnlyRunHasNoExceptionsNote(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cve.json")
+	writeBare(t, path, cveDoc("app", "api", map[string]int{"critical": 3}))
+
+	var out bytes.Buffer
+	if err := run([]string{"-cve", path}, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if strings.Contains(out.String(), "were NOT applied") {
+		t.Errorf("a cve-only run must not carry the posture-exceptions note, got %q", out.String())
 	}
 }
