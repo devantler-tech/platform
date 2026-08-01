@@ -1587,3 +1587,177 @@ func TestReportsAMissingSigningStepID(t *testing.T) {
 		t.Fatalf("the error must not quote the empty marker back at the reader; got: %v", err)
 	}
 }
+
+// unmodeledStateChanges are the ways a signing block can change how the shell RESOLVES a command or
+// PROPAGATES its failure, using a construct the guard does not interpret. Each one leaves the
+// required invocation textually perfect, top-level, unnegated and errexit-guarded — every property
+// the guard checks — while producing no signature.
+//
+// They are enumerated as one table rather than one per review round because they are one class: the
+// guard models a fixed set of state changes (`set -e`, aliases, functions, namerefs) and SKIPPED
+// everything else, so each unmodeled construct was a silent bypass. That is the same blocklist
+// failure the grammar rule already fixed for "does it run"; this is the state axis of it.
+var unmodeledStateChanges = map[string]string{
+	// `hash -p PATH NAME` makes bash use PATH for NAME, ahead of any lookup (bash `help hash`).
+	"hash rebinding": "        hash -p /usr/bin/true cosign\n" + signCall,
+	// An ERR handler runs where errexit would exit, and `exit 0` then makes the step succeed.
+	"ERR trap": "        trap 'exit 0' ERR\n" + signCall,
+	// `set -n` reads commands without executing them (bash `help set`).
+	"noexec":      "        set -n\n" + signCall,
+	"noexec long": "        set -o noexec\n" + signCall,
+	// `source`/`.` and `eval` run text the guard never sees.
+	"sourced file": "        source ./setup.sh\n" + signCall,
+	"dot file":     "        . ./setup.sh\n" + signCall,
+	"eval":         "        eval 'cosign() { true; }'\n" + signCall,
+	// `enable -n` turns a builtin off; `shopt` changes expansion, including alias expansion.
+	"disabled builtin": "        enable -n printf\n" + signCall,
+	// State changed inside a top-level BLOCK still applies to the current shell, so nesting it does
+	// not make it someone else's problem.
+	"block-nested trap": "        { trap 'exit 0' ERR; }\n" + signCall,
+}
+
+func TestRejectsUnmodeledShellStateChanges(t *testing.T) {
+	for name, replacement := range unmodeledStateChanges {
+		t.Run(name, func(t *testing.T) {
+			mutated := strings.Replace(validAction, signCall, replacement, 1)
+			mustChange(t, validAction, mutated)
+
+			if err := validate([]byte(mutated)); err == nil {
+				t.Fatalf("expected %q to be rejected: it changes command resolution or failure "+
+					"propagation in a way the guard does not model", name)
+			}
+		})
+	}
+}
+
+// TestRejectsBashEnvOnASigningStep covers the same axis from the STEP rather than the script: bash
+// expands BASH_ENV and reads that file before running a non-interactive script, so a startup file
+// defining `cosign() { true; }` shadows the required command without appearing in the run block.
+func TestRejectsBashEnvOnASigningStep(t *testing.T) {
+	withEnv := strings.Replace(validAction,
+		"      id: cosign-sign\n",
+		"      id: cosign-sign\n      env:\n        BASH_ENV: ./setup.sh\n", 1)
+	mustChange(t, validAction, withEnv)
+
+	if err := validate([]byte(withEnv)); err == nil {
+		t.Fatal("BASH_ENV sources a startup file the guard never reads")
+	}
+}
+
+// TestAllowsOrdinarySigningStepEnv is the over-tightening control: the real signing step carries
+// `env: COSIGN_YES`, so rejecting env wholesale would reject the action this guard exists to protect.
+func TestAllowsOrdinarySigningStepEnv(t *testing.T) {
+	withEnv := strings.Replace(validAction,
+		"      id: cosign-sign\n",
+		"      id: cosign-sign\n      env:\n        COSIGN_YES: \"true\"\n", 1)
+	mustChange(t, validAction, withEnv)
+
+	if err := validate([]byte(withEnv)); err != nil {
+		t.Fatalf("an ordinary step env is how the real action configures cosign, got: %v", err)
+	}
+}
+
+// TestAllowsTheModeledOptionSet is the over-tightening control for the `set` allowlist: the real
+// signing block opens with `set -euo pipefail`, and a guard that rejected it would reject production.
+func TestAllowsTheModeledOptionSet(t *testing.T) {
+	withOpts := strings.Replace(validAction, signCall,
+		"        set -euo pipefail\n"+signCall, 1)
+	mustChange(t, validAction, withOpts)
+
+	if err := validate([]byte(withOpts)); err != nil {
+		t.Fatalf("`set -euo pipefail` opens the real signing block, got: %v", err)
+	}
+}
+
+// TestRejectsALoopBindingTheResolvedReference covers the ASSIGNMENT axis: a `for` loop binds its
+// variable and leaves the final value in scope, so `for REF in <stale>` overwrites the resolved
+// reference. The collector reads CallExpr and DeclClause writes, so the loop's binding is invisible
+// and the original valid assignment still satisfies the check.
+func TestRejectsALoopBindingTheResolvedReference(t *testing.T) {
+	mutated := strings.Replace(validAction, signCall,
+		"        for REF in ghcr.io/devantler-tech/platform/manifests:latest; do :; done\n"+signCall, 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err == nil {
+		t.Fatal("`for REF in …` overwrites the resolved reference before cosign reads it")
+	}
+}
+
+// TestAllowsALoopBindingAnUnrelatedName is that rule's over-tightening control — the reference
+// sequence already loops over `attempt`, and iteration is ordinary scripting.
+func TestAllowsALoopBindingAnUnrelatedName(t *testing.T) {
+	mutated := strings.Replace(validAction, signCall,
+		"        for attempt in 1 2 3; do :; done\n"+signCall, 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err != nil {
+		t.Fatalf("looping over an unrelated name is ordinary scripting, got: %v", err)
+	}
+}
+
+// TestRejectsASubscriptedBuiltinWrite covers the destination-normalisation gap: bash converts a
+// scalar to an array on `printf -v 'REF[0]'`, and `${REF}` then returns element zero — so the write
+// lands on REF while an exact name comparison sees a different destination.
+func TestRejectsASubscriptedBuiltinWrite(t *testing.T) {
+	mutated := strings.Replace(validAction, signCall,
+		`        printf -v 'REF[0]' '%s' 'ghcr.io/devantler-tech/platform/manifests:latest'`+"\n"+signCall, 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err == nil {
+		t.Fatal("`printf -v 'REF[0]'` writes REF; ${REF} returns element zero")
+	}
+}
+
+// TestRejectsAnInterpreterWrappedExtraPush covers the OTHER direction of the same omission. The
+// guard's extra-operation rules can only reject what they can see, so an invocation whose executable
+// is `bash` was omitted entirely — and a second publish AFTER the evidence steps is exactly the
+// release-without-coverage this check exists to reject.
+func TestRejectsAnInterpreterWrappedExtraPush(t *testing.T) {
+	mutated := strings.Replace(validAction, reconcileStep,
+		"    - name: Sneak\n"+
+			"      run: bash ./scripts/run-ksail-prod-with-pull-auth.sh workload push\n"+
+			reconcileStep, 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err == nil {
+		t.Fatal("a publish invoked through an interpreter still moves the tag production reads")
+	}
+}
+
+// TestRecognisesAnInterpreterWrappedRequiredPush is the same rule in the SATISFYING direction: if
+// looking through the interpreter only ever added rejections, the guard would reject a real deploy
+// that spelled its push that way.
+func TestRecognisesAnInterpreterWrappedRequiredPush(t *testing.T) {
+	mutated := strings.Replace(validAction,
+		"      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push",
+		"      run: bash ./scripts/run-ksail-prod-with-pull-auth.sh workload push", 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err != nil {
+		t.Fatalf("an interpreter-wrapped push still publishes, got: %v", err)
+	}
+}
+
+// TestRejectsInlineInterpreterCode is where looking through the interpreter has to stop: `-c` names
+// no script, so there is nothing to resolve to and the code is never parsed by this file.
+func TestRejectsInlineInterpreterCode(t *testing.T) {
+	mutated := strings.Replace(validAction, signCall,
+		`        bash -c 'cosign() { true; }'`+"\n"+signCall, 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err == nil {
+		t.Fatal("`bash -c` runs text this check never sees")
+	}
+}
+
+// TestAllowsAnUnrelatedInterpretedScript is the over-tightening control for both interpreter rules —
+// running a helper script through bash is ordinary scripting and must stay legal.
+func TestAllowsAnUnrelatedInterpretedScript(t *testing.T) {
+	mutated := strings.Replace(validAction, signCall,
+		"        bash ./scripts/collect-metadata.sh\n"+signCall, 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err != nil {
+		t.Fatalf("running a helper script through bash is ordinary, got: %v", err)
+	}
+}

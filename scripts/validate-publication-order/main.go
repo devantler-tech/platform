@@ -51,6 +51,9 @@ type step struct {
 	// and action reference together still leave the subject free, and an attestation of the wrong
 	// subject is evidence that looks complete and covers nothing this run published.
 	With map[string]string `yaml:"with"`
+	// Env is read because two of its names change the shell BEFORE the run block's first line, so a
+	// step can shadow a required command without the script containing anything unusual.
+	Env map[string]string `yaml:"env"`
 }
 
 type action struct {
@@ -237,6 +240,144 @@ func parseExecuted(run string, errexit bool) []executedCommand {
 // any rebinding of a required name as disqualifying is the conservative direction and matches how
 // functions are already handled: the remedy, given in the error message, is to name the wrapper
 // something else.
+// unmodeledShellState reports a construct that changes how the shell RESOLVES a command or
+// PROPAGATES its failure and that this guard does not interpret, naming it for the error message.
+//
+// This is the state axis of the rule executedCommand already applies to the grammar axis. That one
+// asks the parser what RUNS instead of enumerating the ways a line can fail to run; this one bounds
+// what can change the MEANING of what runs. The guard models a fixed set — errexit, aliases, shell
+// functions, namerefs — and previously skipped every other construct, so each unmodeled one was a
+// silent bypass rather than a failure: `hash -p /usr/bin/true cosign` rebinds the lookup,
+// `trap 'exit 0' ERR` swallows the failure, `set -n` stops execution entirely, and `source`/`eval`
+// run text this file never sees. Each was reported separately, and the list did not end.
+//
+// So the direction is inverted: a construct is allowed here only because it has been reasoned about,
+// and anything else fails closed with its name in the message. The remedy is always the same —
+// express the step without it, or extend the model deliberately.
+//
+// The walk DESCENDS into nested constructs, unlike the top-level statement iteration that decides
+// which commands run. The two questions differ: a command nested in a conditional may never execute,
+// but a block, loop or branch body runs in the CURRENT shell, so `{ trap 'exit 0' ERR; }` changes
+// exactly as much state as the bare form does. Depth is what this walk must not stop at.
+func unmodeledShellState(file *syntax.File) (string, bool) {
+	found := ""
+
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if found != "" {
+			return false
+		}
+
+		if assign, isAssign := node.(*syntax.Assign); isAssign && assign.Name != nil {
+			// PATH decides where every unqualified name resolves, and BASH_ENV/ENV name a file the
+			// shell reads before the script. None of the three is interpreted here.
+			switch assign.Name.Value {
+			case "PATH", "BASH_ENV", "ENV":
+				found = "an assignment to " + assign.Name.Value
+
+				return false
+			}
+		}
+
+		call, isCall := node.(*syntax.CallExpr)
+		if !isCall || len(call.Args) == 0 {
+			return true
+		}
+
+		lits, litOK := wordsOf(call.Args)
+
+		start, executes := commandStart(lits, litOK)
+		if !executes || start >= len(lits) || !litOK[start] {
+			return true
+		}
+
+		switch name := lits[start]; name {
+		case "hash", "trap", "shopt", "enable", "unalias", "eval", "source", ".":
+			found = "`" + name + "`"
+
+			return false
+		case "bash", "sh", "dash", "ksh", "zsh":
+			// An interpreter given inline code runs text this file never parses, exactly as `eval`
+			// does. One naming a SCRIPT is ordinary and is resolved through by scriptTarget.
+			for _, arg := range lits[start+1:] {
+				if strings.HasPrefix(arg, "-") && strings.Contains(arg, "c") {
+					found = "`" + name + " " + arg + "`"
+
+					return false
+				}
+			}
+		case "set":
+			if opt, ok := unmodeledSetOption(lits[start+1:], litOK[start+1:]); ok {
+				found = "`set " + opt + "`"
+
+				return false
+			}
+		}
+
+		return true
+	})
+
+	return found, found != ""
+}
+
+// unmodeledSetOption reports a `set` option outside the modeled set.
+//
+// `set` is the one builtin here that must stay usable — the real signing block opens with
+// `set -euo pipefail` — so it is filtered by option rather than rejected outright. Only the options
+// this guard reasons about are accepted: errexit is tracked, and nounset/xtrace/pipefail cannot
+// affect whether a command runs or what it resolves to. Everything else fails closed, which is what
+// catches `-n` (read commands without executing them) and `-t` (exit after one command) without
+// having to know in advance that those two were the dangerous ones.
+func unmodeledSetOption(lits []string, litOK []bool) (string, bool) {
+	const modeledFlags = "eux"
+
+	modeledLong := map[string]bool{
+		"errexit": true, "nounset": true, "xtrace": true, "pipefail": true,
+	}
+
+	for i := 0; i < len(lits); i++ {
+		if !litOK[i] {
+			return "", false
+		}
+
+		word := lits[i]
+
+		// `--` and `-` end option parsing; every later word is a positional parameter.
+		if word == "--" || word == "-" {
+			return "", false
+		}
+
+		if !strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "+") {
+			// A non-option word is a positional parameter, not a mode change.
+			return "", false
+		}
+
+		flags := word[1:]
+
+		// `o` takes the NEXT word as its long option name, and it may be bundled — `set -euo pipefail`
+		// is `-e -u -o pipefail`. Only a trailing `o` consumes the argument; `set -o` with nothing
+		// after it lists the options rather than setting one.
+		if strings.HasSuffix(flags, "o") {
+			flags = flags[:len(flags)-1]
+
+			if i+1 < len(lits) {
+				if !litOK[i+1] || !modeledLong[lits[i+1]] {
+					return word + " " + lits[i+1], true
+				}
+
+				i++
+			}
+		}
+
+		for _, flag := range flags {
+			if !strings.ContainsRune(modeledFlags, flag) {
+				return word, true
+			}
+		}
+	}
+
+	return "", false
+}
+
 func declaredNames(file *syntax.File) map[string]bool {
 	out := declaredFunctions(file)
 
@@ -1012,6 +1153,49 @@ func viaKsail(exec string) bool {
 	return exec == "ksail" || strings.HasSuffix(exec, ".sh")
 }
 
+// interpreters run a script named as their ARGUMENT, so the executable is not what executes.
+var interpreters = map[string]bool{
+	"bash": true, "sh": true, "dash": true, "ksh": true, "zsh": true,
+}
+
+// scriptTarget returns the program a command actually runs, looking through an interpreter, and the
+// index its own arguments start at.
+//
+// `bash ./scripts/run-ksail-prod-with-pull-auth.sh workload push` publishes exactly as the direct
+// invocation does, but the executable reads as `bash`, so a matcher keyed on the executable omitted
+// the operation entirely. That omission is fail-OPEN in the direction that matters most: the extra
+// push it hides is the one this guard exists to reject, since a second publish AFTER the evidence
+// steps releases bytes nothing covers.
+//
+// Only the leading interpreter is stripped, and only when it names a script. An interpreter carrying
+// inline code (`bash -c …`) names no script and runs text this file never parses, so it is rejected
+// by unmodeledShellState rather than guessed at here.
+func scriptTarget(cmd executedCommand) (string, bool, int) {
+	exec, known := cmd.name()
+	if !known {
+		return "", false, 0
+	}
+
+	if !interpreters[exec] {
+		return exec, true, 0
+	}
+
+	// Skip the interpreter's own options to reach the script operand.
+	for i := 1; i < len(cmd.lits); i++ {
+		if !cmd.litOK[i] {
+			return "", false, 0
+		}
+
+		if strings.HasPrefix(cmd.lits[i], "-") {
+			continue
+		}
+
+		return cmd.lits[i], true, i
+	}
+
+	return "", false, 0
+}
+
 // ksailWorkload matches a step that runs `workload <op>` through that wrapper.
 //
 // The executable matters as much as the words: `ksail workload push` and `echo workload push` have
@@ -1020,12 +1204,12 @@ func viaKsail(exec string) bool {
 func ksailWorkload(op string) func(step) bool {
 	return func(s step) bool {
 		for _, cmd := range parseExecuted(s.Run, errexitAtStart(s)) {
-			exec, known := cmd.name()
+			exec, known, from := scriptTarget(cmd)
 			if !known || !viaKsail(exec) {
 				continue
 			}
 
-			for i := 1; i+1 < len(cmd.lits); i++ {
+			for i := from + 1; i+1 < len(cmd.lits); i++ {
 				if cmd.litOK[i] && cmd.lits[i] == "workload" && cmd.litOK[i+1] && cmd.lits[i+1] == op {
 					return true
 				}
@@ -1386,6 +1570,62 @@ func mustNotReleaseAfterFailure(steps []step, releaseIdx []int) error {
 	return nil
 }
 
+// shellStartupEnv are the step-level names that change the shell before the run block's first line.
+//
+// Bash expands BASH_ENV in a non-interactive shell and reads the resulting file before executing the
+// script, so `BASH_ENV: ./setup.sh` with `cosign() { true; }` inside it shadows the required command
+// while the run block stays textually perfect. ENV is the same mechanism under POSIX mode, and
+// SHELLOPTS/BASHOPTS set shell options — including noexec — from outside the script.
+var shellStartupEnv = []string{"BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS"}
+
+// mustModelEveryRunStep rejects an action carrying a construct this guard cannot interpret.
+//
+// Scope is every run step of the action rather than only the ones matching a marker, because which
+// steps match is itself decided by the analysis this protects: a step made unreadable stops matching,
+// and "no step appears to sign" would then be reported as a missing step rather than as an
+// unreadable one. Both are failures, but only the second names the actual cause.
+func mustModelEveryRunStep(steps []step) error {
+	for i, s := range steps {
+		if s.Run == "" {
+			continue
+		}
+
+		label := s.Name
+		if label == "" {
+			label = fmt.Sprintf("position %d", i+1)
+		}
+
+		for _, name := range shellStartupEnv {
+			if _, set := s.Env[name]; set {
+				return fmt.Errorf(
+					"step %q sets %s, which changes the shell before the step's first line runs.\n"+
+						"Bash reads that file (or applies those options) ahead of the script, so a required"+
+						" command can be shadowed by something this check never sees. Configure the step"+
+						" without it",
+					label, name)
+			}
+		}
+
+		file, err := syntax.NewParser().Parse(strings.NewReader(s.Run), "")
+		if err != nil {
+			continue
+		}
+
+		if construct, unmodeled := unmodeledShellState(file); unmodeled {
+			return fmt.Errorf(
+				"step %q uses %s, which changes how the shell resolves a command or propagates its"+
+					" failure in a way this check does not model.\n"+
+					"That makes both halves of the check unreliable: a required operation can look"+
+					" executed when it was not, and an extra one can go unseen. This is deliberately"+
+					" fail-closed — express the step without that construct, or extend the model in"+
+					" unmodeledShellState deliberately",
+				label, construct)
+		}
+	}
+
+	return nil
+}
+
 func validate(source []byte) error {
 	var parsed action
 	if err := yaml.Unmarshal(source, &parsed); err != nil {
@@ -1395,6 +1635,14 @@ func validate(source []byte) error {
 	steps := parsed.Runs.Steps
 	if len(steps) == 0 {
 		return errors.New("no runs.steps; this does not look like a composite action")
+	}
+
+	// Established before any ordering question, because an unmodeled state change makes every later
+	// answer unreliable in BOTH directions: a required operation can be credited when it never ran,
+	// and an extra one can go unseen. Reporting it as an error rather than as "this step matches
+	// nothing" is what keeps the second half from failing open.
+	if err := mustModelEveryRunStep(steps); err != nil {
+		return err
 	}
 
 	locate := func(m marker) ([]int, error) {
