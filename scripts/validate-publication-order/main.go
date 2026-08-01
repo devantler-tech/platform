@@ -310,6 +310,15 @@ func errexitToggle(cmd executedCommand) (bool, bool) {
 	for i := 1; i < len(cmd.lits); i++ {
 		word := cmd.lits[i]
 
+		// `--` and a bare `-` end option parsing and assign every remaining word to the positional
+		// parameters (bash `help set`). Scanning past them read `set -- -e` as errexit being
+		// restored, so a signing block could turn failure propagation OFF, set positionals, and
+		// still be credited with a gate that no longer fails the step — the guard reporting the
+		// safe state precisely where the unsafe one holds.
+		if word == "--" || word == "-" {
+			break
+		}
+
 		switch {
 		case strings.HasPrefix(word, "-") && !strings.HasPrefix(word, "--") && strings.Contains(word, "e"):
 			state, found = true, true
@@ -399,6 +408,21 @@ func assignmentsTo(run, name string) []assignment {
 		switch typed := node.(type) {
 		case *syntax.CallExpr:
 			collect(typed.Assigns)
+
+			// A builtin can write a variable whose name it takes as an ARGUMENT, which the parser
+			// models as ordinary words rather than CallExpr.Assigns. `printf -v REF '%s' '<stale>'`
+			// was therefore invisible here: a correct resolution could be followed by an unseen
+			// overwrite, and both consumers — which require EVERY assignment to qualify — passed
+			// while cosign signed the overwritten value.
+			if builtinWritesTo(typed, name) {
+				out = append(out, assignment{
+					// Deliberately opaque. Both consumers compare against an exact required form or
+					// demand a resolved value, so an unreadable write fails each of them: the guard
+					// reports "cannot prove this" rather than guessing what the builtin wrote.
+					text:                 "",
+					consumesPublishedTag: false,
+				})
+			}
 		// `export`, `declare`, `local`, `readonly` and `typeset` assign too, and the parser models
 		// them as a DeclClause rather than a CallExpr. Reading only CallExpr made
 		// `declare -g DIGEST="sha256:…"` invisible, so a constant could silently override a correct
@@ -412,6 +436,158 @@ func assignmentsTo(run, name string) []assignment {
 	})
 
 	return out
+}
+
+// builtinWritesTo reports whether call writes the shell variable name through a builtin that takes
+// its destination as an ARGUMENT rather than as an assignment.
+//
+// Listing the class rather than the one builtin that was reported matters: `printf -v` is not
+// special, it is simply the instance a reviewer happened to find. `read`, `mapfile`/`readarray` and
+// `getopts` all take a destination name the same way, and `eval` can assemble any assignment at all,
+// so fixing only `printf` would leave four more spellings of the same bypass.
+//
+// Each builtin is decoded in its OWN argument grammar rather than by scanning every word for the
+// name. That precision is the point: `printf '%s' "${REF}" >>"${GITHUB_OUTPUT}"` is correct,
+// extremely common, and merely READS the variable. A guard that flagged any command mentioning REF
+// would reject correct workflows, and a guard people cannot ship past gets deleted, not obeyed. The
+// conservative direction is reserved for the destination position, where an unreadable word really
+// could be the name being written.
+func builtinWritesTo(call *syntax.CallExpr, name string) bool {
+	if len(call.Args) == 0 {
+		return false
+	}
+
+	command, ok := literalOf(call.Args[0])
+	if !ok {
+		return false
+	}
+
+	args := call.Args[1:]
+
+	switch command {
+	case "printf":
+		return printfWritesTo(args, name)
+	case "read":
+		return readLikeWritesTo(args, name, "adinNptu")
+	case "mapfile", "readarray":
+		return readLikeWritesTo(args, name, "dnOsuCc")
+	case "getopts":
+		// `getopts optstring NAME [arg...]`: the first operand is the option string, every later
+		// one is a destination or a scanned argument. Comparing all but the first keeps it simple
+		// and errs toward reporting a write.
+		return operandWritesTo(args, name, 1)
+	case "eval":
+		return evalWritesTo(args, name)
+	}
+
+	return false
+}
+
+// printfWritesTo decodes `printf -v NAME …`, including the attached `-vNAME` spelling that an exact
+// "-v then the next word" scan would miss.
+func printfWritesTo(args []*syntax.Word, name string) bool {
+	for i, arg := range args {
+		word, readable := literalOf(arg)
+		if !readable {
+			continue
+		}
+
+		if word == "--" {
+			return false
+		}
+
+		if word == "-v" {
+			if i+1 >= len(args) {
+				return false
+			}
+
+			target, targetReadable := literalOf(args[i+1])
+
+			return !targetReadable || target == name
+		}
+
+		if strings.HasPrefix(word, "-v") && len(word) > 2 {
+			return word[2:] == name
+		}
+	}
+
+	return false
+}
+
+// readLikeWritesTo decodes `read` and `mapfile`/`readarray`, whose destination names are the
+// operands left after option parsing. valueOpts lists the single-letter options that consume the
+// following word, so an option's ARGUMENT is never mistaken for a destination.
+//
+// `read -a NAME` is a write like any other: the array name is where the value lands.
+func readLikeWritesTo(args []*syntax.Word, name, valueOpts string) bool {
+	for i := 0; i < len(args); i++ {
+		word, readable := literalOf(args[i])
+		if !readable {
+			// Unreadable in operand position could be the destination.
+			return true
+		}
+
+		if word == "--" {
+			return operandWritesTo(args[i+1:], name, 0)
+		}
+
+		if !strings.HasPrefix(word, "-") || word == "-" {
+			return operandWritesTo(args[i:], name, 0)
+		}
+
+		// A value-taking option given as `-p prompt` consumes the next word; `-ppromopt` and
+		// clustered flags consume nothing further.
+		if len(word) == 2 && strings.ContainsRune(valueOpts, rune(word[1])) {
+			// `read -a NAME` names its destination in the option's own argument.
+			if word == "-a" && i+1 < len(args) {
+				target, targetReadable := literalOf(args[i+1])
+				if !targetReadable || target == name {
+					return true
+				}
+			}
+
+			i++
+		}
+	}
+
+	return false
+}
+
+// operandWritesTo reports whether any operand from skip onward names the protected variable. An
+// unreadable operand counts, because it could be the destination and the guard cannot prove it is
+// not.
+func operandWritesTo(args []*syntax.Word, name string, skip int) bool {
+	for i, arg := range args {
+		if i < skip {
+			continue
+		}
+
+		word, readable := literalOf(arg)
+		if !readable || word == name {
+			return true
+		}
+	}
+
+	return false
+}
+
+// evalWritesTo reports whether an eval could assign the protected variable. Its argument is a
+// program, so a readable one is searched for an assignment to the name and an unreadable one is
+// treated as a write: eval assembling text the guard cannot see is exactly the case it must not
+// certify.
+func evalWritesTo(args []*syntax.Word, name string) bool {
+	for _, arg := range args {
+		word, readable := literalOf(arg)
+		if !readable {
+			return true
+		}
+
+		if strings.Contains(word, name+"=") {
+			return true
+		}
+	}
+
+	return false
 }
 
 // sourceOf returns the source text a node spans. Comparing what was WRITTEN keeps the required

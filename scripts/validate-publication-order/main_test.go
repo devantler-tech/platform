@@ -1236,3 +1236,119 @@ func TestAllowsANonStatusCheckReleaseCondition(t *testing.T) {
 		t.Fatalf("an ordinary release condition keeps the implicit success(), got: %v", err)
 	}
 }
+
+// TestRejectsErrexitApparentlyRestoredBySetPositionals covers `set --`, which assigns the remaining
+// words to the POSITIONAL PARAMETERS rather than to shell options (bash `help set`). A scan that
+// kept reading flags past it accepted `set -- -e` as errexit being restored, so a signing block
+// could turn failure propagation off, set positionals, and still be credited with a gate that no
+// longer fails the step. The guard then reported the safe state exactly where the unsafe one held —
+// the worst direction for it to be wrong in.
+func TestRejectsErrexitApparentlyRestoredBySetPositionals(t *testing.T) {
+	bypass := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        set +e\n"+
+			"        docker logout ghcr.io\n"+
+			"        set -- -e\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, bypass)
+
+	if err := validate([]byte(bypass)); err == nil {
+		t.Fatal("`set -- -e` assigns positional parameters; errexit is still off at the signing call")
+	}
+}
+
+// TestAllowsSetOptionsBeforeTheDoubleDash is the over-tightening control for the test above.
+// Terminating the scan at `--` must not blind it to the options that come BEFORE one: `set -e --`
+// really does restore errexit, and rejecting it would fail correct code.
+func TestAllowsSetOptionsBeforeTheDoubleDash(t *testing.T) {
+	restored := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        set +e\n"+
+			"        docker logout ghcr.io\n"+
+			"        set -e -- keep-positionals\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, restored)
+
+	if err := validate([]byte(restored)); err != nil {
+		t.Fatalf("`set -e --` restores errexit before signing; got: %v", err)
+	}
+}
+
+// TestRejectsAPrintfOverwriteOfTheSignedReference covers a builtin that writes a variable named by
+// its ARGUMENTS. The parser models `printf -v REF …` as command words, not as CallExpr.Assigns, so
+// the overwrite was invisible: a correct resolution stood in the source while cosign signed the
+// mutable tag written after it. Same bypass as a second `REF=` assignment, spelled so the assignment
+// scan could not see it.
+func TestRejectsAPrintfOverwriteOfTheSignedReference(t *testing.T) {
+	shadowed := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        printf -v REF '%s' 'ghcr.io/devantler-tech/platform/manifests:latest'`+"\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, shadowed)
+
+	if err := validate([]byte(shadowed)); err == nil {
+		t.Fatal("`printf -v REF` overwrites the resolved reference before cosign reads it")
+	}
+}
+
+// TestRejectsAnAttachedPrintfOverwrite pins the spelling an exact "-v then the next word" scan would
+// miss. Bash accepts the option argument attached, so `-vREF` is the same write as `-v REF`, and a
+// guard that caught only the detached form would document its own bypass.
+func TestRejectsAnAttachedPrintfOverwrite(t *testing.T) {
+	shadowed := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        printf -vREF '%s' 'ghcr.io/devantler-tech/platform/manifests:latest'`+"\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, shadowed)
+
+	if err := validate([]byte(shadowed)); err == nil {
+		t.Fatal("`printf -vREF` is the attached spelling of the same overwrite")
+	}
+}
+
+// TestAllowsPrintfReadingTheReference is the over-tightening control for the builtin-write
+// detection, and it is the one that keeps the guard usable. Writing a value OUT — to a step output,
+// a log line, a file — is the single most common thing a workflow does with a resolved reference,
+// and it only READS the variable. A detector that flagged any command mentioning REF would reject
+// correct actions, and a guard people cannot ship past is suppressed rather than satisfied.
+func TestAllowsPrintfReadingTheReference(t *testing.T) {
+	reported := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        printf '%s\n' "${REF}" >>"${GITHUB_OUTPUT}"`+"\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, reported)
+
+	if err := validate([]byte(reported)); err != nil {
+		t.Fatalf("printf READING the reference is correct code; got: %v", err)
+	}
+}
+
+// TestRejectsAReadOverwriteOfTheSignedReference proves the fix addresses the CLASS rather than the
+// one builtin that was reported. `read` takes its destination as an operand exactly as `printf -v`
+// takes it as an option argument, so a detector special-cased to printf would leave this open.
+func TestRejectsAReadOverwriteOfTheSignedReference(t *testing.T) {
+	shadowed := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        read -r REF <<<'ghcr.io/devantler-tech/platform/manifests:latest'`+"\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, shadowed)
+
+	if err := validate([]byte(shadowed)); err == nil {
+		t.Fatal("`read REF` is the same overwrite through a different builtin")
+	}
+}
+
+// TestAllowsReadIntoAnUnrelatedVariable is the control for the operand decoding: `read` writing
+// something else entirely must not be mistaken for a write to the protected name, or every action
+// that parses anything would be rejected.
+func TestAllowsReadIntoAnUnrelatedVariable(t *testing.T) {
+	unrelated := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        read -r -p 'REF: ' answer <<<'ignored'`+"\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, unrelated)
+
+	if err := validate([]byte(unrelated)); err != nil {
+		t.Fatalf("read into an unrelated variable is correct code; got: %v", err)
+	}
+}
