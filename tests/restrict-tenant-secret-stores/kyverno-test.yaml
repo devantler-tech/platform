@@ -11,6 +11,7 @@ resources:
 # The policy uses a namespaceSelector, so the CLI needs the namespace labels
 # declared explicitly or every case is reported as Excluded.
 variables: values.yaml
+userinfo: user-info.yaml
 results:
   - policy: restrict-tenant-secret-stores
     rule: secretstore-no-shared-vault-role

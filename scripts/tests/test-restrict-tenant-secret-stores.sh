@@ -6,6 +6,7 @@ repo_root="$(cd "${script_dir}/../.." && pwd)"
 policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-secret-stores.yaml"
 fixtures="${repo_root}/tests/restrict-tenant-secret-stores/resources.yaml"
 values="${repo_root}/tests/restrict-tenant-secret-stores/values.yaml"
+user_info="${repo_root}/tests/restrict-tenant-secret-stores/user-info.yaml"
 output_file="$(mktemp)"
 trap 'rm -f "${output_file}"' EXIT
 
@@ -15,6 +16,7 @@ trap 'rm -f "${output_file}"' EXIT
 if kyverno apply "${policy}" \
   --resource "${fixtures}" \
   --values-file "${values}" \
+  --userinfo "${user_info}" \
   --remove-color >"${output_file}" 2>&1; then
   echo "::error::tenant SecretStore policy admitted every fixture; no deny rule executed"
   exit 1
