@@ -1911,3 +1911,39 @@ func TestRecognisesACommandPrefixedRequiredPush(t *testing.T) {
 		t.Fatalf("a command-prefixed push still publishes, got: %v", err)
 	}
 }
+
+// TestRejectsErrexitDisabledInsideACompoundConstruct covers a state change the two halves of this
+// file disagreed about. unmodeledShellState walks the WHOLE tree, so it sees the nested `set +e`,
+// finds `e` modeled, and accepts it; parseExecuted iterated only top-level statements and skipped
+// the brace group entirely, so errexitToggle never saw the toggle. Bash runs a brace group in the
+// CURRENT shell, so errexit really is off — and the validator still credited cosign as
+// failure-propagating. Two individually-defensible decisions composing into a permissive one.
+func TestRejectsErrexitDisabledInsideACompoundConstruct(t *testing.T) {
+	disabled := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        { set +e; }\n"+
+			`        cosign sign --yes --recursive "${REF}"`+"\n"+
+			`        echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"`, 1)
+	mustChange(t, validAction, disabled)
+
+	if err := validate([]byte(disabled)); err == nil {
+		t.Fatal("a brace group runs in the current shell, so `{ set +e; }` disables errexit at the signing call")
+	}
+}
+
+// TestRejectsDigestResolvedByAShadowedFunction covers the resolver half of command resolution.
+// Top-level required commands are already checked against declaredNames, but the digest-resolver
+// predicate trusted the literal executable name on its own. bash looks up functions before $PATH,
+// so a `docker` function returns a constant while the call still reads as a genuine resolve — the
+// old digest is then signed and exported before reconciliation releases the new artifact.
+func TestRejectsDigestResolvedByAShadowedFunction(t *testing.T) {
+	shadowed := strings.Replace(validAction,
+		`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`,
+		`        docker() { printf 'sha256:aaaa'; }`+"\n"+
+			`        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')`, 1)
+	mustChange(t, validAction, shadowed)
+
+	if err := validate([]byte(shadowed)); err == nil {
+		t.Fatal("a `docker` function shadows the resolver, so DIGEST never depends on the published tag")
+	}
+}

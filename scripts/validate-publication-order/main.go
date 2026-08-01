@@ -261,6 +261,11 @@ func parseExecuted(run string, errexit bool) []executedCommand {
 // exactly as much state as the bare form does. Depth is what this walk must not stop at.
 func unmodeledShellState(file *syntax.File) (string, bool) {
 	found := ""
+	// The state axis is only sound where BOTH halves agree. This walk sees every node, but
+	// parseExecuted tracks errexit from top-level statements alone, so a `set` anywhere else
+	// changes the shell without moving the tracked state.
+	tracked := stateTrackedCalls(file)
+	subshell := callsInSubshells(file)
 
 	syntax.Walk(file, func(node syntax.Node) bool {
 		if found != "" {
@@ -306,6 +311,20 @@ func unmodeledShellState(file *syntax.File) (string, bool) {
 				}
 			}
 		case "set":
+			// A brace group, branch, loop or function body is not a top-level statement, so
+			// errexitToggle never sees this call — while bash still applies it, because all of
+			// them run in the CURRENT shell. Accepting them credited a later `cosign` as
+			// failure-propagating when errexit was in fact off.
+			//
+			// A subshell is the opposite case and must still pass: `$( set -euo pipefail; … )`
+			// changes only the child, so the parent state this file tracks is correctly
+			// unchanged. Rejecting it would fail ordinary scripting.
+			if !tracked[call] && !subshell[call] {
+				found = "`set` in a compound construct that runs in the step's own shell"
+
+				return false
+			}
+
 			if opt, ok := unmodeledSetOption(lits[start+1:], litOK[start+1:]); ok {
 				if opt == nonLiteralOption {
 					found = "`set` with an option whose value is not statically known"
@@ -321,6 +340,68 @@ func unmodeledShellState(file *syntax.File) (string, bool) {
 	})
 
 	return found, found != ""
+}
+
+// stateTrackedCalls returns the calls whose shell-state effect parseExecuted actually evaluates:
+// the top-level statements it iterates, minus the negated and backgrounded ones it skips. Anything
+// outside this set can change the shell without the tracked state moving, so it fails closed.
+func stateTrackedCalls(file *syntax.File) map[*syntax.CallExpr]bool {
+	out := make(map[*syntax.CallExpr]bool, len(file.Stmts))
+
+	for _, stmt := range file.Stmts {
+		if stmt.Negated || stmt.Background {
+			continue
+		}
+
+		if call, isCall := stmt.Cmd.(*syntax.CallExpr); isCall {
+			out[call] = true
+		}
+	}
+
+	return out
+}
+
+// callsInSubshells returns the calls that run in a CHILD shell rather than the step's own.
+//
+// This is the line between a `set` that must fail closed and one that must pass: a brace group,
+// branch or loop applies to the shell parseExecuted is tracking, while a command substitution,
+// explicit subshell, process substitution, backgrounded statement or pipeline stage applies only
+// to a child that exits. `$( set -euo pipefail; crane digest … )` is ordinary scripting and stays
+// legal for exactly that reason.
+func callsInSubshells(file *syntax.File) map[*syntax.CallExpr]bool {
+	out := make(map[*syntax.CallExpr]bool)
+
+	markAll := func(n syntax.Node) {
+		syntax.Walk(n, func(inner syntax.Node) bool {
+			if call, isCall := inner.(*syntax.CallExpr); isCall {
+				out[call] = true
+			}
+
+			return true
+		})
+	}
+
+	syntax.Walk(file, func(node syntax.Node) bool {
+		switch typed := node.(type) {
+		case *syntax.Subshell, *syntax.CmdSubst, *syntax.ProcSubst:
+			markAll(node)
+		case *syntax.Stmt:
+			if typed.Background {
+				markAll(typed)
+			}
+		case *syntax.BinaryCmd:
+			// Each stage of a pipeline runs in its own shell, so neither side can move the
+			// state this file tracks. `&&`/`||` do NOT create one and are deliberately absent.
+			if typed.Op == syntax.Pipe || typed.Op == syntax.PipeAll {
+				markAll(typed.X)
+				markAll(typed.Y)
+			}
+		}
+
+		return true
+	})
+
+	return out
 }
 
 // nonLiteralOption marks a `set` word whose value is not statically known, so the allowlist cannot
@@ -606,7 +687,7 @@ func assignmentsTo(run, name string) []assignment {
 
 			out = append(out, assignment{
 				text:                 sourceOf(run, assign.Value.Pos(), assign.Value.End()),
-				consumesPublishedTag: valueResolvedFrom(assign.Value, publishedTagVar),
+				consumesPublishedTag: valueResolvedFrom(assign.Value, publishedTagVar, declaredNames(file)),
 			})
 		}
 	}
@@ -1034,7 +1115,7 @@ func sourceOf(src string, from, to syntax.Pos) string {
 //
 // The tag must be read by the statement whose output BECOMES the value, not merely by something
 // somewhere inside the substitution — see consumes for why that distinction is load-bearing.
-func valueResolvedFrom(word *syntax.Word, name string) bool {
+func valueResolvedFrom(word *syntax.Word, name string, shadowed map[string]bool) bool {
 	resolved := false
 
 	syntax.Walk(word, func(node syntax.Node) bool {
@@ -1043,7 +1124,7 @@ func valueResolvedFrom(word *syntax.Word, name string) bool {
 			return !resolved
 		}
 
-		if len(subst.Stmts) > 0 && consumes(subst.Stmts[len(subst.Stmts)-1], name) {
+		if len(subst.Stmts) > 0 && consumes(subst.Stmts[len(subst.Stmts)-1], name, shadowed) {
 			resolved = true
 		}
 
@@ -1087,7 +1168,7 @@ func valueResolvedFrom(word *syntax.Word, name string) bool {
 //
 // A retry belongs around the ASSIGNMENT (`for … do DIGEST=$(…) && break; done`), which is unaffected:
 // assignmentsTo finds it at any depth, so the idiomatic spelling still passes.
-func consumes(stmt *syntax.Stmt, name string) bool {
+func consumes(stmt *syntax.Stmt, name string, shadowed map[string]bool) bool {
 	call, isCall := stmt.Cmd.(*syntax.CallExpr)
 	if !isCall || len(call.Args) == 0 {
 		return false
@@ -1110,6 +1191,14 @@ func consumes(stmt *syntax.Stmt, name string) bool {
 	// each round found another one.
 	exec, known := literalOf(call.Args[0])
 	if !known || !digestResolvers[exec] {
+		return false
+	}
+
+	// Allow-listing the NAME only binds the value if the name still reaches that program. bash looks
+	// up functions before $PATH, so `docker() { printf 'sha256:<old>'; }` makes this call return a
+	// constant while reading as a genuine resolve. Top-level required commands were already checked
+	// against declaredNames; the resolver is the same question about a different call.
+	if shadowed[exec] {
 		return false
 	}
 
