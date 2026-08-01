@@ -307,7 +307,11 @@ func unmodeledShellState(file *syntax.File) (string, bool) {
 			}
 		case "set":
 			if opt, ok := unmodeledSetOption(lits[start+1:], litOK[start+1:]); ok {
-				found = "`set " + opt + "`"
+				if opt == nonLiteralOption {
+					found = "`set` with an option whose value is not statically known"
+				} else {
+					found = "`set " + opt + "`"
+				}
 
 				return false
 			}
@@ -318,6 +322,10 @@ func unmodeledShellState(file *syntax.File) (string, bool) {
 
 	return found, found != ""
 }
+
+// nonLiteralOption marks a `set` word whose value is not statically known, so the allowlist cannot
+// read it at all. It is a distinct sentinel because it needs different wording in the error.
+const nonLiteralOption = "\x00non-literal"
 
 // unmodeledSetOption reports a `set` option outside the modeled set.
 //
@@ -335,8 +343,13 @@ func unmodeledSetOption(lits []string, litOK []bool) (string, bool) {
 	}
 
 	for i := 0; i < len(lits); i++ {
+		// A word whose value is not statically known cannot be checked against the allowlist, so it
+		// is unmodeled — the same rule this function exists to apply. Returning "modeled" here was
+		// the allowlist failing open on exactly the input it cannot read: `set "${OPTS}"` left the
+		// option unchecked while errexitToggle conservatively recorded errexit as OFF, which made
+		// parseExecuted skip every later command — including a second `workload push`.
 		if !litOK[i] {
-			return "", false
+			return nonLiteralOption, true
 		}
 
 		word := lits[i]
@@ -1170,18 +1183,24 @@ var interpreters = map[string]bool{
 // Only the leading interpreter is stripped, and only when it names a script. An interpreter carrying
 // inline code (`bash -c …`) names no script and runs text this file never parses, so it is rejected
 // by unmodeledShellState rather than guessed at here.
+// The `command`/`builtin` prefixes are stripped first. They execute the named command with its
+// arguments, so `command ./scripts/run-ksail-prod-with-pull-auth.sh workload push` publishes exactly
+// as the bare form does — but reading argv[0] returns `command`, which matches no wrapper and hid the
+// operation. commandStart already decodes those prefixes for the errexit tracking; this uses the same
+// decoder rather than a second, differently-wrong one.
 func scriptTarget(cmd executedCommand) (string, bool, int) {
-	exec, known := cmd.name()
-	if !known {
+	start, executes := commandStart(cmd.lits, cmd.litOK)
+	if !executes || start >= len(cmd.lits) || !cmd.litOK[start] {
 		return "", false, 0
 	}
 
+	exec := cmd.lits[start]
 	if !interpreters[exec] {
-		return exec, true, 0
+		return exec, true, start
 	}
 
 	// Skip the interpreter's own options to reach the script operand.
-	for i := 1; i < len(cmd.lits); i++ {
+	for i := start + 1; i < len(cmd.lits); i++ {
 		if !cmd.litOK[i] {
 			return "", false, 0
 		}

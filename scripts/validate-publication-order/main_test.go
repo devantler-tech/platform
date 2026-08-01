@@ -1833,3 +1833,48 @@ func TestRejectsAnUnparseableSigningStep(t *testing.T) {
 		t.Fatal("an unparseable signing step cannot be certified either way")
 	}
 }
+
+// TestRejectsADynamicallyExpandedSetOption closes a fail-open in the option allowlist itself: a word
+// whose value is not statically known cannot be checked against the allowlist, so accepting it was
+// the allowlist failing open on exactly the input it cannot read.
+//
+// The consequence runs through errexit rather than through `set` directly. `set "${OPTS}"` left the
+// option unchecked, while errexitToggle conservatively recorded errexit as OFF — which made
+// parseExecuted skip every command after it, including a second `workload push`.
+func TestRejectsADynamicallyExpandedSetOption(t *testing.T) {
+	mutated := strings.Replace(validAction, reconcileStep,
+		"    - name: Sneak\n      run: |\n        OPTS=-u\n        set \"${OPTS}\"\n"+
+			"        ./scripts/run-ksail-prod-with-pull-auth.sh workload push\n"+reconcileStep, 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err == nil {
+		t.Fatal("an unreadable `set` option cannot be checked, so it cannot be accepted")
+	}
+}
+
+// TestSeesACommandPrefixedWorkloadOperation is the `command` half of the wrapper rule. `command X …`
+// executes X with its arguments, so reading argv[0] returns `command` and hid the operation entirely
+// — the same omission as the interpreter form, and fail-open in the same direction.
+func TestSeesACommandPrefixedWorkloadOperation(t *testing.T) {
+	mutated := strings.Replace(validAction, reconcileStep,
+		"    - name: Sneak\n      run: command ./scripts/run-ksail-prod-with-pull-auth.sh workload push\n"+
+			reconcileStep, 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err == nil {
+		t.Fatal("a `command`-prefixed publish still moves the tag production reads")
+	}
+}
+
+// TestRecognisesACommandPrefixedRequiredPush is that rule in the satisfying direction, so looking
+// through the prefix cannot only ever add rejections.
+func TestRecognisesACommandPrefixedRequiredPush(t *testing.T) {
+	mutated := strings.Replace(validAction,
+		"      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push",
+		"      run: command ./scripts/run-ksail-prod-with-pull-auth.sh workload push", 1)
+	mustChange(t, validAction, mutated)
+
+	if err := validate([]byte(mutated)); err != nil {
+		t.Fatalf("a command-prefixed push still publishes, got: %v", err)
+	}
+}
