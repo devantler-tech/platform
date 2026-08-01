@@ -1732,6 +1732,13 @@ func mustNotSkipIndependently(steps []step, m marker, idx []int, releaseIdx []in
 // evidence step while reading as if it required success. The spellings that are genuinely safe —
 // `success()` alone, or `success() && <expr>` — are exactly the ones the implicit gate already
 // provides, so rejecting them costs nothing: the remedy is to drop the call and keep `<expr>`.
+//
+// The entries are lowercase and the condition is lowercased before matching, so a case variant
+// (`ALWAYS()`, `Always()`) is caught too. That holds under either reading of GitHub's expression
+// parser: if function names resolve case-insensitively then a case variant is a working bypass and
+// has to be rejected; if they do not, it is not a spelling any legitimate condition uses, so
+// rejecting it costs nothing. Matching only the lowercase spelling is the one choice that is wrong
+// in the dangerous direction.
 var statusChecks = []string{"always(", "failure(", "cancelled(", "success("}
 
 // mustNotReleaseAfterFailure rejects a release whose condition survives a failed evidence step.
@@ -1748,9 +1755,10 @@ var statusChecks = []string{"always(", "failure(", "cancelled(", "success("}
 func mustNotReleaseAfterFailure(steps []step, releaseIdx []int) error {
 	for _, at := range releaseIdx {
 		condition := strings.TrimSpace(steps[at].If)
+		normalized := strings.ToLower(strings.ReplaceAll(condition, " ", ""))
 
 		for _, check := range statusChecks {
-			if !strings.Contains(strings.ReplaceAll(condition, " ", ""), check) {
+			if !strings.Contains(normalized, check) {
 				continue
 			}
 

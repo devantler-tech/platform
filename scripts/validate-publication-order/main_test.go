@@ -1253,6 +1253,38 @@ func TestAllowsANonStatusCheckReleaseCondition(t *testing.T) {
 	}
 }
 
+// TestRejectsAReleaseGatedOnACaseVariantStatusCheck covers the SPELLING of a status check call
+// rather than which function is called. The rule keys on the call, but the match was written
+// lowercase-only, so `ALWAYS()` reached the release step through a matcher looking for `always(`.
+//
+// This is rejected under either reading of GitHub's expression parser, which is why the guard does
+// not depend on settling that question: if function names resolve case-insensitively then `ALWAYS()`
+// is a working bypass and must be rejected; if they do not, it is not a legitimate condition anybody
+// writes, so rejecting it costs nothing. Fail closed on both.
+func TestRejectsAReleaseGatedOnACaseVariantStatusCheck(t *testing.T) {
+	broken := strings.Replace(validAction, reconcileStep,
+		"    - name: Reconcile\n      if: ALWAYS()\n"+
+			"      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile\n", 1)
+	mustChange(t, validAction, broken)
+
+	if err := validate([]byte(broken)); err == nil {
+		t.Fatal("expected a release conditioned with a case-variant ALWAYS() call to be rejected")
+	}
+}
+
+// TestStatusChecksAreLowercase pins the invariant the case-insensitive match depends on. The
+// condition is lowercased before matching, so an entry added to the list with any uppercase letter
+// could never match anything — the list would silently stop covering that function while still
+// reading as though it did. Asserting the entries here is cheaper than discovering it from a bypass.
+func TestStatusChecksAreLowercase(t *testing.T) {
+	for _, check := range statusChecks {
+		if check != strings.ToLower(check) {
+			t.Fatalf("statusChecks entry %q must be lowercase: the condition is lowercased before"+
+				" matching, so an entry with uppercase can never match", check)
+		}
+	}
+}
+
 // TestRejectsErrexitApparentlyRestoredBySetPositionals covers `set --`, which assigns the remaining
 // words to the POSITIONAL PARAMETERS rather than to shell options (bash `help set`). A scan that
 // kept reading flags past it accepted `set -- -e` as errexit being restored, so a signing block
