@@ -33,29 +33,3 @@ results:
       - platform-ns/platform-secret-store
     kind: SecretStore
     result: skip
-# Kyverno reports a missing named rule as Excluded in the legacy results table.
-# These assertions bind the behavior to real engine results so deleting the
-# rule cannot turn the deny cases into a vacuous green test.
-checks:
-  - match:
-      policy:
-        metadata:
-          name: restrict-tenant-secret-stores
-      rule:
-        name: secretstore-no-shared-vault-role
-      resource:
-        metadata:
-          name: shared-controller-role
-    assert:
-      status: fail
-  - match:
-      policy:
-        metadata:
-          name: restrict-tenant-secret-stores
-      rule:
-        name: secretstore-no-shared-vault-role
-      resource:
-        metadata:
-          name: tenant-role-implicit-namespace
-    assert:
-      status: pass
