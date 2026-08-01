@@ -1551,7 +1551,14 @@ func mustNotSkipIndependently(steps []step, m marker, idx []int, releaseIdx []in
 // check function, which replaces that default. So `if: github.ref == 'refs/heads/main'` still
 // requires every earlier step to have succeeded, while `if: always()` does not, and neither does
 // `if: !cancelled()`.
-var statusChecks = []string{"always(", "failure(", "cancelled("}
+//
+// `success(` is on this list even though it reads as the safe one, because the rule above keys on
+// the CALL, not on which function is called: writing `success()` explicitly replaces the implicit
+// gate just as `always()` does, and `success() || true` is then a release that survives a failed
+// evidence step while reading as if it required success. The spellings that are genuinely safe —
+// `success()` alone, or `success() && <expr>` — are exactly the ones the implicit gate already
+// provides, so rejecting them costs nothing: the remedy is to drop the call and keep `<expr>`.
+var statusChecks = []string{"always(", "failure(", "cancelled(", "success("}
 
 // mustNotReleaseAfterFailure rejects a release whose condition survives a failed evidence step.
 //
@@ -1581,7 +1588,9 @@ func mustNotReleaseAfterFailure(steps []step, releaseIdx []int) error {
 					" a release conditioned this way still runs — releasing production at exactly the"+
 					" moment the evidence is known to be missing.\n"+
 					"Gate the release on success instead: drop the condition, or express it without"+
-					" always()/failure()/cancelled()",
+					" always()/failure()/cancelled()/success() — an explicit success() call is"+
+					" redundant with the implicit gate when it stands alone, so removing it keeps the"+
+					" coupling the release needs",
 				release.label, condition, at+1)
 		}
 	}

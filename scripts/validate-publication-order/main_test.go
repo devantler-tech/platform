@@ -1223,6 +1223,22 @@ func TestRejectsAReleaseThatRunsAfterFailure(t *testing.T) {
 	}
 }
 
+// TestRejectsAReleaseGatedOnAnExplicitSuccessCall is the same axis reached through the status check
+// the list omitted. `success()` is ITSELF a status check function, so writing it explicitly also
+// replaces the implicit gate — and once it is an operand of `||` the expression evaluates true on a
+// failed evidence step, releasing exactly what `always()` would while reading as if it required
+// success. Matching only always/failure/cancelled left that spelling open.
+func TestRejectsAReleaseGatedOnAnExplicitSuccessCall(t *testing.T) {
+	broken := strings.Replace(validAction, reconcileStep,
+		"    - name: Reconcile\n      if: success() || true\n"+
+			"      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile\n", 1)
+	mustChange(t, validAction, broken)
+
+	if err := validate([]byte(broken)); err == nil {
+		t.Fatal("expected a release conditioned with an explicit success() call to be rejected")
+	}
+}
+
 // TestAllowsANonStatusCheckReleaseCondition is the over-tightening control. An ordinary condition
 // keeps the implicit success() and therefore keeps the coupling, so gating the release on a branch
 // or an input stays legal.
