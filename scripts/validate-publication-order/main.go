@@ -294,12 +294,17 @@ func declaredFunctions(file *syntax.File) map[string]bool {
 // conservative direction: the guard then cannot prove any later operation gates the step, and says
 // so, rather than assuming the safe case.
 func errexitToggle(cmd executedCommand) (bool, bool) {
-	exec, known := cmd.name()
-	if !known || exec != "set" || len(cmd.lits) < 2 {
+	// `builtin set +e` and `command set +e` run `set` exactly as a bare `set` does, so the wrapper
+	// must be stripped before the name is compared. Reading only the first word credited errexit as
+	// still ENABLED across a prefixed `set +e` — the dangerous direction, since the guard then
+	// believes a later failure would fail the step when it no longer does.
+	start, executes := commandStart(cmd.lits, cmd.litOK)
+	if !executes || start >= len(cmd.lits) || !cmd.litOK[start] ||
+		cmd.lits[start] != "set" || len(cmd.lits)-start < 2 {
 		return false, false
 	}
 
-	for i := 1; i < len(cmd.lits); i++ {
+	for i := start + 1; i < len(cmd.lits); i++ {
 		if !cmd.litOK[i] {
 			return false, true
 		}
@@ -307,7 +312,7 @@ func errexitToggle(cmd executedCommand) (bool, bool) {
 
 	state, found := false, false
 
-	for i := 1; i < len(cmd.lits); i++ {
+	for i := start + 1; i < len(cmd.lits); i++ {
 		word := cmd.lits[i]
 
 		// `--` and a bare `-` end option parsing and assign every remaining word to the positional
@@ -446,6 +451,41 @@ func assignmentsTo(run, name string) []assignment {
 	return out
 }
 
+// declarationWordsWriteTo decodes a declaration whose leading word carried a `builtin`/`command`
+// wrapper, which stops the parser modelling it as a DeclClause. It covers both shapes the unprefixed
+// path already handles: a direct assignment (`export REF=…`) and a nameref alias (`declare -n
+// target=REF`), and it errs toward reporting a write when a word is unreadable.
+func declarationWordsWriteTo(lits []string, litOK []bool, name string) bool {
+	nameref := false
+
+	for i, word := range lits {
+		if !litOK[i] {
+			return true
+		}
+
+		if strings.HasPrefix(word, "-") && word != "--" {
+			if strings.Contains(word, "n") {
+				nameref = true
+			}
+
+			continue
+		}
+
+		lhs, rhs, isAssign := strings.Cut(word, "=")
+		if !isAssign {
+			continue
+		}
+
+		// `export REF=…` writes REF directly; `declare -n target=REF` makes target an alias FOR REF,
+		// so there the protected name appears on the right.
+		if lhs == name || (nameref && rhs == name) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // declaresNamerefTo reports whether decl creates a nameref aliasing the protected variable.
 //
 // It does not try to follow the alias. Tracking every later write through an arbitrary alias name is
@@ -507,17 +547,85 @@ func declaresNamerefTo(decl *syntax.DeclClause, name string) bool {
 // would reject correct workflows, and a guard people cannot ship past gets deleted, not obeyed. The
 // conservative direction is reserved for the destination position, where an unreadable word really
 // could be the name being written.
+// commandStart returns the index of the word that names the command actually run, after stripping
+// any `builtin` / `command` wrappers, and whether that command is EXECUTED at all.
+//
+// Bash accepts both wrappers in front of a builtin, so `builtin printf -v REF …` and
+// `command printf -v REF …` write REF exactly as the bare form does. Every check that keyed on the
+// first word — the errexit toggle, builtin write detection, nameref detection — was defeated by a
+// single prefix. Stripping in one place is what keeps the three consistent.
+//
+// `command -v` / `-V` only LOOK UP a command, so they execute nothing and must not be read as a
+// write; `command -p` still executes, merely with a default PATH. An unreadable word ends the strip:
+// the guard cannot see what it wraps, so the caller's own conservative handling takes over.
+func commandStart(lits []string, litOK []bool) (int, bool) {
+	i := 0
+
+	for i < len(lits) {
+		if !litOK[i] {
+			return i, true
+		}
+
+		switch lits[i] {
+		case "builtin":
+			i++
+		case "command":
+			i++
+
+			for i < len(lits) && litOK[i] && strings.HasPrefix(lits[i], "-") && lits[i] != "--" {
+				if strings.ContainsAny(lits[i], "vV") {
+					return i, false
+				}
+
+				i++
+			}
+
+			if i < len(lits) && litOK[i] && lits[i] == "--" {
+				i++
+			}
+		default:
+			return i, true
+		}
+	}
+
+	return i, true
+}
+
+// wordsOf flattens a call's arguments into the literal/readable pair commandStart consumes.
+func wordsOf(args []*syntax.Word) ([]string, []bool) {
+	lits := make([]string, 0, len(args))
+	ok := make([]bool, 0, len(args))
+
+	for _, arg := range args {
+		word, readable := literalOf(arg)
+		lits = append(lits, word)
+		ok = append(ok, readable)
+	}
+
+	return lits, ok
+}
+
 func builtinWritesTo(call *syntax.CallExpr, name string) bool {
 	if len(call.Args) == 0 {
 		return false
 	}
 
-	command, ok := literalOf(call.Args[0])
-	if !ok {
+	lits, litOK := wordsOf(call.Args)
+
+	start, executes := commandStart(lits, litOK)
+	if !executes || start >= len(call.Args) || !litOK[start] {
 		return false
 	}
 
-	args := call.Args[1:]
+	command := lits[start]
+	args := call.Args[start+1:]
+
+	// A prefixed declaration is not parsed as a DeclClause — `builtin declare -n target=REF` is an
+	// ordinary CallExpr — so the declaration family is decoded here from words as well.
+	switch command {
+	case "declare", "typeset", "local", "export", "readonly":
+		return declarationWordsWriteTo(lits[start+1:], litOK[start+1:], name)
+	}
 
 	switch command {
 	case "printf":
@@ -1263,7 +1371,21 @@ func validate(source []byte) error {
 		return err
 	}
 
-	evidence := evidenceMarkers(steps[signAt[0]].ID)
+	// Report a missing `id:` as itself. Without this the marker becomes
+	// `${{ steps..outputs.digest }}`, which no attestation can match, and the failure then points at
+	// the attestation steps and tells the reader to write that empty expression into them — sending
+	// them to the wrong file and the wrong fix. A guard that misnames the defect costs more than one
+	// that stays silent.
+	signStepID := strings.TrimSpace(steps[signAt[0]].ID)
+	if signStepID == "" {
+		return fmt.Errorf(
+			"the step that must %s has no `id:`, so no attestation can bind its `subject-digest`"+
+				" to the digest this run resolved.\nGive the signing step an `id:` and reference it"+
+				" as `${{ steps.<id>.outputs.digest }}` in both attestation steps",
+			sign.label)
+	}
+
+	evidence := evidenceMarkers(signStepID)
 
 	for _, m := range evidence {
 		at, err := locate(m)

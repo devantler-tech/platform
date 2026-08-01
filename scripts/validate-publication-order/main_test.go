@@ -1385,3 +1385,78 @@ func TestAllowsANamerefToAnUnrelatedVariable(t *testing.T) {
 		t.Fatalf("a nameref to an unrelated variable is correct code; got: %v", err)
 	}
 }
+
+// TestRejectsPrefixedBuiltinBypasses covers `builtin` and `command`, which bash accepts in front of a
+// builtin. Every check that keyed on a command's first word — the errexit toggle, builtin write
+// detection, nameref detection — was defeated by a single prefix, so one wrapper reopened three
+// separate bypasses at once. All four shapes below were verified to pass the validator before the
+// prefix stripping went in.
+func TestRejectsPrefixedBuiltinBypasses(t *testing.T) {
+	for _, testCase := range []struct{ name, inject string }{
+		{
+			"builtin printf -v",
+			`        builtin printf -v REF '%s' 'ghcr.io/devantler-tech/platform/manifests:latest'`,
+		},
+		{
+			"command printf -v",
+			`        command printf -v REF '%s' 'ghcr.io/devantler-tech/platform/manifests:latest'`,
+		},
+		{
+			"builtin declare -n",
+			"        builtin declare -n target=REF\n" +
+				`        target='ghcr.io/devantler-tech/platform/manifests:latest'`,
+		},
+		{"builtin set +e", "        builtin set +e"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			bypass := strings.Replace(validAction,
+				`        cosign sign --yes --recursive "${REF}"`,
+				testCase.inject+"\n"+`        cosign sign --yes --recursive "${REF}"`, 1)
+			mustChange(t, validAction, bypass)
+
+			if err := validate([]byte(bypass)); err == nil {
+				t.Fatal("a builtin/command prefix must not hide the write or the errexit toggle")
+			}
+		})
+	}
+}
+
+// TestAllowsCommandLookupOfARequiredTool is the over-tightening control for the prefix stripping.
+// `command -v` and `command -V` only LOOK UP a command — they execute nothing — so a preflight check
+// that a tool exists must stay correct code. Stripping the wrapper without honouring `-v` would read
+// this as running printf and writing REF.
+func TestAllowsCommandLookupOfARequiredTool(t *testing.T) {
+	preflight := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        command -v cosign >/dev/null\n"+
+			`        command -v printf >/dev/null`+"\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, preflight)
+
+	if err := validate([]byte(preflight)); err != nil {
+		t.Fatalf("`command -v` is a lookup, not an execution; got: %v", err)
+	}
+}
+
+// TestReportsAMissingSigningStepID pins the error a reader actually needs. Without an `id:` the
+// evidence marker becomes `${{ steps..outputs.digest }}`, which no attestation can match — so the run
+// failed while pointing at the attestation steps and telling the reader to write that empty
+// expression into them. The defect is one step earlier, and a guard that misnames it sends people to
+// the wrong file.
+func TestReportsAMissingSigningStepID(t *testing.T) {
+	noID := strings.Replace(validAction, "      id: cosign-sign\n", "", 1)
+	mustChange(t, validAction, noID)
+
+	err := validate([]byte(noID))
+	if err == nil {
+		t.Fatal("a signing step with no id: cannot bind any attestation")
+	}
+
+	if !strings.Contains(err.Error(), "id:") {
+		t.Fatalf("the error must name the missing id:; got: %v", err)
+	}
+
+	if strings.Contains(err.Error(), "steps..outputs.digest") {
+		t.Fatalf("the error must not quote the empty marker back at the reader; got: %v", err)
+	}
+}
