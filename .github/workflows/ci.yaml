@@ -78,6 +78,7 @@ jobs:
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
               - 'scripts/generate-kubescape-exceptions/**'
+              - 'scripts/kubescape-backlog-bridge/**'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/normalize-sarif-paths.sh'
@@ -434,6 +435,15 @@ jobs:
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
           ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
+
+      - name: 🌉 Validate the Kubescape backlog bridge
+        # The bridge derives themed, fingerprint-deduped backlog entries from
+        # live-only Kubescape findings (#2854). It needs no cluster here: the
+        # tests pin the two properties that make it safe to run unattended —
+        # fingerprints stay stable across runs and input order (so unchanged
+        # state never re-files), and a spec-stripped LIST input fails closed
+        # instead of reporting a clean cluster.
+        run: go test ./scripts/kubescape-backlog-bridge
 
       - name: 🧭 Make the SARIF paths repo-root-relative
         # Kubescape reports paths relative to the directory it scanned, so a
