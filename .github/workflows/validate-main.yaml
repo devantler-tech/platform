@@ -99,7 +99,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.178.2"
+          KSAIL_VERSION: "7.178.4"
         run: |
           set -euo pipefail
           BASE="https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}"
