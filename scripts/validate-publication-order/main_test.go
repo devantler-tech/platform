@@ -1431,6 +1431,82 @@ func TestRejectsPrefixedBuiltinBypasses(t *testing.T) {
 	}
 }
 
+// TestRejectsControlAndBindingBypasses covers four ways a signing block could look correct to the
+// validator while `cosign sign` never covers the released artifact. All four were reported as P1 on
+// the PR that added the surrounding guard, and all four passed the validator before these fixes.
+//
+// They are grouped because they share one failure signature: the step exits zero, the digest output
+// is exported correctly, and both attestations plus reconciliation advance over an artifact that is
+// unsigned or signed at a stale reference.
+func TestRejectsControlAndBindingBypasses(t *testing.T) {
+	const stale = "ghcr.io/devantler-tech/platform/manifests:latest"
+
+	for _, testCase := range []struct{ name, inject, wantErr string }{
+		{
+			// An unconditional top-level `exit` ends the shell, so the `cosign sign` written after it
+			// never runs — but the scan kept walking and credited it as executed.
+			"exit before cosign",
+			"        exit 0",
+			"no step appears to",
+		},
+		{
+			// `exec <cmd>` replaces the shell image; everything after it is equally unreachable.
+			"exec before cosign",
+			"        exec true",
+			"no step appears to",
+		},
+		{
+			// `builtin -- set +e` runs `set`, but the wrapper stripper advanced only past `builtin`
+			// and left `--` standing as the command, so errexit stayed tracked as enabled.
+			"builtin -- set +e",
+			"        builtin -- set +e",
+			"no step appears to",
+		},
+		{
+			// A subscripted printf destination writes REF; the decoder compared the target exactly.
+			"printf -v subscripted destination",
+			`        printf -v 'REF[0]' '%s' '` + stale + `'`,
+			"resolved digest",
+		},
+		{
+			// A `for` binding overwrites REF and leaves its final value in scope after the loop.
+			"for-loop binding overwrites REF",
+			"        for REF in '" + stale + "'; do :; done",
+			"resolved digest",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			bypass := strings.Replace(validAction,
+				`        cosign sign --yes --recursive "${REF}"`,
+				testCase.inject+"\n"+`        cosign sign --yes --recursive "${REF}"`, 1)
+			mustChange(t, validAction, bypass)
+
+			err := validate([]byte(bypass))
+			if err == nil {
+				t.Fatal("the bypass must not leave the publication-order contract satisfied")
+			}
+
+			if !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("want an error naming %q; got: %v", testCase.wantErr, err)
+			}
+		})
+	}
+}
+
+// TestAllowsAnExecThatOnlyRedirects is the over-tightening control for the exit/exec termination.
+// A bare `exec` with no command applies redirections to the CURRENT shell and execution continues
+// past it, so treating it as terminating would blind the guard to the whole rest of the step.
+func TestAllowsAnExecThatOnlyRedirects(t *testing.T) {
+	withRedirect := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		"        exec 3>&1\n"+`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, withRedirect)
+
+	if err := validate([]byte(withRedirect)); err != nil {
+		t.Fatalf("a redirect-only exec must not hide the commands after it; got: %v", err)
+	}
+}
+
 // TestRejectsNamerefWithASubscriptTarget covers a nameref target that carries an array subscript.
 //
 // Bash accepts a subscript on a nameref target, and on a scalar `REF[0]` denotes REF itself, so

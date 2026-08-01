@@ -176,6 +176,20 @@ func parseExecuted(run string, errexit bool) []executedCommand {
 
 		cmd := newExecutedCommand(run, call)
 
+		// An unconditional `exit` or `exec` at the top level ends this shell, so nothing written
+		// after it runs at all. Continuing to scan credited a later `cosign sign` as executed even
+		// though control never reached it: the step still exits zero, the digest output is already
+		// exported, and both attestations plus reconciliation advance over an artifact that was
+		// never signed. Stop here rather than skipping the statement — every subsequent command is
+		// equally unreachable.
+		//
+		// Only the unconditional top-level form terminates. A negated or backgrounded one was
+		// already skipped above, and one nested inside an if/loop/function is not reached by this
+		// walk, which iterates top-level statements only.
+		if terminatesShell(cmd) {
+			break
+		}
+
 		// `set` changes how the shell treats a later failure, so it has to be tracked as state
 		// rather than matched as a shape. Applied before the errexit test so `set -e` enables
 		// itself, which is what makes an explicit re-enable after `set +e` work.
@@ -293,6 +307,40 @@ func declaredFunctions(file *syntax.File) map[string]bool {
 // A `set` whose flags are not statically known (`set "${OPTS}"`) yields "errexit off", the
 // conservative direction: the guard then cannot prove any later operation gates the step, and says
 // so, rather than assuming the safe case.
+// terminatesShell reports whether a command ends this shell, so nothing written after it executes.
+//
+// `exit` returns from the script and `exec <cmd>` replaces the shell image, and in both cases every
+// later top-level statement is unreachable. Crediting those statements as executed was a bypass with
+// a clean-looking step: `digest=${DIGEST} >> "$GITHUB_OUTPUT"; exit 0; cosign sign …` exports the
+// correct digest, exits zero, and satisfied a scan that then recorded the unreachable `cosign sign`
+// as having run — so the attestations covered the right digest while the artifact was released
+// unsigned.
+//
+// `exec` with NO command is deliberately excluded: that form only applies redirections to the
+// current shell and execution continues past it, so treating it as terminating would blind the guard
+// to everything after an ordinary `exec >log`.
+//
+// The wrapper prefix is stripped first, because `builtin exit 0` and `command exec …` terminate
+// exactly as the bare forms do. An unreadable command word yields no termination, which keeps this
+// from swallowing the rest of a script the guard cannot actually read.
+func terminatesShell(cmd executedCommand) bool {
+	start, executes := commandStart(cmd.lits, cmd.litOK)
+	if !executes || start >= len(cmd.lits) || !cmd.litOK[start] {
+		return false
+	}
+
+	switch cmd.lits[start] {
+	case "exit":
+		return true
+	case "exec":
+		// Only a form that names a program replaces the shell; a bare `exec` (or one carrying just
+		// redirections, which contribute no words) leaves execution to continue.
+		return len(cmd.lits)-start > 1
+	default:
+		return false
+	}
+}
+
 func errexitToggle(cmd executedCommand) (bool, bool) {
 	// `builtin set +e` and `command set +e` run `set` exactly as a bare `set` does, so the wrapper
 	// must be stripped before the name is compared. Reading only the first word credited errexit as
@@ -443,6 +491,22 @@ func assignmentsTo(run, name string) []assignment {
 			if declaresNamerefTo(typed, name) {
 				out = append(out, assignment{text: "", consumesPublishedTag: false})
 			}
+
+		// A `for`/`select` clause BINDS its loop variable, and bash leaves the final value in scope
+		// after the loop ends. `for REF in <stale-reference>; do :; done` therefore overwrites REF as
+		// surely as an assignment does, but the parser models the binding as a WordIter rather than
+		// an Assign or a DeclClause, so neither collector above saw it: the validator read only the
+		// one correct assignment while cosign signed the stale value the loop left behind.
+		//
+		// Recorded as an unprovable write, like a builtin destination. The loop's last value depends
+		// on the word list and on whether the body runs at all, so there is no single text this could
+		// honestly attribute — and both consumers require EVERY assignment to qualify, so an opaque
+		// entry makes the guard report that it cannot prove this rather than guess.
+		case *syntax.ForClause:
+			if iter, isWordIter := typed.Loop.(*syntax.WordIter); isWordIter &&
+				iter.Name != nil && iter.Name.Value == name {
+				out = append(out, assignment{text: "", consumesPublishedTag: false})
+			}
 		}
 
 		return true
@@ -587,6 +651,14 @@ func commandStart(lits []string, litOK []bool) (int, bool) {
 		switch lits[i] {
 		case "builtin":
 			i++
+
+			// `builtin -- set +e` runs `set` exactly as `builtin set +e` does. Advancing only past
+			// the wrapper left `--` standing as the apparent command name, so `set` was never
+			// recognised and errexit stayed tracked as enabled across a step that had disabled it.
+			// `command` already skipped its terminator below; this is the same rule for `builtin`.
+			if i < len(lits) && litOK[i] && lits[i] == "--" {
+				i++
+			}
 		case "command":
 			i++
 
@@ -684,11 +756,11 @@ func printfWritesTo(args []*syntax.Word, name string) bool {
 
 			target, targetReadable := literalOf(args[i+1])
 
-			return !targetReadable || target == name
+			return !targetReadable || namerefBase(target) == name
 		}
 
 		if strings.HasPrefix(word, "-v") && len(word) > 2 {
-			return word[2:] == name
+			return namerefBase(word[2:]) == name
 		}
 	}
 
@@ -722,7 +794,7 @@ func readLikeWritesTo(args []*syntax.Word, name, valueOpts string) bool {
 			// `read -a NAME` names its destination in the option's own argument.
 			if word == "-a" && i+1 < len(args) {
 				target, targetReadable := literalOf(args[i+1])
-				if !targetReadable || target == name {
+				if !targetReadable || namerefBase(target) == name {
 					return true
 				}
 			}
@@ -744,7 +816,7 @@ func operandWritesTo(args []*syntax.Word, name string, skip int) bool {
 		}
 
 		word, readable := literalOf(arg)
-		if !readable || word == name {
+		if !readable || namerefBase(word) == name {
 			return true
 		}
 	}
