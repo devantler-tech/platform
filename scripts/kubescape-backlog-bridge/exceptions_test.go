@@ -172,6 +172,63 @@ func TestPartiallyAnchoredControlIDIsRejected(t *testing.T) {
 	}
 }
 
+// TestAlternationCannotDefeatAnchoring covers the hole a TEXTUAL anchoring check cannot see. In a
+// regex, `^` and `$` bind to the individual alternation branch they sit in, so `^C-001|C-002$` is
+// `(^C-001)|(C-002$)`: it starts with ^ and ends with $, satisfying any prefix/suffix test, while
+// branch one is open at the END (it matches C-0016) and branch two is open at the START (it matches
+// XC-002). Validating anchoring as text is therefore not enough on its own — the compiled pattern
+// has to carry full-match semantics.
+func TestAlternationCannotDefeatAnchoring(t *testing.T) {
+	raw := `[{"name":"alternation","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":".*"}}],` +
+		`"posturePolicies":[{"controlID":"^C-001|C-002$"}],"reason":"test fixture"}]`
+
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, raw)
+
+	got, err := loadExceptions(path)
+	if err != nil {
+		return // rejecting the value outright is an equally correct answer
+	}
+
+	// Accepted, so the compiled pattern must not reach beyond the two branches it names.
+	items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+
+	if derived := mustDerivePosture(t, items, got); len(derived) != 1 {
+		t.Errorf("^C-001|C-002$ must not except C-0016, got %+v", derived)
+	}
+
+	other := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"XC-002": "failed"}))
+
+	if derived := mustDerivePosture(t, other, got); len(derived) != 1 {
+		t.Errorf("^C-001|C-002$ must not except XC-002, got %+v", derived)
+	}
+}
+
+// TestUnanchoredAttributeDoesNotMatchBySubstring is the sibling path the control-ID finding only
+// named one of. Resource attributes are compiled and matched with the same MatchString, so a
+// `kind: Job` designator substring-matched CronJob and silently widened the exception to a workload
+// kind the platform never accepted.
+func TestUnanchoredAttributeDoesNotMatchBySubstring(t *testing.T) {
+	raw := `[{"name":"substring-kind","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":"Job"}}],` +
+		`"posturePolicies":[{"controlID":"^C-0016$"}],"reason":"test fixture"}]`
+
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, raw)
+
+	got, err := loadExceptions(path)
+	if err != nil {
+		return // rejecting it is equally correct
+	}
+
+	items := itemsOf(t, postureDoc("app", "CronJob", "backup", map[string]string{"C-0016": "failed"}))
+
+	if derived := mustDerivePosture(t, items, got); len(derived) != 1 {
+		t.Errorf("a `kind: Job` designator must not except a CronJob, got %+v", derived)
+	}
+}
+
 // An attribute this command does not model must NOT be treated as satisfied:
 // doing so would widen the exception and hide a real finding.
 func TestUnknownDesignatorAttributeDoesNotExcept(t *testing.T) {

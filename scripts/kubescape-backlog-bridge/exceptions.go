@@ -179,6 +179,21 @@ func loadExceptions(path string) ([]exception, error) {
 	return out, nil
 }
 
+// compileFullMatch compiles a declared pattern so it can only ever match a WHOLE value.
+//
+// Both consumers match with MatchString, which succeeds on a substring, and validating the text for
+// leading ^ and trailing $ is not sufficient on its own: those anchors bind to the individual
+// alternation branch they sit in, so `^C-001|C-002$` reads as `(^C-001)|(C-002$)` — it passes a
+// prefix/suffix check while branch one stays open at the end (matching C-0016) and branch two open
+// at the start (matching XC-002).
+//
+// Wrapping in a non-capturing group makes full-match semantics a property of the compiled pattern
+// rather than of its spelling, so no internal structure can widen it. Already-anchored values stay
+// correct — the anchors are zero-width and still match at the same positions.
+func compileFullMatch(pattern string) (*regexp.Regexp, error) {
+	return regexp.Compile("^(?:" + pattern + ")$")
+}
+
 func compilePolicy(p rawPolicy, path string) (exception, error) {
 	e := exception{name: p.Name}
 
@@ -222,7 +237,7 @@ func compilePolicy(p rawPolicy, path string) (exception, error) {
 				errBadExceptions, path, p.Name, pp.ControlID)
 		}
 
-		re, err := regexp.Compile(pp.ControlID)
+		re, err := compileFullMatch(pp.ControlID)
 		if err != nil {
 			return exception{}, fmt.Errorf("%w: %s: policy %q: controlID %q: %w",
 				errBadExceptions, path, p.Name, pp.ControlID, err)
@@ -245,7 +260,7 @@ func compilePolicy(p rawPolicy, path string) (exception, error) {
 		d := designator{}
 
 		for key, pattern := range r.Attributes {
-			re, err := regexp.Compile(pattern)
+			re, err := compileFullMatch(pattern)
 			if err != nil {
 				return exception{}, fmt.Errorf("%w: %s: policy %q: attribute %s=%q: %w",
 					errBadExceptions, path, p.Name, key, pattern, err)
