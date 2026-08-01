@@ -210,21 +210,26 @@ func (t theme) Fingerprint() string {
 
 // Title renders the backlog title. Stable for a given theme so a
 // search-before-create can match on it.
+//
+// "Stable" is why no count appears here. The title carried
+// pluralComponents(len(t.Components)), so a workload joining or leaving an
+// otherwise unchanged theme flipped "1 workload" to "2 workloads"; the write
+// half's search-before-create then missed the existing entry and re-filed the
+// theme as a duplicate. That is the same churn Fingerprint deliberately avoids
+// by excluding the count, reached through the other identity the write half
+// matches on — so both have to exclude it, or excluding it from one accomplishes
+// nothing.
+//
+// The count is not lost. report() renders total= and components= as their own
+// fields, which is where a changing number belongs: data about the theme, not
+// part of what names it.
 func (t theme) Title() string {
 	switch t.Kind {
 	case string(surfacePosture):
-		return fmt.Sprintf("security(posture): %s fails on %s", t.Key, pluralComponents(len(t.Components)))
+		return fmt.Sprintf("security(posture): %s fails", t.Key)
 	default:
-		return fmt.Sprintf("security(cve): %s-severity findings on %s", t.Key, pluralComponents(len(t.Components)))
+		return fmt.Sprintf("security(cve): %s-severity findings", t.Key)
 	}
-}
-
-func pluralComponents(n int) string {
-	if n == 1 {
-		return "1 workload"
-	}
-
-	return fmt.Sprintf("%d workloads", n)
 }
 
 // severityCount normalises the two spellings Kubescape uses for a severity
@@ -655,8 +660,22 @@ func run(args []string, out io.Writer) error {
 
 // readSurface reads every file for one surface, validating each against that
 // surface and against the stripped-skeleton signature before combining them.
+//
+// The same object must not arrive twice. Aggregation dedupes the component SET
+// but SUMS the severity counts, so one object supplied twice — the same path
+// repeated, or one object present in two files — renders a doubled total beside
+// an unchanged component list: the report contradicts itself and overstates the
+// platform's exposure. Since a total is what drives the backlog entry, guessing
+// which of the two readings was meant is worse than refusing.
+//
+// Identity is the object's namespace/name, not the path. Two DIFFERENT objects
+// that resolve to the same workload are the normal CVE shape — one summary per
+// image — and must still aggregate, so deduping on the workload would suppress
+// real findings.
 func readSurface(paths []string, want surface) ([]item, error) {
 	var all []item
+
+	seen := map[string]string{}
 
 	for _, path := range paths {
 		items, err := readList(path)
@@ -670,6 +689,17 @@ func readSurface(paths []string, want surface) ([]item, error) {
 
 		if err := checkExamined(items); err != nil {
 			return nil, fmt.Errorf("%s input %s: %w", want, path, err)
+		}
+
+		for _, it := range items {
+			id := it.Metadata.Namespace + "/" + it.Metadata.Name
+			if first, dup := seen[id]; dup {
+				return nil, fmt.Errorf("%w: %s object %s appears in both %s and %s; "+
+					"severity counts are summed, so counting it twice would overstate the finding",
+					errUnrecognisedDocument, want, id, first, path)
+			}
+
+			seen[id] = path
 		}
 
 		all = append(all, items...)

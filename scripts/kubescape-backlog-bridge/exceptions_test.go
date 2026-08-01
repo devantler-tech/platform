@@ -133,6 +133,45 @@ func TestAnchoredControlIDDoesNotMatchByPrefix(t *testing.T) {
 	}
 }
 
+// TestUnanchoredControlIDIsRejected closes the gap every other fixture here hides. policyDoc
+// anchors each controlID with ^…$, so the whole suite proves that an ANCHORED pattern matches
+// exactly — never that an unanchored one is refused. It is not, and covers() uses MatchString, so
+// a raw "C-001" substring-matches C-0016 and silently suppresses a control the platform never
+// accepted. That widens what the cluster is treated as having accepted, which is the one direction
+// an exception loader must never be wrong in.
+//
+// The generator is already the authority on this: its anchor() returns fully anchored values and
+// rejects partial anchoring for exactly this reason. The loader enforces the same contract rather
+// than trusting that every artifact reaching it was generated.
+func TestUnanchoredControlIDIsRejected(t *testing.T) {
+	raw := `[{"name":"unanchored","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":".*"}}],` +
+		`"posturePolicies":[{"controlID":"C-001"}],"reason":"test fixture"}]`
+
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, raw)
+
+	if _, err := loadExceptions(path); err == nil {
+		t.Fatal("an unanchored controlID substring-matches other controls and must be rejected")
+	}
+}
+
+// TestPartiallyAnchoredControlIDIsRejected is the other half of the generator's contract: a value
+// anchored at only one end is still substring-matchable at the open end, so "^C-001" matches
+// C-0016 just as the bare form does.
+func TestPartiallyAnchoredControlIDIsRejected(t *testing.T) {
+	raw := `[{"name":"partial","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":".*"}}],` +
+		`"posturePolicies":[{"controlID":"^C-001"}],"reason":"test fixture"}]`
+
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, raw)
+
+	if _, err := loadExceptions(path); err == nil {
+		t.Fatal("a partially anchored controlID is still substring-matchable and must be rejected")
+	}
+}
+
 // An attribute this command does not model must NOT be treated as satisfied:
 // doing so would widen the exception and hide a real finding.
 func TestUnknownDesignatorAttributeDoesNotExcept(t *testing.T) {

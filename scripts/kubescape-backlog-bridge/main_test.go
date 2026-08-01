@@ -232,6 +232,72 @@ func TestFingerprintIgnoresCounts(t *testing.T) {
 	}
 }
 
+// TestTitleIsStableAcrossAComponentCountChange holds Title to the promise its own doc comment
+// makes — "Stable for a given theme so a search-before-create can match on it". It rendered
+// pluralComponents(len(t.Components)), so a workload joining or leaving an otherwise unchanged
+// theme flipped "1 workload" to "2 workloads". The write half searches on the title, so that
+// search misses and the theme is re-filed as a duplicate — the same churn the fingerprint
+// deliberately avoids by excluding the count.
+//
+// The count is not lost: report() already renders total= and components= as their own fields.
+func TestTitleIsStableAcrossAComponentCountChange(t *testing.T) {
+	one := mustDeriveCVE(t, itemsOf(t, cveDoc("app", "api", map[string]int{"critical": 1})))
+	two := mustDeriveCVE(t, itemsOf(t,
+		cveDoc("app", "api", map[string]int{"critical": 1}),
+		cveDoc("app", "web", map[string]int{"critical": 1})))
+
+	if len(one) != 1 || len(two) != 1 {
+		t.Fatalf("want one theme each, got %d and %d", len(one), len(two))
+	}
+
+	if len(one[0].Components) == len(two[0].Components) {
+		t.Fatalf("fixture does not exercise a count change: both have %d components",
+			len(one[0].Components))
+	}
+
+	if one[0].Title() != two[0].Title() {
+		t.Errorf("a component-count change must not alter the title a search-before-create matches on:\n"+
+			" 1 component: %q\n%d components: %q",
+			one[0].Title(), len(two[0].Components), two[0].Title())
+	}
+}
+
+// TestDuplicateInputObjectIsRejected covers double counting. add() dedupes the component SET but
+// the severity total was summed unconditionally, so passing the same object twice — the same file
+// twice, or the same object present in two files — rendered total=2 for a single critical while
+// components= still listed one workload. The report then overstates the platform's exposure, and
+// the two fields contradict each other.
+//
+// Distinct image summaries for one workload are NOT duplicates and must still aggregate: they are
+// separate objects with separate names that legitimately sum.
+func TestDuplicateInputObjectIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cve.json")
+	writeDocs(t, path, cveDoc("app", "api", map[string]int{"critical": 1}))
+
+	var out bytes.Buffer
+	if err := run([]string{"-cve", path, "-cve", path}, &out); err == nil {
+		t.Fatalf("the same object passed twice must be rejected, not double counted; got: %s", out.String())
+	}
+}
+
+// TestDistinctImageSummariesForOneWorkloadStillAggregate is the over-tightening control for the
+// rule above. Two DIFFERENT objects that resolve to the same workload are the normal CVE shape —
+// one summary per image — and their counts must still sum.
+func TestDistinctImageSummariesForOneWorkloadStillAggregate(t *testing.T) {
+	got := mustDeriveCVE(t, itemsOf(t,
+		cveDoc("app", "api-image-a", map[string]int{"critical": 2}),
+		cveDoc("app", "api-image-b", map[string]int{"critical": 3})))
+
+	if len(got) != 1 {
+		t.Fatalf("want one critical theme, got %d", len(got))
+	}
+
+	if got[0].Total != 5 {
+		t.Errorf("distinct image summaries must still sum: total = %d, want 5", got[0].Total)
+	}
+}
+
 // The counterpart to the rule above: excluding the count from the IDENTITY is
 // correct, but the count must still be carried, or an update to an existing
 // entry cannot show 1 critical becoming 999 and the update is pointless.

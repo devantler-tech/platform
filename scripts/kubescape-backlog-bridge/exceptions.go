@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 )
 
 // errBadExceptions reports an exceptions document this command cannot apply.
@@ -200,6 +201,25 @@ func compilePolicy(p rawPolicy, path string) (exception, error) {
 				"but the scan input carries no framework to match it against; "+
 				"applying it would widen the exception across every framework",
 				errBadExceptions, path, p.Name, pp.ControlID, pp.FrameworkName)
+		}
+
+		// covers() matches with MatchString, which succeeds on a SUBSTRING. An
+		// unanchored "C-001" therefore suppresses C-0016 as well — widening a
+		// deliberately narrow exception onto controls the platform never
+		// accepted, silently, and in the one direction this loader must never be
+		// wrong in.
+		//
+		// The generator that produces these artifacts already anchors every value
+		// and rejects partial anchoring for exactly this reason. Enforcing the
+		// same contract here means a hand-edited or otherwise ungenerated artifact
+		// fails loudly instead of quietly excepting more than it names. A value
+		// anchored at only one end is still substring-matchable at the open end,
+		// so it is refused too rather than silently completed.
+		if !strings.HasPrefix(pp.ControlID, "^") || !strings.HasSuffix(pp.ControlID, "$") {
+			return exception{}, fmt.Errorf("%w: %s: policy %q: controlID %q is not fully anchored; "+
+				"controls are matched as substrings, so it would also suppress every control whose ID "+
+				"contains it. Anchor it as ^…$",
+				errBadExceptions, path, p.Name, pp.ControlID)
 		}
 
 		re, err := regexp.Compile(pp.ControlID)
