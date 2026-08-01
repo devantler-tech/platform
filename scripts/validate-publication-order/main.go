@@ -288,6 +288,19 @@ func unmodeledShellState(file *syntax.File) (string, bool) {
 			return true
 		}
 
+		// The Assign check above only sees `PATH=…`. A builtin can write the same variable while
+		// naming it as an ARGUMENT — `printf -v PATH …`, `read PATH` — which produces no Assign
+		// node at all, so the walk waved it through and a shadowed `cosign` was credited as the
+		// real signature. Same destinations, same consequence, different spelling; reuse the
+		// existing detector rather than a second, differently-wrong one.
+		for _, protected := range [...]string{"PATH", "BASH_ENV", "ENV"} {
+			if builtinWritesTo(call, protected) {
+				found = "a builtin write to " + protected
+
+				return false
+			}
+		}
+
 		lits, litOK := wordsOf(call.Args)
 
 		start, executes := commandStart(lits, litOK)
@@ -568,12 +581,47 @@ func terminatesShell(cmd executedCommand) bool {
 	case "exit":
 		return true
 	case "exec":
-		// Only a form that names a program replaces the shell; a bare `exec` (or one carrying just
-		// redirections, which contribute no words) leaves execution to continue.
-		return len(cmd.lits)-start > 1
+		// Only a form that names a PROGRAM replaces the shell. Counting words was not the same
+		// question: `exec -c` carries a word but names nothing, so bash continues — and treating
+		// it as terminating stopped the scan and hid every later command, including an extra
+		// `workload push`. Options are skipped; anything unreadable returns false, which keeps the
+		// rest of the step visible rather than trusting it.
+		return execNamesProgram(cmd, start)
 	default:
 		return false
 	}
+}
+
+// execNamesProgram reports whether an `exec` call names a program to replace the shell with.
+//
+// Fail-closed direction matters here and is the opposite of the usual one: claiming the shell ends
+// SUPPRESSES the remainder of the scan, so an unreadable word must mean "keep looking", never
+// "stop". Options (`-c`, `-l`, `-a NAME`) are skipped; `--` ends them.
+func execNamesProgram(cmd executedCommand, start int) bool {
+	for i := start + 1; i < len(cmd.lits); i++ {
+		if !cmd.litOK[i] {
+			return false
+		}
+
+		word := cmd.lits[i]
+
+		if word == "--" {
+			return i+1 < len(cmd.lits) && cmd.litOK[i+1]
+		}
+
+		if strings.HasPrefix(word, "-") {
+			// `-a` takes the replacement argv[0] as a separate word; skip that too.
+			if word == "-a" {
+				i++
+			}
+
+			continue
+		}
+
+		return true
+	}
+
+	return false
 }
 
 func errexitToggle(cmd executedCommand) (bool, bool) {
@@ -702,6 +750,10 @@ func assignmentsTo(run, name string) []assignment {
 			// was therefore invisible here: a correct resolution could be followed by an unseen
 			// overwrite, and both consumers — which require EVERY assignment to qualify — passed
 			// while cosign signed the overwritten value.
+			if paramExpAssignsTo(typed, name) {
+				out = append(out, assignment{text: "", consumesPublishedTag: false})
+			}
+
 			if builtinWritesTo(typed, name) {
 				out = append(out, assignment{
 					// Deliberately opaque. Both consumers compare against an exact required form or
@@ -848,6 +900,39 @@ func declaresNamerefTo(decl *syntax.DeclClause, name string) bool {
 	}
 
 	return false
+}
+
+// paramExpAssignsTo reports whether the call contains an assignment-form parameter expansion that
+// writes name — `${DIGEST:=<stale>}` or `${DIGEST=<stale>}`.
+//
+// These assign as a SIDE EFFECT of expanding, so they produce no Assign, no DeclClause and no
+// builtin destination; `unset DIGEST; : "${DIGEST:=sha256:<old>}"` left the collector seeing only
+// the earlier valid resolution while bash signed the fallback. Recorded as an opaque write for the
+// same reason builtin writes are: both consumers demand a resolved value, so "cannot prove this"
+// fails them rather than guessing.
+func paramExpAssignsTo(call *syntax.CallExpr, name string) bool {
+	assigns := false
+
+	syntax.Walk(call, func(node syntax.Node) bool {
+		if assigns {
+			return false
+		}
+
+		exp, isExp := node.(*syntax.ParamExp)
+		if !isExp || exp.Param == nil || exp.Param.Value != name || exp.Exp == nil {
+			return true
+		}
+
+		if exp.Exp.Op == syntax.AssignUnset || exp.Exp.Op == syntax.AssignUnsetOrNull {
+			assigns = true
+
+			return false
+		}
+
+		return true
+	})
+
+	return assigns
 }
 
 // builtinWritesTo reports whether call writes the shell variable name through a builtin that takes

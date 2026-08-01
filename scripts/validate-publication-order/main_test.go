@@ -1947,3 +1947,91 @@ func TestRejectsDigestResolvedByAShadowedFunction(t *testing.T) {
 		t.Fatal("a `docker` function shadows the resolver, so DIGEST never depends on the published tag")
 	}
 }
+
+// TestRejectsIndirectPathWriteByBuiltin is the PATH sibling of the builtin-write rule that already
+// guards DIGEST and REF. unmodeledShellState rejected only a `*syntax.Assign` to PATH, so
+// `printf -v PATH …` reached the same cosign shadowing without ever producing an Assign node.
+func TestRejectsIndirectPathWriteByBuiltin(t *testing.T) {
+	shadowed := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        printf -v PATH '%s' '/tmp/fake:/usr/bin'`+"\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, shadowed)
+
+	if err := validate([]byte(shadowed)); err == nil {
+		t.Fatal("`printf -v PATH` rebinds command resolution exactly as an assignment does")
+	}
+}
+
+// TestRejectsExecWithOptionsButNoCommand covers `exec -c`, which carries a word but names no
+// program, so bash CONTINUES the shell. Counting words treated it as terminating, which let a
+// later `workload push` hide behind it.
+func TestRejectsExecWithOptionsButNoCommand(t *testing.T) {
+	hidden := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        cosign sign --yes --recursive "${REF}"`+"\n"+
+			`        exec -c`+"\n"+
+			`        ksail workload push`, 1)
+	mustChange(t, validAction, hidden)
+
+	if err := validate([]byte(hidden)); err == nil {
+		t.Fatal("`exec -c` names no program, so the shell continues and the later push runs")
+	}
+}
+
+// TestRejectsAssignmentFormParameterExpansionWrite covers `: "${DIGEST:=<stale>}"`, which assigns
+// without producing an Assign, DeclClause or recognised builtin destination — so the collector saw
+// only the earlier valid resolution while bash signed the fallback.
+func TestRejectsAssignmentFormParameterExpansionWrite(t *testing.T) {
+	stale := strings.Replace(validAction,
+		`        cosign sign --yes --recursive "${REF}"`,
+		`        unset DIGEST`+"\n"+
+			`        : "${DIGEST:=sha256:aaaa}"`+"\n"+
+			`        cosign sign --yes --recursive "${REF}"`, 1)
+	mustChange(t, validAction, stale)
+
+	if err := validate([]byte(stale)); err == nil {
+		t.Fatal("an assignment-form parameter expansion writes DIGEST invisibly to the collector")
+	}
+}
+
+// TestCompoundConstructShapeMatrix pins the LINE the compound-construct rule draws, in both
+// directions at once. The distinction is the SHELL, not the nesting: a construct that runs in the
+// step's own shell moves the errexit state parseExecuted tracks and must fail closed, while a
+// subshell form changes only a child that exits and must stay legal — rejecting those would fail
+// ordinary scripting such as `$(set -euo pipefail; crane digest …)`.
+func TestCompoundConstructShapeMatrix(t *testing.T) {
+	cases := []struct {
+		name       string
+		snippet    string
+		wantReject bool
+	}{
+		{"brace group", "        { set +e; }", true},
+		{"if branch", "        if true; then set +e; fi", true},
+		{"for loop", "        for i in 1; do set +e; done", true},
+		{"while loop", "        while false; do set +e; done", true},
+		{"function body", "        f() { set +e; }", true},
+		{"and-list", "        true && set +e", true},
+		{"explicit subshell", "        ( set +e )", false},
+		{"backgrounded", "        { set +e; } &", false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mutated := strings.Replace(validAction,
+				`        cosign sign --yes --recursive "${REF}"`,
+				tc.snippet+"\n"+`        cosign sign --yes --recursive "${REF}"`+"\n"+
+					`        echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"`, 1)
+			mustChange(t, validAction, mutated)
+
+			err := validate([]byte(mutated))
+			if tc.wantReject && err == nil {
+				t.Error("must be rejected: this construct runs in the step's own shell")
+			}
+
+			if !tc.wantReject && err != nil {
+				t.Errorf("must stay legal: a subshell cannot move the tracked state; got: %v", err)
+			}
+		})
+	}
+}
