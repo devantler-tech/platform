@@ -244,6 +244,37 @@ type acc struct {
 
 func (a *acc) add(component string) { a.components[component] = struct{}{} }
 
+// severityRank orders Kubescape's severity names. Unknown names rank lowest so
+// an upstream addition cannot silently outrank Critical.
+func severityRank(s string) int {
+	switch strings.ToLower(s) {
+	case "critical":
+		return 5
+	case "high":
+		return 4
+	case "medium":
+		return 3
+	case "low":
+		return 2
+	case "negligible":
+		return 1
+	default:
+		return 0
+	}
+}
+
+// raiseSeverity keeps the highest severity seen for a theme.
+//
+// One control can be reported at different severities by different workloads,
+// and Go randomises map iteration — so taking whichever arrived first would
+// make this field depend on iteration order. Keeping the maximum is
+// order-independent, which is what every other field here already guarantees.
+func (a *acc) raiseSeverity(s string) {
+	if severityRank(s) > severityRank(a.severity) {
+		a.severity = s
+	}
+}
+
 // derivePosture groups failed posture controls into themes.
 func derivePosture(items []item) []theme {
 	byControl := map[string]*acc{}
@@ -263,6 +294,7 @@ func derivePosture(items []item) []theme {
 				a = &acc{severity: ctrl.Severity.Severity, components: map[string]struct{}{}}
 				byControl[key] = a
 			}
+			a.raiseSeverity(ctrl.Severity.Severity)
 			a.add(it.component())
 		}
 	}
@@ -341,6 +373,12 @@ func run(args []string, out io.Writer) error {
 			"stability is demonstrated on consecutive runs", errWritesNotEnabled)
 	}
 
+	if *posturePath == "" && *cvePath == "" {
+		return errors.New("no input: pass -posture and/or -cve. " +
+			"Reporting \"nothing to file\" for an empty invocation would be the same " +
+			"false all-clear the stripped-LIST guard exists to prevent")
+	}
+
 	var themes []theme
 	if *posturePath != "" {
 		items, err := readList(*posturePath)
@@ -387,8 +425,8 @@ func report(themes []theme, out io.Writer) error {
 		return err
 	}
 	for _, t := range themes {
-		if _, err := fmt.Fprintf(out, "%s\t%s\t%s\tcomponents=%s\n",
-			t.Fingerprint(), t.Kind, t.Title(), strings.Join(t.Components, ",")); err != nil {
+		if _, err := fmt.Fprintf(out, "%s\t%s\tseverity=%s\t%s\tcomponents=%s\n",
+			t.Fingerprint(), t.Kind, t.Severity, t.Title(), strings.Join(t.Components, ",")); err != nil {
 			return err
 		}
 	}

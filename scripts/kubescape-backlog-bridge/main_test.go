@@ -268,6 +268,55 @@ func TestConsecutiveRunsOnUnchangedStateAreByteIdentical(t *testing.T) {
 	}
 }
 
+// One control can be reported at different severities by different workloads.
+// The theme must keep the HIGHEST, independently of input order — anything
+// order-dependent here would reintroduce the nondeterminism every other field
+// is engineered to avoid.
+func TestThemeSeverityIsTheHighestAndOrderIndependent(t *testing.T) {
+	low := postureItem("app", "Deployment", "a", map[string]string{"C-0016": "failed"})
+	high := postureItem("app", "Deployment", "b", map[string]string{"C-0016": "failed"})
+	for id, c := range low.Spec.Controls {
+		c.Severity.Severity = "Low"
+		low.Spec.Controls[id] = c
+	}
+	for id, c := range high.Spec.Controls {
+		c.Severity.Severity = "Critical"
+		high.Spec.Controls[id] = c
+	}
+
+	for _, order := range [][]item{{low, high}, {high, low}} {
+		got := derivePosture(order)
+		if len(got) != 1 {
+			t.Fatalf("want 1 theme, got %d", len(got))
+		}
+		if got[0].Severity != "Critical" {
+			t.Errorf("want the highest severity (Critical), got %q", got[0].Severity)
+		}
+	}
+}
+
+func TestSeverityRankPutsUnknownLowest(t *testing.T) {
+	if severityRank("some-future-severity") >= severityRank("Negligible") {
+		t.Error("an unrecognised severity must not outrank a known one")
+	}
+	if severityRank("Critical") <= severityRank("High") {
+		t.Error("Critical must outrank High")
+	}
+}
+
+// An invocation with no input must not answer "nothing to file" — that is the
+// same false all-clear the stripped-LIST guard exists to prevent.
+func TestNoInputIsAnErrorNotACleanBillOfHealth(t *testing.T) {
+	var out bytes.Buffer
+	err := run(nil, &out)
+	if err == nil {
+		t.Fatal("an empty invocation must be an error, not a clean report")
+	}
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Errorf("must not print an all-clear for missing input, got %q", out.String())
+	}
+}
+
 func writeList(t *testing.T, path string, items []item) {
 	t.Helper()
 	raw, err := json.Marshal(list{Items: items})
