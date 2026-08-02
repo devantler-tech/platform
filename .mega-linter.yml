@@ -86,7 +86,9 @@ DISABLE_ERRORS_LINTERS:
   # checkov (34) and trivy (620): Kubernetes misconfiguration in k8s/, which the section above
   # explains is NOT covered elsewhere. Tracked by #2787.
   #
-  # checkov's 34 are all `kubernetes` framework, and 8 of them are CKV_K8S_40.
+  # checkov's 34 are all `kubernetes` framework, and 8 of them are CKV_K8S_40. Those 8 break down as
+  # 4 withdrawn scoped skips (#2904) + 2 vendored bundles (#2899) + 2 unconstrained candidates. A
+  # further 3 were dispositioned by #2901 and are NOT in the 8 — the original count was 11.
   # Four scoped skips were tried and withdrawn: each named a per-site technical constraint that does
   # not survive checking. The two vault-backup jobs claimed to share the vault-snapshots PVC with the
   # OpenBao StatefulSet — but the live StatefulSet mounts `config`/`unseal-keys`/`tmp`/`home` plus
@@ -94,14 +96,15 @@ DISABLE_ERRORS_LINTERS:
   # preserve. The two user-namespace probes claimed their UID was the measurement subject — but
   # `/proc/self/uid_map` describes the pod's namespace and reads identically for every process in it
   # regardless of UID, and `fsGroup` supplies volume access as a GID independent of `runAsUser`.
-  # #2904 carries the per-site remediation and the risk-acceptance question for those four. Of the
-  # 8, two are inside the vendored KubeVirt and CDI release bundles and need a mechanism that
+  # #2904 carries the per-site remediation and the risk-acceptance question for those four. Two more
+  # of the 8 are inside the vendored KubeVirt and CDI release bundles and need a mechanism that
   # survives a vendor bump (#2899).
   #
-  # The remaining two have no demonstrated constraint and are candidates to simply raise: CoreDNS,
+  # The last two of the 8 have no demonstrated constraint and are candidates to simply raise: CoreDNS,
   # whose pinned image config reads `User: "nonroot:nonroot"` so an explicit `runAsUser: 65532`
   # would both match the image and clear the check, and the vault-config Job. #2901 dispositioned
-  # the other three of that group by checking each image rather than reasoning about it: the MinIO
+  # three further findings — outside the 8, and part of the original 11 — by checking each image
+  # rather than reasoning about it: the MinIO
   # server and its bucket-creation Job declare no `User` at all and carry no /etc/passwd entry for
   # the UID they ran under, so both were raised to 65532; the umami CronJob's 1001 turned out to BE
   # its image's baked `nextjs` user (`nextjs:x:1001:65533`), so it carries a scoped skip instead —
