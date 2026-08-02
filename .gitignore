@@ -30,3 +30,26 @@ megalinter-reports/
 # stages everything when it pushes auto-fixes back — which is how an empty .pyc reached main.
 __pycache__/
 *.py[cod]
+
+# Compiled Go binaries. Every scripts/<name>/ is a `main` package, so a build drops an
+# executable named after its directory — `go build ./scripts/<name>/` leaves it in the working
+# directory, and `go build ./...` from the root leaves one per package at the root. Neither has
+# an extension, so nothing else here covers them, and a directory-wide `git add` stages a ~4 MB
+# Mach-O binary alongside the source without comment.
+#
+# Listed by name rather than by a glob for extensionless files: that glob would also hide a
+# legitimately extensionless file someone adds later, and a silently ignored source file is a
+# worse failure than a binary that `git status` still shows. Add a line here when a new
+# scripts/<name>/ package appears.
+/generate-kubescape-exceptions
+/kubescape-backlog-bridge
+/validate-concurrency-queue
+/validate-dr-signing
+/validate-eks-ci-role-policy
+/validate-merge-group-heal
+/scripts/*/generate-kubescape-exceptions
+/scripts/*/kubescape-backlog-bridge
+/scripts/*/validate-concurrency-queue
+/scripts/*/validate-dr-signing
+/scripts/*/validate-eks-ci-role-policy
+/scripts/*/validate-merge-group-heal
