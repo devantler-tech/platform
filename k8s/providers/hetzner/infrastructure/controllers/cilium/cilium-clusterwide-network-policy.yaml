@@ -78,3 +78,12 @@ spec:
         - {}
       authentication:
         mode: required
+
+  # Deny pod egress to Hetzner IMDS. Autoscaler-created workers receive their
+  # Talos worker machine config through Hetzner user-data, and that config
+  # contains reusable cluster join material. Keep host/Talos boot-time metadata
+  # access intact, but prevent workloads from reading user-data after a node
+  # joins the cluster.
+  egressDeny:
+    - toCIDRSet:
+        - cidr: 169.254.169.254/32
