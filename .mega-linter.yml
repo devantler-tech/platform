@@ -96,7 +96,8 @@ DISABLE_ERRORS_LINTERS:
   # regardless of UID, and `fsGroup` supplies volume access as a GID independent of `runAsUser`.
   # #2904 carries the per-site remediation and the risk-acceptance question. Of the 11, two are
   # inside the vendored KubeVirt and CDI release bundles and need a mechanism that survives a vendor
-  # bump (#2899); the rest are candidates to simply raise (#2901) — including CoreDNS, whose pinned
+  # bump (#2899); five have no demonstrated constraint (#2901) and the four above are candidates to
+  # raise or accept together (#2904) — including CoreDNS, whose pinned
   # image config reads `User: "nonroot:nonroot"`, so an explicit `runAsUser: 65532` would both match
   # the image and clear the check. CKV_K8S_40 is NOT disabled: a new workload running
   # below UID 10000 with no stated reason is still flagged. The `secrets`
