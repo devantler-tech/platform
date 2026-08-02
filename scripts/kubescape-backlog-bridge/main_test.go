@@ -1962,6 +1962,34 @@ func TestCaseInsensitiveScopeDoesNotReachIntoMapKeys(t *testing.T) {
 	}
 }
 
+// Case-insensitive resolution must not escape into a subtree this command does
+// not decode. `annotations` is a map and is never read, so an object sitting
+// under it — whatever its keys happen to be named — must stay exact-only; a
+// key called `spec` there is an annotation name, not the spec field.
+//
+// This pins the property the walker's default rests on: unrecognised fields
+// cannot acquire struct semantics, so an upstream addition cannot start
+// producing false rejections. Without it, letting a map parent fall through to
+// the key switch reddens nothing today, because no map in the current shapes
+// holds object values — the guarantee is real but was untested.
+func TestUndecodedSubtreeNeverAcquiresStructScope(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "posture.json")
+	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app",`+
+		labels("app", "Deployment", "api")+`,`+
+		`"annotations":{"spec":{"Status":"a","status":"b"}}},`+
+		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},`+
+		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":0}}}`)
+
+	var out bytes.Buffer
+	if err := run([]string{"-posture", path}, &out); err != nil {
+		t.Fatalf("an undecoded subtree must not be folded: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "C-0016") {
+		t.Errorf("the document must still be processed, got %q", out.String())
+	}
+}
+
 // The control: an ordinary scan document with no repeated key still parses.
 func TestOrdinaryScanInputStillParses(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "posture.json")
