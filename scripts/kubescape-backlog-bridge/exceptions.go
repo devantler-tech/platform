@@ -190,7 +190,7 @@ func loadExceptions(path string) ([]exception, error) {
 	// ambiguous and Go picks the broader reading. Resolving an ambiguity toward
 	// "excepts more" is the one direction this loader must never take, so the
 	// ambiguity is refused before anything is compiled.
-	if err := rejectDuplicateKeys(raw, true); err != nil {
+	if err := rejectDuplicateKeys(raw); err != nil {
 		return nil, fmt.Errorf("%w: %s: %w; a repeated key here can WIDEN an exception rather than "+
 			"narrow it", errBadExceptions, path, err)
 	}
@@ -247,36 +247,82 @@ func loadExceptions(path string) ([]exception, error) {
 // a map[string]… loses the evidence — so the raw token stream is walked
 // instead.
 //
-// foldKeys additionally rejects keys that differ only by case. That is right
-// for a STRUCT and wrong for a MAP, and the difference is decided by the
-// destination rather than by the document: json binds struct fields
-// case-insensitively, so `Attributes` overwrites `attributes`, while a map
-// keeps both keys and has no ambiguity to report.
+// Keys that differ only by CASE are additionally rejected, but only where that
+// difference can actually change the decoded value. json matches STRUCT FIELDS
+// case-insensitively, so `Controls` overwrites `controls`; MAP keys are kept
+// verbatim, so `Team` beside `team` is two legitimate entries. Applying either
+// rule everywhere is wrong in one direction or the other:
 //
-// The walker cannot see the destination, so the caller supplies it — and the
-// two callers genuinely differ:
+//   - folding everything rejects ordinary Kubernetes objects — a real posture
+//     summary reporting 10 themes aborts once a `Team` label sits beside a
+//     `team` one;
+//   - folding nothing accepts a failed `"controls":{…}` followed by
+//     `"Controls":{}`, which decodes to the empty map and exits 0 with "no
+//     live-only findings" — the false all-clear this command exists to refuse,
+//     reproduced on a real document.
 //
-//   - the exceptions artifact is our own generated file whose aliasable keys
-//     are struct fields, so it folds (that is where the Unicode alias case was
-//     found);
-//   - a scan document is an arbitrary Kubernetes object, dense with
-//     user-controlled MAPS — labels, annotations, and their `f:`-prefixed
-//     mirrors under managedFields — so it does not. Folding it rejected
-//     ordinary objects: a real posture summary reporting 10 themes aborts the
-//     whole run once a `Team` label sits beside a `team` one.
+// So the walker tracks what the object it is scanning decodes INTO, and folds
+// only where keys bind to struct fields. Anything this command does not decode
+// is scanned exact-only: an alias there cannot hide a finding or widen an
+// exception, so refusing it would be pure false positives.
+func rejectDuplicateKeys(raw []byte) error {
+	return scanForDuplicateKeys(json.NewDecoder(bytes.NewReader(raw)), scopeStruct)
+}
+
+// foldScope is what the object currently being scanned decodes into. It is the
+// only thing that decides whether a case-variant key pair is ambiguous.
+type foldScope int
+
+const (
+	// scopeStruct: keys bind to Go struct fields, matched case-insensitively,
+	// so a case variant silently overwrites and must be refused.
+	scopeStruct foldScope = iota
+	// scopeMap: keys are map entries, kept verbatim, so a case variant is two
+	// distinct entries and is legitimate.
+	scopeMap
+	// scopeMapOfStruct: the map itself — arbitrary keys, so exact-only — whose
+	// VALUES are structs, so folding resumes one level down.
+	scopeMapOfStruct
+	// scopeOpaque: not decoded by this command at all.
+	scopeOpaque
+)
+
+// folds reports whether a case-variant collision is ambiguous in this scope.
+func (s foldScope) folds() bool { return s == scopeStruct }
+
+// child returns the scope of the value stored under key. Array elements keep
+// their key's scope, so `items`, `resources` and `posturePolicies` carry it
+// through to the objects inside them.
 //
-// Exact repeats are refused for both, which is what the scan side actually
-// needed: the false all-clear that motivated it was `"controls":{…}` followed
-// by a literal `"controls":{}`, not a case variant. Nothing an API server emits
-// carries case-variant siblings — measured zero across 2215 posture and 117 CVE
-// objects — so the scan side gives up no reachable protection.
-func rejectDuplicateKeys(raw []byte, foldKeys bool) error {
-	return scanForDuplicateKeys(json.NewDecoder(bytes.NewReader(raw)), foldKeys)
+// The default is scopeOpaque, which is what keeps this safe as the documents
+// grow: an unrecognised field — `managedFields` and the `f:`-prefixed trees
+// under it, annotations, anything upstream adds later — is scanned exact-only
+// rather than being folded on a guess.
+func (s foldScope) child(key string) foldScope {
+	if s == scopeMapOfStruct {
+		return scopeStruct
+	}
+
+	if s != scopeStruct {
+		return scopeOpaque
+	}
+
+	switch key {
+	case "labels", "annotations", "attributes", "severities":
+		return scopeMap
+	case "controls":
+		return scopeMapOfStruct
+	case "metadata", "spec", "severity", "status", "vulnerabilitiesRef", "all",
+		"items", "resources", "posturePolicies":
+		return scopeStruct
+	default:
+		return scopeOpaque
+	}
 }
 
 // scanForDuplicateKeys consumes exactly one JSON value from dec, recursing
 // through objects and arrays.
-func scanForDuplicateKeys(dec *json.Decoder, foldKeys bool) error {
+func scanForDuplicateKeys(dec *json.Decoder, scope foldScope) error {
 	tok, err := dec.Token()
 	if err != nil {
 		// A malformed document is left to Unmarshal, which reports it with far
@@ -326,7 +372,7 @@ func scanForDuplicateKeys(dec *json.Decoder, foldKeys bool) error {
 			first, dup := "", false
 
 			for _, prior := range seen {
-				if prior == key || (foldKeys && strings.EqualFold(prior, key)) {
+				if prior == key || (scope.folds() && strings.EqualFold(prior, key)) {
 					first, dup = prior, true
 
 					break
@@ -350,13 +396,17 @@ func scanForDuplicateKeys(dec *json.Decoder, foldKeys bool) error {
 
 			seen = append(seen, key)
 
-			if err := scanForDuplicateKeys(dec, foldKeys); err != nil {
+			// The VALUE under this key may decode into something else entirely
+			// — a map of labels, a map of controls whose values are structs, or
+			// a subtree this command never reads — so the scope is recomputed
+			// per key rather than inherited.
+			if err := scanForDuplicateKeys(dec, scope.child(key)); err != nil {
 				return err
 			}
 		}
 	case '[':
 		for dec.More() {
-			if err := scanForDuplicateKeys(dec, foldKeys); err != nil {
+			if err := scanForDuplicateKeys(dec, scope); err != nil {
 				return err
 			}
 		}

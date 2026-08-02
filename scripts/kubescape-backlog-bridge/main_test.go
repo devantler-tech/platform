@@ -1834,6 +1834,34 @@ func TestScanDocumentAcceptsCaseDistinctMapKeys(t *testing.T) {
 	}
 }
 
+// The other half of the same rule, and the reason folding cannot simply be
+// turned off for scan documents: `spec.controls` binds to a STRUCT FIELD, so a
+// failed control map followed by `"Controls":{}` decodes to the empty map and
+// exits 0 with "no live-only findings".
+//
+// Reproduced on a real cluster document carrying 9 failed controls: adding that
+// one aliased key turned it into a clean all-clear. A case variant is
+// legitimate in `metadata.labels` and fatal here, which is why the walker keys
+// on what each object decodes into rather than on the document or the caller.
+func TestScanDocumentRejectsCaseAliasedStructField(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "posture.json")
+	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app",`+
+		labels("app", "Deployment", "api")+`},`+
+		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},`+
+		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":0},"Controls":{}}}`)
+
+	var out bytes.Buffer
+
+	err := run([]string{"-posture", path}, &out)
+	if err == nil {
+		t.Fatal("a case-aliased spec.controls is ambiguous and must be rejected")
+	}
+
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Errorf("must not print an all-clear for an aliased document, got %q", out.String())
+	}
+}
+
 // The control: an ordinary scan document with no repeated key still parses.
 func TestOrdinaryScanInputStillParses(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "posture.json")
