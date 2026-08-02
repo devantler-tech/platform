@@ -199,8 +199,12 @@ data:
         - Codex Findings:
             - icon: si-openai-#412991
               href: https://chatgpt.com/codex/cloud/security/findings
+        # mdi, not si-stepsecurity: Simple Icons carries no `stepsecurity` slug
+        # (nor does dashboard-icons), so the si- form 404s at the CDN and renders
+        # as a blank tile. Homepage resolves icons in the browser at render time,
+        # so a wrong slug fails silently rather than at deploy.
         - StepSecurity:
-            - icon: si-stepsecurity
+            - icon: mdi-shield-check-outline
               href: https://app.stepsecurity.io
         - Renovate:
             - icon: si-renovatebot-#007fa0
