@@ -7,13 +7,55 @@
 // filed exactly when a human happens to notice. This command is the ingestion
 // half that closes that gap (#2854, second slice of #2451).
 //
-// # Report-only
+// # Modes
 //
-// This slice ships the read/derive half ONLY. `-mode=report` (the default)
-// prints the themes it WOULD file; `-mode=write` is the default-off half and
-// is refused with a non-zero exit until the issue-writing slice lands. That is
-// the feature-flag-first shape: the code lands latent and the flip is a
-// separate, reversible step.
+// `-mode=report` (the default) prints the themes it would file and writes
+// nothing. `-mode=write` reconciles them into GitHub issues in `-repo`, which
+// is the default-off half: reporting stays the default, so enabling writes is
+// an explicit, reversible step rather than something a run falls into.
+//
+// # Reconciliation
+//
+// Write mode lists the issues this command already owns — everything carrying
+// the `kubescape-bridge` label — matches them to derived themes by fingerprint,
+// and then creates, updates, reopens or closes:
+//
+//   - a theme with no tracked issue is CREATED,
+//   - a theme whose issue is closed is REOPENED, never re-created, so a
+//     recurring finding lands back on its original issue instead of minting a
+//     duplicate,
+//   - a theme whose rendered title and body already match its issue writes
+//     NOTHING — unchanged cluster state performs zero writes, which is the
+//     anti-churn guarantee, and
+//   - a tracked issue with no matching theme is CLOSED, but only under the
+//     conditions below.
+//
+// Ownership is established by the LABEL, never by searching issue bodies for
+// the fingerprint. Free-text search ranks and stems, so it both returns issues
+// that merely mention a marker and omits ones that carry it; a reconciler fed
+// that list closes issues it does not own and re-files ones it does.
+//
+// # Closing is gated, because this command cannot see the cluster
+//
+// It has no inventory: it cannot tell a whole-cluster sweep from a single
+// per-object GET. So a partial run must never conclude that the findings it was
+// not shown are resolved. Closing therefore requires `-inputs-complete`, the
+// caller's explicit assertion that EVERY object on each supplied surface was
+// passed, and is further scoped to the surfaces this run actually examined — a
+// posture-only run never closes a CVE entry. Creating and updating are safe
+// under partial input and are not gated.
+//
+// The same asymmetry decides the fail-closed direction throughout: an entry
+// whose surface cannot be read is left alone, because a stale open issue costs
+// far less than a live finding marked resolved.
+//
+// # Bodies carry the sanitized minimum
+//
+// Control or CVE class, the affected components as namespace/kind/name, and the
+// counts. Node names, pod IPs, image digests, UIDs and wlid internals are
+// excluded upstream by component.String and nothing in rendering reintroduces
+// them: these issues are PUBLIC artifacts, and detailed reachability evidence
+// belongs in the private operator notes instead.
 //
 // # Themes, not resources
 //
@@ -81,4 +123,13 @@
 //	  -exceptions exceptions.json \
 //	  -posture ns-a-workload.json -posture ns-b-workload.json \
 //	  -cve ns-a-workload-image-1.json -cve ns-a-workload-image-2.json
+//
+// The same invocation reconciling issues, once a sweep really did pass every
+// object — `-inputs-complete` is what authorises closing, so it belongs only on
+// a run that can honestly make that claim:
+//
+//	go run ./scripts/kubescape-backlog-bridge \
+//	  -mode write -repo devantler-tech/platform -inputs-complete \
+//	  -exceptions exceptions.json \
+//	  -posture ns-a-workload.json -cve ns-a-workload-image-1.json
 package main

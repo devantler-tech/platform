@@ -509,16 +509,49 @@ func TestModeReportIsTheDefaultAndProducesOutput(t *testing.T) {
 	}
 }
 
-func TestModeWriteIsRefusedWhileTheFlagIsOff(t *testing.T) {
+func TestModeWriteNeedsARepository(t *testing.T) {
 	var out bytes.Buffer
 
 	err := run([]string{"-mode", "write"}, &out)
 	if err == nil {
-		t.Fatal("write mode must be refused in this slice")
+		t.Fatal("write mode without -repo must be refused")
 	}
 
 	if !errors.Is(err, errWritesNotEnabled) {
 		t.Errorf("want errWritesNotEnabled, got %v", err)
+	}
+}
+
+// TestUnknownModeIsRefused keeps a typo from silently selecting the default.
+// `-mode=wrote` reporting instead of writing is a failure that looks like
+// success, which is this command's whole subject matter.
+func TestUnknownModeIsRefused(t *testing.T) {
+	var out bytes.Buffer
+
+	if err := run([]string{"-mode", "wrote"}, &out); err == nil {
+		t.Fatal("an unknown -mode must be refused")
+	}
+}
+
+// TestInputsCompleteIsRefusedInReportMode stops the close gate from being
+// carried around as a harmless-looking habit. The flag does nothing in report
+// mode, so accepting it teaches an operator it is safe to leave set — and the
+// next write run then closes on partial input.
+func TestInputsCompleteIsRefusedInReportMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "posture.json")
+	writeDocs(t, path, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+
+	var out bytes.Buffer
+
+	if err := run([]string{"-posture", path, "-inputs-complete"}, &out); err == nil {
+		t.Fatal("-inputs-complete must be refused outside write mode")
+	}
+
+	// CONTROL — the same invocation without the flag must succeed, so the
+	// refusal above is attributable to the flag and not to the input.
+	var ctrl bytes.Buffer
+	if err := run([]string{"-posture", path}, &ctrl); err != nil {
+		t.Fatalf("control run must succeed, got %v", err)
 	}
 }
 

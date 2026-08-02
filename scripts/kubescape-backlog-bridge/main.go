@@ -21,8 +21,9 @@ import (
 // indistinguishable from a clean cluster to any caller that does not check.
 var errStrippedList = errors.New("input looks like a spec-stripped Kubescape LIST")
 
-// errWritesNotEnabled reports the default-off half being requested.
-var errWritesNotEnabled = errors.New("issue writes are not enabled in this slice")
+// errWritesNotEnabled reports the default-off half being requested without the
+// configuration it needs.
+var errWritesNotEnabled = errors.New("issue writes are not enabled")
 
 // errUnrecognisedDocument reports input that is neither a kubectl list nor a
 // single Kubescape object.
@@ -756,10 +757,15 @@ func run(args []string, out io.Writer) error {
 	fs.Var(&cvePaths, "cve",
 		"path to a per-object vulnerabilitymanifestsummary JSON (repeatable)")
 
-	mode := fs.String("mode", "report", "report (default, prints what it would file) or write (not enabled yet)")
+	mode := fs.String("mode", "report", "report (default, prints what it would file) or write (reconciles issues)")
 	exceptionsPath := fs.String("exceptions", "",
 		"path to the generated Kubescape exceptions JSON "+
 			"(`go run ./scripts/generate-kubescape-exceptions`); accepted posture controls are not backlog work")
+	repo := fs.String("repo", "", "owner/name to reconcile issues in; required by -mode=write")
+	inputsComplete := fs.Bool("inputs-complete", false,
+		"assert that EVERY object on each supplied surface was passed. Only then may -mode=write "+
+			"close a tracked issue: this command has no cluster inventory, so without the assertion "+
+			"a partial run would mark live findings resolved")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -775,14 +781,20 @@ func run(args []string, out io.Writer) error {
 			"non-flag argument and would silently ignore everything after it", fs.Arg(0))
 	}
 
-	if *mode != "report" {
-		if *mode != "write" {
-			return fmt.Errorf("unknown -mode %q (want report or write)", *mode)
-		}
+	if *mode != "report" && *mode != "write" {
+		return fmt.Errorf("unknown -mode %q (want report or write)", *mode)
+	}
 
-		return fmt.Errorf("%w: this slice ships the report-only half of #2854; "+
-			"the issue-writing half lands behind the same flag once fingerprint "+
-			"stability is demonstrated on consecutive runs", errWritesNotEnabled)
+	if *mode == "write" && strings.TrimSpace(*repo) == "" {
+		return fmt.Errorf("%w: -mode=write needs -repo owner/name", errWritesNotEnabled)
+	}
+
+	// -inputs-complete only ever relaxes the CLOSE gate, so a report run that
+	// carries it is asserting something the run will never act on. Accepting it
+	// silently would teach an operator the flag is harmless to leave set, which
+	// is exactly the habit that later turns a partial write run destructive.
+	if *mode != "write" && *inputsComplete {
+		return errors.New("-inputs-complete only affects -mode=write; it gates closing a tracked issue")
 	}
 
 	if len(posturePaths) == 0 && len(cvePaths) == 0 {
@@ -837,7 +849,29 @@ func run(args []string, out io.Writer) error {
 		examined = append(examined, surfaceCVE)
 	}
 
+	if *mode == "write" {
+		return reconcile(themes, examined, *inputsComplete, newGHStore(*repo), out)
+	}
+
 	return report(themes, examined, len(exceptions) > 0, suppressed, out)
+}
+
+// reconcile lists what this command already tracks, plans the difference, and
+// applies it. Split out of run so the write path is exercisable against a fake
+// store — including the case that matters most, where the plan is empty and the
+// correct behaviour is to touch nothing.
+func reconcile(themes []theme, examined []surface, closeGone bool, store issueStore, out io.Writer) error {
+	existing, err := store.list()
+	if err != nil {
+		return err
+	}
+
+	p, err := planWrites(themes, existing, examined, closeGone)
+	if err != nil {
+		return err
+	}
+
+	return applyPlan(p, store, out)
 }
 
 // readSurface reads every file for one surface, validating each against that
