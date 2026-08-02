@@ -45,6 +45,11 @@ func validateDRWorkflow(workflow string) error {
 			"rebuild job is missing `id-token: write`, so keyless cosign signing cannot mint a Fulcio certificate",
 		)
 	}
+	if !containsExactLine(job, "      packages: write # push OCI artifacts to GHCR") {
+		return errors.New(
+			"rebuild job is missing `packages: write`, so the publication transaction cannot update GHCR",
+		)
+	}
 	if !containsExactLine(job, "      attestations: write # write SBOM + SLSA provenance attestations") {
 		return errors.New(
 			"rebuild job is missing `attestations: write`, so the SBOM and provenance cannot be recorded",

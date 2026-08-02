@@ -52,6 +52,11 @@ func TestDRWorkflowContractRejectsEachAblation(t *testing.T) {
 			wantErr: "id-token: write",
 		},
 		{
+			name:    "without packages permission the transaction cannot publish",
+			old:     "      packages: write # push OCI artifacts to GHCR\n",
+			wantErr: "packages: write",
+		},
+		{
 			name:    "without attestations permission evidence cannot be written",
 			old:     "      attestations: write # write SBOM + SLSA provenance attestations\n",
 			wantErr: "attestations: write",
