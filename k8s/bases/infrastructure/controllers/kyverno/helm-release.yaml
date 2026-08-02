@@ -99,9 +99,10 @@ spec:
       # this namespace), which right-sizes it at steady state; these values remain
       # as the safe baseline a fresh pod starts on before VPA has a recommendation
       # (the 1Gi memory limit keeps that window well above the 384Mi OOM
-      # threshold). That static VPA is patched to RequestsOnly for this
-      # fail-closed admission controller, so recommendations can right-size the
-      # request without reducing the explicit 1Gi safety limit.
+      # threshold). The static admission VPA manages requests only and caps its
+      # memory request at 1Gi, so recommendations cannot replace or exceed this
+      # authored limit. In-place resize plus replicas: 2 and the PDB keep a
+      # Recreate fallback or OOM from taking down the whole admission path.
       resources:
         requests:
           cpu: 100m

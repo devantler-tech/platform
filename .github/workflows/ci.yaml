@@ -77,6 +77,7 @@ jobs:
               - 'scripts/validate-embedded-json.py'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-kyverno-admission-vpa.sh'
               - 'scripts/generate-kubescape-exceptions/**'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
@@ -266,6 +267,14 @@ jobs:
         # regress the Hetzner WireGuard settings. Bash plus the kubectl bundled
         # on the GitHub-hosted runner; no cluster or secrets required.
         run: bash scripts/tests/test-cilium-bandwidth-manager-component.sh
+
+      - name: 🧠 Validate Kyverno admission VPA safety
+        if: needs.changes.outputs.k8s == 'true'
+        # Render the real VPA and HelmRelease resources so right-sizing cannot
+        # silently replace the fail-closed admission controller's memory limit.
+        run: |
+          shellcheck scripts/tests/test-kyverno-admission-vpa.sh
+          bash scripts/tests/test-kyverno-admission-vpa.sh
 
       - name: 🌐 Validate active Cilium device selection
         if: needs.changes.outputs.k8s == 'true' || needs.changes.outputs.bridge_validation == 'true'
