@@ -307,17 +307,38 @@ func (s foldScope) child(key string) foldScope {
 		return scopeOpaque
 	}
 
-	switch key {
-	case "labels", "annotations", "attributes", "severities":
+	// Resolved with the DECODER's semantics, not by exact match: json binds
+	// `"Status"` to the `Status` field exactly as `"status"` does. Matching
+	// exactly dropped an aliased parent to scopeOpaque and stopped checking the
+	// collisions BELOW it — `"Status":{"status":"failed","Status":"passed"}`
+	// then decoded to passed and exited 0 with "nothing to file", while the
+	// identical document spelled `"status"` was refused.
+	//
+	// This reaches only struct-bound keys: a scopeMap or scopeOpaque parent has
+	// already returned above, so a label spelled `Spec` stays a map entry.
+	switch {
+	case equalsAnyFold(key, "labels", "annotations", "attributes", "severities"):
 		return scopeMap
-	case "controls":
+	case strings.EqualFold(key, "controls"):
 		return scopeMapOfStruct
-	case "metadata", "spec", "severity", "status", "vulnerabilitiesRef", "all",
-		"items", "resources", "posturePolicies":
+	case equalsAnyFold(key, "metadata", "spec", "severity", "status", "vulnerabilitiesRef",
+		"all", "items", "resources", "posturePolicies"):
 		return scopeStruct
 	default:
 		return scopeOpaque
 	}
+}
+
+// equalsAnyFold reports whether key matches any name under the same simple case
+// folding encoding/json uses to bind struct fields.
+func equalsAnyFold(key string, names ...string) bool {
+	for _, name := range names {
+		if strings.EqualFold(key, name) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // scanForDuplicateKeys consumes exactly one JSON value from dec, recursing

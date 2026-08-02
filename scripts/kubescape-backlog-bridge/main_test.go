@@ -1908,6 +1908,60 @@ func TestScanDocumentAcceptsCaseDistinctControlIDs(t *testing.T) {
 	}
 }
 
+// The scope of a value has to be resolved the way the DECODER binds it, not by
+// exact key match: `"Status"` binds to the `Status` field just as `"status"`
+// does. Matching the child key exactly dropped an aliased parent to
+// scopeOpaque, so folded collisions BELOW it stopped being checked.
+//
+// The pair below differs only in the parent's case, and that alone decided
+// whether a nested alias overwriting `failed` with `passed` was caught: the
+// canonical spelling rejected the document, the aliased spelling exited 0 with
+// "nothing to file".
+func TestScanDocumentRejectsNestedAliasUnderAnAliasedParent(t *testing.T) {
+	for _, parent := range []string{"status", "Status", "STATUS"} {
+		t.Run(parent, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "posture.json")
+			writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app",`+
+				labels("app", "Deployment", "api")+`},`+
+				`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},`+
+				`"`+parent+`":{"status":"failed","Status":"passed"}}},`+
+				`"severities":{"critical":0,"high":0}}}`)
+
+			var out bytes.Buffer
+
+			err := run([]string{"-posture", path}, &out)
+			if err == nil {
+				t.Fatalf("a nested alias under a %q parent must be rejected", parent)
+			}
+
+			if strings.Contains(out.String(), "nothing to file") {
+				t.Errorf("must not print an all-clear, got %q", out.String())
+			}
+		})
+	}
+}
+
+// The control: case-insensitive resolution must not reach into MAP keys. A
+// label spelled `Spec` or `Metadata` is a map entry, not a struct field, so it
+// must not acquire a struct scope and start folding its contents.
+func TestCaseInsensitiveScopeDoesNotReachIntoMapKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "posture.json")
+	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app","labels":{`+
+		`"kubescape.io/workload-kind":"Deployment","kubescape.io/workload-name":"api",`+
+		`"kubescape.io/workload-namespace":"app","Spec":"a","spec":"b"}},`+
+		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},`+
+		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":0}}}`)
+
+	var out bytes.Buffer
+	if err := run([]string{"-posture", path}, &out); err != nil {
+		t.Fatalf("case-distinct label keys stay legitimate: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "C-0016") {
+		t.Errorf("the document must still be processed, got %q", out.String())
+	}
+}
+
 // The control: an ordinary scan document with no repeated key still parses.
 func TestOrdinaryScanInputStillParses(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "posture.json")
