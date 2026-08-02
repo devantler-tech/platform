@@ -1327,10 +1327,10 @@ func TestFailedControlWithUnknownSeverityIsAccepted(t *testing.T) {
 // The discriminator is structural: a message that can name the COMPONENT has
 // necessarily decoded the object, so it is content that is wrong, not shape.
 func TestWellFormedDocumentWithUnusableContentIsNotReportedAsUnrecognised(t *testing.T) {
-	noKind := fmt.Sprintf(`{"metadata":{"name":"api","namespace":"app",` +
+	noKind := `{"metadata":{"name":"api","namespace":"app",` +
 		`"labels":{"kubescape.io/workload-namespace":"app","kubescape.io/workload-name":"api"}},` +
 		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},` +
-		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":1}}}`)
+		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":1}}}`
 
 	bothSurfaces := fmt.Sprintf(`{"metadata":{"name":"api","namespace":"app",%s},`+
 		`"spec":{"controls":{},"vulnerabilitiesRef":{"all":{"name":"m"}},`+
@@ -1688,13 +1688,20 @@ func TestSuppressionNoteDoesNotClaimCVEEntriesWereFiltered(t *testing.T) {
 	}
 
 	// The disclosure must scope itself to posture rather than to "the entries
-	// below", which includes CVE themes exceptions never touched.
-	if strings.Contains(got, "the entries below are the UNEXCEPTED remainder") {
-		t.Errorf("the note must not characterise CVE entries as exception-filtered, got %q", got)
+	// below", which would include CVE themes exceptions never touched.
+	//
+	// Assert the text report actually emits. An earlier form asserted the ABSENCE
+	// of an upper-case "the entries below are the UNEXCEPTED remainder" that no
+	// code path produces, so it could not fail whatever the scoping did; and a
+	// bare Contains(got, "posture") is satisfied by the posture theme line alone.
+	if !strings.Contains(got, "the posture entries below are the unexcepted remainder") {
+		t.Errorf("the note must scope its claim to the posture surface, got %q", got)
 	}
 
-	if !strings.Contains(got, "posture") {
-		t.Errorf("the note must scope its claim to the posture surface, got %q", got)
+	// With a CVE surface examined, the note must say outright that CVE entries
+	// were not filtered, rather than leave the reader assuming symmetry.
+	if !strings.Contains(got, "(CVE entries are not filtered by exception policy)") {
+		t.Errorf("the note must carry the CVE caveat when a CVE surface is present, got %q", got)
 	}
 }
 

@@ -734,13 +734,20 @@ func TestMalformedArtifactTerminatesInsteadOfHanging(t *testing.T) {
 		`{"a":[1,2`,
 	} {
 		t.Run("", func(t *testing.T) {
+			// Fixture setup stays on the test goroutine: writeRaw reports failure
+			// with t.Fatalf, and t.Fatalf must run on the goroutine running the
+			// test. From a worker it would Goexit, still fire `defer close(done)`,
+			// and pass this subtest on a fixture that was never written. Only
+			// loadExceptions belongs in the goroutine — only its termination is
+			// under test.
+			path := filepath.Join(t.TempDir(), "exceptions.json")
+			writeRaw(t, path, raw)
+
 			done := make(chan struct{})
 
 			go func() {
 				defer close(done)
 
-				path := filepath.Join(t.TempDir(), "exceptions.json")
-				writeRaw(t, path, raw)
 				_, _ = loadExceptions(path)
 			}()
 
