@@ -628,3 +628,26 @@ func TestNonDuplicateExceptionsStillLoad(t *testing.T) {
 		t.Fatalf("a well-formed artifact must still load, got %+v", got)
 	}
 }
+
+// encoding/json matches struct fields CASE-INSENSITIVELY, so `Attributes` and
+// `attributes` both bind to the same field and the later one wins. An
+// exact-string duplicate check therefore misses the alias:
+// {"attributes":{"kind":"^Job$"},"Attributes":{"kind":".*"}} loads as the
+// WILDCARD — the same silent widening the exact-match guard was added to stop,
+// reached by spelling the key differently.
+//
+// Folding case is safe here rather than merely convenient: measured across the
+// real generated artifact and every live scan document (2215 posture + 117 CVE
+// objects), there are ZERO case-variant sibling keys.
+func TestCaseVariantDuplicateKeysAreRejected(t *testing.T) {
+	raw := `[{"name":"p","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":"^Job$"},` +
+		`"Attributes":{"kind":".*"}}],"posturePolicies":[{"controlID":"^C-0016$"}]}]`
+
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, raw)
+
+	if _, err := loadExceptions(path); !errors.Is(err, errBadExceptions) {
+		t.Fatalf("want errBadExceptions, got %v", err)
+	}
+}

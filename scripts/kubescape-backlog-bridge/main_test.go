@@ -1635,3 +1635,42 @@ func TestOrdinaryCVETotalsStillAggregate(t *testing.T) {
 		t.Fatalf("want one theme totalling 22, got %+v", got)
 	}
 }
+
+// The duplicate-key ambiguity is not confined to the exceptions artifact: a
+// SCAN document repeating `spec.controls` decodes to the last value, so a real
+// failed-control map followed by `"controls":{}` exits 0 with "no live-only
+// findings". That is a false all-clear produced by a corrupted or hand-packaged
+// document, which is the exact class this command exists to refuse.
+func TestDuplicateKeysInScanInputAreRejected(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "posture.json")
+	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app",`+
+		labels("app", "Deployment", "api")+`},`+
+		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},`+
+		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":0},"controls":{}}}`)
+
+	var out bytes.Buffer
+
+	err := run([]string{"-posture", path}, &out)
+	if err == nil {
+		t.Fatal("a scan document repeating spec.controls is ambiguous and must be rejected")
+	}
+
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Errorf("must not print an all-clear for an ambiguous document, got %q", out.String())
+	}
+}
+
+// The control: an ordinary scan document with no repeated key still parses.
+func TestOrdinaryScanInputStillParses(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "posture.json")
+	writeBare(t, path, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+
+	var out bytes.Buffer
+	if err := run([]string{"-posture", path}, &out); err != nil {
+		t.Fatalf("a well-formed document must still parse: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "C-0016") {
+		t.Errorf("want the finding reported, got %q", out.String())
+	}
+}

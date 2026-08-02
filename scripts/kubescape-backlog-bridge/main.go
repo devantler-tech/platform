@@ -910,6 +910,15 @@ func readList(path string) ([]item, error) {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 
+	// The same ambiguity the exceptions loader refuses applies to SCAN input,
+	// and here it hides findings rather than widening an exception: a document
+	// repeating `spec.controls` decodes to the LAST value, so a real
+	// failed-control map followed by `"controls":{}` exits 0 with "no live-only
+	// findings". Labels, statuses and CVE counts are reachable the same way.
+	if err := rejectDuplicateKeys(raw); err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", errUnrecognisedDocument, path, err)
+	}
+
 	var probe map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)

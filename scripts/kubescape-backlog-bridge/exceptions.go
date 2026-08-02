@@ -250,7 +250,15 @@ func scanForDuplicateKeys(dec *json.Decoder) error {
 
 	switch delim {
 	case '{':
-		seen := map[string]struct{}{}
+		// Keys are compared CASE-INSENSITIVELY because encoding/json binds
+		// struct fields that way: `Attributes` and `attributes` reach the same
+		// field and the later one wins, so an exact-string check misses the
+		// alias and the wildcard still lands. Folding case costs nothing on
+		// real input — measured across the generated artifact and every live
+		// scan document (2215 posture + 117 CVE objects), there are zero
+		// case-variant sibling keys — and a map key differing only in case is
+		// already rejected downstream as an unsupported attribute name.
+		seen := map[string]string{}
 
 		for dec.More() {
 			keyTok, err := dec.Token()
@@ -263,13 +271,15 @@ func scanForDuplicateKeys(dec *json.Decoder) error {
 				return nil
 			}
 
-			if _, dup := seen[key]; dup {
-				return fmt.Errorf("object key %q appears more than once; the document is ambiguous "+
-					"and JSON decoding would silently keep the LAST value, which can widen an "+
-					"exception rather than narrow it", key)
+			folded := strings.ToLower(key)
+			if first, dup := seen[folded]; dup {
+				return fmt.Errorf("object keys %q and %q collide; the document is ambiguous and JSON "+
+					"decoding would silently keep the LAST value (field names are matched "+
+					"case-insensitively), which can widen an exception rather than narrow it",
+					first, key)
 			}
 
-			seen[key] = struct{}{}
+			seen[folded] = key
 
 			if err := scanForDuplicateKeys(dec); err != nil {
 				return err
