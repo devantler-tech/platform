@@ -1,0 +1,14 @@
+# Non-secret rotation marker for the node-level GHCR pull credential.
+#
+# KSail redacts RegistryAuthConfig credentials when it fingerprints Talos
+# machine configuration and autoscaler templates. Hashing the committed SOPS
+# ciphertext gives token rotations a visible, non-secret input without
+# publishing a stable hash of the decrypted token. Production lifecycle
+# commands provide ${GHCR_PULL_REVISION}. This desired marker intentionally
+# differs from the helper-owned ghcr-pull-verified-revision-v2 annotation: a
+# newly created/autoscaled node must not claim a successful pull before it has
+# rebooted containerd and proved an exact private KSail image pull. The helper
+# records that second marker only after both steps succeed.
+machine:
+  nodeAnnotations:
+    platform.devantler.tech/ghcr-pull-desired-revision: ${GHCR_PULL_REVISION}

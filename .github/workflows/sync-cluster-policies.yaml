@@ -8,13 +8,13 @@ on:
     branches:
       - main
     paths:
-      - 'k8s/bases/infrastructure/cluster-policies/samples/**'
+      - "k8s/bases/infrastructure/cluster-policies/samples/**"
 
 permissions: {}
 
 jobs:
   sync-policies:
-    uses: devantler-tech/actions/.github/workflows/sync-cluster-policies.yaml@84813ae61fb21741e0a6193b5c14c6941a448577 # v9.0.7
+    uses: devantler-tech/actions/.github/workflows/sync-cluster-policies.yaml@8436c4a9e86ab75cd485e91530eb39bf9104bbeb # v10.1.4
     with:
       kyverno-policies-dir: k8s/bases/infrastructure/cluster-policies/samples
     secrets:

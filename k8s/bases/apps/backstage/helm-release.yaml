@@ -197,6 +197,37 @@ spec:
               name: backstage-backend-secret
               key: password
 
+      # The chart's startupProbe sets no failureThreshold, so Kubernetes applies
+      # its defaults (3 x 10s) — a 30-SECOND budget to boot. Backstage does not
+      # boot in 30s: it initializes a dozen backend plugins and runs the catalog
+      # DB migration first, which measured ~45-60s on a cold start here. The
+      # container is therefore killed just as it finishes initializing, and each
+      # restart is another cold start — so once it is knocked over it can never
+      # come back.
+      #
+      # It survived only by never being knocked over: the running pod had long
+      # since passed startup, so the too-tight budget stayed invisible. The first
+      # thing to force a cold start — a node roll — detonated it (2026-07-14: a
+      # rolling reboot left backstage in CrashLoopBackOff, 17 restarts, exit 0
+      # "failed startup probe"). A Talos upgrade would have done the same.
+      #
+      # Auto-VPA sharpens it: it scales the CPU request down to the ~50m the app
+      # idles at, which is nowhere near the burst a Node.js boot + migration
+      # wants, so the cold start is CPU-starved on top of being time-boxed (the
+      # same burst-headroom trap as the VPA/dashboard OOMs).
+      #
+      # A generous startupProbe is the standard remedy: it gates liveness until
+      # the app is actually up, and costs nothing once it is. Liveness/readiness
+      # stay tight (3 x 10s) — this only buys boot time, it does not slow failure
+      # detection of a running pod.
+      startupProbe:
+        httpGet:
+          path: /.backstage/health/v1/liveness
+          port: 7007
+          scheme: HTTP
+        periodSeconds: 10
+        failureThreshold: 30 # 5 minutes, vs the 30s default
+
       resources:
         requests:
           cpu: 100m

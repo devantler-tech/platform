@@ -86,9 +86,17 @@ stays quiet by design, exactly as the old Alertmanager did.
   and **cert-expiry** checks are not Flux resources, so they need a scan-safe
   synthetic check (e.g. per-CronJob dead-man pings like the heartbeat below, tied
   to the silent vault snapshot in #1970) and are still TODO.
-- **kube-apiserver audit-log retention is gone.** Coroot's node-agent ingests
-  container logs/traces, not host audit-log files, so the previous
-  alloy-audit → Loki pipeline was removed.
+- **kube-apiserver audit logs are searchable in Coroot again.** Coroot's
+  node-agent ingests container logs/traces, not host audit-log files, so the
+  previous alloy-audit → Loki pipeline was removed with the migration. The
+  `audit-log-forwarder` (`bases/infrastructure/audit-log-forwarder/`,
+  a control-plane-only OpenTelemetry Collector DaemonSet) re-introduces that
+  capability against Coroot: it tails `/var/log/audit/kube/audit.log` and ships
+  it to the Coroot OTLP logs endpoint as the `kube-apiserver-audit` application.
+  Retention in Coroot follows the Coroot CR's `logsTTL` (3d in the base, 7d in
+  prod); the on-node file backend (`talos/cluster/enable-audit-logging.yaml`,
+  30-day rotation) remains the resilient primary for forensics beyond that
+  window.
 
 ## Kubescape runtime-detection alerts
 

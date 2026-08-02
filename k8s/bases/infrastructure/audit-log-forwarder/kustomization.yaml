@@ -1,0 +1,10 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Control-plane audit-log → Coroot forwarder. Deploys into the existing
+# `observability` namespace (created by controllers/coroot/) to inherit its
+# privileged PSS label, Kyverno excludes, Kubescape exception and the
+# allow-coroot network policy — see README.md.
+resources:
+  - helm-repository.yaml
+  - helm-release.yaml

@@ -3,9 +3,9 @@ description: 'Codifies devantler-tech engineering practices: agent-first develop
 license: Apache-2.0
 metadata:
     github-path: ways-of-working
-    github-ref: refs/tags/v1.1.0
+    github-ref: refs/tags/v1.5.0
     github-repo: https://github.com/devantler-tech/agent-skills
-    github-tree-sha: be7d95e52d933a19e9fbdba7d4989de0af8ad8cd
+    github-tree-sha: 219a45e80e25b47cc23dcfed9febd526655e624c
 name: ways-of-working
 ---
 # Ways of Working
@@ -114,7 +114,7 @@ Each repository has two core workflow files — `ci.yaml` and `cd.yaml` — plus
 
 ### Releases
 
-Releases are automated via the [`devantler-tech/reusable-workflows/.github/workflows/create-release.yaml`](https://github.com/devantler-tech/reusable-workflows/blob/main/.github/workflows/create-release.yaml) reusable workflow. It runs [semantic-release](https://semantic-release.gitbook.io/) on `push` to `main`, calculates the next semver from [conventional commit](https://www.conventionalcommits.org/) history, and creates the tag + GitHub release — which in turn triggers the CD pipeline above.
+Releases are automated via the [`devantler-tech/actions/.github/workflows/create-release.yaml`](https://github.com/devantler-tech/actions/blob/main/.github/workflows/create-release.yaml) reusable workflow. It runs [semantic-release](https://semantic-release.gitbook.io/) on `push` to `main`, calculates the next semver from [conventional commit](https://www.conventionalcommits.org/) history, and creates the tag + GitHub release — which in turn triggers the CD pipeline above.
 
 For application publishing, always use upstream releasers — e.g. [GoReleaser](https://goreleaser.com/) for Go or [dotnet-releaser](https://github.com/xoofx/dotnet-releaser) for .NET — rather than hand-rolling publish scripts.
 

@@ -11,6 +11,15 @@ spec:
         spec:
           containers:
             - name: package-runtime
+              # IAM is global, but the provider validates credentials through
+              # STS before each reconciliation. Pin that call to the planned
+              # EKS region so the runtime and its exact-host egress policy stay
+              # aligned instead of falling back to us-east-1.
+              env:
+                - name: AWS_REGION
+                  value: eu-central-1
+                - name: AWS_STS_REGIONAL_ENDPOINTS
+                  value: regional
               # Kubescape C-0017 (immutable container filesystem) + the hardening
               # set Kyverno injects at admission (Kubescape scans this stored spec,
               # not the live pod). The upjet runtime writes Terraform workspaces to
