@@ -86,7 +86,21 @@ DISABLE_ERRORS_LINTERS:
   # checkov (37) and trivy (624): Kubernetes misconfiguration in k8s/, which the section above
   # explains is NOT covered elsewhere. Tracked by #2787.
   #
-  # checkov's remaining 37 are all `kubernetes` framework, led by CKV_K8S_40 (11). The `secrets`
+  # checkov's 37 are all `kubernetes` framework, and all 11 CKV_K8S_40 findings stand unsuppressed.
+  # Four scoped skips were tried and withdrawn: each named a per-site technical constraint that does
+  # not survive checking. The two vault-backup jobs claimed to share the vault-snapshots PVC with the
+  # OpenBao StatefulSet — but the live StatefulSet mounts `config`/`unseal-keys`/`tmp`/`home` plus
+  # claim templates `data`/`audit`, and never that PVC at all, so there is no shared ownership to
+  # preserve. The two user-namespace probes claimed their UID was the measurement subject — but
+  # `/proc/self/uid_map` describes the pod's namespace and reads identically for every process in it
+  # regardless of UID, and `fsGroup` supplies volume access as a GID independent of `runAsUser`.
+  # #2904 carries the per-site remediation and the risk-acceptance question for those four. Of the
+  # 11, two are inside the vendored KubeVirt and CDI release bundles and need a mechanism that
+  # survives a vendor bump (#2899). The remaining five have no demonstrated constraint and are
+  # candidates to simply raise (#2901) — including CoreDNS, whose pinned
+  # image config reads `User: "nonroot:nonroot"`, so an explicit `runAsUser: 65532` would both match
+  # the image and clear the check. CKV_K8S_40 is NOT disabled: a new workload running
+  # below UID 10000 with no stated reason is still flagged. The `secrets`
   # framework is at 0: its 31 CKV_SECRET_6 findings were ExternalSecret/PushSecret key NAMES and
   # OpenBao paths rather than secret material, and each site now carries a scoped skip naming the
   # control and the reason (#2892). CKV_SECRET_6 is NOT disabled — a real base64 secret committed
