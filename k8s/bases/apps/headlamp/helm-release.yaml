@@ -12,7 +12,11 @@ spec:
   chart:
     spec:
       chart: headlamp
-      version: 0.43.0
+      # 0.43.0 is reverted: its OIDC popup never closes in Safari (ITP suppresses
+      # the cross-window storage event the opener waits for) — upstream
+      # kubernetes-sigs/headlamp#6353, tracked in #2438. Renovate is gated off
+      # exactly 0.43.0 (.github/renovate.json); >= 0.43.1 bumps normally.
+      version: 0.42.0
       sourceRef:
         kind: HelmRepository
         name: headlamp

@@ -19,7 +19,7 @@ inputs:
     description: talosconfig for the prod cluster (secrets.TALOS_CONFIG) used by `ksail cluster update`.
     required: true
   ghcr-token:
-    description: GHCR PAT with write:packages (secrets.GHCR_TOKEN) for OCI push/pull and cosign auth.
+    description: GHCR PAT with write:packages (secrets.GHCR_TOKEN) for OCI push and signing; every pull path uses the Git/SOPS credential.
     required: true
   hcloud-token:
     description: Hetzner Cloud API token (secrets.HCLOUD_TOKEN) used by the KSail Hetzner provider and CCM/CSI.
@@ -43,12 +43,25 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.165.6"
+        KSAIL_VERSION: "7.178.6"
       run: |
         curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
         tar -xzf /tmp/ksail.tar.gz -C /tmp
         sudo install /tmp/ksail /usr/local/bin/ksail
         ksail --version
+
+    - name: ⚙️ Setup talosctl
+      # refresh-flux-ghcr-auth.sh uses the host API for a secret-safe,
+      # per-node RegistryAuthConfig patch and exact image-pull proof.
+      shell: bash
+      env:
+        # Keep in step with spec.cluster.talos.version in ksail.prod.yaml.
+        # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
+        TALOS_VERSION: "1.13.7"
+      run: |
+        curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
+        sudo install /tmp/talosctl /usr/local/bin/talosctl
+        talosctl version --client
 
     - name: 🔐 Create SOPS Age key
       shell: bash
@@ -126,6 +139,29 @@ runs:
         echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig (last kubectl error: ${last_err}). KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
         exit 1
 
+    - name: 🛡️ Suspend autoscaling for gated Cilium rollout
+      id: cilium_rollout_gate
+      # The widened device component deliberately uses OnDelete so the Cilium
+      # agents can be stepped one node at a time. OnDelete does not protect a
+      # newly autoscaled node: it would boot the widened device set immediately.
+      # Suspend before the mutable artifact is published, because Flux may
+      # observe the new tag before the explicit reconcile step. The script
+      # records the pre-existing replica count so only this gate can restore it.
+      shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
+
+    - name: 🔑 Stage Flux and consumer GHCR pull credential
+      id: stage_flux_ghcr_auth
+      # Validate all seven packages, synchronize and prove an uncached pull of
+      # the declared incoming image on every stale Talos node, then stage and
+      # verify the Kubernetes fan-out BEFORE publishing latest. Every pull
+      # consumer has one known-readable credential before the mutable tag can
+      # be observed.
+      shell: bash
+      run: ./scripts/refresh-flux-ghcr-auth.sh
+
     # Publish the GitOps manifests (push → sign → attest → reconcile) BEFORE
     # syncing Talos machine config (the "🔄 Update cluster" step runs LAST).
     # Manifest delivery never touches the nodes, so it must not be gated on
@@ -133,44 +169,13 @@ runs:
     # down, `ksail cluster update` ran first, hard-failed the job, and froze
     # ALL app/config delivery to an otherwise-healthy cluster (the apiserver
     # and Flux were fine on the two surviving control-plane nodes).
-    - name: 🧾 Prepare immutable workload tag
-      id: workload-ref
-      shell: bash
-      run: |
-        set -euo pipefail
-        # Publish this run under an unguessable, single-use tag instead of
-        # signing the shared mutable `latest` tag. KSail does not currently
-        # expose the pushed digest directly, so the random suffix prevents a
-        # package writer from pre-positioning attacker-controlled content at
-        # the tag this run will resolve and sign.
-        TAG="sha-${GITHUB_SHA::12}-run-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$(openssl rand -hex 8)"
-        CONFIG="${RUNNER_TEMP}/ksail.prod.${TAG}.yaml"
-        cp ksail.prod.yaml "${CONFIG}"
-        python3 - "${CONFIG}" "${TAG}" <<'PY'
-        import pathlib
-        import re
-        import sys
-
-        path = pathlib.Path(sys.argv[1])
-        tag = sys.argv[2]
-        text = path.read_text()
-        updated, count = re.subn(r"(?m)^(\s+tag:\s+)latest$", rf"\g<1>{tag}", text, count=1)
-        if count != 1:
-            raise SystemExit("expected exactly one production workload tag: latest entry")
-        path.write_text(updated)
-        PY
-        echo "config=${CONFIG}" >> "${GITHUB_OUTPUT}"
-        echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
-        echo "ref_tag=ghcr.io/devantler-tech/platform/manifests:${TAG}" >> "${GITHUB_OUTPUT}"
-
     - name: 📦 Push manifests to GHCR
       shell: bash
       env:
         GITHUB_ACTOR: ${{ github.actor }}
         GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-        KSAIL_CONFIG: ${{ steps.workload-ref.outputs.config }}
-      run: ksail --config "${KSAIL_CONFIG}" workload push
+      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push
 
     - name: ⚙️ Install cosign
       # sigstore/cosign-installer is the official installer action — it
@@ -181,10 +186,10 @@ runs:
       # custom regex manager in .github/renovate.json.
       env:
         # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
-        COSIGN_VERSION: "3.1.1"
+        COSIGN_VERSION: "3.1.2"
       uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       with:
-        cosign-release: 'v${{ env.COSIGN_VERSION }}'
+        cosign-release: "v${{ env.COSIGN_VERSION }}"
 
     - name: 🔐 Configure GHCR auth (cosign + buildx + syft)
       # Pre-create ~/.docker/config.json instead of `cosign login` /
@@ -270,13 +275,13 @@ runs:
       # artifact); the SBOM is attested to the registry in the next step.
       env:
         # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-        SYFT_VERSION: "1.46.0"
+        SYFT_VERSION: "1.49.0"
       uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
       with:
         image: ghcr.io/devantler-tech/platform/manifests@${{ steps.cosign-sign.outputs.digest }}
         format: cyclonedx-json
         output-file: sbom.cdx.json
-        syft-version: 'v${{ env.SYFT_VERSION }}'
+        syft-version: "v${{ env.SYFT_VERSION }}"
         upload-artifact: false
 
     - name: 🪪 Attest SBOM (Sigstore via cosign keyless)
@@ -319,15 +324,20 @@ runs:
         push-to-registry: true
         create-storage-record: false
 
+    - name: 🔎 Verify Flux GHCR pull credential after publish
+      id: verify_flux_ghcr_auth_after_push
+      # Revalidate the newly-published artifact before apps reconcile. The
+      # complete consumer fan-out was staged before the mutable tag moved.
+      shell: bash
+      run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
+
     - name: 🔁 Trigger Flux reconciliation
       id: reconcile
       shell: bash
       env:
         GITHUB_ACTOR: ${{ github.actor }}
-        GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-        KSAIL_CONFIG: ${{ steps.workload-ref.outputs.config }}
-      run: ksail --config "${KSAIL_CONFIG}" workload reconcile
+      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
 
     - name: 🩺 Diagnose Flux on failure
       if: failure() && steps.reconcile.outcome == 'failure'
@@ -340,21 +350,78 @@ runs:
       # larger --tail values). Failure-path-only: it cannot affect a green deploy.
       uses: devantler-tech/actions/diagnose-flux@e182f2207fb386ef827f48b3cc9b7deac873046a # v7.1.0
 
+    - name: ⏳ Wait for the newly published Flux revision
+      id: wait_flux_revision
+      # Pin the mutable latest tag to the digest resolved immediately after
+      # publish. A successful reconcile command only proves that Flux accepted
+      # the request; autoscaling and Talos mutation stay blocked until the
+      # infrastructure controller layer has applied this exact artifact and
+      # reports Ready. The temporary Cilium component disables Helm's pod wait
+      # while OnDelete controls replacement, so this proof still completes
+      # without weakening Flux dependency convergence.
+      shell: bash
+      env:
+        PLATFORM_MANIFEST_DIGEST: ${{ steps.cosign-sign.outputs.digest }}
+      run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
+
     - name: 🔄 Update cluster (Talos machine config)
+      id: cluster_update
       # Runs LAST, after manifest delivery, so an unreachable control-plane
       # node cannot block GitOps delivery (see the Push step's comment). Talos
       # config sync still runs on every deploy and a genuine node-reachability
       # problem still fails the deploy (red) — it just no longer takes the
-      # app/config pipeline down with it. Automatically skipped if an earlier
-      # delivery step already failed (no point syncing nodes for a broken
-      # release).
+      # app/config pipeline down with it. The temporary homogeneous-device
+      # rollout gate also skips this step: KSail owns Cluster Autoscaler and
+      # could reconcile it back to one replica during the command, opening a
+      # scale-up race before the first Cilium canary is verified. A reviewed
+      # rollout-completion or rollback artifact removes the gate; because Flux
+      # exact-revision wait happens first, that safe artifact is live before
+      # cluster update runs again.
+      if: >-
+        steps.cilium_rollout_gate.outputs.active != 'true' &&
+        steps.wait_flux_revision.outcome == 'success'
       shell: bash
       env:
-        GHCR_TOKEN: ${{ inputs.ghcr-token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-        KSAIL_CONFIG: ${{ steps.workload-ref.outputs.config }}
         # ksail env-expands ${WG_SERVER_PRIVATE_KEY} in the talos patches at
         # load time; an unset var renders an empty key and Talos rejects the
         # whole machine config ('private key is invalid: wrong key "" length: 0').
         WG_SERVER_PRIVATE_KEY: ${{ inputs.wg-server-private-key }}
-      run: ksail --config "${KSAIL_CONFIG}" cluster update
+      run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update
+
+    - name: 🛡️ Reassert or release the Cilium rollout gate
+      # Reassert the suspension after delivery while OnDelete is active.
+      # A later, reviewed rollout-completion or rollback artifact removes the
+      # gate; only after that artifact has reconciled does this phase restore
+      # the replica count recorded by the pre-publish phase. `always()` also
+      # preserves that fail-closed state when the safe, re-enabled cluster
+      # update fails after reconciliation.
+      if: >-
+        always() &&
+        steps.reconcile.outcome == 'success' &&
+        (
+          steps.cilium_rollout_gate.outputs.active == 'true' ||
+          steps.wait_flux_revision.outcome == 'success'
+        )
+      shell: bash
+      env:
+        # The guard always reasserts suspension for an active rollout, including
+        # failure cleanup, but may approve the rendered candidate only after
+        # Flux proves this exact published revision Ready.
+        CILIUM_ROLLOUT_REVISION_READY: ${{ steps.wait_flux_revision.outcome == 'success' }}
+      run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
+
+    - name: 🔑 Reassert Flux and consumer GHCR pull credential
+      id: reassert_flux_ghcr_auth
+      # cluster update is already wrapped with Git/SOPS auth, but reassert the
+      # full transaction afterward in case KSail fails part-way. Reassert after
+      # its synchronous consumer fan-out when that update fails part-way, but
+      # only after the publish, signing, attestation, post-publish auth check,
+      # and Flux reconcile all succeeded. Never mutate auth as cleanup for a
+      # failed delivery.
+      if: >-
+        always() &&
+        steps.verify_flux_ghcr_auth_after_push.outcome == 'success' &&
+        steps.reconcile.outcome == 'success'
+      shell: bash
+      run: ./scripts/refresh-flux-ghcr-auth.sh

@@ -1,0 +1,77 @@
+---
+# Namespace opted into user namespaces — the disallow-host-users rule applies here.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: userns-enabled
+  labels:
+    pod-security.devantler.tech/user-namespaces: enabled
+---
+# Namespace that has NOT graduated through a userns pilot — the rule must not apply.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: userns-absent
+---
+# Explicit opt-out inside an opted-in namespace. This is the regression the
+# +(hostUsers) conditional anchor in add-security-context.yaml cannot catch.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: explicit-host-users
+  namespace: userns-enabled
+spec:
+  hostUsers: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+# Explicit hostUsers: false — the value the mutate rule injects.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: explicit-unshared
+  namespace: userns-enabled
+spec:
+  hostUsers: false
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+# hostUsers absent — passes validate-if-present; the mutate rule supplies false.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: host-users-absent
+  namespace: userns-enabled
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+# CNPG-managed pod inside an opted-in namespace. Mirrors the mutate rule's
+# exclude, so a mixed namespace (stateless app + CNPG database) stays safe.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cnpg-instance
+  namespace: userns-enabled
+  labels:
+    cnpg.io/cluster: demo-db
+spec:
+  hostUsers: true
+  containers:
+    - name: postgres
+      image: registry.k8s.io/pause:3.10
+---
+# Same explicit opt-out, but in a namespace without the opt-in label: out of scope.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unscoped-host-users
+  namespace: userns-absent
+spec:
+  hostUsers: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10

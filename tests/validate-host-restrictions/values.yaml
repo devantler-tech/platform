@@ -1,0 +1,15 @@
+---
+# The Kyverno CLI does not read namespace labels from the Namespace objects in
+# resources.yaml — a rule matched by namespaceSelector is reported "Excluded"
+# for every resource unless the namespace labels are declared here. Without
+# this file the whole fixture passes vacuously, including the fail case.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+namespaceSelector:
+  - name: userns-enabled
+    labels:
+      pod-security.devantler.tech/user-namespaces: enabled
+  - name: userns-absent
+    labels: {}
