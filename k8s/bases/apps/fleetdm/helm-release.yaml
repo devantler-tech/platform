@@ -325,7 +325,7 @@ spec:
         repository: bitnamilegacy/redis
       auth:
         existingSecret: redis
-        existingSecretPasswordKey: redis-password
+        existingSecretPasswordKey: redis-password  # checkov:skip=CKV_SECRET_6:names a key inside an existing Secret; the value lives in OpenBao
       master:
         podSecurityContext:
           enabled: true
