@@ -916,7 +916,8 @@ func readList(path string) ([]item, error) {
 	// failed-control map followed by `"controls":{}` exits 0 with "no live-only
 	// findings". Labels, statuses and CVE counts are reachable the same way.
 	if err := rejectDuplicateKeys(raw); err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", errUnrecognisedDocument, path, err)
+		return nil, fmt.Errorf("%w: %s: %w; a repeated key here can HIDE findings — a real control "+
+			"map followed by an empty one reads as a clean result", errUnrecognisedDocument, path, err)
 	}
 
 	var probe map[string]json.RawMessage

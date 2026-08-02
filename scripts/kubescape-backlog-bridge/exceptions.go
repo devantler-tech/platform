@@ -191,7 +191,8 @@ func loadExceptions(path string) ([]exception, error) {
 	// "excepts more" is the one direction this loader must never take, so the
 	// ambiguity is refused before anything is compiled.
 	if err := rejectDuplicateKeys(raw); err != nil {
-		return nil, fmt.Errorf("%w: %s: %w", errBadExceptions, path, err)
+		return nil, fmt.Errorf("%w: %s: %w; a repeated key here can WIDEN an exception rather than "+
+			"narrow it", errBadExceptions, path, err)
 	}
 
 	var policies []rawPolicy
@@ -273,10 +274,18 @@ func scanForDuplicateKeys(dec *json.Decoder) error {
 
 			folded := strings.ToLower(key)
 			if first, dup := seen[folded]; dup {
-				return fmt.Errorf("object keys %q and %q collide; the document is ambiguous and JSON "+
-					"decoding would silently keep the LAST value (field names are matched "+
-					"case-insensitively), which can widen an exception rather than narrow it",
-					first, key)
+				// The consequence differs by caller — a duplicate widens an
+				// exception in the artifact and hides findings in a scan
+				// document — so this states only the ambiguity, and each caller
+				// wraps it with the sentinel that carries the meaning.
+				if first == key {
+					return fmt.Errorf("object key %q appears more than once, so the document is "+
+						"ambiguous and JSON decoding would silently keep the LAST value", key)
+				}
+
+				return fmt.Errorf("object keys %q and %q collide, so the document is ambiguous and "+
+					"JSON decoding would silently keep the LAST value (field names are matched "+
+					"case-insensitively)", first, key)
 			}
 
 			seen[folded] = key
