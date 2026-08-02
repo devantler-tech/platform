@@ -1862,6 +1862,52 @@ func TestScanDocumentRejectsCaseAliasedStructField(t *testing.T) {
 	}
 }
 
+// One level deeper, and the reason the scope reverts inside a map: the KEYS of
+// `spec.controls` are control IDs and must be compared exactly, but each of its
+// VALUES is a control struct again. An aliased `Status` there overwrites the
+// failed status and drops the finding — the same hiding this refuses at the
+// `controls` level, one layer down.
+//
+// Without this the revert is unpinned: removing it reddens nothing, which is
+// how the gap was found.
+func TestScanDocumentRejectsCaseAliasWithinAControl(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "posture.json")
+	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app",`+
+		labels("app", "Deployment", "api")+`},`+
+		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},`+
+		`"status":{"status":"failed"},"Status":{"status":"passed"}}},`+
+		`"severities":{"critical":0,"high":0}}}`)
+
+	var out bytes.Buffer
+
+	err := run([]string{"-posture", path}, &out)
+	if err == nil {
+		t.Fatal("a case-aliased status inside a control is ambiguous and must be rejected")
+	}
+
+	if strings.Contains(out.String(), "nothing to file") {
+		t.Errorf("must not print an all-clear for an aliased control, got %q", out.String())
+	}
+}
+
+// The control for the pair above: two DISTINCT control IDs differing only by
+// case are map keys, not struct fields, so they stay legitimate.
+func TestScanDocumentAcceptsCaseDistinctControlIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "posture.json")
+	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app",`+
+		labels("app", "Deployment", "api")+`},`+
+		`"spec":{"controls":{"c-0016":{"controlID":"c-0016","severity":{"severity":"High"},`+
+		`"status":{"status":"failed"}},`+
+		`"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},`+
+		`"status":{"status":"failed"}}},`+
+		`"severities":{"critical":0,"high":0}}}`)
+
+	var out bytes.Buffer
+	if err := run([]string{"-posture", path}, &out); err != nil {
+		t.Fatalf("case-distinct control IDs are map keys and must be accepted: %v", err)
+	}
+}
+
 // The control: an ordinary scan document with no repeated key still parses.
 func TestOrdinaryScanInputStillParses(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "posture.json")
