@@ -133,11 +133,11 @@ spec:
     # place instead of evicting them. Upgraded one minor at a time
     # (1.32 -> 1.33 -> 1.34 -> 1.35 -> 1.36); now on 1.36.2. Talos v1.13.5's
     # ceiling is Kubernetes 1.36.
-    kubernetesVersion: v1.36.2
+    kubernetesVersion: v1.36.3
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.
-      version: v1.13.6
+      version: v1.13.7
       # Hetzner Talos ISO (x86_64). The v1.11.2 ISO (122630) was deprecated
       # and removed from Hetzner on 2026-03-18. Use v1.12.4 (125127).
       iso: 125127

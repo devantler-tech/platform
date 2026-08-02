@@ -91,6 +91,31 @@ data:
         icon: mdi-web
       Customer Sites:
         icon: mdi-briefcase-account
+      # Bookmark groups (bookmarks.yaml). Listing them here is what gives them a
+      # real icon and a deterministic position; unlisted groups fall back to
+      # alphabetical with a generic icon, which is why the bookmark rail used to
+      # order itself differently from the way the groups actually relate. Their
+      # names are deliberately distinct from the service groups above — Homepage
+      # renders services and bookmarks as separate sections, so a shared name
+      # paints the same heading twice with different contents under each.
+      GitHub:
+        icon: si-github-#181717
+      Security & Supply Chain:
+        icon: mdi-shield-search
+      Code Quality:
+        icon: mdi-code-braces-box
+      Kubernetes Reference:
+        icon: si-kubernetes-#326CE5
+      Package Registries:
+        icon: mdi-package-variant-closed
+      Learning & Reference:
+        icon: mdi-school
+      Media:
+        icon: mdi-play-circle-outline
+      Banking:
+        icon: mdi-bank-outline
+      Personal:
+        icon: mdi-account-circle
   kubernetes.yaml: |
     mode: cluster
     gateway: true
@@ -136,11 +161,18 @@ data:
     # Analytics is populated dynamically from the gethomepage.dev annotations on
     # Umami's Flagger-generated HTTPRoute (k8s/bases/apps/umami/canary.yaml,
     # spec.service.apex.annotations).
+  # Bookmarks are grouped by WHAT YOU GO THERE TO DO, matching how services.yaml
+  # and the settings.yaml layout already group by function (Security, Cloud,
+  # Network, Finance, …) rather than by vendor. One console can therefore appear
+  # in more than one group — GitHub's org navigation sits under GitHub while its
+  # security overview sits under Security & Supply Chain, because that is where
+  # you look when the question is "what is vulnerable", not "where is the repo".
+  #
+  # Group names are deliberately DISTINCT from the service group names in
+  # settings.yaml (Security, Kubernetes, Finance, …). Homepage renders services
+  # and bookmarks as separate sections, so reusing a name paints the same heading
+  # twice on one page with different contents under each.
   bookmarks.yaml: |
-    - Personal:
-        - Personal Site:
-            - icon: github-light
-              href: https://devantler.tech
     - GitHub:
         - GitHub:
             - icon: github-light
@@ -148,41 +180,48 @@ data:
         - DevantlerTech:
             - icon: github-light
               href: https://github.com/devantler-tech
-        - Security:
+        - Project Board:
             - icon: si-github-#181717
-              href: https://github.com/orgs/devantler-tech/security/overview
+              href: https://github.com/orgs/devantler-tech/projects/5/views/1
         - Insights:
             - icon: si-github-#181717
               href: https://github.com/orgs/devantler-tech/insights
+        - Actions Usage:
+            - icon: si-githubactions-#2088FF
+              href: https://github.com/orgs/devantler-tech/actions/metrics/usage
         - Packages:
             - icon: si-github-#181717
               href: https://github.com/orgs/devantler-tech/packages
-        - Projects:
+    - Security & Supply Chain:
+        - GitHub Security:
             - icon: si-github-#181717
-              href: https://github.com/orgs/devantler-tech/projects/5
-    - Developer Tools:
+              href: https://github.com/orgs/devantler-tech/security/overview
+        - Codex Findings:
+            - icon: si-openai-#412991
+              href: https://chatgpt.com/codex/cloud/security/findings
+        # mdi, not si-stepsecurity: Simple Icons carries no `stepsecurity` slug
+        # (nor does dashboard-icons), so the si- form 404s at the CDN and renders
+        # as a blank tile. Homepage resolves icons in the browser at render time,
+        # so a wrong slug fails silently rather than at deploy.
+        - StepSecurity:
+            - icon: mdi-shield-check-outline
+              href: https://app.stepsecurity.io
+        # si-renovate, not si-renovatebot: both resolve today, but they are
+        # different marks — `renovatebot.svg` is titled "RenovateBot" (the old
+        # branding) and `renovate.svg` is titled "Renovate", which is the brand's
+        # current name and the one Simple Icons lists. This is a branding
+        # correction, not a fix for a blank icon.
+        - Renovate:
+            - icon: si-renovate-#007fa0
+              href: https://developer.mend.io
+    - Code Quality:
         - Codecov:
             - icon: si-codecov-#F01F7A
               href: https://app.codecov.io
         - CodeRabbit:
             - icon: si-coderabbit-#FF570A
               href: https://app.coderabbit.ai
-        - Enable Banking:
-            - icon: mdi-bank-outline
-              href: https://enablebanking.com
-        - StepSecurity:
-            - icon: si-stepsecurity
-              href: https://app.stepsecurity.io
-        - Renovate:
-            - icon: si-renovatebot-#007fa0
-              href: https://developer.mend.io
-        - skills.sh:
-            - icon: mdi-certificate-outline
-              href: https://skills.sh
-        - lllm-stats.com:
-            - icon: mdi-chart-bar
-              href: https://lllm-stats.com
-    - Kubernetes:
+    - Kubernetes Reference:
         - ArtifactHUB:
             - icon: si-artifacthub-#417598
               href: https://artifacthub.io
@@ -199,6 +238,40 @@ data:
         - NuGet:
             - icon: si-nuget-#1088d6
               href: https://www.nuget.org
+    - Learning & Reference:
+        - KodeKloud:
+            - icon: mdi-school-outline
+              href: https://kodekloud.com
+        - Killercoda:
+            - icon: mdi-console
+              href: https://killercoda.com
+        - skills.sh:
+            - icon: mdi-certificate-outline
+              href: https://skills.sh
+        - LLM Stats:
+            - icon: mdi-chart-bar
+              href: https://llm-stats.com
+    - Media:
+        - YouTube:
+            - icon: si-youtube-#FF0000
+              href: https://youtube.com
+        - Netflix:
+            - icon: si-netflix-#E50914
+              href: https://netflix.com
+        - Gramaton:
+            - icon: mdi-movie-open-play-outline
+              href: https://gramaton.io
+        - Reddit:
+            - icon: si-reddit-#FF4500
+              href: https://reddit.com
+    - Banking:
+        - Enable Banking:
+            - icon: mdi-bank-outline
+              href: https://enablebanking.com
+    - Personal:
+        - Personal Site:
+            - icon: github-light
+              href: https://devantler.tech
   docker.yaml: ""
   # Theme: mirror https://devantler.tech. That site is Astro Starlight with the
   # stock dark palette — a gray ramp at hue 224 but only ~6-14% saturation, i.e.

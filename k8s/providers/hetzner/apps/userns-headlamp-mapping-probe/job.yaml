@@ -76,8 +76,10 @@ spec:
                   app.kubernetes.io/instance: headlamp
               topologyKey: kubernetes.io/hostname
       securityContext:
-        # headlamp's own identity, so the mapping measured is the one applied to
-        # the UID/GID pair the workload actually runs as.
+        # headlamp's own identity, so the probe runs the way headlamp does rather
+        # than as an arbitrary user. It does NOT determine what is measured: an
+        # idmap is a property of the pod's user namespace, so /proc/self/uid_map
+        # reads identically for every process in it whatever UID that process is.
         runAsNonRoot: true
         runAsUser: 100
         runAsGroup: 101

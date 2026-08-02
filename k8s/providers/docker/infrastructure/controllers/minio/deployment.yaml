@@ -31,11 +31,22 @@ spec:
       # minio is a pure S3 server and never calls the Kubernetes API, so it has
       # no use for a mounted ServiceAccount token (kubescape C-0034).
       automountServiceAccountToken: false
+      # UID 65532 rather than a low one (checkov CKV_K8S_40). The minio image
+      # declares no `User`, so it would run as root unedited, and its
+      # /etc/passwd has no entry for the UID this ran under before — the server
+      # is already running unmapped. Its entrypoint only switches user when
+      # MINIO_USERNAME *and* MINIO_GROUPNAME are set; neither is, so it takes
+      # the plain `exec` branch and never looks the UID up.
+      #
+      # What makes `/data` writable is `fsGroup` == `runAsGroup`, not the UID:
+      # the kubelet chowns the emptyDir to that GID and grants it write. The
+      # two are raised together for that reason — moving one alone would be the
+      # change that breaks this.
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:

@@ -24,3 +24,9 @@ megalinter-reports/
 
 # MegaLinter also drops a generated GitHub config tree here.
 .megalinter_github_conf/
+
+# Python bytecode. The validators and their tests are a migration target, but while they
+# exist every run of them drops a __pycache__ tree next to the source, and the shared CI job
+# stages everything when it pushes auto-fixes back — which is how an empty .pyc reached main.
+__pycache__/
+*.py[cod]

@@ -224,4 +224,4 @@ spec:
         tokenExpiration: "never"
         existingSecret:
           name: actual-budget-oidc
-          clientSecretKey: client-secret
+          clientSecretKey: client-secret  # checkov:skip=CKV_SECRET_6:names a key inside an existing Secret; the value lives in OpenBao

@@ -46,6 +46,15 @@ kind: CronJob
 metadata:
   name: umami-provision-tenants
   namespace: umami
+  annotations:
+    # UID 1001 is the umami image's own baked user, not a number picked here:
+    # the image config sets `User: "nextjs"`, and that image's /etc/passwd
+    # reads `nextjs:x:1001:65533`. The container reuses the umami image for its
+    # Node runtime and runs out of its /app WORKDIR, so the UID that owns that
+    # tree is the one to run as. Raising it above 10000 would break the match
+    # the image asks for, and this workload is only deployed to the Hetzner
+    # provider, so nothing in CI would catch it going wrong.
+    checkov.io/skip1: CKV_K8S_40=UID 1001 is the umami image's baked `nextjs` user, which owns its /app WORKDIR
 spec:
   schedule: "*/15 * * * *"
   # Never run two reconciles at once; a slow run (e.g. waiting on a down Umami)
