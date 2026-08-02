@@ -30,7 +30,7 @@ first_guard_call_line="$(printf '%s\n' "${guard_calls}" | sed -n '1p')"
 second_guard_call_line="$(printf '%s\n' "${guard_calls}" | sed -n '2p')"
 readonly first_guard_call_line second_guard_call_line
 
-push_line="$(grep -nF 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push' "${deploy_action}" | cut -d: -f1)"
+push_line="$(grep -nF 'id: publish_platform_manifest' "${deploy_action}" | cut -d: -f1)"
 reconcile_line="$(grep -nF 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile' "${deploy_action}" | cut -d: -f1)"
 cluster_update_line="$(grep -nF 'run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update' "${deploy_action}" | cut -d: -f1)"
 
@@ -63,12 +63,14 @@ grep -Fq "> CILIUM_ROLLOUT_REVISION_READY=true \\" "${dr_runbook}" ||
   fail 'the manual DR fallback must mark approval only after its Flux readiness proof'
 manual_dr_guard_before_line="$(printf '%s\n' "${manual_dr_guard_calls}" | sed -n '1p')"
 manual_dr_guard_after_line="$(printf '%s\n' "${manual_dr_guard_calls}" | sed -n '2p')"
-manual_dr_push_line="$(grep -nF './scripts/run-ksail-prod-with-pull-auth.sh workload push' "${dr_runbook}" | cut -d: -f1)"
+# The literal is copied from the runbook and must not expand in this test shell.
+# shellcheck disable=SC2016
+manual_dr_push_line="$(grep -nF 'PLATFORM_MANIFEST_DIGEST="$(docker buildx imagetools inspect' "${dr_runbook}" | cut -d: -f1)"
 manual_dr_converged_line="$(grep -nF './scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out' "${dr_runbook}" | cut -d: -f1)"
 readonly manual_dr_guard_before_line manual_dr_guard_after_line manual_dr_push_line manual_dr_converged_line
 
 ((manual_dr_guard_before_line < manual_dr_push_line)) ||
-  fail 'the manual DR fallback must suspend autoscaling before publishing manifests'
+  fail 'the manual DR fallback must suspend autoscaling before selecting the active manifest'
 ((manual_dr_guard_after_line > manual_dr_converged_line)) ||
   fail 'the manual DR fallback must reassert or release the gate after Flux converges'
 
