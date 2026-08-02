@@ -589,3 +589,42 @@ func TestRealNamespaceAndWildcardKindStillLoad(t *testing.T) {
 		t.Fatalf("want 1 policy with 2 designators, got %+v", got)
 	}
 }
+
+// Go's json.Unmarshal silently keeps the LAST value for a repeated key, so a
+// stale or hand-edited artifact writing {"kind":"^Job$","kind":".*"} compiles
+// as the WILDCARD — a Job-scoped exception silently widened across every kind.
+// The document is ambiguous, and resolving an ambiguity toward the broader
+// reading is the one direction this loader must never take.
+func TestDuplicateKeysInExceptionsAreRejected(t *testing.T) {
+	for name, raw := range map[string]string{
+		"duplicate attribute widens the scope": `[{"name":"p","policyType":"postureExceptionPolicy",` +
+			`"actions":["alertOnly"],"resources":[{"designatorType":"Attributes",` +
+			`"attributes":{"kind":"^Job$","kind":".*"}}],"posturePolicies":[{"controlID":"^C-0016$"}]}]`,
+		// Deliberately a field NO other guard inspects, so this subtest can only
+		// pass because duplicates are detected. A duplicate "policyType" would
+		// pass for the wrong reason — the last value trips the unknown-type
+		// guard — and would therefore prove nothing about this fix.
+		"duplicate policy name": `[{"name":"first","policyType":"postureExceptionPolicy",` +
+			`"actions":["alertOnly"],"resources":[{"designatorType":"Attributes",` +
+			`"attributes":{"kind":".*"}}],"posturePolicies":[{"controlID":"^C-0016$"}],` +
+			`"name":"second"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "exceptions.json")
+			writeRaw(t, path, raw)
+
+			if _, err := loadExceptions(path); !errors.Is(err, errBadExceptions) {
+				t.Fatalf("want errBadExceptions, got %v", err)
+			}
+		})
+	}
+}
+
+// The over-tightening control: the real generator's shape has no repeated key
+// and must still load.
+func TestNonDuplicateExceptionsStillLoad(t *testing.T) {
+	got := loadFixture(t, exceptionsDoc(policyDoc("ok", []string{"C-0016"}, `{"kind":"^Job$","name":"^nightly$"}`)))
+	if len(got) != 1 {
+		t.Fatalf("a well-formed artifact must still load, got %+v", got)
+	}
+}

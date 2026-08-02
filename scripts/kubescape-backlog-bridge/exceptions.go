@@ -17,6 +17,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -183,6 +184,16 @@ func loadExceptions(path string) ([]exception, error) {
 		return nil, fmt.Errorf("%w: read %s: %w", errBadExceptions, path, err)
 	}
 
+	// encoding/json resolves a REPEATED key by silently keeping the last value,
+	// so `{"kind":"^Job$","kind":".*"}` decodes as the wildcard and a
+	// Job-scoped exception is widened across every kind — the document is
+	// ambiguous and Go picks the broader reading. Resolving an ambiguity toward
+	// "excepts more" is the one direction this loader must never take, so the
+	// ambiguity is refused before anything is compiled.
+	if err := rejectDuplicateKeys(raw); err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", errBadExceptions, path, err)
+	}
+
 	var policies []rawPolicy
 	if err := json.Unmarshal(raw, &policies); err != nil {
 		return nil, fmt.Errorf("%w: parse %s: %w", errBadExceptions, path, err)
@@ -212,6 +223,72 @@ func loadExceptions(path string) ([]exception, error) {
 	}
 
 	return out, nil
+}
+
+// rejectDuplicateKeys fails on any object in the document carrying the same key
+// twice. encoding/json cannot report this — Unmarshal keeps the last value and
+// a map[string]… loses the evidence — so the raw token stream is walked
+// instead.
+func rejectDuplicateKeys(raw []byte) error {
+	return scanForDuplicateKeys(json.NewDecoder(bytes.NewReader(raw)))
+}
+
+// scanForDuplicateKeys consumes exactly one JSON value from dec, recursing
+// through objects and arrays.
+func scanForDuplicateKeys(dec *json.Decoder) error {
+	tok, err := dec.Token()
+	if err != nil {
+		// A malformed document is left to Unmarshal, which reports it with far
+		// better context than a token-level error would.
+		return nil //nolint:nilerr // parse errors are reported by the caller's Unmarshal
+	}
+
+	delim, ok := tok.(json.Delim)
+	if !ok {
+		return nil
+	}
+
+	switch delim {
+	case '{':
+		seen := map[string]struct{}{}
+
+		for dec.More() {
+			keyTok, err := dec.Token()
+			if err != nil {
+				return nil //nolint:nilerr // as above
+			}
+
+			key, ok := keyTok.(string)
+			if !ok {
+				return nil
+			}
+
+			if _, dup := seen[key]; dup {
+				return fmt.Errorf("object key %q appears more than once; the document is ambiguous "+
+					"and JSON decoding would silently keep the LAST value, which can widen an "+
+					"exception rather than narrow it", key)
+			}
+
+			seen[key] = struct{}{}
+
+			if err := scanForDuplicateKeys(dec); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for dec.More() {
+			if err := scanForDuplicateKeys(dec); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Consume the matching closing delimiter.
+	if _, err := dec.Token(); err != nil {
+		return nil //nolint:nilerr // as above
+	}
+
+	return nil
 }
 
 // compileFullMatch compiles a declared pattern so it can only ever match a WHOLE value.

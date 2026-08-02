@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -1593,5 +1594,44 @@ func TestBlankCVESeverityClassIsRejected(t *testing.T) {
 
 	if _, err := deriveCVE(itemsOf(t, doc)); err == nil {
 		t.Fatal("a blank severity class name must be rejected")
+	}
+}
+
+// Each per-bucket count is validated nonnegative, but the AGGREGATE is not:
+// summing two valid counts past MaxInt wraps to a negative total, which then
+// renders as a nonsensical `total=-N` on a successful exit. The per-bucket
+// guard cannot see this because it fires before any addition.
+func TestCVETotalOverflowIsRejected(t *testing.T) {
+	huge := fmt.Sprintf("%d", math.MaxInt)
+
+	docs := make([]string, 0, 2)
+	for _, name := range []string{"api", "web"} {
+		docs = append(docs, `{"metadata":{"name":"`+name+`","namespace":"app",`+
+			labels("app", "Deployment", name)+`},`+
+			`"spec":{"vulnerabilitiesRef":{"all":{"name":"m"}},"severities":{`+
+			`"critical":`+huge+`,"high":0,"low":0,"medium":0,"negligible":0,"unknown":0}}}`)
+	}
+
+	if _, err := deriveCVE(itemsOf(t, docs...)); err == nil {
+		t.Fatal("an aggregate that overflows must be rejected, not wrapped to a negative total")
+	}
+}
+
+// The control: ordinary counts must still aggregate.
+func TestOrdinaryCVETotalsStillAggregate(t *testing.T) {
+	docs := []string{
+		`{"metadata":{"name":"api","namespace":"app",` + labels("app", "Deployment", "api") + `},` +
+			`"spec":{"vulnerabilitiesRef":{"all":{"name":"m"}},"severities":{"critical":18,"high":0,"low":0,"medium":0,"negligible":0,"unknown":0}}}`,
+		`{"metadata":{"name":"web","namespace":"app",` + labels("app", "Deployment", "web") + `},` +
+			`"spec":{"vulnerabilitiesRef":{"all":{"name":"m"}},"severities":{"critical":4,"high":0,"low":0,"medium":0,"negligible":0,"unknown":0}}}`,
+	}
+
+	got, err := deriveCVE(itemsOf(t, docs...))
+	if err != nil {
+		t.Fatalf("deriveCVE: %v", err)
+	}
+
+	if len(got) != 1 || got[0].Total != 22 {
+		t.Fatalf("want one theme totalling 22, got %+v", got)
 	}
 }

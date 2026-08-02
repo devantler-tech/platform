@@ -64,12 +64,21 @@
 // a CVE document passed to -posture is rejected instead of quietly deriving no
 // controls and exiting 0.
 //
-// Usage, from the repository root — both flags are repeatable, because the
-// per-object GETs a cluster-wide run needs are one file per workload:
+// Usage, from the repository root. Both flags are repeatable, and EVERY object
+// must be passed: one -posture file per workload, and one -cve file per IMAGE.
+//
+// The CVE side is not one file per workload. A workload running more than one
+// image has one summary PER IMAGE, and they are aggregated — measured against
+// the live cluster, 117 summaries across 93 workloads, with 22 workloads
+// carrying two or three. Passing a single file for such a workload silently
+// undercounts its vulnerabilities, and where the omitted image held the only
+// findings it produces exactly the false all-clear this command exists to
+// prevent. Nothing detects the omission: this command has no cluster
+// inventory, so it cannot know an object was never handed to it.
 //
 //	go run ./scripts/generate-kubescape-exceptions -o exceptions.json
 //	go run ./scripts/kubescape-backlog-bridge \
 //	  -exceptions exceptions.json \
 //	  -posture ns-a-workload.json -posture ns-b-workload.json \
-//	  -cve ns-a-image.json
+//	  -cve ns-a-workload-image-1.json -cve ns-a-workload-image-2.json
 package main

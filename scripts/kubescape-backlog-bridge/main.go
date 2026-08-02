@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"slices"
 	"sort"
@@ -659,6 +660,18 @@ func deriveCVE(items []item) ([]theme, error) {
 			// The count is summed rather than used as a predicate: 1 critical
 			// and 999 criticals must not render identically, or an update to an
 			// existing entry carries no information.
+			//
+			// Each bucket is validated nonnegative, but the AGGREGATE is not:
+			// two valid counts can sum past MaxInt and wrap to a NEGATIVE
+			// total, which then renders as `total=-N` on a successful exit. The
+			// per-bucket guard cannot see it, because it fires before any
+			// addition happens.
+			if a.total > math.MaxInt-n {
+				return nil, fmt.Errorf("%w: %s pushes the %q total past the representable maximum; "+
+					"summing it would wrap to a negative count and be reported as a successful result",
+					errMalformedScanContent, comp, class)
+			}
+
 			a.total += n
 		}
 	}
