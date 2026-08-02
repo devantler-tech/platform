@@ -29,6 +29,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 	"mvdan.cc/sh/v3/syntax"
@@ -1755,7 +1756,17 @@ var statusChecks = []string{"always(", "failure(", "cancelled(", "success("}
 func mustNotReleaseAfterFailure(steps []step, releaseIdx []int) error {
 	for _, at := range releaseIdx {
 		condition := strings.TrimSpace(steps[at].If)
-		normalized := strings.ToLower(strings.ReplaceAll(condition, " ", ""))
+		// Strip EVERY whitespace rune, not just U+0020. A YAML literal block scalar keeps its
+		// newlines verbatim and a double-quoted scalar resolves `\t`, so `always\n()` and
+		// `always\t()` both reach here intact — GitHub evaluates them as calls, while a space-only
+		// strip left them unmatched and released production on failed evidence.
+		normalized := strings.ToLower(strings.Map(func(r rune) rune {
+			if unicode.IsSpace(r) {
+				return -1
+			}
+
+			return r
+		}, condition))
 
 		for _, check := range statusChecks {
 			if !strings.Contains(normalized, check) {

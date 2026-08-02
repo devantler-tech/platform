@@ -1272,6 +1272,42 @@ func TestRejectsAReleaseGatedOnACaseVariantStatusCheck(t *testing.T) {
 	}
 }
 
+// TestRejectsAReleaseGatedOnALineBrokenStatusCheck covers the WHITESPACE axis, which the case axis
+// above does not reach. Normalization stripped only U+0020, so any other whitespace between the
+// function name and its `(` slipped past a matcher looking for `always(`.
+//
+// A YAML LITERAL block scalar is the spelling that matters, and it is worth being precise about why:
+// a FOLDED scalar (`>-`) converts its newlines to spaces, so `always\n()` written that way arrives as
+// `always ()` and the space-only normalization already caught it. A literal block (`|`) preserves the
+// newline verbatim, so the condition arrives as `always\n()` — which GitHub evaluates as a call, and
+// which the guard did not see. Measured, not assumed: folded normalized to `always()`, literal stayed
+// `always\n()`.
+func TestRejectsAReleaseGatedOnALineBrokenStatusCheck(t *testing.T) {
+	broken := strings.Replace(validAction, reconcileStep,
+		"    - name: Reconcile\n      if: |\n        always\n        ()\n"+
+			"      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile\n", 1)
+	mustChange(t, validAction, broken)
+
+	if err := validate([]byte(broken)); err == nil {
+		t.Fatal("expected a release conditioned with a line-broken always() call to be rejected")
+	}
+}
+
+// TestRejectsAReleaseGatedOnATabSeparatedStatusCheck pins the second whitespace spelling. A
+// double-quoted scalar resolves `\t` to a real tab, so this reaches the matcher as `always\t()`.
+// It is a separate fixture from the line-broken one because they fail for different reasons under a
+// space-only strip, and a single-character fix could plausibly address one and miss the other.
+func TestRejectsAReleaseGatedOnATabSeparatedStatusCheck(t *testing.T) {
+	broken := strings.Replace(validAction, reconcileStep,
+		"    - name: Reconcile\n      if: \"always\\t()\"\n"+
+			"      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile\n", 1)
+	mustChange(t, validAction, broken)
+
+	if err := validate([]byte(broken)); err == nil {
+		t.Fatal("expected a release conditioned with a tab-separated always() call to be rejected")
+	}
+}
+
 // TestStatusChecksAreLowercase pins the invariant the case-insensitive match depends on. The
 // condition is lowercased before matching, so an entry added to the list with any uppercase letter
 // could never match anything — the list would silently stop covering that function while still
