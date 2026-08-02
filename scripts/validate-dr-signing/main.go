@@ -7,18 +7,16 @@
 // signs, because Flux rejects what it cannot verify — and a disaster recovery
 // rebuild is exactly the moment a rejected artifact is unrecoverable by hand.
 //
-// The DR rebuild pushes to the same tag as a normal deploy, so it needs four
-// things to be true: the job must hold `id-token: write`, or Fulcio cannot mint
-// the short-lived certificate keyless signing depends on; it must actually sign
-// what it pushed; it must sign the resolved digest rather than the mutable tag,
-// or a concurrent deploy can move the tag between resolve and sign; and its
-// workflow identity must appear in the cluster's verification allow-list, or a
-// perfectly signed artifact is still refused.
+// Both production paths delegate to one local action. That action pushes a
+// run-unique staging reference, signs and attests its resolved digest, and only
+// then promotes those exact bytes to latest. The DR job must grant the OIDC and
+// attestation permissions that action needs, and its workflow identity must
+// appear in the cluster's verification allow-list.
 //
-// None of the four fails loudly when it is wrong. With verification off they
+// None of these failures is loud at authoring time. With verification off they
 // fail silently forever; with verification on they fail during an incident, at
 // the one moment nobody can afford to debug a supply-chain policy. Pinning all
-// four here turns that into a CI failure on the pull request that breaks one.
+// here turns that into a CI failure on the pull request that breaks one.
 package main
 
 import (
@@ -26,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -46,31 +45,81 @@ func validateDRWorkflow(workflow string) error {
 			"rebuild job is missing `id-token: write`, so keyless cosign signing cannot mint a Fulcio certificate",
 		)
 	}
-
-	pushIdx, ok := lineIndexContaining(job, "workload push")
-	if !ok {
-		return errors.New("rebuild job no longer pushes the workload artifact")
-	}
-
-	signIdx, ok := lineIndexContaining(job, "cosign sign ")
-	if !ok {
+	if !containsExactLine(job, "      packages: write # push OCI artifacts to GHCR") {
 		return errors.New(
-			"rebuild job publishes the mutable tag without signing it, so a verifying cluster would reject the DR artifact",
+			"rebuild job is missing `packages: write`, so the publication transaction cannot update GHCR",
 		)
 	}
-
-	if signIdx < pushIdx {
-		return errors.New("rebuild job signs before it pushes, so it signs the previous artifact")
-	}
-
-	if !containsLine(job, `cosign sign --yes --recursive "${REF}"`) {
-		return errors.New("rebuild job must sign the resolved digest reference (REF), not a mutable tag")
-	}
-
-	if !containsLine(job, `REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"`) {
+	if !containsExactLine(job, "      attestations: write # write SBOM + SLSA provenance attestations") {
 		return errors.New(
-			"rebuild job must build its sign reference from the resolved digest, or a concurrent deploy can move the tag between resolve and sign",
+			"rebuild job is missing `attestations: write`, so the SBOM and provenance cannot be recorded",
 		)
+	}
+	if !containsLine(job, "uses: ./.github/actions/deploy-prod/publish-platform-manifests") {
+		return errors.New(
+			"rebuild job must use the shared publication action so normal and disaster-recovery delivery cannot drift",
+		)
+	}
+	if !containsLine(job, "ghcr-token: ${{ secrets.GHCR_TOKEN }}") ||
+		!containsLine(job, "hcloud-token: ${{ secrets.HCLOUD_TOKEN }}") {
+		return errors.New("rebuild job does not pass the required publication credentials to the shared action")
+	}
+	return nil
+}
+
+func validatePublicationAction(action string) error {
+	if !containsLine(action, `STAGING_TAG="staging-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"`) {
+		return errors.New("publication action must build a unique staging reference from the SHA, run, and attempt")
+	}
+	if !containsLine(action, "STAGING_OCI_REF: ${{ steps.staging_reference.outputs.oci_ref }}") {
+		return errors.New("publication action must use an environment bridge for the generated staging reference")
+	}
+	pushIdx, ok := lineIndexContaining(action, `workload push "${STAGING_OCI_REF}"`)
+	if !ok {
+		return errors.New("publication action must push only the allowlisted staging reference")
+	}
+	resolveIdx, ok := lineIndexContaining(action, `docker buildx imagetools inspect "${STAGING_REF}"`)
+	if !ok {
+		return errors.New("publication action must resolve the staging reference to an immutable digest")
+	}
+	signIdx, ok := lineIndexContaining(action, "cosign sign ")
+	if !ok {
+		return errors.New("publication action would promote the artifact without signing it")
+	}
+	if !containsLine(action, `cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"`) {
+		return errors.New(
+			"publication action must sign the resolved staging digest rather than a mutable tag",
+		)
+	}
+	sbomIdx, ok := lineIndexContaining(action, "uses: anchore/sbom-action@")
+	if !ok {
+		return errors.New("publication action is missing SBOM generation")
+	}
+	attestSBOMIdx, ok := lineIndexContaining(action, "uses: actions/attest@")
+	if !ok {
+		return errors.New("publication action is missing the required SBOM attestation")
+	}
+	provenanceIdx, ok := lineIndexContaining(action, "uses: actions/attest-build-provenance@")
+	if !ok {
+		return errors.New("publication action is missing the required provenance attestation")
+	}
+	promoteIdx, ok := lineIndexContaining(action, "docker buildx imagetools create --prefer-index=false")
+	if !ok {
+		return errors.New("publication action must use digest-preserving latest promotion")
+	}
+
+	if pushIdx >= resolveIdx || resolveIdx >= signIdx || signIdx >= sbomIdx ||
+		sbomIdx >= attestSBOMIdx || attestSBOMIdx >= provenanceIdx || provenanceIdx >= promoteIdx {
+		return errors.New("publication action must complete push, resolution, signature, SBOM, and provenance before promotion")
+	}
+	if strings.Count(action, "steps.resolve_staging.outputs.digest") < 4 {
+		return errors.New("publication action must bind every evidence step to the resolved staging digest")
+	}
+	if !containsLine(action, `"${SUBJECT_NAME}@${STAGING_DIGEST}"`) {
+		return errors.New("publication action must promote the exact evidenced digest")
+	}
+	if !containsLine(action, `if [[ "${LATEST_DIGEST}" != "${STAGING_DIGEST}" ]]; then`) {
+		return errors.New("publication action must verify latest resolves to the staged digest")
 	}
 
 	return nil
@@ -142,25 +191,37 @@ func lineIndexContaining(block string, want string) (int, bool) {
 func run(workflowPath string, configPath string, stdout io.Writer, stderr io.Writer) int {
 	workflow, err := os.ReadFile(workflowPath) //nolint:gosec // The explicit CLI path is the validator input.
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "dr signing contract: read workflow: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "dr publication contract: read workflow: %v\n", err)
 		return 1
 	}
 	config, err := os.ReadFile(configPath) //nolint:gosec // The explicit CLI path is the validator input.
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "dr signing contract: read cluster config: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "dr publication contract: read cluster config: %v\n", err)
 		return 1
 	}
 
 	if err := validateDRWorkflow(string(workflow)); err != nil {
-		_, _ = fmt.Fprintf(stderr, "dr signing contract: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "dr publication contract: %v\n", err)
+		return 1
+	}
+	publisherPath := filepath.Clean(filepath.Join(
+		filepath.Dir(workflowPath), "..", "actions", "deploy-prod", "publish-platform-manifests", "action.yml",
+	))
+	publisher, err := os.ReadFile(publisherPath) //nolint:gosec // Derived from the explicit workflow path.
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "dr publication contract: read publication action: %v\n", err)
+		return 1
+	}
+	if err := validatePublicationAction(string(publisher)); err != nil {
+		_, _ = fmt.Fprintf(stderr, "dr publication contract: %v\n", err)
 		return 1
 	}
 	if err := validateVerifyAllowList(string(config)); err != nil {
-		_, _ = fmt.Fprintf(stderr, "dr signing contract: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "dr publication contract: %v\n", err)
 		return 1
 	}
 
-	_, _ = fmt.Fprintln(stdout, "DR signing contract passed.")
+	_, _ = fmt.Fprintln(stdout, "DR publication contract passed.")
 	return 0
 }
 
