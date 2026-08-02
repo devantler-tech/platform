@@ -915,7 +915,7 @@ func readList(path string) ([]item, error) {
 	// repeating `spec.controls` decodes to the LAST value, so a real
 	// failed-control map followed by `"controls":{}` exits 0 with "no live-only
 	// findings". Labels, statuses and CVE counts are reachable the same way.
-	if err := rejectDuplicateKeys(raw); err != nil {
+	if err := rejectDuplicateKeys(raw, false); err != nil {
 		return nil, fmt.Errorf("%w: %s: %w; a repeated key here can HIDE findings — a real control "+
 			"map followed by an empty one reads as a clean result", errUnrecognisedDocument, path, err)
 	}
@@ -981,7 +981,21 @@ func report(themes []theme, examined []surface, filtered bool, suppressed int, o
 	// platform has already accepted. That is a legitimate view to ask for, but it
 	// must not be mistaken for a drainable backlog — so the report says which one
 	// it is rather than leaving the reader to infer it from the command line.
-	if !filtered && slices.Contains(examined, surfacePosture) {
+	//
+	// It is conditioned on a posture theme actually following it. Without that
+	// the note contradicts the very next line — a clean posture input printed
+	// "accepted controls are included below" directly above "nothing to file" —
+	// and on a run whose only themes are CVE ones it describes entries it does
+	// not apply to, since exceptions are never evaluated for the CVE surface.
+	postureThemes := 0
+
+	for _, t := range themes {
+		if t.Kind == string(surfacePosture) {
+			postureThemes++
+		}
+	}
+
+	if !filtered && slices.Contains(examined, surfacePosture) && postureThemes > 0 {
 		if _, err := fmt.Fprintln(out,
 			"note: no -exceptions supplied, so declared ClusterSecurityExceptions were NOT applied; "+
 				"accepted controls are included below and this output is not a filed-work list"); err != nil {
@@ -1042,11 +1056,22 @@ func report(themes []theme, examined []surface, filtered bool, suppressed int, o
 	// Keyed on findings ACTUALLY suppressed, never on -exceptions having been
 	// supplied: a run whose policies match nothing has filtered nothing, and
 	// saying otherwise is undiscriminating in the opposite direction.
+	//
+	// Scoped to POSTURE, because that is the only surface exceptions reach:
+	// derivePosture evaluates them and deriveCVE never sees them. Calling the
+	// whole list below the unexcepted remainder would credit CVE entries with a
+	// filtering that never happened, so when both surfaces are present the note
+	// says so outright rather than leaving the reader to assume symmetry.
 	if suppressed > 0 {
+		scope := ""
+		if slices.Contains(examined, surfaceCVE) {
+			scope = " (CVE entries are not filtered by exception policy)"
+		}
+
 		if _, err := fmt.Fprintf(out,
-			"note: %d finding(s) were present and excepted by the declared "+
-				"ClusterSecurityExceptions; the entries below are the UNEXCEPTED remainder\n",
-			suppressed); err != nil {
+			"note: %d posture finding(s) were present and excepted by the declared "+
+				"ClusterSecurityExceptions; the posture entries below are the unexcepted remainder%s\n",
+			suppressed, scope); err != nil {
 			return err
 		}
 	}

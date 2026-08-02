@@ -1652,6 +1652,78 @@ func TestFilteredReportThatSuppressedNothingMakesNoSuppressionClaim(t *testing.T
 	}
 }
 
+// Exceptions are evaluated by derivePosture ONLY — deriveCVE never sees them.
+// So a run carrying both surfaces, with a posture control suppressed and a CVE
+// theme surviving, must not describe every entry below as the unexcepted
+// remainder: the CVE entries were never checked against exception policy at
+// all, and saying otherwise credits them with a filtering that did not happen.
+//
+// This is the same misleading-shared-sentinel class already fixed twice on this
+// branch: one message written for one caller, then applied to a set that
+// includes another.
+func TestSuppressionNoteDoesNotClaimCVEEntriesWereFiltered(t *testing.T) {
+	dir := t.TempDir()
+
+	exc := filepath.Join(dir, "exceptions.json")
+	writeRaw(t, exc, `[{"name":"accepted","policyType":"postureExceptionPolicy","actions":["alertOnly"],`+
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":"^Deployment$"}}],`+
+		`"posturePolicies":[{"controlID":"^C-0016$"}]}]`)
+
+	post := filepath.Join(dir, "posture.json")
+	writeBare(t, post, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+
+	cve := filepath.Join(dir, "cve.json")
+	writeBare(t, cve, cveDoc("app", "api", map[string]int{
+		"critical": 1, "high": 0, "low": 0, "medium": 0, "negligible": 0, "unknown": 0,
+	}))
+
+	var out bytes.Buffer
+	if err := run([]string{"-exceptions", exc, "-posture", post, "-cve", cve}, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "cve") {
+		t.Fatalf("the CVE theme must still be reported, got %q", got)
+	}
+
+	// The disclosure must scope itself to posture rather than to "the entries
+	// below", which includes CVE themes exceptions never touched.
+	if strings.Contains(got, "the entries below are the UNEXCEPTED remainder") {
+		t.Errorf("the note must not characterise CVE entries as exception-filtered, got %q", got)
+	}
+
+	if !strings.Contains(got, "posture") {
+		t.Errorf("the note must scope its claim to the posture surface, got %q", got)
+	}
+}
+
+// The unfiltered-posture note tells the reader the list below includes controls
+// the platform has already accepted. When the posture input is CLEAN there is
+// no such list, so the note contradicts the all-clear printed immediately after
+// it — and it does the same when the only themes are CVE ones, which the note
+// does not describe.
+func TestUnfilteredNoteIsNotPrintedWhenNoPostureThemeFollows(t *testing.T) {
+	dir := t.TempDir()
+
+	in := filepath.Join(dir, "posture.json")
+	writeBare(t, in, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "passed"}))
+
+	var out bytes.Buffer
+	if err := run([]string{"-posture", in}, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got := out.String()
+	if strings.Contains(got, "included below") {
+		t.Errorf("nothing is included below a clean posture input, got %q", got)
+	}
+
+	if !strings.Contains(got, "nothing to file") {
+		t.Errorf("the all-clear must still be printed, got %q", got)
+	}
+}
+
 // The six required buckets can all be present while an EXTRA key is blank.
 // Extra buckets are tolerated on purpose (an upstream addition must not break
 // the run), so the completeness check passes and a blank class with a positive
@@ -1727,6 +1799,38 @@ func TestDuplicateKeysInScanInputAreRejected(t *testing.T) {
 
 	if strings.Contains(out.String(), "nothing to file") {
 		t.Errorf("must not print an all-clear for an ambiguous document, got %q", out.String())
+	}
+}
+
+// Case folding is how encoding/json binds STRUCT FIELDS, and it is not how it
+// decodes MAPS: `{"team":"a","Team":"b"}` unmarshals into a map[string]string
+// with BOTH keys, so there is no ambiguity and nothing to refuse.
+//
+// A scan document is full of user-controlled maps — labels and annotations,
+// and the `f:`-prefixed mirrors of them inside managedFields — so folding every
+// object in it rejects ordinary Kubernetes objects outright. Measured on the
+// live cluster: a real posture summary reports 10 themes, and the same document
+// with one extra `Team` label alongside `team` aborts the whole run.
+//
+// The exceptions artifact keeps folded detection (see the exceptions tests):
+// it is our own generated file, its aliasable keys are struct fields, and that
+// is where the Unicode alias case was found.
+func TestScanDocumentAcceptsCaseDistinctMapKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "posture.json")
+	writeRaw(t, path, `{"metadata":{"name":"api","namespace":"app","labels":{`+
+		`"kubescape.io/workload-kind":"Deployment","kubescape.io/workload-name":"api",`+
+		`"kubescape.io/workload-namespace":"app","team":"a","Team":"b"}},`+
+		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},`+
+		`"status":{"status":"failed"}}},`+
+		`"severities":{"critical":0,"high":0,"low":0,"medium":0,"negligible":0,"unknown":0}}}`)
+
+	var out bytes.Buffer
+	if err := run([]string{"-posture", path}, &out); err != nil {
+		t.Fatalf("case-distinct map keys are legitimate and must not be rejected: %v", err)
+	}
+
+	if !strings.Contains(out.String(), "C-0016") {
+		t.Errorf("the document must still be processed, got %q", out.String())
 	}
 }
 

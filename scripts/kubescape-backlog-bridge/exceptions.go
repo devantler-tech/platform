@@ -190,7 +190,7 @@ func loadExceptions(path string) ([]exception, error) {
 	// ambiguous and Go picks the broader reading. Resolving an ambiguity toward
 	// "excepts more" is the one direction this loader must never take, so the
 	// ambiguity is refused before anything is compiled.
-	if err := rejectDuplicateKeys(raw); err != nil {
+	if err := rejectDuplicateKeys(raw, true); err != nil {
 		return nil, fmt.Errorf("%w: %s: %w; a repeated key here can WIDEN an exception rather than "+
 			"narrow it", errBadExceptions, path, err)
 	}
@@ -246,13 +246,37 @@ func loadExceptions(path string) ([]exception, error) {
 // twice. encoding/json cannot report this — Unmarshal keeps the last value and
 // a map[string]… loses the evidence — so the raw token stream is walked
 // instead.
-func rejectDuplicateKeys(raw []byte) error {
-	return scanForDuplicateKeys(json.NewDecoder(bytes.NewReader(raw)))
+//
+// foldKeys additionally rejects keys that differ only by case. That is right
+// for a STRUCT and wrong for a MAP, and the difference is decided by the
+// destination rather than by the document: json binds struct fields
+// case-insensitively, so `Attributes` overwrites `attributes`, while a map
+// keeps both keys and has no ambiguity to report.
+//
+// The walker cannot see the destination, so the caller supplies it — and the
+// two callers genuinely differ:
+//
+//   - the exceptions artifact is our own generated file whose aliasable keys
+//     are struct fields, so it folds (that is where the Unicode alias case was
+//     found);
+//   - a scan document is an arbitrary Kubernetes object, dense with
+//     user-controlled MAPS — labels, annotations, and their `f:`-prefixed
+//     mirrors under managedFields — so it does not. Folding it rejected
+//     ordinary objects: a real posture summary reporting 10 themes aborts the
+//     whole run once a `Team` label sits beside a `team` one.
+//
+// Exact repeats are refused for both, which is what the scan side actually
+// needed: the false all-clear that motivated it was `"controls":{…}` followed
+// by a literal `"controls":{}`, not a case variant. Nothing an API server emits
+// carries case-variant siblings — measured zero across 2215 posture and 117 CVE
+// objects — so the scan side gives up no reachable protection.
+func rejectDuplicateKeys(raw []byte, foldKeys bool) error {
+	return scanForDuplicateKeys(json.NewDecoder(bytes.NewReader(raw)), foldKeys)
 }
 
 // scanForDuplicateKeys consumes exactly one JSON value from dec, recursing
 // through objects and arrays.
-func scanForDuplicateKeys(dec *json.Decoder) error {
+func scanForDuplicateKeys(dec *json.Decoder, foldKeys bool) error {
 	tok, err := dec.Token()
 	if err != nil {
 		// A malformed document is left to Unmarshal, which reports it with far
@@ -302,7 +326,7 @@ func scanForDuplicateKeys(dec *json.Decoder) error {
 			first, dup := "", false
 
 			for _, prior := range seen {
-				if strings.EqualFold(prior, key) {
+				if prior == key || (foldKeys && strings.EqualFold(prior, key)) {
 					first, dup = prior, true
 
 					break
@@ -326,13 +350,13 @@ func scanForDuplicateKeys(dec *json.Decoder) error {
 
 			seen = append(seen, key)
 
-			if err := scanForDuplicateKeys(dec); err != nil {
+			if err := scanForDuplicateKeys(dec, foldKeys); err != nil {
 				return err
 			}
 		}
 	case '[':
 		for dec.More() {
-			if err := scanForDuplicateKeys(dec); err != nil {
+			if err := scanForDuplicateKeys(dec, foldKeys); err != nil {
 				return err
 			}
 		}
