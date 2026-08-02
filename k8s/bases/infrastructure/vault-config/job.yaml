@@ -44,6 +44,11 @@ metadata:
     # The Job script itself is idempotent — each command checks state first.
     kustomize.toolkit.fluxcd.io/force: enabled
     checkov.io/skip1: CKV_K8S_38=the store-keys container writes the openbao-unseal Secret through kubectl
+    # vault-init auto-restores the newest raft snapshot from the
+    # vault-snapshots PVC, whose files are owned by the UID the upstream
+    # OpenBao chart's StatefulSet runs as (100). Reading them requires the
+    # same UID.
+    checkov.io/skip2: CKV_K8S_40=UID 100 matches the OpenBao StatefulSet so the DR restore can read snapshots the PVC already owns at that UID
 spec:
   # Auto-delete the Job (and its pods) 10 minutes after completion. Without
   # this, the `kustomize.toolkit.fluxcd.io/force: enabled` annotation above

@@ -83,10 +83,15 @@ DISABLE_ERRORS_LINTERS:
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (37) and trivy (624): Kubernetes misconfiguration in k8s/, which the section above
+  # checkov (28) and trivy (624): Kubernetes misconfiguration in k8s/, which the section above
   # explains is NOT covered elsewhere. Tracked by #2787.
   #
-  # checkov's remaining 37 are all `kubernetes` framework, led by CKV_K8S_40 (11). The `secrets`
+  # checkov's remaining 28 are all `kubernetes` framework. CKV_K8S_40 is down to 2, both inside
+  # the vendored KubeVirt and CDI release bundles, which cannot carry an inline annotation without
+  # a hand-edit the next vendor bump reverts (#2899). The other nine sites each carry a scoped
+  # skip naming why that UID cannot move — an image's own user, a shared PVC's ownership, root to
+  # bind :53, or a UID that is itself the thing under test (#2898). CKV_K8S_40 is NOT disabled: a
+  # new workload running below UID 10000 with no stated reason is still flagged. The `secrets`
   # framework is at 0: its 31 CKV_SECRET_6 findings were ExternalSecret/PushSecret key NAMES and
   # OpenBao paths rather than secret material, and each site now carries a scoped skip naming the
   # control and the reason (#2892). CKV_SECRET_6 is NOT disabled — a real base64 secret committed

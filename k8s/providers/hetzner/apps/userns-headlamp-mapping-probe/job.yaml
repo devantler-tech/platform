@@ -43,6 +43,11 @@ metadata:
   labels:
     app.kubernetes.io/name: userns-headlamp-mapping-probe
     app.kubernetes.io/component: user-namespace-probe
+  annotations:
+    # The UID/GID pair is the measurement subject, not an incidental choice —
+    # the probe reads the idmap applied to headlamp's own identity, so any
+    # other UID measures a different mapping and answers a different question.
+    checkov.io/skip1: CKV_K8S_40=the probe must run as headlamp's own 100/101 pair because that mapping is what it measures
 spec:
   # Deliberately no ttlSecondsAfterFinished: the TTL controller deletes the Job
   # AND its pod, and the pod's log is the entire deliverable here. The component

@@ -46,6 +46,11 @@ kind: CronJob
 metadata:
   name: umami-provision-tenants
   namespace: umami
+  annotations:
+    # The provisioner talks to the same Umami instance the app serves and must
+    # act as the app's own identity, the image's nextjs user (see the
+    # helm-release: uid/gid 1001 = podSecurityContext.runAsUser/fsGroup).
+    checkov.io/skip1: CKV_K8S_40=must run as umami's own nextjs user 1001 to match the app it provisions
 spec:
   schedule: "*/15 * * * *"
   # Never run two reconciles at once; a slow run (e.g. waiting on a down Umami)

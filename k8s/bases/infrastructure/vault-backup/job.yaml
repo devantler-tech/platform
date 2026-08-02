@@ -29,6 +29,10 @@ metadata:
     # Jobs are immutable; let Flux delete-and-recreate on spec change.
     kustomize.toolkit.fluxcd.io/force: enabled
     checkov.io/skip1: CKV_K8S_38=the snapshot container reads its SA JWT to log in via OpenBao Kubernetes auth
+    # Writes the baseline snapshot to the same vault-snapshots PVC as the
+    # nightly CronJob, so it carries the same UID constraint: 100 is the UID
+    # the upstream OpenBao chart's StatefulSet runs as.
+    checkov.io/skip2: CKV_K8S_40=UID 100 matches the OpenBao StatefulSet so the baseline snapshot lands with the ownership the restore path expects
 spec:
   # No ttlSecondsAfterFinished (intentional). This is a one-shot "snapshot at
   # deploy/change time" Job (see header) -- it must run ONCE per vault-backup

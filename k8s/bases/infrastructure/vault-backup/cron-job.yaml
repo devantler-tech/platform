@@ -27,6 +27,11 @@ metadata:
   namespace: openbao
   annotations:
     checkov.io/skip1: CKV_K8S_38=the snapshot container reads its SA JWT to log in via OpenBao Kubernetes auth
+    # UID 100 is the UID the upstream OpenBao chart's StatefulSet runs as (see
+    # the openbao namespace comment). The snapshot writer and OpenBao share the
+    # vault-snapshots PVC, so both must agree on it; raising this above 10000
+    # would orphan every retained snapshot the DR restore path reads.
+    checkov.io/skip2: CKV_K8S_40=UID 100 matches the OpenBao StatefulSet so the shared vault-snapshots PVC stays readable to both
 spec:
   schedule: "30 3 * * *"
   # Pin the cron evaluation to UTC instead of inheriting kube-controller-manager's
