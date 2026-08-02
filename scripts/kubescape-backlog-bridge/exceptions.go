@@ -580,19 +580,42 @@ func analyse(r *syntax.Regexp) (matchable, consumes bool) {
 	case syntax.OpConcat:
 		// Every element must match, so one unmatchable element makes the whole
 		// concatenation unmatchable however much the others consume.
-		matchable = true
+		//
+		// Position matters too, and individually-matchable elements can still
+		// contradict each other: `^a^$` has a literal and two anchors that are
+		// each fine alone, yet nothing can be at the start of the text after
+		// consuming an `a`. `^$a$` is the mirror. Both match no string at all.
+		//
+		// Only the whole-text anchors are treated this way. Under `(?m)` the
+		// parser produces OpBeginLine/OpEndLine, which legitimately match
+		// mid-string, so they are left alone — accepting is the safe direction.
 		anyConsumes := false
+		endSeen := false
 
 		for _, sub := range r.Sub {
+			switch sub.Op {
+			case syntax.OpBeginText:
+				if anyConsumes {
+					return false, false
+				}
+			case syntax.OpEndText:
+				endSeen = true
+			default:
+			}
+
 			subMatchable, subConsumes := analyse(sub)
 			if !subMatchable {
+				return false, false
+			}
+
+			if subConsumes && endSeen {
 				return false, false
 			}
 
 			anyConsumes = anyConsumes || subConsumes
 		}
 
-		return matchable, anyConsumes
+		return true, anyConsumes
 
 	case syntax.OpAlternate:
 		for _, sub := range r.Sub {

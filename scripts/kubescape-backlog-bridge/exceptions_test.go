@@ -670,7 +670,8 @@ func TestPatternThatCanOnlyMatchEmptyIsRejected(t *testing.T) {
 	// concatenation case matters separately, because the literal beside it
 	// plainly consumes input while the whole expression still cannot match.
 	for _, pattern := range []string{`^$`, `^()$`, `^(?:)$`,
-		`^[^\\x00-\\x{10FFFF}]$`, `^a[^\\x00-\\x{10FFFF}]$`, `^[^\\x00-\\x{10FFFF}]+$`} {
+		`^[^\\x00-\\x{10FFFF}]$`, `^a[^\\x00-\\x{10FFFF}]$`, `^[^\\x00-\\x{10FFFF}]+$`,
+		`^a^$`, `^$a$`, `^a$b$`} {
 		t.Run(pattern, func(t *testing.T) {
 			exc := filepath.Join(t.TempDir(), "exceptions.json")
 			writeRaw(t, exc, `[{"name":"vacuous","policyType":"postureExceptionPolicy",`+
