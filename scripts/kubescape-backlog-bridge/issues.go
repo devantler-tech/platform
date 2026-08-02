@@ -41,7 +41,13 @@ var errAmbiguousEntry = errors.New("two tracked issues carry the same fingerprin
 var errMissingFingerprint = errors.New("tracked issue carries no readable fingerprint")
 
 // fingerprintPattern extracts the marker's hex identity.
-var fingerprintPattern = regexp.MustCompile(fingerprintMarker + `([0-9a-f]{16})`)
+//
+// Anchored to a WHOLE LINE. Sanitising folds an embedded newline into a space,
+// so a crafted component can still carry the marker text mid-line; unanchored,
+// the identity would then be decided by which one appears first, and the entry's
+// identity would depend on the order renderBody happens to emit its fields in.
+// Anchoring makes only the line renderBody itself writes count.
+var fingerprintPattern = regexp.MustCompile(`(?m)^<!-- ` + fingerprintMarker + `([0-9a-f]{16}) -->$`)
 
 // backlogEntry is an issue this command already owns.
 type backlogEntry struct {
@@ -100,12 +106,55 @@ type plan struct {
 // and folding it in here would make a gated run look like it had work to do.
 func (p plan) empty() bool { return len(p.Actions) == 0 }
 
+// zeroWidthSpace breaks a token without removing information from it.
+const zeroWidthSpace = "​"
+
+// sanitizeForIssue neutralises active GitHub syntax in a scanner-derived string
+// before it is posted.
+//
+// Scan output is UNTRUSTED input. Severity names reach a theme after only a
+// blank check, and CVE keys come from the summary object's own map keys, so an
+// arbitrary string can reach a title or body — which this command posts from an
+// authenticated account into a public repository. Two things then go wrong, and
+// neither is cosmetic:
+//
+//   - An "@" makes a live mention. It would notify real people, and a body
+//     containing a review-bot trigger would fire that bot from our own comment.
+//     No Markdown construct hides a mention from a bot — not a code span, a
+//     fence, a blockquote or an HTML comment — because bots parse the raw text,
+//     so the token itself has to be broken.
+//   - A NEWLINE lets the string forge body structure — a second
+//     "**Surface:**" line, or a second fingerprint marker. Today both readers
+//     take the FIRST match and the genuine line is rendered above the component
+//     list, so a forged one loses; that was measured, not assumed. But the
+//     safety of a value must not rest on where it happens to be interpolated,
+//     because moving one field would silently make a crafted workload name able
+//     to retarget which entries a run closes. Stripping the newline makes the
+//     value safe wherever it lands.
+//
+// Backticks are removed for the same reason at a smaller scale: components are
+// rendered inside a code span, and a backtick would end it early and leave the
+// rest of the value as live markup.
+//
+// The replacement is deterministic, so it cannot perturb the anti-churn
+// guarantee: the same input always renders the same bytes.
+func sanitizeForIssue(s string) string {
+	replaced := strings.NewReplacer(
+		"@", "@"+zeroWidthSpace,
+		"`", "'",
+		"\r", " ",
+		"\n", " ",
+	).Replace(s)
+
+	return strings.TrimSpace(replaced)
+}
+
 // renderTitle and renderBody are the two fields a reconciler compares against
 // the live issue to decide whether anything actually changed. Both are pure
 // functions of the theme, with no timestamps, run ids, or ordering derived from
 // map iteration — an unstable byte anywhere in either one turns every run into
 // an update and reintroduces exactly the churn this design forbids.
-func renderTitle(t theme) string { return t.Title() }
+func renderTitle(t theme) string { return sanitizeForIssue(t.Title()) }
 
 // renderBody builds the issue body.
 //
@@ -123,8 +172,11 @@ func renderBody(t theme) string {
 	b.WriteString("Filed automatically from live Kubescape findings by ")
 	b.WriteString("`scripts/kubescape-backlog-bridge`. Part of #2854.\n\n")
 
+	// t.Kind is this package's own constant and is written raw, because
+	// entrySurface parses this exact line back and must match surfacePosture or
+	// surfaceCVE literally. Every other field is scanner-derived and sanitized.
 	fmt.Fprintf(&b, "**Surface:** %s\n", t.Kind)
-	fmt.Fprintf(&b, "**Severity:** %s\n", t.Severity)
+	fmt.Fprintf(&b, "**Severity:** %s\n", sanitizeForIssue(t.Severity))
 
 	if t.Kind == string(surfaceCVE) {
 		fmt.Fprintf(&b, "**Occurrences:** %d\n", t.Total)
@@ -133,7 +185,7 @@ func renderBody(t theme) string {
 	fmt.Fprintf(&b, "\n**Affected components (%d):**\n\n", len(t.Components))
 
 	for _, c := range t.Components {
-		b.WriteString("- `" + c + "`\n")
+		b.WriteString("- `" + sanitizeForIssue(c) + "`\n")
 	}
 
 	b.WriteString("\nThis issue is reconciled automatically: it is updated when the affected set " +

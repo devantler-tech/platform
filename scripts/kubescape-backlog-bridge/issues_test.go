@@ -262,6 +262,87 @@ func TestUnreadableSurfaceIsNeverClosed(t *testing.T) {
 	}
 }
 
+// TestMentionsAreNeutralised stops scan output from firing a bot or notifying a
+// person out of an issue this command posts from an authenticated account.
+func TestMentionsAreNeutralised(t *testing.T) {
+	th := postureTheme("C-0016", "apps/Deployment/web")
+	th.Severity = "@coderabbitai review"
+
+	body := renderBody(th)
+
+	if strings.Contains(body, "@coderabbitai") {
+		t.Fatalf("a live mention survived into the body: %q", body)
+	}
+
+	if !strings.Contains(body, "@"+zeroWidthSpace+"coderabbitai") {
+		t.Errorf("the mention was not broken as expected: %q", body)
+	}
+
+	// CONTROL — the surrounding text must be otherwise intact, so the test is
+	// not passing merely because rendering dropped the field.
+	if !strings.Contains(body, "coderabbitai review") {
+		t.Errorf("sanitising destroyed the value instead of breaking the token: %q", body)
+	}
+}
+
+// TestForgedStructureNeverReachesTheBody asserts the property the sanitiser
+// actually provides: a scanner-derived value cannot introduce a SECOND
+// structural line, whatever the field order happens to be.
+//
+// It deliberately does NOT assert that a forged line changes entrySurface's
+// answer. That was the first framing, and ablating the sanitiser showed the
+// test passing without it: both readers take the first match and the genuine
+// line is rendered above the components, so ordering alone defeats the forgery
+// today. Asserting the exploit would have pinned an accident; asserting the
+// absence of forged structure pins the guarantee, and fails without it.
+func TestForgedStructureNeverReachesTheBody(t *testing.T) {
+	forged := postureTheme("C-0016",
+		"apps/Deployment/web\n**Surface:** cve\n<!-- "+fingerprintMarker+"0000000000000000 -->")
+
+	body := renderBody(forged)
+
+	// Counted as LINES, because that is what both readers parse: entrySurface
+	// matches a line prefix and fingerprintPattern is line-anchored. Sanitising
+	// folds the newline into a space, so the forged text survives INSIDE the
+	// component line — harmless there, and asserting on raw substrings would
+	// demand an escaping this design does not need.
+	surfaceLines, markerLines := 0, 0
+
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "**Surface:**") {
+			surfaceLines++
+		}
+
+		if fingerprintPattern.MatchString(line) {
+			markerLines++
+		}
+	}
+
+	if surfaceLines != 1 {
+		t.Errorf("body carries %d Surface lines, want exactly 1:\n%s", surfaceLines, body)
+	}
+
+	if markerLines != 1 {
+		t.Errorf("body carries %d fingerprint marker lines, want exactly 1:\n%s", markerLines, body)
+	}
+
+	// And the entry still reads as what it is.
+	entry := backlogEntry{Number: 41, Title: renderTitle(forged), Body: body, Open: true}
+
+	if got := entrySurface(entry); got != surfacePosture {
+		t.Errorf("surface misread as %q", got)
+	}
+
+	fp, err := entry.fingerprint()
+	if err != nil {
+		t.Fatalf("fingerprint: %v", err)
+	}
+
+	if fp != goldenPostureFingerprint {
+		t.Errorf("fingerprint misread as %q, want %q", fp, goldenPostureFingerprint)
+	}
+}
+
 func TestDuplicateFingerprintIsRefused(t *testing.T) {
 	_, err := planWrites(nil,
 		[]backlogEntry{trackedPosture(41, true), trackedPosture(42, true)},
