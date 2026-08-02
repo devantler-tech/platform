@@ -493,7 +493,12 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 		// Establishing identity before applying any exception is the fail-closed
 		// order. Namespace is deliberately not required: a cluster-scoped object
 		// legitimately has none, and it is not what a broad designator turns on.
-		if comp.Kind == "" || comp.Name == "" {
+		//
+		// TRIMMED, because whitespace is the same hole one step over: `" "` is
+		// not equal to "" yet `.*` full-matches it just the same, so an untrimmed
+		// check would establish an identity that is blank in every way that
+		// matters and then let a broad exception suppress a failed control.
+		if strings.TrimSpace(comp.Kind) == "" || strings.TrimSpace(comp.Name) == "" {
 			return nil, 0, fmt.Errorf("%w: a posture summary carries no workload %s "+
 				"(`kubescape.io/workload-kind` / `kubescape.io/workload-name`); exceptions are matched "+
 				"against that identity and a cluster-wide designator matches an empty value, so its "+
@@ -1133,11 +1138,11 @@ func missingSeverityBuckets(got map[string]json.RawMessage) []string {
 // error points at the field to fix rather than at the concept.
 func missingIdentityFields(c component) string {
 	var missing []string
-	if c.Kind == "" {
+	if strings.TrimSpace(c.Kind) == "" {
 		missing = append(missing, "kind")
 	}
 
-	if c.Name == "" {
+	if strings.TrimSpace(c.Name) == "" {
 		missing = append(missing, "name")
 	}
 

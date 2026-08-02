@@ -1274,6 +1274,60 @@ func TestPostureSummaryWithoutWorkloadIdentityIsRejected(t *testing.T) {
 	}
 }
 
+// WHITESPACE is the same hole as an empty value, one step over: an `== ""`
+// identity check accepts `" "`, and the generated cluster-wide `kind: ".*"`
+// designator then matches it — so a failed control is suppressed by a broad
+// exception against an identity that was never established, and the run exits
+// successfully with nothing to file. That is the false all-clear this command
+// exists to prevent, so the check trims before deciding.
+func TestWhitespaceOnlyWorkloadIdentityIsRejected(t *testing.T) {
+	for _, tc := range []struct{ name, kind, workload string }{
+		{"blank kind", " ", "api"},
+		{"blank name", "Deployment", "  "},
+		{"tab kind", "\t", "api"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := fmt.Sprintf(`{"metadata":{"name":"api","namespace":"app",`+
+				`"labels":{"kubescape.io/workload-kind":%q,"kubescape.io/workload-name":%q,`+
+				`"kubescape.io/workload-namespace":"app"}},`+
+				`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},`+
+				`"status":{"status":"failed"}}},"severities":{"critical":0,"high":1}}}`,
+				tc.kind, tc.workload)
+
+			items := itemsOf(t, raw)
+
+			if _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
+				t.Fatalf("want errMalformedScanContent for a whitespace-only identity, got %v", err)
+			}
+		})
+	}
+}
+
+// The harm the check above prevents, asserted end to end rather than argued: a
+// whitespace identity plus the generated cluster-wide designator must not
+// silently swallow a FAILED control and report a clean run.
+func TestWhitespaceIdentityIsNotSuppressedByAClusterWideException(t *testing.T) {
+	exceptions := loadFixture(t, exceptionsDoc(
+		policyDoc("cluster-wide", []string{"C-0016"}, `{"kind":".*"}`)))
+
+	raw := `{"metadata":{"name":"api","namespace":"app",` +
+		`"labels":{"kubescape.io/workload-kind":" ","kubescape.io/workload-name":"api",` +
+		`"kubescape.io/workload-namespace":"app"}},` +
+		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},` +
+		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":1}}}`
+
+	items := itemsOf(t, raw)
+
+	themes, _, err := derivePosture(items, exceptions)
+	if err == nil {
+		t.Fatalf("a whitespace identity must be refused, not silently excepted; got %d theme(s)", len(themes))
+	}
+
+	if !errors.Is(err, errMalformedScanContent) {
+		t.Fatalf("want errMalformedScanContent, got %v", err)
+	}
+}
+
 // A document identifying as BOTH scan surfaces is not decidable. surface()
 // returns on the first key it finds, so without this a CVE summary carrying an
 // empty `controls: {}` would pass -posture and report an all-clear from the
