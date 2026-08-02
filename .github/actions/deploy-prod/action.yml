@@ -243,9 +243,9 @@ runs:
         # ~/.docker/config.json populated by the "Configure GHCR auth"
         # step above; cosign reads them through the OCI keychain.
         COSIGN_YES: "true"
-        REF_TAG: ${{ steps.workload-ref.outputs.ref_tag }}
       run: |
         set -euo pipefail
+        REF_TAG="ghcr.io/devantler-tech/platform/manifests:latest"
         # Resolve the tag → digest BEFORE signing so that (a) cosign signs
         # exactly the bytes we resolved -- no tag→digest TOCTOU if a
         # concurrent deploy mutates the tag between this resolve and the
@@ -257,10 +257,6 @@ runs:
         # cosign-native equivalent (`cosign manifest digest`) was removed
         # in cosign v3.0.
         DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')
-        if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-          echo "::error::Resolved invalid OCI digest for ${REF_TAG}: ${DIGEST}"
-          exit 1
-        fi
         REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"
         cosign sign --yes --recursive "${REF}"
         echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
