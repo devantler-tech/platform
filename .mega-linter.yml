@@ -83,10 +83,12 @@ DISABLE_ERRORS_LINTERS:
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (37) and trivy (624): Kubernetes misconfiguration in k8s/, which the section above
+  # checkov (34) and trivy (620): Kubernetes misconfiguration in k8s/, which the section above
   # explains is NOT covered elsewhere. Tracked by #2787.
   #
-  # checkov's 37 are all `kubernetes` framework, and all 11 CKV_K8S_40 findings stand unsuppressed.
+  # checkov's 34 are all `kubernetes` framework, and 8 of them are CKV_K8S_40. Those 8 break down as
+  # 4 withdrawn scoped skips (#2904) + 2 vendored bundles (#2899) + 2 unconstrained candidates. A
+  # further 3 were dispositioned by #2901 and are NOT in the 8 — the original count was 11.
   # Four scoped skips were tried and withdrawn: each named a per-site technical constraint that does
   # not survive checking. The two vault-backup jobs claimed to share the vault-snapshots PVC with the
   # OpenBao StatefulSet — but the live StatefulSet mounts `config`/`unseal-keys`/`tmp`/`home` plus
@@ -94,12 +96,21 @@ DISABLE_ERRORS_LINTERS:
   # preserve. The two user-namespace probes claimed their UID was the measurement subject — but
   # `/proc/self/uid_map` describes the pod's namespace and reads identically for every process in it
   # regardless of UID, and `fsGroup` supplies volume access as a GID independent of `runAsUser`.
-  # #2904 carries the per-site remediation and the risk-acceptance question for those four. Of the
-  # 11, two are inside the vendored KubeVirt and CDI release bundles and need a mechanism that
-  # survives a vendor bump (#2899). The remaining five have no demonstrated constraint and are
-  # candidates to simply raise (#2901) — including CoreDNS, whose pinned
-  # image config reads `User: "nonroot:nonroot"`, so an explicit `runAsUser: 65532` would both match
-  # the image and clear the check. CKV_K8S_40 is NOT disabled: a new workload running
+  # #2904 carries the per-site remediation and the risk-acceptance question for those four. Two more
+  # of the 8 are inside the vendored KubeVirt and CDI release bundles and need a mechanism that
+  # survives a vendor bump (#2899).
+  #
+  # The last two of the 8 have no demonstrated constraint and are candidates to simply raise: CoreDNS,
+  # whose pinned image config reads `User: "nonroot:nonroot"` so an explicit `runAsUser: 65532`
+  # would both match the image and clear the check, and the vault-config Job. #2901 dispositioned
+  # three further findings — outside the 8, and part of the original 11 — by checking each image
+  # rather than reasoning about it: the MinIO
+  # server and its bucket-creation Job declare no `User` at all and carry no /etc/passwd entry for
+  # the UID they ran under, so both were raised to 65532; the umami CronJob's 1001 turned out to BE
+  # its image's baked `nextjs` user (`nextjs:x:1001:65533`), so it carries a scoped skip instead —
+  # the one demonstrated constraint of the three. That asymmetry is the point: the image decides.
+  #
+  # CKV_K8S_40 is NOT disabled: a new workload running
   # below UID 10000 with no stated reason is still flagged. The `secrets`
   # framework is at 0: its 31 CKV_SECRET_6 findings were ExternalSecret/PushSecret key NAMES and
   # OpenBao paths rather than secret material, and each site now carries a scoped skip naming the
@@ -110,7 +121,7 @@ DISABLE_ERRORS_LINTERS:
   # exact commands this job runs, so a slice can show the number moved without a CI round trip.
   #
   # ⚠️ Read trivy's number from that script, NOT from the MegaLinter summary. MegaLinter reports
-  # this trivy scan as "1 non blocking error" while the scan actually fails 624 checks across 459
+  # this trivy scan as "1 non blocking error" while the scan actually fails 620 checks across 459
   # targets; the 1 is an artifact of how MegaLinter counts trivy's output. checkov's number is a
   # genuine sum of "Failed checks:" and needs no such caveat.
   #
