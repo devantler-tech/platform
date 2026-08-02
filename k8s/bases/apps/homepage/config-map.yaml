@@ -239,9 +239,6 @@ data:
         - skills.sh:
             - icon: mdi-certificate-outline
               href: https://skills.sh
-        - Gramaton:
-            - icon: mdi-translate
-              href: https://gramaton.io
         - LLM Stats:
             - icon: mdi-chart-bar
               href: https://llm-stats.com
@@ -252,6 +249,9 @@ data:
         - Netflix:
             - icon: si-netflix-#E50914
               href: https://netflix.com
+        - Gramaton:
+            - icon: mdi-movie-open-play-outline
+              href: https://gramaton.io
         - Reddit:
             - icon: si-reddit-#FF4500
               href: https://reddit.com
