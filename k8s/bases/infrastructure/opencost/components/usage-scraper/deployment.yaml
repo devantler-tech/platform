@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/part-of: opencost
     app.kubernetes.io/component: metrics-scraper
     platform.devantler.tech/replica-floor: exempt
+  annotations:
+    checkov.io/skip1: CKV_K8S_38=Prometheus kubernetes_sd and authenticated kubelet scraping both need the token
 spec:
   # Two replicas would scrape identical node series and race them into the
   # remote-write receiver. Recreate avoids an overlapping rollout; the WAL is

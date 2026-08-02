@@ -83,9 +83,10 @@ func TestKSailLifecycleWrapperUsesOnlySOPSPullToken(t *testing.T) {
 
 func TestKSailPublishWrapperPreservesActionsWriteToken(t *testing.T) {
 	f := newFixture(t)
+	stagingRef := "oci://ghcr.io/devantler-tech/platform/manifests:staging-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-123-2"
 	result := f.runKSailPullWrapper(
 		validConfig(),
-		[]string{"workload", "push"},
+		[]string{"workload", "push", stagingRef},
 		map[string]string{
 			"GITHUB_ACTOR": "fixture-publisher",
 			"GHCR_TOKEN":   "fixture-actions-write-token",
@@ -98,11 +99,44 @@ func TestKSailPublishWrapperPreservesActionsWriteToken(t *testing.T) {
 	requireWrapperFileEquals(t, f.ksailConfigPathCapture, "ksail.prod.yaml")
 	requireWrapperFileEquals(t, f.ksailRegistryCapture, "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests")
 	requireWrapperFileEquals(t, f.ksailRegistryOverrideCapture, "")
+	wantCommand := []string{"--config", "ksail.prod.yaml", "workload", "push", stagingRef}
+	if got := strings.Fields(strings.TrimSpace(mustRead(f.ksailCommandCapture))); !slicesEqual(got, wantCommand) {
+		t.Errorf("KSail command = %q, want %q", got, wantCommand)
+	}
 	if revision := mustRead(f.ksailRevisionCapture); !sha256HexPattern.MatchString(revision) {
 		t.Errorf("KSail pull revision = %q, want 64 lowercase hex characters", revision)
 	}
 	requireWrapperSecretAbsent(t, result, "fixture-actions-write-token")
 	requireWrapperPathExists(t, f.outputPathLog, false)
+}
+
+func TestKSailPublishWrapperRejectsImplicitOrUnscopedDestinations(t *testing.T) {
+	tests := []struct {
+		name    string
+		command []string
+	}{
+		{name: "implicit latest", command: []string{"workload", "push"}},
+		{name: "explicit latest", command: []string{"workload", "push", "oci://ghcr.io/devantler-tech/platform/manifests:latest"}},
+		{name: "external registry", command: []string{"workload", "push", "oci://example.com/devantler-tech/platform/manifests:staging-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-123-2"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			f := newFixture(t)
+			result := f.runKSailPullWrapper(
+				validConfig(),
+				test.command,
+				map[string]string{
+					"GITHUB_ACTOR": "fixture-publisher",
+					"GHCR_TOKEN":   "fixture-actions-write-token",
+				},
+			)
+
+			requireWrapperExitCode(t, result, 64)
+			requireWrapperPathExists(t, f.ksailTokenCapture, false)
+			requireWrapperSecretAbsent(t, result, "fixture-actions-write-token")
+		})
+	}
 }
 
 func TestProductionConfigKeepsProtectedRegistryTemplate(t *testing.T) {

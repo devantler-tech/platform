@@ -1,0 +1,144 @@
+---
+# Disposable production-only measurement of the subordinate UID/GID mapping a
+# user-namespaced pod receives in the `headlamp` namespace (#2651, acceptance
+# criterion 5). It runs in headlamp's own namespace and is scheduled onto the
+# node serving headlamp, so it exercises the same admission path and the same
+# kubelet as the workload under test.
+#
+# Why this shape, and not a more direct read of headlamp's own containers:
+#
+# - `hostUsers` is a POD-level field, so both headlamp containers necessarily
+#   share one user namespace. The open question is therefore not per-container;
+#   it is whether this cluster's kubelet honours `hostUsers: false` at all, or
+#   silently leaves the pod in the host user namespace. A pod that asks for the
+#   same thing, in the same namespace, on the same node discriminates exactly
+#   that failure mode.
+# - Reading `/proc/self/uid_map` inside headlamp needs `exec`, which the
+#   maintaining agent's runtime hard-denies and which nobody should hold
+#   standing access to for a verification.
+# - Inferring the mapping from file ownership on the plugins PVC does NOT work:
+#   when the CSI driver supports idmapped mounts the on-disk ownership is left
+#   unshifted and the mapping is applied at mount time, so an unshifted reading
+#   is ambiguous between "idmapped" and "no user namespace". That probe would
+#   produce false negatives, so it is deliberately not used.
+#
+# What this proves: a pod in the `headlamp` namespace, with headlamp's exact
+# runAsUser/runAsGroup identity, on headlamp's node, receives a non-identity
+# subordinate mapping. What it does not prove: the specific range assigned to
+# the headlamp pod, which differs per pod by design.
+#
+# The component is deliberately omitted from the parent kustomization until a
+# short-lived activation PR, matching userns-longhorn-smoke (#2619). The apps
+# Flux Kustomization runs `wait: true` with no explicit healthChecks, so kstatus
+# evaluates every applied resource: a Job reporting Failed takes the whole apps
+# layer not-Ready. That is reachable here by design — a negative result is
+# exactly what the assertions below produce — so activation is deliberate and
+# watched rather than standing. Activate, capture the completed Job's logs onto
+# #2651, then remove the component again (#2858).
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: userns-headlamp-mapping-probe
+  namespace: headlamp
+  labels:
+    app.kubernetes.io/name: userns-headlamp-mapping-probe
+    app.kubernetes.io/component: user-namespace-probe
+spec:
+  # Deliberately no ttlSecondsAfterFinished: the TTL controller deletes the Job
+  # AND its pod, and the pod's log is the entire deliverable here. The component
+  # is removed by hand once that log is recorded on #2651 (#2858), which is the
+  # cleanup path — a TTL would race it and could destroy the measurement.
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: userns-headlamp-mapping-probe
+        app.kubernetes.io/component: user-namespace-probe
+    spec:
+      # Explicit rather than inherited: the headlamp namespace is not opted into
+      # the namespace-label Kyverno rule (headlamp takes an exact-target values
+      # patch instead), so nothing would supply this value.
+      hostUsers: false
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      # Co-locate with the headlamp pod. User-namespace support is a kubelet and
+      # node-level capability, so the measurement is only about headlamp's
+      # runtime if it is taken on headlamp's node. Expressed as affinity rather
+      # than a pinned nodeName so it follows the workload across rollouts.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: headlamp
+                  app.kubernetes.io/instance: headlamp
+              topologyKey: kubernetes.io/hostname
+      securityContext:
+        # headlamp's own identity, so the probe runs the way headlamp does rather
+        # than as an arbitrary user. It does NOT determine what is measured: an
+        # idmap is a property of the pod's user namespace, so /proc/self/uid_map
+        # reads identically for every process in it whatever UID that process is.
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: read-id-maps
+          image: docker.io/library/busybox:1.38.0@sha256:fd8d9aa63ba2f0982b5304e1ee8d3b90a210bc1ffb5314d980eb6962f1a9715d
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+          args:
+            - |
+              set -eu
+              uid_map="$(cat /proc/self/uid_map)"
+              gid_map="$(cat /proc/self/gid_map)"
+
+              printf 'running-as=%s:%s\n' "$(id -u)" "$(id -g)"
+              printf 'uid_map:\n%s\n' "$uid_map"
+              printf 'gid_map:\n%s\n' "$gid_map"
+
+              # A /proc/<pid>/uid_map line is "<container-start> <host-start>
+              # <length>". Read the host-start column of the first line.
+              uid_host_start="$(printf '%s\n' "$uid_map" | awk 'NR == 1 { print $2 }')"
+              gid_host_start="$(printf '%s\n' "$gid_map" | awk 'NR == 1 { print $2 }')"
+              uid_length="$(printf '%s\n' "$uid_map" | awk 'NR == 1 { print $3 }')"
+              gid_length="$(printf '%s\n' "$gid_map" | awk 'NR == 1 { print $3 }')"
+
+              # The acceptance criterion: a non-zero subordinate range.
+              test "$uid_host_start" -gt 0
+              test "$gid_host_start" -gt 0
+
+              # A pod left in the host user namespace reports the identity map
+              # "0 0 4294967295". The host-start assertions above already reject
+              # it, but assert the full-width length separately so a future
+              # kernel reporting a non-zero-based identity map cannot pass.
+              test "$uid_length" -lt 4294967295
+              test "$gid_length" -lt 4294967295
+
+              printf 'userns-headlamp-mapping=non-identity uid_host_start=%s gid_host_start=%s\n' \
+                "$uid_host_start" "$gid_host_start"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 101
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions:
+              level: s0
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi

@@ -151,25 +151,58 @@ func TestDeployActionClusterLifecycleUsesSOPSAuthButPublishKeepsActionsToken(t *
 	requireContains(t, action[actionUpdate:actionReassert], "run: "+wrapper+" cluster update")
 	requireNotContains(t, action[actionUpdate:actionReassert], "GHCR_TOKEN:")
 
-	actionPush := requireIndex(t, action, "name: 📦 Push manifests to GHCR")
-	actionSign := requireIndex(t, action, "name: ⚙️ Install cosign")
-	requireContains(t, action[actionPush:actionSign], "run: "+wrapper+" workload push")
-	requireContains(t, action[actionPush:actionSign], "GHCR_TOKEN: ${{ inputs.ghcr-token }}")
+	actionPublish := requireIndex(t, action, "id: publish_platform_manifest")
+	actionVerify := requireIndex(t, action, "id: verify_flux_ghcr_auth_after_push")
+	requireContains(t, action[actionPublish:actionVerify], "uses: ./.github/actions/deploy-prod/publish-platform-manifests")
+	requireContains(t, action[actionPublish:actionVerify], "ghcr-token: ${{ inputs.ghcr-token }}")
 
 	drCreate := requireIndex(t, workflow, "name: 🏗️ Create cluster")
 	drStage := requireIndex(t, workflow, "id: stage_flux_ghcr_auth")
 	requireContains(t, workflow[drCreate:drStage], "run: "+wrapper+" cluster create")
 	requireNotContains(t, workflow[drCreate:drStage], "GHCR_TOKEN:")
 
-	drPush := requireIndex(t, workflow, "name: 📦 Push manifests to GHCR")
+	drPush := requireIndex(t, workflow, "id: publish_platform_manifest")
 	drVerify := requireIndex(t, workflow, "id: verify_flux_ghcr_auth_after_push")
-	requireContains(t, workflow[drPush:drVerify], "run: "+wrapper+" workload push")
-	requireContains(t, workflow[drPush:drVerify], "GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}")
+	requireContains(t, workflow[drPush:drVerify], "uses: ./.github/actions/deploy-prod/publish-platform-manifests")
+	requireContains(t, workflow[drPush:drVerify], "ghcr-token: ${{ secrets.GHCR_TOKEN }}")
 
 	drReconcile := requireIndex(t, workflow, "name: 🔁 Trigger Flux reconciliation")
 	drWait := requireIndex(t, workflow, "name: ⏳ Wait for Flux to settle")
 	requireContains(t, workflow[drReconcile:drWait], "run: "+wrapper+" workload reconcile")
 	requireNotContains(t, workflow[drReconcile:drWait], "GHCR_TOKEN:")
+}
+
+func TestPlatformManifestPublicationMovesLatestOnlyAfterEvidence(t *testing.T) {
+	publish := readRepositoryFile(t, ".github/actions/deploy-prod/publish-platform-manifests/action.yml")
+
+	staging := requireIndex(t, publish, "id: staging_reference")
+	push := requireIndex(t, publish, "id: push_staging")
+	resolve := requireIndex(t, publish, "id: resolve_staging")
+	sign := requireIndex(t, publish, "id: cosign_sign")
+	sbom := requireIndex(t, publish, "id: generate_sbom")
+	attestSBOM := requireIndex(t, publish, "id: attest_sbom")
+	attestProvenance := requireIndex(t, publish, "id: attest_provenance")
+	promote := requireIndex(t, publish, "id: promote_latest")
+
+	requireBefore(t, staging, push, "unique staging reference before push")
+	requireBefore(t, push, resolve, "staging push before digest resolution")
+	requireBefore(t, resolve, sign, "digest resolution before signing")
+	requireBefore(t, sign, sbom, "signature before SBOM generation")
+	requireBefore(t, sbom, attestSBOM, "SBOM generation before attestation")
+	requireBefore(t, attestSBOM, attestProvenance, "SBOM attestation before provenance")
+	requireBefore(t, attestProvenance, promote, "all evidence before latest promotion")
+
+	requireContains(t, publish[staging:push], "GITHUB_SHA")
+	requireContains(t, publish[staging:push], "GITHUB_RUN_ID")
+	requireContains(t, publish[staging:push], "GITHUB_RUN_ATTEMPT")
+	requireContains(t, publish[push:resolve], "STAGING_OCI_REF: ${{ steps.staging_reference.outputs.oci_ref }}")
+	requireContains(t, publish[push:resolve], "workload push \"${STAGING_OCI_REF}\"")
+	requireContains(t, publish[resolve:promote], "steps.resolve_staging.outputs.digest")
+	requireNotContains(t, publish[staging:promote], "manifests:latest")
+	requireContains(t, publish[promote:], "docker buildx imagetools create --prefer-index=false")
+	requireContains(t, publish[promote:], "${SUBJECT_NAME}@${STAGING_DIGEST}")
+	requireContains(t, publish[promote:], "LATEST_DIGEST")
+	requireContains(t, publish[promote:], "STAGING_DIGEST")
 }
 
 func TestDeployActionTalosctlIsInstalledBeforeAnyMutatingBridge(t *testing.T) {
@@ -211,7 +244,7 @@ func TestDeployActionConsumerStagingPrecedesPublishAndIsReassertedAfterUpdate(t 
 	wrapper := "./scripts/run-ksail-prod-with-pull-auth.sh"
 
 	firstRefresh := requireIndex(t, action, "id: stage_flux_ghcr_auth")
-	push := requireIndex(t, action, "run: "+wrapper+" workload push")
+	push := requireIndex(t, action, "id: publish_platform_manifest")
 	postPushRefresh := requireIndex(t, action, "id: verify_flux_ghcr_auth_after_push")
 	reconcile := requireIndex(t, action, "id: reconcile")
 	clusterUpdate := requireIndex(t, action, "run: "+wrapper+" cluster update")
@@ -241,7 +274,7 @@ func TestDeployActionDisasterRebuildPreflightsThenStagesBeforePublish(t *testing
 	preflight := requireIndex(t, workflow, "run: ./scripts/refresh-flux-ghcr-auth.sh --check-only")
 	clusterCreate := requireIndex(t, workflow, "run: "+wrapper+" cluster create")
 	stage := requireIndex(t, workflow, "id: stage_flux_ghcr_auth")
-	push := requireIndex(t, workflow, "run: "+wrapper+" workload push")
+	push := requireIndex(t, workflow, "id: publish_platform_manifest")
 	verify := requireIndex(t, workflow, "id: verify_flux_ghcr_auth_after_push")
 	fanoutVerify := requireIndex(t, workflow, "id: verify_flux_ghcr_fanout")
 	openbaoRestore := requireIndex(t, workflow, "name: 🔐 Restore OpenBao from the R2 snapshot mirror")

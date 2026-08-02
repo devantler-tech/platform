@@ -15,10 +15,17 @@ spec:
       # The bucket-creation Job runs the mc client only; it never calls the
       # Kubernetes API, so it needs no ServiceAccount token (kubescape C-0034).
       automountServiceAccountToken: false
+      # UID 65532 rather than a low one (checkov CKV_K8S_40). Nothing here
+      # constrains the UID: the mc image declares no `User` at all, so it would
+      # run as root unedited, and its /etc/passwd has no entry for the UID this
+      # ran under before — the client is already running unmapped and does not
+      # care. Its only volume is a `mc-config` emptyDir carrying no `fsGroup`,
+      # so no UID owns it, and `MC_CONFIG_DIR` points mc's state there rather
+      # than at a home directory that would have to exist.
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
+        runAsUser: 65532
+        runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
