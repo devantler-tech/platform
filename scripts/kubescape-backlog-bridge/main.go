@@ -1028,6 +1028,29 @@ func report(themes []theme, examined []surface, filtered bool, suppressed int, o
 		return err
 	}
 
+	// The all-clear above states whether it was reached by filtering. The MIXED
+	// case needs the same disclosure and is the one that actually occurs: on the
+	// live cluster the declared exceptions suppress most of what fails, so a
+	// reader sees a short list with no way to tell whether it is short because
+	// the cluster is healthy or because the policies are broad.
+	//
+	// Rendering those two identically is this command's own failure mode turned
+	// inward — the same reading, applied to the same numbers, that the all-clear
+	// branch already refuses. Without it an exception policy can widen until it
+	// accepts almost everything and the output never changes shape.
+	//
+	// Keyed on findings ACTUALLY suppressed, never on -exceptions having been
+	// supplied: a run whose policies match nothing has filtered nothing, and
+	// saying otherwise is undiscriminating in the opposite direction.
+	if suppressed > 0 {
+		if _, err := fmt.Fprintf(out,
+			"note: %d finding(s) were present and excepted by the declared "+
+				"ClusterSecurityExceptions; the entries below are the UNEXCEPTED remainder\n",
+			suppressed); err != nil {
+			return err
+		}
+	}
+
 	for _, t := range themes {
 		if _, err := fmt.Fprintf(out, "%s\t%s\tseverity=%s\ttotal=%d\t%s\tcomponents=%s\n",
 			t.Fingerprint(), t.Kind, t.Severity, t.Total, t.Title(), strings.Join(t.Components, ",")); err != nil {

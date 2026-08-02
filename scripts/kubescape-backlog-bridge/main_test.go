@@ -1582,6 +1582,76 @@ func TestGenuineAllClearDoesNotClaimExceptions(t *testing.T) {
 	}
 }
 
+// The all-clear branch states its provenance, but the MIXED case — some
+// findings excepted, some surviving — is the one that actually occurs, and it
+// rendered the survivors with no indication that anything had been filtered.
+//
+// That is this command's own thesis turned inward, exactly as the all-clear
+// case was: a heavily-filtered report and a lightly-filtered one are
+// byte-indistinguishable, so an exception policy can widen until it accepts
+// almost everything and the output never says so. Fixing only the empty branch
+// fixed the rarer half.
+func TestMixedFilteredReportDisclosesSuppression(t *testing.T) {
+	dir := t.TempDir()
+
+	exc := filepath.Join(dir, "exceptions.json")
+	writeRaw(t, exc, `[{"name":"accepted","policyType":"postureExceptionPolicy","actions":["alertOnly"],`+
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":"^Deployment$"}}],`+
+		`"posturePolicies":[{"controlID":"^C-0016$"}]}]`)
+
+	in := filepath.Join(dir, "posture.json")
+	writeBare(t, in, postureDoc("app", "Deployment", "api",
+		map[string]string{"C-0016": "failed", "C-0017": "failed"}))
+
+	var out bytes.Buffer
+	if err := run([]string{"-exceptions", exc, "-posture", in}, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got := out.String()
+
+	// The surviving theme must still be reported — the note is additional
+	// provenance, never a replacement for the work list.
+	if !strings.Contains(got, "C-0017") {
+		t.Errorf("the unexcepted finding must still be reported, got %q", got)
+	}
+
+	if !strings.Contains(got, "except") {
+		t.Errorf("a partially filtered report must disclose that findings were excepted, got %q", got)
+	}
+}
+
+// The control, and it is the same one the all-clear branch needed: the
+// disclosure must key on findings ACTUALLY suppressed, not on -exceptions
+// having been supplied. A run whose declared exceptions match nothing has
+// filtered nothing, and claiming otherwise is undiscriminating in the opposite
+// direction.
+func TestFilteredReportThatSuppressedNothingMakesNoSuppressionClaim(t *testing.T) {
+	dir := t.TempDir()
+
+	exc := filepath.Join(dir, "exceptions.json")
+	writeRaw(t, exc, `[{"name":"accepted","policyType":"postureExceptionPolicy","actions":["alertOnly"],`+
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":"^Deployment$"}}],`+
+		`"posturePolicies":[{"controlID":"^C-0016$"}]}]`)
+
+	in := filepath.Join(dir, "posture.json")
+	writeBare(t, in, postureDoc("app", "Deployment", "api", map[string]string{"C-0017": "failed"}))
+
+	var out bytes.Buffer
+	if err := run([]string{"-exceptions", exc, "-posture", in}, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "C-0017") {
+		t.Fatalf("the unexcepted finding must still be reported, got %q", got)
+	}
+
+	if strings.Contains(got, "except") {
+		t.Errorf("nothing was suppressed, so the report must make no exception claim, got %q", got)
+	}
+}
+
 // The six required buckets can all be present while an EXTRA key is blank.
 // Extra buckets are tolerated on purpose (an upstream addition must not break
 // the run), so the completeness check passes and a blank class with a positive
