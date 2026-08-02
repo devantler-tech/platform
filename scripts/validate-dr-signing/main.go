@@ -100,8 +100,8 @@ func validatePublicationAction(action string) error {
 		return errors.New("publication action must use digest-preserving latest promotion")
 	}
 
-	if !(pushIdx < resolveIdx && resolveIdx < signIdx && signIdx < sbomIdx &&
-		sbomIdx < attestSBOMIdx && attestSBOMIdx < provenanceIdx && provenanceIdx < promoteIdx) {
+	if pushIdx >= resolveIdx || resolveIdx >= signIdx || signIdx >= sbomIdx ||
+		sbomIdx >= attestSBOMIdx || attestSBOMIdx >= provenanceIdx || provenanceIdx >= promoteIdx {
 		return errors.New("publication action must complete push, resolution, signature, SBOM, and provenance before promotion")
 	}
 	if strings.Count(action, "steps.resolve_staging.outputs.digest") < 4 {
