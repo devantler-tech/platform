@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"regexp/syntax"
 	"sort"
 	"strings"
 )
@@ -453,7 +454,78 @@ func scanForDuplicateKeys(dec *json.Decoder, scope foldScope) error {
 // rather than of its spelling, so no internal structure can widen it. Already-anchored values stay
 // correct — the anchors are zero-width and still match at the same positions.
 func compileFullMatch(pattern string) (*regexp.Regexp, error) {
-	return regexp.Compile("^(?:" + pattern + ")$")
+	re, err := regexp.Compile("^(?:" + pattern + ")$")
+	if err != nil {
+		return nil, err
+	}
+
+	// A pattern that cannot match any NON-EMPTY string is vacuous here, because
+	// the identity guards make kind, name and controlID non-empty. The
+	// generator produces exactly this from an empty CR value: its anchor()
+	// wraps the raw value, so "" becomes `^$` — a non-empty STRING, which slips
+	// past every empty-value guard and compiles cleanly.
+	//
+	// Left alone it is worse than useless. `filtered` is derived from the policy
+	// COUNT, so one vacuous policy suppresses the "no -exceptions supplied"
+	// caveat while suppressing no finding: every accepted control renders as an
+	// ordinary work list with no note, the same shape a genuinely filtered run
+	// produces.
+	ok, err := canMatchNonEmpty(re.String())
+	if err != nil {
+		return nil, err
+	}
+
+	if !ok {
+		return nil, fmt.Errorf("pattern %q can only ever match the empty string, and kind, name and "+
+			"controlID are never empty, so it can suppress nothing while still counting as an "+
+			"applied exception", pattern)
+	}
+
+	return re, nil
+}
+
+// canMatchNonEmpty reports whether pattern can match at least one non-empty
+// string.
+//
+// It deliberately FAILS TOWARD TRUE: it answers false only when no part of the
+// expression can consume input at all. A false rejection breaks real artifacts,
+// which is the failure this branch has already made twice; a missed exotic
+// pattern only leaves the gap that existed before.
+//
+// Note that "matches the empty string" is NOT the question — `^(a|)$` matches
+// "" and also matches "a", and `^.*$` matches everything.
+func canMatchNonEmpty(pattern string) (bool, error) {
+	parsed, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		return false, fmt.Errorf("parse %q: %w", pattern, err)
+	}
+
+	return consumesInput(parsed.Simplify()), nil
+}
+
+// consumesInput reports whether any branch of the expression can consume at
+// least one character. Anchors, word boundaries and empty matches are
+// zero-width, so an expression built only from those matches nothing but "".
+func consumesInput(r *syntax.Regexp) bool {
+	switch r.Op {
+	case syntax.OpLiteral:
+		return len(r.Rune) > 0
+	case syntax.OpCharClass, syntax.OpAnyChar, syntax.OpAnyCharNotNL:
+		return true
+	case syntax.OpCapture, syntax.OpStar, syntax.OpPlus, syntax.OpQuest, syntax.OpRepeat,
+		syntax.OpConcat, syntax.OpAlternate:
+		for _, sub := range r.Sub {
+			if consumesInput(sub) {
+				return true
+			}
+		}
+
+		return false
+	default:
+		// OpNoMatch, OpEmptyMatch, OpBeginLine, OpEndLine, OpBeginText,
+		// OpEndText, OpWordBoundary, OpNoWordBoundary — all zero-width.
+		return false
+	}
 }
 
 func compilePolicy(p rawPolicy, path string) (exception, error) {

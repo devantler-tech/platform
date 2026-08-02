@@ -652,6 +652,59 @@ func TestCaseVariantDuplicateKeysAreRejected(t *testing.T) {
 	}
 }
 
+// The generator turns an empty CR value into `^$` — its anchor() wraps the raw
+// value, so "" becomes "^" + "" + "$". Nothing downstream notices: `^$` is a
+// non-empty STRING, so the empty-value guards pass it, and it compiles fine.
+//
+// But the bridge's identity guards make kind, name and controlID non-empty, so
+// `^$` can never match anything. The policy is vacuous — and because `filtered`
+// is derived from the POLICY COUNT, one such policy still suppresses the "no
+// -exceptions supplied" caveat. Measured on a real workload: nine accepted
+// controls then render as an ordinary list with no note at all, the same shape
+// a genuinely filtered run produces.
+func TestPatternThatCanOnlyMatchEmptyIsRejected(t *testing.T) {
+	for _, pattern := range []string{`^$`, `^()$`, `^(?:)$`} {
+		t.Run(pattern, func(t *testing.T) {
+			exc := filepath.Join(t.TempDir(), "exceptions.json")
+			writeRaw(t, exc, `[{"name":"vacuous","policyType":"postureExceptionPolicy",`+
+				`"actions":["alertOnly"],`+
+				`"resources":[{"designatorType":"Attributes","attributes":{"kind":"^Deployment$"}}],`+
+				`"posturePolicies":[{"controlID":"`+pattern+`"}]}]`)
+
+			if _, err := loadExceptions(exc); !errors.Is(err, errBadExceptions) {
+				t.Fatalf("a controlID that can only match empty must be rejected, got %v", err)
+			}
+		})
+	}
+}
+
+// The control, and it decides the SHAPE of the check: matching empty does not
+// make a pattern vacuous. `^(a|)$` matches "" and also "a"; `.*` matches
+// everything. Rejecting on "matches empty" would throw both out, so the test is
+// whether the pattern can match ANY non-empty string — and the analysis fails
+// toward accepting, because a false rejection breaks real artifacts (rounds 8
+// through 11 on this branch were exactly that failure) while a missed exotic
+// pattern only leaves the pre-existing gap.
+//
+// Every case here is fully anchored, because an unanchored controlID is already
+// refused by a separate and older rule — it would substring-match, so `.*` never
+// reaches this check at all.
+func TestPatternsThatCanMatchSomethingStillLoad(t *testing.T) {
+	for _, pattern := range []string{`^C-0036$`, `^.*$`, `^(a|)$`, `^C-00.*$`} {
+		t.Run(pattern, func(t *testing.T) {
+			exc := filepath.Join(t.TempDir(), "exceptions.json")
+			writeRaw(t, exc, `[{"name":"real","policyType":"postureExceptionPolicy",`+
+				`"actions":["alertOnly"],`+
+				`"resources":[{"designatorType":"Attributes","attributes":{"kind":"^Deployment$"}}],`+
+				`"posturePolicies":[{"controlID":"`+pattern+`"}]}]`)
+
+			if _, err := loadExceptions(exc); err != nil {
+				t.Fatalf("pattern %q can match a real control ID and must load: %v", pattern, err)
+			}
+		})
+	}
+}
+
 // strings.ToLower is NOT the folding encoding/json uses. Verified on the Go
 // toolchain in use (1.26.5): `attributeſ` (U+017F LATIN SMALL LETTER LONG S)
 // binds to the `attributes` field and overwrites it, yet
