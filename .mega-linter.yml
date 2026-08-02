@@ -83,18 +83,19 @@ DISABLE_ERRORS_LINTERS:
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (31) and trivy (624): Kubernetes misconfiguration in k8s/, which the section above
+  # checkov (33) and trivy (624): Kubernetes misconfiguration in k8s/, which the section above
   # explains is NOT covered elsewhere. Tracked by #2787.
   #
-  # checkov's remaining 31 are all `kubernetes` framework. CKV_K8S_40 is down from 11 to 5. Six
-  # sites carry a scoped skip naming why that UID cannot move: the three OpenBao jobs share the
-  # StatefulSet's UID 100 and the vault-snapshots PVC it owns (read live from the cluster), CoreDNS
-  # runs as root to bind :53, and the two user-namespace probes run as the exact UID pair they
-  # measure (#2898). Of the five left, two are inside the vendored KubeVirt and CDI release bundles
-  # and need a mechanism that survives a vendor bump (#2899); three — the umami provisioner and the
-  # two MinIO workloads — have no demonstrated constraint at all and are candidates to simply raise
-  # (#2901). CKV_K8S_40 is NOT disabled: a new workload running below UID 10000 with no stated
-  # reason is still flagged. The `secrets`
+  # checkov's remaining 33 are all `kubernetes` framework. CKV_K8S_40 is down from 11 to 7. Four
+  # sites carry a scoped skip naming why that UID cannot move: the two vault-backup jobs share the
+  # OpenBao StatefulSet's UID 100 and the vault-snapshots PVC they mount (the StatefulSet's
+  # `runAsUser: 100` read live from the cluster), and the two user-namespace probes run as the exact
+  # UID pair they measure (#2898). Of the seven left, two are inside the vendored KubeVirt and CDI
+  # release bundles and need a mechanism that survives a vendor bump (#2899); the other five have no
+  # demonstrated constraint and are candidates to simply raise (#2901) — including CoreDNS, whose
+  # pinned image config reads `User: "nonroot:nonroot"`, so an explicit `runAsUser: 65532` would
+  # both match the image and clear the check. CKV_K8S_40 is NOT disabled: a new workload running
+  # below UID 10000 with no stated reason is still flagged. The `secrets`
   # framework is at 0: its 31 CKV_SECRET_6 findings were ExternalSecret/PushSecret key NAMES and
   # OpenBao paths rather than secret material, and each site now carries a scoped skip naming the
   # control and the reason (#2892). CKV_SECRET_6 is NOT disabled — a real base64 secret committed
