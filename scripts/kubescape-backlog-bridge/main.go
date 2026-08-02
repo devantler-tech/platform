@@ -466,13 +466,18 @@ func (a *acc) raiseSeverity(s string) {
 
 // derivePosture groups failed posture controls into themes, dropping any
 // (control, component) pair a declared ClusterSecurityException already covers.
-func derivePosture(items []item, exceptions []exception) ([]theme, error) {
+// The suppressed count is returned, not discarded: an all-clear reached by
+// FILTERING is a different statement from one reached by a clean input, and
+// report() cannot tell them apart without it.
+func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 	byControl := map[string]*acc{}
+
+	suppressed := 0
 
 	for _, it := range items {
 		ctrls, err := it.controls()
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		comp := it.component()
@@ -488,7 +493,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 		// order. Namespace is deliberately not required: a cluster-scoped object
 		// legitimately has none, and it is not what a broad designator turns on.
 		if comp.Kind == "" || comp.Name == "" {
-			return nil, fmt.Errorf("%w: a posture summary carries no workload %s "+
+			return nil, 0, fmt.Errorf("%w: a posture summary carries no workload %s "+
 				"(`kubescape.io/workload-kind` / `kubescape.io/workload-name`); exceptions are matched "+
 				"against that identity and a cluster-wide designator matches an empty value, so its "+
 				"findings could be suppressed without ever identifying the resource",
@@ -506,7 +511,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 			// the cluster — is wrong.
 			failed, known := controlFailed(ctrl.Status.Status)
 			if !known {
-				return nil, fmt.Errorf("%w: %s reports control %s with status %q, "+
+				return nil, 0, fmt.Errorf("%w: %s reports control %s with status %q, "+
 					"which is neither a failure nor a recognised non-failure",
 					errMalformedScanContent, comp, id, ctrl.Status.Status)
 			}
@@ -523,7 +528,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 			// report. Unknown NONEMPTY names stay tolerated, so a future
 			// severity does not become a hard failure.
 			if strings.TrimSpace(ctrl.Severity.Severity) == "" {
-				return nil, fmt.Errorf("%w: %s reports failed control %s with no severity; "+
+				return nil, 0, fmt.Errorf("%w: %s reports failed control %s with no severity; "+
 					"a genuine posture summary always carries one, and a theme without it "+
 					"loses the prioritisation the backlog is ordered by",
 					errMalformedScanContent, comp, id)
@@ -537,7 +542,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 			key := id
 			if ctrl.ControlID != "" {
 				if ctrl.ControlID != id {
-					return nil, fmt.Errorf("%w: %s keys a control as %q but its controlID is %q; "+
+					return nil, 0, fmt.Errorf("%w: %s keys a control as %q but its controlID is %q; "+
 						"refusing to guess which control an exception should match",
 						errMalformedScanContent, comp, id, ctrl.ControlID)
 				}
@@ -550,7 +555,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 			// "security(posture):  fails" with a stable fingerprint for a
 			// control that names nothing.
 			if strings.TrimSpace(key) == "" {
-				return nil, fmt.Errorf("%w: %s reports a failed control with an empty identifier; "+
+				return nil, 0, fmt.Errorf("%w: %s reports a failed control with an empty identifier; "+
 					"a backlog entry keyed on it would name no control and could not be matched "+
 					"against an exception", errMalformedScanContent, comp)
 			}
@@ -560,6 +565,8 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 			// must not suppress the same control on a workload it does not
 			// name, which would itself be a false all-clear.
 			if excepted(exceptions, key, comp) {
+				suppressed++
+
 				continue
 			}
 
@@ -575,7 +582,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, error) {
 		}
 	}
 
-	return assemble(surfacePosture, byControl), nil
+	return assemble(surfacePosture, byControl), suppressed, nil
 }
 
 // deriveCVE groups CVE counts into one theme per severity class.
@@ -609,6 +616,24 @@ func deriveCVE(items []item) ([]theme, error) {
 		}
 
 		for class, raw := range it.Spec.Severities {
+			// Extra buckets are tolerated on purpose so an upstream addition
+			// does not break the run, and that tolerance is what lets a BLANK
+			// key through: the six required buckets can all be present beside
+			// one whose name is empty or whitespace. With a positive count it
+			// became a theme rendered `security(cve): -severity findings`,
+			// carrying a stable fingerprint — so it would be filed as real work
+			// and then faithfully kept up to date, naming no severity at all.
+			//
+			// Tolerating an unknown name is right; tolerating no name is not.
+			// Measured: all 117 live CVE summaries carry exactly the six
+			// canonical keys and none blank, so this cannot fire on real input.
+			if strings.TrimSpace(class) == "" {
+				return nil, fmt.Errorf("%w: %s reports a severity bucket whose name is blank; "+
+					"a genuine CVE summary names every class it counts, and a blank one would be "+
+					"filed as a finding that identifies no severity",
+					errMalformedScanContent, comp)
+			}
+
 			n, ok := severityCount(raw)
 			if !ok {
 				return nil, fmt.Errorf("%w: %s reports severity %q in an unrecognised shape; "+
@@ -753,6 +778,10 @@ func run(args []string, out io.Writer) error {
 	var (
 		themes   []theme
 		examined []surface
+		// suppressed counts findings the declared exceptions removed. An
+		// all-clear reached by FILTERING is a different claim from one reached
+		// by a clean input, and the report must not render them identically.
+		suppressed int
 	)
 
 	if len(posturePaths) > 0 {
@@ -761,10 +790,12 @@ func run(args []string, out io.Writer) error {
 			return err
 		}
 
-		derived, err := derivePosture(postureItems, exceptions)
+		derived, n, err := derivePosture(postureItems, exceptions)
 		if err != nil {
 			return err
 		}
+
+		suppressed = n
 
 		themes = append(themes, derived...)
 		examined = append(examined, surfacePosture)
@@ -785,7 +816,7 @@ func run(args []string, out io.Writer) error {
 		examined = append(examined, surfaceCVE)
 	}
 
-	return report(themes, examined, len(exceptions) > 0, out)
+	return report(themes, examined, len(exceptions) > 0, suppressed, out)
 }
 
 // readSurface reads every file for one surface, validating each against that
@@ -922,7 +953,7 @@ func readList(path string) ([]item, error) {
 // two consecutive runs on unchanged state are byte-identical — that equality IS
 // the acceptance check. `total` is rendered but never fingerprinted, so a
 // changed count updates an entry instead of re-filing one.
-func report(themes []theme, examined []surface, filtered bool, out io.Writer) error {
+func report(themes []theme, examined []surface, filtered bool, suppressed int, out io.Writer) error {
 	// A posture report derived WITHOUT the declared exceptions lists controls the
 	// platform has already accepted. That is a legitimate view to ask for, but it
 	// must not be mistaken for a drainable backlog — so the report says which one
@@ -948,6 +979,24 @@ func report(themes []theme, examined []surface, filtered bool, out io.Writer) er
 		}
 
 		sort.Strings(names)
+
+		// An all-clear reached by FILTERING is not the same statement as one
+		// reached by a clean input, and rendering them identically is this
+		// command's own core failure mode turned inward: it exists because a
+		// broken scanner and a compliant cluster read alike. Saying "no
+		// live-only findings" when findings were present and merely accepted is
+		// literally false about the input, and it is the reading that would let
+		// an exception policy widen until it accepted everything with the
+		// report never changing.
+		if suppressed > 0 {
+			_, err := fmt.Fprintf(out, "no UNEXCEPTED live-only findings in the supplied %s input(s) — "+
+				"nothing to file (%d finding(s) were present and excepted by the declared "+
+				"ClusterSecurityExceptions; only the objects passed on the command line were "+
+				"examined, so this is not a statement about the whole cluster)\n",
+				strings.Join(names, " and "), suppressed)
+
+			return err
+		}
 
 		_, err := fmt.Fprintf(out, "no live-only findings in the supplied %s input(s) — nothing to file "+
 			"(only the objects passed on the command line were examined; "+

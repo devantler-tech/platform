@@ -150,7 +150,7 @@ func mustDeriveCVE(t *testing.T, items []item) []theme {
 func mustDerivePosture(t *testing.T, items []item, exceptions []exception) []theme {
 	t.Helper()
 
-	got, err := derivePosture(items, exceptions)
+	got, _, err := derivePosture(items, exceptions)
 	if err != nil {
 		t.Fatalf("derivePosture: %v", err)
 	}
@@ -319,11 +319,11 @@ func TestTotalIsAccumulatedEvenThoughItIsNotFingerprinted(t *testing.T) {
 	}
 
 	var a, b bytes.Buffer
-	if err := report(few, []surface{surfaceCVE}, true, &a); err != nil {
+	if err := report(few, []surface{surfaceCVE}, true, 0, &a); err != nil {
 		t.Fatalf("report: %v", err)
 	}
 
-	if err := report(many, []surface{surfaceCVE}, true, &b); err != nil {
+	if err := report(many, []surface{surfaceCVE}, true, 0, &b); err != nil {
 		t.Fatalf("report: %v", err)
 	}
 
@@ -1006,7 +1006,7 @@ func TestUnrecognisedControlStatusFailsClosed(t *testing.T) {
 	for _, status := range []string{"", "  ", "weird-new-status"} {
 		items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": status}))
 
-		_, err := derivePosture(items, nil)
+		_, _, err := derivePosture(items, nil)
 		if err == nil {
 			t.Errorf("status %q must fail closed, got no error", status)
 		}
@@ -1019,7 +1019,7 @@ func TestRecognisedNonFailureStatusesAreSkipped(t *testing.T) {
 	for _, status := range []string{"passed", "skipped", "irrelevant", "excluded", "ignored", "PASSED"} {
 		items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": status}))
 
-		got, err := derivePosture(items, nil)
+		got, _, err := derivePosture(items, nil)
 		if err != nil {
 			t.Errorf("status %q must be accepted, got %v", status, err)
 		}
@@ -1216,7 +1216,7 @@ func TestControlIDMismatchIsRejected(t *testing.T) {
 		`"spec":{"controls":{"C-9999":{"controlID":"C-0036","severity":{"severity":"High"},` +
 		`"status":{"status":"failed"}}},"severities":{"critical":0}}}`
 
-	_, err := derivePosture(itemsOf(t, doc), nil)
+	_, _, err := derivePosture(itemsOf(t, doc), nil)
 	if err == nil {
 		t.Fatal("a key/controlID mismatch must be rejected")
 	}
@@ -1231,7 +1231,7 @@ func TestEmptyEmbeddedControlIDFallsBackToTheKey(t *testing.T) {
 		`"spec":{"controls":{"C-0016":{"controlID":"","severity":{"severity":"High"},` +
 		`"status":{"status":"failed"}}},"severities":{"critical":0}}}`
 
-	got, err := derivePosture(itemsOf(t, doc), nil)
+	got, _, err := derivePosture(itemsOf(t, doc), nil)
 	if err != nil {
 		t.Fatalf("an empty embedded controlID must still fall back, got %v", err)
 	}
@@ -1268,7 +1268,7 @@ func TestPostureSummaryWithoutWorkloadIdentityIsRejected(t *testing.T) {
 
 	items := itemsOf(t, raw)
 
-	if _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
+	if _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
 		t.Fatalf("want errMalformedScanContent for a summary with no workload kind, got %v", err)
 	}
 }
@@ -1299,7 +1299,7 @@ func TestFailedControlWithoutSeverityIsRejected(t *testing.T) {
 	items := itemsOf(t, postureDocSev("app", "Deployment", "api",
 		map[string]string{"C-0016": "failed"}, ""))
 
-	if _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
+	if _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
 		t.Fatalf("want errMalformedScanContent for a failed control with no severity, got %v", err)
 	}
 }
@@ -1484,7 +1484,7 @@ func TestMissingWorkloadNameLabelIsRejectedNotSubstituted(t *testing.T) {
 		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},` +
 		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":0}}}`
 
-	_, err := derivePosture(itemsOf(t, doc), nil)
+	_, _, err := derivePosture(itemsOf(t, doc), nil)
 	if err == nil {
 		t.Fatal("a summary with no workload-name label must be rejected, not renamed to the CR's own name")
 	}
@@ -1523,5 +1523,75 @@ func TestLabelledSummaryStillDerives(t *testing.T) {
 
 	if got[0].Components[0] != "app/Deployment/api" {
 		t.Errorf("want the LABEL's workload name, got %v", got[0].Components)
+	}
+}
+
+// An all-clear produced by FILTERING must not read like an all-clear produced
+// by a clean input. When every failed control is accepted by a declared
+// exception, "no live-only findings in the supplied posture input(s)" is
+// literally false about the input: the findings were there and were excepted.
+//
+// This is the command's own core thesis turned inward. It exists because a
+// broken scanner and a compliant cluster read identically; an exceptions-
+// filtered result reading identically to a finding-free one is the same defect
+// one layer up, and it is the reading that would let a policy quietly widen
+// until it accepted everything without the report ever changing.
+func TestFilteredAllClearSaysTheFindingsWereExcepted(t *testing.T) {
+	dir := t.TempDir()
+
+	exc := filepath.Join(dir, "exceptions.json")
+	writeRaw(t, exc, `[{"name":"accepted","policyType":"postureExceptionPolicy","actions":["alertOnly"],`+
+		`"resources":[{"designatorType":"Attributes","attributes":{"kind":"^Deployment$"}}],`+
+		`"posturePolicies":[{"controlID":"^C-0016$"}]}]`)
+
+	in := filepath.Join(dir, "posture.json")
+	writeBare(t, in, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+
+	var out bytes.Buffer
+	if err := run([]string{"-exceptions", exc, "-posture", in}, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	got := out.String()
+	if !strings.Contains(got, "nothing to file") {
+		t.Errorf("must still say nothing to file, got %q", got)
+	}
+
+	if !strings.Contains(got, "except") {
+		t.Errorf("a filtered all-clear must say the findings were excepted, got %q", got)
+	}
+}
+
+// The control: a genuinely finding-free input must NOT claim anything was
+// excepted, or the new wording would be just as undiscriminating in the other
+// direction.
+func TestGenuineAllClearDoesNotClaimExceptions(t *testing.T) {
+	dir := t.TempDir()
+
+	in := filepath.Join(dir, "posture.json")
+	writeBare(t, in, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "passed"}))
+
+	var out bytes.Buffer
+	if err := run([]string{"-posture", in}, &out); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	if strings.Contains(out.String(), "excepted by") {
+		t.Errorf("a genuinely clean input must not claim exceptions were applied, got %q", out.String())
+	}
+}
+
+// The six required buckets can all be present while an EXTRA key is blank.
+// Extra buckets are tolerated on purpose (an upstream addition must not break
+// the run), so the completeness check passes and a blank class with a positive
+// count became a theme titled `security(cve): -severity findings` — carrying a
+// stable fingerprint, so it would be filed and then kept up to date forever.
+func TestBlankCVESeverityClassIsRejected(t *testing.T) {
+	doc := `{"metadata":{"name":"api","namespace":"app",` + labels("app", "Deployment", "api") + `},` +
+		`"spec":{"vulnerabilitiesRef":{"all":{"name":"m"}},"severities":{` +
+		`"critical":0,"high":0,"low":0,"medium":0,"negligible":0,"unknown":0,"   ":3}}}`
+
+	if _, err := deriveCVE(itemsOf(t, doc)); err == nil {
+		t.Fatal("a blank severity class name must be rejected")
 	}
 }
