@@ -108,9 +108,14 @@ func TestPublicationActionRejectsEachAblation(t *testing.T) {
 		},
 		{
 			name:    "without a staging push there is nothing immutable to evidence",
-			old:     `workload push "${{ steps.staging_reference.outputs.oci_ref }}"`,
+			old:     `workload push "${STAGING_OCI_REF}"`,
 			new:     `echo skip-push`,
 			wantErr: "staging reference",
+		},
+		{
+			name:    "without the environment bridge an expression reaches shell code",
+			old:     "STAGING_OCI_REF: ${{ steps.staging_reference.outputs.oci_ref }}\n",
+			wantErr: "environment bridge",
 		},
 		{
 			name:    "without signing the promoted bytes are unverifiable",

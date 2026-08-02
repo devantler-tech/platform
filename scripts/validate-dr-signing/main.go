@@ -71,7 +71,10 @@ func validatePublicationAction(action string) error {
 	if !containsLine(action, `STAGING_TAG="staging-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"`) {
 		return errors.New("publication action must build a unique staging reference from the SHA, run, and attempt")
 	}
-	pushIdx, ok := lineIndexContaining(action, `workload push "${{ steps.staging_reference.outputs.oci_ref }}"`)
+	if !containsLine(action, "STAGING_OCI_REF: ${{ steps.staging_reference.outputs.oci_ref }}") {
+		return errors.New("publication action must use an environment bridge for the generated staging reference")
+	}
+	pushIdx, ok := lineIndexContaining(action, `workload push "${STAGING_OCI_REF}"`)
 	if !ok {
 		return errors.New("publication action must push only the allowlisted staging reference")
 	}
