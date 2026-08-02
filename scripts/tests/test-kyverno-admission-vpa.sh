@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly repo_root
 
-for tool in kubectl yq; do
+for tool in ksail kubectl yq; do
   if ! command -v "${tool}" >/dev/null 2>&1; then
     echo "${tool} is required to validate the rendered Kyverno admission resources" >&2
     exit 1
@@ -48,20 +48,20 @@ if [[ "${memory_ceiling}" != "1Gi" ]]; then
   exit 1
 fi
 
-rendered_kyverno="$(
-  kubectl kustomize \
-    "${repo_root}/k8s/bases/infrastructure/controllers/kyverno"
-)"
-memory_limit="$(
-  yq ea -N -r '
-    select(.kind == "HelmRelease" and .metadata.name == "kyverno") |
-    .spec.values.admissionController.resources.limits.memory
-  ' - <<<"${rendered_kyverno}"
-)"
-
-if [[ "${memory_limit}" != "1Gi" ]]; then
-  echo "Kyverno admission-controller rendered memory limit=${memory_limit:-missing}; want 1Gi" >&2
+if ! chart_validation="$(
+  ksail workload validate \
+    "${repo_root}/k8s/bases/infrastructure/controllers/kyverno" \
+    --rules "${repo_root}/scripts/tests/kyverno-admission-vpa-rules.yaml" 2>&1
+)"; then
+  echo "${chart_validation}" >&2
   exit 1
 fi
 
-echo "Kyverno admission VPA keeps request-only resizing and the 1Gi memory limit"
+if [[ "${chart_validation}" != *"observe-kyverno-admission-deployment"* ]] ||
+  [[ "${chart_validation}" != *"Deployment/kyverno/kyverno-admission-controller"* ]]; then
+  echo "KSail did not observe the rendered Kyverno admission Deployment" >&2
+  echo "${chart_validation}" >&2
+  exit 1
+fi
+
+echo "Kyverno admission VPA keeps request-only resizing and its rendered container's 1Gi memory limit"

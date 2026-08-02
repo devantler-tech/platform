@@ -40,7 +40,7 @@ spec:
     # lever for the slow growth here) rather than bumping a limit. NB: Kyverno
     # controllers are NOT VPA-managed -- Kyverno excludes its own namespace from
     # auto-vpa to avoid an eviction deadlock -- so the admission controller is
-    # given an explicit limit below (see the admissionController.resources block
+    # given an explicit limit below (see the admissionController.container.resources block
     # and the OOM incident it documents); the chart default proved too low.
     features:
       backgroundScan:
@@ -101,14 +101,16 @@ spec:
       # (the 1Gi memory limit keeps that window well above the 384Mi OOM
       # threshold). The static admission VPA manages requests only and caps its
       # memory request at 1Gi, so recommendations cannot replace or exceed this
-      # authored limit. In-place resize plus replicas: 2 and the PDB keep a
-      # Recreate fallback or OOM from taking down the whole admission path.
-      resources:
-        requests:
-          cpu: 100m
-          memory: 256Mi
-        limits:
-          memory: 1Gi
+      # authored limit. In-place resize avoids routine eviction; replicas: 2
+      # preserve availability while the PDB limits voluntary disruption to one
+      # replica. The 1Gi limit above is the OOM safety boundary.
+      container:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            memory: 1Gi
       podSecurityContext:
         runAsNonRoot: true
         seccompProfile:

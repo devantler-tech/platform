@@ -78,6 +78,7 @@ jobs:
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
               - 'scripts/tests/test-kyverno-admission-vpa.sh'
+              - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
@@ -268,14 +269,6 @@ jobs:
         # on the GitHub-hosted runner; no cluster or secrets required.
         run: bash scripts/tests/test-cilium-bandwidth-manager-component.sh
 
-      - name: 🧠 Validate Kyverno admission VPA safety
-        if: needs.changes.outputs.k8s == 'true'
-        # Render the real VPA and HelmRelease resources so right-sizing cannot
-        # silently replace the fail-closed admission controller's memory limit.
-        run: |
-          shellcheck scripts/tests/test-kyverno-admission-vpa.sh
-          bash scripts/tests/test-kyverno-admission-vpa.sh
-
       - name: 🌐 Validate active Cilium device selection
         if: needs.changes.outputs.k8s == 'true' || needs.changes.outputs.bridge_validation == 'true'
         # Pin the production activation, merge order, and OnDelete rollout gate
@@ -375,6 +368,16 @@ jobs:
           key: kubeconform-schema-cache-v1-${{ github.run_id }}
           restore-keys: |
             kubeconform-schema-cache-v1-
+
+      - name: 🧠 Validate Kyverno admission VPA safety
+        if: needs.changes.outputs.k8s == 'true'
+        # Render the production VPA and the actual Kyverno chart Deployment so
+        # right-sizing cannot silently replace the fail-closed admission
+        # controller's memory limit. KSail is installed above because its CEL
+        # rules run against Helm-rendered documents, not only the HelmRelease.
+        run: |
+          shellcheck scripts/tests/test-kyverno-admission-vpa.sh
+          bash scripts/tests/test-kyverno-admission-vpa.sh
 
       - name: ✅ Validate manifests (local + prod overlays)
         # Schema-aware kubeconform validation with Flux variable substitution,
