@@ -34,6 +34,16 @@ import (
 // findings.
 var errBadExceptions = errors.New("cannot read the generated Kubescape exceptions")
 
+// errMalformedJSON stops the duplicate-key walk on a token error.
+//
+// The walk deliberately does NOT report parse errors itself — Unmarshal gives
+// far better context — but it cannot simply return nil either. Returning nil
+// without consuming a token leaves dec.More() reporting true forever, so the
+// enclosing object and array loops spin: a malformed artifact hung the whole
+// command instead of being rejected. This sentinel unwinds the recursion, and
+// rejectDuplicateKeys swallows it so Unmarshal still produces the message.
+var errMalformedJSON = errors.New("malformed JSON")
+
 // posturePolicyType is the only policy type this command applies. The
 // generator emits others for surfaces this bridge does not derive.
 const posturePolicyType = "postureExceptionPolicy"
@@ -267,7 +277,14 @@ func loadExceptions(path string) ([]exception, error) {
 // is scanned exact-only: an alias there cannot hide a finding or widen an
 // exception, so refusing it would be pure false positives.
 func rejectDuplicateKeys(raw []byte) error {
-	return scanForDuplicateKeys(json.NewDecoder(bytes.NewReader(raw)), scopeStruct)
+	err := scanForDuplicateKeys(json.NewDecoder(bytes.NewReader(raw)), scopeStruct)
+	if errors.Is(err, errMalformedJSON) {
+		// Deliberately not surfaced here: the caller's Unmarshal reports the
+		// parse error with position and context. The walk only had to stop.
+		return nil
+	}
+
+	return err
 }
 
 // foldScope is what the object currently being scanned decodes into. It is the
@@ -348,8 +365,10 @@ func scanForDuplicateKeys(dec *json.Decoder, scope foldScope) error {
 	tok, err := dec.Token()
 	if err != nil {
 		// A malformed document is left to Unmarshal, which reports it with far
-		// better context than a token-level error would.
-		return nil //nolint:nilerr // parse errors are reported by the caller's Unmarshal
+		// better context than a token-level error would — but the walk must
+		// still STOP, because returning without consuming a token leaves the
+		// caller's dec.More() loop spinning forever.
+		return errMalformedJSON
 	}
 
 	delim, ok := tok.(json.Delim)
@@ -383,7 +402,7 @@ func scanForDuplicateKeys(dec *json.Decoder, scope foldScope) error {
 		for dec.More() {
 			keyTok, err := dec.Token()
 			if err != nil {
-				return nil //nolint:nilerr // as above
+				return errMalformedJSON
 			}
 
 			key, ok := keyTok.(string)
@@ -436,7 +455,7 @@ func scanForDuplicateKeys(dec *json.Decoder, scope foldScope) error {
 
 	// Consume the matching closing delimiter.
 	if _, err := dec.Token(); err != nil {
-		return nil //nolint:nilerr // as above
+		return errMalformedJSON
 	}
 
 	return nil
@@ -500,31 +519,94 @@ func canMatchNonEmpty(pattern string) (bool, error) {
 		return false, fmt.Errorf("parse %q: %w", pattern, err)
 	}
 
-	return consumesInput(parsed.Simplify()), nil
+	_, consumes := analyse(parsed.Simplify())
+
+	return consumes, nil
 }
 
-// consumesInput reports whether any branch of the expression can consume at
-// least one character. Anchors, word boundaries and empty matches are
-// zero-width, so an expression built only from those matches nothing but "".
-func consumesInput(r *syntax.Regexp) bool {
+// analyse reports two independent properties of an expression: whether it can
+// match ANYTHING at all, and whether it can match something NON-EMPTY.
+//
+// They have to be tracked together, because consuming input is not sufficient
+// on its own. `^a[^\x00-\x{10FFFF}]$` contains a literal that plainly consumes,
+// yet the empty character class beside it makes the whole concatenation
+// unmatchable — so the pattern matches nothing, which is just as vacuous as
+// matching only "". An empty character class is `OpCharClass` with no runes and
+// is exactly how an impossible class reaches here.
+//
+// The bias is unchanged and deliberate: uncertainty resolves toward MATCHABLE,
+// so a pattern is called vacuous only when the structure proves it. A false
+// rejection breaks real artifacts; a missed vacuous pattern only leaves the gap
+// that existed before.
+func analyse(r *syntax.Regexp) (matchable, consumes bool) {
 	switch r.Op {
+	case syntax.OpNoMatch:
+		return false, false
+
 	case syntax.OpLiteral:
-		return len(r.Rune) > 0
-	case syntax.OpCharClass, syntax.OpAnyChar, syntax.OpAnyCharNotNL:
-		return true
-	case syntax.OpCapture, syntax.OpStar, syntax.OpPlus, syntax.OpQuest, syntax.OpRepeat,
-		syntax.OpConcat, syntax.OpAlternate:
-		for _, sub := range r.Sub {
-			if consumesInput(sub) {
-				return true
-			}
+		return true, len(r.Rune) > 0
+
+	case syntax.OpCharClass:
+		// No runes means no character satisfies it, so it matches nothing —
+		// neither empty nor non-empty.
+		return len(r.Rune) > 0, len(r.Rune) > 0
+
+	case syntax.OpAnyChar, syntax.OpAnyCharNotNL:
+		return true, true
+
+	case syntax.OpCapture:
+		return analyse(r.Sub[0])
+
+	case syntax.OpStar, syntax.OpQuest:
+		// Zero repetitions always match, so these match even when the sub
+		// cannot; they consume only if the sub is reachable AND consuming.
+		subMatchable, subConsumes := analyse(r.Sub[0])
+
+		return true, subMatchable && subConsumes
+
+	case syntax.OpPlus:
+		subMatchable, subConsumes := analyse(r.Sub[0])
+
+		return subMatchable, subMatchable && subConsumes
+
+	case syntax.OpRepeat:
+		subMatchable, subConsumes := analyse(r.Sub[0])
+		if r.Min == 0 {
+			return true, subMatchable && subConsumes
 		}
 
-		return false
+		return subMatchable, subMatchable && subConsumes
+
+	case syntax.OpConcat:
+		// Every element must match, so one unmatchable element makes the whole
+		// concatenation unmatchable however much the others consume.
+		matchable = true
+		anyConsumes := false
+
+		for _, sub := range r.Sub {
+			subMatchable, subConsumes := analyse(sub)
+			if !subMatchable {
+				return false, false
+			}
+
+			anyConsumes = anyConsumes || subConsumes
+		}
+
+		return matchable, anyConsumes
+
+	case syntax.OpAlternate:
+		for _, sub := range r.Sub {
+			subMatchable, subConsumes := analyse(sub)
+			matchable = matchable || subMatchable
+			consumes = consumes || (subMatchable && subConsumes)
+		}
+
+		return matchable, consumes
+
 	default:
-		// OpNoMatch, OpEmptyMatch, OpBeginLine, OpEndLine, OpBeginText,
-		// OpEndText, OpWordBoundary, OpNoWordBoundary — all zero-width.
-		return false
+		// OpEmptyMatch and the zero-width assertions: OpBeginLine, OpEndLine,
+		// OpBeginText, OpEndText, OpWordBoundary, OpNoWordBoundary.
+		return true, false
 	}
 }
 

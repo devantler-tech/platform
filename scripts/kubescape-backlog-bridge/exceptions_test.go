@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The fixtures below use the exact shape `scripts/generate-kubescape-exceptions`
@@ -663,7 +664,13 @@ func TestCaseVariantDuplicateKeysAreRejected(t *testing.T) {
 // controls then render as an ordinary list with no note at all, the same shape
 // a genuinely filtered run produces.
 func TestPatternThatCanOnlyMatchEmptyIsRejected(t *testing.T) {
-	for _, pattern := range []string{`^$`, `^()$`, `^(?:)$`} {
+	// The last three are impossible CHARACTER CLASSES rather than empty
+	// expressions. `regexp/syntax` represents `[^\x00-\x{10FFFF}]` as an
+	// OpCharClass with no runes, so it matches nothing at all — and the
+	// concatenation case matters separately, because the literal beside it
+	// plainly consumes input while the whole expression still cannot match.
+	for _, pattern := range []string{`^$`, `^()$`, `^(?:)$`,
+		`^[^\\x00-\\x{10FFFF}]$`, `^a[^\\x00-\\x{10FFFF}]$`, `^[^\\x00-\\x{10FFFF}]+$`} {
 		t.Run(pattern, func(t *testing.T) {
 			exc := filepath.Join(t.TempDir(), "exceptions.json")
 			writeRaw(t, exc, `[{"name":"vacuous","policyType":"postureExceptionPolicy",`+
@@ -690,7 +697,7 @@ func TestPatternThatCanOnlyMatchEmptyIsRejected(t *testing.T) {
 // refused by a separate and older rule — it would substring-match, so `.*` never
 // reaches this check at all.
 func TestPatternsThatCanMatchSomethingStillLoad(t *testing.T) {
-	for _, pattern := range []string{`^C-0036$`, `^.*$`, `^(a|)$`, `^C-00.*$`} {
+	for _, pattern := range []string{`^C-0036$`, `^.*$`, `^(a|)$`, `^C-00.*$`, `^[^\\x00-\\x{10FFFE}]$`, `^(?:[^\\x00-\\x{10FFFF}]|b)$`} {
 		t.Run(pattern, func(t *testing.T) {
 			exc := filepath.Join(t.TempDir(), "exceptions.json")
 			writeRaw(t, exc, `[{"name":"real","policyType":"postureExceptionPolicy",`+
@@ -700,6 +707,46 @@ func TestPatternsThatCanMatchSomethingStillLoad(t *testing.T) {
 
 			if _, err := loadExceptions(exc); err != nil {
 				t.Fatalf("pattern %q can match a real control ID and must load: %v", pattern, err)
+			}
+		})
+	}
+}
+
+// A malformed document must be REJECTED, not spun on.
+//
+// The duplicate-key walk deliberately leaves parse errors to Unmarshal, but it
+// returned nil on a token error without consuming anything — so the enclosing
+// object and array loops saw dec.More() stay true forever. Measured against the
+// binary built at the previous reviewed head: an artifact carrying an invalid
+// `\x` escape hung the whole command indefinitely rather than failing.
+//
+// Found by accident, from a test fixture written as a Go raw string: `\x00`
+// reached JSON as an invalid escape. Twelve review rounds had never fed the
+// walker malformed input.
+func TestMalformedArtifactTerminatesInsteadOfHanging(t *testing.T) {
+	for _, raw := range []string{
+		`[{"name":"v","policyType":"postureExceptionPolicy","actions":["alertOnly"],` +
+			`"resources":[{"designatorType":"Attributes","attributes":{"kind":"^D$"}}],` +
+			`"posturePolicies":[{"controlID":"^[^\x00]$"}]}]`,
+		`[{"name":"v",`,
+		`[{"a":1},`,
+		`{"a":[1,2`,
+	} {
+		t.Run("", func(t *testing.T) {
+			done := make(chan struct{})
+
+			go func() {
+				defer close(done)
+
+				path := filepath.Join(t.TempDir(), "exceptions.json")
+				writeRaw(t, path, raw)
+				_, _ = loadExceptions(path)
+			}()
+
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("loadExceptions did not terminate on a malformed artifact")
 			}
 		})
 	}
