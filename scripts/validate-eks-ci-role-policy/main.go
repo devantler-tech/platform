@@ -57,6 +57,26 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
+// Measured against main 94714d94 before approving this value: 511 documents on
+// both sides, with membership IDENTICAL -- zero added, removed, or renamed by
+// set difference over every apiVersion|kind|namespace|name identity. Exactly
+// two rendered entries move:
+//
+//	autoscaling.k8s.io/v1       VerticalPodAutoscaler  kyverno/kyverno-admission-controller
+//	helm.toolkit.fluxcd.io/v2  HelmRelease           kyverno/kyverno
+//
+// The VPA delta narrows controlledValues from RequestsAndLimits to RequestsOnly
+// and its memory ceiling from 6Gi to the authored 1Gi container limit. The
+// HelmRelease delta moves that same request/limit block from the ignored
+// admissionController.resources key to the chart-consumed
+// admissionController.container.resources key. Both are resource-safety
+// constraints; neither can grant an identity or permission.
+//
+// The rendered surface carries 64 Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding / ServiceAccount documents on BOTH sides, and their
+// canonical byte stream is identical. Every `aws`-bearing line is likewise
+// byte-identical, so nothing granted to the aws/aws service account moved.
+//
 // Measured against main 4cfe7d9f while fixing the Renovate KSail bump: the PR
 // changes exactly the ksail-operator chart's pinned SemVer (7.176.4 -> 7.178.2)
 // inside the authorization surface. This value migrates the projection so an
@@ -160,7 +180,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "ca5cc61ec1b23e86582a616c11b0cdd5f2bbc425f27e92044479624b0a22e3af"
+const expectedRenderedSurfaceSHA = "1a19f043e1864e3dddb4ce2bd2a4adfa540e20346409c970beb093df1c07570e"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
