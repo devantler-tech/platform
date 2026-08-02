@@ -206,8 +206,13 @@ data:
         - StepSecurity:
             - icon: mdi-shield-check-outline
               href: https://app.stepsecurity.io
+        # si-renovate, not si-renovatebot: both resolve today, but they are
+        # different marks — `renovatebot.svg` is titled "RenovateBot" (the old
+        # branding) and `renovate.svg` is titled "Renovate", which is the brand's
+        # current name and the one Simple Icons lists. This is a branding
+        # correction, not a fix for a blank icon.
         - Renovate:
-            - icon: si-renovatebot-#007fa0
+            - icon: si-renovate-#007fa0
               href: https://developer.mend.io
     - Code Quality:
         - Codecov:
