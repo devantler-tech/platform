@@ -18,7 +18,7 @@ runs it in a dedicated, locked-down namespace.
 There are two halves to onboarding, in two repos:
 
 1. **The tenant repo** — created from the
-   [`gitops-tenant-template`](https://github.com/devantler-tech/gitops-tenant-template),
+   [`platform-tenant-template`](https://github.com/devantler-tech/platform-tenant-template),
    which ships the shared, framework-agnostic CI/CD plumbing and keeps it current
    via [template-sync](https://github.com/AndreasAugustin/actions-template-sync).
 2. **The platform registration** — a small directory in *this* repo under
@@ -40,7 +40,7 @@ Create the repo from the template with **"Use this template"** (GitHub UI), or:
 
 ```sh
 gh repo create devantler-tech/<tenant> \
-  --template devantler-tech/gitops-tenant-template --private
+  --template devantler-tech/platform-tenant-template --private
 ```
 
 The template gives you the shared plumbing it keeps in sync (`cd.yaml`,
