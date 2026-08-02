@@ -200,6 +200,22 @@ func loadExceptions(path string) ([]exception, error) {
 		return nil, fmt.Errorf("%w: parse %s: %w", errBadExceptions, path, err)
 	}
 
+	// A SUPPLIED artifact holding no policies disables all filtering silently:
+	// accepted controls reappear as backlog work, and because `filtered` is
+	// derived from the policy count the report then claims no -exceptions was
+	// supplied at all. That is a different statement from omitting the flag,
+	// which stays legitimate and is handled above.
+	//
+	// The generator never emits this — it errors with "no ClusterSecurityException
+	// documents found" when it resolves zero — so refusing cannot fire on a
+	// generated file.
+	if len(policies) == 0 {
+		return nil, fmt.Errorf("%w: %s declares no exception policies; the generator refuses to emit "+
+			"an empty artifact, so this one is truncated or replaced. Applying it would silently "+
+			"disable all filtering and re-file every accepted control",
+			errBadExceptions, path)
+	}
+
 	out := make([]exception, 0, len(policies))
 
 	for _, p := range policies {
@@ -251,15 +267,26 @@ func scanForDuplicateKeys(dec *json.Decoder) error {
 
 	switch delim {
 	case '{':
-		// Keys are compared CASE-INSENSITIVELY because encoding/json binds
-		// struct fields that way: `Attributes` and `attributes` reach the same
-		// field and the later one wins, so an exact-string check misses the
-		// alias and the wildcard still lands. Folding case costs nothing on
-		// real input — measured across the generated artifact and every live
-		// scan document (2215 posture + 117 CVE objects), there are zero
-		// case-variant sibling keys — and a map key differing only in case is
-		// already rejected downstream as an unsupported attribute name.
-		seen := map[string]string{}
+		// Keys are compared with the SAME folding encoding/json uses to bind
+		// struct fields, because that is what decides which value survives:
+		// `Attributes` and `attributes` reach the same field and the later one
+		// wins, so an exact-string check misses the alias and the wildcard
+		// still lands.
+		//
+		// strings.ToLower is NOT that folding, and the gap is reachable rather
+		// than theoretical — verified on the toolchain in use: `attributeſ`
+		// (U+017F LONG S) binds to the `attributes` field and overwrites it,
+		// while ToLower leaves the two strings distinct. strings.EqualFold
+		// implements the simple case folding json's field matcher uses, so the
+		// keys already seen are compared with it directly. Objects here carry a
+		// handful of keys, so the quadratic comparison is irrelevant.
+		//
+		// Folding costs nothing on real input — measured across the generated
+		// artifact and every live scan document (2215 posture + 117 CVE
+		// objects), there are zero case-variant sibling keys — and a map key
+		// differing only in case is separately rejected downstream as an
+		// unsupported attribute name.
+		var seen []string
 
 		for dec.More() {
 			keyTok, err := dec.Token()
@@ -272,8 +299,17 @@ func scanForDuplicateKeys(dec *json.Decoder) error {
 				return nil
 			}
 
-			folded := strings.ToLower(key)
-			if first, dup := seen[folded]; dup {
+			first, dup := "", false
+
+			for _, prior := range seen {
+				if strings.EqualFold(prior, key) {
+					first, dup = prior, true
+
+					break
+				}
+			}
+
+			if dup {
 				// The consequence differs by caller — a duplicate widens an
 				// exception in the artifact and hides findings in a scan
 				// document — so this states only the ambiguity, and each caller
@@ -288,7 +324,7 @@ func scanForDuplicateKeys(dec *json.Decoder) error {
 					"case-insensitively)", first, key)
 			}
 
-			seen[folded] = key
+			seen = append(seen, key)
 
 			if err := scanForDuplicateKeys(dec); err != nil {
 				return err

@@ -651,3 +651,55 @@ func TestCaseVariantDuplicateKeysAreRejected(t *testing.T) {
 		t.Fatalf("want errBadExceptions, got %v", err)
 	}
 }
+
+// strings.ToLower is NOT the folding encoding/json uses. Verified on the Go
+// toolchain in use (1.26.5): `attributeſ` (U+017F LATIN SMALL LETTER LONG S)
+// binds to the `attributes` field and overwrites it, yet
+// strings.ToLower("attributeſ") != "attributes" — while
+// strings.EqualFold reports them equal. So a lowercase-keyed `seen` set treats
+// them as distinct and the wildcard still lands.
+func TestUnicodeCaseAliasDuplicateIsRejected(t *testing.T) {
+	raw := "[{\"name\":\"p\",\"policyType\":\"postureExceptionPolicy\",\"actions\":[\"alertOnly\"]," +
+		"\"resources\":[{\"designatorType\":\"Attributes\",\"attributes\":{\"kind\":\"^Job$\"}," +
+		"\"attributeſ\":{\"kind\":\".*\"}}],\"posturePolicies\":[{\"controlID\":\"^C-0016$\"}]}]"
+
+	path := filepath.Join(t.TempDir(), "exceptions.json")
+	writeRaw(t, path, raw)
+
+	if _, err := loadExceptions(path); !errors.Is(err, errBadExceptions) {
+		t.Fatalf("want errBadExceptions, got %v", err)
+	}
+}
+
+// A supplied artifact holding no policies disables ALL filtering silently:
+// every accepted control reappears as backlog work, and because `filtered` is
+// derived from the policy count the report then claims no -exceptions was
+// supplied at all. The generator refuses to emit this — it errors with "no
+// ClusterSecurityException documents found" — so an empty artifact is never its
+// output and rejecting it cannot fire on a generated file.
+func TestEmptyExceptionsArtifactIsRejected(t *testing.T) {
+	for name, raw := range map[string]string{"empty array": `[]`, "null": `null`} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "exceptions.json")
+			writeRaw(t, path, raw)
+
+			if _, err := loadExceptions(path); !errors.Is(err, errBadExceptions) {
+				t.Fatalf("want errBadExceptions, got %v", err)
+			}
+		})
+	}
+}
+
+// The control: supplying NO -exceptions path at all stays legitimate — that is
+// a different statement from supplying an empty file, and the report already
+// says so.
+func TestNoExceptionsPathRemainsLegitimate(t *testing.T) {
+	got, err := loadExceptions("")
+	if err != nil {
+		t.Fatalf("an absent -exceptions flag must stay legitimate: %v", err)
+	}
+
+	if len(got) != 0 {
+		t.Fatalf("want no policies, got %d", len(got))
+	}
+}
