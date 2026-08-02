@@ -10,11 +10,6 @@ metadata:
   labels:
     app.kubernetes.io/name: userns-longhorn-smoke
     app.kubernetes.io/component: storage-smoke-test
-  annotations:
-    # The whole assertion is that a user-namespaced pod can own files on a
-    # Longhorn volume under fsGroup 1000; the writer must run as the matching
-    # UID or the test proves nothing about that pairing.
-    checkov.io/skip1: CKV_K8S_40=the smoke test asserts Longhorn volume ownership under fsGroup 1000 and must run as the matching UID
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 300
