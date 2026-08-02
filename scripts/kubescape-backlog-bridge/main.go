@@ -601,8 +601,11 @@ func deriveCVE(items []item) ([]theme, error) {
 		// The posture path rejects a summary with no workload kind/name because
 		// a cluster-wide exception designator matches an empty value. The same
 		// identity feeds CVE entries and the same suppression applies, so the
-		// check belongs on both paths or it covers only one of two.
-		if comp.Kind == "" || comp.Name == "" {
+		// check belongs on both paths or it covers only one of two — including
+		// the TRIM: an untrimmed check here would emit a valid-looking theme for
+		// an unidentified component (`components=app/ /api`), and several blank
+		// identities would collapse into one another in the component set.
+		if strings.TrimSpace(comp.Kind) == "" || strings.TrimSpace(comp.Name) == "" {
 			return nil, fmt.Errorf("%w: a CVE summary carries no workload %s "+
 				"(`kubescape.io/workload-kind` / `kubescape.io/workload-name`); exceptions are "+
 				"matched against that identity and a cluster-wide designator matches an empty "+

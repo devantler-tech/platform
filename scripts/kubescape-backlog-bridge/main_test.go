@@ -1303,6 +1303,31 @@ func TestWhitespaceOnlyWorkloadIdentityIsRejected(t *testing.T) {
 	}
 }
 
+// BOTH derive paths, or the guard covers one of two. deriveCVE consumes the same
+// identity and the code says so in its own comment, so a trim applied only to the
+// posture path leaves the CVE path emitting a valid-looking theme for an
+// unidentified component (`components=app/ /api`) — and several blank identities
+// collapse into one another in the component set.
+func TestWhitespaceOnlyWorkloadIdentityIsRejectedOnTheCVEPathToo(t *testing.T) {
+	for _, tc := range []struct{ name, kind, workload string }{
+		{"blank kind", " ", "api"},
+		{"blank name", "Deployment", "\t"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := fmt.Sprintf(`{"metadata":{"name":"api","namespace":"app",`+
+				`"labels":{"kubescape.io/workload-kind":%q,"kubescape.io/workload-name":%q,`+
+				`"kubescape.io/workload-namespace":"app"}},`+
+				`"spec":{"vulnerabilitiesRef":{"all":{"name":"m"}},`+
+				`"severities":{"critical":1,"high":0,"low":0,"medium":0,"negligible":0,"unknown":0}}}`,
+				tc.kind, tc.workload)
+
+			if _, err := deriveCVE(itemsOf(t, raw)); !errors.Is(err, errMalformedScanContent) {
+				t.Fatalf("want errMalformedScanContent on the CVE path, got %v", err)
+			}
+		})
+	}
+}
+
 // The harm the check above prevents, asserted end to end rather than argued: a
 // whitespace identity plus the generated cluster-wide designator must not
 // silently swallow a FAILED control and report a clean run.
