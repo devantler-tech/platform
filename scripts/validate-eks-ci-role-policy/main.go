@@ -21,7 +21,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -57,15 +56,13 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main 4cfe7d9f while fixing the Renovate KSail bump: the PR
-// changes exactly the ksail-operator chart's pinned SemVer (7.176.4 -> 7.178.2)
-// inside the authorization surface. This value migrates the projection so an
-// exact Helm chart SemVer is represented by one sentinel; both versions produce
-// this fingerprint. Every other HelmRelease field remains byte-exact after
-// canonicalization, including chart/source identity, values, post-renderers,
-// substitutions, and reconciliation policy. Missing, ranged, wildcarded, or
-// substituted versions are not normalized. The required manifest job separately
-// Helm-renders and security-scans the selected chart artifact before merge.
+// Measured against HEAD f19f8191 while restoring exact Helm chart versions to
+// the authorization surface: 510 documents are unchanged, and the selected
+// resource membership is unchanged. The fingerprint moves only because every
+// HelmRelease is now serialized verbatim instead of replacing immutable SemVer
+// selectors with a sentinel. This is a fail-closed control change: a future
+// chart version update now moves the fingerprint and requires review because
+// the selected chart can materialize RBAC outside the Kustomize render.
 //
 // Measured against main 9b1990de before approving this value: 510 documents
 // on both sides, with membership IDENTICAL — zero added, zero removed, zero
@@ -160,7 +157,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "ca5cc61ec1b23e86582a616c11b0cdd5f2bbc425f27e92044479624b0a22e3af"
+const expectedRenderedSurfaceSHA = "4c79183964115139dd7578efe37ae2d053f449283d0f0f78cb48ac14a7441a40"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -171,15 +168,6 @@ var authorizationOverlayPaths = []string{
 	bootstrapOverlayPath,
 	rootProductionOverlayPath,
 }
-
-// exactPinnedHelmChartVersion accepts one immutable SemVer selector, including
-// the optional v prefix and prerelease/build suffixes used by this portfolio.
-// Ranges, wildcards, substitutions, and omitted versions remain fingerprinted
-// verbatim because they let a chart move without a reviewed dependency PR.
-var exactPinnedHelmChartVersion = regexp.MustCompile(
-	`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)` +
-		`(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`,
-)
 
 // commandExecutor makes the renderer orchestration independently testable
 // without weakening the production command and deadline contract.
@@ -1057,61 +1045,10 @@ func authorizationTemplateInstanceTypes(documents []map[string]any) map[resource
 	return selected
 }
 
-// cloneStringAnyMap returns a shallow copy used to project one nested field
-// without changing the decoded document used by the remaining checks.
-func cloneStringAnyMap(source map[string]any) map[string]any {
-	clone := make(map[string]any, len(source))
-	for key, value := range source {
-		clone[key] = value
-	}
-	return clone
-}
-
-// authorizationSurfaceDocument removes only an immutable Helm dependency pin
-// from the approval projection. HelmRelease identity, chart/source identity,
-// values, post-renderers, substitutions, and reconciliation policy stay exact.
-// The required manifest job separately Helm-renders and security-scans the
-// selected chart version, so a routine Renovate pin does not require a manual
-// refresh of an otherwise unchanged authorization fingerprint.
-func authorizationSurfaceDocument(
-	identity resourceIdentity,
-	document map[string]any,
-) map[string]any {
-	if !strings.HasPrefix(identity.apiVersion, "helm.toolkit.fluxcd.io/") || identity.kind != "HelmRelease" {
-		return document
-	}
-	spec, ok := document["spec"].(map[string]any)
-	if !ok {
-		return document
-	}
-	chart, ok := spec["chart"].(map[string]any)
-	if !ok {
-		return document
-	}
-	chartSpec, ok := chart["spec"].(map[string]any)
-	if !ok {
-		return document
-	}
-	version, ok := chartSpec["version"].(string)
-	if !ok || !exactPinnedHelmChartVersion.MatchString(version) {
-		return document
-	}
-
-	projected := cloneStringAnyMap(document)
-	projectedSpec := cloneStringAnyMap(spec)
-	projectedChart := cloneStringAnyMap(chart)
-	projectedChartSpec := cloneStringAnyMap(chartSpec)
-	projectedChartSpec["version"] = "<exact-semver>"
-	projectedChart["spec"] = projectedChartSpec
-	projectedSpec["chart"] = projectedChart
-	projected["spec"] = projectedSpec
-	return projected
-}
-
 // authorizationSurfaceEntry serializes one selected object with its complete
 // identity so the aggregate hash preserves additions, removals, and duplicates.
 func authorizationSurfaceEntry(identity resourceIdentity, document map[string]any) (string, error) {
-	canonical, err := json.Marshal(authorizationSurfaceDocument(identity, document))
+	canonical, err := json.Marshal(document)
 	if err != nil {
 		return "", fmt.Errorf("marshal authorization surface entry: %w", err)
 	}

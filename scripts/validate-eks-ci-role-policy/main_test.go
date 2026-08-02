@@ -821,10 +821,11 @@ func TestValidateAuthorizationAcceptsCommittedPolicy(t *testing.T) {
 	}
 }
 
-// TestAuthorizationSurfaceEntryNormalizesOnlyPinnedHelmChartVersions keeps
-// routine dependency pins out of the authorization approval fingerprint while
-// preserving every field that can configure, redirect, or float the chart.
-func TestAuthorizationSurfaceEntryNormalizesOnlyPinnedHelmChartVersions(t *testing.T) {
+// TestAuthorizationSurfaceEntryFingerprintsHelmChartVersions ensures every
+// chart selector moves the authorization approval fingerprint. Helm charts can
+// materialize RBAC that is not visible in the static Kustomize render, so even
+// immutable version changes require explicit review.
+func TestAuthorizationSurfaceEntryFingerprintsHelmChartVersions(t *testing.T) {
 	const manifest = `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -864,15 +865,13 @@ spec:
 	}
 
 	baseline := entry(manifest)
-	if actual := entry(strings.Replace(manifest, "version: 1.2.3", "version: v2.0.0-rc.1", 1)); actual != baseline {
-		t.Fatal("exact Helm chart version update moved the authorization surface")
-	}
 
 	mutations := []struct {
 		name string
 		old  string
 		new  string
 	}{
+		{name: "exact version", old: "version: 1.2.3", new: "version: v2.0.0-rc.1"},
 		{name: "floating version range", old: "version: 1.2.3", new: "version: '>=1.2.3'"},
 		{name: "wildcard version", old: "version: 1.2.3", new: "version: '1.2.x'"},
 		{name: "substituted version", old: "version: 1.2.3", new: "version: ${chart_version}"},
