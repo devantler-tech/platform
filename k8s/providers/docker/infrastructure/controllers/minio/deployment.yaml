@@ -16,11 +16,6 @@ metadata:
   namespace: minio
   labels:
     app.kubernetes.io/name: minio
-  annotations:
-    # The server writes its object store to the /data emptyDir under
-    # fsGroup 1000, and minio-create-bucket must reach the same files as the
-    # same identity. The pair only works while both agree on the UID.
-    checkov.io/skip1: CKV_K8S_40=server and bucket-creation Job share UID 1000 so mc can write the /data emptyDir the server serves
 spec:
   replicas: 1
   strategy:

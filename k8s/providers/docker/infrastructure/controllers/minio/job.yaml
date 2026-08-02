@@ -6,10 +6,6 @@ kind: Job
 metadata:
   name: minio-create-bucket
   namespace: minio
-  annotations:
-    # Paired with the minio Deployment's UID: the bucket this Job creates is
-    # served by that pod, so both run as 1000.
-    checkov.io/skip1: CKV_K8S_40=mc runs as UID 1000 to match the minio server whose bucket it creates
 spec:
   backoffLimit: 20
   ttlSecondsAfterFinished: 3600
