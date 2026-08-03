@@ -83,9 +83,13 @@ func TestRenderMatchesGolden(t *testing.T) {
 
 // TestRenderIsDeterministic guards the anti-churn guarantee at its source: two
 // renders of one theme must be byte-identical, so an unchanged cluster writes
-// nothing. A component set is deliberately supplied in a different ORDER each
-// time, because the reconciler compares rendered text and any order-sensitivity
-// here would surface as a permanent update loop rather than as a failure.
+// nothing.
+//
+// renderBody PRESERVES the component order it is given; it does not impose one.
+// That is deliberate — the canonical order is established once, by assemble,
+// and TestAssembleSortsEveryCollection is what pins it. Asserting
+// order-independence here would demand a property renderBody is not required to
+// have, and would move the guarantee away from the function that provides it.
 func TestRenderIsDeterministic(t *testing.T) {
 	a := renderBody(postureTheme("C-0016", "apps/Deployment/web", "db/StatefulSet/pg"))
 	b := renderBody(postureTheme("C-0016", "apps/Deployment/web", "db/StatefulSet/pg"))
@@ -855,6 +859,24 @@ func TestWithheldUpdateIsDisclosed(t *testing.T) {
 	if len(store.calls) != 0 {
 		t.Errorf("a partial run issued %v", store.calls)
 	}
+
+	// CONTROL — the note must not fire when nothing is withheld, mirroring the
+	// control TestWithheldCloseIsDisclosed pairs with its "left OPEN" assertion.
+	// Only the component set changes: this theme renders exactly as the tracked
+	// entry, so no update is pending under the same partial-run gate. Without
+	// this, an implementation printing the note unconditionally stays green.
+	ctrlStore := &fakeStore{entries: []backlogEntry{trackedPosture(41, true)}}
+
+	var ctrl bytes.Buffer
+
+	if err := reconcile([]theme{postureTheme("C-0016", "apps/Deployment/web")},
+		[]surface{surfacePosture}, false, nil, ctrlStore, &ctrl); err != nil {
+		t.Fatalf("control reconcile: %v", err)
+	}
+
+	if strings.Contains(ctrl.String(), "left UNCHANGED") {
+		t.Errorf("the note fired with nothing withheld: %q", ctrl.String())
+	}
 }
 
 // TestAcceptedCloseCarriesTheNotPlannedDisposition keeps the structured state
@@ -976,8 +998,11 @@ func TestBodyBoundsTheComponentListButNotTheCount(t *testing.T) {
 
 	// CONTROL — a theme under the bound must render every component and say
 	// nothing about omissions, so the truncation above is attributable to size.
+	// The omission clause must match the wording asserted above ("…and 25 more").
+	// "more (" is a form the renderer never emits, so that clause could never be
+	// true and the control proved only the bullet count.
 	small := renderBody(postureTheme("C-0016", "apps/Deployment/web", "db/StatefulSet/pg"))
-	if strings.Count(small, "\n- `") != 2 || strings.Contains(small, "more (") {
+	if strings.Count(small, "\n- `") != 2 || strings.Contains(small, "…and ") {
 		t.Errorf("control did not flip:\n%s", small)
 	}
 }
@@ -1088,8 +1113,26 @@ func TestFirstCreateProvisionsEveryLabelItApplies(t *testing.T) {
 	// A create for a label this command does not own must not abort the run
 	// when that label already exists — "already exists" is success spelled as a
 	// failure, and treating it as fatal would file nothing at all.
+	// Derived from createLabels for the same reason as the assertion above: a
+	// hard-coded name stops matching if the unowned entry is renamed, the stub
+	// then returns success for every label call, and the "already exists"
+	// tolerance under test is silently never exercised.
+	var unowned string
+
+	for _, l := range createLabels {
+		if !l.owned {
+			unowned = l.name
+
+			break
+		}
+	}
+
+	if unowned == "" {
+		t.Fatal("premise broken: createLabels has no unowned entry to exercise")
+	}
+
 	failing := &ghStore{repo: "o/r", run: func(a ...string) ([]byte, error) {
-		if a[0] == "label" && a[2] == "security" {
+		if a[0] == "label" && a[2] == unowned {
 			return nil, errors.New("label already exists")
 		}
 
@@ -1799,6 +1842,15 @@ func TestReclassifyExplainsItselfWhenTheStateChangeSucceeds(t *testing.T) {
 
 	if !strings.Contains(calls[0], "state_reason=not_planned") {
 		t.Errorf("PATCH = %q, want the REST underscore spelling", calls[0])
+	}
+
+	// The REST API ignores state_reason unless state travels with it, so a PATCH
+	// carrying the reason alone succeeds while changing nothing. That failure is
+	// invisible to the caller — it returns no error — and the next run re-derives
+	// the same disagreement forever. Asserting the reason alone would pass
+	// against exactly that broken request.
+	if !strings.Contains(calls[0], "state=closed") {
+		t.Errorf("PATCH = %q, want state=closed so the API honours state_reason", calls[0])
 	}
 
 	if !strings.Contains(calls[1], "why this changed") {

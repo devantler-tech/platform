@@ -436,9 +436,17 @@ func apiStateReason(disposition string) string {
 // why, and the next run sees agreement so it never explains it. That loss is
 // bounded to one occurrence and destroys nothing, whereas comment spam on a
 // settled issue is unbounded — so it is the better direction to fail in.
+// state accompanies state_reason because the REST API IGNORES state_reason
+// unless state is submitted in the same request. Reclassification only ever
+// targets an already-closed issue, so state=closed re-asserts the state the
+// issue is already in and the disposition is what actually changes. Omitting it
+// makes the PATCH succeed while changing nothing — which is indistinguishable
+// from success here, so the next run re-derives the same disagreement and the
+// retry loop this function's ordering exists to bound never terminates.
 func (g *ghStore) reclassify(number int, comment, reason string) error {
 	if _, err := g.run("api", "--method", "PATCH",
 		fmt.Sprintf("repos/%s/issues/%d", g.repo, number),
+		"-f", "state=closed",
 		"-f", "state_reason="+apiStateReason(reason)); err != nil {
 		return err
 	}

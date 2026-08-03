@@ -64,7 +64,7 @@
 // that merely mention a marker and omits ones that carry it; a reconciler fed
 // that list closes issues it does not own and re-files ones it does.
 //
-// # Closing and updating are gated, because this command cannot see the cluster
+// # Closing, updating and reclassifying are gated, because this command cannot see the cluster
 //
 // It has no inventory: it cannot tell a whole-cluster sweep from a single
 // per-object GET. So a partial run must never conclude that the findings it was
@@ -128,10 +128,18 @@
 // # Bodies carry the sanitized minimum
 //
 // Control or CVE class, the affected components as namespace/kind/name, and the
-// counts. Node names, pod IPs, image digests, UIDs and wlid internals are
-// excluded upstream by component.String and nothing in rendering reintroduces
-// them: these issues are PUBLIC artifacts, and detailed reachability evidence
-// belongs in the private operator notes instead.
+// counts. Pod IPs, image digests, UIDs and wlid internals are excluded upstream
+// by component.String, and nothing in rendering reintroduces them: these issues
+// are PUBLIC artifacts, and detailed reachability evidence belongs in the
+// private operator notes instead.
+//
+// A NODE name is pseudonymized rather than excluded — component.String renders
+// it as node-<8 hex> derived from the name, because the body must still show how
+// many distinct nodes a finding spans. The component keeps the real name so
+// exception designators can match it, so the pseudonym exists only in rendered
+// output. Being deterministic, it is stable and linkable across issues and runs:
+// a weaker guarantee than exclusion, and the reason a node name must never be
+// the thing an issue is read to identify.
 //
 // # Themes, not resources
 //

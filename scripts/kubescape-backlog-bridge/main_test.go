@@ -2193,8 +2193,13 @@ func TestWriteModeRequiresExceptionsForPosture(t *testing.T) {
 	// CONTROL — a CVE-only write never reaches the posture derivation, so the
 	// gate must not fire for it either. This is what scopes the refusal to the
 	// surface that actually consumes exceptions.
-	cve := filepath.Join(dir, "cve.json")
-	writeBare(t, cve, cveDoc("app", "api", map[string]int{"critical": 1}))
+	//
+	// Pointed at an ABSENT path for the same reason as the control above: a
+	// loadable CVE document passes validation, and `run` then hands the plan to
+	// reconcile with a real ghStore, so the test would shell out to `gh` against
+	// the -repo argument. The gate under test fires during validation, strictly
+	// before the loader, so stopping there costs the assertion nothing.
+	cve := filepath.Join(dir, "absent-cve.json")
 
 	var cveOut bytes.Buffer
 
@@ -2302,6 +2307,48 @@ func TestNonNodeComponentsAreNotPseudonymized(t *testing.T) {
 	for want, c := range cases {
 		if got := c.String(); got != want {
 			t.Errorf("want %q, got %q", want, got)
+		}
+	}
+}
+
+// TestAssembleSortsEveryCollection pins the anti-churn guarantee where it is
+// actually provided. Go randomises map iteration, so assemble is the single
+// place that turns the accumulator's unordered sets into a canonical order;
+// renderBody downstream merely preserves what it is handed.
+//
+// Without this, nothing asserted the sort at all: TestRenderIsDeterministic
+// feeds one already-ordered slice twice, so it stays green against an assemble
+// that emitted components in iteration order — and the resulting body would
+// differ run to run on identical input, turning every run into an update.
+//
+// Enough entries that an unsorted map iteration is overwhelmingly unlikely to
+// come out ordered by chance, and the check runs over repeated assembles so a
+// single lucky ordering cannot pass it.
+func TestAssembleSortsEveryCollection(t *testing.T) {
+	components := map[string]struct{}{}
+	for _, c := range []string{
+		"zz/Deployment/web", "aa/StatefulSet/pg", "mm/DaemonSet/log",
+		"bb/Deployment/api", "yy/Job/batch", "cc/CronJob/prune",
+		"nn/Deployment/edge", "dd/StatefulSet/cache",
+	} {
+		components[c] = struct{}{}
+	}
+
+	for i := range 16 {
+		themes := assemble(surfacePosture, map[string]*acc{
+			"C-0055": {severity: "High", components: components, total: 3},
+			"C-0016": {severity: "High", components: components, total: 1},
+			"C-0034": {severity: "Low", components: components, total: 2},
+		})
+
+		if !sort.SliceIsSorted(themes, func(a, b int) bool { return themes[a].Key < themes[b].Key }) {
+			t.Fatalf("run %d: themes are not ordered by key: %v", i, themes)
+		}
+
+		for _, th := range themes {
+			if !sort.StringsAreSorted(th.Components) {
+				t.Fatalf("run %d: theme %s components are not sorted: %v", i, th.Key, th.Components)
+			}
 		}
 	}
 }

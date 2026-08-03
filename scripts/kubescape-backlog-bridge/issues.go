@@ -458,11 +458,15 @@ func renderTitle(t theme) string {
 // an update and reintroduces exactly the churn this design forbids.
 //
 // It carries the SANITIZED MINIMUM: the control or CVE class, the affected
-// components as namespace/kind/name, and the counts. Node names, pod IPs, image
-// digests, UIDs and wlid internals are already excluded upstream by
-// component.String, and nothing here reintroduces them — this body is a public
-// artifact, and detailed reachability evidence belongs in the private operator
-// notes instead.
+// components as namespace/kind/name, and the counts. Pod IPs, image digests,
+// UIDs and wlid internals are already excluded upstream by component.String,
+// and nothing here reintroduces them — this body is a public artifact, and
+// detailed reachability evidence belongs in the private operator notes instead.
+//
+// A NODE name is pseudonymized, not excluded: component.String renders it as
+// node-<8 hex> so the body can still show how many distinct nodes are affected.
+// The pseudonym is deterministic, so it is linkable across issues and runs —
+// weaker than exclusion, and deliberately so.
 func renderBody(t theme) string {
 	var b strings.Builder
 
