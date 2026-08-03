@@ -457,6 +457,9 @@ func validateVendorSource(input []byte, bundle string) error {
 		if err := rejectInlineCheckovSuppression(&document); err != nil {
 			return fmt.Errorf("vendor document %d contains %w", documentIndex, err)
 		}
+		if err := rejectYAMLAlias(&document); err != nil {
+			return fmt.Errorf("vendor document %d contains %w", documentIndex, err)
+		}
 		if err := rejectYAMLMergeKey(&document); err != nil {
 			return fmt.Errorf("vendor document %d contains %w", documentIndex, err)
 		}
@@ -563,6 +566,9 @@ func validateAnnotatedBundle(input []byte, targets []targetSpec) error {
 			continue
 		}
 		if err := rejectInlineCheckovSuppression(&document); err != nil {
+			return fmt.Errorf("committed document %d contains %w", documentIndex, err)
+		}
+		if err := rejectYAMLAlias(&document); err != nil {
 			return fmt.Errorf("committed document %d contains %w", documentIndex, err)
 		}
 		root := document.Content[0]
@@ -891,6 +897,18 @@ func rejectInlineCheckovSuppression(node *yaml.Node) error {
 	return nil
 }
 
+func rejectYAMLAlias(node *yaml.Node) error {
+	if node.Kind == yaml.AliasNode {
+		return errors.New("YAML alias")
+	}
+	for _, child := range node.Content {
+		if err := rejectYAMLAlias(child); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func rejectYAMLMergeKey(node *yaml.Node) error {
 	if node.Kind == yaml.MappingNode {
 		for index := 0; index+1 < len(node.Content); index += 2 {
@@ -1155,7 +1173,7 @@ func annotateDocument(lines []string, target targetSpec) ([]string, error) {
 	metadataIndex := -1
 	metadataEnd := len(lines)
 	for index, line := range lines {
-		if line == "metadata:" {
+		if isBlockMappingLine(line, "metadata:") {
 			if metadataIndex != -1 {
 				return nil, errors.New("multiple top-level metadata mappings")
 			}
@@ -1174,7 +1192,7 @@ func annotateDocument(lines []string, target targetSpec) ([]string, error) {
 	annotationsIndex := -1
 	annotationsEnd := metadataEnd
 	for index := metadataIndex + 1; index < metadataEnd; index++ {
-		if lines[index] == "  annotations:" {
+		if isBlockMappingLine(lines[index], "  annotations:") {
 			if annotationsIndex != -1 {
 				return nil, errors.New("multiple metadata.annotations mappings")
 			}
@@ -1217,6 +1235,14 @@ func annotateDocument(lines []string, target targetSpec) ([]string, error) {
 	}
 
 	return insertLines(lines, insertAt, additions), nil
+}
+
+func isBlockMappingLine(line, prefix string) bool {
+	if !strings.HasPrefix(line, prefix) {
+		return false
+	}
+	remainder := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	return remainder == "" || strings.HasPrefix(remainder, "#")
 }
 
 func validateAnnotationStyle(lines []string) error {

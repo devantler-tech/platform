@@ -277,6 +277,40 @@ func TestAnnotatorAcceptsDecoratedDocumentMarkers(t *testing.T) {
 	}
 }
 
+func TestAnnotatorPreservesTrailingMappingComments(t *testing.T) {
+	t.Parallel()
+
+	input := bundleFixture("cdi-operator-cluster", "cdi-operator")
+	input = strings.Replace(
+		input,
+		"kind: ClusterRole\nmetadata:\n  name: cdi-operator-cluster",
+		"kind: ClusterRole\nmetadata: # generated upstream\n  name: cdi-operator-cluster",
+		1,
+	)
+	input = strings.Replace(
+		input,
+		"  annotations:\n    owner: upstream",
+		"  annotations: # generated upstream\n    owner: upstream",
+		1,
+	)
+
+	output, stderr, err := runAnnotator(t, "cdi", input)
+	if err != nil {
+		t.Fatalf("annotator rejected trailing mapping comments: %v\nstderr: %s", err, stderr)
+	}
+	if !strings.Contains(output, "metadata: # generated upstream\n") ||
+		!strings.Contains(output, "  annotations: # generated upstream\n") {
+		t.Fatalf("annotator did not preserve trailing mapping comments:\n%s", output)
+	}
+	documents := decodeDocuments(t, output)
+	if documents["ClusterRole/cdi-operator-cluster"].Metadata.Annotations["checkov.io/skip1"] == "" {
+		t.Fatal("annotator did not add the ClusterRole disposition")
+	}
+	if documents["Deployment/cdi-operator"].Metadata.Annotations["checkov.io/skip1"] == "" {
+		t.Fatal("annotator did not add the Deployment disposition")
+	}
+}
+
 func TestAnnotatorFailsClosedWhenVendorTargetsDrift(t *testing.T) {
 	t.Parallel()
 
@@ -680,6 +714,26 @@ spec: {}
 	}
 	if !strings.Contains(stderr, "Deployment metadata is missing") {
 		t.Fatalf("stderr did not name the missing workload metadata: %q", stderr)
+	}
+}
+
+func TestSourceValidationRejectsYAMLAliases(t *testing.T) {
+	t.Parallel()
+
+	input := `apiVersion: apps/v1
+kindAnchor: &workload Deployment
+kind: *workload
+metadata:
+  name: aliased-workload
+  namespace: other
+spec: {}
+`
+	_, stderr, err := runAnnotator(t, "cdi", input, "--validate-source")
+	if err == nil {
+		t.Fatal("source validator accepted a workload kind hidden behind a YAML alias")
+	}
+	if !strings.Contains(stderr, "YAML alias") {
+		t.Fatalf("stderr did not name the YAML alias: %q", stderr)
 	}
 }
 
