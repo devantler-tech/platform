@@ -48,6 +48,18 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 		}
 	}
 
+	// Same reasoning, other direction: the filed entry disagrees with what this
+	// run derived, and the run declined to overwrite it because a subset render
+	// would drop the components it never looked at.
+	if p.WithheldUpdates > 0 {
+		if _, err := fmt.Fprintf(out,
+			"note: %d tracked issue(s) differ from this run's findings but were left UNCHANGED — "+
+				"updating needs -inputs-complete, since a subset render would drop components this "+
+				"run did not examine\n", p.WithheldUpdates); err != nil {
+			return err
+		}
+	}
+
 	if p.empty() {
 		_, err := fmt.Fprintln(out, "no changes: every derived theme already matches its tracked issue")
 

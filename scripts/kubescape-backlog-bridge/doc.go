@@ -35,19 +35,41 @@
 // that merely mention a marker and omits ones that carry it; a reconciler fed
 // that list closes issues it does not own and re-files ones it does.
 //
-// # Closing is gated, because this command cannot see the cluster
+// # Closing and updating are gated, because this command cannot see the cluster
 //
 // It has no inventory: it cannot tell a whole-cluster sweep from a single
 // per-object GET. So a partial run must never conclude that the findings it was
-// not shown are resolved. Closing therefore requires `-inputs-complete`, the
-// caller's explicit assertion that EVERY object on each supplied surface was
-// passed, and is further scoped to the surfaces this run actually examined — a
-// posture-only run never closes a CVE entry. Creating and updating are safe
-// under partial input and are not gated.
+// not shown are resolved. `-inputs-complete` is the caller's explicit assertion
+// that EVERY object on each supplied surface was passed, and two writes need it:
+//
+//   - CLOSING, further scoped to the surfaces this run actually examined — a
+//     posture-only run never closes a CVE entry.
+//   - UPDATING, because a theme derived from a subset lists only that subset's
+//     components. Writing it over a tracked entry drops the components this run
+//     never looked at and can lower a recorded count or severity while those
+//     findings are still live, which reads to a human as remediation.
+//
+// CREATING is not gated: a theme nobody tracks yet is new information, and an
+// under-scoped new entry is corrected by the first complete run. REOPENING is
+// likewise never withheld — a live finding left closed is the worse error — but
+// under partial input it reopens carrying the entry's already-filed text rather
+// than the subset render.
+//
+// Both withheld counts are printed, so a gated run never renders as a clean one.
 //
 // The same asymmetry decides the fail-closed direction throughout: an entry
 // whose surface cannot be read is left alone, because a stale open issue costs
 // far less than a live finding marked resolved.
+//
+// # Accepted is not the same as gone
+//
+// A control every occurrence of which a declared ClusterSecurityException covers
+// leaves the derivation exactly as a remediated one does — absent from the
+// themes — but the opposite thing is true of the cluster: it is still failing,
+// and someone decided to accept that. Such an entry closes with its own wording
+// naming the exception, never as "no longer present". For the same reason
+// `-mode=write` over posture input REQUIRES `-exceptions`: without it every
+// accepted control is derived as live and filed as backlog work.
 //
 // # Bodies carry the sanitized minimum
 //
@@ -125,8 +147,9 @@
 //	  -cve ns-a-workload-image-1.json -cve ns-a-workload-image-2.json
 //
 // The same invocation reconciling issues, once a sweep really did pass every
-// object — `-inputs-complete` is what authorises closing, so it belongs only on
-// a run that can honestly make that claim:
+// object — `-inputs-complete` is what authorises closing and updating, so it
+// belongs only on a run that can honestly make that claim, and `-exceptions` is
+// required rather than optional as soon as posture input is being written:
 //
 //	go run ./scripts/kubescape-backlog-bridge \
 //	  -mode write -repo devantler-tech/platform -inputs-complete \

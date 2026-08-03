@@ -468,18 +468,27 @@ func (a *acc) raiseSeverity(s string) {
 
 // derivePosture groups failed posture controls into themes, dropping any
 // (control, component) pair a declared ClusterSecurityException already covers.
+//
 // The suppressed count is returned, not discarded: an all-clear reached by
 // FILTERING is a different statement from one reached by a clean input, and
 // report() cannot tell them apart without it.
-func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
+//
+// acceptedKeys names the controls whose EVERY failing component was suppressed,
+// so no theme survives for them. That set is what tells the write path apart
+// from a genuine disappearance: both look like "absent from themes", but one is
+// remediation and the other is an accepted risk that is still failing. A control
+// suppressed on one workload and live on another is NOT in it — its theme
+// survives, carrying the components that remain actionable.
+func derivePosture(items []item, exceptions []exception) ([]theme, int, []string, error) {
 	byControl := map[string]*acc{}
 
 	suppressed := 0
+	suppressedKeys := map[string]struct{}{}
 
 	for _, it := range items {
 		ctrls, err := it.controls()
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 
 		comp := it.component()
@@ -500,7 +509,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 		// check would establish an identity that is blank in every way that
 		// matters and then let a broad exception suppress a failed control.
 		if strings.TrimSpace(comp.Kind) == "" || strings.TrimSpace(comp.Name) == "" {
-			return nil, 0, fmt.Errorf("%w: a posture summary carries no workload %s "+
+			return nil, 0, nil, fmt.Errorf("%w: a posture summary carries no workload %s "+
 				"(`kubescape.io/workload-kind` / `kubescape.io/workload-name`); exceptions are matched "+
 				"against that identity and a cluster-wide designator matches an empty value, so its "+
 				"findings could be suppressed without ever identifying the resource",
@@ -518,7 +527,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 			// the cluster — is wrong.
 			failed, known := controlFailed(ctrl.Status.Status)
 			if !known {
-				return nil, 0, fmt.Errorf("%w: %s reports control %s with status %q, "+
+				return nil, 0, nil, fmt.Errorf("%w: %s reports control %s with status %q, "+
 					"which is neither a failure nor a recognised non-failure",
 					errMalformedScanContent, comp, id, ctrl.Status.Status)
 			}
@@ -535,7 +544,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 			// report. Unknown NONEMPTY names stay tolerated, so a future
 			// severity does not become a hard failure.
 			if strings.TrimSpace(ctrl.Severity.Severity) == "" {
-				return nil, 0, fmt.Errorf("%w: %s reports failed control %s with no severity; "+
+				return nil, 0, nil, fmt.Errorf("%w: %s reports failed control %s with no severity; "+
 					"a genuine posture summary always carries one, and a theme without it "+
 					"loses the prioritisation the backlog is ordered by",
 					errMalformedScanContent, comp, id)
@@ -549,7 +558,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 			key := id
 			if ctrl.ControlID != "" {
 				if ctrl.ControlID != id {
-					return nil, 0, fmt.Errorf("%w: %s keys a control as %q but its controlID is %q; "+
+					return nil, 0, nil, fmt.Errorf("%w: %s keys a control as %q but its controlID is %q; "+
 						"refusing to guess which control an exception should match",
 						errMalformedScanContent, comp, id, ctrl.ControlID)
 				}
@@ -562,7 +571,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 			// "security(posture):  fails" with a stable fingerprint for a
 			// control that names nothing.
 			if strings.TrimSpace(key) == "" {
-				return nil, 0, fmt.Errorf("%w: %s reports a failed control with an empty identifier; "+
+				return nil, 0, nil, fmt.Errorf("%w: %s reports a failed control with an empty identifier; "+
 					"a backlog entry keyed on it would name no control and could not be matched "+
 					"against an exception", errMalformedScanContent, comp)
 			}
@@ -573,6 +582,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 			// name, which would itself be a false all-clear.
 			if excepted(exceptions, key, comp) {
 				suppressed++
+				suppressedKeys[key] = struct{}{}
 
 				continue
 			}
@@ -589,7 +599,23 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 		}
 	}
 
-	return assemble(surfacePosture, byControl), suppressed, nil
+	// A control with a surviving accumulator is still live somewhere, so it is
+	// not accepted however many of its components were suppressed. Subtracting
+	// here rather than tracking it inline keeps the loop's only new work a map
+	// insert, and means the answer cannot depend on which component came first.
+	accepted := make([]string, 0, len(suppressedKeys))
+
+	for key := range suppressedKeys {
+		if _, live := byControl[key]; live {
+			continue
+		}
+
+		accepted = append(accepted, key)
+	}
+
+	sort.Strings(accepted)
+
+	return assemble(surfacePosture, byControl), suppressed, accepted, nil
 }
 
 // deriveCVE groups CVE counts into one theme per severity class.
@@ -797,6 +823,19 @@ func run(args []string, out io.Writer) error {
 		return errors.New("-inputs-complete only affects -mode=write; it gates closing a tracked issue")
 	}
 
+	// A posture run derived WITHOUT the declared exceptions keeps every accepted
+	// control, and report() says so in a note because that output is explicitly
+	// not a filed-work list. Write mode has no such escape: it turns the same
+	// unfiltered derivation into real issues, filing — and reopening — backlog
+	// work for risks the cluster has already accepted, under this command's own
+	// automation disclosure. Refusing is the only reading that keeps the two
+	// modes consistent, and the flag is one argument away.
+	if *mode == "write" && len(posturePaths) > 0 && strings.TrimSpace(*exceptionsPath) == "" {
+		return fmt.Errorf("%w: -mode=write with -posture requires -exceptions "+
+			"(`go run ./scripts/generate-kubescape-exceptions`); without it every accepted "+
+			"control is filed as backlog work", errWritesNotEnabled)
+	}
+
 	if len(posturePaths) == 0 && len(cvePaths) == 0 {
 		return errors.New("no input: pass -posture and/or -cve. " +
 			"Reporting \"nothing to file\" for an empty invocation would be the same " +
@@ -815,6 +854,10 @@ func run(args []string, out io.Writer) error {
 		// all-clear reached by FILTERING is a different claim from one reached
 		// by a clean input, and the report must not render them identically.
 		suppressed int
+		// accepted holds the fingerprints of themes an exception suppressed
+		// ENTIRELY, which the planner needs to close them as accepted rather
+		// than as gone.
+		accepted = map[string]struct{}{}
 	)
 
 	if len(posturePaths) > 0 {
@@ -823,12 +866,19 @@ func run(args []string, out io.Writer) error {
 			return err
 		}
 
-		derived, n, err := derivePosture(postureItems, exceptions)
+		derived, n, acceptedKeys, err := derivePosture(postureItems, exceptions)
 		if err != nil {
 			return err
 		}
 
 		suppressed = n
+
+		// Carried as fingerprints, not keys: that is the identity the planner
+		// matches a tracked issue by, and deriving it here keeps the planner
+		// free of any knowledge of how a posture key becomes one.
+		for _, key := range acceptedKeys {
+			accepted[theme{Kind: string(surfacePosture), Key: key}.Fingerprint()] = struct{}{}
+		}
 
 		themes = append(themes, derived...)
 		examined = append(examined, surfacePosture)
@@ -850,7 +900,7 @@ func run(args []string, out io.Writer) error {
 	}
 
 	if *mode == "write" {
-		return reconcile(themes, examined, *inputsComplete, newGHStore(*repo), out)
+		return reconcile(themes, examined, *inputsComplete, accepted, newGHStore(*repo), out)
 	}
 
 	return report(themes, examined, len(exceptions) > 0, suppressed, out)
@@ -860,13 +910,20 @@ func run(args []string, out io.Writer) error {
 // applies it. Split out of run so the write path is exercisable against a fake
 // store — including the case that matters most, where the plan is empty and the
 // correct behaviour is to touch nothing.
-func reconcile(themes []theme, examined []surface, closeGone bool, store issueStore, out io.Writer) error {
+func reconcile(
+	themes []theme,
+	examined []surface,
+	inputsComplete bool,
+	accepted map[string]struct{},
+	store issueStore,
+	out io.Writer,
+) error {
 	existing, err := store.list()
 	if err != nil {
 		return err
 	}
 
-	p, err := planWrites(themes, existing, examined, closeGone)
+	p, err := planWrites(themes, existing, examined, inputsComplete, accepted)
 	if err != nil {
 		return err
 	}

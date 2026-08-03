@@ -151,7 +151,7 @@ func mustDeriveCVE(t *testing.T, items []item) []theme {
 func mustDerivePosture(t *testing.T, items []item, exceptions []exception) []theme {
 	t.Helper()
 
-	got, _, err := derivePosture(items, exceptions)
+	got, _, _, err := derivePosture(items, exceptions)
 	if err != nil {
 		t.Fatalf("derivePosture: %v", err)
 	}
@@ -1040,7 +1040,7 @@ func TestUnrecognisedControlStatusFailsClosed(t *testing.T) {
 	for _, status := range []string{"", "  ", "weird-new-status"} {
 		items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": status}))
 
-		_, _, err := derivePosture(items, nil)
+		_, _, _, err := derivePosture(items, nil)
 		if err == nil {
 			t.Errorf("status %q must fail closed, got no error", status)
 		}
@@ -1053,7 +1053,7 @@ func TestRecognisedNonFailureStatusesAreSkipped(t *testing.T) {
 	for _, status := range []string{"passed", "skipped", "irrelevant", "excluded", "ignored", "PASSED"} {
 		items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": status}))
 
-		got, _, err := derivePosture(items, nil)
+		got, _, _, err := derivePosture(items, nil)
 		if err != nil {
 			t.Errorf("status %q must be accepted, got %v", status, err)
 		}
@@ -1250,7 +1250,7 @@ func TestControlIDMismatchIsRejected(t *testing.T) {
 		`"spec":{"controls":{"C-9999":{"controlID":"C-0036","severity":{"severity":"High"},` +
 		`"status":{"status":"failed"}}},"severities":{"critical":0}}}`
 
-	_, _, err := derivePosture(itemsOf(t, doc), nil)
+	_, _, _, err := derivePosture(itemsOf(t, doc), nil)
 	if err == nil {
 		t.Fatal("a key/controlID mismatch must be rejected")
 	}
@@ -1265,7 +1265,7 @@ func TestEmptyEmbeddedControlIDFallsBackToTheKey(t *testing.T) {
 		`"spec":{"controls":{"C-0016":{"controlID":"","severity":{"severity":"High"},` +
 		`"status":{"status":"failed"}}},"severities":{"critical":0}}}`
 
-	got, _, err := derivePosture(itemsOf(t, doc), nil)
+	got, _, _, err := derivePosture(itemsOf(t, doc), nil)
 	if err != nil {
 		t.Fatalf("an empty embedded controlID must still fall back, got %v", err)
 	}
@@ -1302,7 +1302,7 @@ func TestPostureSummaryWithoutWorkloadIdentityIsRejected(t *testing.T) {
 
 	items := itemsOf(t, raw)
 
-	if _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
+	if _, _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
 		t.Fatalf("want errMalformedScanContent for a summary with no workload kind, got %v", err)
 	}
 }
@@ -1329,7 +1329,7 @@ func TestWhitespaceOnlyWorkloadIdentityIsRejected(t *testing.T) {
 
 			items := itemsOf(t, raw)
 
-			if _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
+			if _, _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
 				t.Fatalf("want errMalformedScanContent for a whitespace-only identity, got %v", err)
 			}
 		})
@@ -1376,7 +1376,7 @@ func TestWhitespaceIdentityIsNotSuppressedByAClusterWideException(t *testing.T) 
 
 	items := itemsOf(t, raw)
 
-	themes, _, err := derivePosture(items, exceptions)
+	themes, _, _, err := derivePosture(items, exceptions)
 	if err == nil {
 		t.Fatalf("a whitespace identity must be refused, not silently excepted; got %d theme(s)", len(themes))
 	}
@@ -1412,7 +1412,7 @@ func TestFailedControlWithoutSeverityIsRejected(t *testing.T) {
 	items := itemsOf(t, postureDocSev("app", "Deployment", "api",
 		map[string]string{"C-0016": "failed"}, ""))
 
-	if _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
+	if _, _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
 		t.Fatalf("want errMalformedScanContent for a failed control with no severity, got %v", err)
 	}
 }
@@ -1597,7 +1597,7 @@ func TestMissingWorkloadNameLabelIsRejectedNotSubstituted(t *testing.T) {
 		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},` +
 		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":0}}}`
 
-	_, _, err := derivePosture(itemsOf(t, doc), nil)
+	_, _, _, err := derivePosture(itemsOf(t, doc), nil)
 	if err == nil {
 		t.Fatal("a summary with no workload-name label must be rejected, not renamed to the CR's own name")
 	}
@@ -2121,5 +2121,90 @@ func TestOrdinaryScanInputStillParses(t *testing.T) {
 
 	if !strings.Contains(out.String(), "C-0016") {
 		t.Errorf("want the finding reported, got %q", out.String())
+	}
+}
+
+// TestWriteModeRequiresExceptionsForPosture keeps the two modes' claims
+// consistent. Report mode already announces that an unfiltered posture
+// derivation is not a drainable backlog; write mode turns that same derivation
+// into real GitHub issues, so accepting the flagless invocation would file —
+// and reopen — work for every risk the platform has already accepted.
+func TestWriteModeRequiresExceptionsForPosture(t *testing.T) {
+	dir := t.TempDir()
+	posture := filepath.Join(dir, "posture.json")
+	writeBare(t, posture, postureDoc("app", "Deployment", "api", map[string]string{"C-0036": "failed"}))
+
+	var out bytes.Buffer
+
+	err := run([]string{"-mode", "write", "-repo", "owner/name", "-posture", posture}, &out)
+	if err == nil {
+		t.Fatal("a posture write without -exceptions must be refused")
+	}
+
+	if !errors.Is(err, errWritesNotEnabled) || !strings.Contains(err.Error(), "-exceptions") {
+		t.Errorf("want an errWritesNotEnabled naming -exceptions, got %v", err)
+	}
+
+	// CONTROL — the same invocation carrying the flag must get PAST this gate.
+	// It is pointed at a path that does not exist so the run stops at the
+	// exceptions loader instead of reaching the network: any error is fine so
+	// long as it is no longer this one. Without this the assertion above would
+	// hold for a build that refuses every write invocation.
+	var ctrl bytes.Buffer
+
+	ctrlErr := run([]string{
+		"-mode", "write", "-repo", "owner/name", "-posture", posture,
+		"-exceptions", filepath.Join(dir, "absent.json"),
+	}, &ctrl)
+
+	if ctrlErr != nil && strings.Contains(ctrlErr.Error(), "-exceptions requires") {
+		t.Fatalf("control did not flip: still refused by the same gate, got %v", ctrlErr)
+	}
+
+	// CONTROL — a CVE-only write never reaches the posture derivation, so the
+	// gate must not fire for it either. This is what scopes the refusal to the
+	// surface that actually consumes exceptions.
+	cve := filepath.Join(dir, "cve.json")
+	writeBare(t, cve, cveDoc("app", "api", map[string]int{"critical": 1}))
+
+	var cveOut bytes.Buffer
+
+	cveErr := run([]string{"-mode", "write", "-repo", "owner/name", "-cve", cve}, &cveOut)
+	if cveErr != nil && errors.Is(cveErr, errWritesNotEnabled) &&
+		strings.Contains(cveErr.Error(), "-exceptions") {
+		t.Errorf("the posture gate fired on a CVE-only write: %v", cveErr)
+	}
+}
+
+// TestDerivePostureNamesFullySuppressedControls is what lets the write path
+// tell an accepted finding from a remediated one. Both are absent from the
+// derived themes; only this set says which.
+func TestDerivePostureNamesFullySuppressedControls(t *testing.T) {
+	// C-0036 is excepted cluster-wide, so nothing survives for it.
+	// C-0016 is excepted on Jobs only, so its Deployment occurrence remains and
+	// it is NOT accepted — the discriminating half of this test.
+	exceptions := loadFixture(t, exceptionsDoc(
+		policyDoc("admission", []string{"C-0036"}, `{"kind":".*"}`),
+		policyDoc("batch", []string{"C-0016"}, `{"kind":"^Job$"}`)))
+
+	items := itemsOf(t,
+		postureDoc("app", "Job", "nightly", map[string]string{"C-0016": "failed", "C-0036": "failed"}),
+		postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed", "C-0036": "failed"}))
+
+	themes, suppressed, accepted, err := derivePosture(items, exceptions)
+	if err != nil {
+		t.Fatalf("derivePosture: %v", err)
+	}
+
+	if len(accepted) != 1 || accepted[0] != "C-0036" {
+		t.Fatalf("want exactly C-0036 accepted, got %v", accepted)
+	}
+
+	if len(themes) != 1 || themes[0].Key != "C-0016" {
+		t.Fatalf("want C-0016 to survive as a theme, got %+v", themes)
+	}
+
+	if suppressed != 3 {
+		t.Errorf("want 3 suppressed (control,component) pairs, got %d", suppressed)
 	}
 }
