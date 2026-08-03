@@ -528,8 +528,32 @@ func TestModeWriteNeedsARepository(t *testing.T) {
 func TestUnknownModeIsRefused(t *testing.T) {
 	var out bytes.Buffer
 
-	if err := run([]string{"-mode", "wrote"}, &out); err == nil {
+	err := run([]string{"-mode", "wrote"}, &out)
+	if err == nil {
 		t.Fatal("an unknown -mode must be refused")
+	}
+
+	// This invocation ALSO carries no input, and run refuses that too, so
+	// "some error came back" passes for whichever check happens to run first
+	// and would keep passing if the mode check stopped firing entirely. Both
+	// halves are needed: the sentinel proves it is an invocation refusal rather
+	// than an unrelated failure, and the message proves it is THIS one.
+	if !errors.Is(err, errInvalidInvocation) {
+		t.Errorf("want errInvalidInvocation, got %v", err)
+	}
+
+	if !strings.Contains(err.Error(), "unknown -mode") {
+		t.Errorf("the refusal does not name the mode check: %v", err)
+	}
+
+	// CONTROL — the same invocation with a VALID mode must get past this gate,
+	// so the assertion above is attributable to the mode and not to the missing
+	// input it also carries.
+	var ctrl bytes.Buffer
+
+	ctrlErr := run([]string{"-mode", "report"}, &ctrl)
+	if ctrlErr != nil && strings.Contains(ctrlErr.Error(), "unknown -mode") {
+		t.Fatalf("control did not flip: a valid mode was still refused, got %v", ctrlErr)
 	}
 }
 
@@ -2157,7 +2181,12 @@ func TestWriteModeRequiresExceptionsForPosture(t *testing.T) {
 		"-exceptions", filepath.Join(dir, "absent.json"),
 	}, &ctrl)
 
-	if ctrlErr != nil && strings.Contains(ctrlErr.Error(), "-exceptions requires") {
+	// Matched with the SAME discriminator the CVE control below uses. The
+	// substring "-exceptions requires" reversed the words of the real message
+	// ("... requires -exceptions ..."), so it could never match: the control
+	// reported success unconditionally and left the assertion above unablated.
+	if ctrlErr != nil && errors.Is(ctrlErr, errWritesNotEnabled) &&
+		strings.Contains(ctrlErr.Error(), "-exceptions") {
 		t.Fatalf("control did not flip: still refused by the same gate, got %v", ctrlErr)
 	}
 

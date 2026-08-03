@@ -20,6 +20,12 @@ import (
 // parsed out of a body the label already proved is ours.
 const bridgeLabel = "kubescape-bridge"
 
+// githubIssueBodyLimit is the documented maximum length of an issue body.
+const githubIssueBodyLimit = 65536
+
+// githubIssueTitleLimit is the documented maximum length of an issue title.
+const githubIssueTitleLimit = 256
+
 // maxListedComponents bounds how many components a body enumerates.
 //
 // GitHub refuses an issue body over 65,536 characters. A component line is
@@ -28,9 +34,6 @@ const bridgeLabel = "kubescape-bridge"
 // prose, while being far above any component count a real control produces
 // (the live cluster carries ~2,215 posture summaries in total, across every
 // control).
-// githubIssueBodyLimit is the documented maximum length of an issue body.
-const githubIssueBodyLimit = 65536
-
 const maxListedComponents = 300
 
 // fingerprintMarker is the machine-readable identity embedded in each body.
@@ -60,7 +63,15 @@ var errMissingFingerprint = errors.New("tracked issue carries no readable finger
 // the identity would then be decided by which one appears first, and the entry's
 // identity would depend on the order renderBody happens to emit its fields in.
 // Anchoring makes only the line renderBody itself writes count.
-var fingerprintPattern = regexp.MustCompile(`(?m)^<!-- ` + fingerprintMarker + `([0-9a-f]{16}) -->$`)
+//
+// The trailing \r? is load-bearing, not defensive noise. renderBody writes LF,
+// but a body EDITED IN THE GITHUB WEB UI comes back from the API with CRLF, and
+// Go's (?m)$ matches only before \n — so the \r would sit between `-->` and the
+// anchor and the marker would not match. That is not a cosmetic miss: fingerprint
+// failure is deliberately fail-closed, so planWrites returns errMissingFingerprint
+// and EVERY subsequent run refuses, until someone hand-repairs the body. One
+// maintainer edit through the web UI would otherwise wedge the bridge for good.
+var fingerprintPattern = regexp.MustCompile(`(?m)^<!-- ` + fingerprintMarker + `([0-9a-f]{16}) -->\r?$`)
 
 // backlogEntry is an issue this command already owns.
 type backlogEntry struct {
@@ -137,7 +148,13 @@ type plan struct {
 func (p plan) empty() bool { return len(p.Actions) == 0 }
 
 // zeroWidthSpace breaks a token without removing information from it.
-const zeroWidthSpace = "​"
+//
+// Written as an escape rather than the raw rune: U+200B is invisible in review
+// and in a diff, so a raw literal can be silently dropped by an editor or a
+// copy/paste without anything looking wrong. staticcheck flags the raw form
+// (ST1018). The escape encodes the identical bytes, so rendered bodies are
+// unchanged.
+const zeroWidthSpace = "\u200b"
 
 // sanitizeForIssue neutralises active GitHub syntax in a scanner-derived string
 // before it is posted.
@@ -184,7 +201,33 @@ func sanitizeForIssue(s string) string {
 // functions of the theme, with no timestamps, run ids, or ordering derived from
 // map iteration — an unstable byte anywhere in either one turns every run into
 // an update and reintroduces exactly the churn this design forbids.
-func renderTitle(t theme) string { return sanitizeForIssue(t.Title()) }
+// renderTitle bounds the title for the same reason renderBody bounds the list:
+// GitHub refuses a title over githubIssueTitleLimit, applyPlan stops at the
+// first failure, so ONE over-long scanner-derived key would block every
+// remaining action in the run. t.Key reaches the title from a CVE summary's own
+// map keys or a control map key, so its length is not ours to assume.
+//
+// Cut by RUNE, not by byte: a byte cut can split a multi-byte rune and emit
+// U+FFFD, which would differ from the live title every run and churn the issue
+// forever — the exact failure the anti-churn guarantee forbids. Rune-truncation
+// of identical input yields identical bytes, so a bounded title is as stable as
+// an unbounded one.
+//
+// Truncating cannot collide two themes into one issue: identity is the body's
+// fingerprint, never the title.
+func renderTitle(t theme) string {
+	title := sanitizeForIssue(t.Title())
+
+	runes := []rune(title)
+	if len(runes) <= githubIssueTitleLimit {
+		return title
+	}
+
+	// The ellipsis is inside the budget, not added to it.
+	const ellipsis = "…"
+
+	return string(runes[:githubIssueTitleLimit-len([]rune(ellipsis))]) + ellipsis
+}
 
 // renderBody builds the issue body.
 //

@@ -426,19 +426,37 @@ func (f *fakeStore) create(title, _ string) (int, error) {
 	return f.nextNum, nil
 }
 
+// update, reopen and close all honour failOn, not just list and create.
+//
+// applyPlan wraps each of these on the same stop-at-first-failure path, so a
+// regression that swallowed the error from any ONE of them would leave a
+// create-only fake green. close is the destructive branch, which makes it the
+// one that most needs to be reachable by the failure test.
 func (f *fakeStore) update(number int, _, _ string) error {
+	if f.failOn == "update" {
+		return errors.New("boom")
+	}
+
 	f.calls = append(f.calls, fmt.Sprintf("update:%d", number))
 
 	return nil
 }
 
 func (f *fakeStore) reopen(number int, _, _ string) error {
+	if f.failOn == "reopen" {
+		return errors.New("boom")
+	}
+
 	f.calls = append(f.calls, fmt.Sprintf("reopen:%d", number))
 
 	return nil
 }
 
 func (f *fakeStore) close(number int, _, reason string) error {
+	if f.failOn == "close" {
+		return errors.New("boom")
+	}
+
 	f.calls = append(f.calls, fmt.Sprintf("close:%d:%s", number, reason))
 
 	return nil
@@ -517,14 +535,82 @@ func TestWithheldCloseIsDisclosed(t *testing.T) {
 	}
 }
 
+// TestReconcileStopsAtFirstFailure covers EVERY mutating branch, not just
+// create. applyPlan wraps all four on the same path, so a regression that
+// swallowed the error from update, reopen or close would have left a
+// create-only test green — and close is the destructive one.
 func TestReconcileStopsAtFirstFailure(t *testing.T) {
-	store := &fakeStore{failOn: "create"}
+	cases := []struct {
+		name           string
+		failOn         string
+		themes         []theme
+		existing       []backlogEntry
+		inputsComplete bool
+	}{
+		{
+			name:           "create",
+			failOn:         "create",
+			themes:         []theme{postureTheme("C-0016", "apps/Deployment/web")},
+			inputsComplete: true,
+		},
+		{
+			name:           "update",
+			failOn:         "update",
+			themes:         []theme{postureTheme("C-0016", "apps/Deployment/web", "db/StatefulSet/pg")},
+			existing:       []backlogEntry{trackedPosture(41, true)},
+			inputsComplete: true,
+		},
+		{
+			name:           "reopen",
+			failOn:         "reopen",
+			themes:         []theme{postureTheme("C-0016", "apps/Deployment/web")},
+			existing:       []backlogEntry{trackedPosture(41, false)},
+			inputsComplete: true,
+		},
+		{
+			// The destructive branch: a tracked issue with no matching finding,
+			// on a run that has asserted complete input.
+			name:           "close",
+			failOn:         "close",
+			themes:         nil,
+			existing:       []backlogEntry{trackedPosture(41, true)},
+			inputsComplete: true,
+		},
+	}
 
-	err := reconcile([]theme{postureTheme("C-0016", "apps/Deployment/web")},
-		[]surface{surfacePosture}, true, nil, store, &bytes.Buffer{})
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store := &fakeStore{failOn: c.failOn, entries: c.existing}
 
-	if !errors.Is(err, errWriteFailed) {
-		t.Fatalf("want errWriteFailed, got %v", err)
+			err := reconcile(c.themes, []surface{surfacePosture},
+				c.inputsComplete, nil, store, &bytes.Buffer{})
+
+			if !errors.Is(err, errWriteFailed) {
+				t.Fatalf("want errWriteFailed, got %v", err)
+			}
+
+			// CONTROL — the SAME invocation with a healthy store must succeed
+			// AND must actually perform the branch under test. Without this the
+			// assertion above would pass for a case that never reached it, which
+			// is how a failOn the fake ignores looks identical to one it honours.
+			ctrl := &fakeStore{entries: c.existing}
+			if err := reconcile(c.themes, []surface{surfacePosture},
+				c.inputsComplete, nil, ctrl, &bytes.Buffer{}); err != nil {
+				t.Fatalf("control reconcile failed: %v", err)
+			}
+
+			var performed bool
+
+			for _, call := range ctrl.calls {
+				if strings.HasPrefix(call, c.failOn+":") {
+					performed = true
+				}
+			}
+
+			if !performed {
+				t.Fatalf("control never performed a %q; calls=%v", c.failOn, ctrl.calls)
+			}
+		})
 	}
 }
 
@@ -833,9 +919,19 @@ func TestWithheldRunDoesNotClaimTheBacklogMatches(t *testing.T) {
 // one oversized issue would block every remaining action in the run — not just
 // its own.
 func TestBodyBoundsTheComponentListButNotTheCount(t *testing.T) {
+	// Sized at the WORST CASE the cluster can produce, not a convenient short
+	// name. component.String joins namespace/kind/name, and an RFC 1123 name
+	// runs to 253 characters, so a realistic upper bound is a couple of hundred
+	// characters per line. With ~35-character names the body came to ~11KB and
+	// the githubIssueBodyLimit assertion below could not fail for ANY value of
+	// maxListedComponents up to several thousand — it read as a guard while
+	// binding nothing.
+	const worstCaseNameLen = 180
+
 	components := make([]string, maxListedComponents+25)
 	for i := range components {
-		components[i] = fmt.Sprintf("ns-%04d/Deployment/workload-%04d", i, i)
+		stem := fmt.Sprintf("ns-%04d/Deployment/workload-%04d-", i, i)
+		components[i] = stem + strings.Repeat("x", worstCaseNameLen-len(stem))
 	}
 
 	body := renderBody(postureTheme("C-0016", components...))
@@ -878,12 +974,18 @@ func TestTruncatedBodyIsStable(t *testing.T) {
 	}
 }
 
-// TestFirstCreateProvisionsTheOwnershipLabel covers a failure that only ever
+// TestFirstCreateProvisionsEveryLabelItApplies covers a failure that only ever
 // appears on a repository this command has never run against — which is exactly
 // when nobody is watching. `gh issue create --label` associates an existing
 // label; it does not create one, so without this the first untracked theme
 // fails and applyPlan's stop-at-first-failure blocks the whole run.
-func TestFirstCreateProvisionsTheOwnershipLabel(t *testing.T) {
+//
+// The assertion is that the provisioned set EQUALS the applied set, derived from
+// createLabels rather than hard-coded. A count-based check ("two calls") passed
+// while `security` was applied but never provisioned, because it pinned the
+// number of calls instead of the relationship the guarantee is about — so
+// adding a label to create silently broke the guarantee and kept the test green.
+func TestFirstCreateProvisionsEveryLabelItApplies(t *testing.T) {
 	var args [][]string
 
 	store := &ghStore{repo: "o/r", run: func(a ...string) ([]byte, error) {
@@ -896,20 +998,52 @@ func TestFirstCreateProvisionsTheOwnershipLabel(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	if len(args) != 2 {
-		t.Fatalf("want a label call then a create call, got %v", args)
+	if len(args) != len(createLabels)+1 {
+		t.Fatalf("want one label call per createLabels entry then a create, got %v", args)
 	}
 
-	if args[0][0] != "label" || args[0][1] != "create" || args[0][2] != bridgeLabel {
-		t.Errorf("the label was not provisioned first: %v", args[0])
+	provisioned := map[string]bool{}
+
+	for _, a := range args[:len(createLabels)] {
+		if a[0] != "label" || a[1] != "create" {
+			t.Fatalf("a label call was expected before the create: %v", a)
+		}
+
+		if !slices.Contains(a, "--force") {
+			t.Errorf("label provisioning must be idempotent: %v", a)
+		}
+
+		provisioned[a[2]] = true
 	}
 
-	if !slices.Contains(args[0], "--force") {
-		t.Errorf("label provisioning must be idempotent: %v", args[0])
+	createCall := args[len(createLabels)]
+	if createCall[0] != "issue" || createCall[1] != "create" {
+		t.Fatalf("the last call is not the create: %v", createCall)
 	}
 
-	if args[1][0] != "issue" || args[1][1] != "create" {
-		t.Errorf("the second call is not the create: %v", args[1])
+	// Every label the create APPLIES must have been provisioned above. This is
+	// the direction that actually fails a run: an applied-but-unprovisioned
+	// label is refused by GitHub.
+	for i, a := range createCall {
+		if a != "--label" || i+1 >= len(createCall) {
+			continue
+		}
+
+		if !provisioned[createCall[i+1]] {
+			t.Errorf("create applies label %q that was never provisioned", createCall[i+1])
+		}
+	}
+
+	// And the set is exactly createLabels, so neither side can gain an entry
+	// the other does not know about.
+	for _, l := range createLabels {
+		if !provisioned[l.name] {
+			t.Errorf("createLabels entry %q was not provisioned", l.name)
+		}
+
+		if !slices.Contains(createCall, l.name) {
+			t.Errorf("createLabels entry %q was not applied by create", l.name)
+		}
 	}
 
 	// A second create must NOT re-ask: one call per run, not one per issue.
@@ -917,7 +1051,92 @@ func TestFirstCreateProvisionsTheOwnershipLabel(t *testing.T) {
 		t.Fatalf("second create: %v", err)
 	}
 
-	if len(args) != 3 {
+	if len(args) != len(createLabels)+2 {
 		t.Fatalf("the label check repeated per issue: %v", args)
+	}
+}
+
+// TestFingerprintSurvivesCRLFBodies covers a body EDITED IN THE GITHUB WEB UI.
+// The API returns such a body with CRLF line endings, and Go's (?m)$ matches
+// only before \n — so before the pattern tolerated \r, the marker line ended
+// "-->\r" and did not match.
+//
+// The consequence is not a cosmetic miss and not a duplicate: fingerprint
+// failure is deliberately fail-closed, so planWrites returns
+// errMissingFingerprint and EVERY subsequent run refuses until someone
+// hand-repairs the body. One maintainer edit would wedge the bridge for good.
+func TestFingerprintSurvivesCRLFBodies(t *testing.T) {
+	lf := renderBody(postureTheme("C-0016", "apps/Deployment/web"))
+
+	want, err := (backlogEntry{Number: 1, Body: lf}).fingerprint()
+	if err != nil {
+		t.Fatalf("the LF body this command writes must parse: %v", err)
+	}
+
+	crlf := strings.ReplaceAll(lf, "\n", "\r\n")
+
+	// Guard the fixture itself: if renderBody ever emitted CRLF, the two bodies
+	// would be identical and this test would prove nothing.
+	if crlf == lf {
+		t.Fatal("fixture is inert: the CRLF body is byte-identical to the LF one")
+	}
+
+	got, err := (backlogEntry{Number: 1, Body: crlf}).fingerprint()
+	if err != nil {
+		t.Fatalf("a web-UI-edited (CRLF) body must still parse: %v", err)
+	}
+
+	if got != want {
+		t.Errorf("CRLF body yielded fingerprint %q, want %q", got, want)
+	}
+
+	// CONTROL — a body whose marker is genuinely absent must STILL be refused,
+	// so tolerating \r did not turn the fail-closed guard into a permissive one.
+	stripped := strings.ReplaceAll(crlf, fingerprintMarker, "not-the-marker=")
+	if _, err := (backlogEntry{Number: 1, Body: stripped}).fingerprint(); !errors.Is(err, errMissingFingerprint) {
+		t.Errorf("a body with no marker must stay refused, got %v", err)
+	}
+
+	// CONTROL — the anchor must still reject a marker that is not on its own
+	// line, which is the injection case the anchoring exists for.
+	midline := "prefix <!-- " + fingerprintMarker + "0123456789abcdef -->\r\n"
+	if _, err := (backlogEntry{Number: 1, Body: midline}).fingerprint(); !errors.Is(err, errMissingFingerprint) {
+		t.Errorf("a mid-line marker must not be honoured, got %v", err)
+	}
+}
+
+// TestTitleIsBoundedForOverlongKeys keeps one scanner-derived key from failing
+// the create call and blocking every remaining action in the run — the same
+// failure mode renderBody's component bound exists to prevent.
+func TestTitleIsBoundedForOverlongKeys(t *testing.T) {
+	long := postureTheme(strings.Repeat("C-0016-", 200), "apps/Deployment/web")
+
+	title := renderTitle(long)
+	if n := len([]rune(title)); n > githubIssueTitleLimit {
+		t.Errorf("title is %d runes, over GitHub's %d limit", n, githubIssueTitleLimit)
+	}
+
+	if !strings.HasSuffix(title, "…") {
+		t.Errorf("truncation is not disclosed: %q", title)
+	}
+
+	// Anti-churn: the bounded title must be byte-stable across renders, or
+	// every run becomes an update.
+	if renderTitle(long) != title {
+		t.Error("a truncated title is not byte-stable across renders")
+	}
+
+	// A multi-byte key must not be cut mid-rune — a byte cut would emit U+FFFD
+	// and differ from the live title every run.
+	wide := postureTheme(strings.Repeat("é", 400), "apps/Deployment/web")
+	if strings.ContainsRune(renderTitle(wide), '�') {
+		t.Error("title truncation split a multi-byte rune")
+	}
+
+	// CONTROL — a title under the bound must pass through untouched, so the
+	// truncation above is attributable to length.
+	short := postureTheme("C-0016", "apps/Deployment/web")
+	if got := renderTitle(short); strings.HasSuffix(got, "…") || got != sanitizeForIssue(short.Title()) {
+		t.Errorf("control did not flip: a short title was altered: %q", got)
 	}
 }

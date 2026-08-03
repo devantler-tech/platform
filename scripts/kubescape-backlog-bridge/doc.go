@@ -83,8 +83,11 @@
 // surrounding prose is reworded and re-render every tracked issue.
 //
 // `gh issue create --label` associates an existing label rather than creating
-// one, so the ownership label is provisioned once per run before the first
-// create. Without that, the first run against a repository this command has not
+// one, so EVERY label a create applies — the `kubescape-bridge` ownership label
+// and `security` — is provisioned once per run before the first create.
+// Provisioning only some of them would fail the create just as surely as
+// provisioning none, so the two lists come from one declaration and cannot
+// drift. Without that, the first run against a repository this command has not
 // seen before files nothing at all.
 //
 // # Bodies carry the sanitized minimum
@@ -167,8 +170,19 @@
 // belongs only on a run that can honestly make that claim, and `-exceptions` is
 // required rather than optional as soon as posture input is being written:
 //
+// Note that the file list is GENERATED from the sweep directory rather than
+// written out by hand. Naming two files beside -inputs-complete would make a
+// completeness claim the invocation visibly does not meet, and that claim is
+// what authorises closing and updating — so an example that could be copied
+// into a partial run is the destructive outcome the gate exists to prevent:
+//
+//	sweep=./kubescape-sweep   # one full pass, written by the collection step
+//
+//	args=()
+//	for f in "$sweep"/posture/*.json; do args+=(-posture "$f"); done
+//	for f in "$sweep"/cve/*.json; do args+=(-cve "$f"); done
+//
 //	go run ./scripts/kubescape-backlog-bridge \
 //	  -mode write -repo devantler-tech/platform -inputs-complete \
-//	  -exceptions exceptions.json \
-//	  -posture ns-a-workload.json -cve ns-a-workload-image-1.json
+//	  -exceptions exceptions.json "${args[@]}"
 package main

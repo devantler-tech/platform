@@ -25,6 +25,17 @@ var errStrippedList = errors.New("input looks like a spec-stripped Kubescape LIS
 // configuration it needs.
 var errWritesNotEnabled = errors.New("issue writes are not enabled")
 
+// errInvalidInvocation reports a flag combination that is refused before any
+// input is read.
+//
+// It exists so the refusals below can be BOUND BY A TEST. run's early
+// validations all fail an invocation that is also missing inputs, so a test
+// asserting only "some error came back" passes for whichever check happens to
+// run first — and would keep passing if the checks were reordered and the one
+// it names stopped firing. errors.Is against this sentinel names the refusal
+// the test is actually about.
+var errInvalidInvocation = errors.New("invalid invocation")
+
 // errUnrecognisedDocument reports input that is neither a kubectl list nor a
 // single Kubescape object.
 var errUnrecognisedDocument = errors.New("input is neither a kubectl list nor a Kubescape object")
@@ -233,6 +244,23 @@ func (t theme) Fingerprint() string {
 	sum := sha256.Sum256([]byte(canonical))
 
 	return hex.EncodeToString(sum[:])[:16]
+}
+
+// postureFingerprint is the identity of a posture theme named only by its key.
+//
+// The accepted-exception set is built from control keys, not from derived
+// themes, so it needs the fingerprint of a theme it never constructs. Doing that
+// inline as theme{Kind: ..., Key: ...}.Fingerprint() silently depends on
+// Fingerprint reading NO OTHER FIELD. That holds today, but if the canonical
+// string ever gained a field, the inline literal would start producing an
+// identity matching no tracked issue — every accepted close would then fall back
+// to the "no longer present" wording and the completed disposition, writing the
+// wrong fact into a permanent timeline, and no test would fail.
+//
+// Naming it keeps both producers of a posture fingerprint in one place, so a
+// change to the canonical form has one site to update rather than two.
+func postureFingerprint(key string) string {
+	return theme{Kind: string(surfacePosture), Key: key}.Fingerprint()
 }
 
 // Title renders the backlog title. Stable for a given theme so a
@@ -802,13 +830,14 @@ func run(args []string, out io.Writer) error {
 	// flag after it, then exits 0 having read only a.json — a partial report
 	// from a plausible cluster-wide invocation. Reproduced on live data.
 	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected argument %q: each input needs its own flag "+
+		return fmt.Errorf("%w: unexpected argument %q: each input needs its own flag "+
 			"(-posture a.json -posture b.json), because flag parsing stops at the first "+
-			"non-flag argument and would silently ignore everything after it", fs.Arg(0))
+			"non-flag argument and would silently ignore everything after it",
+			errInvalidInvocation, fs.Arg(0))
 	}
 
 	if *mode != "report" && *mode != "write" {
-		return fmt.Errorf("unknown -mode %q (want report or write)", *mode)
+		return fmt.Errorf("%w: unknown -mode %q (want report or write)", errInvalidInvocation, *mode)
 	}
 
 	if *mode == "write" && strings.TrimSpace(*repo) == "" {
@@ -820,7 +849,8 @@ func run(args []string, out io.Writer) error {
 	// silently would teach an operator the flag is harmless to leave set, which
 	// is exactly the habit that later turns a partial write run destructive.
 	if *mode != "write" && *inputsComplete {
-		return errors.New("-inputs-complete only affects -mode=write; it gates closing a tracked issue")
+		return fmt.Errorf("%w: -inputs-complete only affects -mode=write; "+
+			"it gates closing a tracked issue", errInvalidInvocation)
 	}
 
 	// A posture run derived WITHOUT the declared exceptions keeps every accepted
@@ -837,9 +867,9 @@ func run(args []string, out io.Writer) error {
 	}
 
 	if len(posturePaths) == 0 && len(cvePaths) == 0 {
-		return errors.New("no input: pass -posture and/or -cve. " +
-			"Reporting \"nothing to file\" for an empty invocation would be the same " +
-			"false all-clear the stripped-LIST guard exists to prevent")
+		return fmt.Errorf("%w: no input: pass -posture and/or -cve. "+
+			"Reporting \"nothing to file\" for an empty invocation would be the same "+
+			"false all-clear the stripped-LIST guard exists to prevent", errInvalidInvocation)
 	}
 
 	exceptions, err := loadExceptions(*exceptionsPath)
@@ -877,7 +907,7 @@ func run(args []string, out io.Writer) error {
 		// matches a tracked issue by, and deriving it here keeps the planner
 		// free of any knowledge of how a posture key becomes one.
 		for _, key := range acceptedKeys {
-			accepted[theme{Kind: string(surfacePosture), Key: key}.Fingerprint()] = struct{}{}
+			accepted[postureFingerprint(key)] = struct{}{}
 		}
 
 		themes = append(themes, derived...)

@@ -176,10 +176,19 @@ func (g *ghStore) list() ([]backlogEntry, error) {
 		return nil, fmt.Errorf("decoding gh issue list: %w", err)
 	}
 
+	// The ceiling counts CLOSED issues too: --state all is deliberate (a
+	// returning theme must land back on its original issue), and a closed issue
+	// keeps the label. So this is a LIFETIME budget, not a concurrent one, and
+	// it is reached by ordinary successful use rather than by anything going
+	// wrong. Naming the recovery step here is the difference between a stop an
+	// operator can clear and one they have to reverse-engineer.
 	if len(issues) >= listLimit {
 		return nil, fmt.Errorf("%w: %d tracked issues hit the --limit %d ceiling, so the listing "+
-			"may be truncated and every omitted theme would be re-filed as a duplicate",
-			errWriteFailed, len(issues), listLimit)
+			"may be truncated and every omitted theme would be re-filed as a duplicate. "+
+			"This ceiling counts closed issues too, so it is a lifetime total. To clear it, "+
+			"remove the %q label from issues that are closed and no longer need tracking "+
+			"(they are re-filed only if the finding returns), or raise listLimit",
+			errWriteFailed, len(issues), listLimit, bridgeLabel)
 	}
 
 	entries := make([]backlogEntry, 0, len(issues))
@@ -195,7 +204,22 @@ func (g *ghStore) list() ([]backlogEntry, error) {
 	return entries, nil
 }
 
-// ensureLabel provisions the ownership label before the first create.
+// createLabels is the single source of truth for the labels a new issue wears.
+//
+// ensureLabel provisions exactly this set and create applies exactly this set,
+// from the same slice, so the two cannot drift. Provisioning a subset is not a
+// cosmetic mismatch: an unprovisioned label fails the create outright (see
+// ensureLabel), and applyPlan stops at the first failure, so the run files
+// nothing at all.
+var createLabels = []struct {
+	name        string
+	description string
+}{
+	{bridgeLabel, "Filed automatically from live Kubescape findings"},
+	{"security", "Security finding"},
+}
+
+// ensureLabel provisions every label a create applies.
 //
 // `gh issue create --label` ASSOCIATES an existing label; it does not create
 // one. On a repository that has never run this command the label does not
@@ -206,6 +230,11 @@ func (g *ghStore) list() ([]backlogEntry, error) {
 // on a first run against a fresh repository, which is exactly when nobody is
 // watching for it.
 //
+// EVERY label in createLabels is provisioned, not just the ownership one.
+// devantler-tech/platform happens to carry `security` already, so on today's
+// target this is latent rather than live — but -repo is a flag, and on any
+// repository lacking it the first create would fail and file nothing.
+//
 // `--force` makes this idempotent, so the ordinary case (label already present)
 // is a no-op rather than an error. It runs once per store: repeating it before
 // every create would spend a call per issue on a question already answered.
@@ -214,11 +243,13 @@ func (g *ghStore) ensureLabel() error {
 		return nil
 	}
 
-	if _, err := g.run("label", "create", bridgeLabel,
-		"--repo", g.repo,
-		"--description", "Filed automatically from live Kubescape findings",
-		"--force"); err != nil {
-		return err
+	for _, l := range createLabels {
+		if _, err := g.run("label", "create", l.name,
+			"--repo", g.repo,
+			"--description", l.description,
+			"--force"); err != nil {
+			return err
+		}
 	}
 
 	g.labelEnsured = true
@@ -233,12 +264,15 @@ func (g *ghStore) create(title, body string) (int, error) {
 		return 0, err
 	}
 
-	raw, err := g.run("issue", "create",
+	args := []string{"issue", "create",
 		"--repo", g.repo,
 		"--title", title,
-		"--body", body,
-		"--label", bridgeLabel,
-		"--label", "security")
+		"--body", body}
+	for _, l := range createLabels {
+		args = append(args, "--label", l.name)
+	}
+
+	raw, err := g.run(args...)
 	if err != nil {
 		return 0, err
 	}
