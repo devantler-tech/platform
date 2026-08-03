@@ -102,6 +102,9 @@ jobs:
               # still runs the check that covers it.
               - 'scripts/dr-rebuild-supersession-guard.sh'
               - 'scripts/tests/test-dr-rebuild-supersession-guard.sh'
+              # Both halves, for the same reason as the guard above.
+              - 'scripts/verify-published-evidence.sh'
+              - 'scripts/tests/test-verify-published-evidence.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
@@ -304,6 +307,15 @@ jobs:
         # and this pins both its decision and the wiring that reaches it — a
         # guard the destructive job does not depend on protects nothing.
         run: bash scripts/tests/test-dr-rebuild-supersession-guard.sh
+
+      - name: 🔍 Validate the published-evidence gate
+        if: needs.changes.outputs.k8s == 'true'
+        # Every publication step can report success while leaving no usable
+        # evidence in the registry, and the promotion that follows is what
+        # production starts following within the minute. This pins the gate's
+        # verdict in both rollout states and the wiring that reaches it — a gate
+        # that runs after latest already moved has verified nothing that matters.
+        run: bash scripts/tests/test-verify-published-evidence.sh
 
       - name: 📋 Validate Kubescape finding summary
         if: needs.changes.outputs.k8s == 'true'
