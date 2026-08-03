@@ -458,6 +458,9 @@ func validateVendorSource(input []byte, bundle string) error {
 		if err := rejectYAMLMergeKey(&document); err != nil {
 			return fmt.Errorf("vendor document %d contains %w", documentIndex, err)
 		}
+		if err := rejectDuplicateYAMLMappingKeys(&document); err != nil {
+			return fmt.Errorf("vendor document %d contains %w", documentIndex, err)
+		}
 		root := document.Content[0]
 		if root.Kind != yaml.MappingNode {
 			return fmt.Errorf("vendor document %d must contain a top-level mapping", documentIndex)
@@ -900,6 +903,28 @@ func rejectYAMLMergeKey(node *yaml.Node) error {
 	}
 	for _, child := range node.Content {
 		if err := rejectYAMLMergeKey(child); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rejectDuplicateYAMLMappingKeys(node *yaml.Node) error {
+	if node.Kind == yaml.MappingNode {
+		seen := make(map[string]struct{}, len(node.Content)/2)
+		for index := 0; index+1 < len(node.Content); index += 2 {
+			key := node.Content[index]
+			if key.Kind != yaml.ScalarNode {
+				return errors.New("non-scalar YAML mapping key")
+			}
+			if _, duplicate := seen[key.Value]; duplicate {
+				return fmt.Errorf("duplicate YAML mapping key %q", key.Value)
+			}
+			seen[key.Value] = struct{}{}
+		}
+	}
+	for _, child := range node.Content {
+		if err := rejectDuplicateYAMLMappingKeys(child); err != nil {
 			return err
 		}
 	}

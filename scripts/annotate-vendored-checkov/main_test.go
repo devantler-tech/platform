@@ -688,6 +688,41 @@ metadata:
 	}
 }
 
+func TestSourceValidationRejectsDuplicateYAMLMappingKeys(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]string{
+		"kind": `apiVersion: v1
+kind: ConfigMap
+kind: Deployment
+metadata:
+  name: ambiguous-kind
+  namespace: other
+`,
+		"metadata": `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: first
+metadata:
+  name: second
+  annotations:
+    checkov.io/skip1: CKV_K8S_99=upstream suppression
+`,
+	}
+	for name, input := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, stderr, err := runAnnotator(t, "cdi", input, "--validate-source")
+			if err == nil {
+				t.Fatal("source validator accepted duplicate YAML mapping keys")
+			}
+			if !strings.Contains(stderr, "duplicate YAML mapping key") {
+				t.Fatalf("stderr did not name the duplicate YAML mapping key: %q", stderr)
+			}
+		})
+	}
+}
+
 func TestSourceValidationRejectsNestedListWorkloadOutsideProtectedNamespace(t *testing.T) {
 	t.Parallel()
 
