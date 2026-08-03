@@ -255,7 +255,7 @@ func validateCheckovFindings(input []byte, targets []targetSpec) error {
 
 func codeBlockFingerprint(codeBlock [][]any) (string, error) {
 	if len(codeBlock) == 0 {
-		return "", errors.New("Checkov finding omits code_block")
+		return "", errors.New("checkov finding omits code_block")
 	}
 	hash := sha256.New()
 	for index, line := range codeBlock {
