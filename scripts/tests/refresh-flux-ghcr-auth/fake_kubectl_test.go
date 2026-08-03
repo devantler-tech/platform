@@ -627,8 +627,21 @@ func fakeKubectlGetFluxControllerPods(namespace string) int {
 			}},
 		},
 	}}
+	// A pre-handoff Pod that lingers for a bounded number of samples and then disappears models
+	// the real termination grace period: the rollout is correct, the old Pod is simply not gone
+	// yet at the first sample. Distinct from FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING, where it
+	// never goes away and must keep failing.
+	terminatingSamples := parseInt(os.Getenv("FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING_SAMPLES"), 0)
+	if rolloutCount > 0 && terminatingSamples > 0 {
+		observed := parseInt(markerContent("flux-controller-pod-sample-count"), 0) + 1
+		setMarkerContent("flux-controller-pod-sample-count", strconv.Itoa(observed))
+		if observed > terminatingSamples {
+			terminatingSamples = 0
+		}
+	}
 	if rolloutCount > 0 &&
-		os.Getenv("FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING") == "true" {
+		(terminatingSamples > 0 ||
+			os.Getenv("FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING") == "true") {
 		items = append(items, map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Pod",

@@ -3144,6 +3144,7 @@ read_flux_policy_fences() {
 restart_flux_kustomize_controller_for_handoff() {
   local resource_version deployment_uid replicas annotations_present
   local restart_token
+  local pre_handoff_pods_replaced attempt
 
   assert_sync_lease_held || return 1
   if ! read_flux_policy_fences ||
@@ -3255,27 +3256,43 @@ restart_flux_kustomize_controller_for_handoff() {
     echo "::error::kustomize-controller did not complete the policy handoff restart."
     return 1
   fi
-  if ! kubectl \
-    --context "${KUBE_CONTEXT}" \
-    --namespace flux-system \
-    get pods \
-    --selector "${FLUX_KUSTOMIZE_CONTROLLER_SELECTOR}" \
-    -o json >"${flux_controller_pods_after_file}" ||
-    ! jq -e \
-      --argjson replicas "${replicas}" \
-      --slurpfile before "${flux_controller_pods_before_file}" '
-      [.items[] | select((.metadata.deletionTimestamp // "") == "")] as $current
-      | [.items[].metadata.uid] as $post_uids
-      | [$before[0].items[].metadata.uid] as $old_uids
-      | ($current | length) >= $replicas
-      and all($current[];
-        (.metadata.uid | type == "string" and length > 0)
-        and any(.status.conditions[]?;
-          .type == "Ready" and .status == "True")
-      )
-      and all($old_uids[];
-        . as $old_uid | ($post_uids | index($old_uid)) == null)
-    ' "${flux_controller_pods_after_file}" >/dev/null; then
+  # `kubectl rollout status` returns as soon as the new ReplicaSet is available; it does not wait
+  # for the superseded Pods to finish terminating. Sampling the proof once therefore fails a
+  # correct rollout whenever a pre-handoff Pod is still inside its termination grace period. Poll
+  # instead, on the same budget as the rest of this script. The success condition is unchanged: a
+  # pre-handoff Pod object that never goes away still exhausts the budget and fails, because its
+  # process can still hold the superseded GHCR credential.
+  pre_handoff_pods_replaced=false
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get pods \
+      --selector "${FLUX_KUSTOMIZE_CONTROLLER_SELECTOR}" \
+      -o json >"${flux_controller_pods_after_file}" &&
+      jq -e \
+        --argjson replicas "${replicas}" \
+        --slurpfile before "${flux_controller_pods_before_file}" '
+        [.items[] | select((.metadata.deletionTimestamp // "") == "")] as $current
+        | [.items[].metadata.uid] as $post_uids
+        | [$before[0].items[].metadata.uid] as $old_uids
+        | ($current | length) >= $replicas
+        and all($current[];
+          (.metadata.uid | type == "string" and length > 0)
+          and any(.status.conditions[]?;
+            .type == "Ready" and .status == "True")
+        )
+        and all($old_uids[];
+          . as $old_uid | ($post_uids | index($old_uid)) == null)
+      ' "${flux_controller_pods_after_file}" >/dev/null; then
+      pre_handoff_pods_replaced=true
+      break
+    fi
+    if ((attempt < SYNC_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
+  done
+  if [[ "${pre_handoff_pods_replaced}" != "true" ]]; then
     echo "::error::Could not prove every pre-handoff kustomize-controller process was replaced by a Ready Pod."
     return 1
   fi
