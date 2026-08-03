@@ -30,6 +30,13 @@ type issueStore interface {
 	// finding is still live, so recording it as Completed contradicts the comment
 	// the same call posts.
 	close(number int, comment, reason string) error
+	// reclassify corrects the disposition of an entry that is already closed and
+	// stays closed, posting the comment that explains the new classification.
+	//
+	// Separate from close because `gh issue close` refuses an already-closed
+	// issue: routing this through close would fail the whole run at the first
+	// re-classification, and applyPlan stops at the first failure.
+	reclassify(number int, comment, reason string) error
 }
 
 // applyPlan executes a plan against a store, narrating each step.
@@ -63,6 +70,20 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 		}
 	}
 
+	// A closed entry whose recorded disposition disagrees with this run's
+	// derivation. Announced separately from WithheldCloses because these issues
+	// are closed, not open: an operator told they were "left OPEN" would go
+	// looking for backlog work that is not there.
+	if p.WithheldReclassifications > 0 {
+		if _, err := fmt.Fprintf(out,
+			"note: %d closed issue(s) carry a disposition this run disagrees with but were left "+
+				"UNCHANGED — correcting one needs -inputs-complete and a run that examined their "+
+				"surface, so the structured record may still say a finding was remediated when an "+
+				"exception is what is covering it\n", p.WithheldReclassifications); err != nil {
+			return err
+		}
+	}
+
 	// A create this run planned and then dropped because a concurrent
 	// invocation had already filed it. Reported before the actions for the same
 	// reason as the withheld counts: the run wrote less than it planned, and the
@@ -84,7 +105,8 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 		// synchronized. The withheld notes above say what is pending; this line
 		// only claims the writes it actually decided against making.
 		line := "no changes: every derived theme already matches its tracked issue"
-		if p.WithheldCloses > 0 || p.WithheldUpdates > 0 || p.RacedCreates > 0 {
+		if p.WithheldCloses > 0 || p.WithheldUpdates > 0 || p.RacedCreates > 0 ||
+			p.WithheldReclassifications > 0 {
 			line = "no writes performed: this run planned none beyond the withheld or dropped " +
 				"action(s) noted above"
 		}
@@ -116,6 +138,14 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 		case "close":
 			if err = store.close(a.Number, a.Reason, a.Disposition); err == nil {
 				_, err = fmt.Fprintf(out, "closed #%d\n", a.Number)
+			}
+		case "reclassify":
+			// Narrated with the resulting disposition, not just the number: the
+			// issue was closed before this run and is closed after it, so the
+			// only thing that changed is the word an operator would otherwise
+			// have to open GitHub to see.
+			if err = store.reclassify(a.Number, a.Reason, a.Disposition); err == nil {
+				_, err = fmt.Fprintf(out, "reclassified #%d\tas %s\n", a.Number, a.Disposition)
 			}
 		default:
 			err = fmt.Errorf("%w: unknown action %q", errWriteFailed, a.Kind)
@@ -164,6 +194,10 @@ type ghIssue struct {
 	Title  string `json:"title"`
 	Body   string `json:"body"`
 	State  string `json:"state"`
+	// StateReason is GitHub's structured close reason, empty while the issue is
+	// open. Reported here as COMPLETED / NOT_PLANNED — a THIRD spelling of the
+	// same concept, see normalizeDisposition.
+	StateReason string `json:"stateReason"`
 }
 
 // listLimit bounds one `gh issue list` page.
@@ -181,7 +215,7 @@ func (g *ghStore) list() ([]backlogEntry, error) {
 		"--label", bridgeLabel,
 		"--state", "all",
 		"--limit", fmt.Sprint(listLimit),
-		"--json", "number,title,body,state")
+		"--json", "number,title,body,state,stateReason")
 	if err != nil {
 		return nil, err
 	}
@@ -209,10 +243,11 @@ func (g *ghStore) list() ([]backlogEntry, error) {
 	entries := make([]backlogEntry, 0, len(issues))
 	for _, i := range issues {
 		entries = append(entries, backlogEntry{
-			Number: i.Number,
-			Title:  i.Title,
-			Body:   i.Body,
-			Open:   strings.EqualFold(i.State, "open"),
+			Number:      i.Number,
+			Title:       i.Title,
+			Body:        i.Body,
+			Open:        strings.EqualFold(i.State, "open"),
+			Disposition: normalizeDisposition(i.StateReason),
 		})
 	}
 
@@ -357,6 +392,41 @@ func (g *ghStore) reopen(number int, title, body string) error {
 func (g *ghStore) close(number int, comment, reason string) error {
 	_, err := g.run("issue", "close", fmt.Sprint(number),
 		"--repo", g.repo, "--comment", comment, "--reason", reason)
+
+	return err
+}
+
+// apiStateReason maps this command's disposition vocabulary onto the REST one.
+//
+// `gh issue close --reason` spells it "not planned" with a SPACE; the REST
+// state_reason field spells it not_planned with an UNDERSCORE and rejects the
+// spaced form. The close path never meets this because it goes through the CLI
+// flag, so the mismatch would surface only on the reclassify path — as a 422 on
+// exactly the transition this exists to record.
+func apiStateReason(disposition string) string {
+	if disposition == dispositionNotPlanned {
+		return "not_planned"
+	}
+
+	return "completed"
+}
+
+// reclassify comments on an already-closed issue and corrects its state_reason.
+//
+// Two calls rather than one because no `gh issue` subcommand sets state_reason
+// on an issue that is already closed: `close` refuses it and `edit` has no such
+// flag, so the structured half goes through the REST API directly. The comment
+// is posted FIRST so a failure of the second call leaves the reasoning visible
+// on the issue rather than a silently changed label with nothing explaining it.
+func (g *ghStore) reclassify(number int, comment, reason string) error {
+	if _, err := g.run("issue", "comment", fmt.Sprint(number),
+		"--repo", g.repo, "--body", comment); err != nil {
+		return err
+	}
+
+	_, err := g.run("api", "--method", "PATCH",
+		fmt.Sprintf("repos/%s/issues/%d", g.repo, number),
+		"-f", "state_reason="+apiStateReason(reason))
 
 	return err
 }

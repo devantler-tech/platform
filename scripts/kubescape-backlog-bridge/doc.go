@@ -34,7 +34,7 @@
 //
 // Write mode lists the issues this command already owns — everything carrying
 // the `kubescape-bridge` label — matches them to derived themes by fingerprint,
-// and then creates, updates, reopens or closes:
+// and then creates, updates, reopens, closes or reclassifies:
 //
 //   - a theme with no tracked issue is CREATED,
 //   - a theme whose issue is closed is REOPENED, never re-created, so a
@@ -42,9 +42,22 @@
 //     duplicate,
 //   - a theme whose rendered title and body already match its issue writes
 //     NOTHING — unchanged cluster state performs zero writes, which is the
-//     anti-churn guarantee, and
+//     anti-churn guarantee,
 //   - a tracked issue with no matching theme is CLOSED, but only under the
-//     conditions below.
+//     conditions below, and
+//   - an ALREADY-CLOSED issue whose recorded close reason disagrees with what
+//     this run derives is RECLASSIFIED: it stays closed, and only its structured
+//     disposition and an explaining comment change.
+//
+// That last case exists because an absent finding's correct disposition is not
+// settled at the moment it is closed. A theme closed as remediated can later be
+// covered by a `ClusterSecurityException`, and one closed as accepted can later
+// be genuinely fixed. Both remain absent from the scan, so neither reopens and
+// neither would ever be revisited — leaving the audit record asserting a finding
+// was remediated while an exception is what is holding it down. That is the
+// fail-open direction for a security backlog, and it is invisible because the
+// issue looks settled. A reclassification is emitted only on a genuine
+// disagreement, so a correctly-dispositioned backlog stays silent.
 //
 // Ownership is established by the LABEL, never by searching issue bodies for
 // the fingerprint. Free-text search ranks and stems, so it both returns issues

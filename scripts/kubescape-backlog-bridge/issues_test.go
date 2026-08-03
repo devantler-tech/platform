@@ -463,6 +463,22 @@ func (f *fakeStore) close(number int, _, reason string) error {
 	return nil
 }
 
+// reclassify records the resulting disposition, like close does.
+//
+// Recording the number alone would let a regression that corrected an entry to
+// the WRONG disposition pass every assertion below: the whole defect this path
+// addresses is a disposition that disagrees with the cluster, so the value is
+// the part under test, not the call count.
+func (f *fakeStore) reclassify(number int, _, reason string) error {
+	if f.failOn == "reclassify" {
+		return errors.New("boom")
+	}
+
+	f.calls = append(f.calls, fmt.Sprintf("reclassify:%d:%s", number, reason))
+
+	return nil
+}
+
 // TestReconcileWritesNothingOnUnchangedState closes the loop end-to-end: not
 // merely an empty plan, but a driver that issues no mutating call at all.
 func TestReconcileWritesNothingOnUnchangedState(t *testing.T) {
@@ -1369,5 +1385,282 @@ func TestForcedLabelProvisioningPinsItsColour(t *testing.T) {
 		if i < 0 || i+1 >= len(a) || strings.TrimSpace(a[i+1]) == "" {
 			t.Errorf("--force with no pinned --color re-rolls the colour every run: %v", a)
 		}
+	}
+}
+
+// closedPosture is trackedPosture with a recorded close reason.
+//
+// Separate helper because the defect under test is invisible unless the entry
+// carries the disposition GitHub already has: trackedPosture(n, false) leaves it
+// empty, and an empty disposition never equals a derived one, so every closed
+// entry would look mis-classified and every one of these tests would pass for
+// the wrong reason.
+func closedPosture(number int, disposition string) backlogEntry {
+	e := trackedPosture(number, false)
+	e.Disposition = disposition
+
+	return e
+}
+
+func acceptedGolden() map[string]struct{} {
+	return map[string]struct{}{goldenPostureFingerprint: {}}
+}
+
+// TestPlanWritesReclassifiesCompletedEntryNowCoveredByException pins the
+// forward transition: a theme closed as remediated that an exception now covers
+// is still absent from the scan, so nothing reopens it and — before this path —
+// nothing revisited it either. The record kept saying Completed for a finding
+// that is still in the cluster.
+func TestPlanWritesReclassifiesCompletedEntryNowCoveredByException(t *testing.T) {
+	entry := closedPosture(41, dispositionCompleted)
+
+	p, err := planWrites(nil, []backlogEntry{entry}, []surface{surfacePosture}, true, acceptedGolden())
+	if err != nil {
+		t.Fatalf("planWrites: %v", err)
+	}
+
+	if len(p.Actions) != 1 {
+		t.Fatalf("want exactly 1 action, got %d: %+v", len(p.Actions), p.Actions)
+	}
+
+	got := p.Actions[0]
+	if got.Kind != "reclassify" {
+		t.Errorf("kind = %q, want reclassify (a close would try to close an already-closed issue)", got.Kind)
+	}
+
+	if got.Number != 41 {
+		t.Errorf("number = %d, want 41", got.Number)
+	}
+
+	if got.Disposition != dispositionNotPlanned {
+		t.Errorf("disposition = %q, want %q", got.Disposition, dispositionNotPlanned)
+	}
+
+	// The comment must say the finding is still present. Reusing closeComment
+	// here would assert the opposite fact in the issue's permanent timeline.
+	if !strings.Contains(got.Reason, "ClusterSecurityException") {
+		t.Errorf("reason does not explain the exception:\n%s", got.Reason)
+	}
+
+	// CONTROL — the identical input with the disposition ALREADY correct must
+	// produce nothing. Without this the test passes for a path that rewrites
+	// every closed entry on every run.
+	ctrl, err := planWrites(nil, []backlogEntry{closedPosture(41, dispositionNotPlanned)},
+		[]surface{surfacePosture}, true, acceptedGolden())
+	if err != nil {
+		t.Fatalf("control planWrites: %v", err)
+	}
+
+	if !ctrl.empty() {
+		t.Fatalf("an already-correct closed entry produced writes: %+v", ctrl.Actions)
+	}
+}
+
+// TestPlanWritesReclassifiesNotPlannedEntryThatWasActuallyRemediated pins the
+// reverse transition, which fails in the direction that looks safe: an entry
+// left at "not planned" claims an exception is load-bearing when the finding was
+// genuinely fixed and the exception could be retired.
+func TestPlanWritesReclassifiesNotPlannedEntryThatWasActuallyRemediated(t *testing.T) {
+	entry := closedPosture(41, dispositionNotPlanned)
+
+	p, err := planWrites(nil, []backlogEntry{entry}, []surface{surfacePosture}, true, nil)
+	if err != nil {
+		t.Fatalf("planWrites: %v", err)
+	}
+
+	if len(p.Actions) != 1 {
+		t.Fatalf("want exactly 1 action, got %d: %+v", len(p.Actions), p.Actions)
+	}
+
+	if got := p.Actions[0]; got.Kind != "reclassify" || got.Disposition != dispositionCompleted {
+		t.Errorf("got kind=%q disposition=%q, want reclassify/%s", got.Kind, got.Disposition, dispositionCompleted)
+	}
+
+	// CONTROL — already completed, no exception: nothing to do.
+	ctrl, err := planWrites(nil, []backlogEntry{closedPosture(41, dispositionCompleted)},
+		[]surface{surfacePosture}, true, nil)
+	if err != nil {
+		t.Fatalf("control planWrites: %v", err)
+	}
+
+	if !ctrl.empty() {
+		t.Fatalf("an already-correct closed entry produced writes: %+v", ctrl.Actions)
+	}
+}
+
+// TestWithheldReclassificationIsNotCountedAsAWithheldClose keeps the two
+// operator notes honest. WithheldCloses prints "left OPEN", which is false of a
+// closed entry and would send someone looking for work that does not exist.
+func TestWithheldReclassificationIsNotCountedAsAWithheldClose(t *testing.T) {
+	entry := closedPosture(41, dispositionCompleted)
+
+	p, err := planWrites(nil, []backlogEntry{entry}, []surface{surfacePosture}, false, acceptedGolden())
+	if err != nil {
+		t.Fatalf("planWrites: %v", err)
+	}
+
+	if !p.empty() {
+		t.Fatalf("a gated run still planned writes: %+v", p.Actions)
+	}
+
+	if p.WithheldReclassifications != 1 {
+		t.Errorf("WithheldReclassifications = %d, want 1", p.WithheldReclassifications)
+	}
+
+	if p.WithheldCloses != 0 {
+		t.Errorf("WithheldCloses = %d, want 0 — the entry is closed, not left open", p.WithheldCloses)
+	}
+}
+
+// TestNormalizeDispositionBridgesThreeVocabularies is the regression that costs
+// the most if it is missing: `gh issue list` reports NOT_PLANNED, the close flag
+// takes "not planned", and REST takes not_planned. Comparing a raw list value
+// against the internal constant is never equal, so the bridge would rewrite
+// every already-accepted closed entry on every run, forever.
+func TestNormalizeDispositionBridgesThreeVocabularies(t *testing.T) {
+	// The trap itself, asserted directly: if these ever became equal, the
+	// normalizer would be redundant and this whole test could be deleted.
+	if dispositionNotPlanned == "NOT_PLANNED" {
+		t.Fatal("raw list spelling equals the internal one; this test no longer guards anything")
+	}
+
+	for raw, want := range map[string]string{
+		"COMPLETED":   dispositionCompleted,
+		"NOT_PLANNED": dispositionNotPlanned,
+		"not_planned": dispositionNotPlanned,
+		" COMPLETED ": dispositionCompleted,
+		"":            "",
+		"DUPLICATE":   "",
+		"nonsense":    "",
+	} {
+		if got := normalizeDisposition(raw); got != want {
+			t.Errorf("normalizeDisposition(%q) = %q, want %q", raw, got, want)
+		}
+	}
+}
+
+// TestAPIStateReasonUsesTheRESTSpelling guards the second half of the same
+// mismatch. The close path never meets it (it goes through a CLI flag), so a
+// wrong value here would surface only as a 422 on the reclassify path.
+func TestAPIStateReasonUsesTheRESTSpelling(t *testing.T) {
+	if got := apiStateReason(dispositionNotPlanned); got != "not_planned" {
+		t.Errorf("apiStateReason(%q) = %q, want not_planned", dispositionNotPlanned, got)
+	}
+
+	if got := apiStateReason(dispositionCompleted); got != "completed" {
+		t.Errorf("apiStateReason(%q) = %q, want completed", dispositionCompleted, got)
+	}
+
+	// The spaced CLI form must never reach REST.
+	if strings.Contains(apiStateReason(dispositionNotPlanned), " ") {
+		t.Error("REST state_reason contains a space; the API rejects the spaced form")
+	}
+}
+
+// TestListNormalizesTheDispositionItReports pins the normalizer to the code path
+// that actually needs it.
+//
+// The unit test above proves normalizeDisposition maps the vocabularies; it does
+// NOT prove list() calls it. That gap is not hypothetical — it was found by
+// ablation: replacing the call in list() with the raw field left the entire
+// suite green, because every other test constructs backlogEntry directly and
+// never parses a `gh` payload.
+//
+// Without this test, dropping the call ships a bridge that compares COMPLETED
+// against "completed", finds every closed entry mis-dispositioned, and rewrites
+// all of them on every run forever — an unbounded write loop against the API
+// whose only symptom is comment spam on long-settled issues.
+func TestListNormalizesTheDispositionItReports(t *testing.T) {
+	store := &ghStore{repo: "o/r", run: func(...string) ([]byte, error) {
+		return []byte(`[{"number":1,"title":"a","body":"b","state":"CLOSED","stateReason":"COMPLETED"},` +
+			`{"number":2,"title":"c","body":"d","state":"CLOSED","stateReason":"NOT_PLANNED"},` +
+			`{"number":3,"title":"e","body":"f","state":"OPEN","stateReason":""}]`), nil
+	}}
+
+	entries, err := store.list()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	if got := entries[0].Disposition; got != dispositionCompleted {
+		t.Errorf("COMPLETED mapped to %q, want %q", got, dispositionCompleted)
+	}
+
+	if got := entries[1].Disposition; got != dispositionNotPlanned {
+		t.Errorf("NOT_PLANNED mapped to %q, want %q", got, dispositionNotPlanned)
+	}
+
+	if got := entries[2].Disposition; got != "" {
+		t.Errorf("an open issue carries disposition %q, want empty", got)
+	}
+
+	// The raw wire values must NOT survive into the entry. Asserting the mapped
+	// values alone would still pass if the mapping were the identity on some
+	// future spelling; this says explicitly that what `gh` printed is gone.
+	for _, e := range entries {
+		if e.Disposition == "COMPLETED" || e.Disposition == "NOT_PLANNED" {
+			t.Errorf("#%d kept the raw wire spelling %q", e.Number, e.Disposition)
+		}
+	}
+}
+
+// TestListRequestsTheStateReasonField closes the last hole in the chain: the
+// normalizer can be wired correctly and still receive nothing, because `gh issue
+// list` only returns fields named in --json. An omitted field decodes as "",
+// which normalizes to "" and reads as "no disagreement" — the bridge would then
+// never reclassify anything and this suite would stay green.
+func TestListRequestsTheStateReasonField(t *testing.T) {
+	var gotArgs []string
+
+	store := &ghStore{repo: "o/r", run: func(a ...string) ([]byte, error) {
+		gotArgs = a
+
+		return []byte(`[]`), nil
+	}}
+
+	if _, err := store.list(); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	idx := slices.Index(gotArgs, "--json")
+	if idx < 0 || idx+1 >= len(gotArgs) {
+		t.Fatalf("list issued no --json argument: %v", gotArgs)
+	}
+
+	if !strings.Contains(gotArgs[idx+1], "stateReason") {
+		t.Errorf("--json %q does not request stateReason", gotArgs[idx+1])
+	}
+}
+
+// TestGatedReclassificationDoesNotClaimEverythingMatches guards the summary line
+// against the counter added for reclassifications.
+//
+// Found by running the narration rather than reasoning about it: the withheld
+// note printed correctly and the very next line still read "every derived theme
+// already matches its tracked issue" — two lines under a note saying one does
+// not. Each new withheld counter has to be added to that condition too, and
+// nothing about adding a field forces it.
+func TestGatedReclassificationDoesNotClaimEverythingMatches(t *testing.T) {
+	p, err := planWrites(nil, []backlogEntry{closedPosture(41, dispositionCompleted)},
+		[]surface{surfacePosture}, false, acceptedGolden())
+	if err != nil {
+		t.Fatalf("planWrites: %v", err)
+	}
+
+	if p.WithheldReclassifications == 0 {
+		t.Fatal("fixture is inert: nothing was withheld, so the summary line is not under test")
+	}
+
+	var out bytes.Buffer
+	if err := applyPlan(p, &fakeStore{}, &out); err != nil {
+		t.Fatalf("applyPlan: %v", err)
+	}
+
+	if strings.Contains(out.String(), "every derived theme already matches") {
+		t.Errorf("summary contradicts the withheld note it just printed:\n%s", out.String())
+	}
+
+	if !strings.Contains(out.String(), "no writes performed") {
+		t.Errorf("summary does not report the withheld-only outcome:\n%s", out.String())
 	}
 }
