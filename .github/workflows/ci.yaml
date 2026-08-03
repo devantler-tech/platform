@@ -81,6 +81,10 @@ jobs:
               - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/kubescape-backlog-bridge/**'
+              # The updater and its annotation helper are one fail-closed
+              # contract for the vendored CDI/KubeVirt manifests.
+              - 'scripts/annotate-vendored-checkov/**'
+              - 'scripts/update-vendored-operators.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/normalize-sarif-paths.sh'
@@ -237,6 +241,13 @@ jobs:
         # second, so it goes first — before the ksail download. See
         # scripts/validate-embedded-json.py (#2480).
         run: python3 scripts/validate-embedded-json.py
+
+      - name: 🧷 Validate vendored operator Checkov dispositions
+        if: needs.changes.outputs.k8s == 'true'
+        # Exercise the real annotator over multi-document fixtures. The updater
+        # must preserve unrelated resources, remain idempotent, and refuse a
+        # vendor rename before it can replace either committed bundle.
+        run: go test ./scripts/annotate-vendored-checkov
 
       - name: 🔐 Validate OpenBao OIDC admin role
         if: needs.changes.outputs.k8s == 'true'

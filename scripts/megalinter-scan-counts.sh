@@ -45,7 +45,7 @@ set -euo pipefail
 readonly CI_CHECKOV_VERSION='3.3.2'
 readonly CI_TRIVY_VERSION='0.71.2'
 
-# The frameworks MegaLinter's checkov run reports, and their contribution to CI's total of 73.
+# The frameworks MegaLinter's checkov run reports, and their current contribution to the CI total.
 #
 # A missing framework is REPORTED, never refused, because the two causes are indistinguishable from
 # checkov's output alone: a framework whose last finding is fixed stops emitting a section entirely
@@ -57,7 +57,7 @@ readonly CI_TRIVY_VERSION='0.71.2'
 # What protects against the known defect is structural rather than a check: this script always runs
 # checkov from the repository root with a literal ".", the invocation whose absence caused the
 # kubernetes framework to vanish in the first place.
-readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:42 secrets:31 github_actions:0)
+readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:18 secrets:0 github_actions:0)
 
 # A parsing error means a file was NOT analysed, so findings can hide behind it. CI's run has
 # exactly one (in the cloudformation framework) and so does a correct local run, which is why this
