@@ -57,6 +57,21 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
+// Measured by comparing base 4673fe2d with manifest head d0f130a0 before
+// approving this value: all five production render trees contain 1,019 documents
+// on both sides, with membership IDENTICAL by
+// apiVersion|kind|namespace|name set difference. The 64 Role /
+// ClusterRole / RoleBinding / ClusterRoleBinding / ServiceAccount documents are
+// byte-identical. Exactly ONE rendered entry moves:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  kube-system/cilium
+//
+// Its only rendered delta changes authentication.enabled and
+// authentication.mutual.spire.enabled from true to false. No scoped
+// required-authentication policy consumes SPIRE, so disabling the unused
+// integration removes continuous delegated-identity errors and grants no
+// identity or permission.
+//
 // Measured against main 94714d94 before approving this value: 511 documents on
 // both sides, with membership IDENTICAL -- zero added, removed, or renamed by
 // set difference over every apiVersion|kind|namespace|name identity. Exactly
@@ -180,7 +195,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "1a19f043e1864e3dddb4ce2bd2a4adfa540e20346409c970beb093df1c07570e"
+const expectedRenderedSurfaceSHA = "fef511d40d44624fcd81d26a7c09b84c7a08ebb25eae7d643cfacd9519146927"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
