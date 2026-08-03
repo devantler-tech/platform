@@ -7,6 +7,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -37,6 +38,16 @@ type manifestIdentity struct {
 	} `yaml:"metadata"`
 }
 
+type checkovReport struct {
+	CheckType string `json:"check_type"`
+	Results   struct {
+		FailedChecks []struct {
+			CheckID  string `json:"check_id"`
+			Resource string `json:"resource"`
+		} `json:"failed_checks"`
+	} `json:"results"`
+}
+
 var bundleTargets = map[string][]targetSpec{
 	"cdi": {
 		{kind: "ClusterRole", name: "cdi-operator-cluster", checks: []string{"CKV_K8S_155"}, reason: clusterRoleReason},
@@ -62,6 +73,11 @@ func deploymentChecks() []string {
 
 func main() {
 	bundle := flag.String("bundle", "", "bundle to annotate: cdi or kubevirt")
+	validateFindings := flag.Bool(
+		"validate-findings",
+		false,
+		"validate that every configured disposition still matches a Checkov JSON finding",
+	)
 	flag.Parse()
 	if flag.NArg() != 0 {
 		fail("unexpected positional arguments")
@@ -76,6 +92,12 @@ func main() {
 	if err != nil {
 		fail("read bundle: %v", err)
 	}
+	if *validateFindings {
+		if err := validateCheckovFindings(input, targets); err != nil {
+			fail("validate %s findings: %v", *bundle, err)
+		}
+		return
+	}
 	output, err := annotateBundle(string(input), targets)
 	if err != nil {
 		fail("annotate %s bundle: %v", *bundle, err)
@@ -83,6 +105,62 @@ func main() {
 	if _, err := io.WriteString(os.Stdout, output); err != nil {
 		fail("write bundle: %v", err)
 	}
+}
+
+func validateCheckovFindings(input []byte, targets []targetSpec) error {
+	trimmed := strings.TrimSpace(string(input))
+	if trimmed == "" {
+		return errors.New("checkov report is empty")
+	}
+
+	var reports []checkovReport
+	if strings.HasPrefix(trimmed, "[") {
+		if err := json.Unmarshal(input, &reports); err != nil {
+			return fmt.Errorf("decode Checkov reports: %w", err)
+		}
+	} else {
+		var report checkovReport
+		if err := json.Unmarshal(input, &report); err != nil {
+			return fmt.Errorf("decode Checkov report: %w", err)
+		}
+		reports = []checkovReport{report}
+	}
+
+	found := make(map[string]int)
+	for _, report := range reports {
+		if report.CheckType != "kubernetes" {
+			continue
+		}
+		for _, failed := range report.Results.FailedChecks {
+			for _, target := range targets {
+				if !strings.HasPrefix(failed.Resource, target.kind+".") ||
+					!strings.HasSuffix(failed.Resource, "."+target.name) {
+					continue
+				}
+				for _, check := range target.checks {
+					if failed.CheckID == check {
+						found[target.kind+"/"+target.name+"/"+check]++
+					}
+				}
+			}
+		}
+	}
+
+	for _, target := range targets {
+		for _, check := range target.checks {
+			key := target.kind + "/" + target.name + "/" + check
+			if found[key] != 1 {
+				return fmt.Errorf(
+					"configured disposition %s for %s/%s no longer matches exactly one current finding (found %d)",
+					check,
+					target.kind,
+					target.name,
+					found[key],
+				)
+			}
+		}
+	}
+	return nil
 }
 
 func fail(format string, args ...any) {

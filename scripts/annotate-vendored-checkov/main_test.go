@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"os/exec"
@@ -22,10 +23,12 @@ type manifestDocument struct {
 	Metadata manifestMetadata `yaml:"metadata"`
 }
 
-func runAnnotator(t *testing.T, bundle, input string) (string, string, error) {
+func runAnnotator(t *testing.T, bundle, input string, extraArgs ...string) (string, string, error) {
 	t.Helper()
 
-	command := exec.Command("go", "run", ".", "--bundle", bundle)
+	args := []string{"run", ".", "--bundle", bundle}
+	args = append(args, extraArgs...)
+	command := exec.Command("go", args...)
 	command.Stdin = strings.NewReader(input)
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -34,6 +37,55 @@ func runAnnotator(t *testing.T, bundle, input string) (string, string, error) {
 	err := command.Run()
 
 	return stdout.String(), stderr.String(), err
+}
+
+func checkovFindingsFixture(t *testing.T, bundle, omittedCheck string) string {
+	t.Helper()
+
+	clusterRoleName := "cdi-operator-cluster"
+	deploymentName := "cdi-operator"
+	deploymentNamespace := "cdi"
+	if bundle == "kubevirt" {
+		clusterRoleName = "kubevirt-operator"
+		deploymentName = "virt-operator"
+		deploymentNamespace = "kubevirt"
+	}
+
+	failedChecks := make([]map[string]string, 0, 8)
+	checks := []struct {
+		id       string
+		resource string
+	}{
+		{id: "CKV_K8S_155", resource: "ClusterRole.default." + clusterRoleName},
+		{id: "CKV_K8S_11", resource: "Deployment." + deploymentNamespace + "." + deploymentName},
+		{id: "CKV_K8S_13", resource: "Deployment." + deploymentNamespace + "." + deploymentName},
+		{id: "CKV_K8S_15", resource: "Deployment." + deploymentNamespace + "." + deploymentName},
+		{id: "CKV_K8S_22", resource: "Deployment." + deploymentNamespace + "." + deploymentName},
+		{id: "CKV_K8S_38", resource: "Deployment." + deploymentNamespace + "." + deploymentName},
+		{id: "CKV_K8S_40", resource: "Deployment." + deploymentNamespace + "." + deploymentName},
+		{id: "CKV_K8S_43", resource: "Deployment." + deploymentNamespace + "." + deploymentName},
+	}
+	for _, check := range checks {
+		if check.id == omittedCheck {
+			continue
+		}
+		failedChecks = append(failedChecks, map[string]string{
+			"check_id": check.id,
+			"resource": check.resource,
+		})
+	}
+
+	report := map[string]any{
+		"check_type": "kubernetes",
+		"results": map[string]any{
+			"failed_checks": failedChecks,
+		},
+	}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("encode Checkov fixture: %v", err)
+	}
+	return string(encoded)
 }
 
 func decodeDocuments(t *testing.T, input string) map[string]manifestDocument {
@@ -181,6 +233,42 @@ func TestAnnotatorFailsClosedOnConflictingDisposition(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "already has a different disposition") {
 		t.Fatalf("stderr did not explain the conflicting disposition: %q", stderr)
+	}
+}
+
+func TestFindingsValidationAcceptsEveryCurrentDisposition(t *testing.T) {
+	t.Parallel()
+
+	for _, bundle := range []string{"cdi", "kubevirt"} {
+		t.Run(bundle, func(t *testing.T) {
+			t.Parallel()
+			_, stderr, err := runAnnotator(
+				t,
+				bundle,
+				checkovFindingsFixture(t, bundle, ""),
+				"--validate-findings",
+			)
+			if err != nil {
+				t.Fatalf("current dispositions were rejected: %v\nstderr: %s", err, stderr)
+			}
+		})
+	}
+}
+
+func TestFindingsValidationRejectsObsoleteDisposition(t *testing.T) {
+	t.Parallel()
+
+	_, stderr, err := runAnnotator(
+		t,
+		"cdi",
+		checkovFindingsFixture(t, "cdi", "CKV_K8S_43"),
+		"--validate-findings",
+	)
+	if err == nil {
+		t.Fatal("validator accepted a disposition whose finding disappeared upstream")
+	}
+	if !strings.Contains(stderr, "CKV_K8S_43") || !strings.Contains(stderr, "no longer matches") {
+		t.Fatalf("stderr did not name the obsolete disposition: %q", stderr)
 	}
 }
 

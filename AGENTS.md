@@ -112,7 +112,7 @@ The CDI and KubeVirt operator files are pinned upstream release bundles. Refresh
 and SHA-256 constants and run it from any directory in this repository. The updater downloads the
 pinned release assets, reapplies the reviewed resource-scoped Checkov dispositions with the tested
 `scripts/annotate-vendored-checkov` helper, and runs Checkov before replacing either committed file.
-It requires `curl`, `go`, `checkov`, and `sha256sum` on the local path.
+It requires `curl`, `go`, `sha256sum`, and the Checkov version pinned in the script on the local path.
 
 This convention deliberately keeps the suppressions narrow: only the named upstream ClusterRole and
 Deployment receive annotations, no Checkov check is disabled repository-wide, and an unrelated new
@@ -120,6 +120,13 @@ finding still fails the update. A vendor rename/removal also fails closed becaus
 requires exactly one of every expected target. Do not hand-edit the generated bundles or fetch them
 directly; the updater is what makes a future vendor bump retain the dispositions instead of silently
 reintroducing the scanner backlog (#2899).
+The updater scans the unannotated asset first and refuses a disposition that no longer corresponds
+to a current upstream finding, then scans the annotated result across both the Kubernetes and secrets
+frameworks. That keeps an upstream fix from leaving a stale exception and prevents embedded secret
+material from slipping through the non-blocking repository backlog scan.
+Its isolated-file scan excludes CKV2_K8S_6 only: Checkov does not model the committed
+`CiliumNetworkPolicy` that protects every CDI endpoint, while the full-repository CI scan retains the
+check and remains authoritative for graph findings.
 
 ## Local Development Cluster
 
