@@ -96,7 +96,6 @@ func TestAnnotatorAddsOnlyResourceScopedSuppressions(t *testing.T) {
 	}
 
 	for _, test := range tests {
-		test := test
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			input := bundleFixture(test.clusterRoleName, test.deploymentName)
@@ -164,6 +163,24 @@ func TestAnnotatorFailsClosedWhenVendorTargetsDrift(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "expected exactly one Deployment/cdi-operator") {
 		t.Fatalf("stderr did not name the missing target: %q", stderr)
+	}
+}
+
+func TestAnnotatorFailsClosedOnConflictingDisposition(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Replace(
+		bundleFixture("cdi-operator-cluster", "cdi-operator"),
+		"    owner: upstream",
+		"    owner: upstream\n    checkov.io/skip1: \"CKV_K8S_11=some other reason\"",
+		1,
+	)
+	_, stderr, err := runAnnotator(t, "cdi", input)
+	if err == nil {
+		t.Fatal("annotator replaced a conflicting Checkov disposition")
+	}
+	if !strings.Contains(stderr, "already has a different disposition") {
+		t.Fatalf("stderr did not explain the conflicting disposition: %q", stderr)
 	}
 }
 

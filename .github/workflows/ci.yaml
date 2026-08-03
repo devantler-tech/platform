@@ -247,7 +247,10 @@ jobs:
         # Exercise the real annotator over multi-document fixtures. The updater
         # must preserve unrelated resources, remain idempotent, and refuse a
         # vendor rename before it can replace either committed bundle.
-        run: go test ./scripts/annotate-vendored-checkov
+        run: |
+          bash -n scripts/update-vendored-operators.sh
+          shellcheck scripts/update-vendored-operators.sh
+          go test ./scripts/annotate-vendored-checkov
 
       - name: 🔐 Validate OpenBao OIDC admin role
         if: needs.changes.outputs.k8s == 'true'

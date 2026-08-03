@@ -109,9 +109,10 @@ The scan is a **hard gate**: it fails the PR if the NSA compliance score drops b
 
 The CDI and KubeVirt operator files are pinned upstream release bundles. Refresh them only through
 [`scripts/update-vendored-operators.sh`](scripts/update-vendored-operators.sh): edit its two version
-constants and run it from any directory in this repository. The updater downloads the pinned release
-assets, reapplies the reviewed resource-scoped Checkov dispositions with the tested
+and SHA-256 constants and run it from any directory in this repository. The updater downloads the
+pinned release assets, reapplies the reviewed resource-scoped Checkov dispositions with the tested
 `scripts/annotate-vendored-checkov` helper, and runs Checkov before replacing either committed file.
+It requires `curl`, `go`, `checkov`, and `sha256sum` on the local path.
 
 This convention deliberately keeps the suppressions narrow: only the named upstream ClusterRole and
 Deployment receive annotations, no Checkov check is disabled repository-wide, and an unrelated new
