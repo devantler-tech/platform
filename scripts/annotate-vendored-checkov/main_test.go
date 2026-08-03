@@ -262,6 +262,21 @@ func TestAnnotatorAddsOnlyResourceScopedSuppressions(t *testing.T) {
 	}
 }
 
+func TestAnnotatorAcceptsDecoratedDocumentMarkers(t *testing.T) {
+	t.Parallel()
+
+	input := bundleFixture("cdi-operator-cluster", "cdi-operator")
+	input = strings.Replace(input, "---\n", "--- # generated\n", 1)
+	input = strings.Replace(input, "---\n", "--- \t\n", 1)
+	output, stderr, err := runAnnotator(t, "cdi", input)
+	if err != nil {
+		t.Fatalf("annotator rejected decorated document markers: %v\nstderr: %s", err, stderr)
+	}
+	if !strings.Contains(output, "--- # generated\n") || !strings.Contains(output, "--- \t\n") {
+		t.Fatalf("annotator did not preserve decorated document markers:\n%s", output)
+	}
+}
+
 func TestAnnotatorFailsClosedWhenVendorTargetsDrift(t *testing.T) {
 	t.Parallel()
 

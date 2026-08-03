@@ -83,6 +83,7 @@ var bundleTargets = map[string][]targetSpec{
 
 var inlineCheckovSkip = regexp.MustCompile(`(?i)checkov\s*:\s*skip\s*=`)
 var sha256Digest = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var yamlDocumentMarker = regexp.MustCompile(`^---(?:[ \t]+(?:#.*)?)?$`)
 
 var workloadKinds = map[string]struct{}{
 	"CronJob":               {},
@@ -986,7 +987,7 @@ func annotateBundle(input string, targets []targetSpec) (string, error) {
 func splitDocuments(lines []string) [][]string {
 	starts := []int{0}
 	for index, line := range lines {
-		if index > 0 && line == "---" {
+		if index > 0 && yamlDocumentMarker.MatchString(line) {
 			starts = append(starts, index)
 		}
 	}
