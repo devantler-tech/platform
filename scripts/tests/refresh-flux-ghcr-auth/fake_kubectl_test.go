@@ -171,7 +171,27 @@ func fakeFluxPolicyChildObject() map[string]any {
 			"reason": "ReconciliationSucceeded",
 		},
 	}
-	if os.Getenv("FAKE_FLUX_POLICY_RECONCILING") == "true" {
+	reconciling := os.Getenv("FAKE_FLUX_POLICY_RECONCILING") == "true"
+	if suspended && os.Getenv("FAKE_FLUX_POLICY_RECONCILING_AFTER_PAUSE") == "true" {
+		reconciling = true
+	}
+	if !suspended {
+		readCount := parseInt(markerContent("flux-policy-child-read-count"), 0) + 1
+		setMarkerContent("flux-policy-child-read-count", strconv.Itoa(readCount))
+		reconcilingReads := parseInt(
+			os.Getenv("FAKE_FLUX_POLICY_RECONCILING_READS_BEFORE_PAUSE"),
+			0,
+		)
+		if readCount <= reconcilingReads {
+			reconciling = true
+			appendEnvFile("OPERATION_LOG", "flux-policy-child-reconciling:infrastructure\n")
+		} else if reconcilingReads > 0 &&
+			!markerExists("flux-policy-child-stable-logged") {
+			touchMarker("flux-policy-child-stable-logged")
+			appendEnvFile("OPERATION_LOG", "flux-policy-child-stable:infrastructure\n")
+		}
+	}
+	if reconciling {
 		conditions = append(conditions, map[string]any{
 			"type":   "Reconciling",
 			"status": "True",
@@ -354,6 +374,17 @@ func fakeKubectlGetFluxPolicyFences(args []string, namespace string) int {
 	if namespace != "flux-system" ||
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid Flux policy fence list lookup")
+	}
+	if markerExists("flux-policy-handoff-suspended") &&
+		os.Getenv("FAKE_FLUX_POLICY_RESOURCE_VERSION_CHURN_AFTER_PAUSE") == "true" {
+		currentResourceVersion := defaultString(
+			markerContent("flux-policy-handoff-resource-version"),
+			"20",
+		)
+		setMarkerContent(
+			"flux-policy-handoff-resource-version",
+			incrementDecimal(currentResourceVersion),
+		)
 	}
 	fmt.Println(encodeJSON(map[string]any{
 		"apiVersion": "v1",
