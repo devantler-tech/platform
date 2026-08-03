@@ -866,6 +866,24 @@ func TestTerminatingPrePauseFluxControllerBlocksPolicyMutation(t *testing.T) {
 	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
 }
 
+// A pre-handoff Pod inside its termination grace period is a correct rollout, not a surviving
+// process: `kubectl rollout status` returns before the superseded Pod is gone. Sampling the proof
+// once failed these deploys and evicted their PRs from the merge queue (#2926).
+func TestTransientlyTerminatingFluxControllerPodIsAwaited(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING_SAMPLES": "1",
+		"FAKE_LOG_FLUX_CONTROLLER_RESTART":                 "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "flux-controller-restart:kustomize-controller")
+	requireLine(t, operations, "ivpol-policy-apply:verify-app-images")
+	requireLine(t, operations, "flux-policy-resume:infrastructure")
+	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+}
+
 func TestAmbiguousFluxControllerRestartIsAdopted(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
