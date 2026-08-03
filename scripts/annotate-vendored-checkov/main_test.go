@@ -638,6 +638,32 @@ func TestSourceValidationRejectsWorkloadOutsideProtectedNamespace(t *testing.T) 
 	}
 }
 
+func TestSourceValidationRejectsNestedListWorkloadOutsideProtectedNamespace(t *testing.T) {
+	t.Parallel()
+
+	for _, listKind := range []string{"List", "DeploymentList"} {
+		t.Run(listKind, func(t *testing.T) {
+			t.Parallel()
+			input := `apiVersion: v1
+kind: ` + listKind + `
+items:
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: nested-operator
+    namespace: other
+`
+			_, stderr, err := runAnnotator(t, "cdi", input, "--validate-source")
+			if err == nil {
+				t.Fatal("source validator accepted a nested workload outside the protected namespace")
+			}
+			if !strings.Contains(stderr, "Deployment/nested-operator uses namespace other, want cdi") {
+				t.Fatalf("stderr did not name the unprotected nested workload namespace: %q", stderr)
+			}
+		})
+	}
+}
+
 func TestAnnotatedValidationAcceptsOnlyConfiguredDispositions(t *testing.T) {
 	t.Parallel()
 

@@ -449,14 +449,19 @@ func validateVendorSource(input []byte, bundle string) error {
 		if root.Kind != yaml.MappingNode {
 			return fmt.Errorf("vendor document %d must contain a top-level mapping", documentIndex)
 		}
-		metadata := mappingValue(root, "metadata")
-		if metadata == nil {
-			continue
+		if err := validateVendorResource(root, protectedNamespace); err != nil {
+			return fmt.Errorf("vendor document %d: %w", documentIndex, err)
 		}
+	}
+}
+
+func validateVendorResource(root *yaml.Node, protectedNamespace string) error {
+	kind := mappingScalar(root, "kind")
+	metadata := mappingValue(root, "metadata")
+	if metadata != nil {
 		if metadata.Kind != yaml.MappingNode {
-			return fmt.Errorf("vendor document %d metadata must be a mapping", documentIndex)
+			return errors.New("metadata must be a mapping")
 		}
-		kind := mappingScalar(root, "kind")
 		if _, workload := workloadKinds[kind]; workload {
 			name := mappingScalar(metadata, "name")
 			namespace := mappingScalar(metadata, "namespace")
@@ -471,19 +476,38 @@ func validateVendorSource(input []byte, bundle string) error {
 			}
 		}
 		annotations := mappingValue(metadata, "annotations")
-		if annotations == nil {
-			continue
-		}
-		if annotations.Kind != yaml.MappingNode {
-			return fmt.Errorf("vendor document %d metadata.annotations must be a mapping", documentIndex)
-		}
-		for index := 0; index+1 < len(annotations.Content); index += 2 {
-			key := annotations.Content[index].Value
-			if strings.HasPrefix(key, "checkov.io/skip") {
-				return fmt.Errorf("vendor document %d contains upstream Checkov suppression %s", documentIndex, key)
+		if annotations != nil {
+			if annotations.Kind != yaml.MappingNode {
+				return errors.New("metadata.annotations must be a mapping")
+			}
+			for index := 0; index+1 < len(annotations.Content); index += 2 {
+				key := annotations.Content[index].Value
+				if strings.HasPrefix(key, "checkov.io/skip") {
+					return fmt.Errorf("contains upstream Checkov suppression %s", key)
+				}
 			}
 		}
 	}
+
+	if kind != "List" && !strings.HasSuffix(kind, "List") {
+		return nil
+	}
+	items := mappingValue(root, "items")
+	if items == nil {
+		return nil
+	}
+	if items.Kind != yaml.SequenceNode {
+		return fmt.Errorf("%s items must be a sequence", kind)
+	}
+	for index, item := range items.Content {
+		if item.Kind != yaml.MappingNode {
+			return fmt.Errorf("%s item %d must be a mapping", kind, index+1)
+		}
+		if err := validateVendorResource(item, protectedNamespace); err != nil {
+			return fmt.Errorf("%s item %d: %w", kind, index+1, err)
+		}
+	}
+	return nil
 }
 
 func validateAnnotatedBundle(input []byte, targets []targetSpec) error {
