@@ -52,6 +52,22 @@ if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
   exit 2
 fi
 
+# Validate the flag's DOMAIN, not just read it. The enforcing branch below tests
+# for the literal "true", so without this every other value — ENFORCE=True,
+# ENFORCE=1, a typo — would quietly select the non-enforcing path and be
+# indistinguishable from a deliberate ENFORCE=false. The operator who set it
+# would see a ::warning:: and a green job and conclude the gate was refusing
+# promotion, when it was off. Rejected here, with the other input validation, so
+# a misconfigured run fails before it spends registry calls to reach the same
+# verdict. An unset or empty value is not a typo — it is the documented default.
+enforce="${ENFORCE:-false}"
+if [[ "${enforce}" != "true" && "${enforce}" != "false" ]]; then
+  echo "::error::ENFORCE must be exactly 'true' or 'false' (got: '${enforce}')" >&2
+  usage
+  exit 2
+fi
+readonly enforce
+
 # The identity is this run's own workflow, taken from the runner rather than
 # from a pattern. GITHUB_WORKFLOW_REF is "owner/repo/.github/workflows/f.yaml@ref",
 # and the Fulcio SAN is that with the GitHub host prefixed — so the signature is
@@ -137,7 +153,7 @@ if [[ "${failures}" == "0" ]]; then
   exit 0
 fi
 
-if [[ "${ENFORCE:-false}" == "true" ]]; then
+if [[ "${enforce}" == "true" ]]; then
   echo "::error::${failures} evidence check(s) failed for ${digest}; refusing to promote it." >&2
   exit 1
 fi

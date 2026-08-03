@@ -133,6 +133,53 @@ else
   bad "enforcing: reports the failure as an error" "${gate_output}"
 fi
 
+# --- The flag's DOMAIN is part of its contract --------------------------------
+# The enforcing branch compares against the literal "true", so ANY other value
+# selects the non-enforcing path. That makes a typo in the workflow env —
+# ENFORCE=True, ENFORCE=1, ENFORCE=ture — indistinguishable from a deliberate
+# ENFORCE=false: the gate emits a ::warning:: and exits 0 while the operator who
+# set it believes promotion is now being refused. A gate that is silently off is
+# the single failure this script exists to prevent, and it is least visible
+# precisely at the flip, so an unrecognised value must be a hard error rather
+# than a default.
+#
+# The loop COUNTS rejections instead of spot-checking one value: a guard that
+# only special-cased "True" would satisfy a single assertion while leaving every
+# other typo fail-open. Asserting the count makes a partial fix fail.
+invalid_enforce=("True" "TRUE" "1" "yes" "ture" "false ")
+invalid_rejected=0
+for invalid in "${invalid_enforce[@]}"; do
+  run_gate 1 0 "${invalid}"
+  [[ "${gate_rc}" == "2" ]] && invalid_rejected=$((invalid_rejected + 1))
+done
+
+if [[ "${invalid_rejected}" == "${#invalid_enforce[@]}" ]]; then
+  ok "an unrecognised ENFORCE value is refused (${invalid_rejected}/${#invalid_enforce[@]})"
+else
+  bad "an unrecognised ENFORCE value is refused" \
+    "only ${invalid_rejected}/${#invalid_enforce[@]} exited 2 — the rest fell through to a path that does not enforce"
+fi
+
+# Rejection must be loud. Exiting non-zero without saying why turns a typo into
+# an unexplained CI failure, which is how a guard gets deleted rather than fixed.
+run_gate 1 0 "True"
+if grep -q "::error::" <<<"${gate_output}" && grep -q "ENFORCE" <<<"${gate_output}"; then
+  ok "the refusal names ENFORCE as the cause"
+else
+  bad "the refusal names ENFORCE as the cause" "${gate_output}"
+fi
+
+# The control for the guard above: the two VALID values must still reach their
+# verdicts. A guard that rejected everything would pass the assertions above
+# while breaking the gate outright — an empty value included, since the script
+# documents unset as defaulting to non-enforcing.
+run_gate 1 0 ""
+if [[ "${gate_rc}" == "0" ]]; then
+  ok "an EMPTY ENFORCE still defaults to non-enforcing (not rejected)"
+else
+  bad "an EMPTY ENFORCE still defaults to non-enforcing" "exit ${gate_rc}: ${gate_output}"
+fi
+
 # --- Each evidence kind is load-bearing ---------------------------------------
 # Without this, a gate that only ever ran cosign would pass every test above.
 run_gate 0 1 "true"
