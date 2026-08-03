@@ -126,6 +126,8 @@ frameworks. That keeps an upstream fix from leaving a stale exception and preven
 material from slipping through the non-blocking repository backlog scan.
 The scan runs with an isolated home, empty Checkov config, and no inherited `CKV_*` environment;
 upstream annotation and inline-comment suppressions are rejected before either framework runs.
+The secrets scan adds one synthetic AWS-key canary and requires Checkov's explicit `secrets` report
+to contain exactly that finding, so an empty or silently omitted secrets framework cannot pass.
 Each reviewed finding also pins its Checkov evaluated keys and a line-number-independent fingerprint
 of the affected resource in `scripts/annotate-vendored-checkov/main.go`. A real vendor bump that
 changes either target therefore stops before replacement. Review the upstream resource diff and the

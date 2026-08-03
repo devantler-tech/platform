@@ -100,9 +100,9 @@ DISABLE_ERRORS_LINTERS:
   #
   # The last two of the 6 have no demonstrated constraint and are candidates to simply raise: CoreDNS,
   # whose pinned image config reads `User: "nonroot:nonroot"` so an explicit `runAsUser: 65532`
-  # would both match the image and clear the check, and the vault-config Job. #2901 dispositioned
-  # three further findings — outside the 6, and part of the original 11 — by checking each image
-  # rather than reasoning about it: the MinIO
+  # would both match the image and clear the check, and the vault-config Job. Of the original 11,
+  # #2901 dispositioned three outside the 6, while #2899 removed the two vendored operator findings,
+  # leaving 6. #2901 checked each image rather than reasoning about it: the MinIO
   # server and its bucket-creation Job declare no `User` at all and carry no /etc/passwd entry for
   # the UID they ran under, so both were raised to 65532; the umami CronJob's 1001 turned out to BE
   # its image's baked `nextjs` user (`nextjs:x:1001:65533`), so it carries a scoped skip instead —

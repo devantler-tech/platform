@@ -27,8 +27,10 @@ readonly work_dir
 trap 'rm -rf "${work_dir}"' EXIT
 readonly checkov_home="${work_dir}/checkov-home"
 readonly checkov_config="${work_dir}/checkov.yaml"
+readonly checkov_secrets_canary="${work_dir}/checkov-secrets-canary.txt"
 mkdir -p "${checkov_home}"
 printf '{}\n' >"${checkov_config}"
+printf 'aws_access_key_id: AKIAQWERTYUIOPASDFGH\n' >"${checkov_secrets_canary}"
 
 # Ignore user/home configuration and CKV_* environment overrides. The updater
 # must prove its own explicit policy even when the caller normally soft-fails or
@@ -57,8 +59,16 @@ run_clean_framework_scan() {
   local framework="$4"
   local report="$5"
   local checkov_rc=0
+  local expected_checkov_rc=0
+  local -a input_files=("${manifest}")
+  local -a validator_args=(--validate-report --framework "${framework}")
+  if [ "${framework}" = 'secrets' ]; then
+    input_files+=("${checkov_secrets_canary}")
+    expected_checkov_rc=1
+    validator_args+=(--require-secrets-canary)
+  fi
   local -a checkov_args=(
-    --file "${manifest}"
+    --file "${input_files[@]}"
     --framework "${framework}"
     --output json
     --quiet
@@ -68,14 +78,21 @@ run_clean_framework_scan() {
   fi
 
   run_checkov "${checkov_args[@]}" >"${report}" || checkov_rc=$?
-  (
-    cd "${repo_root}"
-    go run ./scripts/annotate-vendored-checkov --bundle "${bundle}" \
-      --validate-report --framework "${framework}" <"${report}"
-  )
-  if [ "${checkov_rc}" -ne 0 ]; then
+  if [ "${checkov_rc}" -ne "${expected_checkov_rc}" ]; then
     printf 'checkov rejected the %s %s %s scan (exit %d):\n' \
       "${phase}" "${bundle}" "${framework}" "${checkov_rc}" >&2
+    while IFS= read -r line; do
+      printf '%s\n' "${line}" >&2
+    done <"${report}"
+    exit 2
+  fi
+  if ! (
+    cd "${repo_root}"
+    go run ./scripts/annotate-vendored-checkov --bundle "${bundle}" \
+      "${validator_args[@]}" <"${report}"
+  ); then
+    printf 'checkov report validation rejected the %s %s %s scan:\n' \
+      "${phase}" "${bundle}" "${framework}" >&2
     while IFS= read -r line; do
       printf '%s\n' "${line}" >&2
     done <"${report}"

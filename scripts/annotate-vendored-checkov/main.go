@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -49,6 +50,7 @@ type checkovReport struct {
 		FailedChecks []struct {
 			CheckID     string  `json:"check_id"`
 			Resource    string  `json:"resource"`
+			FilePath    string  `json:"file_path"`
 			CodeBlock   [][]any `json:"code_block"`
 			CheckResult struct {
 				EvaluatedKeys []string `json:"evaluated_keys"`
@@ -102,25 +104,25 @@ func deploymentChecks() []string {
 	}
 }
 
-func expectedEvaluatedKeys(check string) []string {
+func expectedEvaluatedKeys(check string) ([]string, bool) {
 	switch check {
 	case "CKV_K8S_11":
-		return []string{"spec/template/spec/containers/[0]/resources/limits/cpu"}
+		return []string{"spec/template/spec/containers/[0]/resources/limits/cpu"}, true
 	case "CKV_K8S_13":
-		return []string{"spec/template/spec/containers/[0]/resources/limits/memory"}
+		return []string{"spec/template/spec/containers/[0]/resources/limits/memory"}, true
 	case "CKV_K8S_15":
 		return []string{
 			"spec/template/spec/containers/[0]/image",
 			"spec/template/spec/containers/[0]/imagePullPolicy",
-		}
+		}, true
 	case "CKV_K8S_22":
-		return []string{"spec/template/spec/containers/[0]/securityContext/readOnlyRootFilesystem"}
+		return []string{"spec/template/spec/containers/[0]/securityContext/readOnlyRootFilesystem"}, true
 	case "CKV_K8S_43":
-		return []string{"spec/template/spec/containers/[0]/image"}
+		return []string{"spec/template/spec/containers/[0]/image"}, true
 	case "CKV_K8S_38", "CKV_K8S_40", "CKV_K8S_155":
-		return []string{}
+		return []string{}, true
 	default:
-		return nil
+		return nil, false
 	}
 }
 
@@ -151,6 +153,11 @@ func main() {
 		"",
 		"expected Checkov framework for --validate-report: kubernetes or secrets",
 	)
+	requireSecretsCanary := flag.Bool(
+		"require-secrets-canary",
+		false,
+		"require the updater's exact synthetic secrets finding in a secrets report",
+	)
 	flag.Parse()
 	if flag.NArg() != 0 {
 		fail("unexpected positional arguments")
@@ -172,6 +179,9 @@ func main() {
 	if *validateReport && *framework != "kubernetes" && *framework != "secrets" {
 		fail("--validate-report requires --framework kubernetes or --framework secrets")
 	}
+	if *requireSecretsCanary && (!*validateReport || *framework != "secrets") {
+		fail("--require-secrets-canary requires --validate-report --framework secrets")
+	}
 
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -184,7 +194,7 @@ func main() {
 		return
 	}
 	if *validateReport {
-		if _, err := decodeCheckovReports(input, *framework, true); err != nil {
+		if _, err := decodeCheckovReports(input, *framework, !*requireSecretsCanary, *requireSecretsCanary); err != nil {
 			fail("validate %s report: %v", *bundle, err)
 		}
 		return
@@ -211,7 +221,14 @@ func main() {
 }
 
 func validateCheckovFindings(input []byte, targets []targetSpec) error {
-	reports, err := decodeCheckovReports(input, "kubernetes", false)
+	for _, target := range targets {
+		for _, check := range target.checks {
+			if _, known := expectedEvaluatedKeys(check); !known {
+				return fmt.Errorf("%s has no reviewed evaluated keys", check)
+			}
+		}
+	}
+	reports, err := decodeCheckovReports(input, "kubernetes", false, false)
 	if err != nil {
 		return err
 	}
@@ -229,7 +246,10 @@ func validateCheckovFindings(input []byte, targets []targetSpec) error {
 				}
 				for _, check := range target.checks {
 					if failed.CheckID == check {
-						expectedKeys := expectedEvaluatedKeys(check)
+						expectedKeys, known := expectedEvaluatedKeys(check)
+						if !known {
+							return fmt.Errorf("%s has no reviewed evaluated keys", check)
+						}
 						if !slices.Equal(failed.CheckResult.EvaluatedKeys, expectedKeys) {
 							return fmt.Errorf(
 								"%s finding for %s/%s evaluated keys changed: found %v, want %v",
@@ -301,7 +321,12 @@ func codeBlockFingerprint(codeBlock [][]any) (string, error) {
 	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
-func decodeCheckovReports(input []byte, expectedFramework string, rejectFindings bool) ([]checkovReport, error) {
+func decodeCheckovReports(
+	input []byte,
+	expectedFramework string,
+	rejectFindings bool,
+	requireSecretsCanary bool,
+) ([]checkovReport, error) {
 	trimmed := strings.TrimSpace(string(input))
 	if trimmed == "" {
 		return nil, errors.New("checkov report is empty")
@@ -316,14 +341,6 @@ func decodeCheckovReports(input []byte, expectedFramework string, rejectFindings
 		var report checkovReport
 		if err := json.Unmarshal(input, &report); err != nil {
 			return nil, fmt.Errorf("decode Checkov report: %w", err)
-		}
-		if expectedFramework == "secrets" && report.CheckType == "" && report.Summary.ParsingErrors == nil {
-			var summary checkovSummary
-			if err := json.Unmarshal(input, &summary); err != nil {
-				return nil, fmt.Errorf("decode Checkov summary: %w", err)
-			}
-			report.CheckType = expectedFramework
-			report.Summary = summary
 		}
 		reports = []checkovReport{report}
 	}
@@ -362,8 +379,35 @@ func decodeCheckovReports(input []byte, expectedFramework string, rejectFindings
 		if rejectFindings && failedCount != 0 {
 			return nil, fmt.Errorf("%s report reported %d failed check(s)", report.CheckType, failedCount)
 		}
+		if requireSecretsCanary {
+			if err := validateSecretsCanary(report, failedCount); err != nil {
+				return nil, err
+			}
+		}
 	}
 	return reports, nil
+}
+
+func validateSecretsCanary(report checkovReport, failedCount int) error {
+	if report.CheckType != "secrets" || failedCount != 1 || len(report.Results.FailedChecks) != 1 {
+		return fmt.Errorf("secrets report must contain exactly one synthetic canary finding, found %d", failedCount)
+	}
+	finding := report.Results.FailedChecks[0]
+	if finding.CheckID != "CKV_SECRET_2" || path.Base(finding.FilePath) != "checkov-secrets-canary.txt" {
+		return fmt.Errorf(
+			"secrets report contains unexpected canary identity %s in %s",
+			finding.CheckID,
+			finding.FilePath,
+		)
+	}
+	if len(finding.CodeBlock) != 1 || len(finding.CodeBlock[0]) != 2 {
+		return errors.New("secrets canary finding has an unexpected code_block")
+	}
+	line, ok := finding.CodeBlock[0][1].(string)
+	if !ok || line != "aws_access_key_id: AKIAQ**********\n" {
+		return errors.New("secrets canary finding does not contain the masked synthetic key")
+	}
+	return nil
 }
 
 func validateVendorSource(input []byte, bundle string) error {

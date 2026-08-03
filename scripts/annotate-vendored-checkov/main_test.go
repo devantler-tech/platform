@@ -75,12 +75,16 @@ func checkovFindingsFixture(t *testing.T, bundle, omittedCheck string) string {
 			kind = "ClusterRole"
 			name = clusterRoleName
 		}
+		evaluatedKeys, known := expectedEvaluatedKeys(check.id)
+		if !known {
+			t.Fatalf("fixture check %s has no expected evaluated keys", check.id)
+		}
 		failedChecks = append(failedChecks, map[string]any{
 			"check_id":   check.id,
 			"resource":   check.resource,
 			"code_block": fixtureCodeBlock(kind, name),
 			"check_result": map[string]any{
-				"evaluated_keys": expectedEvaluatedKeys(check.id),
+				"evaluated_keys": evaluatedKeys,
 			},
 		})
 	}
@@ -427,7 +431,7 @@ func TestCheckovReportValidationRequiresExpectedFramework(t *testing.T) {
 	}
 }
 
-func TestCheckovReportValidationAcceptsEmptySecretsSummary(t *testing.T) {
+func TestCheckovReportValidationRejectsEmptySecretsSummary(t *testing.T) {
 	t.Parallel()
 
 	report := `{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0,"checkov_version":"3.3.2"}`
@@ -439,8 +443,67 @@ func TestCheckovReportValidationAcceptsEmptySecretsSummary(t *testing.T) {
 		"--framework",
 		"secrets",
 	)
+	if err == nil {
+		t.Fatal("validator accepted a framework-less empty secrets summary")
+	}
+	if !strings.Contains(stderr, "expected exactly one secrets report") {
+		t.Fatalf("stderr did not require explicit secrets report identity: %q", stderr)
+	}
+}
+
+func TestCheckovReportValidationAcceptsExactSecretsCanary(t *testing.T) {
+	t.Parallel()
+
+	report := map[string]any{
+		"check_type": "secrets",
+		"results": map[string]any{
+			"failed_checks": []map[string]any{{
+				"check_id":  "CKV_SECRET_2",
+				"file_path": "/tmp/checkov-secrets-canary.txt",
+				"code_block": [][]any{{
+					1,
+					"aws_access_key_id: AKIAQ**********\n",
+				}},
+			}},
+		},
+		"summary": map[string]any{
+			"parsing_errors": 0,
+			"failed":         1,
+		},
+	}
+	encoded, err := json.Marshal(report)
 	if err != nil {
-		t.Fatalf("validator rejected Checkov's empty secrets summary: %v\nstderr: %s", err, stderr)
+		t.Fatalf("encode Checkov fixture: %v", err)
+	}
+
+	_, stderr, err := runAnnotator(
+		t,
+		"cdi",
+		string(encoded),
+		"--validate-report",
+		"--framework",
+		"secrets",
+		"--require-secrets-canary",
+	)
+	if err != nil {
+		t.Fatalf("validator rejected the exact secrets canary: %v\nstderr: %s", err, stderr)
+	}
+}
+
+func TestFindingsValidationRejectsUnknownConfiguredCheck(t *testing.T) {
+	t.Parallel()
+
+	targets := fixtureTargets(t, "cdi")
+	targets[0].checks = append(targets[0].checks, "CKV_K8S_UNKNOWN")
+	err := validateCheckovFindings(
+		[]byte(checkovFindingsFixture(t, "cdi", "")),
+		targets,
+	)
+	if err == nil {
+		t.Fatal("validator accepted a configured check without reviewed evaluated keys")
+	}
+	if !strings.Contains(err.Error(), "CKV_K8S_UNKNOWN has no reviewed evaluated keys") {
+		t.Fatalf("error did not name the unknown configured check: %v", err)
 	}
 }
 
