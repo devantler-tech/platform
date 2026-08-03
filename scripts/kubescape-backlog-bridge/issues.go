@@ -238,6 +238,14 @@ const zeroWidthSpace = "\u200b"
 //     No Markdown construct hides a mention from a bot — not a code span, a
 //     fence, a blockquote or an HTML comment — because bots parse the raw text,
 //     so the token itself has to be broken.
+//   - A "#" makes a live issue reference. GitHub turns "#123" into a link AND
+//     posts a cross-reference on that issue, from this command's authenticated
+//     account — so scan data carrying one generates notifications and timeline
+//     noise on an unrelated issue that nobody chose to involve. Unlike a
+//     mention, a code span DOES suppress this, and components are rendered
+//     inside one; but Severity is not, and binding a value's safety to where it
+//     happens to be interpolated is the mistake the newline case above already
+//     rejects. Break the token instead, so every field is safe wherever it lands.
 //   - A NEWLINE lets the string forge body structure — a second
 //     "**Surface:**" line, or a second fingerprint marker. Today both readers
 //     take the FIRST match and the genuine line is rendered above the component
@@ -256,6 +264,7 @@ const zeroWidthSpace = "\u200b"
 func sanitizeForIssue(s string) string {
 	replaced := strings.NewReplacer(
 		"@", "@"+zeroWidthSpace,
+		"#", "#"+zeroWidthSpace,
 		"`", "'",
 		"\r", " ",
 		"\n", " ",
@@ -708,19 +717,37 @@ func planWrites(
 // cost of failing to close is a stale issue and the cost of closing wrongly is
 // a live finding marked resolved.
 func entrySurface(e backlogEntry) surface {
+	var (
+		found surface
+		seen  int
+	)
+
+	// Every "**Surface:**" line is examined, not just the first. renderBody
+	// writes exactly one, so a second is not something this command can produce
+	// — and taking the first match would let an edited body put a forged line
+	// ABOVE the genuine one and silently retarget which surface the entry claims
+	// to belong to. That decides whether a run may close or reclassify it, so
+	// the ambiguity is resolved fail-closed: an unrecognised value, a duplicate,
+	// or none at all all yield "", which reads as "surface unknown" and makes
+	// the lifecycle gates withhold rather than authorise.
 	for _, line := range strings.Split(e.Body, "\n") {
 		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "**Surface:**")
 		if !ok {
 			continue
 		}
 
+		seen++
+		if seen > 1 {
+			return ""
+		}
+
 		switch s := surface(strings.TrimSpace(rest)); s {
 		case surfacePosture, surfaceCVE:
-			return s
+			found = s
 		default:
 			return ""
 		}
 	}
 
-	return ""
+	return found
 }

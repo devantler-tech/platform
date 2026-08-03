@@ -1795,3 +1795,80 @@ func TestReclassifyExplainsItselfWhenTheStateChangeSucceeds(t *testing.T) {
 		t.Errorf("comment = %q, want the caller's explanation", calls[1])
 	}
 }
+
+// TestIssueReferencesAreNeutralised stops scan output from cross-referencing an
+// unrelated issue.
+//
+// GitHub turns "#123" into a link AND posts a cross-reference event on issue
+// 123, so a crafted or malformed scanner value would generate notifications and
+// timeline noise on an issue nobody chose to involve — from this command's own
+// authenticated account.
+//
+// Severity is the field that proves it matters: components render INSIDE a code
+// span, which does suppress the autolink, but Severity renders outside one. A
+// value's safety must not depend on where it happens to be interpolated.
+func TestIssueReferencesAreNeutralised(t *testing.T) {
+	th := postureTheme("C-0016", "apps/Deployment/web")
+	th.Severity = "unknown bucket #2854 see also"
+
+	body := renderBody(th)
+
+	if strings.Contains(body, "#2854 see") {
+		t.Fatalf("a live issue reference survived into the body: %q", body)
+	}
+
+	if !strings.Contains(body, "#"+zeroWidthSpace+"2854") {
+		t.Errorf("the reference was not broken as expected: %q", body)
+	}
+
+	// CONTROL — the value must survive apart from the broken token, so this does
+	// not pass merely because rendering dropped the field.
+	if !strings.Contains(body, "unknown bucket") || !strings.Contains(body, "2854 see also") {
+		t.Errorf("sanitising destroyed the value instead of breaking the token: %q", body)
+	}
+
+	// CONTROL — the body's OWN legitimate "Part of #2854" reference is written by
+	// renderBody itself, not through the sanitiser, and must stay live. Without
+	// this, neutralising every "#" everywhere would look like a pass.
+	if !strings.Contains(body, "Part of #2854.") {
+		t.Errorf("the body's own issue reference was broken; only scanner-derived fields are sanitised: %q", body)
+	}
+}
+
+// TestDuplicateSurfaceMarkerIsRefused keeps an edited body from retargeting
+// which surface a tracked entry claims to belong to.
+//
+// entrySurface decides whether a run "examined" an entry's surface, which is
+// what authorizes closing and reclassifying it. Taking the FIRST match would let
+// a line inserted above the genuine one flip a posture entry to cve, so a
+// CVE-only run would close a posture finding it never scanned — the fail-open
+// direction for a security backlog.
+//
+// Refusing on duplication rather than preferring one of them is deliberate: with
+// two markers present there is no principled way to tell the genuine one from
+// the forged one, and "" makes the gates withhold.
+func TestDuplicateSurfaceMarkerIsRefused(t *testing.T) {
+	genuine := renderBody(postureTheme("C-0016", "apps/Deployment/web"))
+
+	// CONTROL — the untouched body must resolve, or the test below would pass
+	// against a function that refuses everything.
+	if got := entrySurface(backlogEntry{Body: genuine}); got != surfacePosture {
+		t.Fatalf("untouched body resolved to %q, want %q", got, surfacePosture)
+	}
+
+	for _, c := range []struct {
+		name string
+		body string
+	}{
+		{"forged line inserted ABOVE the genuine one",
+			"**Surface:** " + string(surfaceCVE) + "\n" + genuine},
+		{"forged line appended BELOW the genuine one",
+			genuine + "\n**Surface:** " + string(surfaceCVE) + "\n"},
+		{"the genuine line edited to another valid surface, duplicated",
+			genuine + "\n**Surface:** " + string(surfacePosture) + "\n"},
+	} {
+		if got := entrySurface(backlogEntry{Body: c.body}); got != "" {
+			t.Errorf("%s: resolved to %q, want \"\" so the lifecycle gates withhold", c.name, got)
+		}
+	}
+}
