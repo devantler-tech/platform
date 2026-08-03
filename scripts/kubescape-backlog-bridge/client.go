@@ -201,13 +201,18 @@ type ghIssue struct {
 	StateReason string `json:"stateReason"`
 }
 
-// listLimit bounds one `gh issue list` page.
+// listLimit is the largest tracked set this bridge will reconcile against.
 //
 // `gh issue list` defaults to THIRTY, and a truncated listing is the worst
 // possible input to a reconciler: every theme whose issue fell off the end
-// looks unfiled, so the run re-creates it as a duplicate. The limit is set far
+// looks unfiled, so the run re-creates it as a duplicate. The budget is set far
 // above any plausible theme count and the result is checked against it, so
 // truncation becomes a hard error rather than a silent duplicate storm.
+//
+// The PAGE requested is deliberately one larger (see list): asking for exactly
+// this many makes a full page ambiguous between "the budget is met" and "the
+// budget is exceeded", and resolving that ambiguity conservatively refuses a
+// tracked set that is complete and reconcilable.
 const listLimit = 500
 
 func (g *ghStore) list() ([]backlogEntry, error) {
@@ -215,7 +220,7 @@ func (g *ghStore) list() ([]backlogEntry, error) {
 		"--repo", g.repo,
 		"--label", bridgeLabel,
 		"--state", "all",
-		"--limit", fmt.Sprint(listLimit),
+		"--limit", fmt.Sprint(listLimit+1),
 		"--json", "number,title,body,state,stateReason")
 	if err != nil {
 		return nil, err
@@ -226,19 +231,23 @@ func (g *ghStore) list() ([]backlogEntry, error) {
 		return nil, fmt.Errorf("decoding gh issue list: %w", err)
 	}
 
-	// The ceiling counts CLOSED issues too: --state all is deliberate (a
+	// The budget counts CLOSED issues too: --state all is deliberate (a
 	// returning theme must land back on its original issue), and a closed issue
 	// keeps the label. So this is a LIFETIME budget, not a concurrent one, and
 	// it is reached by ordinary successful use rather than by anything going
 	// wrong. Naming the recovery step here is the difference between a stop an
 	// operator can clear and one they have to reverse-engineer.
-	if len(issues) >= listLimit {
-		return nil, fmt.Errorf("%w: %d tracked issues hit the --limit %d ceiling, so the listing "+
+	//
+	// Strictly greater, because the page above was requested one larger than the
+	// budget: listLimit issues is a COMPLETE listing of a tracked set that is at
+	// budget, and refusing it would wedge the bridge on its own success.
+	if len(issues) > listLimit {
+		return nil, fmt.Errorf("%w: more than %d tracked issues carry %q, so the listing "+
 			"may be truncated and every omitted theme would be re-filed as a duplicate. "+
-			"This ceiling counts closed issues too, so it is a lifetime total. To clear it, "+
+			"This budget counts closed issues too, so it is a lifetime total. To clear it, "+
 			"remove the %q label from issues that are closed and no longer need tracking "+
 			"(they are re-filed only if the finding returns), or raise listLimit",
-			errWriteFailed, len(issues), listLimit, bridgeLabel)
+			errWriteFailed, listLimit, bridgeLabel, bridgeLabel)
 	}
 
 	entries := make([]backlogEntry, 0, len(issues))

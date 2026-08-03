@@ -1076,6 +1076,47 @@ func dropRacedCreates(p *plan, store issueStore) error {
 
 	p.Actions = kept
 
+	return checkCreateBudget(p, len(current))
+}
+
+// checkCreateBudget refuses a plan whose creates would carry the tracked set
+// past the listing budget.
+//
+// list() refuses a listing that EXCEEDS the budget, which protects the reader
+// but not the writer: the run that crosses the line lists a set that is still
+// within budget, plans its create, and files it perfectly successfully. Every
+// LATER run is the one that fails, on a listing the earlier run produced. So
+// without this the bridge wedges itself by working, the failure surfaces in a
+// run that did nothing wrong, and recovery needs an operator stripping labels
+// by hand.
+//
+// Checked against the re-read count, not the planning snapshot, so a create
+// filed by a concurrent run in between counts against the budget too.
+//
+// The budget counts closed issues, so it is a lifetime total that ordinary
+// successful use walks into rather than a pathological case.
+func checkCreateBudget(p *plan, tracked int) error {
+	creates := 0
+
+	for _, a := range p.Actions {
+		if a.Kind == "create" {
+			creates++
+		}
+	}
+
+	if creates == 0 {
+		return nil
+	}
+
+	if projected := tracked + creates; projected > listLimit {
+		return fmt.Errorf("%w: %d tracked issues plus %d new theme(s) would reach %d, over the "+
+			"%d the listing can reconcile, and every later run would then refuse. Nothing was "+
+			"written. To make room, remove the %q label from issues that are closed and no "+
+			"longer need tracking (they are re-filed only if the finding returns), or raise "+
+			"listLimit",
+			errWriteFailed, tracked, creates, projected, listLimit, bridgeLabel)
+	}
+
 	return nil
 }
 

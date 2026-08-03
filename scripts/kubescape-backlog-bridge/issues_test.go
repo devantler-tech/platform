@@ -658,32 +658,53 @@ func TestParseIssueNumber(t *testing.T) {
 // TestListRefusesTruncatedPage pins the duplicate-storm guard: a listing that
 // reaches the CLI's own ceiling cannot be distinguished from a complete one, so
 // it is refused rather than reconciled against.
+//
+// The page is requested ONE ABOVE the budget so "complete" and "truncated" stay
+// distinguishable. Asking for exactly listLimit conflates them — a full page
+// means either that listLimit issues exist or that more do — which refuses a
+// tracked set that is merely AT budget and is therefore perfectly reconcilable.
+// That is not a hypothetical: the ceiling counts closed issues, so it is a
+// lifetime total reached by ordinary successful use, and a run that filed the
+// listLimit-th issue would wedge every later run until an operator stripped
+// labels by hand.
 func TestListRefusesTruncatedPage(t *testing.T) {
 	var page []string
-	for i := range listLimit {
+	for i := range listLimit + 1 {
 		page = append(page, fmt.Sprintf(`{"number":%d,"title":"t","body":"b","state":"OPEN"}`, i+1))
 	}
 
-	store := &ghStore{repo: "o/r", run: func(...string) ([]byte, error) {
+	var gotArgs []string
+
+	store := &ghStore{repo: "o/r", run: func(args ...string) ([]byte, error) {
+		gotArgs = args
+
 		return []byte("[" + strings.Join(page, ",") + "]"), nil
 	}}
 
 	if _, err := store.list(); !errors.Is(err, errWriteFailed) {
-		t.Fatalf("a full page was accepted as complete: %v", err)
+		t.Fatalf("an over-budget page was accepted as complete: %v", err)
 	}
 
-	// CONTROL — one fewer issue is not truncated and must be accepted.
+	// The refusal above is only meaningful if the request actually asked for one
+	// more than the budget; asking for listLimit would make a full page ambiguous
+	// again no matter how the length is compared.
+	if !slices.Contains(gotArgs, fmt.Sprint(listLimit+1)) {
+		t.Fatalf("list requested %v, want a --limit of %d", gotArgs, listLimit+1)
+	}
+
+	// CONTROL — a tracked set exactly AT the budget is complete, not truncated,
+	// and must be accepted. This is the case the old `>=` comparison wedged.
 	store.run = func(...string) ([]byte, error) {
-		return []byte("[" + strings.Join(page[:listLimit-1], ",") + "]"), nil
+		return []byte("[" + strings.Join(page[:listLimit], ",") + "]"), nil
 	}
 
 	entries, err := store.list()
 	if err != nil {
-		t.Fatalf("control list: %v", err)
+		t.Fatalf("a tracked set at the budget was refused: %v", err)
 	}
 
-	if len(entries) != listLimit-1 {
-		t.Fatalf("control returned %d entries, want %d", len(entries), listLimit-1)
+	if len(entries) != listLimit {
+		t.Fatalf("control returned %d entries, want %d", len(entries), listLimit)
 	}
 }
 
@@ -1322,6 +1343,76 @@ func TestScannerDerivedFieldsAreBoundedInTheBody(t *testing.T) {
 	small := renderBody(postureTheme("C-0016", "apps/Deployment/web"))
 	if !strings.Contains(small, "`apps/Deployment/web`") || strings.Contains(small, "…") {
 		t.Errorf("control did not flip:\n%s", small)
+	}
+}
+
+// TestReconcileRefusesToCreatePastTheBudget pins the other half of the listing
+// budget, which refusing an over-budget LISTING does not cover.
+//
+// The run that crosses the budget is itself entirely successful: it lists a
+// tracked set that is within budget, plans a create, and files it. Every LATER
+// run is the one that refuses, on a listing the earlier run produced — so the
+// bridge wedges itself by working correctly, and clearing it needs an operator
+// stripping labels by hand. Refusing BEFORE the create keeps the failure in the
+// run that caused it and leaves the backlog reconcilable.
+//
+// The budget counts closed issues, so it is a lifetime total that ordinary use
+// walks into; this is not a pathological input.
+func TestReconcileRefusesToCreatePastTheBudget(t *testing.T) {
+	themes := make([]theme, 0, listLimit+1)
+	entries := make([]backlogEntry, 0, listLimit)
+
+	for i := range listLimit + 1 {
+		th := postureTheme(fmt.Sprintf("C-%04d", i+1), "apps/Deployment/web")
+		themes = append(themes, th)
+
+		// All but the last are already filed, so the plan carries exactly ONE
+		// create against a tracked set sitting exactly AT the budget.
+		if i < listLimit {
+			entries = append(entries, backlogEntry{
+				Number: i + 1,
+				Title:  renderTitle(th),
+				Body:   renderBody(th),
+				Open:   true,
+			})
+		}
+	}
+
+	store := &fakeStore{entries: entries}
+
+	var out bytes.Buffer
+
+	err := reconcile(themes, []surface{surfacePosture}, true, nil, store, &out)
+	if !errors.Is(err, errWriteFailed) {
+		t.Fatalf("a create crossing the budget was accepted: %v", err)
+	}
+
+	// Refusing AFTER filing would leave exactly the state this guard exists to
+	// prevent, so the absence of the write is the property, not the error.
+	for _, c := range store.calls {
+		if strings.HasPrefix(c, "create:") {
+			t.Fatalf("refused only after writing; calls=%v", store.calls)
+		}
+	}
+
+	// CONTROL — one fewer tracked issue leaves exactly one slot, and the very
+	// same create must land. Without this the test would pass on a guard that
+	// refuses every create.
+	room := &fakeStore{entries: entries[:listLimit-1]}
+	if err := reconcile(themes[:listLimit], []surface{surfacePosture}, true, nil, room, &out); err != nil {
+		t.Fatalf("control: a create that fits the budget was refused: %v", err)
+	}
+
+	created := 0
+
+	for _, c := range room.calls {
+		if strings.HasPrefix(c, "create:") {
+			created++
+		}
+	}
+
+	if created != 1 {
+		t.Fatalf("control performed %d creates, want 1; calls=%v", created, room.calls)
 	}
 }
 
