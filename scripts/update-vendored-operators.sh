@@ -41,6 +41,7 @@ prepare_bundle() {
   local downloaded="${work_dir}/${bundle}-upstream.yaml"
   local findings="${work_dir}/${bundle}-findings.json"
   local annotated="${work_dir}/${bundle}-annotated.yaml"
+  local annotated_report="${work_dir}/${bundle}-annotated-report.json"
   local checkov_rc=0
 
   curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
@@ -70,8 +71,23 @@ prepare_bundle() {
   # The known, reviewed dispositions must clear the current upstream bundle,
   # while any new check introduced by a vendor bump remains visible and blocks
   # replacement until it receives an explicit disposition.
+  checkov_rc=0
   checkov --file "${annotated}" --framework kubernetes secrets \
-    --skip-check "${isolated_scan_skip_check}" --compact --quiet
+    --skip-check "${isolated_scan_skip_check}" \
+    --output json --quiet >"${annotated_report}" || checkov_rc=$?
+  (
+    cd "${repo_root}"
+    go run ./scripts/annotate-vendored-checkov --bundle "${bundle}" \
+      --validate-report <"${annotated_report}"
+  )
+  if [ "${checkov_rc}" -ne 0 ]; then
+    printf 'checkov found an undispositioned issue in the annotated %s bundle (exit %d):\n' \
+      "${bundle}" "${checkov_rc}" >&2
+    while IFS= read -r line; do
+      printf '%s\n' "${line}" >&2
+    done <"${annotated_report}"
+    exit 2
+  fi
 }
 
 require_tool curl

@@ -46,6 +46,9 @@ type checkovReport struct {
 			Resource string `json:"resource"`
 		} `json:"failed_checks"`
 	} `json:"results"`
+	Summary struct {
+		ParsingErrors *int `json:"parsing_errors"`
+	} `json:"summary"`
 }
 
 var bundleTargets = map[string][]targetSpec{
@@ -78,6 +81,11 @@ func main() {
 		false,
 		"validate that every configured disposition still matches a Checkov JSON finding",
 	)
+	validateReport := flag.Bool(
+		"validate-report",
+		false,
+		"validate that a Checkov JSON report contains no parsing errors",
+	)
 	flag.Parse()
 	if flag.NArg() != 0 {
 		fail("unexpected positional arguments")
@@ -87,6 +95,9 @@ func main() {
 	if !ok {
 		fail("unsupported bundle %q", *bundle)
 	}
+	if *validateFindings && *validateReport {
+		fail("--validate-findings and --validate-report are mutually exclusive")
+	}
 
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -95,6 +106,12 @@ func main() {
 	if *validateFindings {
 		if err := validateCheckovFindings(input, targets); err != nil {
 			fail("validate %s findings: %v", *bundle, err)
+		}
+		return
+	}
+	if *validateReport {
+		if _, err := decodeCheckovReports(input); err != nil {
+			fail("validate %s report: %v", *bundle, err)
 		}
 		return
 	}
@@ -108,22 +125,9 @@ func main() {
 }
 
 func validateCheckovFindings(input []byte, targets []targetSpec) error {
-	trimmed := strings.TrimSpace(string(input))
-	if trimmed == "" {
-		return errors.New("checkov report is empty")
-	}
-
-	var reports []checkovReport
-	if strings.HasPrefix(trimmed, "[") {
-		if err := json.Unmarshal(input, &reports); err != nil {
-			return fmt.Errorf("decode Checkov reports: %w", err)
-		}
-	} else {
-		var report checkovReport
-		if err := json.Unmarshal(input, &report); err != nil {
-			return fmt.Errorf("decode Checkov report: %w", err)
-		}
-		reports = []checkovReport{report}
+	reports, err := decodeCheckovReports(input)
+	if err != nil {
+		return err
 	}
 
 	found := make(map[string]int)
@@ -161,6 +165,42 @@ func validateCheckovFindings(input []byte, targets []targetSpec) error {
 		}
 	}
 	return nil
+}
+
+func decodeCheckovReports(input []byte) ([]checkovReport, error) {
+	trimmed := strings.TrimSpace(string(input))
+	if trimmed == "" {
+		return nil, errors.New("checkov report is empty")
+	}
+
+	var reports []checkovReport
+	if strings.HasPrefix(trimmed, "[") {
+		if err := json.Unmarshal(input, &reports); err != nil {
+			return nil, fmt.Errorf("decode Checkov reports: %w", err)
+		}
+	} else {
+		var report checkovReport
+		if err := json.Unmarshal(input, &report); err != nil {
+			return nil, fmt.Errorf("decode Checkov report: %w", err)
+		}
+		reports = []checkovReport{report}
+	}
+	if len(reports) == 0 {
+		return nil, errors.New("checkov report contains no framework results")
+	}
+	for _, report := range reports {
+		if report.Summary.ParsingErrors == nil {
+			return nil, fmt.Errorf("%s report omits summary.parsing_errors", report.CheckType)
+		}
+		if *report.Summary.ParsingErrors != 0 {
+			return nil, fmt.Errorf(
+				"%s report reported %d parsing error(s)",
+				report.CheckType,
+				*report.Summary.ParsingErrors,
+			)
+		}
+	}
+	return reports, nil
 }
 
 func fail(format string, args ...any) {
@@ -243,6 +283,10 @@ func readIdentity(lines []string) (manifestIdentity, error) {
 }
 
 func annotateDocument(lines []string, target targetSpec) ([]string, error) {
+	if err := validateAnnotationStyle(lines); err != nil {
+		return nil, err
+	}
+
 	metadataIndex := -1
 	metadataEnd := len(lines)
 	for index, line := range lines {
@@ -308,6 +352,37 @@ func annotateDocument(lines []string, target targetSpec) ([]string, error) {
 	}
 
 	return insertLines(lines, insertAt, additions), nil
+}
+
+func validateAnnotationStyle(lines []string) error {
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(strings.Join(lines, "\n")), &document); err != nil {
+		return fmt.Errorf("parse vendor document: %w", err)
+	}
+	if len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+		return errors.New("vendor document must contain a top-level mapping")
+	}
+	metadata := mappingValue(document.Content[0], "metadata")
+	if metadata == nil || metadata.Kind != yaml.MappingNode {
+		return errors.New("top-level metadata mapping is missing")
+	}
+	annotations := mappingValue(metadata, "annotations")
+	if annotations == nil {
+		return nil
+	}
+	if annotations.Kind != yaml.MappingNode || annotations.Style&yaml.FlowStyle != 0 {
+		return errors.New("metadata.annotations must use block mapping style")
+	}
+	return nil
+}
+
+func mappingValue(mapping *yaml.Node, key string) *yaml.Node {
+	for index := 0; index+1 < len(mapping.Content); index += 2 {
+		if mapping.Content[index].Value == key {
+			return mapping.Content[index+1]
+		}
+	}
+	return nil
 }
 
 func existingCheckovAnnotations(lines []string, start, end int) (map[string]string, int, error) {
