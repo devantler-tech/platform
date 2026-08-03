@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
+
+// truncationSuffix is what renderTitle appends when it cuts an over-long key:
+// the disclosure ellipsis followed by the 8-hex distinctness digest.
+var truncationSuffix = regexp.MustCompile(`…[0-9a-f]{8}$`)
 
 // postureTheme and cveTheme are the two shapes the reconciler sees.
 func postureTheme(key string, components ...string) theme {
@@ -1179,7 +1184,12 @@ func TestTitleIsBoundedForOverlongKeys(t *testing.T) {
 		t.Errorf("title is %d runes, over GitHub's %d limit", n, githubIssueTitleLimit)
 	}
 
-	if !strings.HasSuffix(title, "…") {
+	// The ellipsis is no longer the final rune: it is followed by a distinctness
+	// digest (see TestRenderTitleKeepsOverlongKeysDistinct). Assert that exact
+	// suffix rather than a bare Contains — an ellipsis appearing anywhere would
+	// otherwise let a key that happens to contain one pass with no truncation
+	// marker at all.
+	if !truncationSuffix.MatchString(title) {
 		t.Errorf("truncation is not disclosed: %q", title)
 	}
 
@@ -1870,5 +1880,78 @@ func TestDuplicateSurfaceMarkerIsRefused(t *testing.T) {
 		if got := entrySurface(backlogEntry{Body: c.body}); got != "" {
 			t.Errorf("%s: resolved to %q, want \"\" so the lifecycle gates withhold", c.name, got)
 		}
+	}
+}
+
+// TestSanitizeForIssueBreaksHTMLTags pins the "<" case of sanitizeForIssue.
+//
+// GitHub renders inline HTML inside Markdown, and Severity reaches the body
+// OUTSIDE a code span, so an unknown posture severity or CVE bucket carrying
+// "<details><summary>" emits real structure — collapsing the affected-component
+// list this issue exists to show. Scan output is untrusted, so the value must be
+// inert wherever it lands.
+func TestSanitizeForIssueBreaksHTMLTags(t *testing.T) {
+	hostile := "<details><summary>hidden</summary>"
+
+	got := sanitizeForIssue(hostile)
+
+	// An intact "<" immediately followed by a tag character is what GitHub
+	// parses. The zero-width space between them is what makes it inert.
+	if strings.Contains(got, "<d") || strings.Contains(got, "</") {
+		t.Errorf("HTML tag survived sanitization and would render live:\n%q", got)
+	}
+
+	// The information is broken, not destroyed — a reader still sees the value.
+	if !strings.Contains(got, "details") || !strings.Contains(got, "summary") {
+		t.Errorf("sanitization removed the value instead of neutralising it:\n%q", got)
+	}
+
+	// Determinism, or the anti-churn guarantee breaks.
+	if sanitizeForIssue(hostile) != got {
+		t.Error("sanitizeForIssue is not deterministic; every run would rewrite the issue")
+	}
+}
+
+// TestRenderTitleKeepsOverlongKeysDistinct is the title-side twin of
+// TestBoundFieldKeepsOverlongComponentsDistinct.
+//
+// The title is the ONLY place t.Key is rendered — renderBody omits it — so a
+// prefix-only cut of two keys sharing a long prefix yields two issues a human
+// cannot tell apart, and when severity and components match too, their bodies
+// are identical as well. Only the hidden fingerprint would differ.
+func TestRenderTitleKeepsOverlongKeysDistinct(t *testing.T) {
+	shared := strings.Repeat("C", githubIssueTitleLimit+40)
+	alpha := theme{Kind: string(surfacePosture), Key: shared + "-alpha"}
+	beta := theme{Kind: string(surfacePosture), Key: shared + "-beta"}
+
+	a, b := renderTitle(alpha), renderTitle(beta)
+
+	// The fixture must actually exercise truncation, or this proves nothing.
+	if utf8.RuneCountInString(alpha.Title()) <= githubIssueTitleLimit {
+		t.Fatal("fixture is inert: the title is inside the limit, so nothing is truncated")
+	}
+
+	if a == b {
+		t.Errorf("two distinct themes rendered the same visible title:\n%q", a)
+	}
+
+	// Distinctness must not cost the bound it exists to enforce: GitHub refuses
+	// an over-long title, and applyPlan stops at the first failure.
+	for _, got := range []string{a, b} {
+		if n := utf8.RuneCountInString(got); n > githubIssueTitleLimit {
+			t.Errorf("title is %d runes, over the %d limit: %q", n, githubIssueTitleLimit, got)
+		}
+	}
+
+	// Determinism, or every run rewrites the title.
+	if renderTitle(alpha) != a {
+		t.Error("renderTitle is not deterministic; every run would rewrite the issue")
+	}
+
+	// A title inside the limit must be returned untouched — no digest, no
+	// ellipsis — or the ordinary case would churn every tracked issue.
+	short := theme{Kind: string(surfacePosture), Key: "C-0016"}
+	if got, want := renderTitle(short), "security(posture): C-0016 fails"; got != want {
+		t.Errorf("a short title was altered: got %q, want %q", got, want)
 	}
 }

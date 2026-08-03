@@ -238,6 +238,7 @@ const zeroWidthSpace = "\u200b"
 //     No Markdown construct hides a mention from a bot — not a code span, a
 //     fence, a blockquote or an HTML comment — because bots parse the raw text,
 //     so the token itself has to be broken.
+//
 //   - A "#" makes a live issue reference. GitHub turns "#123" into a link AND
 //     posts a cross-reference on that issue, from this command's authenticated
 //     account — so scan data carrying one generates notifications and timeline
@@ -246,6 +247,21 @@ const zeroWidthSpace = "\u200b"
 //     inside one; but Severity is not, and binding a value's safety to where it
 //     happens to be interpolated is the mistake the newline case above already
 //     rejects. Break the token instead, so every field is safe wherever it lands.
+//
+//   - A "<" opens live HTML. GitHub renders inline HTML in Markdown, so a
+//     severity or CVE bucket carrying "<details><summary>…" emits real structure
+//     into the body — collapsing or hiding the affected-component list that is
+//     the whole point of the issue. Severity is interpolated outside a code
+//     span, so nothing suppresses it there.
+//
+//     Broken with a zero-width space rather than escaped to "&lt;": components
+//     render INSIDE a code span, where entities are not decoded, so escaping
+//     would corrupt a legitimate component name into a visible "&lt;". Breaking
+//     the token reads correctly in both places, which is the property this
+//     function is for. A ">" needs no handling — without a "<" it opens nothing,
+//     and newlines are already stripped, so a value can never start a line and
+//     forge a blockquote.
+//
 //   - A NEWLINE lets the string forge body structure — a second
 //     "**Surface:**" line, or a second fingerprint marker. Today both readers
 //     take the FIRST match and the genuine line is rendered above the component
@@ -265,6 +281,7 @@ func sanitizeForIssue(s string) string {
 	replaced := strings.NewReplacer(
 		"@", "@"+zeroWidthSpace,
 		"#", "#"+zeroWidthSpace,
+		"<", "<"+zeroWidthSpace,
 		"`", "'",
 		"\r", " ",
 		"\n", " ",
@@ -323,6 +340,15 @@ func boundField(s string) string {
 //
 // Truncating cannot collide two themes into one issue: identity is the body's
 // fingerprint, never the title.
+//
+// It CAN, however, collide them for a human reader, which is why the digest
+// below exists. The title is the only place t.Key is rendered — renderBody does
+// not carry it — so a prefix-only cut of two keys sharing a long prefix
+// produces two issues with identical visible titles, and when their severity
+// and components also match, identical visible bodies. Only the hidden
+// fingerprint would distinguish them, and nobody reads that. A digest of the
+// full title, taken before the cut, restores distinctness for exactly the same
+// reason boundField takes one.
 func renderTitle(t theme) string {
 	title := sanitizeForIssue(t.Title())
 
@@ -331,10 +357,13 @@ func renderTitle(t theme) string {
 		return title
 	}
 
-	// The ellipsis is inside the budget, not added to it.
+	// The suffix is inside the budget, not added to it.
 	const ellipsis = "…"
 
-	return string(runes[:githubIssueTitleLimit-len([]rune(ellipsis))]) + ellipsis
+	digest := sha256.Sum256([]byte(title))
+	suffix := ellipsis + hex.EncodeToString(digest[:])[:8]
+
+	return string(runes[:githubIssueTitleLimit-len([]rune(suffix))]) + suffix
 }
 
 // renderBody builds the issue body.
