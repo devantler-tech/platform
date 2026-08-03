@@ -281,6 +281,27 @@ else
   bad "the gate is given the resolved staging digest" "unexpected argument in ${action}"
 fi
 
+# The gate must be told which subject to verify, and it must be the same subject
+# the attestations were just published under. The script carries its own
+# fallback default, so leaving the env unset makes two files agree only by
+# coincidence: rename the package in one of them and the gate starts asking the
+# registry about a reference that was never published. It then fails for
+# absence, which in the default non-enforcing mode is a bare ::warning:: — the
+# drift is invisible exactly when it matters. Comparing the passed value against
+# the published one asserts the property; asserting the line merely exists would
+# pass for any value, including a wrong one.
+published_subjects="$(sed -nE 's/^[[:space:]]*subject-name:[[:space:]]*//p' "${action}" | sort -u || true)"
+published_count="$(printf '%s\n' "${published_subjects}" | grep -c . || true)"
+gate_subject="$(awk '/id: verify_evidence/,/run: /' "${action}" |
+  sed -nE 's/^[[:space:]]*SUBJECT_NAME:[[:space:]]*//p' || true)"
+
+if [[ -n "${gate_subject}" && "${published_count}" == "1" && "${gate_subject}" == "${published_subjects}" ]]; then
+  ok "the gate verifies the subject the attestations were published under (${gate_subject})"
+else
+  bad "the gate verifies the subject the attestations were published under" \
+    "gate=${gate_subject:-<unset>} published(${published_count})=[${published_subjects}]"
+fi
+
 # The rollout ratchet: default-off on this landing, so the enforcing flip is a
 # separate, deliberate change rather than something that arrives with it.
 if grep -q "enforce-evidence-verification" "${action}"; then

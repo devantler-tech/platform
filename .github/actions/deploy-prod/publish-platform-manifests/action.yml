@@ -144,6 +144,7 @@ runs:
         GH_TOKEN: ${{ inputs.ghcr-token }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}
+        SUBJECT_NAME: ghcr.io/devantler-tech/platform/manifests
         WORKFLOW_REF: ${{ github.workflow_ref }}
       # Every step above can report success while leaving no usable evidence in
       # the registry, and the promotion below is the point of no return: once
