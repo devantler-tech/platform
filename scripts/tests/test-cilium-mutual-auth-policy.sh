@@ -22,11 +22,15 @@ broad_authenticated_policies="$({
   printf '%s\n' "${rendered}" |
     yq ea -r '
       select(.kind == "CiliumClusterwideNetworkPolicy") as $policy |
-      $policy.spec.ingress[]? |
-      select(.authentication.mode == "required") |
-      .fromEndpoints[]? |
-      select(tag == "!!map" and length == 0) |
-      $policy.metadata.name
+      {"name": $policy.metadata.name, "ingress": $policy.spec.ingress[]} |
+      select(.ingress.authentication.mode == "required") |
+      .ingress.fromEndpoints[]? as $selector |
+      {"name": .name, "selector": $selector} |
+      select(
+        (((.selector.matchLabels // {}) | length) == 0) and
+        (((.selector.matchExpressions // []) | length) == 0)
+      ) |
+      .name
     ' -
 })" || fail 'the rendered Cilium policy inspection must succeed'
 

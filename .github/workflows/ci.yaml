@@ -91,6 +91,7 @@ jobs:
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy.sh'
+              - 'scripts/tests/test-cilium-mutual-auth-policy-regressions.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh'
@@ -275,7 +276,9 @@ jobs:
         if: needs.changes.outputs.k8s == 'true'
         # An authentication stanza is still an allow rule. Reject a cluster-wide
         # empty fromEndpoints selector before it can bypass workload allow-lists.
-        run: bash scripts/tests/test-cilium-mutual-auth-policy.sh
+        run: |
+          bash scripts/tests/test-cilium-mutual-auth-policy-regressions.sh
+          bash scripts/tests/test-cilium-mutual-auth-policy.sh
 
       - name: 🌐 Validate active Cilium device selection
         if: needs.changes.outputs.k8s == 'true' || needs.changes.outputs.bridge_validation == 'true'
