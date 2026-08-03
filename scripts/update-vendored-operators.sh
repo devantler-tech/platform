@@ -25,6 +25,22 @@ readonly repo_root
 work_dir="$(mktemp -d)"
 readonly work_dir
 trap 'rm -rf "${work_dir}"' EXIT
+readonly checkov_home="${work_dir}/checkov-home"
+readonly checkov_config="${work_dir}/checkov.yaml"
+mkdir -p "${checkov_home}"
+printf '{}\n' >"${checkov_config}"
+
+# Ignore user/home configuration and CKV_* environment overrides. The updater
+# must prove its own explicit policy even when the caller normally soft-fails or
+# skips checks in an interactive shell.
+run_checkov() {
+  env -i \
+    HOME="${checkov_home}" \
+    LC_ALL=C \
+    PATH="${PATH}" \
+    PYTHONUTF8=1 \
+    checkov --config-file "${checkov_config}" "$@"
+}
 
 require_tool() {
   local tool="$1"
@@ -51,7 +67,7 @@ run_clean_framework_scan() {
     checkov_args+=(--skip-check "${isolated_scan_skip_check}")
   fi
 
-  checkov "${checkov_args[@]}" >"${report}" || checkov_rc=$?
+  run_checkov "${checkov_args[@]}" >"${report}" || checkov_rc=$?
   (
     cd "${repo_root}"
     go run ./scripts/annotate-vendored-checkov --bundle "${bundle}" \
@@ -91,7 +107,7 @@ prepare_bundle() {
   # Prove that every reviewed disposition is still necessary on this exact
   # upstream asset. An upstream security fix makes the update stop here until
   # the obsolete annotation is removed from the configured target list.
-  checkov --file "${downloaded}" --framework kubernetes \
+  run_checkov --file "${downloaded}" --framework kubernetes \
     --skip-check "${isolated_scan_skip_check}" \
     --output json --quiet >"${findings}" || checkov_rc=$?
   if [ "${checkov_rc}" -gt 1 ]; then
@@ -125,7 +141,7 @@ require_tool go
 require_tool checkov
 require_tool sha256sum
 
-actual_checkov_version="$(checkov --version)"
+actual_checkov_version="$(run_checkov --version)"
 readonly actual_checkov_version
 if [ "${actual_checkov_version}" != "${checkov_version}" ]; then
   printf 'checkov %s is required; found %s\n' \

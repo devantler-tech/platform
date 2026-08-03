@@ -124,6 +124,8 @@ The updater scans the unannotated asset first and refuses a disposition that no 
 to a current upstream finding, then scans the annotated result across both the Kubernetes and secrets
 frameworks. That keeps an upstream fix from leaving a stale exception and prevents embedded secret
 material from slipping through the non-blocking repository backlog scan.
+The scan runs with an isolated home, empty Checkov config, and no inherited `CKV_*` environment;
+upstream annotation and inline-comment suppressions are rejected before either framework runs.
 Each reviewed finding also pins its Checkov evaluated keys and a line-number-independent fingerprint
 of the affected resource in `scripts/annotate-vendored-checkov/main.go`. A real vendor bump that
 changes either target therefore stops before replacement. Review the upstream resource diff and the
@@ -131,7 +133,9 @@ new finding evidence before updating those keys or fingerprints alongside the ve
 digest; never copy a reported fingerprint without inspecting the changed resource.
 Its isolated-file scan excludes CKV2_K8S_6 only: Checkov does not model the committed
 `CiliumNetworkPolicy` that protects every CDI endpoint, while the full-repository CI scan retains the
-check and remains authoritative for graph findings.
+check and remains authoritative for graph findings. Before applying that file-level exclusion, the
+source validator requires every bundled workload to remain in the corresponding `cdi` or `kubevirt`
+namespace covered by those policies.
 
 ## Local Development Cluster
 

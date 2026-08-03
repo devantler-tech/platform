@@ -537,6 +537,42 @@ func TestSourceValidationRejectsInlineCheckovSuppressions(t *testing.T) {
 	}
 }
 
+func TestSourceValidationRejectsCheckovSuppressionsInBlockScalars(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Replace(
+		bundleFixture("cdi-operator-cluster", "cdi-operator"),
+		"    owner: platform",
+		"    owner: platform\ndata:\n  embedded.yaml: |\n    password: value # checkov:skip=CKV_SECRET_6:upstream suppression",
+		1,
+	)
+	_, stderr, err := runAnnotator(t, "cdi", input, "--validate-source")
+	if err == nil {
+		t.Fatal("source validator accepted a Checkov suppression inside a block scalar")
+	}
+	if !strings.Contains(stderr, "inline Checkov suppression") {
+		t.Fatalf("stderr did not name the block-scalar suppression: %q", stderr)
+	}
+}
+
+func TestSourceValidationRejectsWorkloadOutsideProtectedNamespace(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Replace(
+		bundleFixture("cdi-operator-cluster", "cdi-operator"),
+		"  name: cdi-operator\n  annotations:",
+		"  name: cdi-operator\n  namespace: other\n  annotations:",
+		1,
+	)
+	_, stderr, err := runAnnotator(t, "cdi", input, "--validate-source")
+	if err == nil {
+		t.Fatal("source validator accepted a workload outside the protected namespace")
+	}
+	if !strings.Contains(stderr, "Deployment/cdi-operator uses namespace other, want cdi") {
+		t.Fatalf("stderr did not name the unprotected workload namespace: %q", stderr)
+	}
+}
+
 func TestAnnotatedValidationAcceptsOnlyConfiguredDispositions(t *testing.T) {
 	t.Parallel()
 

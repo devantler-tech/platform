@@ -79,6 +79,17 @@ var bundleTargets = map[string][]targetSpec{
 
 var inlineCheckovSkip = regexp.MustCompile(`(?i)checkov\s*:\s*skip\s*=`)
 
+var workloadKinds = map[string]struct{}{
+	"CronJob":               {},
+	"DaemonSet":             {},
+	"Deployment":            {},
+	"Job":                   {},
+	"Pod":                   {},
+	"ReplicaSet":            {},
+	"ReplicationController": {},
+	"StatefulSet":           {},
+}
+
 func deploymentChecks() []string {
 	return []string{
 		"CKV_K8S_11",
@@ -179,7 +190,7 @@ func main() {
 		return
 	}
 	if *validateSource {
-		if err := validateVendorSource(input); err != nil {
+		if err := validateVendorSource(input, *bundle); err != nil {
 			fail("validate %s source: %v", *bundle, err)
 		}
 		return
@@ -355,7 +366,14 @@ func decodeCheckovReports(input []byte, expectedFramework string, rejectFindings
 	return reports, nil
 }
 
-func validateVendorSource(input []byte) error {
+func validateVendorSource(input []byte, bundle string) error {
+	if inlineCheckovSkip.Match(input) {
+		return errors.New("source contains inline Checkov suppression")
+	}
+	protectedNamespace := map[string]string{
+		"cdi":      "cdi",
+		"kubevirt": "kubevirt",
+	}[bundle]
 	decoder := yaml.NewDecoder(strings.NewReader(string(input)))
 	for documentIndex := 1; ; documentIndex++ {
 		var document yaml.Node
@@ -382,6 +400,20 @@ func validateVendorSource(input []byte) error {
 		if metadata.Kind != yaml.MappingNode {
 			return fmt.Errorf("vendor document %d metadata must be a mapping", documentIndex)
 		}
+		kind := mappingScalar(root, "kind")
+		if _, workload := workloadKinds[kind]; workload {
+			name := mappingScalar(metadata, "name")
+			namespace := mappingScalar(metadata, "namespace")
+			if namespace != protectedNamespace {
+				return fmt.Errorf(
+					"%s/%s uses namespace %s, want %s before CKV2_K8S_6 can be excluded",
+					kind,
+					name,
+					namespace,
+					protectedNamespace,
+				)
+			}
+		}
 		annotations := mappingValue(metadata, "annotations")
 		if annotations == nil {
 			continue
@@ -399,6 +431,9 @@ func validateVendorSource(input []byte) error {
 }
 
 func validateAnnotatedBundle(input []byte, targets []targetSpec) error {
+	if inlineCheckovSkip.Match(input) {
+		return errors.New("committed bundle contains inline Checkov suppression")
+	}
 	targetsByIdentity := make(map[string]targetSpec, len(targets))
 	expectedByIdentity := make(map[string]map[string]string, len(targets))
 	for _, target := range targets {
