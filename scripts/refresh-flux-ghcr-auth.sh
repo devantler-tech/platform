@@ -58,6 +58,10 @@ readonly FLUX_POLICY_PARENT_OWNER_ANNOTATION="platform.devantler.tech/ghcr-polic
 readonly FLUX_POLICY_PARENT_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-policy-parent-owner"
 readonly FLUX_RECONCILE_ANNOTATION="kustomize.toolkit.fluxcd.io/reconcile"
 readonly FLUX_RECONCILE_JSON_PATH="/metadata/annotations/kustomize.toolkit.fluxcd.io~1reconcile"
+readonly FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT="kustomize-controller"
+readonly FLUX_KUSTOMIZE_CONTROLLER_SELECTOR="app=kustomize-controller"
+readonly FLUX_CONTROLLER_RESTART_JSON_PATH="/spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt"
+readonly FLUX_CONTROLLER_ROLLOUT_TIMEOUT="2m"
 readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
 readonly SYNC_LEASE_DURATION_SECONDS=120
 readonly SYNC_LEASE_HEARTBEAT_SECONDS="${FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS:-30}"
@@ -211,6 +215,11 @@ flux_policy_parent_state_file="${work_dir}/flux-policy-parent-state.json"
 flux_policy_parent_patch_file="${work_dir}/flux-policy-parent-patch.json"
 flux_policy_parent_result_file="${work_dir}/flux-policy-parent-result.txt"
 flux_policy_fences_state_file="${work_dir}/flux-policy-fences-state.json"
+flux_controller_deployment_state_file="${work_dir}/flux-controller-deployment-state.json"
+flux_controller_restart_patch_file="${work_dir}/flux-controller-restart-patch.json"
+flux_controller_result_file="${work_dir}/flux-controller-result.txt"
+flux_controller_pods_before_file="${work_dir}/flux-controller-pods-before.json"
+flux_controller_pods_after_file="${work_dir}/flux-controller-pods-after.json"
 recovery_nodes_file="${work_dir}/recovery-nodes.json"
 recovery_node_file="${work_dir}/recovery-node.json"
 recovery_targets_file="${work_dir}/recovery-targets.jsonl"
@@ -3105,29 +3114,6 @@ flux_policy_handoff_is_quiescent() {
   ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 
-flux_reconcile_timeout_seconds() {
-  local duration="$1" hours=0 minutes=0 seconds=0 total
-
-  if ! [[ "${duration}" =~ ^(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?$ ]] ||
-    [[ -z "${BASH_REMATCH[1]}${BASH_REMATCH[3]}${BASH_REMATCH[5]}" ]]; then
-    return 1
-  fi
-  if [[ -n "${BASH_REMATCH[2]}" ]]; then
-    hours="${BASH_REMATCH[2]}"
-  fi
-  if [[ -n "${BASH_REMATCH[4]}" ]]; then
-    minutes="${BASH_REMATCH[4]}"
-  fi
-  if [[ -n "${BASH_REMATCH[6]}" ]]; then
-    seconds="${BASH_REMATCH[6]}"
-  fi
-  total=$((10#${hours} * 3600 + 10#${minutes} * 60 + 10#${seconds}))
-  if ((total < 1)); then
-    return 1
-  fi
-  printf '%s\n' "${total}"
-}
-
 read_flux_policy_fences() {
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
@@ -3155,6 +3141,151 @@ read_flux_policy_fences() {
   ' "${flux_policy_fences_state_file}" >"${flux_policy_parent_state_file}"
 }
 
+restart_flux_kustomize_controller_for_handoff() {
+  local resource_version deployment_uid replicas annotations_present
+  local restart_token
+
+  assert_sync_lease_held || return 1
+  if ! read_flux_policy_fences ||
+    ! flux_policy_handoff_is_owned ||
+    ! flux_policy_parent_is_stable; then
+    echo "::error::The Flux policy fences changed before the kustomize-controller handoff restart."
+    return 1
+  fi
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get deployment.apps \
+    "${FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT}" \
+    -o json >"${flux_controller_deployment_state_file}"; then
+    echo "::error::Could not inspect kustomize-controller before the policy handoff restart."
+    return 1
+  fi
+  if ! jq -e \
+    --arg name "${FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT}" '
+    .kind == "Deployment"
+    and .metadata.name == $name
+    and (.metadata.uid | type == "string" and length > 0)
+    and (.metadata.resourceVersion | type == "string" and length > 0)
+    and (.spec.replicas | type == "number" and . >= 1 and floor == .)
+    and .spec.selector.matchLabels.app == $name
+    and ((.status.availableReplicas // 0) >= .spec.replicas)
+    and (((.spec.template.metadata.annotations // {}) | type) == "object")
+  ' "${flux_controller_deployment_state_file}" >/dev/null; then
+    echo "::error::kustomize-controller is malformed or not fully available; refusing the policy handoff restart."
+    return 1
+  fi
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get pods \
+    --selector "${FLUX_KUSTOMIZE_CONTROLLER_SELECTOR}" \
+    -o json >"${flux_controller_pods_before_file}" ||
+    ! jq -e '
+      .kind == "List"
+      and (.items | length) >= 1
+      and all(.items[];
+        (.metadata.uid | type == "string" and length > 0)
+        and ((.metadata.deletionTimestamp // "") == "")
+        and any(.status.conditions[]?;
+          .type == "Ready" and .status == "True")
+      )
+    ' "${flux_controller_pods_before_file}" >/dev/null; then
+    echo "::error::Could not prove the current kustomize-controller Pods are Ready before restarting them."
+    return 1
+  fi
+
+  resource_version="$(jq -er '.metadata.resourceVersion' \
+    "${flux_controller_deployment_state_file}")"
+  deployment_uid="$(jq -er '.metadata.uid' \
+    "${flux_controller_deployment_state_file}")"
+  replicas="$(jq -er '.spec.replicas' \
+    "${flux_controller_deployment_state_file}")"
+  annotations_present="$(jq -r \
+    '(.spec.template.metadata.annotations? | type) == "object"' \
+    "${flux_controller_deployment_state_file}")"
+  restart_token="$(kubernetes_microtime_now)"
+  jq -n \
+    --arg resource_version "${resource_version}" \
+    --arg uid "${deployment_uid}" \
+    --arg restart_path "${FLUX_CONTROLLER_RESTART_JSON_PATH}" \
+    --arg restart_token "${restart_token}" \
+    --argjson annotations_present "${annotations_present}" '
+    [
+      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
+      {op: "test", path: "/metadata/uid", value: $uid}
+    ]
+    + (if $annotations_present then [] else
+      [{op: "add", path: "/spec/template/metadata/annotations", value: {}}]
+    end)
+    + [{op: "add", path: $restart_path, value: $restart_token}]
+  ' >"${flux_controller_restart_patch_file}"
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    patch deployment.apps \
+    "${FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT}" \
+    --type=json \
+    --patch-file="${flux_controller_restart_patch_file}" \
+    -o json >"${flux_controller_deployment_state_file}" \
+    2>"${flux_controller_result_file}"; then
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get deployment.apps \
+      "${FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT}" \
+      -o json >"${flux_controller_deployment_state_file}" ||
+      ! jq -e \
+        --arg uid "${deployment_uid}" \
+        --arg restart "${restart_token}" '
+        .metadata.uid == $uid
+        and ((.spec.template.metadata.annotations // {})["kubectl.kubernetes.io/restartedAt"] == $restart)
+      ' "${flux_controller_deployment_state_file}" >/dev/null; then
+      echo "::error::Could not atomically restart or adopt the kustomize-controller policy handoff rollout."
+      return 1
+    fi
+  fi
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    rollout status \
+    "deployment.apps/${FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT}" \
+    --timeout="${FLUX_CONTROLLER_ROLLOUT_TIMEOUT}" \
+    >"${flux_controller_result_file}" 2>&1; then
+    echo "::error::kustomize-controller did not complete the policy handoff restart."
+    return 1
+  fi
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get pods \
+    --selector "${FLUX_KUSTOMIZE_CONTROLLER_SELECTOR}" \
+    -o json >"${flux_controller_pods_after_file}" ||
+    ! jq -e \
+      --argjson replicas "${replicas}" \
+      --slurpfile before "${flux_controller_pods_before_file}" '
+      [.items[] | select((.metadata.deletionTimestamp // "") == "")] as $current
+      | [$before[0].items[].metadata.uid] as $old_uids
+      | ($current | length) >= $replicas
+      and all($current[];
+        (.metadata.uid | type == "string" and length > 0)
+        and any(.status.conditions[]?;
+          .type == "Ready" and .status == "True")
+        and (.metadata.uid as $uid | ($old_uids | index($uid)) == null)
+      )
+    ' "${flux_controller_pods_after_file}" >/dev/null; then
+    echo "::error::Could not prove every pre-handoff kustomize-controller process was replaced by a Ready Pod."
+    return 1
+  fi
+  assert_sync_lease_held || return 1
+  if ! read_flux_policy_fences ||
+    ! flux_policy_handoff_is_owned ||
+    ! flux_policy_parent_is_stable; then
+    echo "::error::The Flux policy fences changed during the kustomize-controller handoff restart."
+    return 1
+  fi
+}
+
 flux_policy_handoff_is_released() {
   jq -e \
     --arg uid "${flux_policy_handoff_uid}" \
@@ -3170,7 +3301,6 @@ flux_policy_handoff_is_released() {
 pause_flux_policy_handoff() {
   local resource_version attempt annotations_present
   local stable_resource_version="" current_resource_version
-  local reconcile_timeout reconcile_timeout_seconds handoff_drain_seconds
 
   # Quiesce the child before changing spec.suspend. Suspending a Kustomization
   # while it is already reconciling can strand Reconciling=True in status: the
@@ -3212,21 +3342,6 @@ pause_flux_policy_handoff() {
     fi
     sleep "${SYNC_INTERVAL}"
   done
-
-  reconcile_timeout="$(jq -er '.spec.timeout | select(type == "string")' \
-    "${flux_policy_handoff_state_file}")"
-  if ! reconcile_timeout_seconds="$(flux_reconcile_timeout_seconds \
-    "${reconcile_timeout}")"; then
-    echo "::error::The Flux image-verification policy owner has an unsupported or non-positive reconciliation timeout; refusing the handoff."
-    return 1
-  fi
-  # A reconcile can fetch the unsuspended child immediately after the final
-  # quiescence read and before the CAS patch without first writing status. Its
-  # managed-resource writes do not change the Kustomization resourceVersion.
-  # Hold both fences for one complete configured reconcile timeout plus one
-  # second so every such pre-pause reconcile context must expire before this
-  # transaction stages the admission policy.
-  handoff_drain_seconds=$((reconcile_timeout_seconds + 1))
 
   resource_version="$(jq -er '.metadata.resourceVersion' \
     "${flux_policy_handoff_state_file}")"
@@ -3281,8 +3396,12 @@ pause_flux_policy_handoff() {
     flux_policy_handoff_acquired=true
   fi
 
-  sleep "${handoff_drain_seconds}"
-  assert_sync_lease_held || return 1
+  # Flux explicitly documents that suspension does not stop an execution that
+  # already started. Replace every pre-pause kustomize-controller process while
+  # both policy-owner fences and the synchronization Lease are held. The new
+  # controller observes spec.suspend=true, so no old execution can write a
+  # managed ImageValidatingPolicy after this point.
+  restart_flux_kustomize_controller_for_handoff || return 1
 
   # A suspended reconciliation intentionally does not advance
   # status.observedGeneration and can leave its pre-suspension Reconciling=True

@@ -52,6 +52,15 @@ func fakeKubectlImplementation(args []string) int {
 		return fakeKubectlGetFluxPolicyKustomization(args, namespace)
 	case containsSequence(args, "patch", "kustomizations.kustomize.toolkit.fluxcd.io"):
 		return fakeKubectlPatchFluxPolicyKustomization(args, namespace, patchFile)
+	case containsSequence(args, "get", "deployment.apps"):
+		return fakeKubectlGetFluxControllerDeployment(args, namespace)
+	case containsSequence(args, "patch", "deployment.apps"):
+		return fakeKubectlPatchFluxControllerDeployment(args, namespace, patchFile)
+	case containsSequence(args, "rollout", "status"):
+		return fakeKubectlRolloutFluxController(args, namespace)
+	case containsSequence(args, "get", "pods") &&
+		flagValue(args, "--selector") == "app=kustomize-controller":
+		return fakeKubectlGetFluxControllerPods(namespace)
 	case containsSequence(args, "get", "lease"):
 		return fakeKubectlGetSyncLease(args, namespace)
 	case containsSequence(args, "patch", "lease"):
@@ -204,7 +213,6 @@ func fakeFluxPolicyChildObject() map[string]any {
 		"metadata":   metadata,
 		"spec": map[string]any{
 			"suspend": suspended,
-			"timeout": defaultString(os.Getenv("FAKE_FLUX_POLICY_TIMEOUT"), "3m"),
 		},
 		"status": map[string]any{
 			"observedGeneration": 13,
@@ -475,6 +483,144 @@ func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string
 		return commandFailure(54, "connection reset after parent Flux handoff release")
 	}
 	fmt.Println("kustomization.kustomize.toolkit.fluxcd.io/flux-system patched")
+	return 0
+}
+
+func fakeFluxControllerDeploymentObject() map[string]any {
+	restartCount := parseInt(markerContent("flux-controller-restart-count"), 0)
+	resourceVersion := strconv.Itoa(40 + restartCount)
+	generation := 7 + restartCount
+	annotations := map[string]any{
+		"prometheus.io/port": "8080",
+	}
+	if restartCount > 0 {
+		annotations["kubectl.kubernetes.io/restartedAt"] = markerContent(
+			"flux-controller-restart-token",
+		)
+	}
+	return map[string]any{
+		"apiVersion": "apps/v1",
+		"kind":       "Deployment",
+		"metadata": map[string]any{
+			"name":            "kustomize-controller",
+			"namespace":       "flux-system",
+			"uid":             "kustomize-controller-deployment-uid",
+			"resourceVersion": resourceVersion,
+			"generation":      generation,
+		},
+		"spec": map[string]any{
+			"replicas": 1,
+			"selector": map[string]any{
+				"matchLabels": map[string]any{"app": "kustomize-controller"},
+			},
+			"template": map[string]any{
+				"metadata": map[string]any{
+					"annotations": annotations,
+					"labels":      map[string]any{"app": "kustomize-controller"},
+				},
+			},
+		},
+		"status": map[string]any{
+			"availableReplicas": 1,
+			"updatedReplicas":   1,
+		},
+	}
+}
+
+func fakeKubectlGetFluxControllerDeployment(args []string, namespace string) int {
+	if namespace != "flux-system" ||
+		argumentAfter(args, "deployment.apps") != "kustomize-controller" ||
+		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
+		return commandFailure(91, "invalid kustomize-controller Deployment lookup")
+	}
+	fmt.Println(encodeJSON(fakeFluxControllerDeploymentObject()))
+	return 0
+}
+
+func fakeKubectlPatchFluxControllerDeployment(args []string, namespace, patchFile string) int {
+	if namespace != "flux-system" ||
+		argumentAfter(args, "deployment.apps") != "kustomize-controller" ||
+		!containsArg(args, "--type=json") || patchFile == "" {
+		return commandFailure(91, "invalid kustomize-controller Deployment patch")
+	}
+	var patch []jsonPatchOperation
+	if err := json.Unmarshal([]byte(mustReadCommandFile(patchFile)), &patch); err != nil {
+		return commandFailure(91, "parse kustomize-controller restart patch: %v", err)
+	}
+	restartPath := "/spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt"
+	restartToken := patchValueString(patch, "add", restartPath)
+	restartCount := parseInt(markerContent("flux-controller-restart-count"), 0)
+	currentResourceVersion := strconv.Itoa(40 + restartCount)
+	if !hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
+		!hasPatchOperation(
+			patch,
+			"test",
+			"/metadata/uid",
+			"kustomize-controller-deployment-uid",
+		) || restartToken == "" {
+		return commandFailure(56, "invalid or conflicting kustomize-controller restart")
+	}
+	setMarkerContent("flux-controller-restart-token", restartToken)
+	setMarkerContent("flux-controller-restart-count", strconv.Itoa(restartCount+1))
+	if os.Getenv("FAKE_LOG_FLUX_CONTROLLER_RESTART") == "true" {
+		appendEnvFile("OPERATION_LOG", "flux-controller-restart:kustomize-controller\n")
+	}
+	if os.Getenv("FAKE_FLUX_CONTROLLER_RESTART_RESPONSE_LOST") == "true" &&
+		!markerExists("flux-controller-restart-response-lost") {
+		touchMarker("flux-controller-restart-response-lost")
+		return commandFailure(54, "connection reset after kustomize-controller restart patch")
+	}
+	fmt.Println(encodeJSON(fakeFluxControllerDeploymentObject()))
+	return 0
+}
+
+func fakeKubectlRolloutFluxController(args []string, namespace string) int {
+	restartCount := parseInt(markerContent("flux-controller-restart-count"), 0)
+	rolloutCount := parseInt(markerContent("flux-controller-rollout-count"), 0)
+	if namespace != "flux-system" ||
+		!containsArg(args, "deployment.apps/kustomize-controller") ||
+		flagValue(args, "--timeout") != "2m" ||
+		restartCount != rolloutCount+1 {
+		return commandFailure(91, "invalid kustomize-controller rollout status")
+	}
+	if os.Getenv("FAKE_FLUX_CONTROLLER_ROLLOUT_FAIL") == "true" {
+		return commandFailure(56, "kustomize-controller rollout did not converge")
+	}
+	setMarkerContent("flux-controller-rollout-count", strconv.Itoa(restartCount))
+	if os.Getenv("FAKE_LOG_FLUX_CONTROLLER_RESTART") == "true" {
+		appendEnvFile("OPERATION_LOG", "flux-controller-old-processes-terminated:kustomize-controller\n")
+	}
+	fmt.Println("deployment.apps/kustomize-controller successfully rolled out")
+	return 0
+}
+
+func fakeKubectlGetFluxControllerPods(namespace string) int {
+	if namespace != "flux-system" {
+		return commandFailure(91, "invalid kustomize-controller Pod lookup")
+	}
+	rolloutCount := parseInt(markerContent("flux-controller-rollout-count"), 0)
+	uid := fmt.Sprintf("kustomize-controller-pod-uid-%d", rolloutCount)
+	name := fmt.Sprintf("kustomize-controller-%d", rolloutCount)
+	fmt.Println(encodeJSON(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "List",
+		"items": []any{map[string]any{
+			"apiVersion": "v1",
+			"kind":       "Pod",
+			"metadata": map[string]any{
+				"name":      name,
+				"namespace": "flux-system",
+				"uid":       uid,
+				"labels":    map[string]any{"app": "kustomize-controller"},
+			},
+			"status": map[string]any{
+				"conditions": []any{map[string]any{
+					"type":   "Ready",
+					"status": "True",
+				}},
+			},
+		}},
+	}))
 	return 0
 }
 

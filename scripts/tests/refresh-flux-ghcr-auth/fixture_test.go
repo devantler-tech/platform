@@ -72,8 +72,6 @@ func TestMain(m *testing.M) {
 		code = fakeCurl(os.Args[1:])
 	case "kubectl":
 		code = fakeKubectl(os.Args[1:])
-	case "sleep":
-		code = fakeSleep(os.Args[1:])
 	default:
 		cleanup := prepareFakeCommandBinary()
 		code = m.Run()
@@ -176,7 +174,7 @@ func newFixture(t *testing.T) *fixture {
 	if fakeCommandBinary == "" {
 		t.Fatal("fake-command binary was not prepared; TestMain must run before any fixture")
 	}
-	for _, name := range []string{"ksail", "talosctl", "curl", "kubectl", "sleep"} {
+	for _, name := range []string{"ksail", "talosctl", "curl", "kubectl"} {
 		if err := os.Symlink(fakeCommandBinary, filepath.Join(f.binDir, name)); err != nil {
 			t.Fatalf("link fake %s: %v", name, err)
 		}

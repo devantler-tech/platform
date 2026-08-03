@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"gopkg.in/yaml.v3"
 )
@@ -78,24 +77,6 @@ func fakeKSail(args []string) int {
 	mustWriteEnvFile("KSAIL_REGISTRY_CAPTURE", registry)
 	mustWriteEnvFile("KSAIL_REGISTRY_OVERRIDE_CAPTURE", registryOverride)
 	return 0
-}
-
-func fakeSleep(args []string) int {
-	if len(args) != 1 {
-		return commandFailure(89, "sleep requires exactly one duration")
-	}
-	if args[0] == "181" {
-		if os.Getenv("FAKE_FLUX_POLICY_INFLIGHT_WRITE_DURING_DRAIN") == "true" &&
-			!markerExists("flux-policy-inflight-write-during-drain") {
-			touchMarker("flux-policy-inflight-write-during-drain")
-			appendEnvFile("OPERATION_LOG", "flux-policy-inflight-write:verify-app-images\n")
-		}
-		return 0
-	}
-	if err := syscall.Exec("/bin/sleep", []string{"sleep", args[0]}, os.Environ()); err != nil {
-		return commandFailure(89, "execute system sleep: %v", err)
-	}
-	return commandFailure(89, "system sleep returned unexpectedly")
 }
 
 func fakeCurl(args []string) int {

@@ -782,47 +782,75 @@ func TestStaleFluxChildReconcilingConditionAfterPauseDoesNotBlockHandoff(t *test
 	requireLine(t, operations, "flux-policy-resume:infrastructure")
 }
 
-func TestFluxHandoffDrainsInFlightManagedWritesBeforePolicyStage(t *testing.T) {
+func TestFluxControllerRestartTerminatesPrePauseProcessesBeforePolicyStage(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
-		"FAKE_FLUX_POLICY_INFLIGHT_WRITE_DURING_DRAIN": "true",
+		"FAKE_LOG_FLUX_CONTROLLER_RESTART": "true",
 	})
 	requireSuccessResult(t, result)
 	operations := readLines(f.operationLog)
-	pause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
-	inFlightWrite := lineIndex(
+	parentPause := lineIndex(t, operations, "flux-policy-parent-pause:flux-system")
+	childPause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
+	restart := lineIndex(t, operations, "flux-controller-restart:kustomize-controller")
+	oldProcessesTerminated := lineIndex(
 		t,
 		operations,
-		"flux-policy-inflight-write:verify-app-images",
+		"flux-controller-old-processes-terminated:kustomize-controller",
 	)
 	firstPolicyApply := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
-	if pause >= inFlightWrite || inFlightWrite >= firstPolicyApply {
+	if parentPause >= childPause ||
+		childPause >= restart ||
+		restart >= oldProcessesTerminated ||
+		oldProcessesTerminated >= firstPolicyApply {
 		t.Fatalf(
-			"unsafe in-flight Flux write ordering: pause=%d write=%d policy=%d",
-			pause,
-			inFlightWrite,
+			"unsafe Flux controller handoff ordering: parent=%d child=%d restart=%d terminated=%d policy=%d",
+			parentPause,
+			childPause,
+			restart,
+			oldProcessesTerminated,
 			firstPolicyApply,
 		)
 	}
 }
 
-func TestUnsupportedFluxChildTimeoutBlocksBeforePolicyHandoffAcquisition(t *testing.T) {
+func TestFluxControllerRolloutFailureBlocksPolicyMutationAndReleasesFences(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
-		"FAKE_FLUX_POLICY_TIMEOUT": "3.5m",
+		"FAKE_FLUX_CONTROLLER_ROLLOUT_FAIL": "true",
+		"FAKE_LOG_FLUX_CONTROLLER_RESTART":  "true",
 	})
 	requireFailureResult(t, result)
 	requireContains(
 		t,
 		result.stdout+result.stderr,
-		"unsupported or non-positive reconciliation timeout",
+		"did not complete the policy handoff restart",
 	)
 	operations := readLines(f.operationLog)
 	requireLine(t, operations, "flux-policy-parent-pause:flux-system")
-	requireNoLine(t, operations, "flux-policy-pause:infrastructure")
+	requireLine(t, operations, "flux-policy-pause:infrastructure")
+	requireLine(t, operations, "flux-controller-restart:kustomize-controller")
+	requireNoLine(t, operations, "flux-controller-old-processes-terminated:kustomize-controller")
 	requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
+	requireNoLine(t, operations, "root-patch")
+	requireLine(t, operations, "flux-policy-resume:infrastructure")
+	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+}
+
+func TestAmbiguousFluxControllerRestartIsAdopted(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_CONTROLLER_RESTART_RESPONSE_LOST": "true",
+		"FAKE_LOG_FLUX_CONTROLLER_RESTART":           "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "flux-controller-restart:kustomize-controller")
+	requireLine(t, operations, "flux-controller-old-processes-terminated:kustomize-controller")
+	requireLine(t, operations, "ivpol-policy-apply:verify-app-images")
+	requireLine(t, operations, "flux-policy-resume:infrastructure")
 	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
 }
 
