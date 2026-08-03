@@ -111,7 +111,7 @@ SVIDs, or it deadlocks. Options, hardest constraint first:
   without a Longhorn replica set. A 1-instance `spire-db` on hcloud + frequent
   base backups may be the pragmatic first cut, accepting that the DB itself is
   then the SPOF the replicas removed from the server tier — see "Open questions".)
-- **Do not add a broad mTLS carve-out or catch-all authentication rule.** If
+- **Do not add a broad mTLS allow policy or catch-all authentication rule.** If
   Cilium authentication is reintroduced for SPIRE↔Postgres in the future, it must
   be scoped to the exact datastore traffic. A blanket `fromEndpoints: [{}]`
   authentication policy is an allow rule and weakens workload isolation.
@@ -167,8 +167,8 @@ increasing order of blast radius:
    Fragile: fights the HelmRelease, breaks on every chart bump, and the drift-
    detection component would fight it. **Not recommended.**
 
-Recommended sequence: **(a)** ship the additive prerequisites now (the
-spire-db↔spire-server mTLS carve-out policy; optionally provision an *unused*
+Recommended sequence: **(a)** ship the additive prerequisites now (the exact,
+narrow spire-server→spire-db TCP `:5432` network policy; optionally provision an *unused*
 `spire-db` CNPG Cluster in the infra-controllers tier on hcloud so the datastore
 exists and is backed up), then **(b)** do option 1 (standalone SPIRE chart) as a
 dedicated, separately-reviewed migration with the cutover runbook below, or wait
@@ -208,7 +208,7 @@ data, verify, then capture in Git.
      Cilium/SPIRE identity consumer works after cache expiry);
    - kill one spire-server pod → identities still issue (the actual HA assertion);
    - `spire-db` failover (kill primary) → spire-server reconnects.
-5. **Land the manifests** (install change + spire-db + carve-out + drop
+5. **Land the manifests** (install change + spire-db + narrow TCP `:5432` policy + drop
    spire-server from the `validate-replica-floor` exemption) so Git captures the
    HA state.
 

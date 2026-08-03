@@ -178,8 +178,8 @@ spec:
                   // absorbs that for login, but
                   // ensureTeam/ensureWebsite/ensureMember called fetch exactly once
                   // each -- a transient network error failed the whole run (observed:
-                  // `fetch failed at async ensureTeam`). Retry only THROWN (network)
-                  // errors; an HTTP error RESPONSE is returned untouched so every
+                  // `fetch failed at async ensureTeam`). Retry thrown fetch errors;
+                  // an HTTP error RESPONSE is returned untouched so every
                   // caller's existing !r.ok / status handling is preserved.
                   const fetchRetry = async (u, o) => {
                     for (let i = 0; ; i++) {

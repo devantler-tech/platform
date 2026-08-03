@@ -12,7 +12,7 @@ This is a **GitOps-based Kubernetes platform** — not a traditional code reposi
 
 - **Flux CD** — GitOps engine reconciling from OCI artifacts
 - **Kustomize** — manifest templating and overlays
-- **Cilium** — CNI and Gateway API. WireGuard wire encryption is enabled for pod-to-pod traffic in prod. Cilium's SPIRE mutual-auth components remain enabled, but the platform does **not** install a blanket cluster-wide mTLS policy: Cilium ingress rules are allow rules, so an authentication rule with `fromEndpoints: [{}]` would weaken namespace/application allow-lists. The Docker provider overlay disables encryption and SPIRE for local/CI.
+- **Cilium** — CNI and Gateway API. WireGuard wire encryption is enabled for pod-to-pod traffic in prod. Cilium's SPIRE mutual-auth components remain enabled, but the platform does **not** install a blanket cluster-wide mTLS policy: Cilium ingress rules are allow rules, so an authentication rule with a semantically empty source selector would impose no allow-list and weaken namespace/application isolation. Empty forms include `fromEndpoints: [{}]` and selectors with `matchLabels: {}`, `matchExpressions: []`, or both fields empty. The Docker provider overlay disables encryption and SPIRE for local/CI.
 - **Talos Linux** — immutable Kubernetes OS
 - **KSail** — unified cluster and workload lifecycle management (Talos + Docker for local, Talos + Hetzner for prod)
 - **SOPS + Age** — secret encryption at rest (per-environment Age keys)
