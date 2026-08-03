@@ -151,7 +151,7 @@ func mustDeriveCVE(t *testing.T, items []item) []theme {
 func mustDerivePosture(t *testing.T, items []item, exceptions []exception) []theme {
 	t.Helper()
 
-	got, _, err := derivePosture(items, exceptions)
+	got, _, _, err := derivePosture(items, exceptions)
 	if err != nil {
 		t.Fatalf("derivePosture: %v", err)
 	}
@@ -509,16 +509,73 @@ func TestModeReportIsTheDefaultAndProducesOutput(t *testing.T) {
 	}
 }
 
-func TestModeWriteIsRefusedWhileTheFlagIsOff(t *testing.T) {
+func TestModeWriteNeedsARepository(t *testing.T) {
 	var out bytes.Buffer
 
 	err := run([]string{"-mode", "write"}, &out)
 	if err == nil {
-		t.Fatal("write mode must be refused in this slice")
+		t.Fatal("write mode without -repo must be refused")
 	}
 
 	if !errors.Is(err, errWritesNotEnabled) {
 		t.Errorf("want errWritesNotEnabled, got %v", err)
+	}
+}
+
+// TestUnknownModeIsRefused keeps a typo from silently selecting the default.
+// `-mode=wrote` reporting instead of writing is a failure that looks like
+// success, which is this command's whole subject matter.
+func TestUnknownModeIsRefused(t *testing.T) {
+	var out bytes.Buffer
+
+	err := run([]string{"-mode", "wrote"}, &out)
+	if err == nil {
+		t.Fatal("an unknown -mode must be refused")
+	}
+
+	// This invocation ALSO carries no input, and run refuses that too, so
+	// "some error came back" passes for whichever check happens to run first
+	// and would keep passing if the mode check stopped firing entirely. Both
+	// halves are needed: the sentinel proves it is an invocation refusal rather
+	// than an unrelated failure, and the message proves it is THIS one.
+	if !errors.Is(err, errInvalidInvocation) {
+		t.Errorf("want errInvalidInvocation, got %v", err)
+	}
+
+	if !strings.Contains(err.Error(), "unknown -mode") {
+		t.Errorf("the refusal does not name the mode check: %v", err)
+	}
+
+	// CONTROL — the same invocation with a VALID mode must get past this gate,
+	// so the assertion above is attributable to the mode and not to the missing
+	// input it also carries.
+	var ctrl bytes.Buffer
+
+	ctrlErr := run([]string{"-mode", "report"}, &ctrl)
+	if ctrlErr != nil && strings.Contains(ctrlErr.Error(), "unknown -mode") {
+		t.Fatalf("control did not flip: a valid mode was still refused, got %v", ctrlErr)
+	}
+}
+
+// TestInputsCompleteIsRefusedInReportMode stops the close gate from being
+// carried around as a harmless-looking habit. The flag does nothing in report
+// mode, so accepting it teaches an operator it is safe to leave set — and the
+// next write run then closes on partial input.
+func TestInputsCompleteIsRefusedInReportMode(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "posture.json")
+	writeDocs(t, path, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed"}))
+
+	var out bytes.Buffer
+
+	if err := run([]string{"-posture", path, "-inputs-complete"}, &out); err == nil {
+		t.Fatal("-inputs-complete must be refused outside write mode")
+	}
+
+	// CONTROL — the same invocation without the flag must succeed, so the
+	// refusal above is attributable to the flag and not to the input.
+	var ctrl bytes.Buffer
+	if err := run([]string{"-posture", path}, &ctrl); err != nil {
+		t.Fatalf("control run must succeed, got %v", err)
 	}
 }
 
@@ -1007,7 +1064,7 @@ func TestUnrecognisedControlStatusFailsClosed(t *testing.T) {
 	for _, status := range []string{"", "  ", "weird-new-status"} {
 		items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": status}))
 
-		_, _, err := derivePosture(items, nil)
+		_, _, _, err := derivePosture(items, nil)
 		if err == nil {
 			t.Errorf("status %q must fail closed, got no error", status)
 		}
@@ -1020,7 +1077,7 @@ func TestRecognisedNonFailureStatusesAreSkipped(t *testing.T) {
 	for _, status := range []string{"passed", "skipped", "irrelevant", "excluded", "ignored", "PASSED"} {
 		items := itemsOf(t, postureDoc("app", "Deployment", "api", map[string]string{"C-0016": status}))
 
-		got, _, err := derivePosture(items, nil)
+		got, _, _, err := derivePosture(items, nil)
 		if err != nil {
 			t.Errorf("status %q must be accepted, got %v", status, err)
 		}
@@ -1217,7 +1274,7 @@ func TestControlIDMismatchIsRejected(t *testing.T) {
 		`"spec":{"controls":{"C-9999":{"controlID":"C-0036","severity":{"severity":"High"},` +
 		`"status":{"status":"failed"}}},"severities":{"critical":0}}}`
 
-	_, _, err := derivePosture(itemsOf(t, doc), nil)
+	_, _, _, err := derivePosture(itemsOf(t, doc), nil)
 	if err == nil {
 		t.Fatal("a key/controlID mismatch must be rejected")
 	}
@@ -1232,7 +1289,7 @@ func TestEmptyEmbeddedControlIDFallsBackToTheKey(t *testing.T) {
 		`"spec":{"controls":{"C-0016":{"controlID":"","severity":{"severity":"High"},` +
 		`"status":{"status":"failed"}}},"severities":{"critical":0}}}`
 
-	got, _, err := derivePosture(itemsOf(t, doc), nil)
+	got, _, _, err := derivePosture(itemsOf(t, doc), nil)
 	if err != nil {
 		t.Fatalf("an empty embedded controlID must still fall back, got %v", err)
 	}
@@ -1269,7 +1326,7 @@ func TestPostureSummaryWithoutWorkloadIdentityIsRejected(t *testing.T) {
 
 	items := itemsOf(t, raw)
 
-	if _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
+	if _, _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
 		t.Fatalf("want errMalformedScanContent for a summary with no workload kind, got %v", err)
 	}
 }
@@ -1296,7 +1353,7 @@ func TestWhitespaceOnlyWorkloadIdentityIsRejected(t *testing.T) {
 
 			items := itemsOf(t, raw)
 
-			if _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
+			if _, _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
 				t.Fatalf("want errMalformedScanContent for a whitespace-only identity, got %v", err)
 			}
 		})
@@ -1343,7 +1400,7 @@ func TestWhitespaceIdentityIsNotSuppressedByAClusterWideException(t *testing.T) 
 
 	items := itemsOf(t, raw)
 
-	themes, _, err := derivePosture(items, exceptions)
+	themes, _, _, err := derivePosture(items, exceptions)
 	if err == nil {
 		t.Fatalf("a whitespace identity must be refused, not silently excepted; got %d theme(s)", len(themes))
 	}
@@ -1379,7 +1436,7 @@ func TestFailedControlWithoutSeverityIsRejected(t *testing.T) {
 	items := itemsOf(t, postureDocSev("app", "Deployment", "api",
 		map[string]string{"C-0016": "failed"}, ""))
 
-	if _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
+	if _, _, _, err := derivePosture(items, nil); !errors.Is(err, errMalformedScanContent) {
 		t.Fatalf("want errMalformedScanContent for a failed control with no severity, got %v", err)
 	}
 }
@@ -1564,7 +1621,7 @@ func TestMissingWorkloadNameLabelIsRejectedNotSubstituted(t *testing.T) {
 		`"spec":{"controls":{"C-0016":{"controlID":"C-0016","severity":{"severity":"High"},` +
 		`"status":{"status":"failed"}}},"severities":{"critical":0,"high":0}}}`
 
-	_, _, err := derivePosture(itemsOf(t, doc), nil)
+	_, _, _, err := derivePosture(itemsOf(t, doc), nil)
 	if err == nil {
 		t.Fatal("a summary with no workload-name label must be rejected, not renamed to the CR's own name")
 	}
@@ -2088,5 +2145,238 @@ func TestOrdinaryScanInputStillParses(t *testing.T) {
 
 	if !strings.Contains(out.String(), "C-0016") {
 		t.Errorf("want the finding reported, got %q", out.String())
+	}
+}
+
+// TestWriteModeRequiresExceptionsForPosture keeps the two modes' claims
+// consistent. Report mode already announces that an unfiltered posture
+// derivation is not a drainable backlog; write mode turns that same derivation
+// into real GitHub issues, so accepting the flagless invocation would file —
+// and reopen — work for every risk the platform has already accepted.
+func TestWriteModeRequiresExceptionsForPosture(t *testing.T) {
+	dir := t.TempDir()
+	posture := filepath.Join(dir, "posture.json")
+	writeBare(t, posture, postureDoc("app", "Deployment", "api", map[string]string{"C-0036": "failed"}))
+
+	var out bytes.Buffer
+
+	err := run([]string{"-mode", "write", "-repo", "owner/name", "-posture", posture}, &out)
+	if err == nil {
+		t.Fatal("a posture write without -exceptions must be refused")
+	}
+
+	if !errors.Is(err, errWritesNotEnabled) || !strings.Contains(err.Error(), "-exceptions") {
+		t.Errorf("want an errWritesNotEnabled naming -exceptions, got %v", err)
+	}
+
+	// CONTROL — the same invocation carrying the flag must get PAST this gate.
+	// It is pointed at a path that does not exist so the run stops at the
+	// exceptions loader instead of reaching the network: any error is fine so
+	// long as it is no longer this one. Without this the assertion above would
+	// hold for a build that refuses every write invocation.
+	var ctrl bytes.Buffer
+
+	ctrlErr := run([]string{
+		"-mode", "write", "-repo", "owner/name", "-posture", posture,
+		"-exceptions", filepath.Join(dir, "absent.json"),
+	}, &ctrl)
+
+	// Matched with the SAME discriminator the CVE control below uses. The
+	// substring "-exceptions requires" reversed the words of the real message
+	// ("... requires -exceptions ..."), so it could never match: the control
+	// reported success unconditionally and left the assertion above unablated.
+	if ctrlErr != nil && errors.Is(ctrlErr, errWritesNotEnabled) &&
+		strings.Contains(ctrlErr.Error(), "-exceptions") {
+		t.Fatalf("control did not flip: still refused by the same gate, got %v", ctrlErr)
+	}
+
+	// CONTROL — a CVE-only write never reaches the posture derivation, so the
+	// gate must not fire for it either. This is what scopes the refusal to the
+	// surface that actually consumes exceptions.
+	//
+	// Pointed at an ABSENT path for the same reason as the control above: a
+	// loadable CVE document passes validation, and `run` then hands the plan to
+	// reconcile with a real ghStore, so the test would shell out to `gh` against
+	// the -repo argument. The gate under test fires during validation, strictly
+	// before the loader, so stopping there costs the assertion nothing.
+	cve := filepath.Join(dir, "absent-cve.json")
+
+	var cveOut bytes.Buffer
+
+	cveErr := run([]string{"-mode", "write", "-repo", "owner/name", "-cve", cve}, &cveOut)
+	if cveErr != nil && errors.Is(cveErr, errWritesNotEnabled) &&
+		strings.Contains(cveErr.Error(), "-exceptions") {
+		t.Errorf("the posture gate fired on a CVE-only write: %v", cveErr)
+	}
+}
+
+// TestDerivePostureNamesFullySuppressedControls is what lets the write path
+// tell an accepted finding from a remediated one. Both are absent from the
+// derived themes; only this set says which.
+func TestDerivePostureNamesFullySuppressedControls(t *testing.T) {
+	// C-0036 is excepted cluster-wide, so nothing survives for it.
+	// C-0016 is excepted on Jobs only, so its Deployment occurrence remains and
+	// it is NOT accepted — the discriminating half of this test.
+	exceptions := loadFixture(t, exceptionsDoc(
+		policyDoc("admission", []string{"C-0036"}, `{"kind":".*"}`),
+		policyDoc("batch", []string{"C-0016"}, `{"kind":"^Job$"}`)))
+
+	items := itemsOf(t,
+		postureDoc("app", "Job", "nightly", map[string]string{"C-0016": "failed", "C-0036": "failed"}),
+		postureDoc("app", "Deployment", "api", map[string]string{"C-0016": "failed", "C-0036": "failed"}))
+
+	themes, suppressed, accepted, err := derivePosture(items, exceptions)
+	if err != nil {
+		t.Fatalf("derivePosture: %v", err)
+	}
+
+	if len(accepted) != 1 || accepted[0] != "C-0036" {
+		t.Fatalf("want exactly C-0036 accepted, got %v", accepted)
+	}
+
+	if len(themes) != 1 || themes[0].Key != "C-0016" {
+		t.Fatalf("want C-0016 to survive as a theme, got %+v", themes)
+	}
+
+	if suppressed != 3 {
+		t.Errorf("want 3 suppressed (control,component) pairs, got %d", suppressed)
+	}
+}
+
+// A Node is the one kind whose NAME is itself the reachability evidence that
+// doc.go, renderBody and the component type all promise is withheld from these
+// public issues. For every other kind the name is a workload identity; for a
+// Node, `kubescape.io/workload-name` IS the hostname.
+//
+// TestComponentCarriesOnlyTheSanitizedMinimum already greps a rendered
+// component for "prod-worker", but it builds a *Deployment*, where a node name
+// could never have appeared — so it pinned the shape of the guarantee without
+// being able to fail on the path that actually breaks it. This exercises that
+// path.
+func TestNodeIdentityIsPseudonymizedInPublicComponents(t *testing.T) {
+	const nodeName = "worker-7.example.invalid"
+
+	it := itemOf(t, clusterScopedDoc("Node", nodeName, "kubescape",
+		map[string]string{"C-0016": "failed"}))
+
+	got := it.component().String()
+
+	if strings.Contains(got, nodeName) {
+		t.Fatalf("node hostname reached a public component: %s", got)
+	}
+
+	// A partial leak is still a leak: the domain alone maps a cluster.
+	for _, fragment := range []string{"worker-7", "example", "invalid"} {
+		if strings.Contains(got, fragment) {
+			t.Errorf("component leaked node-name fragment %q: %s", fragment, got)
+		}
+	}
+
+	// It must still SAY it is a Node, and still be recognisably a pseudonym —
+	// redacting to a constant would hide how many nodes are affected.
+	if want := "<cluster>/Node/" + nodeIdentityPrefix; !strings.HasPrefix(got, want) {
+		t.Errorf("want a pseudonymized node component starting %q, got %s", want, got)
+	}
+}
+
+// Pseudonymizing must not collapse two nodes into one entry, and must render
+// identical bytes across runs or every run rewrites the issue.
+func TestPseudonymizedNodesStayDistinctAndStable(t *testing.T) {
+	first := component{Kind: "Node", Name: "worker-1.example.invalid"}
+	second := component{Kind: "Node", Name: "worker-2.example.invalid"}
+
+	if first.String() == second.String() {
+		t.Errorf("two distinct nodes collapsed to one component: %s", first)
+	}
+
+	if first.String() != (component{Kind: "Node", Name: "worker-1.example.invalid"}).String() {
+		t.Error("the same node must render identical bytes, or every run churns the issue")
+	}
+}
+
+// The control for the two tests above: pseudonymization is scoped to Node and
+// must leave every other kind byte-identical, including a workload whose name
+// merely looks host-like.
+func TestNonNodeComponentsAreNotPseudonymized(t *testing.T) {
+	cases := map[string]component{
+		"app/Deployment/api":               {Namespace: "app", Kind: "Deployment", Name: "api"},
+		"app/Pod/worker-7.example.invalid": {Namespace: "app", Kind: "Pod", Name: "worker-7.example.invalid"},
+		"<cluster>/ClusterRole/some-role":  {Kind: "ClusterRole", Name: "some-role"},
+	}
+
+	for want, c := range cases {
+		if got := c.String(); got != want {
+			t.Errorf("want %q, got %q", want, got)
+		}
+	}
+}
+
+// TestAssembleSortsEveryCollection pins the anti-churn guarantee where it is
+// actually provided. Go randomises map iteration, so assemble is the single
+// place that turns the accumulator's unordered sets into a canonical order;
+// renderBody downstream merely preserves what it is handed.
+//
+// Without this, nothing asserted the sort at all: TestRenderIsDeterministic
+// feeds one already-ordered slice twice, so it stays green against an assemble
+// that emitted components in iteration order — and the resulting body would
+// differ run to run on identical input, turning every run into an update.
+//
+// Enough entries that an unsorted map iteration is overwhelmingly unlikely to
+// come out ordered by chance, and the check runs over repeated assembles so a
+// single lucky ordering cannot pass it.
+func TestAssembleSortsEveryCollection(t *testing.T) {
+	components := map[string]struct{}{}
+	for _, c := range []string{
+		"zz/Deployment/web", "aa/StatefulSet/pg", "mm/DaemonSet/log",
+		"bb/Deployment/api", "yy/Job/batch", "cc/CronJob/prune",
+		"nn/Deployment/edge", "dd/StatefulSet/cache",
+	} {
+		components[c] = struct{}{}
+	}
+
+	for i := range 16 {
+		themes := assemble(surfacePosture, map[string]*acc{
+			"C-0055": {severity: "High", components: components, total: 3},
+			"C-0016": {severity: "High", components: components, total: 1},
+			"C-0034": {severity: "Low", components: components, total: 2},
+		})
+
+		if !sort.SliceIsSorted(themes, func(a, b int) bool { return themes[a].Key < themes[b].Key }) {
+			t.Fatalf("run %d: themes are not ordered by key: %v", i, themes)
+		}
+
+		for _, th := range themes {
+			if !sort.StringsAreSorted(th.Components) {
+				t.Fatalf("run %d: theme %s components are not sorted: %v", i, th.Key, th.Components)
+			}
+		}
+	}
+}
+
+// whitespaceMarkerCVEDoc is strippedCVEDoc with the payload marker set to a
+// single space rather than empty. Everything else is identical, so the only
+// variable is the marker's content.
+func whitespaceMarkerCVEDoc(ns, name string) string {
+	return fmt.Sprintf(`{"metadata":{"name":%q,"namespace":%q,%s},`+
+		`"spec":{"severities":{"critical":{"all":0},"high":{"all":0},"low":{"all":0},`+
+		`"medium":{"all":0},"negligible":{"all":0},"unknown":{"all":0}},`+
+		`"vulnerabilitiesRef":{"all":{"kind":"","name":" ","namespace":""},`+
+		`"relevant":{"kind":"","name":"","namespace":""}}}}`,
+		name, ns, labels(ns, "Deployment", name))
+}
+
+// A marker containing only whitespace names no manifest, so the document is as
+// stripped as one carrying "". Accepting it lets a document that evaluated
+// nothing pass as hydrated, and with every severity bucket at zero the run then
+// derives no CVE themes at all — which under -inputs-complete is read as "every
+// tracked CVE issue is resolved" and closes all of them.
+func TestWhitespaceOnlyCVEMarkerFailsClosed(t *testing.T) {
+	err := checkExamined(itemsOf(t, whitespaceMarkerCVEDoc("app", "api")))
+	if err == nil {
+		t.Fatal("a whitespace-only payload marker must fail closed like an empty one")
+	}
+
+	if !errors.Is(err, errStrippedList) {
+		t.Errorf("want errStrippedList, got %v", err)
 	}
 }

@@ -21,8 +21,20 @@ import (
 // indistinguishable from a clean cluster to any caller that does not check.
 var errStrippedList = errors.New("input looks like a spec-stripped Kubescape LIST")
 
-// errWritesNotEnabled reports the default-off half being requested.
-var errWritesNotEnabled = errors.New("issue writes are not enabled in this slice")
+// errWritesNotEnabled reports the default-off half being requested without the
+// configuration it needs.
+var errWritesNotEnabled = errors.New("issue writes are not enabled")
+
+// errInvalidInvocation reports a flag combination that is refused before any
+// input is read.
+//
+// It exists so the refusals below can be BOUND BY A TEST. run's early
+// validations all fail an invocation that is also missing inputs, so a test
+// asserting only "some error came back" passes for whichever check happens to
+// run first — and would keep passing if the checks were reordered and the one
+// it names stopped firing. errors.Is against this sentinel names the refusal
+// the test is actually about.
+var errInvalidInvocation = errors.New("invalid invocation")
 
 // errUnrecognisedDocument reports input that is neither a kubectl list nor a
 // single Kubescape object.
@@ -69,10 +81,15 @@ const (
 	surfaceCVE surface = "cve"
 )
 
-// component is the sanitized public identity of a scanned object. It
-// deliberately omits node names, pod IPs, image digests, UIDs and the wlid
-// internals — those are reachability evidence that must not reach a public
-// issue.
+// component is the sanitized public identity of a scanned object. Pod IPs,
+// image digests, UIDs and the wlid internals are never carried at all — those
+// are reachability evidence that must not reach a public issue.
+//
+// A node name is the one exception, and the distinction is deliberate: when the
+// scanned object IS a Node, its name is also its hostname, and exception
+// designators still have to match on it. So the STRUCT keeps the real name and
+// String — the only path to a public artifact — pseudonymizes it. Withholding
+// happens at the boundary, not in the field.
 //
 // It is kept STRUCTURED rather than pre-joined because exception designators
 // match on the individual fields.
@@ -82,9 +99,37 @@ type component struct {
 	Name      string
 }
 
+// nodeIdentityPrefix marks a component name that has been replaced by a
+// pseudonym. It is spelled so a reader can tell at a glance that the value is
+// deliberately not a hostname.
+const nodeIdentityPrefix = "node-"
+
+// nodeIdentityDigestLen is the hex width of a pseudonymized node identity.
+// Node counts are cluster-sized, not adversarial: 32 bits over a few dozen
+// names leaves collision probability negligible, and a pseudonym only has to
+// separate one node from another within a single issue body.
+const nodeIdentityDigestLen = 8
+
 // String renders the component. A cluster-scoped object has no namespace, and
 // is rendered with an explicit "cluster" scope marker rather than an empty
 // leading segment, so a reader cannot mistake it for a missing value.
+//
+// This is the ONLY place a component becomes a public string — acc.add is its
+// single call site, and exception designators match the structured fields
+// instead — which is what makes it the right place to enforce the exclusion the
+// package documents, rather than a second rule that rendering has to remember.
+//
+// A `Node` is the one kind whose NAME is itself the reachability evidence the
+// package excludes. For every other kind the name is a workload identity and
+// the node it runs on never appears; for a Node, `kubescape.io/workload-name`
+// IS the hostname, so rendering it verbatim publishes exactly what doc.go,
+// renderBody and this type all promise is withheld. Kubescape reports Node
+// findings in the live input, so this is a reachable path, not a hypothetical.
+//
+// It is pseudonymized rather than dropped: the body must still show that N
+// distinct nodes are affected and let two entries be told apart. The digest is
+// taken over the name alone and is therefore deterministic, so an unchanged
+// cluster renders identical bytes and the anti-churn guarantee holds.
 func (c component) String() string {
 	scope := c.Namespace
 	if scope == "" {
@@ -94,11 +139,17 @@ func (c component) String() string {
 		scope = "<cluster>"
 	}
 
-	if c.Kind == "" {
-		return scope + "/" + c.Name
+	name := c.Name
+	if c.Kind == "Node" && name != "" {
+		digest := sha256.Sum256([]byte(name))
+		name = nodeIdentityPrefix + hex.EncodeToString(digest[:])[:nodeIdentityDigestLen]
 	}
 
-	return scope + "/" + c.Kind + "/" + c.Name
+	if c.Kind == "" {
+		return scope + "/" + name
+	}
+
+	return scope + "/" + c.Kind + "/" + name
 }
 
 // control is one posture control's state within a summary object.
@@ -173,8 +224,11 @@ func (i item) examined() bool {
 		return !isJSONNull(i.Spec.Controls)
 	case i.Spec.VulnerabilitiesRef != nil:
 		// A stripped CVE object blanks the reference; a real one names the
-		// manifest even when every severity is zero.
-		return i.Spec.VulnerabilitiesRef.All.Name != ""
+		// manifest even when every severity is zero. Trimmed, because a marker
+		// of only whitespace names no manifest either — and accepting it would
+		// let a document that evaluated nothing pass as hydrated, which under
+		// -inputs-complete reads as "every tracked CVE issue is resolved".
+		return strings.TrimSpace(i.Spec.VulnerabilitiesRef.All.Name) != ""
 	default:
 		return false
 	}
@@ -232,6 +286,23 @@ func (t theme) Fingerprint() string {
 	sum := sha256.Sum256([]byte(canonical))
 
 	return hex.EncodeToString(sum[:])[:16]
+}
+
+// postureFingerprint is the identity of a posture theme named only by its key.
+//
+// The accepted-exception set is built from control keys, not from derived
+// themes, so it needs the fingerprint of a theme it never constructs. Doing that
+// inline as theme{Kind: ..., Key: ...}.Fingerprint() silently depends on
+// Fingerprint reading NO OTHER FIELD. That holds today, but if the canonical
+// string ever gained a field, the inline literal would start producing an
+// identity matching no tracked issue — every accepted close would then fall back
+// to the "no longer present" wording and the completed disposition, writing the
+// wrong fact into a permanent timeline, and no test would fail.
+//
+// Naming it keeps both producers of a posture fingerprint in one place, so a
+// change to the canonical form has one site to update rather than two.
+func postureFingerprint(key string) string {
+	return theme{Kind: string(surfacePosture), Key: key}.Fingerprint()
 }
 
 // Title renders the backlog title. Stable for a given theme so a
@@ -467,18 +538,27 @@ func (a *acc) raiseSeverity(s string) {
 
 // derivePosture groups failed posture controls into themes, dropping any
 // (control, component) pair a declared ClusterSecurityException already covers.
+//
 // The suppressed count is returned, not discarded: an all-clear reached by
 // FILTERING is a different statement from one reached by a clean input, and
 // report() cannot tell them apart without it.
-func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
+//
+// acceptedKeys names the controls whose EVERY failing component was suppressed,
+// so no theme survives for them. That set is what tells the write path apart
+// from a genuine disappearance: both look like "absent from themes", but one is
+// remediation and the other is an accepted risk that is still failing. A control
+// suppressed on one workload and live on another is NOT in it — its theme
+// survives, carrying the components that remain actionable.
+func derivePosture(items []item, exceptions []exception) ([]theme, int, []string, error) {
 	byControl := map[string]*acc{}
 
 	suppressed := 0
+	suppressedKeys := map[string]struct{}{}
 
 	for _, it := range items {
 		ctrls, err := it.controls()
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, nil, err
 		}
 
 		comp := it.component()
@@ -499,7 +579,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 		// check would establish an identity that is blank in every way that
 		// matters and then let a broad exception suppress a failed control.
 		if strings.TrimSpace(comp.Kind) == "" || strings.TrimSpace(comp.Name) == "" {
-			return nil, 0, fmt.Errorf("%w: a posture summary carries no workload %s "+
+			return nil, 0, nil, fmt.Errorf("%w: a posture summary carries no workload %s "+
 				"(`kubescape.io/workload-kind` / `kubescape.io/workload-name`); exceptions are matched "+
 				"against that identity and a cluster-wide designator matches an empty value, so its "+
 				"findings could be suppressed without ever identifying the resource",
@@ -517,7 +597,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 			// the cluster — is wrong.
 			failed, known := controlFailed(ctrl.Status.Status)
 			if !known {
-				return nil, 0, fmt.Errorf("%w: %s reports control %s with status %q, "+
+				return nil, 0, nil, fmt.Errorf("%w: %s reports control %s with status %q, "+
 					"which is neither a failure nor a recognised non-failure",
 					errMalformedScanContent, comp, id, ctrl.Status.Status)
 			}
@@ -534,7 +614,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 			// report. Unknown NONEMPTY names stay tolerated, so a future
 			// severity does not become a hard failure.
 			if strings.TrimSpace(ctrl.Severity.Severity) == "" {
-				return nil, 0, fmt.Errorf("%w: %s reports failed control %s with no severity; "+
+				return nil, 0, nil, fmt.Errorf("%w: %s reports failed control %s with no severity; "+
 					"a genuine posture summary always carries one, and a theme without it "+
 					"loses the prioritisation the backlog is ordered by",
 					errMalformedScanContent, comp, id)
@@ -548,7 +628,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 			key := id
 			if ctrl.ControlID != "" {
 				if ctrl.ControlID != id {
-					return nil, 0, fmt.Errorf("%w: %s keys a control as %q but its controlID is %q; "+
+					return nil, 0, nil, fmt.Errorf("%w: %s keys a control as %q but its controlID is %q; "+
 						"refusing to guess which control an exception should match",
 						errMalformedScanContent, comp, id, ctrl.ControlID)
 				}
@@ -561,7 +641,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 			// "security(posture):  fails" with a stable fingerprint for a
 			// control that names nothing.
 			if strings.TrimSpace(key) == "" {
-				return nil, 0, fmt.Errorf("%w: %s reports a failed control with an empty identifier; "+
+				return nil, 0, nil, fmt.Errorf("%w: %s reports a failed control with an empty identifier; "+
 					"a backlog entry keyed on it would name no control and could not be matched "+
 					"against an exception", errMalformedScanContent, comp)
 			}
@@ -572,6 +652,7 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 			// name, which would itself be a false all-clear.
 			if excepted(exceptions, key, comp) {
 				suppressed++
+				suppressedKeys[key] = struct{}{}
 
 				continue
 			}
@@ -588,7 +669,23 @@ func derivePosture(items []item, exceptions []exception) ([]theme, int, error) {
 		}
 	}
 
-	return assemble(surfacePosture, byControl), suppressed, nil
+	// A control with a surviving accumulator is still live somewhere, so it is
+	// not accepted however many of its components were suppressed. Subtracting
+	// here rather than tracking it inline keeps the loop's only new work a map
+	// insert, and means the answer cannot depend on which component came first.
+	accepted := make([]string, 0, len(suppressedKeys))
+
+	for key := range suppressedKeys {
+		if _, live := byControl[key]; live {
+			continue
+		}
+
+		accepted = append(accepted, key)
+	}
+
+	sort.Strings(accepted)
+
+	return assemble(surfacePosture, byControl), suppressed, accepted, nil
 }
 
 // deriveCVE groups CVE counts into one theme per severity class.
@@ -756,10 +853,15 @@ func run(args []string, out io.Writer) error {
 	fs.Var(&cvePaths, "cve",
 		"path to a per-object vulnerabilitymanifestsummary JSON (repeatable)")
 
-	mode := fs.String("mode", "report", "report (default, prints what it would file) or write (not enabled yet)")
+	mode := fs.String("mode", "report", "report (default, prints what it would file) or write (reconciles issues)")
 	exceptionsPath := fs.String("exceptions", "",
 		"path to the generated Kubescape exceptions JSON "+
 			"(`go run ./scripts/generate-kubescape-exceptions`); accepted posture controls are not backlog work")
+	repo := fs.String("repo", "", "owner/name to reconcile issues in; required by -mode=write")
+	inputsComplete := fs.Bool("inputs-complete", false,
+		"assert that EVERY object on each supplied surface was passed. Only then may -mode=write "+
+			"close a tracked issue: this command has no cluster inventory, so without the assertion "+
+			"a partial run would mark live findings resolved")
 
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -770,25 +872,46 @@ func run(args []string, out io.Writer) error {
 	// flag after it, then exits 0 having read only a.json — a partial report
 	// from a plausible cluster-wide invocation. Reproduced on live data.
 	if fs.NArg() > 0 {
-		return fmt.Errorf("unexpected argument %q: each input needs its own flag "+
+		return fmt.Errorf("%w: unexpected argument %q: each input needs its own flag "+
 			"(-posture a.json -posture b.json), because flag parsing stops at the first "+
-			"non-flag argument and would silently ignore everything after it", fs.Arg(0))
+			"non-flag argument and would silently ignore everything after it",
+			errInvalidInvocation, fs.Arg(0))
 	}
 
-	if *mode != "report" {
-		if *mode != "write" {
-			return fmt.Errorf("unknown -mode %q (want report or write)", *mode)
-		}
+	if *mode != "report" && *mode != "write" {
+		return fmt.Errorf("%w: unknown -mode %q (want report or write)", errInvalidInvocation, *mode)
+	}
 
-		return fmt.Errorf("%w: this slice ships the report-only half of #2854; "+
-			"the issue-writing half lands behind the same flag once fingerprint "+
-			"stability is demonstrated on consecutive runs", errWritesNotEnabled)
+	if *mode == "write" && strings.TrimSpace(*repo) == "" {
+		return fmt.Errorf("%w: -mode=write needs -repo owner/name", errWritesNotEnabled)
+	}
+
+	// -inputs-complete only ever relaxes the CLOSE gate, so a report run that
+	// carries it is asserting something the run will never act on. Accepting it
+	// silently would teach an operator the flag is harmless to leave set, which
+	// is exactly the habit that later turns a partial write run destructive.
+	if *mode != "write" && *inputsComplete {
+		return fmt.Errorf("%w: -inputs-complete only affects -mode=write; "+
+			"it gates closing a tracked issue", errInvalidInvocation)
+	}
+
+	// A posture run derived WITHOUT the declared exceptions keeps every accepted
+	// control, and report() says so in a note because that output is explicitly
+	// not a filed-work list. Write mode has no such escape: it turns the same
+	// unfiltered derivation into real issues, filing — and reopening — backlog
+	// work for risks the cluster has already accepted, under this command's own
+	// automation disclosure. Refusing is the only reading that keeps the two
+	// modes consistent, and the flag is one argument away.
+	if *mode == "write" && len(posturePaths) > 0 && strings.TrimSpace(*exceptionsPath) == "" {
+		return fmt.Errorf("%w: -mode=write with -posture requires -exceptions "+
+			"(`go run ./scripts/generate-kubescape-exceptions`); without it every accepted "+
+			"control is filed as backlog work", errWritesNotEnabled)
 	}
 
 	if len(posturePaths) == 0 && len(cvePaths) == 0 {
-		return errors.New("no input: pass -posture and/or -cve. " +
-			"Reporting \"nothing to file\" for an empty invocation would be the same " +
-			"false all-clear the stripped-LIST guard exists to prevent")
+		return fmt.Errorf("%w: no input: pass -posture and/or -cve. "+
+			"Reporting \"nothing to file\" for an empty invocation would be the same "+
+			"false all-clear the stripped-LIST guard exists to prevent", errInvalidInvocation)
 	}
 
 	exceptions, err := loadExceptions(*exceptionsPath)
@@ -803,6 +926,10 @@ func run(args []string, out io.Writer) error {
 		// all-clear reached by FILTERING is a different claim from one reached
 		// by a clean input, and the report must not render them identically.
 		suppressed int
+		// accepted holds the fingerprints of themes an exception suppressed
+		// ENTIRELY, which the planner needs to close them as accepted rather
+		// than as gone.
+		accepted = map[string]struct{}{}
 	)
 
 	if len(posturePaths) > 0 {
@@ -811,12 +938,19 @@ func run(args []string, out io.Writer) error {
 			return err
 		}
 
-		derived, n, err := derivePosture(postureItems, exceptions)
+		derived, n, acceptedKeys, err := derivePosture(postureItems, exceptions)
 		if err != nil {
 			return err
 		}
 
 		suppressed = n
+
+		// Carried as fingerprints, not keys: that is the identity the planner
+		// matches a tracked issue by, and deriving it here keeps the planner
+		// free of any knowledge of how a posture key becomes one.
+		for _, key := range acceptedKeys {
+			accepted[postureFingerprint(key)] = struct{}{}
+		}
 
 		themes = append(themes, derived...)
 		examined = append(examined, surfacePosture)
@@ -837,7 +971,153 @@ func run(args []string, out io.Writer) error {
 		examined = append(examined, surfaceCVE)
 	}
 
+	if *mode == "write" {
+		return reconcile(themes, examined, *inputsComplete, accepted, newGHStore(*repo), out)
+	}
+
 	return report(themes, examined, len(exceptions) > 0, suppressed, out)
+}
+
+// reconcile lists what this command already tracks, plans the difference, and
+// applies it. Split out of run so the write path is exercisable against a fake
+// store — including the case that matters most, where the plan is empty and the
+// correct behaviour is to touch nothing.
+func reconcile(
+	themes []theme,
+	examined []surface,
+	inputsComplete bool,
+	accepted map[string]struct{},
+	store issueStore,
+	out io.Writer,
+) error {
+	existing, err := store.list()
+	if err != nil {
+		return err
+	}
+
+	p, err := planWrites(themes, existing, examined, inputsComplete, accepted)
+	if err != nil {
+		return err
+	}
+
+	if err := dropRacedCreates(&p, store); err != nil {
+		return err
+	}
+
+	return applyPlan(p, store, out)
+}
+
+// dropRacedCreates re-reads the tracked set immediately before applying and
+// discards any create whose fingerprint has been filed since the plan was made.
+//
+// Two write invocations that overlap both take the same snapshot at the top of
+// reconcile, both find a newly derived theme untracked, and both plan a create.
+// GitHub enforces no uniqueness on the embedded fingerprint, so both issues are
+// filed — and planWrites is deliberately fail-closed on a duplicate fingerprint
+// (errAmbiguousEntry, which refuses rather than guessing which of the two is
+// authoritative). So a single raced create does not cost one redundant issue: it
+// stops the reconciler planning ANYTHING, on every subsequent run, until an
+// operator deletes one by hand.
+//
+// This narrows that window from the whole run — list, derive, plan, then one
+// call per action — to the gap between this re-read and the create itself. It
+// does NOT make the command safe to run concurrently and is not offered as a
+// substitute for serializing it; a caller that schedules write mode must still
+// use a `concurrency` group with cancel-in-progress disabled. doc.go records
+// that as a requirement of the write path, because no scheduled caller exists
+// yet to carry it.
+//
+// Costs one extra list per run, and only on a run that actually creates.
+func dropRacedCreates(p *plan, store issueStore) error {
+	if !slices.ContainsFunc(p.Actions, func(a issueAction) bool { return a.Kind == "create" }) {
+		return nil
+	}
+
+	current, err := store.list()
+	if err != nil {
+		return err
+	}
+
+	filed := map[string]struct{}{}
+
+	for _, e := range current {
+		fp, err := e.fingerprint()
+		if err != nil {
+			// An unreadable marker is planWrites' business, not this filter's.
+			// Refusing here would put a second, differently-worded gate on a
+			// condition the plan this run is applying has already passed.
+			continue
+		}
+
+		filed[fp] = struct{}{}
+	}
+
+	kept := make([]issueAction, 0, len(p.Actions))
+
+	for _, a := range p.Actions {
+		if a.Kind == "create" {
+			// The planned body is the only place a create's identity exists —
+			// it carries no issue number yet — and it is the same marker
+			// backlogEntry.fingerprint parses back off a filed issue.
+			fp, err := (backlogEntry{Body: a.Body}).fingerprint()
+			if err != nil {
+				return err
+			}
+
+			if _, raced := filed[fp]; raced {
+				p.RacedCreates++
+
+				continue
+			}
+		}
+
+		kept = append(kept, a)
+	}
+
+	p.Actions = kept
+
+	return checkCreateBudget(p, len(current))
+}
+
+// checkCreateBudget refuses a plan whose creates would carry the tracked set
+// past the listing budget.
+//
+// list() refuses a listing that EXCEEDS the budget, which protects the reader
+// but not the writer: the run that crosses the line lists a set that is still
+// within budget, plans its create, and files it perfectly successfully. Every
+// LATER run is the one that fails, on a listing the earlier run produced. So
+// without this the bridge wedges itself by working, the failure surfaces in a
+// run that did nothing wrong, and recovery needs an operator stripping labels
+// by hand.
+//
+// Checked against the re-read count, not the planning snapshot, so a create
+// filed by a concurrent run in between counts against the budget too.
+//
+// The budget counts closed issues, so it is a lifetime total that ordinary
+// successful use walks into rather than a pathological case.
+func checkCreateBudget(p *plan, tracked int) error {
+	creates := 0
+
+	for _, a := range p.Actions {
+		if a.Kind == "create" {
+			creates++
+		}
+	}
+
+	if creates == 0 {
+		return nil
+	}
+
+	if projected := tracked + creates; projected > listLimit {
+		return fmt.Errorf("%w: %d tracked issues plus %d new theme(s) would reach %d, over the "+
+			"%d the listing can reconcile, and every later run would then refuse. Nothing was "+
+			"written. To make room, remove the %q label from issues that are closed and no "+
+			"longer need tracking (they are re-filed only if the finding returns), or raise "+
+			"listLimit",
+			errWriteFailed, tracked, creates, projected, listLimit, bridgeLabel)
+	}
+
+	return nil
 }
 
 // readSurface reads every file for one surface, validating each against that
