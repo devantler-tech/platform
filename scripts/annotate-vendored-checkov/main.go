@@ -1035,7 +1035,7 @@ func annotateListDocument(lines []string, targets []targetSpec, found map[string
 			}
 			identity := target.kind + "/" + target.name
 			found[identity]++
-			insertion, err := annotationInsertion(resource, target)
+			insertion, err := annotationInsertion(lines, resource, target)
 			if err != nil {
 				return fmt.Errorf("%s: %w", identity, err)
 			}
@@ -1057,7 +1057,7 @@ func annotateListDocument(lines []string, targets []targetSpec, found map[string
 	return lines, nil
 }
 
-func annotationInsertion(resource *yaml.Node, target targetSpec) (lineInsertion, error) {
+func annotationInsertion(lines []string, resource *yaml.Node, target targetSpec) (lineInsertion, error) {
 	metadataKey, metadata := mappingEntry(resource, "metadata")
 	if metadata == nil || metadata.Kind != yaml.MappingNode || metadata.Style&yaml.FlowStyle != 0 {
 		return lineInsertion{}, errors.New("metadata must use block mapping style")
@@ -1096,7 +1096,11 @@ func annotationInsertion(resource *yaml.Node, target targetSpec) (lineInsertion,
 		highest++
 		additions = append(additions, fmt.Sprintf("%scheckov.io/skip%d: %q", indent, highest, value))
 	}
-	return lineInsertion{index: maxNodeLine(annotations), lines: additions}, nil
+	insertAt, err := blockMappingEnd(lines, annotationsKey)
+	if err != nil {
+		return lineInsertion{}, err
+	}
+	return lineInsertion{index: insertAt, lines: additions}, nil
 }
 
 func existingCheckovAnnotationNodes(annotations *yaml.Node) (map[string]string, int, error) {
@@ -1130,12 +1134,26 @@ func existingCheckovAnnotationNodes(annotations *yaml.Node) (map[string]string, 
 	return existing, highest, nil
 }
 
-func maxNodeLine(node *yaml.Node) int {
-	line := node.Line
-	for _, child := range node.Content {
-		line = max(line, maxNodeLine(child))
+func blockMappingEnd(lines []string, key *yaml.Node) (int, error) {
+	if key.Line < 1 || key.Line > len(lines) || key.Column < 1 {
+		return 0, errors.New("mapping key source position is invalid")
 	}
-	return line
+	parentIndent := key.Column - 1
+	end := key.Line
+	for end < len(lines) {
+		line := lines[end]
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			end++
+			continue
+		}
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		if indent <= parentIndent {
+			break
+		}
+		end++
+	}
+	return end, nil
 }
 
 func splitDocuments(lines []string) [][]string {

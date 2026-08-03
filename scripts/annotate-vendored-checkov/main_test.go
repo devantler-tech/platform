@@ -924,6 +924,48 @@ items:
 	}
 }
 
+func TestAnnotatorInsertsAfterNestedListBlockScalarAnnotations(t *testing.T) {
+	t.Parallel()
+
+	input := `apiVersion: v1
+kind: List
+items:
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: cdi-operator-cluster
+    annotations:
+      release-note: |
+        first line
+        second line
+  rules: []
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: cdi-operator
+    namespace: cdi
+  spec:
+    template:
+      spec:
+        containers:
+        - name: cdi-operator
+          image: quay.io/kubevirt/cdi-operator:v1.65.0
+`
+	output, err := annotateBundle(input, bundleTargets["cdi"])
+	if err != nil {
+		t.Fatalf("annotate List block-scalar fixture: %v", err)
+	}
+	if !strings.Contains(
+		output,
+		"      release-note: |\n        first line\n        second line\n      checkov.io/skip1:",
+	) {
+		t.Fatalf("disposition was not inserted after the complete block scalar:\n%s", output)
+	}
+	if err := validateAnnotatedBundle([]byte(output), bundleTargets["cdi"]); err != nil {
+		t.Fatalf("annotated List block-scalar fixture is invalid: %v", err)
+	}
+}
+
 func TestPinnedSourceValidationRejectsNonAnnotationChange(t *testing.T) {
 	t.Parallel()
 
