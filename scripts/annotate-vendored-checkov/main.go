@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -76,6 +77,8 @@ var bundleTargets = map[string][]targetSpec{
 	},
 }
 
+var inlineCheckovSkip = regexp.MustCompile(`(?i)checkov\s*:\s*skip\s*=`)
+
 func deploymentChecks() []string {
 	return []string{
 		"CKV_K8S_11",
@@ -127,6 +130,11 @@ func main() {
 		false,
 		"validate that an upstream bundle contains no Checkov suppressions",
 	)
+	validateAnnotated := flag.Bool(
+		"validate-annotated",
+		false,
+		"validate that a committed bundle contains exactly the configured Checkov dispositions",
+	)
 	framework := flag.String(
 		"framework",
 		"",
@@ -142,7 +150,7 @@ func main() {
 		fail("unsupported bundle %q", *bundle)
 	}
 	modeCount := 0
-	for _, enabled := range []bool{*validateFindings, *validateReport, *validateSource} {
+	for _, enabled := range []bool{*validateFindings, *validateReport, *validateSource, *validateAnnotated} {
 		if enabled {
 			modeCount++
 		}
@@ -173,6 +181,12 @@ func main() {
 	if *validateSource {
 		if err := validateVendorSource(input); err != nil {
 			fail("validate %s source: %v", *bundle, err)
+		}
+		return
+	}
+	if *validateAnnotated {
+		if err := validateAnnotatedBundle(input, targets); err != nil {
+			fail("validate %s annotated bundle: %v", *bundle, err)
 		}
 		return
 	}
@@ -354,6 +368,9 @@ func validateVendorSource(input []byte) error {
 		if len(document.Content) == 0 || document.Content[0].Kind == 0 {
 			continue
 		}
+		if err := rejectInlineCheckovSuppression(&document); err != nil {
+			return fmt.Errorf("vendor document %d contains %w", documentIndex, err)
+		}
 		root := document.Content[0]
 		if root.Kind != yaml.MappingNode {
 			return fmt.Errorf("vendor document %d must contain a top-level mapping", documentIndex)
@@ -379,6 +396,110 @@ func validateVendorSource(input []byte) error {
 			}
 		}
 	}
+}
+
+func validateAnnotatedBundle(input []byte, targets []targetSpec) error {
+	targetsByIdentity := make(map[string]targetSpec, len(targets))
+	expectedByIdentity := make(map[string]map[string]string, len(targets))
+	for _, target := range targets {
+		identity := target.kind + "/" + target.name
+		targetsByIdentity[identity] = target
+		expected := make(map[string]string, len(target.checks))
+		for index, check := range target.checks {
+			expected["checkov.io/skip"+strconv.Itoa(index+1)] = check + "=" + target.reason
+		}
+		expectedByIdentity[identity] = expected
+	}
+
+	seenTargets := make(map[string]int, len(targets))
+	seenDispositions := make(map[string]int)
+	decoder := yaml.NewDecoder(strings.NewReader(string(input)))
+	for documentIndex := 1; ; documentIndex++ {
+		var document yaml.Node
+		if err := decoder.Decode(&document); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return fmt.Errorf("parse committed document %d: %w", documentIndex, err)
+		}
+		if len(document.Content) == 0 || document.Content[0].Kind == 0 {
+			continue
+		}
+		if err := rejectInlineCheckovSuppression(&document); err != nil {
+			return fmt.Errorf("committed document %d contains %w", documentIndex, err)
+		}
+		root := document.Content[0]
+		if root.Kind != yaml.MappingNode {
+			return fmt.Errorf("committed document %d must contain a top-level mapping", documentIndex)
+		}
+		kind := mappingScalar(root, "kind")
+		metadata := mappingValue(root, "metadata")
+		if metadata == nil {
+			continue
+		}
+		if metadata.Kind != yaml.MappingNode {
+			return fmt.Errorf("committed document %d metadata must be a mapping", documentIndex)
+		}
+		name := mappingScalar(metadata, "name")
+		identity := kind + "/" + name
+		if _, configured := targetsByIdentity[identity]; configured {
+			seenTargets[identity]++
+		}
+
+		annotations := mappingValue(metadata, "annotations")
+		if annotations == nil {
+			continue
+		}
+		if annotations.Kind != yaml.MappingNode {
+			return fmt.Errorf("committed document %d metadata.annotations must be a mapping", documentIndex)
+		}
+		for index := 0; index+1 < len(annotations.Content); index += 2 {
+			annotationKey := annotations.Content[index].Value
+			if !strings.HasPrefix(annotationKey, "checkov.io/skip") {
+				continue
+			}
+			expected, configuredTarget := expectedByIdentity[identity]
+			expectedValue, configuredDisposition := expected[annotationKey]
+			if !configuredTarget || !configuredDisposition {
+				return fmt.Errorf("unexpected Checkov disposition %s on %s", annotationKey, identity)
+			}
+			annotationValue := annotations.Content[index+1]
+			if annotationValue.Kind != yaml.ScalarNode || annotationValue.Value != expectedValue {
+				return fmt.Errorf(
+					"%s on %s does not match the configured disposition",
+					annotationKey,
+					identity,
+				)
+			}
+			seenDispositions[identity+"/"+annotationKey]++
+		}
+	}
+
+	for identity, expected := range expectedByIdentity {
+		if seenTargets[identity] != 1 {
+			return fmt.Errorf("expected exactly one committed %s, found %d", identity, seenTargets[identity])
+		}
+		for annotationKey := range expected {
+			if seenDispositions[identity+"/"+annotationKey] != 1 {
+				return fmt.Errorf("expected exactly one configured %s on %s", annotationKey, identity)
+			}
+		}
+	}
+	return nil
+}
+
+func rejectInlineCheckovSuppression(node *yaml.Node) error {
+	for _, comment := range []string{node.HeadComment, node.LineComment, node.FootComment} {
+		if inlineCheckovSkip.MatchString(comment) {
+			return errors.New("inline Checkov suppression")
+		}
+	}
+	for _, child := range node.Content {
+		if err := rejectInlineCheckovSuppression(child); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func fail(format string, args ...any) {
@@ -561,6 +682,14 @@ func mappingValue(mapping *yaml.Node, key string) *yaml.Node {
 		}
 	}
 	return nil
+}
+
+func mappingScalar(mapping *yaml.Node, key string) string {
+	value := mappingValue(mapping, key)
+	if value == nil || value.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return value.Value
 }
 
 func existingCheckovAnnotations(lines []string, start, end int) (map[string]string, int, error) {

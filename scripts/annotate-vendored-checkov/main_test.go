@@ -519,6 +519,74 @@ func TestSourceValidationRejectsUpstreamCheckovSuppressions(t *testing.T) {
 	}
 }
 
+func TestSourceValidationRejectsInlineCheckovSuppressions(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Replace(
+		bundleFixture("cdi-operator-cluster", "cdi-operator"),
+		"    owner: platform",
+		"    owner: platform # checkov:skip=CKV_SECRET_6:upstream suppression",
+		1,
+	)
+	_, stderr, err := runAnnotator(t, "cdi", input, "--validate-source")
+	if err == nil {
+		t.Fatal("source validator accepted an inline upstream Checkov suppression")
+	}
+	if !strings.Contains(stderr, "inline Checkov suppression") {
+		t.Fatalf("stderr did not name the inline upstream suppression: %q", stderr)
+	}
+}
+
+func TestAnnotatedValidationAcceptsOnlyConfiguredDispositions(t *testing.T) {
+	t.Parallel()
+
+	input := bundleFixture("cdi-operator-cluster", "cdi-operator")
+	annotated, err := annotateBundle(input, bundleTargets["cdi"])
+	if err != nil {
+		t.Fatalf("annotate fixture: %v", err)
+	}
+	if err := validateAnnotatedBundle([]byte(annotated), bundleTargets["cdi"]); err != nil {
+		t.Fatalf("configured dispositions were rejected: %v", err)
+	}
+}
+
+func TestAnnotatedValidationRejectsSuppressionOnUnrelatedResource(t *testing.T) {
+	t.Parallel()
+
+	input := bundleFixture("cdi-operator-cluster", "cdi-operator")
+	annotated, err := annotateBundle(input, bundleTargets["cdi"])
+	if err != nil {
+		t.Fatalf("annotate fixture: %v", err)
+	}
+	annotated = strings.Replace(
+		annotated,
+		"    owner: platform",
+		"    owner: platform\n    checkov.io/skip1: \"CKV_K8S_99=unreviewed\"",
+		1,
+	)
+	if err := validateAnnotatedBundle([]byte(annotated), bundleTargets["cdi"]); err == nil {
+		t.Fatal("committed-bundle validator accepted a suppression on an unrelated resource")
+	} else if !strings.Contains(err.Error(), "unexpected Checkov disposition") {
+		t.Fatalf("error did not name the unexpected disposition: %v", err)
+	}
+}
+
+func TestAnnotatedValidationRejectsChangedDisposition(t *testing.T) {
+	t.Parallel()
+
+	input := bundleFixture("cdi-operator-cluster", "cdi-operator")
+	annotated, err := annotateBundle(input, bundleTargets["cdi"])
+	if err != nil {
+		t.Fatalf("annotate fixture: %v", err)
+	}
+	annotated = strings.Replace(annotated, clusterRoleReason, "different reason", 1)
+	if err := validateAnnotatedBundle([]byte(annotated), bundleTargets["cdi"]); err == nil {
+		t.Fatal("committed-bundle validator accepted a changed disposition")
+	} else if !strings.Contains(err.Error(), "does not match the configured disposition") {
+		t.Fatalf("error did not name the changed disposition: %v", err)
+	}
+}
+
 func TestAnnotatorRejectsUnknownBundle(t *testing.T) {
 	t.Parallel()
 

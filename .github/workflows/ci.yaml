@@ -244,13 +244,17 @@ jobs:
 
       - name: 🧷 Validate vendored operator Checkov dispositions
         if: needs.changes.outputs.k8s == 'true'
-        # Exercise the real annotator over multi-document fixtures. The updater
-        # must preserve unrelated resources, remain idempotent, and refuse a
-        # vendor rename before it can replace either committed bundle.
+        # Exercise the annotator over multi-document fixtures, then prove the
+        # committed bundles contain only the configured resource-scoped
+        # dispositions. A hand edit or vendor rename must fail offline.
         run: |
           bash -n scripts/update-vendored-operators.sh
           shellcheck scripts/update-vendored-operators.sh
           go test ./scripts/annotate-vendored-checkov
+          go run ./scripts/annotate-vendored-checkov --bundle cdi --validate-annotated \
+            < k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+          go run ./scripts/annotate-vendored-checkov --bundle kubevirt --validate-annotated \
+            < k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
 
       - name: 🔐 Validate OpenBao OIDC admin role
         if: needs.changes.outputs.k8s == 'true'
