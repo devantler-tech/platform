@@ -838,6 +838,34 @@ func TestFluxControllerRolloutFailureBlocksPolicyMutationAndReleasesFences(t *te
 	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
 }
 
+func TestTerminatingPrePauseFluxControllerBlocksPolicyMutation(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING": "true",
+		"FAKE_LOG_FLUX_CONTROLLER_RESTART":         "true",
+	})
+	requireFailureResult(t, result)
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"Could not prove every pre-handoff kustomize-controller process was replaced",
+	)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "flux-policy-parent-pause:flux-system")
+	requireLine(t, operations, "flux-policy-pause:infrastructure")
+	requireLine(t, operations, "flux-controller-restart:kustomize-controller")
+	requireLine(
+		t,
+		operations,
+		"flux-controller-rollout-complete-with-terminating-old-pod:kustomize-controller",
+	)
+	requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
+	requireNoLine(t, operations, "root-patch")
+	requireLine(t, operations, "flux-policy-resume:infrastructure")
+	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+}
+
 func TestAmbiguousFluxControllerRestartIsAdopted(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

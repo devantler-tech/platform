@@ -588,7 +588,17 @@ func fakeKubectlRolloutFluxController(args []string, namespace string) int {
 	}
 	setMarkerContent("flux-controller-rollout-count", strconv.Itoa(restartCount))
 	if os.Getenv("FAKE_LOG_FLUX_CONTROLLER_RESTART") == "true" {
-		appendEnvFile("OPERATION_LOG", "flux-controller-old-processes-terminated:kustomize-controller\n")
+		if os.Getenv("FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING") == "true" {
+			appendEnvFile(
+				"OPERATION_LOG",
+				"flux-controller-rollout-complete-with-terminating-old-pod:kustomize-controller\n",
+			)
+		} else {
+			appendEnvFile(
+				"OPERATION_LOG",
+				"flux-controller-old-processes-terminated:kustomize-controller\n",
+			)
+		}
 	}
 	fmt.Println("deployment.apps/kustomize-controller successfully rolled out")
 	return 0
@@ -601,25 +611,46 @@ func fakeKubectlGetFluxControllerPods(namespace string) int {
 	rolloutCount := parseInt(markerContent("flux-controller-rollout-count"), 0)
 	uid := fmt.Sprintf("kustomize-controller-pod-uid-%d", rolloutCount)
 	name := fmt.Sprintf("kustomize-controller-%d", rolloutCount)
-	fmt.Println(encodeJSON(map[string]any{
+	items := []any{map[string]any{
 		"apiVersion": "v1",
-		"kind":       "List",
-		"items": []any{map[string]any{
+		"kind":       "Pod",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": "flux-system",
+			"uid":       uid,
+			"labels":    map[string]any{"app": "kustomize-controller"},
+		},
+		"status": map[string]any{
+			"conditions": []any{map[string]any{
+				"type":   "Ready",
+				"status": "True",
+			}},
+		},
+	}}
+	if rolloutCount > 0 &&
+		os.Getenv("FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING") == "true" {
+		items = append(items, map[string]any{
 			"apiVersion": "v1",
 			"kind":       "Pod",
 			"metadata": map[string]any{
-				"name":      name,
-				"namespace": "flux-system",
-				"uid":       uid,
-				"labels":    map[string]any{"app": "kustomize-controller"},
+				"name":              fmt.Sprintf("kustomize-controller-%d", rolloutCount-1),
+				"namespace":         "flux-system",
+				"uid":               fmt.Sprintf("kustomize-controller-pod-uid-%d", rolloutCount-1),
+				"labels":            map[string]any{"app": "kustomize-controller"},
+				"deletionTimestamp": "2026-08-03T09:30:00Z",
 			},
 			"status": map[string]any{
 				"conditions": []any{map[string]any{
 					"type":   "Ready",
-					"status": "True",
+					"status": "False",
 				}},
 			},
-		}},
+		})
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "List",
+		"items":      items,
 	}))
 	return 0
 }

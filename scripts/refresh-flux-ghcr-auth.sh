@@ -3265,14 +3265,16 @@ restart_flux_kustomize_controller_for_handoff() {
       --argjson replicas "${replicas}" \
       --slurpfile before "${flux_controller_pods_before_file}" '
       [.items[] | select((.metadata.deletionTimestamp // "") == "")] as $current
+      | [.items[].metadata.uid] as $post_uids
       | [$before[0].items[].metadata.uid] as $old_uids
       | ($current | length) >= $replicas
       and all($current[];
         (.metadata.uid | type == "string" and length > 0)
         and any(.status.conditions[]?;
           .type == "Ready" and .status == "True")
-        and (.metadata.uid as $uid | ($old_uids | index($uid)) == null)
       )
+      and all($old_uids[];
+        . as $old_uid | ($post_uids | index($old_uid)) == null)
     ' "${flux_controller_pods_after_file}" >/dev/null; then
     echo "::error::Could not prove every pre-handoff kustomize-controller process was replaced by a Ready Pod."
     return 1
