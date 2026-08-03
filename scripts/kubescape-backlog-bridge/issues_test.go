@@ -1503,8 +1503,8 @@ func TestWithheldReclassificationIsNotCountedAsAWithheldClose(t *testing.T) {
 		t.Fatalf("a gated run still planned writes: %+v", p.Actions)
 	}
 
-	if p.WithheldReclassifications != 1 {
-		t.Errorf("WithheldReclassifications = %d, want 1", p.WithheldReclassifications)
+	if p.UnverifiedDispositions != 1 {
+		t.Errorf("UnverifiedDispositions = %d, want 1", p.UnverifiedDispositions)
 	}
 
 	if p.WithheldCloses != 0 {
@@ -1657,7 +1657,7 @@ func TestGatedReclassificationDoesNotClaimEverythingMatches(t *testing.T) {
 		t.Fatalf("planWrites: %v", err)
 	}
 
-	if p.WithheldReclassifications == 0 {
+	if p.UnverifiedDispositions == 0 {
 		t.Fatal("fixture is inert: nothing was withheld, so the summary line is not under test")
 	}
 
@@ -1672,5 +1672,44 @@ func TestGatedReclassificationDoesNotClaimEverythingMatches(t *testing.T) {
 
 	if !strings.Contains(out.String(), "no writes performed") {
 		t.Errorf("summary does not report the withheld-only outcome:\n%s", out.String())
+	}
+}
+
+// TestBoundFieldKeepsOverlongComponentsDistinct pins the identity half of the
+// field bound. Truncation exists so one malformed value cannot push a body past
+// GitHub's limit; it must not achieve that by making two real resources
+// indistinguishable, because naming the affected resources is what the list is
+// for. A prefix-only cut renders `…-a` and `…-b` as the same bullet while the
+// component COUNT still reads correct — right number, unusable identities.
+func TestBoundFieldKeepsOverlongComponentsDistinct(t *testing.T) {
+	shared := "prod/Deployment/" + strings.Repeat("x", maxRenderedFieldRunes+40)
+	a, b := boundField(shared+"-alpha"), boundField(shared+"-beta")
+
+	// The fixture must actually exercise truncation, or this proves nothing.
+	if utf8.RuneCountInString(shared+"-alpha") <= maxRenderedFieldRunes {
+		t.Fatal("fixture is inert: the input is inside the bound, so nothing is truncated")
+	}
+
+	if a == b {
+		t.Errorf("two distinct components collapsed to one bullet:\n%q", a)
+	}
+
+	// Distinctness must not come at the cost of the bound it exists to enforce.
+	for _, got := range []string{a, b} {
+		if n := utf8.RuneCountInString(got); n > maxRenderedFieldRunes {
+			t.Errorf("bounded field is %d runes, over the %d limit: %q", n, maxRenderedFieldRunes, got)
+		}
+	}
+
+	// Determinism, or the anti-churn guarantee breaks: an unchanged component
+	// must render identically on every run.
+	if boundField(shared+"-alpha") != a {
+		t.Error("boundField is not deterministic; every run would rewrite the issue")
+	}
+
+	// A value inside the bound must be returned untouched — no digest, no
+	// ellipsis. Otherwise the ordinary case would churn every tracked issue.
+	if got := boundField("prod/Deployment/web"); got != "prod/Deployment/web" {
+		t.Errorf("a short component was altered: %q", got)
 	}
 }

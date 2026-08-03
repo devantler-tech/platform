@@ -74,12 +74,11 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 	// derivation. Announced separately from WithheldCloses because these issues
 	// are closed, not open: an operator told they were "left OPEN" would go
 	// looking for backlog work that is not there.
-	if p.WithheldReclassifications > 0 {
+	if p.UnverifiedDispositions > 0 {
 		if _, err := fmt.Fprintf(out,
-			"note: %d closed issue(s) carry a disposition this run disagrees with but were left "+
-				"UNCHANGED — correcting one needs -inputs-complete and a run that examined their "+
-				"surface, so the structured record may still say a finding was remediated when an "+
-				"exception is what is covering it\n", p.WithheldReclassifications); err != nil {
+			"note: %d closed issue(s) had their disposition left UNVERIFIED — checking one needs "+
+				"-inputs-complete and a run that examined their surface, so the structured record "+
+				"may still say a finding was remediated when an exception is what is covering it\n", p.UnverifiedDispositions); err != nil {
 			return err
 		}
 	}
@@ -106,7 +105,7 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 		// only claims the writes it actually decided against making.
 		line := "no changes: every derived theme already matches its tracked issue"
 		if p.WithheldCloses > 0 || p.WithheldUpdates > 0 || p.RacedCreates > 0 ||
-			p.WithheldReclassifications > 0 {
+			p.UnverifiedDispositions > 0 {
 			line = "no writes performed: this run planned none beyond the withheld or dropped " +
 				"action(s) noted above"
 		}

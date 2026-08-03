@@ -2,6 +2,8 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -193,16 +195,16 @@ type plan struct {
 	// but does not make safe — so a non-zero count is what tells an operator the
 	// caller is missing its concurrency guard.
 	RacedCreates int
-	// WithheldReclassifications counts already-closed entries whose recorded
-	// disposition disagrees with what this run derived, but which were left
-	// alone because the run was not authorised to conclude a finding is absent.
+	// UnverifiedDispositions counts already-closed entries whose disposition this
+	// run could not check, because it was not authorised to conclude a finding is
+	// absent — no -inputs-complete, or it never examined that entrys surface.
 	//
 	// Kept apart from WithheldCloses rather than folded into it: that counter's
 	// operator note says the issues were "left OPEN", which is false of these and
 	// would send someone looking for open work that does not exist. The
 	// distinction matters most in the direction that reads as safe — an entry
 	// stuck at Completed while an exception is doing the work looks remediated.
-	WithheldReclassifications int
+	UnverifiedDispositions int
 }
 
 // empty reports whether the plan performs no writes at all. Unchanged cluster
@@ -276,10 +278,26 @@ func boundField(s string) string {
 		return sanitized
 	}
 
-	// The ellipsis is inside the budget, not added to it — same as renderTitle.
+	// A prefix cut alone is not enough here, and the failure is silent. Two
+	// distinct components sharing a long prefix — `ns/Deployment/<200 chars>-a`
+	// and `…-b` — would render as the SAME bullet, so the body reports the right
+	// component COUNT while showing duplicate, non-identifying entries. Naming
+	// the affected resources is the entire purpose of that list.
+	//
+	// A short digest of the FULL value restores distinctness: it is derived
+	// before truncation, so it distinguishes values that differ anywhere,
+	// including past the cut. It is deterministic, so an unchanged component
+	// renders identically across runs and the anti-churn guarantee holds.
+	//
+	// Kept inside the budget, like the ellipsis, so the bound this function
+	// promises is still exact.
 	const ellipsis = "…"
 
-	return string(runes[:maxRenderedFieldRunes-len([]rune(ellipsis))]) + ellipsis
+	digest := sha256.Sum256([]byte(sanitized))
+	suffix := ellipsis + hex.EncodeToString(digest[:])[:8]
+	keep := maxRenderedFieldRunes - len([]rune(suffix))
+
+	return string(runes[:keep]) + suffix
 }
 
 // renderTitle bounds the title for the same reason renderBody bounds the list:
@@ -609,10 +627,19 @@ func planWrites(
 			// not a tracked issue "left open", and folding it into this counter
 			// would make the operator note report a backlog state that does not
 			// exist.
+			//
+			// The closed-entry count is UNVERIFIED, not disagreeing: this branch
+			// is reached before any disposition is derived, and it cannot be
+			// derived here — whether the finding is absent is exactly what an
+			// unexamined surface does not establish. A CVE-only run would
+			// otherwise report every correctly-classified closed posture entry as
+			// mismatched, turning a clean surface-specific run into one that looks
+			// to have pending work. The note wording says unverified for that
+			// reason.
 			if e.Open {
 				p.WithheldCloses++
 			} else {
-				p.WithheldReclassifications++
+				p.UnverifiedDispositions++
 			}
 
 			continue
