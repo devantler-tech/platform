@@ -32,10 +32,12 @@ __pycache__/
 *.py[cod]
 
 # Compiled Go binaries. Every scripts/<name>/ is a `main` package, so a build drops an
-# executable named after its directory — `go build ./scripts/<name>/` leaves it in the working
-# directory, and `go build ./...` from the root leaves one per package at the root. Neither has
-# an extension, so nothing else here covers them, and a directory-wide `git add` stages a ~4 MB
-# Mach-O binary alongside the source without comment.
+# executable named after its directory: `go build ./scripts/<name>/` from the repository root
+# writes it at the root, and `go build .` from inside scripts/<name>/ writes it there — hence the
+# two blocks below. (`go build ./...` builds every package but discards the executables, so it
+# leaves nothing to ignore.) Neither form gives the file an extension, so nothing else here covers
+# them, and a directory-wide `git add` stages a ~4 MB Mach-O binary alongside the source without
+# comment.
 #
 # Listed by name rather than by a glob for extensionless files: that glob would also hide a
 # legitimately extensionless file someone adds later, and a silently ignored source file is a
