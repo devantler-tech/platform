@@ -26,7 +26,10 @@ type issueStore interface {
 	create(title, body string) (int, error)
 	update(number int, title, body string) error
 	reopen(number int, title, body string) error
-	close(number int, comment string) error
+	// close carries the GitHub disposition as well as the comment: an accepted
+	// finding is still live, so recording it as Completed contradicts the comment
+	// the same call posts.
+	close(number int, comment, reason string) error
 }
 
 // applyPlan executes a plan against a store, narrating each step.
@@ -61,7 +64,17 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 	}
 
 	if p.empty() {
-		_, err := fmt.Fprintln(out, "no changes: every derived theme already matches its tracked issue")
+		// A run that withheld something did NOT find the backlog already matching,
+		// and saying so two lines under a note that a tracked issue differs is a
+		// self-contradicting summary an operator can reasonably read as
+		// synchronized. The withheld notes above say what is pending; this line
+		// only claims the writes it actually decided against making.
+		line := "no changes: every derived theme already matches its tracked issue"
+		if p.WithheldCloses > 0 || p.WithheldUpdates > 0 {
+			line = "no writes performed: this run planned none beyond the withheld action(s) noted above"
+		}
+
+		_, err := fmt.Fprintln(out, line)
 
 		return err
 	}
@@ -86,7 +99,7 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 				_, err = fmt.Fprintf(out, "reopened #%d\t%s\n", a.Number, a.Title)
 			}
 		case "close":
-			if err = store.close(a.Number, a.Reason); err == nil {
+			if err = store.close(a.Number, a.Reason, a.Disposition); err == nil {
 				_, err = fmt.Fprintf(out, "closed #%d\n", a.Number)
 			}
 		default:
@@ -104,6 +117,9 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 // ghStore drives the `gh` CLI against one repository.
 type ghStore struct {
 	repo string
+	// labelEnsured records that the ownership label has been provisioned for this
+	// store, so the check costs one call per run rather than one per issue.
+	labelEnsured bool
 	// run is the command runner, replaceable in tests.
 	run func(args ...string) ([]byte, error)
 }
@@ -179,10 +195,44 @@ func (g *ghStore) list() ([]backlogEntry, error) {
 	return entries, nil
 }
 
-// createdNumberPattern pulls the issue number out of the URL `gh issue create`
-// prints. `gh` offers no JSON output for create, so the URL is the only handle
-// it returns.
+// ensureLabel provisions the ownership label before the first create.
+//
+// `gh issue create --label` ASSOCIATES an existing label; it does not create
+// one. On a repository that has never run this command the label does not
+// exist — verified against devantler-tech/platform, which carries no
+// kubescape-bridge label and no setup for it outside this package — so the very
+// first untracked theme would fail and, because applyPlan stops at the first
+// failure, no backlog issue would be filed at all. The failure would appear only
+// on a first run against a fresh repository, which is exactly when nobody is
+// watching for it.
+//
+// `--force` makes this idempotent, so the ordinary case (label already present)
+// is a no-op rather than an error. It runs once per store: repeating it before
+// every create would spend a call per issue on a question already answered.
+func (g *ghStore) ensureLabel() error {
+	if g.labelEnsured {
+		return nil
+	}
+
+	if _, err := g.run("label", "create", bridgeLabel,
+		"--repo", g.repo,
+		"--description", "Filed automatically from live Kubescape findings",
+		"--force"); err != nil {
+		return err
+	}
+
+	g.labelEnsured = true
+
+	return nil
+}
+
+// create files a new backlog issue. The issue number comes out of the URL
+// `gh issue create` prints, since `gh` offers no JSON output for create.
 func (g *ghStore) create(title, body string) (int, error) {
+	if err := g.ensureLabel(); err != nil {
+		return 0, err
+	}
+
 	raw, err := g.run("issue", "create",
 		"--repo", g.repo,
 		"--title", title,
@@ -216,9 +266,9 @@ func (g *ghStore) reopen(number int, title, body string) error {
 	return g.update(number, title, body)
 }
 
-func (g *ghStore) close(number int, comment string) error {
+func (g *ghStore) close(number int, comment, reason string) error {
 	_, err := g.run("issue", "close", fmt.Sprint(number),
-		"--repo", g.repo, "--comment", comment)
+		"--repo", g.repo, "--comment", comment, "--reason", reason)
 
 	return err
 }

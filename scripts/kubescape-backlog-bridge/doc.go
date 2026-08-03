@@ -67,9 +67,25 @@
 // leaves the derivation exactly as a remediated one does — absent from the
 // themes — but the opposite thing is true of the cluster: it is still failing,
 // and someone decided to accept that. Such an entry closes with its own wording
-// naming the exception, never as "no longer present". For the same reason
-// `-mode=write` over posture input REQUIRES `-exceptions`: without it every
-// accepted control is derived as live and filed as backlog work.
+// naming the exception, and as GitHub's "not planned" rather than "completed",
+// so the structured state a board filters on agrees with the comment posted
+// beside it. For the same reason `-mode=write` over posture input REQUIRES
+// `-exceptions`: without it every accepted control is derived as live and filed
+// as backlog work.
+//
+// # Two limits the forge imposes
+//
+// A body over 65,536 characters is refused, and applyPlan stops at the first
+// failure — so one broadly-failing control would block every remaining action in
+// the run, not merely its own issue. Bodies therefore enumerate at most 300
+// components; the stated count is always the true one. The bound is a component
+// COUNT rather than a measured byte budget, because a budget would shift as the
+// surrounding prose is reworded and re-render every tracked issue.
+//
+// `gh issue create --label` associates an existing label rather than creating
+// one, so the ownership label is provisioned once per run before the first
+// create. Without that, the first run against a repository this command has not
+// seen before files nothing at all.
 //
 // # Bodies carry the sanitized minimum
 //

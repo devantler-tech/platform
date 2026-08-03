@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -437,8 +438,8 @@ func (f *fakeStore) reopen(number int, _, _ string) error {
 	return nil
 }
 
-func (f *fakeStore) close(number int, _ string) error {
-	f.calls = append(f.calls, fmt.Sprintf("close:%d", number))
+func (f *fakeStore) close(number int, _, reason string) error {
+	f.calls = append(f.calls, fmt.Sprintf("close:%d:%s", number, reason))
 
 	return nil
 }
@@ -745,5 +746,178 @@ func TestWithheldUpdateIsDisclosed(t *testing.T) {
 
 	if len(store.calls) != 0 {
 		t.Errorf("a partial run issued %v", store.calls)
+	}
+}
+
+// TestAcceptedCloseCarriesTheNotPlannedDisposition keeps the structured state
+// GitHub renders in step with the comment posted beside it. A finding closed
+// because an exception covers it is still failing; recording it as "completed"
+// tells every board filter the opposite of what the close comment says.
+func TestAcceptedCloseCarriesTheNotPlannedDisposition(t *testing.T) {
+	existing := []backlogEntry{trackedPosture(41, true)}
+
+	p, err := planWrites(nil, existing, []surface{surfacePosture}, true,
+		map[string]struct{}{goldenPostureFingerprint: {}})
+	if err != nil {
+		t.Fatalf("planWrites: %v", err)
+	}
+
+	if len(p.Actions) != 1 || p.Actions[0].Disposition != dispositionNotPlanned {
+		t.Fatalf("want a not-planned close, got %+v", p.Actions)
+	}
+
+	// CONTROL — a genuinely gone finding must keep the completed disposition,
+	// so the assertion above is attributable to acceptance rather than to a
+	// planner that marks every close not-planned.
+	ctrl, err := planWrites(nil, existing, []surface{surfacePosture}, true, nil)
+	if err != nil {
+		t.Fatalf("control planWrites: %v", err)
+	}
+
+	if len(ctrl.Actions) != 1 || ctrl.Actions[0].Disposition != dispositionCompleted {
+		t.Fatalf("control did not flip: got %+v", ctrl.Actions)
+	}
+}
+
+// TestDispositionReachesTheStore closes the gap between planning a disposition
+// and sending one: applyPlan is what actually passes it to `gh`, and a driver
+// that dropped the field would leave the plan correct and every close wrong.
+func TestDispositionReachesTheStore(t *testing.T) {
+	store := &fakeStore{}
+
+	err := applyPlan(plan{Actions: []issueAction{{
+		Kind: "close", Number: 41, Reason: acceptedComment, Disposition: dispositionNotPlanned,
+	}}}, store, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("applyPlan: %v", err)
+	}
+
+	if len(store.calls) != 1 || store.calls[0] != "close:41:not planned" {
+		t.Fatalf("the disposition did not reach the store: %v", store.calls)
+	}
+}
+
+// TestWithheldRunDoesNotClaimTheBacklogMatches stops the summary contradicting
+// the note directly above it. A run that reported a tracked issue differs, then
+// said every derived theme already matches, reads as synchronized when it is
+// deliberately not.
+func TestWithheldRunDoesNotClaimTheBacklogMatches(t *testing.T) {
+	var out bytes.Buffer
+
+	if err := applyPlan(plan{WithheldUpdates: 1}, &fakeStore{}, &out); err != nil {
+		t.Fatalf("applyPlan: %v", err)
+	}
+
+	if strings.Contains(out.String(), "already matches") {
+		t.Errorf("a withheld run claimed the backlog matches:\n%s", out.String())
+	}
+
+	if !strings.Contains(out.String(), "no writes performed") {
+		t.Errorf("a withheld run must still say it wrote nothing, got:\n%s", out.String())
+	}
+
+	// CONTROL — a genuinely clean run keeps the original wording, so the
+	// assertion above is attributable to the withheld count.
+	var clean bytes.Buffer
+	if err := applyPlan(plan{}, &fakeStore{}, &clean); err != nil {
+		t.Fatalf("control applyPlan: %v", err)
+	}
+
+	if !strings.Contains(clean.String(), "already matches") {
+		t.Fatalf("control did not flip, got:\n%s", clean.String())
+	}
+}
+
+// TestBodyBoundsTheComponentListButNotTheCount keeps a broadly-failing control
+// from rendering a body GitHub refuses. applyPlan stops at the first failure, so
+// one oversized issue would block every remaining action in the run — not just
+// its own.
+func TestBodyBoundsTheComponentListButNotTheCount(t *testing.T) {
+	components := make([]string, maxListedComponents+25)
+	for i := range components {
+		components[i] = fmt.Sprintf("ns-%04d/Deployment/workload-%04d", i, i)
+	}
+
+	body := renderBody(postureTheme("C-0016", components...))
+
+	if !strings.Contains(body, fmt.Sprintf("**Affected components (%d):**", len(components))) {
+		t.Error("the true component count must survive truncation")
+	}
+
+	if got := strings.Count(body, "\n- `"); got != maxListedComponents {
+		t.Errorf("listed %d components, want %d", got, maxListedComponents)
+	}
+
+	if !strings.Contains(body, "…and 25 more") {
+		t.Errorf("the omission is not disclosed:\n%s", body[len(body)-400:])
+	}
+
+	if len(body) >= githubIssueBodyLimit {
+		t.Errorf("body is %d chars, over GitHub's %d limit", len(body), githubIssueBodyLimit)
+	}
+
+	// CONTROL — a theme under the bound must render every component and say
+	// nothing about omissions, so the truncation above is attributable to size.
+	small := renderBody(postureTheme("C-0016", "apps/Deployment/web", "db/StatefulSet/pg"))
+	if strings.Count(small, "\n- `") != 2 || strings.Contains(small, "more (") {
+		t.Errorf("control did not flip:\n%s", small)
+	}
+}
+
+// TestTruncatedBodyIsStable protects the anti-churn guarantee across the new
+// branch: an unstable truncation would make every run an update.
+func TestTruncatedBodyIsStable(t *testing.T) {
+	components := make([]string, maxListedComponents+3)
+	for i := range components {
+		components[i] = fmt.Sprintf("ns-%04d/Deployment/workload-%04d", i, i)
+	}
+
+	first := renderBody(postureTheme("C-0016", components...))
+	if second := renderBody(postureTheme("C-0016", components...)); first != second {
+		t.Error("a truncated body is not byte-stable across renders")
+	}
+}
+
+// TestFirstCreateProvisionsTheOwnershipLabel covers a failure that only ever
+// appears on a repository this command has never run against — which is exactly
+// when nobody is watching. `gh issue create --label` associates an existing
+// label; it does not create one, so without this the first untracked theme
+// fails and applyPlan's stop-at-first-failure blocks the whole run.
+func TestFirstCreateProvisionsTheOwnershipLabel(t *testing.T) {
+	var args [][]string
+
+	store := &ghStore{repo: "o/r", run: func(a ...string) ([]byte, error) {
+		args = append(args, a)
+
+		return []byte("https://github.com/o/r/issues/7\n"), nil
+	}}
+
+	if _, err := store.create("t", "b"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if len(args) != 2 {
+		t.Fatalf("want a label call then a create call, got %v", args)
+	}
+
+	if args[0][0] != "label" || args[0][1] != "create" || args[0][2] != bridgeLabel {
+		t.Errorf("the label was not provisioned first: %v", args[0])
+	}
+
+	if !slices.Contains(args[0], "--force") {
+		t.Errorf("label provisioning must be idempotent: %v", args[0])
+	}
+
+	if args[1][0] != "issue" || args[1][1] != "create" {
+		t.Errorf("the second call is not the create: %v", args[1])
+	}
+
+	// A second create must NOT re-ask: one call per run, not one per issue.
+	if _, err := store.create("t2", "b2"); err != nil {
+		t.Fatalf("second create: %v", err)
+	}
+
+	if len(args) != 3 {
+		t.Fatalf("the label check repeated per issue: %v", args)
 	}
 }
