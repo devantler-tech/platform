@@ -1206,9 +1206,12 @@ func TestScannerDerivedFieldsAreBoundedInTheBody(t *testing.T) {
 	// body under the limit cannot be explained by the component cap alone.
 	const hostile = 70000
 
+	// Deliberately fenced with "-": a cutset trim in the measurement below would
+	// eat those, so the fixture carries the shape that would expose it rather
+	// than a value that happens to avoid the question.
 	components := make([]string, maxListedComponents+5)
 	for i := range components {
-		components[i] = fmt.Sprintf("ns-%04d/Deployment/", i) + strings.Repeat("x", hostile)
+		components[i] = fmt.Sprintf("-ns-%04d/Deployment/", i) + strings.Repeat("x", hostile) + "-"
 	}
 
 	th := postureTheme("C-0016", components...)
@@ -1232,7 +1235,13 @@ func TestScannerDerivedFieldsAreBoundedInTheBody(t *testing.T) {
 				t.Errorf("severity rendered %d runes, over the %d bound", got, maxRenderedFieldRunes)
 			}
 		case strings.HasPrefix(line, "- `"):
-			if got := utf8.RuneCountInString(strings.Trim(line, "- `")); got > maxRenderedFieldRunes {
+			// Trimmed by exact prefix and suffix, NOT with strings.Trim: that
+			// takes a cutset, so it would also eat any leading or trailing "-",
+			// space or backtick belonging to the component itself. The error
+			// runs the unsafe way — it under-reports the rendered length, so an
+			// over-long value could measure inside the bound and pass.
+			value := strings.TrimSuffix(strings.TrimPrefix(line, "- `"), "`")
+			if got := utf8.RuneCountInString(value); got > maxRenderedFieldRunes {
 				t.Errorf("a component rendered %d runes, over the %d bound", got, maxRenderedFieldRunes)
 			}
 		}
