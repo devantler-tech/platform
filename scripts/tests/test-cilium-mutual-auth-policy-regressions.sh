@@ -79,6 +79,27 @@ specs:
             matchExpressions: []
         authentication:
           mode: required
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: broad-cnp-omitted-sources
+spec:
+  endpointSelector: {}
+  ingress:
+    - authentication:
+        mode: required
+---
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: broad-ccnp-empty-sources
+specs:
+  - endpointSelector: {}
+    ingress:
+      - fromEndpoints: []
+        authentication:
+          mode: required
 EOF
 
 if broad_output="$(run_guard 2>&1)"; then
@@ -88,7 +109,9 @@ for expected_name in \
   broad-cnp-empty-map \
   broad-ccnp-empty-labels \
   broad-cnp-empty-expressions \
-  broad-ccnp-specs-empty-fields; do
+  broad-ccnp-specs-empty-fields \
+  broad-cnp-omitted-sources \
+  broad-ccnp-empty-sources; do
   grep -Fq -- "${expected_name}" <<<"${broad_output}" ||
     fail "the guard did not identify ${expected_name}"
 done
@@ -123,6 +146,30 @@ specs:
                   - trusted
         authentication:
           mode: required
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: narrow-cnp-entity
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEntities:
+        - cluster
+      authentication:
+        mode: required
+---
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: narrow-ccnp-cidr
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromCIDR:
+        - 10.0.0.0/8
+      authentication:
+        mode: required
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease

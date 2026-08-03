@@ -41,17 +41,33 @@ broad_authenticated_policies="$({
       } |
       {
         "name": .name,
-        "broadSelectors": [
+        "broadRules": [
           .rules[] |
           select(.authentication.mode == "required") |
-          (.fromEndpoints // [])[]? |
           select(
-            ((((.matchLabels // {}) | length) == 0) and
-            (((.matchExpressions // []) | length) == 0))
+            (
+              [
+                (.fromEndpoints // [])[] |
+                select(
+                  ((((.matchLabels // {}) | length) == 0) and
+                  (((.matchExpressions // []) | length) == 0))
+                )
+              ] |
+              length > 0
+            ) or
+            (
+              (((.fromEndpoints // []) | length) == 0) and
+              (((.fromEntities // []) | length) == 0) and
+              (((.fromCIDR // []) | length) == 0) and
+              (((.fromCIDRSet // []) | length) == 0) and
+              (((.fromNodes // []) | length) == 0) and
+              (((.fromServices // []) | length) == 0) and
+              (((.fromRequires // []) | length) == 0)
+            )
           )
         ]
       } |
-      select((.broadSelectors | length) > 0) |
+      select((.broadRules | length) > 0) |
       .name
     ' -
 })" || fail 'the rendered Cilium policy inspection must succeed'
