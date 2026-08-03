@@ -24,11 +24,7 @@
 # may not yet know a peer's identity. Left false, strict mode fails CLOSED on
 # that node-identity traffic too, dropping the cilium-agent SPIRE mutual-auth
 # handshake (TCP 4250) and cilium-health host probes (TCP 4240) to the
-# not-yet-propagated peer. That black-holes the mTLS the hetzner
-# require-mutual-auth policy demands, so every auth-gated cross-node pod flow
-# to/from a freshly churned node stalls (observed: KEDA http-add-on scaler
-# CrashLoopBackOff, Longhorn replica-rebuild storms, the umami provisioner and
-# coroot-heartbeat failing, cilium-health "2/9 reachable"). true exempts only
+# not-yet-propagated peer. true exempts only
 # node-IDENTITY traffic from the strict drop (it may briefly ride unencrypted
 # during that window, then converges to WireGuard); pod-to-pod traffic across
 # the egress CIDR below stays fail-closed. The earlier "CIDRs don't overlap so

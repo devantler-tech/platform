@@ -90,6 +90,7 @@ jobs:
               - 'go.mod'
               - 'go.sum'
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
+              - 'scripts/tests/test-cilium-mutual-auth-policy.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh'
@@ -269,6 +270,12 @@ jobs:
         # regress the Hetzner WireGuard settings. Bash plus the kubectl bundled
         # on the GitHub-hosted runner; no cluster or secrets required.
         run: bash scripts/tests/test-cilium-bandwidth-manager-component.sh
+
+      - name: 🔐 Validate Cilium mutual-auth policy scope
+        if: needs.changes.outputs.k8s == 'true'
+        # An authentication stanza is still an allow rule. Reject a cluster-wide
+        # empty fromEndpoints selector before it can bypass workload allow-lists.
+        run: bash scripts/tests/test-cilium-mutual-auth-policy.sh
 
       - name: 🌐 Validate active Cilium device selection
         if: needs.changes.outputs.k8s == 'true' || needs.changes.outputs.bridge_validation == 'true'

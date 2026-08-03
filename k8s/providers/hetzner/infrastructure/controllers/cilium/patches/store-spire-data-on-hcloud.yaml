@@ -3,31 +3,17 @@
 # (hcloud-csi) instead of Longhorn, to break a circular dependency that wedges
 # the whole cluster.
 #
-# spire-server issues the SVIDs that satisfy the require-mutual-auth policy, so
-# it sits IN the pod-to-pod mTLS data path. By default its single-replica
-# StatefulSet binds a ReadWriteOnce PVC to the cluster-default StorageClass
-# (longhorn). Longhorn's OWN control plane is pod-to-pod traffic
-# (longhorn-csi-plugin -> longhorn-backend:9500 -> instance-managers), so it is
-# itself behind the mTLS gate. That creates a deadlock:
+# Keep the SPIRE datastore independent from the cluster-default Longhorn
+# StorageClass. Longhorn's own control plane is pod-to-pod traffic
+# (longhorn-csi-plugin -> longhorn-backend:9500 -> instance-managers), so using
+# hcloud-csi avoids coupling SPIRE recovery to Longhorn recovery during node
+# rolls or storage incidents.
 #
-#   SPIRE down -> Longhorn control plane black-holed (no SVIDs) -> cannot
-#   attach spire-server's PVC -> spire-server cannot start -> no SVIDs -> loop.
-#
-# GitOps cannot self-heal out of it either, because helm-controller ->
-# source-controller is on the same black-holed path. This took prod fully down
-# during the Talos 1.12.4 -> 1.13.3 node roll on 2026-06-06 (every Flux
-# Kustomization + ~30 HelmReleases stuck on "context deadline exceeded" reaching
-# source-controller; devantler-tech/platform).
-#
-# hcloud-csi removes the dependency: a Hetzner Cloud Volume is attached/detached
-# via the Hetzner API by the hcloud CSI controller (talks to its sidecars over a
-# unix socket and to the Hetzner API over the internet — never pod-to-pod), so
-# it attaches even while SPIRE is down. A single cloud block device also
-# survives node death and re-attaches to the replacement node, so unlike a
-# Longhorn volume whose replicas all sat on the workers that rolled together, it
-# is not faulted by a node roll. mTLS stays fully enforced everywhere and
-# WireGuard still encrypts every byte on the wire — this changes only WHERE
-# spire-server keeps its SQLite datastore.
+# hcloud-csi attaches/detaches a Hetzner Cloud Volume via the Hetzner API (not
+# pod-to-pod), and the single cloud block device survives node death and
+# re-attaches to the replacement node. WireGuard still encrypts pod-to-pod
+# traffic on the wire — this changes only WHERE spire-server keeps its SQLite
+# datastore.
 #
 # size: 10Gi is the Hetzner Cloud Volume minimum (the SPIRE datastore needs
 # ~1Gi; the chart default 1Gi is rejected by csi.hetzner.cloud). The `hcloud`

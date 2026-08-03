@@ -114,11 +114,9 @@ spec:
                 - |
                   set -u
                   BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
-                  # This cluster enforces Cilium mutual authentication
-                  # (CiliumClusterwideNetworkPolicy require-mutual-auth, mode:
-                  # required). The FIRST packet from this short-lived pod to coroot
-                  # is dropped while the SPIRE handshake is established, so a single
-                  # un-retried in-cluster call intermittently fails (curl exit /
+                  # In-cluster calls from this short-lived pod to coroot can see
+                  # transient first-packet or endpoint-readiness failures, so a
+                  # single un-retried call intermittently fails (curl exit /
                   # HTTP 000). The project-discovery loop below already absorbs that
                   # for /api/user, but the pricing GET + POST ran exactly once and so
                   # flapped: a dropped GET skips the "already correct" short-circuit

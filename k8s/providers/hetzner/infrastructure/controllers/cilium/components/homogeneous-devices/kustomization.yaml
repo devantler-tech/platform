@@ -50,11 +50,8 @@
 # the node-address selection of the running 1.20.0-pre.4 is not documented
 # precisely enough to TRUST that the primary stays private — the 2026-06-19
 # incident showed device-set changes can flip it. So: activate one node at a
-# time and verify before proceeding (runbook below). Note the SPIRE
-# mutual-auth dial itself is intermittently public-IP-bound REGARDLESS of
-# this selection (upstream cilium/cilium#46767, random node-IP pick); that
-# pre-existing defect is tracked separately and is NOT widened by this
-# component as long as the primary/routing address stays private.
+# time and verify before proceeding (runbook below). Cilium node-control traffic
+# must continue to use the private path admitted by the Talos firewall.
 #
 # ROLLOUT GATE (why this component ALSO sets updateStrategy OnDelete): the
 # base HelmRelease's `rollOutCiliumPods: true` would start an automatic
