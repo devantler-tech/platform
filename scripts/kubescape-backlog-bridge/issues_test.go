@@ -1524,17 +1524,27 @@ func TestNormalizeDispositionBridgesThreeVocabularies(t *testing.T) {
 		t.Fatal("raw list spelling equals the internal one; this test no longer guards anything")
 	}
 
-	for raw, want := range map[string]string{
-		"COMPLETED":   dispositionCompleted,
-		"NOT_PLANNED": dispositionNotPlanned,
-		"not_planned": dispositionNotPlanned,
-		" COMPLETED ": dispositionCompleted,
-		"":            "",
-		"DUPLICATE":   "",
-		"nonsense":    "",
-	} {
-		if got := normalizeDisposition(raw); got != want {
-			t.Errorf("normalizeDisposition(%q) = %q, want %q", raw, got, want)
+	// A slice rather than a map: one case deliberately carries surrounding
+	// whitespace, and gocritic's mapKey check reads a padded map key as a typo
+	// (correctly — in a map literal it usually is). The padding is the point
+	// here, so the table states it as data instead of encoding it in a key.
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"the two spellings gh issue list actually emits", "COMPLETED", dispositionCompleted},
+		{"", "NOT_PLANNED", dispositionNotPlanned},
+		{"REST's own spelling, accepted for free", "not_planned", dispositionNotPlanned},
+		{"padded — a value must not depend on trimming upstream", " COMPLETED ", dispositionCompleted},
+		{"an open issue reports no reason at all", "", ""},
+		{"a reason this command never writes but a human can", "DUPLICATE", ""},
+		{"anything unrecognised is not guessed into a default", "nonsense", ""},
+	}
+
+	for _, c := range cases {
+		if got := normalizeDisposition(c.raw); got != c.want {
+			t.Errorf("normalizeDisposition(%q) = %q, want %q  [%s]", c.raw, got, c.want, c.name)
 		}
 	}
 }
