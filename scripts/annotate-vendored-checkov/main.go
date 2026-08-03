@@ -200,7 +200,7 @@ func annotateDocument(lines []string, target targetSpec) ([]string, error) {
 		}
 	}
 
-	insertAt := annotationsEnd
+	var insertAt int
 	if annotationsIndex == -1 {
 		annotationsIndex = metadataIndex + 1
 		insertAt = annotationsIndex + 1
