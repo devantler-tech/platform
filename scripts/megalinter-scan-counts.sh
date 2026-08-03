@@ -45,7 +45,7 @@ set -euo pipefail
 readonly CI_CHECKOV_VERSION='3.3.2'
 readonly CI_TRIVY_VERSION='0.71.2'
 
-# The frameworks MegaLinter's checkov run reports, and their contribution to CI's total of 73.
+# The frameworks MegaLinter's checkov run reports, and their current contribution to the CI total.
 #
 # A missing framework is REPORTED, never refused, because the two causes are indistinguishable from
 # checkov's output alone: a framework whose last finding is fixed stops emitting a section entirely
@@ -57,7 +57,7 @@ readonly CI_TRIVY_VERSION='0.71.2'
 # What protects against the known defect is structural rather than a check: this script always runs
 # checkov from the repository root with a literal ".", the invocation whose absence caused the
 # kubernetes framework to vanish in the first place.
-readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:42 secrets:31 github_actions:0)
+readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:18 secrets:0 github_actions:0)
 
 # A parsing error means a file was NOT analysed, so findings can hide behind it. CI's run has
 # exactly one (in the cloudformation framework) and so does a correct local run, which is why this
@@ -142,8 +142,9 @@ scan_checkov() {
   printf 'Running checkov (this takes ~1 minute)...\n' >&2
   # --directory MUST be the literal "." from the repository root, as CI runs it. Passing an
   # absolute path instead makes checkov's kubernetes framework return NOTHING — it disappears from
-  # the report entirely and the total silently drops from 73 to 31, with no error. Reproduced both
-  # with and without --skip-path, so it is the absolute path itself.
+  # the report entirely and, in the historical pre-#2899 reproduction, silently dropped the total
+  # from 73 to 31 with no error. Reproduced both with and without --skip-path, so it is the absolute
+  # path itself.
   (cd "$REPO_ROOT" && checkov --skip-path tests/ --skip-framework kustomize \
     --directory . --compact --quiet) >"$out" 2>&1 || rc=$?
   if [ "$rc" -gt 1 ]; then
@@ -153,8 +154,8 @@ scan_checkov() {
   fi
   # Every framework CI reports must be present. "At least one section" is not enough: a silently
   # dropped framework is the failure mode already seen here — an absolute --directory removes the
-  # whole kubernetes framework and its 42 findings while the other three still report, so the run
-  # looks healthy and the total is simply 42 lower.
+  # whole kubernetes framework and its then-current 42 findings while the other three still report,
+  # so the historical run looked healthy and the total was simply 42 lower.
   local absent='' entry fw baseline
   for entry in "${CI_CHECKOV_FRAMEWORKS[@]}"; do
     fw="${entry%%:*}"

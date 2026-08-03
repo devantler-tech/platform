@@ -105,6 +105,44 @@ The scan is a **hard gate**: it fails the PR if the NSA compliance score drops b
 - **ksail is Renovate-managed** (the Setup step, grouped `ksail` with the deploy pins). It was previously frozen at 7.65.0 because 7.66.x parallelised the in-process Helm render and made it racy — two distinct symptoms of the same regression: `ksail workload validate` non-deterministically corrupted the render with varying YAML parse errors ([devantler-tech/ksail#5362](https://github.com/devantler-tech/ksail/issues/5362), closed — contained since KSail v7.163.1 by the [ksail#5978](https://github.com/devantler-tech/ksail/issues/5978) stream-splitting fix, which is what let the temporary `--skip-helm-render` workaround be removed), and the scan's compliance score swung run-to-run ([devantler-tech/ksail#5371](https://github.com/devantler-tech/ksail/issues/5371), closed). Both are resolved upstream, so the pin is lifted back onto the latest release. Tripwire (kept in sync with the comments in `.github/workflows/ci.yaml`): if `validate` output or the `scan` score varies run-to-run again, re-add `--skip-helm-render` and reopen ksail#5362 (or re-pin to a known-good version, reopening #5371 if only the score swings).
 - **The threshold is a regression floor, not the actual score — and the scan runs WITH the platform's justified exceptions applied.** The `ClusterSecurityException` CRs (`k8s/bases/infrastructure/cluster-security-exceptions/` — the single source of truth, consumed in-cluster by the kubescape-operator) are converted at scan time into Kubescape's native exceptions format by [`scripts/generate-kubescape-exceptions`](scripts/generate-kubescape-exceptions) (fail-closed: an unrecognised CR shape aborts the scan step rather than silently dropping or widening an exception; Go unit tests alongside it), so runtime-enforced (Kyverno mutation, `CiliumNetworkPolicy`) and except-only findings (e.g. **C-0002**, the KubeVirt operator's `pods/exec` RBAC) no longer depress the score and the floor gates the residual REAL posture (#2264). The score has historically been **environment-dependent** (Linux CI runner vs macOS — a gap that is *not* the render mode, the framework cache, or PR-merge content, all ruled out) and shifts with the ksail render, so **CI is the source of truth** (re-baseline the floor after a ksail bump); the observed CI reference with exceptions applied is **≈98.9%** (2026-07-11, ksail 7.165.2), with the floor a few points under it. A new justified exception is added as a CSE CR (kind+name-scoped, minimal — see the existing CRs' conventions), never by lowering the floor: **ratchet up** as genuine gaps close; never lower it.
 
+### Updating Vendored Operator Bundles
+
+The CDI and KubeVirt operator files are pinned upstream release bundles. Refresh them only through
+[`scripts/update-vendored-operators.sh`](scripts/update-vendored-operators.sh): edit its two version
+and SHA-256 constants and run it from any directory in this repository. The updater downloads the
+pinned release assets, reapplies the reviewed resource-scoped Checkov dispositions with the tested
+`scripts/annotate-vendored-checkov` helper, and runs Checkov before replacing either committed file.
+It requires `curl`, `go`, `sha256sum`, and the Checkov version pinned in the script on the local path.
+
+This convention deliberately keeps the suppressions narrow: only the named upstream ClusterRole and
+Deployment receive annotations, no Checkov check is disabled repository-wide, and an unrelated new
+finding still fails the update. A vendor rename/removal also fails closed because the annotator
+requires exactly one of every expected target. Do not hand-edit the generated bundles or fetch them
+directly; the updater is what makes a future vendor bump retain the dispositions instead of silently
+reintroducing the scanner backlog (#2899).
+The updater scans the unannotated asset first and refuses a disposition that no longer corresponds
+to a current upstream finding, then scans the annotated result across both the Kubernetes and secrets
+frameworks. That keeps an upstream fix from leaving a stale exception and prevents embedded secret
+material from slipping through the non-blocking repository backlog scan.
+The scan runs with an isolated home, empty Checkov config, and no inherited `CKV_*` environment;
+upstream annotation and inline-comment suppressions are rejected before either framework runs.
+The secrets scan adds one synthetic AWS-key canary and requires Checkov's explicit `secrets` report
+to contain exactly that finding, so an empty or silently omitted secrets framework cannot pass.
+Each reviewed finding also pins its Checkov evaluated keys and a line-number-independent fingerprint
+of the affected resource in `scripts/annotate-vendored-checkov/main.go`. A real vendor bump that
+changes either target therefore stops before replacement. Review the upstream resource diff and the
+new finding evidence before updating those keys or fingerprints alongside the version and asset
+digest; never copy a reported fingerprint without inspecting the changed resource.
+CI runs the updater's offline `--validate-committed` mode, removes only those exact configured
+disposition lines, requires the remaining bytes to match the pinned upstream SHA-256, and binds each
+release version to the operator image tag in that source. Any other manual or automated rewrite of a
+generated bundle, or a mismatched version/digest pair, therefore fails before merge.
+Its isolated-file scan excludes CKV2_K8S_6 only: Checkov does not model the committed
+`CiliumNetworkPolicy` that protects every CDI endpoint, while the full-repository CI scan retains the
+check and remains authoritative for graph findings. Before applying that file-level exclusion, the
+source validator requires every bundled workload to remain in the corresponding `cdi` or `kubevirt`
+namespace covered by those policies.
+
 ## Local Development Cluster
 
 **Primary method (requires KSail + Docker):**
