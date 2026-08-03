@@ -652,6 +652,42 @@ func TestSourceValidationRejectsWorkloadOutsideProtectedNamespace(t *testing.T) 
 	}
 }
 
+func TestSourceValidationRejectsWorkloadWithoutMetadata(t *testing.T) {
+	t.Parallel()
+
+	input := `apiVersion: apps/v1
+kind: Deployment
+spec: {}
+`
+	_, stderr, err := runAnnotator(t, "cdi", input, "--validate-source")
+	if err == nil {
+		t.Fatal("source validator accepted a workload without metadata")
+	}
+	if !strings.Contains(stderr, "Deployment metadata is missing") {
+		t.Fatalf("stderr did not name the missing workload metadata: %q", stderr)
+	}
+}
+
+func TestSourceValidationRejectsYAMLMergeSuppression(t *testing.T) {
+	t.Parallel()
+
+	input := `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: merged-suppression
+  annotations:
+    <<: &suppression
+      checkov.io/skip1: CKV_K8S_99=upstream suppression
+`
+	_, stderr, err := runAnnotator(t, "cdi", input, "--validate-source")
+	if err == nil {
+		t.Fatal("source validator accepted a Checkov suppression inherited through a YAML merge")
+	}
+	if !strings.Contains(stderr, "YAML merge key") {
+		t.Fatalf("stderr did not name the YAML merge key: %q", stderr)
+	}
+}
+
 func TestSourceValidationRejectsNestedListWorkloadOutsideProtectedNamespace(t *testing.T) {
 	t.Parallel()
 

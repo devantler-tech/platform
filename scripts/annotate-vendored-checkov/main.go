@@ -455,6 +455,9 @@ func validateVendorSource(input []byte, bundle string) error {
 		if err := rejectInlineCheckovSuppression(&document); err != nil {
 			return fmt.Errorf("vendor document %d contains %w", documentIndex, err)
 		}
+		if err := rejectYAMLMergeKey(&document); err != nil {
+			return fmt.Errorf("vendor document %d contains %w", documentIndex, err)
+		}
 		root := document.Content[0]
 		if root.Kind != yaml.MappingNode {
 			return fmt.Errorf("vendor document %d must contain a top-level mapping", documentIndex)
@@ -468,11 +471,15 @@ func validateVendorSource(input []byte, bundle string) error {
 func validateVendorResource(root *yaml.Node, protectedNamespace string) error {
 	kind := mappingScalar(root, "kind")
 	metadata := mappingValue(root, "metadata")
+	_, workload := workloadKinds[kind]
+	if workload && metadata == nil {
+		return fmt.Errorf("%s metadata is missing", kind)
+	}
 	if metadata != nil {
 		if metadata.Kind != yaml.MappingNode {
 			return errors.New("metadata must be a mapping")
 		}
-		if _, workload := workloadKinds[kind]; workload {
+		if workload {
 			name := mappingScalar(metadata, "name")
 			namespace := mappingScalar(metadata, "namespace")
 			if namespace != protectedNamespace {
@@ -876,6 +883,23 @@ func rejectInlineCheckovSuppression(node *yaml.Node) error {
 	}
 	for _, child := range node.Content {
 		if err := rejectInlineCheckovSuppression(child); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rejectYAMLMergeKey(node *yaml.Node) error {
+	if node.Kind == yaml.MappingNode {
+		for index := 0; index+1 < len(node.Content); index += 2 {
+			key := node.Content[index]
+			if key.Value == "<<" || key.Tag == "!!merge" {
+				return errors.New("YAML merge key")
+			}
+		}
+	}
+	for _, child := range node.Content {
+		if err := rejectYAMLMergeKey(child); err != nil {
 			return err
 		}
 	}
