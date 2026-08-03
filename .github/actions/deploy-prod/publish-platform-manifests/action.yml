@@ -6,11 +6,28 @@ description: >-
 
 inputs:
   ghcr-token:
-    description: GHCR PAT with write:packages for push, signing, attestation, and promotion.
+    description: >-
+      GHCR PAT with write:packages for push, signing, attestation, and
+      promotion, and read:packages for reading the evidence back. The
+      evidence-verification step below reuses this token as GH_TOKEN for
+      `gh attestation verify --bundle-from-oci`, which reads each bundle from
+      the registry beside the image rather than from the GitHub Attestations
+      API — the attestations are published with `create-storage-record: false`,
+      so no API record exists to read. A token that cannot read the package
+      makes that call fail for authorization rather than for absent evidence,
+      and the two are indistinguishable in the verdict.
     required: true
   hcloud-token:
     description: Hetzner Cloud API token required while KSail loads the production config.
     required: true
+  enforce-evidence-verification:
+    description: >-
+      Fail the deploy when the published evidence cannot be verified. Default-off
+      while the gate proves itself on real deploys: a verification wrong about the
+      identity or issuer would break every production deploy, so it earns the
+      right to block by first being observed passing (platform#2859).
+    required: false
+    default: "false"
 
 outputs:
   digest:
@@ -118,6 +135,23 @@ runs:
         subject-name: ghcr.io/devantler-tech/platform/manifests
         push-to-registry: true
         create-storage-record: false
+
+    - name: 🔍 Verify the published evidence before promoting
+      id: verify_evidence
+      shell: bash
+      env:
+        ENFORCE: ${{ inputs.enforce-evidence-verification }}
+        GH_TOKEN: ${{ inputs.ghcr-token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}
+        SUBJECT_NAME: ghcr.io/devantler-tech/platform/manifests
+        WORKFLOW_REF: ${{ github.workflow_ref }}
+      # Every step above can report success while leaving no usable evidence in
+      # the registry, and the promotion below is the point of no return: once
+      # latest names these bytes, production follows them within the minute. Ask
+      # the registry what it actually holds before that, rather than inferring it
+      # from the fact that the steps ran.
+      run: ./scripts/verify-published-evidence.sh "${STAGING_DIGEST}"
 
     - name: 🚀 Promote the evidenced digest to latest
       id: promote_latest
