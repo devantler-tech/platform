@@ -7,12 +7,15 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -25,10 +28,11 @@ const (
 )
 
 type targetSpec struct {
-	kind   string
-	name   string
-	checks []string
-	reason string
+	kind                string
+	name                string
+	checks              []string
+	reason              string
+	resourceFingerprint string
 }
 
 type manifestIdentity struct {
@@ -42,8 +46,12 @@ type checkovReport struct {
 	CheckType string `json:"check_type"`
 	Results   struct {
 		FailedChecks []struct {
-			CheckID  string `json:"check_id"`
-			Resource string `json:"resource"`
+			CheckID     string  `json:"check_id"`
+			Resource    string  `json:"resource"`
+			CodeBlock   [][]any `json:"code_block"`
+			CheckResult struct {
+				EvaluatedKeys []string `json:"evaluated_keys"`
+			} `json:"check_result"`
 		} `json:"failed_checks"`
 	} `json:"results"`
 	Summary checkovSummary `json:"summary"`
@@ -54,14 +62,17 @@ type checkovSummary struct {
 	ParsingErrors *int `json:"parsing_errors"`
 }
 
+// resourceFingerprint hashes Checkov's resource code_block without its source
+// line numbers. A vendor refresh must therefore re-review any target change,
+// including a known check moving to a different container or field.
 var bundleTargets = map[string][]targetSpec{
 	"cdi": {
-		{kind: "ClusterRole", name: "cdi-operator-cluster", checks: []string{"CKV_K8S_155"}, reason: clusterRoleReason},
-		{kind: "Deployment", name: "cdi-operator", checks: deploymentChecks(), reason: deploymentReason},
+		{kind: "ClusterRole", name: "cdi-operator-cluster", checks: []string{"CKV_K8S_155"}, reason: clusterRoleReason, resourceFingerprint: "df06bcec640e27ea586a8d12bffa509558eb8a244978a0de46c35743ec85341e"},
+		{kind: "Deployment", name: "cdi-operator", checks: deploymentChecks(), reason: deploymentReason, resourceFingerprint: "f81c6d025990a3a550fbe12e38033c8c0c4e3d4397dc14c357c7c6dc601abe07"},
 	},
 	"kubevirt": {
-		{kind: "ClusterRole", name: "kubevirt-operator", checks: []string{"CKV_K8S_155"}, reason: clusterRoleReason},
-		{kind: "Deployment", name: "virt-operator", checks: deploymentChecks(), reason: deploymentReason},
+		{kind: "ClusterRole", name: "kubevirt-operator", checks: []string{"CKV_K8S_155"}, reason: clusterRoleReason, resourceFingerprint: "6eb8526d222f837be3a38f82c18710be5f64aa10e27cbe741b7707198b3df842"},
+		{kind: "Deployment", name: "virt-operator", checks: deploymentChecks(), reason: deploymentReason, resourceFingerprint: "a983d7303c2daf4c74e806ddfe9caf3eb1f25c6238798716d6c80e124016b51e"},
 	},
 }
 
@@ -74,6 +85,28 @@ func deploymentChecks() []string {
 		"CKV_K8S_38",
 		"CKV_K8S_40",
 		"CKV_K8S_43",
+	}
+}
+
+func expectedEvaluatedKeys(check string) []string {
+	switch check {
+	case "CKV_K8S_11":
+		return []string{"spec/template/spec/containers/[0]/resources/limits/cpu"}
+	case "CKV_K8S_13":
+		return []string{"spec/template/spec/containers/[0]/resources/limits/memory"}
+	case "CKV_K8S_15":
+		return []string{
+			"spec/template/spec/containers/[0]/image",
+			"spec/template/spec/containers/[0]/imagePullPolicy",
+		}
+	case "CKV_K8S_22":
+		return []string{"spec/template/spec/containers/[0]/securityContext/readOnlyRootFilesystem"}
+	case "CKV_K8S_43":
+		return []string{"spec/template/spec/containers/[0]/image"}
+	case "CKV_K8S_38", "CKV_K8S_40", "CKV_K8S_155":
+		return []string{}
+	default:
+		return nil
 	}
 }
 
@@ -171,6 +204,31 @@ func validateCheckovFindings(input []byte, targets []targetSpec) error {
 				}
 				for _, check := range target.checks {
 					if failed.CheckID == check {
+						expectedKeys := expectedEvaluatedKeys(check)
+						if !slices.Equal(failed.CheckResult.EvaluatedKeys, expectedKeys) {
+							return fmt.Errorf(
+								"%s finding for %s/%s evaluated keys changed: found %v, want %v",
+								check,
+								target.kind,
+								target.name,
+								failed.CheckResult.EvaluatedKeys,
+								expectedKeys,
+							)
+						}
+						fingerprint, err := codeBlockFingerprint(failed.CodeBlock)
+						if err != nil {
+							return fmt.Errorf("fingerprint %s finding for %s/%s: %w", check, target.kind, target.name, err)
+						}
+						if fingerprint != target.resourceFingerprint {
+							return fmt.Errorf(
+								"%s finding for %s/%s resource fingerprint changed: found %s, want %s",
+								check,
+								target.kind,
+								target.name,
+								fingerprint,
+								target.resourceFingerprint,
+							)
+						}
 						found[target.kind+"/"+target.name+"/"+check]++
 					}
 				}
@@ -193,6 +251,29 @@ func validateCheckovFindings(input []byte, targets []targetSpec) error {
 		}
 	}
 	return nil
+}
+
+func codeBlockFingerprint(codeBlock [][]any) (string, error) {
+	if len(codeBlock) == 0 {
+		return "", errors.New("Checkov finding omits code_block")
+	}
+	hash := sha256.New()
+	for index, line := range codeBlock {
+		if len(line) != 2 {
+			return "", fmt.Errorf("code_block line %d has %d fields", index, len(line))
+		}
+		text, ok := line[1].(string)
+		if !ok {
+			return "", fmt.Errorf("code_block line %d text is %T", index, line[1])
+		}
+		if err := binary.Write(hash, binary.BigEndian, uint64(len(text))); err != nil {
+			return "", fmt.Errorf("hash code_block line %d length: %w", index, err)
+		}
+		if _, err := hash.Write([]byte(text)); err != nil {
+			return "", fmt.Errorf("hash code_block line %d: %w", index, err)
+		}
+	}
+	return fmt.Sprintf("%x", hash.Sum(nil)), nil
 }
 
 func decodeCheckovReports(input []byte, expectedFramework string, rejectFindings bool) ([]checkovReport, error) {

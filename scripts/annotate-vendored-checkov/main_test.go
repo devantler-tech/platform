@@ -51,7 +51,6 @@ func checkovFindingsFixture(t *testing.T, bundle, omittedCheck string) string {
 		deploymentNamespace = "kubevirt"
 	}
 
-	failedChecks := make([]map[string]string, 0, 8)
 	checks := []struct {
 		id       string
 		resource string
@@ -65,13 +64,24 @@ func checkovFindingsFixture(t *testing.T, bundle, omittedCheck string) string {
 		{id: "CKV_K8S_40", resource: "Deployment." + deploymentNamespace + "." + deploymentName},
 		{id: "CKV_K8S_43", resource: "Deployment." + deploymentNamespace + "." + deploymentName},
 	}
+	failedChecks := make([]map[string]any, 0, len(checks))
 	for _, check := range checks {
 		if check.id == omittedCheck {
 			continue
 		}
-		failedChecks = append(failedChecks, map[string]string{
-			"check_id": check.id,
-			"resource": check.resource,
+		kind := "Deployment"
+		name := deploymentName
+		if check.id == "CKV_K8S_155" {
+			kind = "ClusterRole"
+			name = clusterRoleName
+		}
+		failedChecks = append(failedChecks, map[string]any{
+			"check_id":   check.id,
+			"resource":   check.resource,
+			"code_block": fixtureCodeBlock(kind, name),
+			"check_result": map[string]any{
+				"evaluated_keys": expectedEvaluatedKeys(check.id),
+			},
 		})
 	}
 
@@ -90,6 +100,29 @@ func checkovFindingsFixture(t *testing.T, bundle, omittedCheck string) string {
 		t.Fatalf("encode Checkov fixture: %v", err)
 	}
 	return string(encoded)
+}
+
+func fixtureCodeBlock(kind, name string) [][]any {
+	return [][]any{
+		{1, "kind: " + kind},
+		{2, "metadata:"},
+		{3, "  name: " + name},
+		{4, "container: operator"},
+	}
+}
+
+func fixtureTargets(t *testing.T, bundle string) []targetSpec {
+	t.Helper()
+
+	targets := append([]targetSpec(nil), bundleTargets[bundle]...)
+	for index := range targets {
+		fingerprint, err := codeBlockFingerprint(fixtureCodeBlock(targets[index].kind, targets[index].name))
+		if err != nil {
+			t.Fatalf("fingerprint fixture target: %v", err)
+		}
+		targets[index].resourceFingerprint = fingerprint
+	}
+	return targets
 }
 
 func decodeDocuments(t *testing.T, input string) map[string]manifestDocument {
@@ -264,14 +297,12 @@ func TestFindingsValidationAcceptsEveryCurrentDisposition(t *testing.T) {
 	for _, bundle := range []string{"cdi", "kubevirt"} {
 		t.Run(bundle, func(t *testing.T) {
 			t.Parallel()
-			_, stderr, err := runAnnotator(
-				t,
-				bundle,
-				checkovFindingsFixture(t, bundle, ""),
-				"--validate-findings",
+			err := validateCheckovFindings(
+				[]byte(checkovFindingsFixture(t, bundle, "")),
+				fixtureTargets(t, bundle),
 			)
 			if err != nil {
-				t.Fatalf("current dispositions were rejected: %v\nstderr: %s", err, stderr)
+				t.Fatalf("current dispositions were rejected: %v", err)
 			}
 		})
 	}
@@ -280,17 +311,51 @@ func TestFindingsValidationAcceptsEveryCurrentDisposition(t *testing.T) {
 func TestFindingsValidationRejectsObsoleteDisposition(t *testing.T) {
 	t.Parallel()
 
-	_, stderr, err := runAnnotator(
-		t,
-		"cdi",
-		checkovFindingsFixture(t, "cdi", "CKV_K8S_43"),
-		"--validate-findings",
+	err := validateCheckovFindings(
+		[]byte(checkovFindingsFixture(t, "cdi", "CKV_K8S_43")),
+		fixtureTargets(t, "cdi"),
 	)
 	if err == nil {
 		t.Fatal("validator accepted a disposition whose finding disappeared upstream")
 	}
-	if !strings.Contains(stderr, "CKV_K8S_43") || !strings.Contains(stderr, "no longer matches") {
-		t.Fatalf("stderr did not name the obsolete disposition: %q", stderr)
+	if !strings.Contains(err.Error(), "CKV_K8S_43") || !strings.Contains(err.Error(), "no longer matches") {
+		t.Fatalf("error did not name the obsolete disposition: %v", err)
+	}
+}
+
+func TestFindingsValidationRejectsMovedViolation(t *testing.T) {
+	t.Parallel()
+
+	report := strings.Replace(
+		checkovFindingsFixture(t, "cdi", ""),
+		"spec/template/spec/containers/[0]/image",
+		"spec/template/spec/containers/[1]/image",
+		1,
+	)
+	err := validateCheckovFindings([]byte(report), fixtureTargets(t, "cdi"))
+	if err == nil {
+		t.Fatal("validator accepted a reviewed check after its violation moved to another container")
+	}
+	if !strings.Contains(err.Error(), "evaluated keys changed") {
+		t.Fatalf("error did not explain the changed finding evidence: %v", err)
+	}
+}
+
+func TestFindingsValidationRejectsChangedResourceFingerprint(t *testing.T) {
+	t.Parallel()
+
+	report := strings.Replace(
+		checkovFindingsFixture(t, "cdi", ""),
+		"container: operator",
+		"container: sidecar",
+		1,
+	)
+	err := validateCheckovFindings([]byte(report), fixtureTargets(t, "cdi"))
+	if err == nil {
+		t.Fatal("validator accepted changed resource evidence for an empty-key disposition")
+	}
+	if !strings.Contains(err.Error(), "resource fingerprint changed") {
+		t.Fatalf("error did not explain the changed resource evidence: %v", err)
 	}
 }
 
