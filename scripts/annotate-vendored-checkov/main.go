@@ -46,9 +46,12 @@ type checkovReport struct {
 			Resource string `json:"resource"`
 		} `json:"failed_checks"`
 	} `json:"results"`
-	Summary struct {
-		ParsingErrors *int `json:"parsing_errors"`
-	} `json:"summary"`
+	Summary checkovSummary `json:"summary"`
+}
+
+type checkovSummary struct {
+	Failed        *int `json:"failed"`
+	ParsingErrors *int `json:"parsing_errors"`
 }
 
 var bundleTargets = map[string][]targetSpec{
@@ -84,7 +87,17 @@ func main() {
 	validateReport := flag.Bool(
 		"validate-report",
 		false,
-		"validate that a Checkov JSON report contains no parsing errors",
+		"validate that a Checkov JSON report contains no parsing errors or failed checks",
+	)
+	validateSource := flag.Bool(
+		"validate-source",
+		false,
+		"validate that an upstream bundle contains no Checkov suppressions",
+	)
+	framework := flag.String(
+		"framework",
+		"",
+		"expected Checkov framework for --validate-report: kubernetes or secrets",
 	)
 	flag.Parse()
 	if flag.NArg() != 0 {
@@ -95,8 +108,17 @@ func main() {
 	if !ok {
 		fail("unsupported bundle %q", *bundle)
 	}
-	if *validateFindings && *validateReport {
-		fail("--validate-findings and --validate-report are mutually exclusive")
+	modeCount := 0
+	for _, enabled := range []bool{*validateFindings, *validateReport, *validateSource} {
+		if enabled {
+			modeCount++
+		}
+	}
+	if modeCount > 1 {
+		fail("validation modes are mutually exclusive")
+	}
+	if *validateReport && *framework != "kubernetes" && *framework != "secrets" {
+		fail("--validate-report requires --framework kubernetes or --framework secrets")
 	}
 
 	input, err := io.ReadAll(os.Stdin)
@@ -110,8 +132,14 @@ func main() {
 		return
 	}
 	if *validateReport {
-		if _, err := decodeCheckovReports(input); err != nil {
+		if _, err := decodeCheckovReports(input, *framework, true); err != nil {
 			fail("validate %s report: %v", *bundle, err)
+		}
+		return
+	}
+	if *validateSource {
+		if err := validateVendorSource(input); err != nil {
+			fail("validate %s source: %v", *bundle, err)
 		}
 		return
 	}
@@ -125,7 +153,7 @@ func main() {
 }
 
 func validateCheckovFindings(input []byte, targets []targetSpec) error {
-	reports, err := decodeCheckovReports(input)
+	reports, err := decodeCheckovReports(input, "kubernetes", false)
 	if err != nil {
 		return err
 	}
@@ -167,7 +195,7 @@ func validateCheckovFindings(input []byte, targets []targetSpec) error {
 	return nil
 }
 
-func decodeCheckovReports(input []byte) ([]checkovReport, error) {
+func decodeCheckovReports(input []byte, expectedFramework string, rejectFindings bool) ([]checkovReport, error) {
 	trimmed := strings.TrimSpace(string(input))
 	if trimmed == "" {
 		return nil, errors.New("checkov report is empty")
@@ -183,14 +211,36 @@ func decodeCheckovReports(input []byte) ([]checkovReport, error) {
 		if err := json.Unmarshal(input, &report); err != nil {
 			return nil, fmt.Errorf("decode Checkov report: %w", err)
 		}
+		if report.CheckType == "" && report.Summary.ParsingErrors == nil {
+			var summary checkovSummary
+			if err := json.Unmarshal(input, &summary); err != nil {
+				return nil, fmt.Errorf("decode Checkov summary: %w", err)
+			}
+			report.CheckType = expectedFramework
+			report.Summary = summary
+		}
 		reports = []checkovReport{report}
 	}
-	if len(reports) == 0 {
-		return nil, errors.New("checkov report contains no framework results")
+	matching := 0
+	for _, report := range reports {
+		if report.CheckType == expectedFramework {
+			matching++
+		}
+	}
+	if len(reports) != 1 || matching != 1 {
+		return nil, fmt.Errorf(
+			"expected exactly one %s report, found %d among %d framework result(s)",
+			expectedFramework,
+			matching,
+			len(reports),
+		)
 	}
 	for _, report := range reports {
 		if report.Summary.ParsingErrors == nil {
 			return nil, fmt.Errorf("%s report omits summary.parsing_errors", report.CheckType)
+		}
+		if report.Summary.Failed == nil {
+			return nil, fmt.Errorf("%s report omits summary.failed", report.CheckType)
 		}
 		if *report.Summary.ParsingErrors != 0 {
 			return nil, fmt.Errorf(
@@ -199,8 +249,55 @@ func decodeCheckovReports(input []byte) ([]checkovReport, error) {
 				*report.Summary.ParsingErrors,
 			)
 		}
+		failedCount := *report.Summary.Failed
+		if len(report.Results.FailedChecks) > failedCount {
+			failedCount = len(report.Results.FailedChecks)
+		}
+		if rejectFindings && failedCount != 0 {
+			return nil, fmt.Errorf("%s report reported %d failed check(s)", report.CheckType, failedCount)
+		}
 	}
 	return reports, nil
+}
+
+func validateVendorSource(input []byte) error {
+	decoder := yaml.NewDecoder(strings.NewReader(string(input)))
+	for documentIndex := 1; ; documentIndex++ {
+		var document yaml.Node
+		if err := decoder.Decode(&document); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("parse vendor document %d: %w", documentIndex, err)
+		}
+		if len(document.Content) == 0 || document.Content[0].Kind == 0 {
+			continue
+		}
+		root := document.Content[0]
+		if root.Kind != yaml.MappingNode {
+			return fmt.Errorf("vendor document %d must contain a top-level mapping", documentIndex)
+		}
+		metadata := mappingValue(root, "metadata")
+		if metadata == nil {
+			continue
+		}
+		if metadata.Kind != yaml.MappingNode {
+			return fmt.Errorf("vendor document %d metadata must be a mapping", documentIndex)
+		}
+		annotations := mappingValue(metadata, "annotations")
+		if annotations == nil {
+			continue
+		}
+		if annotations.Kind != yaml.MappingNode {
+			return fmt.Errorf("vendor document %d metadata.annotations must be a mapping", documentIndex)
+		}
+		for index := 0; index+1 < len(annotations.Content); index += 2 {
+			key := annotations.Content[index].Value
+			if strings.HasPrefix(key, "checkov.io/skip") {
+				return fmt.Errorf("vendor document %d contains upstream Checkov suppression %s", documentIndex, key)
+			}
+		}
+	}
 }
 
 func fail(format string, args ...any) {

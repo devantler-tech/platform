@@ -34,24 +34,64 @@ require_tool() {
   fi
 }
 
+run_clean_framework_scan() {
+  local bundle="$1"
+  local phase="$2"
+  local manifest="$3"
+  local framework="$4"
+  local report="$5"
+  local checkov_rc=0
+  local -a checkov_args=(
+    --file "${manifest}"
+    --framework "${framework}"
+    --output json
+    --quiet
+  )
+  if [ "${framework}" = 'kubernetes' ]; then
+    checkov_args+=(--skip-check "${isolated_scan_skip_check}")
+  fi
+
+  checkov "${checkov_args[@]}" >"${report}" || checkov_rc=$?
+  (
+    cd "${repo_root}"
+    go run ./scripts/annotate-vendored-checkov --bundle "${bundle}" \
+      --validate-report --framework "${framework}" <"${report}"
+  )
+  if [ "${checkov_rc}" -ne 0 ]; then
+    printf 'checkov rejected the %s %s %s scan (exit %d):\n' \
+      "${phase}" "${bundle}" "${framework}" "${checkov_rc}" >&2
+    while IFS= read -r line; do
+      printf '%s\n' "${line}" >&2
+    done <"${report}"
+    exit 2
+  fi
+}
+
 prepare_bundle() {
   local bundle="$1"
   local url="$2"
   local expected_sha256="$3"
   local downloaded="${work_dir}/${bundle}-upstream.yaml"
-  local findings="${work_dir}/${bundle}-findings.json"
+  local findings="${work_dir}/${bundle}-kubernetes-findings.json"
+  local source_secrets_report="${work_dir}/${bundle}-source-secrets-report.json"
   local annotated="${work_dir}/${bundle}-annotated.yaml"
-  local annotated_report="${work_dir}/${bundle}-annotated-report.json"
+  local annotated_kubernetes_report="${work_dir}/${bundle}-annotated-kubernetes-report.json"
+  local annotated_secrets_report="${work_dir}/${bundle}-annotated-secrets-report.json"
   local checkov_rc=0
 
   curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
     --retry 3 --retry-all-errors "${url}" --output "${downloaded}"
   printf '%s  %s\n' "${expected_sha256}" "${downloaded}" | sha256sum -c -
+  (
+    cd "${repo_root}"
+    go run ./scripts/annotate-vendored-checkov --bundle "${bundle}" \
+      --validate-source <"${downloaded}"
+  )
 
   # Prove that every reviewed disposition is still necessary on this exact
   # upstream asset. An upstream security fix makes the update stop here until
   # the obsolete annotation is removed from the configured target list.
-  checkov --file "${downloaded}" --framework kubernetes secrets \
+  checkov --file "${downloaded}" --framework kubernetes \
     --skip-check "${isolated_scan_skip_check}" \
     --output json --quiet >"${findings}" || checkov_rc=$?
   if [ "${checkov_rc}" -gt 1 ]; then
@@ -67,27 +107,17 @@ prepare_bundle() {
     go run ./scripts/annotate-vendored-checkov --bundle "${bundle}" \
       <"${downloaded}" >"${annotated}"
   )
+  run_clean_framework_scan \
+    "${bundle}" source "${downloaded}" secrets "${source_secrets_report}"
 
   # The known, reviewed dispositions must clear the current upstream bundle,
   # while any new check introduced by a vendor bump remains visible and blocks
-  # replacement until it receives an explicit disposition.
-  checkov_rc=0
-  checkov --file "${annotated}" --framework kubernetes secrets \
-    --skip-check "${isolated_scan_skip_check}" \
-    --output json --quiet >"${annotated_report}" || checkov_rc=$?
-  (
-    cd "${repo_root}"
-    go run ./scripts/annotate-vendored-checkov --bundle "${bundle}" \
-      --validate-report <"${annotated_report}"
-  )
-  if [ "${checkov_rc}" -ne 0 ]; then
-    printf 'checkov found an undispositioned issue in the annotated %s bundle (exit %d):\n' \
-      "${bundle}" "${checkov_rc}" >&2
-    while IFS= read -r line; do
-      printf '%s\n' "${line}" >&2
-    done <"${annotated_report}"
-    exit 2
-  fi
+  # replacement until it receives an explicit disposition. Run each framework
+  # separately so Checkov cannot silently omit an empty framework report.
+  run_clean_framework_scan \
+    "${bundle}" annotated "${annotated}" kubernetes "${annotated_kubernetes_report}"
+  run_clean_framework_scan \
+    "${bundle}" annotated "${annotated}" secrets "${annotated_secrets_report}"
 }
 
 require_tool curl

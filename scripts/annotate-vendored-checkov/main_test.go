@@ -82,6 +82,7 @@ func checkovFindingsFixture(t *testing.T, bundle, omittedCheck string) string {
 		},
 		"summary": map[string]any{
 			"parsing_errors": 0,
+			"failed":         len(failedChecks),
 		},
 	}
 	encoded, err := json.Marshal(report)
@@ -303,6 +304,7 @@ func TestCheckovReportValidationRejectsParsingErrors(t *testing.T) {
 		},
 		"summary": map[string]any{
 			"parsing_errors": 1,
+			"failed":         0,
 		},
 	}
 	encoded, err := json.Marshal(report)
@@ -310,12 +312,125 @@ func TestCheckovReportValidationRejectsParsingErrors(t *testing.T) {
 		t.Fatalf("encode Checkov fixture: %v", err)
 	}
 
-	_, stderr, err := runAnnotator(t, "cdi", string(encoded), "--validate-report")
+	_, stderr, err := runAnnotator(
+		t,
+		"cdi",
+		string(encoded),
+		"--validate-report",
+		"--framework",
+		"kubernetes",
+	)
 	if err == nil {
 		t.Fatal("validator accepted a Checkov report with parsing errors")
 	}
 	if !strings.Contains(stderr, "reported 1 parsing error") {
 		t.Fatalf("stderr did not name the parsing error count: %q", stderr)
+	}
+}
+
+func TestCheckovReportValidationRequiresExpectedFramework(t *testing.T) {
+	t.Parallel()
+
+	report := map[string]any{
+		"check_type": "kubernetes",
+		"results": map[string]any{
+			"failed_checks": []any{},
+		},
+		"summary": map[string]any{
+			"parsing_errors": 0,
+			"failed":         0,
+		},
+	}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("encode Checkov fixture: %v", err)
+	}
+
+	_, stderr, err := runAnnotator(
+		t,
+		"cdi",
+		string(encoded),
+		"--validate-report",
+		"--framework",
+		"secrets",
+	)
+	if err == nil {
+		t.Fatal("validator accepted a report from the wrong Checkov framework")
+	}
+	if !strings.Contains(stderr, "expected exactly one secrets report") {
+		t.Fatalf("stderr did not name the missing framework: %q", stderr)
+	}
+}
+
+func TestCheckovReportValidationAcceptsEmptySecretsSummary(t *testing.T) {
+	t.Parallel()
+
+	report := `{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0,"checkov_version":"3.3.2"}`
+	_, stderr, err := runAnnotator(
+		t,
+		"cdi",
+		report,
+		"--validate-report",
+		"--framework",
+		"secrets",
+	)
+	if err != nil {
+		t.Fatalf("validator rejected Checkov's empty secrets summary: %v\nstderr: %s", err, stderr)
+	}
+}
+
+func TestCheckovReportValidationRejectsSoftFailedFindings(t *testing.T) {
+	t.Parallel()
+
+	report := map[string]any{
+		"check_type": "kubernetes",
+		"results": map[string]any{
+			"failed_checks": []map[string]string{{
+				"check_id": "CKV_K8S_99",
+				"resource": "Deployment.default.new-upstream-risk",
+			}},
+		},
+		"summary": map[string]any{
+			"parsing_errors": 0,
+			"failed":         1,
+		},
+	}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("encode Checkov fixture: %v", err)
+	}
+
+	_, stderr, err := runAnnotator(
+		t,
+		"cdi",
+		string(encoded),
+		"--validate-report",
+		"--framework",
+		"kubernetes",
+	)
+	if err == nil {
+		t.Fatal("validator accepted undispositioned findings from a soft-failed Checkov run")
+	}
+	if !strings.Contains(stderr, "reported 1 failed check") {
+		t.Fatalf("stderr did not name the failed-check count: %q", stderr)
+	}
+}
+
+func TestSourceValidationRejectsUpstreamCheckovSuppressions(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Replace(
+		bundleFixture("cdi-operator-cluster", "cdi-operator"),
+		"    owner: platform",
+		"    owner: platform\n    checkov.io/skip1: \"CKV_K8S_99=upstream suppression\"",
+		1,
+	)
+	_, stderr, err := runAnnotator(t, "cdi", input, "--validate-source")
+	if err == nil {
+		t.Fatal("source validator accepted an upstream Checkov suppression")
+	}
+	if !strings.Contains(stderr, "upstream Checkov suppression checkov.io/skip1") {
+		t.Fatalf("stderr did not name the upstream suppression: %q", stderr)
 	}
 }
 
