@@ -2050,3 +2050,103 @@ func TestSanitizeDropsNULSoTheExecCannotBeRefused(t *testing.T) {
 		t.Errorf("want the NUL dropped and nothing else changed, got %q", got)
 	}
 }
+
+// TestSanitizationCollisionKeepsTitlesDistinct is the short-title half of the
+// digest's job.
+//
+// sanitizeForIssue maps several raw characters onto one replacement — \r and \n
+// both become a space — so two keys differing only there render one identical
+// title. Severity and component sets being equal too, the two issues are then
+// visibly identical to a reader, and only the hidden fingerprint tells them
+// apart. This collision does not need a long key, so a digest attached only on
+// the truncation path leaves it unaddressed.
+func TestSanitizationCollisionKeepsTitlesDistinct(t *testing.T) {
+	newline := renderTitle(postureTheme("C-0016\nX", "apps/Deployment/web"))
+	carriage := renderTitle(postureTheme("C-0016\rX", "apps/Deployment/web"))
+
+	// The premise: both really do sanitize onto one string. Without this the
+	// test could pass against keys that never collided in the first place.
+	if sanitizeForIssue("C-0016\nX") != sanitizeForIssue("C-0016\rX") {
+		t.Fatalf("premise broken: the two keys no longer sanitize alike")
+	}
+
+	if newline == carriage {
+		t.Errorf(
+			"two keys colliding under sanitization rendered one title %q — "+
+				"the issues are indistinguishable to a reader",
+			newline,
+		)
+	}
+
+	for _, got := range []string{newline, carriage} {
+		if !truncationSuffix.MatchString(got) {
+			t.Errorf("title %q carries no distinguishing digest", got)
+		}
+
+		if n := len([]rune(got)); n > githubIssueTitleLimit {
+			t.Errorf("title is %d runes, over the %d limit: %q", n, githubIssueTitleLimit, got)
+		}
+	}
+}
+
+// TestFaithfulTitleCarriesNoDigest is the negative control for the test above.
+//
+// A digest appended unconditionally would pass the distinctness check while
+// putting eight hex characters on every ordinary title in the backlog. The
+// suffix must appear only where the rendering actually stopped being injective.
+func TestFaithfulTitleCarriesNoDigest(t *testing.T) {
+	got := renderTitle(postureTheme("C-0016", "apps/Deployment/web"))
+
+	if truncationSuffix.MatchString(got) {
+		t.Errorf("a faithfully rendered title must carry no digest, got %q", got)
+	}
+
+	if got != "security(posture): C-0016 fails" {
+		t.Errorf("unexpected title %q", got)
+	}
+}
+
+// TestTwoThemesClaimingOneFingerprintAreRefused is errAmbiguousEntry's sibling,
+// on the live side of the identity.
+//
+// Two derived themes sharing a fingerprint both miss the tracked set, both queue
+// as creates, and the two issues that result carry one marker — after which
+// every later run fails errAmbiguousEntry against a state no run can repair. The
+// plan is refused before any action is queued, which is detection only: it
+// changes no stored identity, so it does not orphan the issues already filed.
+func TestTwoThemesClaimingOneFingerprintAreRefused(t *testing.T) {
+	first := postureTheme("C-0016", "apps/Deployment/web")
+	second := postureTheme("C-0016", "apps/Deployment/api")
+
+	// The premise: these two really do claim one fingerprint.
+	if first.Fingerprint() != second.Fingerprint() {
+		t.Fatalf("premise broken: the two themes no longer collide")
+	}
+
+	p, err := planWrites([]theme{first, second}, nil, []surface{surfacePosture}, true, nil)
+
+	if !errors.Is(err, errCollidingThemes) {
+		t.Fatalf("want errCollidingThemes, got %v", err)
+	}
+
+	if len(p.Actions) != 0 {
+		t.Errorf("a refused plan must queue nothing, got %d actions", len(p.Actions))
+	}
+}
+
+// TestDistinctThemesAreNotRefused is the negative control for the detector. A
+// guard that refused any second theme would pass the test above while stopping
+// every real multi-theme run.
+func TestDistinctThemesAreNotRefused(t *testing.T) {
+	p, err := planWrites([]theme{
+		postureTheme("C-0016", "apps/Deployment/web"),
+		postureTheme("C-0017", "apps/Deployment/api"),
+	}, nil, []surface{surfacePosture}, true, nil)
+	if err != nil {
+		t.Fatalf("two distinct themes must plan cleanly, got %v", err)
+	}
+
+	if len(p.Actions) != 2 {
+		t.Errorf("want one create per theme, got %d actions", len(p.Actions))
+	}
+}

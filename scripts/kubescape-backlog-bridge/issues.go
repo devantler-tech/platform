@@ -87,6 +87,23 @@ var errAmbiguousEntry = errors.New("two tracked issues carry the same fingerprin
 // looking unfiled, and the next run would create a second issue for it.
 var errMissingFingerprint = errors.New("tracked issue carries no readable fingerprint")
 
+// errCollidingThemes reports two DERIVED themes claiming one fingerprint.
+//
+// The sibling of errAmbiguousEntry, on the other side of the identity: that one
+// catches two tracked issues resolving to a theme, this one catches two live
+// themes resolving to a tracked issue. Without it the collision is silent and
+// self-worsening — both themes miss the tracked set, both queue as creates, and
+// once filed the two issues carry one marker, so every subsequent run fails
+// errAmbiguousEntry against a state no run can now repair.
+//
+// Detection only, and deliberately so. The fingerprint is the STORED identity of
+// issues that already exist, so widening it is a migration rather than a
+// constant change: it would stop every filed issue resolving to its theme, refile
+// each as a duplicate, and never close the originals. Refusing the plan changes
+// no stored identity, converts a silent merge into a loud stop, and is what makes
+// a later widening safe to do deliberately instead of urgently.
+var errCollidingThemes = errors.New("two derived themes claim the same fingerprint")
+
 // errAmbiguousFingerprint reports an issue body carrying more than one marker.
 //
 // Fail-closed for the same reason entrySurface refuses a second "**Surface:**"
@@ -389,27 +406,47 @@ func boundField(s string) string {
 //
 // It CAN, however, collide them for a human reader, which is why the digest
 // below exists. The title is the only place t.Key is rendered — renderBody does
-// not carry it — so a prefix-only cut of two keys sharing a long prefix
-// produces two issues with identical visible titles, and when their severity
-// and components also match, identical visible bodies. Only the hidden
-// fingerprint would distinguish them, and nobody reads that. A digest of the
-// full title, taken before the cut, restores distinctness for exactly the same
-// reason boundField takes one.
+// not carry it — so two keys that render to one visible title produce two issues
+// with identical visible titles, and when their severity and components also
+// match, identical visible bodies. Only the hidden fingerprint would distinguish
+// them, and nobody reads that.
+//
+// TWO renderings collapse distinct keys, not one, and both need the digest:
+//
+//   - the cut, when two keys share a prefix longer than the limit; and
+//   - sanitizeForIssue, which maps several raw characters onto one replacement.
+//     Keys differing only there — "foo\nbar" and "foo\rbar", both becoming
+//     "foo bar" — collide at ANY length, so a digest attached only on the
+//     truncation path leaves the short case indistinguishable.
+//
+// The digest is therefore taken over the RAW key rather than the sanitized
+// title. Digesting after sanitization would hand both members of a sanitization
+// collision the same suffix and distinguish nothing — the digest has to be taken
+// over the value that still differs.
 func renderTitle(t theme) string {
-	title := sanitizeForIssue(t.Title())
-
+	raw := t.Title()
+	title := sanitizeForIssue(raw)
 	runes := []rune(title)
-	if len(runes) <= githubIssueTitleLimit {
+
+	// A faithful rendering needs no digest: it is already injective, so adding
+	// one would be noise on every title that reads exactly as its key.
+	truncating := len(runes) > githubIssueTitleLimit
+	if !truncating && title == raw {
 		return title
 	}
 
 	// The suffix is inside the budget, not added to it.
 	const ellipsis = "…"
 
-	digest := sha256.Sum256([]byte(title))
+	digest := sha256.Sum256([]byte(raw))
 	suffix := ellipsis + hex.EncodeToString(digest[:])[:8]
 
-	return string(runes[:githubIssueTitleLimit-len([]rune(suffix))]) + suffix
+	if keep := githubIssueTitleLimit - len([]rune(suffix)); truncating ||
+		len(runes) > keep {
+		return string(runes[:keep]) + suffix
+	}
+
+	return title + suffix
 }
 
 // renderBody builds the issue body.
@@ -625,10 +662,20 @@ func planWrites(
 	var (
 		p     plan
 		alive = map[string]struct{}{}
+		// claimedBy records which theme first claimed each fingerprint, so a
+		// second claimant is caught before any action is queued for either.
+		claimedBy = map[string]theme{}
 	)
 
 	for _, t := range sorted {
 		fp := t.Fingerprint()
+
+		if prev, dup := claimedBy[fp]; dup {
+			return plan{}, fmt.Errorf("%w: %s/%s and %s/%s both claim %s",
+				errCollidingThemes, prev.Kind, prev.Key, t.Kind, t.Key, fp)
+		}
+
+		claimedBy[fp] = t
 		alive[fp] = struct{}{}
 
 		title, body := renderTitle(t), renderBody(t)
