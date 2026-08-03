@@ -134,8 +134,9 @@ changes either target therefore stops before replacement. Review the upstream re
 new finding evidence before updating those keys or fingerprints alongside the version and asset
 digest; never copy a reported fingerprint without inspecting the changed resource.
 CI runs the updater's offline `--validate-committed` mode, removes only those exact configured
-disposition lines, and requires the remaining bytes to match the pinned upstream SHA-256. Any other
-manual or automated rewrite of a generated bundle therefore fails before merge.
+disposition lines, requires the remaining bytes to match the pinned upstream SHA-256, and binds each
+release version to the operator image tag in that source. Any other manual or automated rewrite of a
+generated bundle, or a mismatched version/digest pair, therefore fails before merge.
 Its isolated-file scan excludes CKV2_K8S_6 only: Checkov does not model the committed
 `CiliumNetworkPolicy` that protects every CDI endpoint, while the full-repository CI scan retains the
 check and remains authoritative for graph findings. Before applying that file-level exclusion, the

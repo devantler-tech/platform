@@ -7,6 +7,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
@@ -35,6 +36,7 @@ type targetSpec struct {
 	checks              []string
 	reason              string
 	resourceFingerprint string
+	imageRepository     string
 }
 
 type manifestIdentity struct {
@@ -71,11 +73,11 @@ type checkovSummary struct {
 var bundleTargets = map[string][]targetSpec{
 	"cdi": {
 		{kind: "ClusterRole", name: "cdi-operator-cluster", checks: []string{"CKV_K8S_155"}, reason: clusterRoleReason, resourceFingerprint: "df06bcec640e27ea586a8d12bffa509558eb8a244978a0de46c35743ec85341e"},
-		{kind: "Deployment", name: "cdi-operator", checks: deploymentChecks(), reason: deploymentReason, resourceFingerprint: "f81c6d025990a3a550fbe12e38033c8c0c4e3d4397dc14c357c7c6dc601abe07"},
+		{kind: "Deployment", name: "cdi-operator", checks: deploymentChecks(), reason: deploymentReason, resourceFingerprint: "f81c6d025990a3a550fbe12e38033c8c0c4e3d4397dc14c357c7c6dc601abe07", imageRepository: "quay.io/kubevirt/cdi-operator"},
 	},
 	"kubevirt": {
 		{kind: "ClusterRole", name: "kubevirt-operator", checks: []string{"CKV_K8S_155"}, reason: clusterRoleReason, resourceFingerprint: "6eb8526d222f837be3a38f82c18710be5f64aa10e27cbe741b7707198b3df842"},
-		{kind: "Deployment", name: "virt-operator", checks: deploymentChecks(), reason: deploymentReason, resourceFingerprint: "a983d7303c2daf4c74e806ddfe9caf3eb1f25c6238798716d6c80e124016b51e"},
+		{kind: "Deployment", name: "virt-operator", checks: deploymentChecks(), reason: deploymentReason, resourceFingerprint: "a983d7303c2daf4c74e806ddfe9caf3eb1f25c6238798716d6c80e124016b51e", imageRepository: "quay.io/kubevirt/virt-operator"},
 	},
 }
 
@@ -154,6 +156,11 @@ func main() {
 		"",
 		"expected SHA-256 of the annotation-free upstream source for --validate-annotated",
 	)
+	sourceVersion := flag.String(
+		"source-version",
+		"",
+		"expected release version in the pinned operator image for --validate-annotated",
+	)
 	framework := flag.String(
 		"framework",
 		"",
@@ -191,8 +198,11 @@ func main() {
 	if *validateAnnotated && *sourceSHA256 == "" {
 		fail("--validate-annotated requires --source-sha256")
 	}
-	if !*validateAnnotated && *sourceSHA256 != "" {
-		fail("--source-sha256 requires --validate-annotated")
+	if *validateAnnotated && *sourceVersion == "" {
+		fail("--validate-annotated requires --source-version")
+	}
+	if !*validateAnnotated && (*sourceSHA256 != "" || *sourceVersion != "") {
+		fail("--source-sha256 and --source-version require --validate-annotated")
 	}
 
 	input, err := io.ReadAll(os.Stdin)
@@ -218,7 +228,7 @@ func main() {
 		return
 	}
 	if *validateAnnotated {
-		if err := validatePinnedSource(input, targets, *sourceSHA256); err != nil {
+		if err := validatePinnedSource(input, targets, *sourceSHA256, *sourceVersion); err != nil {
 			fail("validate %s annotated bundle: %v", *bundle, err)
 		}
 		return
@@ -603,7 +613,7 @@ func validateAnnotatedBundle(input []byte, targets []targetSpec) error {
 	return nil
 }
 
-func validatePinnedSource(input []byte, targets []targetSpec, expectedSHA256 string) error {
+func validatePinnedSource(input []byte, targets []targetSpec, expectedSHA256, expectedVersion string) error {
 	if !sha256Digest.MatchString(expectedSHA256) {
 		return fmt.Errorf("source SHA-256 must be 64 lowercase hexadecimal characters")
 	}
@@ -618,7 +628,140 @@ func validatePinnedSource(input []byte, targets []targetSpec, expectedSHA256 str
 	if actualSHA256 != expectedSHA256 {
 		return fmt.Errorf("source SHA-256 is %s, want %s", actualSHA256, expectedSHA256)
 	}
+	if err := validateOperatorImageVersion([]byte(source), targets, expectedVersion); err != nil {
+		return err
+	}
 	return nil
+}
+
+func validateOperatorImageVersion(input []byte, targets []targetSpec, expectedVersion string) error {
+	if expectedVersion == "" {
+		return errors.New("source version must not be empty")
+	}
+	expectedByIdentity := make(map[string]targetSpec)
+	for _, target := range targets {
+		if target.imageRepository != "" {
+			expectedByIdentity[target.kind+"/"+target.name] = target
+		}
+	}
+	if len(expectedByIdentity) == 0 {
+		return errors.New("no operator image is configured for the bundle")
+	}
+
+	seen := make(map[string]int, len(expectedByIdentity))
+	decoder := yaml.NewDecoder(bytes.NewReader(input))
+	for documentIndex := 1; ; documentIndex++ {
+		var document yaml.Node
+		if err := decoder.Decode(&document); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return fmt.Errorf("parse pinned source document %d: %w", documentIndex, err)
+		}
+		if len(document.Content) == 0 || document.Content[0].Kind == 0 {
+			continue
+		}
+		if err := validateOperatorImageResource(
+			document.Content[0],
+			expectedByIdentity,
+			expectedVersion,
+			seen,
+		); err != nil {
+			return fmt.Errorf("pinned source document %d: %w", documentIndex, err)
+		}
+	}
+	for identity := range expectedByIdentity {
+		if seen[identity] != 1 {
+			return fmt.Errorf("expected exactly one operator image resource %s, found %d", identity, seen[identity])
+		}
+	}
+	return nil
+}
+
+func validateOperatorImageResource(
+	root *yaml.Node,
+	expectedByIdentity map[string]targetSpec,
+	expectedVersion string,
+	seen map[string]int,
+) error {
+	if root.Kind != yaml.MappingNode {
+		return errors.New("operator image resource must be a mapping")
+	}
+	kind := mappingScalar(root, "kind")
+	metadata := mappingValue(root, "metadata")
+	if metadata != nil && metadata.Kind == yaml.MappingNode {
+		identity := kind + "/" + mappingScalar(metadata, "name")
+		if target, configured := expectedByIdentity[identity]; configured {
+			seen[identity]++
+			expectedImage := target.imageRepository + ":" + expectedVersion
+			images, err := deploymentContainerImages(root)
+			if err != nil {
+				return fmt.Errorf("inspect operator image on %s: %w", identity, err)
+			}
+			repositoryReferences := 0
+			exactReferences := 0
+			for _, image := range images {
+				if strings.HasPrefix(image, target.imageRepository+":") ||
+					strings.HasPrefix(image, target.imageRepository+"@") {
+					repositoryReferences++
+				}
+				if image == expectedImage {
+					exactReferences++
+				}
+			}
+			if repositoryReferences != 1 || exactReferences != 1 {
+				return fmt.Errorf("%s operator image must be exactly %s", identity, expectedImage)
+			}
+		}
+	}
+
+	if kind != "List" && !strings.HasSuffix(kind, "List") {
+		return nil
+	}
+	items := mappingValue(root, "items")
+	if items == nil {
+		return nil
+	}
+	if items.Kind != yaml.SequenceNode {
+		return fmt.Errorf("%s items must be a sequence", kind)
+	}
+	for index, item := range items.Content {
+		if err := validateOperatorImageResource(item, expectedByIdentity, expectedVersion, seen); err != nil {
+			return fmt.Errorf("%s item %d: %w", kind, index+1, err)
+		}
+	}
+	return nil
+}
+
+func deploymentContainerImages(root *yaml.Node) ([]string, error) {
+	spec := mappingValue(root, "spec")
+	if spec == nil || spec.Kind != yaml.MappingNode {
+		return nil, errors.New("spec must be a mapping")
+	}
+	template := mappingValue(spec, "template")
+	if template == nil || template.Kind != yaml.MappingNode {
+		return nil, errors.New("spec.template must be a mapping")
+	}
+	podSpec := mappingValue(template, "spec")
+	if podSpec == nil || podSpec.Kind != yaml.MappingNode {
+		return nil, errors.New("spec.template.spec must be a mapping")
+	}
+	containers := mappingValue(podSpec, "containers")
+	if containers == nil || containers.Kind != yaml.SequenceNode {
+		return nil, errors.New("spec.template.spec.containers must be a sequence")
+	}
+	images := make([]string, 0, len(containers.Content))
+	for index, container := range containers.Content {
+		if container.Kind != yaml.MappingNode {
+			return nil, fmt.Errorf("container %d must be a mapping", index+1)
+		}
+		image := mappingScalar(container, "image")
+		if image == "" {
+			return nil, fmt.Errorf("container %d image must be a scalar", index+1)
+		}
+		images = append(images, image)
+	}
+	return images, nil
 }
 
 func stripConfiguredDispositions(input string, targets []targetSpec) (string, error) {
@@ -699,7 +842,8 @@ func stripTargetDispositions(lines []string, target targetSpec) ([]string, error
 			expectedLines[lines[index]] = true
 			continue
 		}
-		if strings.TrimSpace(lines[index]) != "" {
+		trimmedLine := strings.TrimSpace(lines[index])
+		if trimmedLine != "" && !strings.HasPrefix(trimmedLine, "#") {
 			remainingAnnotations = true
 		}
 	}

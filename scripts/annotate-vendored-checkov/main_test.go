@@ -177,6 +177,20 @@ spec: {}
 `
 }
 
+func cdiOperatorBundleFixture() string {
+	return strings.Replace(
+		bundleFixture("cdi-operator-cluster", "cdi-operator"),
+		"spec: {}",
+		`spec:
+  template:
+    spec:
+      containers:
+      - name: cdi-operator
+        image: quay.io/kubevirt/cdi-operator:v1.65.0`,
+		1,
+	)
+}
+
 func TestAnnotatorAddsOnlyResourceScopedSuppressions(t *testing.T) {
 	t.Parallel()
 
@@ -667,7 +681,7 @@ items:
 func TestAnnotatedValidationAcceptsOnlyConfiguredDispositions(t *testing.T) {
 	t.Parallel()
 
-	input := bundleFixture("cdi-operator-cluster", "cdi-operator")
+	input := cdiOperatorBundleFixture()
 	annotated, err := annotateBundle(input, bundleTargets["cdi"])
 	if err != nil {
 		t.Fatalf("annotate fixture: %v", err)
@@ -680,28 +694,79 @@ func TestAnnotatedValidationAcceptsOnlyConfiguredDispositions(t *testing.T) {
 func TestPinnedSourceValidationAcceptsAnnotatedExactSource(t *testing.T) {
 	t.Parallel()
 
-	input := bundleFixture("cdi-operator-cluster", "cdi-operator")
+	input := cdiOperatorBundleFixture()
 	annotated, err := annotateBundle(input, bundleTargets["cdi"])
 	if err != nil {
 		t.Fatalf("annotate fixture: %v", err)
 	}
 	expectedSHA256 := fmt.Sprintf("%x", sha256.Sum256([]byte(input)))
-	if err := validatePinnedSource([]byte(annotated), bundleTargets["cdi"], expectedSHA256); err != nil {
+	if err := validatePinnedSource(
+		[]byte(annotated),
+		bundleTargets["cdi"],
+		expectedSHA256,
+		"v1.65.0",
+	); err != nil {
 		t.Fatalf("exact pinned source was rejected: %v", err)
+	}
+}
+
+func TestPinnedSourceStrippingPreservesMetadataComment(t *testing.T) {
+	t.Parallel()
+
+	input := strings.Replace(
+		bundleFixture("cdi-operator-cluster", "cdi-operator"),
+		"kind: ClusterRole\nmetadata:\n  name:",
+		"kind: ClusterRole\nmetadata:\n  # upstream metadata comment\n  name:",
+		1,
+	)
+	annotated, err := annotateBundle(input, bundleTargets["cdi"])
+	if err != nil {
+		t.Fatalf("annotate fixture: %v", err)
+	}
+	stripped, err := stripConfiguredDispositions(annotated, bundleTargets["cdi"])
+	if err != nil {
+		t.Fatalf("strip configured dispositions: %v", err)
+	}
+	if stripped != input {
+		t.Fatalf("stripped source did not preserve the exact commented metadata:\n%s", stripped)
+	}
+}
+
+func TestPinnedSourceValidationBindsOperatorImageVersion(t *testing.T) {
+	t.Parallel()
+
+	input := cdiOperatorBundleFixture()
+	if err := validateOperatorImageVersion([]byte(input), bundleTargets["cdi"], "v1.65.0"); err != nil {
+		t.Fatalf("matching release version was rejected: %v", err)
+	}
+	if err := validateOperatorImageVersion([]byte(input), bundleTargets["cdi"], "v1.66.0"); err == nil {
+		t.Fatal("operator-image validator accepted a mismatched release version")
+	} else if !strings.Contains(err.Error(), "operator image") {
+		t.Fatalf("error did not name the mismatched operator image: %v", err)
 	}
 }
 
 func TestPinnedSourceValidationRejectsNonAnnotationChange(t *testing.T) {
 	t.Parallel()
 
-	input := bundleFixture("cdi-operator-cluster", "cdi-operator")
+	input := cdiOperatorBundleFixture()
 	annotated, err := annotateBundle(input, bundleTargets["cdi"])
 	if err != nil {
 		t.Fatalf("annotate fixture: %v", err)
 	}
 	expectedSHA256 := fmt.Sprintf("%x", sha256.Sum256([]byte(input)))
-	annotated = strings.Replace(annotated, "spec: {}", "spec:\n  replicas: 9", 1)
-	if err := validatePinnedSource([]byte(annotated), bundleTargets["cdi"], expectedSHA256); err == nil {
+	annotated = strings.Replace(
+		annotated,
+		"quay.io/kubevirt/cdi-operator:v1.65.0",
+		"quay.io/kubevirt/cdi-operator:v9.99.0",
+		1,
+	)
+	if err := validatePinnedSource(
+		[]byte(annotated),
+		bundleTargets["cdi"],
+		expectedSHA256,
+		"v1.65.0",
+	); err == nil {
 		t.Fatal("pinned-source validator accepted a non-annotation bundle change")
 	} else if !strings.Contains(err.Error(), "source SHA-256") {
 		t.Fatalf("error did not name the pinned source digest: %v", err)
