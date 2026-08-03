@@ -2352,3 +2352,31 @@ func TestAssembleSortsEveryCollection(t *testing.T) {
 		}
 	}
 }
+
+// whitespaceMarkerCVEDoc is strippedCVEDoc with the payload marker set to a
+// single space rather than empty. Everything else is identical, so the only
+// variable is the marker's content.
+func whitespaceMarkerCVEDoc(ns, name string) string {
+	return fmt.Sprintf(`{"metadata":{"name":%q,"namespace":%q,%s},`+
+		`"spec":{"severities":{"critical":{"all":0},"high":{"all":0},"low":{"all":0},`+
+		`"medium":{"all":0},"negligible":{"all":0},"unknown":{"all":0}},`+
+		`"vulnerabilitiesRef":{"all":{"kind":"","name":" ","namespace":""},`+
+		`"relevant":{"kind":"","name":"","namespace":""}}}}`,
+		name, ns, labels(ns, "Deployment", name))
+}
+
+// A marker containing only whitespace names no manifest, so the document is as
+// stripped as one carrying "". Accepting it lets a document that evaluated
+// nothing pass as hydrated, and with every severity bucket at zero the run then
+// derives no CVE themes at all — which under -inputs-complete is read as "every
+// tracked CVE issue is resolved" and closes all of them.
+func TestWhitespaceOnlyCVEMarkerFailsClosed(t *testing.T) {
+	err := checkExamined(itemsOf(t, whitespaceMarkerCVEDoc("app", "api")))
+	if err == nil {
+		t.Fatal("a whitespace-only payload marker must fail closed like an empty one")
+	}
+
+	if !errors.Is(err, errStrippedList) {
+		t.Errorf("want errStrippedList, got %v", err)
+	}
+}

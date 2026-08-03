@@ -224,8 +224,11 @@ func (i item) examined() bool {
 		return !isJSONNull(i.Spec.Controls)
 	case i.Spec.VulnerabilitiesRef != nil:
 		// A stripped CVE object blanks the reference; a real one names the
-		// manifest even when every severity is zero.
-		return i.Spec.VulnerabilitiesRef.All.Name != ""
+		// manifest even when every severity is zero. Trimmed, because a marker
+		// of only whitespace names no manifest either — and accepting it would
+		// let a document that evaluated nothing pass as hydrated, which under
+		// -inputs-complete reads as "every tracked CVE issue is resolved".
+		return strings.TrimSpace(i.Spec.VulnerabilitiesRef.All.Name) != ""
 	default:
 		return false
 	}
