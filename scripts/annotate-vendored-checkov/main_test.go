@@ -379,6 +379,26 @@ func TestCheckovReportValidationAcceptsEmptySecretsSummary(t *testing.T) {
 	}
 }
 
+func TestCheckovReportValidationRejectsFrameworklessKubernetesSummary(t *testing.T) {
+	t.Parallel()
+
+	report := `{"passed":0,"failed":0,"skipped":0,"parsing_errors":0,"resource_count":0,"checkov_version":"3.3.2"}`
+	_, stderr, err := runAnnotator(
+		t,
+		"cdi",
+		report,
+		"--validate-report",
+		"--framework",
+		"kubernetes",
+	)
+	if err == nil {
+		t.Fatal("validator treated a framework-less summary as proof of a Kubernetes scan")
+	}
+	if !strings.Contains(stderr, "expected exactly one kubernetes report") {
+		t.Fatalf("stderr did not require explicit Kubernetes report identity: %q", stderr)
+	}
+}
+
 func TestCheckovReportValidationRejectsSoftFailedFindings(t *testing.T) {
 	t.Parallel()
 

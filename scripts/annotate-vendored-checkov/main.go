@@ -211,7 +211,7 @@ func decodeCheckovReports(input []byte, expectedFramework string, rejectFindings
 		if err := json.Unmarshal(input, &report); err != nil {
 			return nil, fmt.Errorf("decode Checkov report: %w", err)
 		}
-		if report.CheckType == "" && report.Summary.ParsingErrors == nil {
+		if expectedFramework == "secrets" && report.CheckType == "" && report.Summary.ParsingErrors == nil {
 			var summary checkovSummary
 			if err := json.Unmarshal(input, &summary); err != nil {
 				return nil, fmt.Errorf("decode Checkov summary: %w", err)
