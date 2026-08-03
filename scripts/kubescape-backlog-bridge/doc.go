@@ -69,7 +69,8 @@
 // It has no inventory: it cannot tell a whole-cluster sweep from a single
 // per-object GET. So a partial run must never conclude that the findings it was
 // not shown are resolved. `-inputs-complete` is the caller's explicit assertion
-// that EVERY object on each supplied surface was passed, and two writes need it:
+// that EVERY object on each supplied surface was passed, and three writes need
+// it:
 //
 //   - CLOSING, further scoped to the surfaces this run actually examined — a
 //     posture-only run never closes a CVE entry.
@@ -77,6 +78,11 @@
 //     components. Writing it over a tracked entry drops the components this run
 //     never looked at and can lower a recorded count or severity while those
 //     findings are still live, which reads to a human as remediation.
+//   - RECLASSIFYING, scoped the same way as closing. Deciding that a closed
+//     entry's disposition is wrong means deciding the finding's true state, so
+//     a run that did not examine that surface cannot tell a genuine mismatch
+//     from an absence it simply never looked for. Withheld reclassifications
+//     are reported as UnverifiedDispositions, never as detected disagreements.
 //
 // CREATING is not gated: a theme nobody tracks yet is new information, and an
 // under-scoped new entry is corrected by the first complete run. REOPENING is

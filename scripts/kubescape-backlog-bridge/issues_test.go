@@ -1536,6 +1536,7 @@ func TestNormalizeDispositionBridgesThreeVocabularies(t *testing.T) {
 		{"the two spellings gh issue list actually emits", "COMPLETED", dispositionCompleted},
 		{"", "NOT_PLANNED", dispositionNotPlanned},
 		{"REST's own spelling, accepted for free", "not_planned", dispositionNotPlanned},
+		{"this command's own CLI spelling, so a value it wrote round-trips", "NOT PLANNED", dispositionNotPlanned},
 		{"padded — a value must not depend on trimming upstream", " COMPLETED ", dispositionCompleted},
 		{"an open issue reports no reason at all", "", ""},
 		{"a reason this command never writes but a human can", "DUPLICATE", ""},
@@ -1711,5 +1712,86 @@ func TestBoundFieldKeepsOverlongComponentsDistinct(t *testing.T) {
 	// ellipsis. Otherwise the ordinary case would churn every tracked issue.
 	if got := boundField("prod/Deployment/web"); got != "prod/Deployment/web" {
 		t.Errorf("a short component was altered: %q", got)
+	}
+}
+
+// TestReclassifyPostsNothingWhenTheStateChangeFails pins the ORDER inside
+// reclassify, by asserting the consequence of that order rather than the order
+// itself.
+//
+// reclassify makes two calls, and planWrites re-derives the same action from the
+// same inputs on every run — so whichever call fails is retried next run. If the
+// comment went first, a PATCH that keeps failing would post the same comment
+// again on every run, accumulating duplicates on a settled issue with no bound.
+// Doing the state change first makes a failure post nothing at all, so the retry
+// is idempotent.
+//
+// Asserting "PATCH is argv[0]" would pass just as well with the comment posted
+// first and the PATCH second, which is the bug. The guarantee is that a failed
+// state change leaves NO comment behind.
+func TestReclassifyPostsNothingWhenTheStateChangeFails(t *testing.T) {
+	var calls []string
+
+	store := &ghStore{repo: "o/r", run: func(a ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(a, " "))
+
+		if a[0] == "api" {
+			return nil, errors.New("422 unprocessable")
+		}
+
+		return nil, nil
+	}}
+
+	if err := store.reclassify(7, "why this changed", dispositionNotPlanned); err == nil {
+		t.Fatal("reclassify returned nil, want the PATCH failure surfaced so applyPlan stops")
+	}
+
+	for _, c := range calls {
+		if strings.HasPrefix(c, "issue comment") {
+			t.Errorf("a comment was posted despite the state change failing: %q\n"+
+				"the next run re-derives the same disagreement, so this comment repeats forever", c)
+		}
+	}
+
+	// Without this the test would also pass if reclassify made no calls at all.
+	if len(calls) != 1 {
+		t.Fatalf("made %d call(s) %q, want exactly the failing PATCH", len(calls), calls)
+	}
+}
+
+// TestReclassifyExplainsItselfWhenTheStateChangeSucceeds is the other half:
+// ordering the PATCH first must not silently drop the explanation on the happy
+// path, which is the whole reason the comment exists.
+func TestReclassifyExplainsItselfWhenTheStateChangeSucceeds(t *testing.T) {
+	var calls []string
+
+	store := &ghStore{repo: "o/r", run: func(a ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(a, " "))
+
+		return nil, nil
+	}}
+
+	if err := store.reclassify(7, "why this changed", dispositionNotPlanned); err != nil {
+		t.Fatalf("reclassify: %v", err)
+	}
+
+	if len(calls) != 2 {
+		t.Fatalf("made %d call(s) %q, want the PATCH and the comment", len(calls), calls)
+	}
+
+	if !strings.HasPrefix(calls[0], "api --method PATCH") {
+		t.Errorf("first call = %q, want the state change", calls[0])
+	}
+
+	if !strings.HasPrefix(calls[1], "issue comment") {
+		t.Errorf("second call = %q, want the explaining comment", calls[1])
+	}
+
+	if !strings.Contains(calls[0], "state_reason=not_planned") {
+		t.Errorf("PATCH = %q, want the REST underscore spelling", calls[0])
+	}
+
+	if !strings.Contains(calls[1], "why this changed") {
+		t.Errorf("comment = %q, want the caller's explanation", calls[1])
 	}
 }

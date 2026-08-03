@@ -70,10 +70,12 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 		}
 	}
 
-	// A closed entry whose recorded disposition disagrees with this run's
-	// derivation. Announced separately from WithheldCloses because these issues
-	// are closed, not open: an operator told they were "left OPEN" would go
-	// looking for backlog work that is not there.
+	// A closed entry whose recorded disposition this run could not CHECK — the
+	// counter is incremented in the gate branch, before any disposition is
+	// derived, so it records "not verified", never "found to disagree".
+	// Announced separately from WithheldCloses because these issues are closed,
+	// not open: an operator told they were "left OPEN" would go looking for
+	// backlog work that is not there.
 	if p.UnverifiedDispositions > 0 {
 		if _, err := fmt.Fprintf(out,
 			"note: %d closed issue(s) had their disposition left UNVERIFIED — checking one needs "+
@@ -410,22 +412,39 @@ func apiStateReason(disposition string) string {
 	return "completed"
 }
 
-// reclassify comments on an already-closed issue and corrects its state_reason.
+// reclassify corrects an already-closed issue's state_reason and comments to
+// explain the correction.
 //
 // Two calls rather than one because no `gh issue` subcommand sets state_reason
 // on an issue that is already closed: `close` refuses it and `edit` has no such
-// flag, so the structured half goes through the REST API directly. The comment
-// is posted FIRST so a failure of the second call leaves the reasoning visible
-// on the issue rather than a silently changed label with nothing explaining it.
+// flag, so the structured half goes through the REST API directly.
+//
+// The STATE CHANGE goes first, and the ordering is the whole safety property.
+// This runs on every closed entry forever, and planWrites derives the same
+// action from the same inputs each time, so whichever call fails is retried on
+// the next run:
+//
+//   - PATCH first (this order): a failed PATCH has posted nothing, and the next
+//     run re-derives the same disagreement and retries both calls. Idempotent.
+//   - Comment first (the previous order): a failed PATCH leaves state_reason
+//     unchanged, so the next run derives the same disagreement and posts the
+//     same comment AGAIN. Repeated failures accumulate duplicate comments on a
+//     settled issue, unbounded.
+//
+// The cost of this order is the reverse failure: if the PATCH succeeds and the
+// comment fails, the disposition is corrected with nothing on the issue saying
+// why, and the next run sees agreement so it never explains it. That loss is
+// bounded to one occurrence and destroys nothing, whereas comment spam on a
+// settled issue is unbounded — so it is the better direction to fail in.
 func (g *ghStore) reclassify(number int, comment, reason string) error {
-	if _, err := g.run("issue", "comment", fmt.Sprint(number),
-		"--repo", g.repo, "--body", comment); err != nil {
+	if _, err := g.run("api", "--method", "PATCH",
+		fmt.Sprintf("repos/%s/issues/%d", g.repo, number),
+		"-f", "state_reason="+apiStateReason(reason)); err != nil {
 		return err
 	}
 
-	_, err := g.run("api", "--method", "PATCH",
-		fmt.Sprintf("repos/%s/issues/%d", g.repo, number),
-		"-f", "state_reason="+apiStateReason(reason))
+	_, err := g.run("issue", "comment", fmt.Sprint(number),
+		"--repo", g.repo, "--body", comment)
 
 	return err
 }
