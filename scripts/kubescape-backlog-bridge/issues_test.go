@@ -1009,11 +1009,28 @@ func TestFirstCreateProvisionsEveryLabelItApplies(t *testing.T) {
 			t.Fatalf("a label call was expected before the create: %v", a)
 		}
 
-		if !slices.Contains(a, "--force") {
-			t.Errorf("label provisioning must be idempotent: %v", a)
+		provisioned[a[2]] = true
+
+		var owned bool
+
+		for _, l := range createLabels {
+			if l.name == a[2] {
+				owned = l.owned
+			}
 		}
 
-		provisioned[a[2]] = true
+		switch {
+		case owned && !slices.Contains(a, "--force"):
+			t.Errorf("an owned label must be provisioned idempotently: %v", a)
+		case !owned && slices.Contains(a, "--force"):
+			// gh updates colour AND description under --force, choosing a
+			// RANDOM colour when none is passed — so forcing a label this
+			// command does not own silently restyles a label the repository
+			// maintains for its own purposes.
+			t.Errorf("a label this command does not own must never be forced: %v", a)
+		case !owned && slices.Contains(a, "--description"):
+			t.Errorf("a label this command does not own must keep its own description: %v", a)
+		}
 	}
 
 	createCall := args[len(createLabels)]
@@ -1044,6 +1061,35 @@ func TestFirstCreateProvisionsEveryLabelItApplies(t *testing.T) {
 		if !slices.Contains(createCall, l.name) {
 			t.Errorf("createLabels entry %q was not applied by create", l.name)
 		}
+	}
+
+	// A create for a label this command does not own must not abort the run
+	// when that label already exists — "already exists" is success spelled as a
+	// failure, and treating it as fatal would file nothing at all.
+	failing := &ghStore{repo: "o/r", run: func(a ...string) ([]byte, error) {
+		if a[0] == "label" && a[2] == "security" {
+			return nil, errors.New("label already exists")
+		}
+
+		return []byte("https://github.com/o/r/issues/9\n"), nil
+	}}
+
+	if _, err := failing.create("t", "b"); err != nil {
+		t.Errorf("an existing unowned label must not fail the create: %v", err)
+	}
+
+	// CONTROL — the OWNED label's failure must still be fatal, so the tolerance
+	// above is scoped and not a blanket swallow.
+	fatal := &ghStore{repo: "o/r", run: func(a ...string) ([]byte, error) {
+		if a[0] == "label" && a[2] == bridgeLabel {
+			return nil, errors.New("boom")
+		}
+
+		return []byte("https://github.com/o/r/issues/9\n"), nil
+	}}
+
+	if _, err := fatal.create("t", "b"); err == nil {
+		t.Error("a failure provisioning the ownership label must abort the run")
 	}
 
 	// A second create must NOT re-ask: one call per run, not one per issue.

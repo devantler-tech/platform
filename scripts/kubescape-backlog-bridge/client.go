@@ -214,9 +214,13 @@ func (g *ghStore) list() ([]backlogEntry, error) {
 var createLabels = []struct {
 	name        string
 	description string
+	// owned marks a label this command created and may therefore keep
+	// up to date. A label it merely APPLIES belongs to the repository, and
+	// its appearance is not ours to change — see ensureLabel.
+	owned bool
 }{
-	{bridgeLabel, "Filed automatically from live Kubescape findings"},
-	{"security", "Security finding"},
+	{bridgeLabel, "Filed automatically from live Kubescape findings", true},
+	{"security", "", false},
 }
 
 // ensureLabel provisions every label a create applies.
@@ -235,15 +239,38 @@ var createLabels = []struct {
 // target this is latent rather than live — but -repo is a flag, and on any
 // repository lacking it the first create would fail and file nothing.
 //
-// `--force` makes this idempotent, so the ordinary case (label already present)
-// is a no-op rather than an error. It runs once per store: repeating it before
-// every create would spend a call per issue on a question already answered.
+// The two kinds are provisioned DIFFERENTLY, and the difference is not
+// cosmetic. `gh label create --force` updates an existing label's colour and
+// description, and when no colour is passed gh picks a RANDOM one — so forcing
+// a label this command does not own would silently recolour and re-describe a
+// label the repository already maintains for its own purposes, on every fresh
+// run. devantler-tech/platform's `security` is a deliberate red (#b60205) with
+// no description; that is the repository's choice, not this command's.
+//
+//   - owned (bridgeLabel): --force, with our description. It exists only
+//     because this command creates it, so keeping it current is correct and
+//     makes the call idempotent.
+//   - not owned (security): a plain create, and an error is DELIBERATELY
+//     ignored. The only property that matters is that the label exists
+//     afterwards; if it already did, "already exists" is success spelled as a
+//     failure. A genuine inability to create it still surfaces loudly and
+//     attributably at the very next `issue create`, which names the label.
+//
+// It runs once per store: repeating it before every create would spend a call
+// per issue on a question already answered.
 func (g *ghStore) ensureLabel() error {
 	if g.labelEnsured {
 		return nil
 	}
 
 	for _, l := range createLabels {
+		if !l.owned {
+			// Best-effort: see the ignored-error rationale above.
+			_, _ = g.run("label", "create", l.name, "--repo", g.repo)
+
+			continue
+		}
+
 		if _, err := g.run("label", "create", l.name,
 			"--repo", g.repo,
 			"--description", l.description,
