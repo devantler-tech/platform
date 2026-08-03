@@ -1,17 +1,20 @@
 # SPIRE server HA — external datastore + 2 replicas (design)
 
-> **Status: DESIGN ONLY — no manifest change ships in this PR.** Coroot flags
-> `kube-system:StatefulSet:spire-server` as *"single instance — not resilient to
-> node failure."* That signal is **real**, but the fix is **not** a values flip.
-> spire-server is installed by the **Cilium** chart (not a standalone SPIRE
-> chart), and naïve HA would (a) split-brain on the built-in SQLite datastore
+> **Status: DESIGN ONLY — the HA design is not implemented.** Coroot previously
+> flagged `kube-system:StatefulSet:spire-server` as *"single instance — not
+> resilient to node failure."* Cilium authentication and SPIRE are now disabled
+> because no narrowly scoped authentication policy consumes them; leaving the
+> integration enabled without a consumer produces continuous `no identity
+> issued` errors. If re-enabled, spire-server would be installed by the
+> **Cilium** chart (not a standalone SPIRE chart), and naïve HA would (a)
+> split-brain on the built-in SQLite datastore
 > and (b) add a datastore dependency to identity infrastructure. Earlier versions
 > of this design assumed a blanket `require-mutual-auth` Cilium policy; that
 > policy was removed because Cilium ingress rules are allow rules and a catch-all
 > authentication rule weakens workload allow-lists. This doc remains the runbook
-> for doing SPIRE HA correctly when the prerequisites are met; until then the **deliberate
-> single-node posture stays**, and the replica-floor policy keeps spire-server
-> exempt on purpose.
+> for doing SPIRE HA correctly when the prerequisites are met. Until then no
+> SPIRE workload is installed; the dormant chart values retain the prospective
+> single-node shape documented below.
 
 ## TL;DR — why this isn't shipped as code today
 
@@ -48,20 +51,22 @@ this is an ADR, mirroring `docs/dr/openbao-raft-ha-migration.md` for the same
 reason (critical security infra, disruptive cutover, data that must be carried
 over, not blind-flipped).
 
-## Current state (what Coroot is seeing)
+## Current state
 
 | | Today |
 | --- | --- |
-| Install | Cilium chart sub-component (`authentication.mutual.spire`), `kube-system` |
-| Replicas | **1** (StatefulSet; chart exposes no `replicaCount`) |
-| Datastore | built-in **SQLite** on a single RWO PVC |
-| PVC storage (prod) | **hcloud-csi** `hcloud` 10Gi (NOT longhorn — deadlock break, see overlay patch) |
-| Data-path role | available to narrowly scoped Cilium authentication rules; no blanket policy consumes it |
-| Failure tolerance | with no current scoped authentication consumers, workload traffic does not depend on it; a node-loss outage lasts until the pod reschedules + its hcloud volume re-attaches |
-| Replica-floor policy | spire-server **exempted on purpose** (`validate-replica-floor.yaml`) — "HA needs a shared external datastore, not just replicas" |
+| Activation | **disabled** (`authentication.enabled: false`, `authentication.mutual.spire.enabled: false`) |
+| Prospective install | Cilium chart sub-component (`authentication.mutual.spire`), `kube-system` |
+| Replicas if re-enabled | **1** (StatefulSet; chart exposes no `replicaCount`) |
+| Datastore if re-enabled | built-in **SQLite** on a single RWO PVC |
+| Dormant PVC values (prod) | **hcloud-csi** `hcloud` 10Gi (NOT longhorn — deadlock break, see overlay patch) |
+| Data-path role | none; no authentication policy consumes SPIRE |
+| Failure tolerance | workload traffic and cilium-agent logs have no dependency on an absent SPIRE server |
+| Replica-floor policy | dormant spire-server exemption remains (`validate-replica-floor.yaml`) — "HA needs a shared external datastore, not just replicas" |
 
-With no current scoped authentication consumers, the single replica does not
-gate workload traffic. If narrow consumers are introduced, SVID **issuance**
+No SPIRE workload is rendered while the activation flags are false. Re-enable
+the integration only in the same change as a narrow policy consumer. Once such
+consumers are introduced, SVID **issuance**
 (new identity pairs and rotation) becomes unavailable while spire-server is
 down; established flows can ride the cilium-agent auth cache while the server
 reschedules. That future availability gap is what HA would close.

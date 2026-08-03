@@ -25,49 +25,156 @@ cat "${CILIUM_POLICY_FIXTURE:?}"
 EOF
 chmod +x "${fake_bin}/kubectl"
 
-write_fixture() {
-  local name="$1"
-  local selector="$2"
-
-  cat >"${fixture}" <<EOF
----
-apiVersion: cilium.io/v2
-kind: CiliumClusterwideNetworkPolicy
-metadata:
-  name: ${name}
-spec:
-  endpointSelector: {}
-  ingress:
-    - fromEndpoints:
-${selector}
-      authentication:
-        mode: required
-EOF
-}
-
 run_guard() {
   CILIUM_POLICY_FIXTURE="${fixture}" PATH="${fake_bin}:${PATH}" bash "${guard}"
 }
 
-require_rejection() {
-  local name="$1"
-  local selector="$2"
-  local output
+cat >"${fixture}" <<'EOF'
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: broad-cnp-empty-map
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - {}
+      authentication:
+        mode: required
+---
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: broad-ccnp-empty-labels
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - matchLabels: {}
+      authentication:
+        mode: required
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: broad-cnp-empty-expressions
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - matchExpressions: []
+      authentication:
+        mode: required
+---
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: broad-ccnp-specs-empty-fields
+specs:
+  - endpointSelector: {}
+    ingress:
+      - fromEndpoints:
+          - matchLabels: {}
+            matchExpressions: []
+        authentication:
+          mode: required
+EOF
 
-  write_fixture "${name}" "${selector}"
-  if output="$(run_guard 2>&1)"; then
-    fail "the guard accepted effectively empty selector ${name}"
-  fi
-  grep -Fq -- "${name}" <<<"${output}" ||
-    fail "the guard failed without identifying effectively empty selector ${name}"
-}
+if broad_output="$(run_guard 2>&1)"; then
+  fail 'the guard accepted broad authentication rules across CNP, CCNP, spec, and specs forms'
+fi
+for expected_name in \
+  broad-cnp-empty-map \
+  broad-ccnp-empty-labels \
+  broad-cnp-empty-expressions \
+  broad-ccnp-specs-empty-fields; do
+  grep -Fq -- "${expected_name}" <<<"${broad_output}" ||
+    fail "the guard did not identify ${expected_name}"
+done
 
-require_rejection broad-empty-map '        - {}'
-require_rejection broad-empty-labels '        - matchLabels: {}'
-require_rejection broad-empty-expressions '        - matchExpressions: []'
-require_rejection broad-empty-fields $'        - matchLabels: {}\n          matchExpressions: []'
+cat >"${fixture}" <<'EOF'
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: narrow-cnp-spec
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: trusted
+      authentication:
+        mode: required
+---
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: narrow-ccnp-specs
+specs:
+  - endpointSelector: {}
+    ingress:
+      - fromEndpoints:
+          - matchExpressions:
+              - key: k8s:io.kubernetes.pod.namespace
+                operator: In
+                values:
+                  - trusted
+        authentication:
+          mode: required
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  values:
+    authentication:
+      enabled: true
+      mutual:
+        spire:
+          enabled: true
+EOF
+run_guard >/dev/null || fail 'the guard rejected narrow CNP/CCNP rules using spec/specs'
 
-write_fixture narrow-labels $'        - matchLabels:\n            k8s:io.kubernetes.pod.namespace: trusted'
-run_guard >/dev/null || fail 'the guard rejected a selector with an effective label requirement'
+cat >"${fixture}" <<'EOF'
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  values:
+    authentication:
+      enabled: true
+      mutual:
+        spire:
+          enabled: true
+EOF
+if orphan_output="$(run_guard 2>&1)"; then
+  fail 'the guard accepted enabled Cilium authentication with no policy consumer'
+fi
+grep -Fq -- 'no required-authentication policy is rendered' <<<"${orphan_output}" ||
+  fail 'the orphaned-authentication failure did not explain the missing policy consumer'
 
-printf 'PASS: Cilium mutual-auth policy guard rejects every empty selector representation\n'
+cat >"${fixture}" <<'EOF'
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  values:
+    authentication:
+      enabled: false
+      mutual:
+        spire:
+          enabled: false
+EOF
+run_guard >/dev/null || fail 'the guard rejected disabled authentication with no policy consumer'
+
+printf 'PASS: Cilium authentication guard covers every production policy shape and consumer state\n'

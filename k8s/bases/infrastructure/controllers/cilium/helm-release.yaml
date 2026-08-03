@@ -231,11 +231,18 @@ spec:
       # stabilizes node encryption under tunnel routing
       # (cilium/cilium#37919 and the encryption-wireguard known limitations).
       nodeEncryption: false
+    # No required-authentication policy is currently rendered. Leaving this
+    # feature enabled without a consumer makes every delegated-identity
+    # subscription emit `no identity issued` continuously. Re-enable both
+    # switches only in the same change that adds a narrowly scoped policy;
+    # scripts/tests/test-cilium-mutual-auth-policy.sh enforces that coupling.
     authentication:
-      enabled: true
+      enabled: false
       mutual:
         spire:
-          enabled: true
+          enabled: false
+          # Latent install configuration for a future narrow consumer. These
+          # values do not install SPIRE while the switches above are false.
           install:
             namespace: kube-system
             existingNamespace: true
@@ -252,8 +259,9 @@ spec:
                   memory: 128Mi
             # TODO: Remove workaround when SPIRE no longer fails to start (https://github.com/cilium/cilium/issues/40533)
             server:
-              # spire-server is a single-replica StatefulSet backed by an
-              # SQLite datastore on a ReadWriteOnce PVC (Cilium chart default).
+              # If re-enabled, spire-server is a single-replica StatefulSet
+              # backed by an SQLite datastore on a ReadWriteOnce PVC (Cilium
+              # chart default).
               # spire-server is not protected by a multi-replica HA setup here:
               # while it is down, new Cilium/SPIRE identity material cannot be
               # issued. The cilium-operator re-syncs entries from

@@ -104,8 +104,9 @@ patches:
   - path: openbao/patches/store-data-on-hcloud.yaml
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
-  # Prod-only: move the SPIRE server datastore off Longhorn onto hcloud-csi to
-  # break the SPIRE <-> Longhorn <-> mTLS circular deadlock — see file.
+  # Dormant prod-only SPIRE storage values. Authentication/SPIRE stay disabled
+  # until a narrow policy consumer lands; if re-enabled, keep the datastore off
+  # Longhorn to avoid the SPIRE <-> Longhorn <-> mTLS cycle — see file.
   - path: cilium/patches/store-spire-data-on-hcloud.yaml
   # Prod-only: switch Velero to a MIXED backup model — CSI volume snapshots +
   # data movement for Longhorn-backed PVCs (→ R2), file-system (Kopia) backup
