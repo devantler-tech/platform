@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // postureTheme and cveTheme are the two shapes the reconciler sees.
@@ -1184,5 +1185,180 @@ func TestTitleIsBoundedForOverlongKeys(t *testing.T) {
 	short := postureTheme("C-0016", "apps/Deployment/web")
 	if got := renderTitle(short); strings.HasSuffix(got, "…") || got != sanitizeForIssue(short.Title()) {
 		t.Errorf("control did not flip: a short title was altered: %q", got)
+	}
+}
+
+// TestScannerDerivedFieldsAreBoundedInTheBody pins the runtime bound that
+// maxListedComponents alone never provided.
+//
+// The component CAP bounds how many lines a body enumerates; nothing bounded how
+// long each one — or the severity — may be, and both arrive straight out of a
+// scan document. One oversized value is enough to push the assembled body past
+// githubIssueBodyLimit, and because applyPlan stops at the first failure, GitHub
+// refusing that one create blocks every remaining action in the run.
+//
+// TestBodyStaysUnderGitHubsLimit asserts the same limit, but over components of
+// an ASSUMED 180-character worst case — so it pinned the arithmetic while
+// nothing made the assumption true. This one supplies values far over the bound
+// and is therefore a test of the bound rather than of the assumption.
+func TestScannerDerivedFieldsAreBoundedInTheBody(t *testing.T) {
+	// Long enough that ONE field exceeds the whole body limit by itself, so a
+	// body under the limit cannot be explained by the component cap alone.
+	const hostile = 70000
+
+	components := make([]string, maxListedComponents+5)
+	for i := range components {
+		components[i] = fmt.Sprintf("ns-%04d/Deployment/", i) + strings.Repeat("x", hostile)
+	}
+
+	th := postureTheme("C-0016", components...)
+	th.Severity = strings.Repeat("S", hostile)
+
+	body := renderBody(th)
+
+	// Counted in RUNES: GitHub documents the limit in characters, and len()
+	// would measure bytes — which agrees only while the input stays ASCII, so a
+	// byte assertion here would silently stop meaning what it says.
+	if got := utf8.RuneCountInString(body); got >= githubIssueBodyLimit {
+		t.Errorf("body is %d runes, over GitHub's %d limit", got, githubIssueBodyLimit)
+	}
+
+	// Both fields individually, because the total above can be satisfied by
+	// bounding either one of them.
+	for _, line := range strings.Split(body, "\n") {
+		switch {
+		case strings.HasPrefix(line, "**Severity:** "):
+			if got := utf8.RuneCountInString(strings.TrimPrefix(line, "**Severity:** ")); got > maxRenderedFieldRunes {
+				t.Errorf("severity rendered %d runes, over the %d bound", got, maxRenderedFieldRunes)
+			}
+		case strings.HasPrefix(line, "- `"):
+			if got := utf8.RuneCountInString(strings.Trim(line, "- `")); got > maxRenderedFieldRunes {
+				t.Errorf("a component rendered %d runes, over the %d bound", got, maxRenderedFieldRunes)
+			}
+		}
+	}
+
+	// CONTROL — a value UNDER the bound is rendered whole and unmarked, so the
+	// truncation above is attributable to length rather than to boundField
+	// mangling every value it touches.
+	small := renderBody(postureTheme("C-0016", "apps/Deployment/web"))
+	if !strings.Contains(small, "`apps/Deployment/web`") || strings.Contains(small, "…") {
+		t.Errorf("control did not flip:\n%s", small)
+	}
+}
+
+// racingStore models a concurrent write invocation: its SECOND list — the
+// re-read dropRacedCreates performs immediately before applying — returns an
+// issue that was not there when the plan was made.
+type racingStore struct {
+	fakeStore
+	filedByTheOtherRun []backlogEntry
+	lists              int
+}
+
+func (r *racingStore) list() ([]backlogEntry, error) {
+	r.lists++
+
+	if r.lists >= 2 {
+		return append(slices.Clone(r.entries), r.filedByTheOtherRun...), nil
+	}
+
+	return r.entries, nil
+}
+
+// TestRacedCreateIsDroppedRatherThanDuplicated covers the overlap that turns one
+// redundant issue into a permanently wedged reconciler.
+//
+// Two write invocations both snapshot an empty tracked set and both plan a
+// create. GitHub enforces no uniqueness on the embedded fingerprint, so both
+// file — and planWrites is fail-closed on a duplicate fingerprint, so from then
+// on EVERY run refuses to plan anything at all until an operator deletes one by
+// hand. The cost of the race is the whole reconciler, not one issue.
+func TestRacedCreateIsDroppedRatherThanDuplicated(t *testing.T) {
+	th := postureTheme("C-0016", "apps/Deployment/web")
+
+	store := &racingStore{filedByTheOtherRun: []backlogEntry{{
+		Number: 7,
+		Title:  renderTitle(th),
+		Body:   renderBody(th),
+		Open:   true,
+	}}}
+
+	var out bytes.Buffer
+	if err := reconcile([]theme{th}, []surface{surfacePosture}, true, nil, store, &out); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	for _, c := range store.calls {
+		if strings.HasPrefix(c, "create:") {
+			t.Errorf("duplicated an issue the other invocation had already filed: %v", store.calls)
+		}
+	}
+
+	// Dropping it silently would be the same failure this package guards against
+	// everywhere else: a run that wrote less than it planned, reported as clean.
+	if !strings.Contains(out.String(), "DROPPED") {
+		t.Errorf("the dropped create was not disclosed:\n%s", out.String())
+	}
+
+	// CONTROL — with nothing filed concurrently the SAME theme is created, so
+	// the drop above is attributable to the re-read rather than to the plan
+	// having been empty all along.
+	plain := &fakeStore{}
+
+	var plainOut bytes.Buffer
+	if err := reconcile([]theme{th}, []surface{surfacePosture}, true, nil, plain, &plainOut); err != nil {
+		t.Fatalf("control reconcile: %v", err)
+	}
+
+	if len(plain.calls) != 1 || !strings.HasPrefix(plain.calls[0], "create:") {
+		t.Errorf("control did not flip: %v", plain.calls)
+	}
+}
+
+// TestForcedLabelProvisioningPinsItsColour covers a churn source that no linter
+// or CI check can see.
+//
+// `gh label create --force` updates an existing label, and its documented colour
+// default is RANDOM — so forcing without --color re-rolls the bridge label's
+// colour on every run that has an issue to create, against surrounding code that
+// claims the provisioning is idempotent.
+//
+// Asserted over EVERY forced call rather than over the one label that exists
+// today: the guarantee is "nothing is forced without a pinned colour", and a
+// check naming bridgeLabel would go quiet the moment a second owned label is
+// added.
+func TestForcedLabelProvisioningPinsItsColour(t *testing.T) {
+	var args [][]string
+
+	store := &ghStore{repo: "o/r", run: func(a ...string) ([]byte, error) {
+		args = append(args, a)
+
+		return []byte("https://github.com/o/r/issues/7\n"), nil
+	}}
+
+	if _, err := store.create("t", "b"); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	var forced [][]string
+
+	for _, a := range args {
+		if len(a) > 1 && a[0] == "label" && slices.Contains(a, "--force") {
+			forced = append(forced, a)
+		}
+	}
+
+	// Without this the loop below is vacuously true for any implementation that
+	// simply stopped provisioning labels.
+	if len(forced) == 0 {
+		t.Fatal("no label was force-provisioned at all, so the colour assertion proves nothing")
+	}
+
+	for _, a := range forced {
+		i := slices.Index(a, "--color")
+		if i < 0 || i+1 >= len(a) || strings.TrimSpace(a[i+1]) == "" {
+			t.Errorf("--force with no pinned --color re-rolls the colour every run: %v", a)
+		}
 	}
 }

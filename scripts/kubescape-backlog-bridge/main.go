@@ -958,7 +958,83 @@ func reconcile(
 		return err
 	}
 
+	if err := dropRacedCreates(&p, store); err != nil {
+		return err
+	}
+
 	return applyPlan(p, store, out)
+}
+
+// dropRacedCreates re-reads the tracked set immediately before applying and
+// discards any create whose fingerprint has been filed since the plan was made.
+//
+// Two write invocations that overlap both take the same snapshot at the top of
+// reconcile, both find a newly derived theme untracked, and both plan a create.
+// GitHub enforces no uniqueness on the embedded fingerprint, so both issues are
+// filed — and planWrites is deliberately fail-closed on a duplicate fingerprint
+// (errAmbiguousEntry, which refuses rather than guessing which of the two is
+// authoritative). So a single raced create does not cost one redundant issue: it
+// stops the reconciler planning ANYTHING, on every subsequent run, until an
+// operator deletes one by hand.
+//
+// This narrows that window from the whole run — list, derive, plan, then one
+// call per action — to the gap between this re-read and the create itself. It
+// does NOT make the command safe to run concurrently and is not offered as a
+// substitute for serializing it; a caller that schedules write mode must still
+// use a `concurrency` group with cancel-in-progress disabled. doc.go records
+// that as a requirement of the write path, because no scheduled caller exists
+// yet to carry it.
+//
+// Costs one extra list per run, and only on a run that actually creates.
+func dropRacedCreates(p *plan, store issueStore) error {
+	if !slices.ContainsFunc(p.Actions, func(a issueAction) bool { return a.Kind == "create" }) {
+		return nil
+	}
+
+	current, err := store.list()
+	if err != nil {
+		return err
+	}
+
+	filed := map[string]struct{}{}
+
+	for _, e := range current {
+		fp, err := e.fingerprint()
+		if err != nil {
+			// An unreadable marker is planWrites' business, not this filter's.
+			// Refusing here would put a second, differently-worded gate on a
+			// condition the plan this run is applying has already passed.
+			continue
+		}
+
+		filed[fp] = struct{}{}
+	}
+
+	kept := make([]issueAction, 0, len(p.Actions))
+
+	for _, a := range p.Actions {
+		if a.Kind == "create" {
+			// The planned body is the only place a create's identity exists —
+			// it carries no issue number yet — and it is the same marker
+			// backlogEntry.fingerprint parses back off a filed issue.
+			fp, err := (backlogEntry{Body: a.Body}).fingerprint()
+			if err != nil {
+				return err
+			}
+
+			if _, raced := filed[fp]; raced {
+				p.RacedCreates++
+
+				continue
+			}
+		}
+
+		kept = append(kept, a)
+	}
+
+	p.Actions = kept
+
+	return nil
 }
 
 // readSurface reads every file for one surface, validating each against that

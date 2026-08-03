@@ -29,12 +29,41 @@ const githubIssueTitleLimit = 256
 // maxListedComponents bounds how many components a body enumerates.
 //
 // GitHub refuses an issue body over 65,536 characters. A component line is
-// well under 200 characters even for a long namespace/kind/name, so 300 lines
-// is at most ~60KB of list — comfortably inside the limit with the surrounding
-// prose, while being far above any component count a real control produces
-// (the live cluster carries ~2,215 posture summaries in total, across every
-// control).
+// bounded to maxRenderedFieldRunes below, so 300 lines is at most ~56KB of list
+// — comfortably inside the limit with the surrounding prose, while being far
+// above any component count a real control produces (the live cluster carries
+// ~2,215 posture summaries in total, across every control).
 const maxListedComponents = 300
+
+// maxRenderedFieldRunes bounds every scanner-derived field a body renders.
+//
+// maxListedComponents bounds how MANY components a body enumerates; nothing
+// bounded how LONG each one — or the severity — may be, and both reach the body
+// straight out of a scan document, so their length is not ours to assume. A
+// single 70,000-character severity passes derivation and then pushes the
+// assembled body past githubIssueBodyLimit on its own; GitHub refuses the create
+// or edit, and applyPlan stops at the first failure, so one malformed scanner
+// value blocks every remaining action in the run.
+//
+// Cut by RUNE, for the reason renderTitle gives: a byte cut can split a
+// multi-byte rune into U+FFFD, which would differ from the live body every run
+// and churn the issue forever.
+//
+// Bounding each FIELD rather than the assembled body is what keeps the cut
+// prose-independent. A byte budget applied to the whole body would move as the
+// surrounding wording is reworded, so the same theme would render differently
+// across two versions and re-write every tracked issue — the exact churn the
+// anti-churn guarantee forbids.
+//
+// 180 is the worst-case component length TestBodyStaysUnderGitHubsLimit already
+// measured; with maxListedComponents that arithmetic leaves ~9K of headroom,
+// which the same test now asserts against a real bound rather than against an
+// assumed input length.
+//
+// Truncating cannot collide two themes into one issue: identity is the body's
+// fingerprint, which Fingerprint derives from Kind and Key alone — never from a
+// severity or a component.
+const maxRenderedFieldRunes = 180
 
 // fingerprintMarker is the machine-readable identity embedded in each body.
 const fingerprintMarker = "kubescape-backlog-bridge:fingerprint="
@@ -137,6 +166,16 @@ type plan struct {
 	// run saw, so a silent skip leaves an operator believing the backlog was
 	// reconciled when a real change — in either direction — is still pending.
 	WithheldUpdates int
+	// RacedCreates counts creates dropped by dropRacedCreates because another
+	// invocation filed the same fingerprint between planning and applying.
+	//
+	// Disclosed for the same reason as the two counters above: the run performed
+	// fewer writes than it planned, and a silent drop is indistinguishable from
+	// a theme that never needed filing. It is also the only signal that write
+	// mode is being run concurrently — which this command narrows the window on
+	// but does not make safe — so a non-zero count is what tells an operator the
+	// caller is missing its concurrency guard.
+	RacedCreates int
 }
 
 // empty reports whether the plan performs no writes at all. Unchanged cluster
@@ -196,6 +235,26 @@ func sanitizeForIssue(s string) string {
 	return strings.TrimSpace(replaced)
 }
 
+// boundField sanitizes a scanner-derived value and bounds its rendered length.
+//
+// Every field renderBody writes from scan data goes through this rather than
+// through sanitizeForIssue directly; see maxRenderedFieldRunes for why an
+// unbounded one can wedge the whole run, and why the cut is per field and by
+// rune.
+func boundField(s string) string {
+	sanitized := sanitizeForIssue(s)
+
+	runes := []rune(sanitized)
+	if len(runes) <= maxRenderedFieldRunes {
+		return sanitized
+	}
+
+	// The ellipsis is inside the budget, not added to it — same as renderTitle.
+	const ellipsis = "…"
+
+	return string(runes[:maxRenderedFieldRunes-len([]rune(ellipsis))]) + ellipsis
+}
+
 // renderTitle and renderBody are the two fields a reconciler compares against
 // the live issue to decide whether anything actually changed. Both are pure
 // functions of the theme, with no timestamps, run ids, or ordering derived from
@@ -249,7 +308,7 @@ func renderBody(t theme) string {
 	// entrySurface parses this exact line back and must match surfacePosture or
 	// surfaceCVE literally. Every other field is scanner-derived and sanitized.
 	fmt.Fprintf(&b, "**Surface:** %s\n", t.Kind)
-	fmt.Fprintf(&b, "**Severity:** %s\n", sanitizeForIssue(t.Severity))
+	fmt.Fprintf(&b, "**Severity:** %s\n", boundField(t.Severity))
 
 	if t.Kind == string(surfaceCVE) {
 		fmt.Fprintf(&b, "**Occurrences:** %d\n", t.Total)
@@ -274,7 +333,7 @@ func renderBody(t theme) string {
 	}
 
 	for _, c := range listed {
-		b.WriteString("- `" + sanitizeForIssue(c) + "`\n")
+		b.WriteString("- `" + boundField(c) + "`\n")
 	}
 
 	if omitted := len(t.Components) - len(listed); omitted > 0 {

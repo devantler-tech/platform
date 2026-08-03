@@ -14,6 +14,22 @@
 // is the default-off half: reporting stays the default, so enabling writes is
 // an explicit, reversible step rather than something a run falls into.
 //
+// # Write mode must be serialized
+//
+// A caller that schedules `-mode=write` MUST run it one at a time — in GitHub
+// Actions, a `concurrency` group with `cancel-in-progress: false`. Two
+// overlapping invocations take the same snapshot, both find a newly derived
+// theme untracked, and both file it; GitHub enforces no uniqueness on the
+// embedded fingerprint, and the reconciler is fail-closed on a duplicate one, so
+// the result is not a redundant issue but a reconciler that refuses to plan
+// anything at all until an operator deletes one by hand.
+//
+// dropRacedCreates re-reads the tracked set immediately before applying and
+// narrows that window, and reports any create it drops. It is a mitigation, not
+// a lock: the requirement above still stands. Nothing schedules this command
+// today, which is why the requirement is recorded here rather than enforced in a
+// workflow.
+//
 // # Reconciliation
 //
 // Write mode lists the issues this command already owns — everything carrying

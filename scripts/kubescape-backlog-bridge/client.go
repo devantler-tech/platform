@@ -63,6 +63,20 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 		}
 	}
 
+	// A create this run planned and then dropped because a concurrent
+	// invocation had already filed it. Reported before the actions for the same
+	// reason as the withheld counts: the run wrote less than it planned, and the
+	// operator needs to know their caller is running write mode concurrently.
+	if p.RacedCreates > 0 {
+		if _, err := fmt.Fprintf(out,
+			"note: %d planned create(s) were DROPPED — another invocation filed the same "+
+				"fingerprint between this run's plan and its apply. Serialize write mode "+
+				"(a concurrency group with cancel-in-progress disabled); the next run "+
+				"reconciles the issues it filed\n", p.RacedCreates); err != nil {
+			return err
+		}
+	}
+
 	if p.empty() {
 		// A run that withheld something did NOT find the backlog already matching,
 		// and saying so two lines under a note that a tracked issue differs is a
@@ -70,8 +84,9 @@ func applyPlan(p plan, store issueStore, out io.Writer) error {
 		// synchronized. The withheld notes above say what is pending; this line
 		// only claims the writes it actually decided against making.
 		line := "no changes: every derived theme already matches its tracked issue"
-		if p.WithheldCloses > 0 || p.WithheldUpdates > 0 {
-			line = "no writes performed: this run planned none beyond the withheld action(s) noted above"
+		if p.WithheldCloses > 0 || p.WithheldUpdates > 0 || p.RacedCreates > 0 {
+			line = "no writes performed: this run planned none beyond the withheld or dropped " +
+				"action(s) noted above"
 		}
 
 		_, err := fmt.Fprintln(out, line)
@@ -214,13 +229,21 @@ func (g *ghStore) list() ([]backlogEntry, error) {
 var createLabels = []struct {
 	name        string
 	description string
+	// color pins an owned label's appearance so --force is genuinely
+	// idempotent. `gh label create` documents its colour default as RANDOM, so
+	// forcing without one re-rolls the colour on every run that has an issue to
+	// create — churning the label's appearance and its audit timeline while the
+	// surrounding code claims the provisioning is a no-op. Empty for a label
+	// this command does not own, which is never forced and whose colour is the
+	// repository's to choose.
+	color string
 	// owned marks a label this command created and may therefore keep
 	// up to date. A label it merely APPLIES belongs to the repository, and
 	// its appearance is not ours to change — see ensureLabel.
 	owned bool
 }{
-	{bridgeLabel, "Filed automatically from live Kubescape findings", true},
-	{"security", "", false},
+	{bridgeLabel, "Filed automatically from live Kubescape findings", "0e8a16", true},
+	{"security", "", "", false},
 }
 
 // ensureLabel provisions every label a create applies.
@@ -247,9 +270,10 @@ var createLabels = []struct {
 // run. devantler-tech/platform's `security` is a deliberate red (#b60205) with
 // no description; that is the repository's choice, not this command's.
 //
-//   - owned (bridgeLabel): --force, with our description. It exists only
-//     because this command creates it, so keeping it current is correct and
-//     makes the call idempotent.
+//   - owned (bridgeLabel): --force, with our description AND a pinned colour.
+//     It exists only because this command creates it, so keeping it current is
+//     correct — but the colour has to be pinned for the call to be idempotent
+//     at all, since gh's colour default is random.
 //   - not owned (security): a plain create, and an error is DELIBERATELY
 //     ignored. The only property that matters is that the label exists
 //     afterwards; if it already did, "already exists" is success spelled as a
@@ -271,9 +295,12 @@ func (g *ghStore) ensureLabel() error {
 			continue
 		}
 
+		// --color is not optional here: without it --force re-rolls a random
+		// colour on every run that reaches this path. See createLabels.color.
 		if _, err := g.run("label", "create", l.name,
 			"--repo", g.repo,
 			"--description", l.description,
+			"--color", l.color,
 			"--force"); err != nil {
 			return err
 		}
