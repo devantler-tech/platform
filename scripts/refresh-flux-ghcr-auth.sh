@@ -3105,6 +3105,29 @@ flux_policy_handoff_is_quiescent() {
   ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 
+flux_reconcile_timeout_seconds() {
+  local duration="$1" hours=0 minutes=0 seconds=0 total
+
+  if ! [[ "${duration}" =~ ^(([0-9]+)h)?(([0-9]+)m)?(([0-9]+)s)?$ ]] ||
+    [[ -z "${BASH_REMATCH[1]}${BASH_REMATCH[3]}${BASH_REMATCH[5]}" ]]; then
+    return 1
+  fi
+  if [[ -n "${BASH_REMATCH[2]}" ]]; then
+    hours="${BASH_REMATCH[2]}"
+  fi
+  if [[ -n "${BASH_REMATCH[4]}" ]]; then
+    minutes="${BASH_REMATCH[4]}"
+  fi
+  if [[ -n "${BASH_REMATCH[6]}" ]]; then
+    seconds="${BASH_REMATCH[6]}"
+  fi
+  total=$((10#${hours} * 3600 + 10#${minutes} * 60 + 10#${seconds}))
+  if ((total < 1)); then
+    return 1
+  fi
+  printf '%s\n' "${total}"
+}
+
 read_flux_policy_fences() {
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
@@ -3147,14 +3170,15 @@ flux_policy_handoff_is_released() {
 pause_flux_policy_handoff() {
   local resource_version attempt annotations_present
   local stable_resource_version="" current_resource_version
+  local reconcile_timeout reconcile_timeout_seconds handoff_drain_seconds
 
   # Quiesce the child before changing spec.suspend. Suspending a Kustomization
   # while it is already reconciling can strand Reconciling=True in status: the
   # suspended controller intentionally does not advance observedGeneration, so
   # the post-patch status can never prove the old reconcile finished. The
   # parent is already fenced; wait for the child to finish, then use its latest
-  # resourceVersion as the acquisition CAS so a new reconcile cannot slip
-  # between this proof and the pause patch.
+  # resourceVersion as the acquisition CAS so any intervening Kustomization
+  # write rejects the pause patch.
   for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
     if read_flux_policy_fences; then
       if jq -e \
@@ -3188,6 +3212,21 @@ pause_flux_policy_handoff() {
     fi
     sleep "${SYNC_INTERVAL}"
   done
+
+  reconcile_timeout="$(jq -er '.spec.timeout | select(type == "string")' \
+    "${flux_policy_handoff_state_file}")"
+  if ! reconcile_timeout_seconds="$(flux_reconcile_timeout_seconds \
+    "${reconcile_timeout}")"; then
+    echo "::error::The Flux image-verification policy owner has an unsupported or non-positive reconciliation timeout; refusing the handoff."
+    return 1
+  fi
+  # A reconcile can fetch the unsuspended child immediately after the final
+  # quiescence read and before the CAS patch without first writing status. Its
+  # managed-resource writes do not change the Kustomization resourceVersion.
+  # Hold both fences for one complete configured reconcile timeout plus one
+  # second so every such pre-pause reconcile context must expire before this
+  # transaction stages the admission policy.
+  handoff_drain_seconds=$((reconcile_timeout_seconds + 1))
 
   resource_version="$(jq -er '.metadata.resourceVersion' \
     "${flux_policy_handoff_state_file}")"
@@ -3241,6 +3280,9 @@ pause_flux_policy_handoff() {
     fi
     flux_policy_handoff_acquired=true
   fi
+
+  sleep "${handoff_drain_seconds}"
+  assert_sync_lease_held || return 1
 
   # A suspended reconciliation intentionally does not advance
   # status.observedGeneration and can leave its pre-suspension Reconciling=True

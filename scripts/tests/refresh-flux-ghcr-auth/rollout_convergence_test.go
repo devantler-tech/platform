@@ -782,6 +782,50 @@ func TestStaleFluxChildReconcilingConditionAfterPauseDoesNotBlockHandoff(t *test
 	requireLine(t, operations, "flux-policy-resume:infrastructure")
 }
 
+func TestFluxHandoffDrainsInFlightManagedWritesBeforePolicyStage(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_INFLIGHT_WRITE_DURING_DRAIN": "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	pause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
+	inFlightWrite := lineIndex(
+		t,
+		operations,
+		"flux-policy-inflight-write:verify-app-images",
+	)
+	firstPolicyApply := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
+	if pause >= inFlightWrite || inFlightWrite >= firstPolicyApply {
+		t.Fatalf(
+			"unsafe in-flight Flux write ordering: pause=%d write=%d policy=%d",
+			pause,
+			inFlightWrite,
+			firstPolicyApply,
+		)
+	}
+}
+
+func TestUnsupportedFluxChildTimeoutBlocksBeforePolicyHandoffAcquisition(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_TIMEOUT": "3.5m",
+	})
+	requireFailureResult(t, result)
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"unsupported or non-positive reconciliation timeout",
+	)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "flux-policy-parent-pause:flux-system")
+	requireNoLine(t, operations, "flux-policy-pause:infrastructure")
+	requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
+	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+}
+
 func TestFluxChildResourceVersionChurnAfterPauseBlocksPolicyMutation(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

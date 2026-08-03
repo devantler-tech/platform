@@ -204,6 +204,7 @@ func fakeFluxPolicyChildObject() map[string]any {
 		"metadata":   metadata,
 		"spec": map[string]any{
 			"suspend": suspended,
+			"timeout": defaultString(os.Getenv("FAKE_FLUX_POLICY_TIMEOUT"), "3m"),
 		},
 		"status": map[string]any{
 			"observedGeneration": 13,
