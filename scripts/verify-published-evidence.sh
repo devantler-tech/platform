@@ -101,13 +101,22 @@ check "cosign signature" \
   --certificate-oidc-issuer "${oidc_issuer}" \
   "${ref}"
 
+# --bundle-from-oci on both: the attestations are published with
+# `create-storage-record: false`, so the bundles live in the registry beside the
+# image and were never written to the GitHub Attestations API that this command
+# reads by default. Without the flag both checks query the API, find nothing,
+# and fail for ABSENT evidence — indistinguishable in the verdict from evidence
+# that is genuinely missing or invalid, which is the one distinction this gate
+# exists to make.
 check "SBOM attestation" \
   gh attestation verify "oci://${ref}" \
+  --bundle-from-oci \
   --repo "${repo}" \
   --predicate-type "${sbom_predicate}"
 
 check "provenance attestation" \
   gh attestation verify "oci://${ref}" \
+  --bundle-from-oci \
   --repo "${repo}" \
   --predicate-type "${provenance_predicate}"
 

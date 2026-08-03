@@ -8,13 +8,14 @@ inputs:
   ghcr-token:
     description: >-
       GHCR PAT with write:packages for push, signing, attestation, and
-      promotion, and read access to this repository's attestations. The
+      promotion, and read:packages for reading the evidence back. The
       evidence-verification step below reuses this token as GH_TOKEN for
-      `gh attestation verify`, which fetches the bundle through the GitHub API:
-      a token that cannot read attestations makes that call fail for
-      authorization rather than for absent evidence, and the two are
-      indistinguishable in the verdict. On a fine-grained PAT this is the
-      attestations:read repository permission.
+      `gh attestation verify --bundle-from-oci`, which reads each bundle from
+      the registry beside the image rather than from the GitHub Attestations
+      API — the attestations are published with `create-storage-record: false`,
+      so no API record exists to read. A token that cannot read the package
+      makes that call fail for authorization rather than for absent evidence,
+      and the two are indistinguishable in the verdict.
     required: true
   hcloud-token:
     description: Hetzner Cloud API token required while KSail loads the production config.

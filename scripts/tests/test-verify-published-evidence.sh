@@ -210,6 +210,23 @@ else
   bad "every check targets the digest, never the mutable tag" "${argv}"
 fi
 
+# The attestations are published with `create-storage-record: false`, so the
+# bundles exist only in the OCI registry and never in the GitHub Attestations
+# API. `gh attestation verify` reads the API by default, so without
+# --bundle-from-oci both checks look somewhere the evidence was never written:
+# they fail for absence, not for invalidity, and the two are indistinguishable
+# in the verdict. Counted rather than merely grepped, so adding a third
+# attestation without the flag cannot hide behind the two that carry it.
+attest_calls="$(grep -c -- "attestation verify" <<<"${argv}" || true)"
+from_oci_calls="$(grep -- "attestation verify" <<<"${argv}" | grep -c -- "--bundle-from-oci" || true)"
+
+if [[ "${attest_calls}" != "0" && "${attest_calls}" == "${from_oci_calls}" ]]; then
+  ok "every attestation check reads its bundle from the registry (${from_oci_calls}/${attest_calls})"
+else
+  bad "every attestation check reads its bundle from the registry" \
+    "${from_oci_calls}/${attest_calls} carried --bundle-from-oci: ${argv}"
+fi
+
 # An absent identity must refuse rather than fall back to a wildcard: verifying
 # that SOMEONE signed the bytes is not the property being asserted.
 dir="$(stub_dir 0 0)"
