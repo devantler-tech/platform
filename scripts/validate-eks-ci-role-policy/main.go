@@ -57,9 +57,10 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against PR head 4673fe2d before approving this value: all five
-// production render trees contain 1,019 documents on both sides, with membership
-// IDENTICAL by apiVersion|kind|namespace|name set difference. The 64 Role /
+// Measured by comparing base 4673fe2d with manifest head d0f130a0 before
+// approving this value: all five production render trees contain 1,019 documents
+// on both sides, with membership IDENTICAL by
+// apiVersion|kind|namespace|name set difference. The 64 Role /
 // ClusterRole / RoleBinding / ClusterRoleBinding / ServiceAccount documents are
 // byte-identical. Exactly ONE rendered entry moves:
 //
