@@ -81,10 +81,15 @@ const (
 	surfaceCVE surface = "cve"
 )
 
-// component is the sanitized public identity of a scanned object. It
-// deliberately omits node names, pod IPs, image digests, UIDs and the wlid
-// internals — those are reachability evidence that must not reach a public
-// issue.
+// component is the sanitized public identity of a scanned object. Pod IPs,
+// image digests, UIDs and the wlid internals are never carried at all — those
+// are reachability evidence that must not reach a public issue.
+//
+// A node name is the one exception, and the distinction is deliberate: when the
+// scanned object IS a Node, its name is also its hostname, and exception
+// designators still have to match on it. So the STRUCT keeps the real name and
+// String — the only path to a public artifact — pseudonymizes it. Withholding
+// happens at the boundary, not in the field.
 //
 // It is kept STRUCTURED rather than pre-joined because exception designators
 // match on the individual fields.
@@ -94,9 +99,37 @@ type component struct {
 	Name      string
 }
 
+// nodeIdentityPrefix marks a component name that has been replaced by a
+// pseudonym. It is spelled so a reader can tell at a glance that the value is
+// deliberately not a hostname.
+const nodeIdentityPrefix = "node-"
+
+// nodeIdentityDigestLen is the hex width of a pseudonymized node identity.
+// Node counts are cluster-sized, not adversarial: 32 bits over a few dozen
+// names leaves collision probability negligible, and a pseudonym only has to
+// separate one node from another within a single issue body.
+const nodeIdentityDigestLen = 8
+
 // String renders the component. A cluster-scoped object has no namespace, and
 // is rendered with an explicit "cluster" scope marker rather than an empty
 // leading segment, so a reader cannot mistake it for a missing value.
+//
+// This is the ONLY place a component becomes a public string — acc.add is its
+// single call site, and exception designators match the structured fields
+// instead — which is what makes it the right place to enforce the exclusion the
+// package documents, rather than a second rule that rendering has to remember.
+//
+// A `Node` is the one kind whose NAME is itself the reachability evidence the
+// package excludes. For every other kind the name is a workload identity and
+// the node it runs on never appears; for a Node, `kubescape.io/workload-name`
+// IS the hostname, so rendering it verbatim publishes exactly what doc.go,
+// renderBody and this type all promise is withheld. Kubescape reports Node
+// findings in the live input, so this is a reachable path, not a hypothetical.
+//
+// It is pseudonymized rather than dropped: the body must still show that N
+// distinct nodes are affected and let two entries be told apart. The digest is
+// taken over the name alone and is therefore deterministic, so an unchanged
+// cluster renders identical bytes and the anti-churn guarantee holds.
 func (c component) String() string {
 	scope := c.Namespace
 	if scope == "" {
@@ -106,11 +139,17 @@ func (c component) String() string {
 		scope = "<cluster>"
 	}
 
-	if c.Kind == "" {
-		return scope + "/" + c.Name
+	name := c.Name
+	if c.Kind == "Node" && name != "" {
+		digest := sha256.Sum256([]byte(name))
+		name = nodeIdentityPrefix + hex.EncodeToString(digest[:])[:nodeIdentityDigestLen]
 	}
 
-	return scope + "/" + c.Kind + "/" + c.Name
+	if c.Kind == "" {
+		return scope + "/" + name
+	}
+
+	return scope + "/" + c.Kind + "/" + name
 }
 
 // control is one posture control's state within a summary object.

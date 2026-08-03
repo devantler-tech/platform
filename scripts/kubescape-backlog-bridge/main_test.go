@@ -2237,3 +2237,71 @@ func TestDerivePostureNamesFullySuppressedControls(t *testing.T) {
 		t.Errorf("want 3 suppressed (control,component) pairs, got %d", suppressed)
 	}
 }
+
+// A Node is the one kind whose NAME is itself the reachability evidence that
+// doc.go, renderBody and the component type all promise is withheld from these
+// public issues. For every other kind the name is a workload identity; for a
+// Node, `kubescape.io/workload-name` IS the hostname.
+//
+// TestComponentCarriesOnlyTheSanitizedMinimum already greps a rendered
+// component for "prod-worker", but it builds a *Deployment*, where a node name
+// could never have appeared — so it pinned the shape of the guarantee without
+// being able to fail on the path that actually breaks it. This exercises that
+// path.
+func TestNodeIdentityIsPseudonymizedInPublicComponents(t *testing.T) {
+	const nodeName = "worker-7.example.invalid"
+
+	it := itemOf(t, clusterScopedDoc("Node", nodeName, "kubescape",
+		map[string]string{"C-0016": "failed"}))
+
+	got := it.component().String()
+
+	if strings.Contains(got, nodeName) {
+		t.Fatalf("node hostname reached a public component: %s", got)
+	}
+
+	// A partial leak is still a leak: the domain alone maps a cluster.
+	for _, fragment := range []string{"worker-7", "example", "invalid"} {
+		if strings.Contains(got, fragment) {
+			t.Errorf("component leaked node-name fragment %q: %s", fragment, got)
+		}
+	}
+
+	// It must still SAY it is a Node, and still be recognisably a pseudonym —
+	// redacting to a constant would hide how many nodes are affected.
+	if want := "<cluster>/Node/" + nodeIdentityPrefix; !strings.HasPrefix(got, want) {
+		t.Errorf("want a pseudonymized node component starting %q, got %s", want, got)
+	}
+}
+
+// Pseudonymizing must not collapse two nodes into one entry, and must render
+// identical bytes across runs or every run rewrites the issue.
+func TestPseudonymizedNodesStayDistinctAndStable(t *testing.T) {
+	first := component{Kind: "Node", Name: "worker-1.example.invalid"}
+	second := component{Kind: "Node", Name: "worker-2.example.invalid"}
+
+	if first.String() == second.String() {
+		t.Errorf("two distinct nodes collapsed to one component: %s", first)
+	}
+
+	if first.String() != (component{Kind: "Node", Name: "worker-1.example.invalid"}).String() {
+		t.Error("the same node must render identical bytes, or every run churns the issue")
+	}
+}
+
+// The control for the two tests above: pseudonymization is scoped to Node and
+// must leave every other kind byte-identical, including a workload whose name
+// merely looks host-like.
+func TestNonNodeComponentsAreNotPseudonymized(t *testing.T) {
+	cases := map[string]component{
+		"app/Deployment/api":               {Namespace: "app", Kind: "Deployment", Name: "api"},
+		"app/Pod/worker-7.example.invalid": {Namespace: "app", Kind: "Pod", Name: "worker-7.example.invalid"},
+		"<cluster>/ClusterRole/some-role":  {Kind: "ClusterRole", Name: "some-role"},
+	}
+
+	for want, c := range cases {
+		if got := c.String(); got != want {
+			t.Errorf("want %q, got %q", want, got)
+		}
+	}
+}

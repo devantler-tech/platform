@@ -308,6 +308,16 @@ const zeroWidthSpace = "\u200b"
 // rendered inside a code span, and a backtick would end it early and leave the
 // rest of the value as live markup.
 //
+// A NUL is dropped rather than neutralized, and its failure mode is not a
+// rendering one. An argv element cannot contain NUL, so Go refuses the exec
+// itself with `fork/exec: invalid argument` before `gh` ever runs. applyPlan
+// stops at the first failure, so a single scanner field carrying \x00 would
+// block every remaining action in the run — the same one-bad-field-wedges-
+// everything class that maxRenderedFieldRunes and maxListedComponents already
+// exist to prevent, arriving through a different door. It is removed outright
+// because, unlike the markup characters above, it carries no meaning a reader
+// could want preserved.
+//
 // The replacement is deterministic, so it cannot perturb the anti-churn
 // guarantee: the same input always renders the same bytes.
 func sanitizeForIssue(s string) string {
@@ -318,6 +328,7 @@ func sanitizeForIssue(s string) string {
 		"[", "["+zeroWidthSpace,
 		"*", "*"+zeroWidthSpace,
 		"`", "'",
+		"\x00", "",
 		"\r", " ",
 		"\n", " ",
 	).Replace(s)

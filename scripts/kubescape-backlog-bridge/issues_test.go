@@ -2034,3 +2034,19 @@ func TestFingerprintRefusesDuplicateMarkers(t *testing.T) {
 		t.Errorf("a body with no marker must report missing, got %v", err)
 	}
 }
+
+// A NUL never reaches Markdown at all: an argv element cannot contain one, so
+// Go refuses the exec with `fork/exec: invalid argument` before gh runs, and
+// because applyPlan stops at the first failure a single scanner field carrying
+// \x00 would block every remaining action in the run.
+func TestSanitizeDropsNULSoTheExecCannotBeRefused(t *testing.T) {
+	got := sanitizeForIssue("Critical\x00severity")
+
+	if strings.ContainsRune(got, 0) {
+		t.Fatalf("NUL survived sanitization: %q", got)
+	}
+
+	if got != "Criticalseverity" {
+		t.Errorf("want the NUL dropped and nothing else changed, got %q", got)
+	}
+}
