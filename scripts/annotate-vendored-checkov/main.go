@@ -80,6 +80,7 @@ var bundleTargets = map[string][]targetSpec{
 }
 
 var inlineCheckovSkip = regexp.MustCompile(`(?i)checkov\s*:\s*skip\s*=`)
+var sha256Digest = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 var workloadKinds = map[string]struct{}{
 	"CronJob":               {},
@@ -146,7 +147,12 @@ func main() {
 	validateAnnotated := flag.Bool(
 		"validate-annotated",
 		false,
-		"validate that a committed bundle contains exactly the configured Checkov dispositions",
+		"validate that a committed bundle is the pinned source plus exactly the configured dispositions",
+	)
+	sourceSHA256 := flag.String(
+		"source-sha256",
+		"",
+		"expected SHA-256 of the annotation-free upstream source for --validate-annotated",
 	)
 	framework := flag.String(
 		"framework",
@@ -182,6 +188,12 @@ func main() {
 	if *requireSecretsCanary && (!*validateReport || *framework != "secrets") {
 		fail("--require-secrets-canary requires --validate-report --framework secrets")
 	}
+	if *validateAnnotated && *sourceSHA256 == "" {
+		fail("--validate-annotated requires --source-sha256")
+	}
+	if !*validateAnnotated && *sourceSHA256 != "" {
+		fail("--source-sha256 requires --validate-annotated")
+	}
 
 	input, err := io.ReadAll(os.Stdin)
 	if err != nil {
@@ -206,7 +218,7 @@ func main() {
 		return
 	}
 	if *validateAnnotated {
-		if err := validateAnnotatedBundle(input, targets); err != nil {
+		if err := validatePinnedSource(input, targets, *sourceSHA256); err != nil {
 			fail("validate %s annotated bundle: %v", *bundle, err)
 		}
 		return
@@ -565,6 +577,127 @@ func validateAnnotatedBundle(input []byte, targets []targetSpec) error {
 		}
 	}
 	return nil
+}
+
+func validatePinnedSource(input []byte, targets []targetSpec, expectedSHA256 string) error {
+	if !sha256Digest.MatchString(expectedSHA256) {
+		return fmt.Errorf("source SHA-256 must be 64 lowercase hexadecimal characters")
+	}
+	if err := validateAnnotatedBundle(input, targets); err != nil {
+		return err
+	}
+	source, err := stripConfiguredDispositions(string(input), targets)
+	if err != nil {
+		return err
+	}
+	actualSHA256 := fmt.Sprintf("%x", sha256.Sum256([]byte(source)))
+	if actualSHA256 != expectedSHA256 {
+		return fmt.Errorf("source SHA-256 is %s, want %s", actualSHA256, expectedSHA256)
+	}
+	return nil
+}
+
+func stripConfiguredDispositions(input string, targets []targetSpec) (string, error) {
+	hasTrailingNewline := strings.HasSuffix(input, "\n")
+	trimmed := strings.TrimSuffix(input, "\n")
+	documents := splitDocuments(strings.Split(trimmed, "\n"))
+	targetsByIdentity := make(map[string]targetSpec, len(targets))
+	for _, target := range targets {
+		targetsByIdentity[target.kind+"/"+target.name] = target
+	}
+
+	output := make([]string, 0, len(strings.Split(trimmed, "\n")))
+	for _, document := range documents {
+		identity, err := readIdentity(document)
+		if err != nil {
+			return "", err
+		}
+		target, configured := targetsByIdentity[identity.Kind+"/"+identity.Metadata.Name]
+		if !configured {
+			output = append(output, document...)
+			continue
+		}
+		stripped, err := stripTargetDispositions(document, target)
+		if err != nil {
+			return "", fmt.Errorf("%s/%s: %w", target.kind, target.name, err)
+		}
+		output = append(output, stripped...)
+	}
+
+	result := strings.Join(output, "\n")
+	if hasTrailingNewline {
+		result += "\n"
+	}
+	return result, nil
+}
+
+func stripTargetDispositions(lines []string, target targetSpec) ([]string, error) {
+	metadataIndex := -1
+	metadataEnd := len(lines)
+	for index, line := range lines {
+		if line == "metadata:" {
+			metadataIndex = index
+			continue
+		}
+		if metadataIndex != -1 && line != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "#") {
+			metadataEnd = index
+			break
+		}
+	}
+	if metadataIndex == -1 {
+		return nil, errors.New("top-level metadata mapping is missing")
+	}
+
+	annotationsIndex := -1
+	annotationsEnd := metadataEnd
+	for index := metadataIndex + 1; index < metadataEnd; index++ {
+		if lines[index] == "  annotations:" {
+			annotationsIndex = index
+			continue
+		}
+		if annotationsIndex != -1 && lines[index] != "" && !strings.HasPrefix(lines[index], "    ") && !strings.HasPrefix(strings.TrimSpace(lines[index]), "#") {
+			annotationsEnd = index
+			break
+		}
+	}
+	if annotationsIndex == -1 {
+		return nil, errors.New("metadata.annotations mapping is missing")
+	}
+
+	expectedLines := make(map[string]bool, len(target.checks))
+	for index, check := range target.checks {
+		line := fmt.Sprintf("    checkov.io/skip%d: %q", index+1, check+"="+target.reason)
+		expectedLines[line] = false
+	}
+	remainingAnnotations := false
+	for index := annotationsIndex + 1; index < annotationsEnd; index++ {
+		if _, expected := expectedLines[lines[index]]; expected {
+			expectedLines[lines[index]] = true
+			continue
+		}
+		if strings.TrimSpace(lines[index]) != "" {
+			remainingAnnotations = true
+		}
+	}
+	for line, found := range expectedLines {
+		if !found {
+			return nil, fmt.Errorf("configured disposition line %q is missing", line)
+		}
+	}
+
+	stripped := make([]string, 0, len(lines)-len(target.checks))
+	for index, line := range lines {
+		if index > annotationsIndex && index < annotationsEnd {
+			if _, expected := expectedLines[line]; expected {
+				continue
+			}
+		}
+		if index == annotationsIndex && !remainingAnnotations {
+			continue
+		}
+		stripped = append(stripped, line)
+	}
+	return stripped, nil
 }
 
 func rejectInlineCheckovSuppression(node *yaml.Node) error {

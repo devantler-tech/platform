@@ -153,6 +153,29 @@ prepare_bundle() {
     "${bundle}" annotated "${annotated}" secrets "${annotated_secrets_report}"
 }
 
+validate_committed_bundles() {
+  (
+    cd "${repo_root}"
+    go run ./scripts/annotate-vendored-checkov --bundle cdi --validate-annotated \
+      --source-sha256 "${cdi_sha256}" \
+      <k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+    go run ./scripts/annotate-vendored-checkov --bundle kubevirt --validate-annotated \
+      --source-sha256 "${kubevirt_sha256}" \
+      <k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+  )
+}
+
+if [ "$#" -ne 0 ]; then
+  if [ "$#" -eq 1 ] && [ "$1" = '--validate-committed' ]; then
+    require_tool go
+    validate_committed_bundles
+    printf 'Committed CDI and KubeVirt bundles match their pinned upstream digests.\n'
+    exit 0
+  fi
+  printf 'usage: %s [--validate-committed]\n' "$0" >&2
+  exit 2
+fi
+
 require_tool curl
 require_tool go
 require_tool checkov

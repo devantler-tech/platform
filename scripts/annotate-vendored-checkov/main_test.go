@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"strconv"
@@ -646,6 +648,37 @@ func TestAnnotatedValidationAcceptsOnlyConfiguredDispositions(t *testing.T) {
 	}
 	if err := validateAnnotatedBundle([]byte(annotated), bundleTargets["cdi"]); err != nil {
 		t.Fatalf("configured dispositions were rejected: %v", err)
+	}
+}
+
+func TestPinnedSourceValidationAcceptsAnnotatedExactSource(t *testing.T) {
+	t.Parallel()
+
+	input := bundleFixture("cdi-operator-cluster", "cdi-operator")
+	annotated, err := annotateBundle(input, bundleTargets["cdi"])
+	if err != nil {
+		t.Fatalf("annotate fixture: %v", err)
+	}
+	expectedSHA256 := fmt.Sprintf("%x", sha256.Sum256([]byte(input)))
+	if err := validatePinnedSource([]byte(annotated), bundleTargets["cdi"], expectedSHA256); err != nil {
+		t.Fatalf("exact pinned source was rejected: %v", err)
+	}
+}
+
+func TestPinnedSourceValidationRejectsNonAnnotationChange(t *testing.T) {
+	t.Parallel()
+
+	input := bundleFixture("cdi-operator-cluster", "cdi-operator")
+	annotated, err := annotateBundle(input, bundleTargets["cdi"])
+	if err != nil {
+		t.Fatalf("annotate fixture: %v", err)
+	}
+	expectedSHA256 := fmt.Sprintf("%x", sha256.Sum256([]byte(input)))
+	annotated = strings.Replace(annotated, "spec: {}", "spec:\n  replicas: 9", 1)
+	if err := validatePinnedSource([]byte(annotated), bundleTargets["cdi"], expectedSHA256); err == nil {
+		t.Fatal("pinned-source validator accepted a non-annotation bundle change")
+	} else if !strings.Contains(err.Error(), "source SHA-256") {
+		t.Fatalf("error did not name the pinned source digest: %v", err)
 	}
 }
 
