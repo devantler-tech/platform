@@ -832,6 +832,44 @@ func TestPinnedSourceValidationBindsOperatorImageVersion(t *testing.T) {
 	}
 }
 
+func TestPinnedSourceValidationSupportsTargetsNestedInList(t *testing.T) {
+	t.Parallel()
+
+	input := `apiVersion: v1
+kind: List
+items:
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: cdi-operator-cluster
+  rules: []
+- apiVersion: apps/v1
+  kind: Deployment
+  metadata:
+    name: cdi-operator
+    namespace: cdi
+  spec:
+    template:
+      spec:
+        containers:
+        - name: cdi-operator
+          image: quay.io/kubevirt/cdi-operator:v1.65.0
+`
+	annotated, err := annotateBundle(input, bundleTargets["cdi"])
+	if err != nil {
+		t.Fatalf("annotate List fixture: %v", err)
+	}
+	expectedSHA256 := fmt.Sprintf("%x", sha256.Sum256([]byte(input)))
+	if err := validatePinnedSource(
+		[]byte(annotated),
+		bundleTargets["cdi"],
+		expectedSHA256,
+		"v1.65.0",
+	); err != nil {
+		t.Fatalf("nested List targets did not validate as pinned source: %v", err)
+	}
+}
+
 func TestPinnedSourceValidationRejectsNonAnnotationChange(t *testing.T) {
 	t.Parallel()
 

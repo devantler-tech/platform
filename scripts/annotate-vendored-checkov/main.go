@@ -19,6 +19,7 @@ import (
 	"path"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -568,46 +569,16 @@ func validateAnnotatedBundle(input []byte, targets []targetSpec) error {
 		if root.Kind != yaml.MappingNode {
 			return fmt.Errorf("committed document %d must contain a top-level mapping", documentIndex)
 		}
-		kind := mappingScalar(root, "kind")
-		metadata := mappingValue(root, "metadata")
-		if metadata == nil {
-			continue
-		}
-		if metadata.Kind != yaml.MappingNode {
-			return fmt.Errorf("committed document %d metadata must be a mapping", documentIndex)
-		}
-		name := mappingScalar(metadata, "name")
-		identity := kind + "/" + name
-		if _, configured := targetsByIdentity[identity]; configured {
-			seenTargets[identity]++
-		}
-
-		annotations := mappingValue(metadata, "annotations")
-		if annotations == nil {
-			continue
-		}
-		if annotations.Kind != yaml.MappingNode {
-			return fmt.Errorf("committed document %d metadata.annotations must be a mapping", documentIndex)
-		}
-		for index := 0; index+1 < len(annotations.Content); index += 2 {
-			annotationKey := annotations.Content[index].Value
-			if !strings.HasPrefix(annotationKey, "checkov.io/skip") {
-				continue
-			}
-			expected, configuredTarget := expectedByIdentity[identity]
-			expectedValue, configuredDisposition := expected[annotationKey]
-			if !configuredTarget || !configuredDisposition {
-				return fmt.Errorf("unexpected Checkov disposition %s on %s", annotationKey, identity)
-			}
-			annotationValue := annotations.Content[index+1]
-			if annotationValue.Kind != yaml.ScalarNode || annotationValue.Value != expectedValue {
-				return fmt.Errorf(
-					"%s on %s does not match the configured disposition",
-					annotationKey,
-					identity,
-				)
-			}
-			seenDispositions[identity+"/"+annotationKey]++
+		if err := walkManifestResources(root, func(resource *yaml.Node) error {
+			return validateAnnotatedResource(
+				resource,
+				targetsByIdentity,
+				expectedByIdentity,
+				seenTargets,
+				seenDispositions,
+			)
+		}); err != nil {
+			return fmt.Errorf("committed document %d: %w", documentIndex, err)
 		}
 	}
 
@@ -620,6 +591,57 @@ func validateAnnotatedBundle(input []byte, targets []targetSpec) error {
 				return fmt.Errorf("expected exactly one configured %s on %s", annotationKey, identity)
 			}
 		}
+	}
+	return nil
+}
+
+func validateAnnotatedResource(
+	root *yaml.Node,
+	targetsByIdentity map[string]targetSpec,
+	expectedByIdentity map[string]map[string]string,
+	seenTargets map[string]int,
+	seenDispositions map[string]int,
+) error {
+	kind := mappingScalar(root, "kind")
+	metadata := mappingValue(root, "metadata")
+	if metadata == nil {
+		return nil
+	}
+	if metadata.Kind != yaml.MappingNode {
+		return errors.New("metadata must be a mapping")
+	}
+	name := mappingScalar(metadata, "name")
+	identity := kind + "/" + name
+	if _, configured := targetsByIdentity[identity]; configured {
+		seenTargets[identity]++
+	}
+
+	annotations := mappingValue(metadata, "annotations")
+	if annotations == nil {
+		return nil
+	}
+	if annotations.Kind != yaml.MappingNode {
+		return errors.New("metadata.annotations must be a mapping")
+	}
+	for index := 0; index+1 < len(annotations.Content); index += 2 {
+		annotationKey := annotations.Content[index].Value
+		if !strings.HasPrefix(annotationKey, "checkov.io/skip") {
+			continue
+		}
+		expected, configuredTarget := expectedByIdentity[identity]
+		expectedValue, configuredDisposition := expected[annotationKey]
+		if !configuredTarget || !configuredDisposition {
+			return fmt.Errorf("unexpected Checkov disposition %s on %s", annotationKey, identity)
+		}
+		annotationValue := annotations.Content[index+1]
+		if annotationValue.Kind != yaml.ScalarNode || annotationValue.Value != expectedValue {
+			return fmt.Errorf(
+				"%s on %s does not match the configured disposition",
+				annotationKey,
+				identity,
+			)
+		}
+		seenDispositions[identity+"/"+annotationKey]++
 	}
 	return nil
 }
@@ -778,105 +800,81 @@ func deploymentContainerImages(root *yaml.Node) ([]string, error) {
 func stripConfiguredDispositions(input string, targets []targetSpec) (string, error) {
 	hasTrailingNewline := strings.HasSuffix(input, "\n")
 	trimmed := strings.TrimSuffix(input, "\n")
-	documents := splitDocuments(strings.Split(trimmed, "\n"))
+	lines := strings.Split(trimmed, "\n")
 	targetsByIdentity := make(map[string]targetSpec, len(targets))
 	for _, target := range targets {
 		targetsByIdentity[target.kind+"/"+target.name] = target
 	}
-
-	output := make([]string, 0, len(strings.Split(trimmed, "\n")))
-	for _, document := range documents {
-		identity, err := readIdentity(document)
-		if err != nil {
-			return "", err
+	removeLines := make(map[int]struct{})
+	decoder := yaml.NewDecoder(strings.NewReader(input))
+	for documentIndex := 1; ; documentIndex++ {
+		var document yaml.Node
+		if err := decoder.Decode(&document); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return "", fmt.Errorf("parse annotated document %d for stripping: %w", documentIndex, err)
 		}
-		target, configured := targetsByIdentity[identity.Kind+"/"+identity.Metadata.Name]
-		if !configured {
-			output = append(output, document...)
+		if len(document.Content) == 0 || document.Content[0].Kind == 0 {
 			continue
 		}
-		stripped, err := stripTargetDispositions(document, target)
-		if err != nil {
-			return "", fmt.Errorf("%s/%s: %w", target.kind, target.name, err)
+		if err := walkManifestResources(document.Content[0], func(resource *yaml.Node) error {
+			kind := mappingScalar(resource, "kind")
+			_, metadata := mappingEntry(resource, "metadata")
+			if metadata == nil || metadata.Kind != yaml.MappingNode {
+				return nil
+			}
+			target, configured := targetsByIdentity[kind+"/"+mappingScalar(metadata, "name")]
+			if !configured {
+				return nil
+			}
+			annotationsKey, annotations := mappingEntry(metadata, "annotations")
+			if annotations == nil || annotations.Kind != yaml.MappingNode {
+				return errors.New("configured target annotations mapping is missing")
+			}
+			for index, check := range target.checks {
+				annotationKey := "checkov.io/skip" + strconv.Itoa(index+1)
+				key, value := mappingEntry(annotations, annotationKey)
+				if key == nil || value == nil {
+					return fmt.Errorf("configured disposition %s is missing", annotationKey)
+				}
+				expectedValue := check + "=" + target.reason
+				expectedLine := fmt.Sprintf(
+					"%s%s: %q",
+					strings.Repeat(" ", key.Column-1),
+					annotationKey,
+					expectedValue,
+				)
+				if key.Line < 1 || key.Line > len(lines) || lines[key.Line-1] != expectedLine {
+					return fmt.Errorf("configured disposition line %q is missing", expectedLine)
+				}
+				removeLines[key.Line-1] = struct{}{}
+			}
+			if len(annotations.Content)/2 == len(target.checks) {
+				if annotationsKey.Line < 1 || annotationsKey.Line > len(lines) ||
+					strings.TrimSpace(lines[annotationsKey.Line-1]) != "annotations:" {
+					return errors.New("introduced annotations mapping line is missing")
+				}
+				removeLines[annotationsKey.Line-1] = struct{}{}
+			}
+			return nil
+		}); err != nil {
+			return "", fmt.Errorf("strip annotated document %d: %w", documentIndex, err)
 		}
-		output = append(output, stripped...)
 	}
 
+	output := make([]string, 0, len(lines)-len(removeLines))
+	for index, line := range lines {
+		if _, remove := removeLines[index]; remove {
+			continue
+		}
+		output = append(output, line)
+	}
 	result := strings.Join(output, "\n")
 	if hasTrailingNewline {
 		result += "\n"
 	}
 	return result, nil
-}
-
-func stripTargetDispositions(lines []string, target targetSpec) ([]string, error) {
-	metadataIndex := -1
-	metadataEnd := len(lines)
-	for index, line := range lines {
-		if line == "metadata:" {
-			metadataIndex = index
-			continue
-		}
-		if metadataIndex != -1 && line != "" && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "#") {
-			metadataEnd = index
-			break
-		}
-	}
-	if metadataIndex == -1 {
-		return nil, errors.New("top-level metadata mapping is missing")
-	}
-
-	annotationsIndex := -1
-	annotationsEnd := metadataEnd
-	for index := metadataIndex + 1; index < metadataEnd; index++ {
-		if lines[index] == "  annotations:" {
-			annotationsIndex = index
-			continue
-		}
-		if annotationsIndex != -1 && lines[index] != "" && !strings.HasPrefix(lines[index], "    ") && !strings.HasPrefix(strings.TrimSpace(lines[index]), "#") {
-			annotationsEnd = index
-			break
-		}
-	}
-	if annotationsIndex == -1 {
-		return nil, errors.New("metadata.annotations mapping is missing")
-	}
-
-	expectedLines := make(map[string]bool, len(target.checks))
-	for index, check := range target.checks {
-		line := fmt.Sprintf("    checkov.io/skip%d: %q", index+1, check+"="+target.reason)
-		expectedLines[line] = false
-	}
-	remainingAnnotations := false
-	for index := annotationsIndex + 1; index < annotationsEnd; index++ {
-		if _, expected := expectedLines[lines[index]]; expected {
-			expectedLines[lines[index]] = true
-			continue
-		}
-		trimmedLine := strings.TrimSpace(lines[index])
-		if trimmedLine != "" && !strings.HasPrefix(trimmedLine, "#") {
-			remainingAnnotations = true
-		}
-	}
-	for line, found := range expectedLines {
-		if !found {
-			return nil, fmt.Errorf("configured disposition line %q is missing", line)
-		}
-	}
-
-	stripped := make([]string, 0, len(lines)-len(target.checks))
-	for index, line := range lines {
-		if index > annotationsIndex && index < annotationsEnd {
-			if _, expected := expectedLines[line]; expected {
-				continue
-			}
-		}
-		if index == annotationsIndex && !remainingAnnotations {
-			continue
-		}
-		stripped = append(stripped, line)
-	}
-	return stripped, nil
 }
 
 func rejectInlineCheckovSuppression(node *yaml.Node) error {
@@ -956,6 +954,14 @@ func annotateBundle(input string, targets []targetSpec) (string, error) {
 		}
 
 		annotated := document
+		if identity.Kind == "List" || strings.HasSuffix(identity.Kind, "List") {
+			annotated, err = annotateListDocument(document, targets, found)
+			if err != nil {
+				return "", err
+			}
+			output = append(output, annotated...)
+			continue
+		}
 		for _, target := range targets {
 			if identity.Kind != target.kind || identity.Metadata.Name != target.name {
 				continue
@@ -982,6 +988,136 @@ func annotateBundle(input string, targets []targetSpec) (string, error) {
 		result += "\n"
 	}
 	return result, nil
+}
+
+type lineInsertion struct {
+	index int
+	lines []string
+}
+
+func annotateListDocument(lines []string, targets []targetSpec, found map[string]int) ([]string, error) {
+	var document yaml.Node
+	if err := yaml.Unmarshal([]byte(strings.Join(lines, "\n")), &document); err != nil {
+		return nil, fmt.Errorf("parse vendor List document: %w", err)
+	}
+	if len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode {
+		return nil, errors.New("vendor List document must contain a top-level mapping")
+	}
+	var insertions []lineInsertion
+	err := walkManifestResources(document.Content[0], func(resource *yaml.Node) error {
+		kind := mappingScalar(resource, "kind")
+		metadata := mappingValue(resource, "metadata")
+		if metadata == nil || metadata.Kind != yaml.MappingNode {
+			return nil
+		}
+		name := mappingScalar(metadata, "name")
+		for _, target := range targets {
+			if kind != target.kind || name != target.name {
+				continue
+			}
+			identity := target.kind + "/" + target.name
+			found[identity]++
+			insertion, err := annotationInsertion(resource, target)
+			if err != nil {
+				return fmt.Errorf("%s: %w", identity, err)
+			}
+			if len(insertion.lines) != 0 {
+				insertions = append(insertions, insertion)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(insertions, func(left, right int) bool {
+		return insertions[left].index > insertions[right].index
+	})
+	for _, insertion := range insertions {
+		lines = insertLines(lines, insertion.index, insertion.lines)
+	}
+	return lines, nil
+}
+
+func annotationInsertion(resource *yaml.Node, target targetSpec) (lineInsertion, error) {
+	metadataKey, metadata := mappingEntry(resource, "metadata")
+	if metadata == nil || metadata.Kind != yaml.MappingNode || metadata.Style&yaml.FlowStyle != 0 {
+		return lineInsertion{}, errors.New("metadata must use block mapping style")
+	}
+	annotationsKey, annotations := mappingEntry(metadata, "annotations")
+	if annotations == nil {
+		metadataIndent := strings.Repeat(" ", metadataKey.Column-1+2)
+		dispositionIndent := metadataIndent + "  "
+		additions := []string{metadataIndent + "annotations:"}
+		for index, check := range target.checks {
+			value := check + "=" + target.reason
+			additions = append(
+				additions,
+				fmt.Sprintf("%scheckov.io/skip%d: %q", dispositionIndent, index+1, value),
+			)
+		}
+		return lineInsertion{index: metadataKey.Line, lines: additions}, nil
+	}
+	if annotations.Kind != yaml.MappingNode || annotations.Style&yaml.FlowStyle != 0 {
+		return lineInsertion{}, errors.New("metadata.annotations must use block mapping style")
+	}
+	existing, highest, err := existingCheckovAnnotationNodes(annotations)
+	if err != nil {
+		return lineInsertion{}, err
+	}
+	indent := strings.Repeat(" ", annotationsKey.Column-1+2)
+	additions := make([]string, 0, len(target.checks))
+	for _, check := range target.checks {
+		value := check + "=" + target.reason
+		if existingValue, ok := existing[check]; ok {
+			if existingValue != value {
+				return lineInsertion{}, fmt.Errorf("%s already has a different disposition", check)
+			}
+			continue
+		}
+		highest++
+		additions = append(additions, fmt.Sprintf("%scheckov.io/skip%d: %q", indent, highest, value))
+	}
+	return lineInsertion{index: maxNodeLine(annotations), lines: additions}, nil
+}
+
+func existingCheckovAnnotationNodes(annotations *yaml.Node) (map[string]string, int, error) {
+	existing := make(map[string]string)
+	highest := 0
+	for index := 0; index+1 < len(annotations.Content); index += 2 {
+		key := annotations.Content[index]
+		if !strings.HasPrefix(key.Value, "checkov.io/skip") {
+			continue
+		}
+		number, err := strconv.Atoi(strings.TrimPrefix(key.Value, "checkov.io/skip"))
+		if err != nil || number < 1 {
+			return nil, 0, fmt.Errorf("invalid Checkov annotation key %q", key.Value)
+		}
+		if number > highest {
+			highest = number
+		}
+		value := annotations.Content[index+1]
+		if value.Kind != yaml.ScalarNode {
+			return nil, 0, fmt.Errorf("%s value must be a scalar", key.Value)
+		}
+		parts := strings.SplitN(value.Value, "=", 2)
+		if len(parts) != 2 || parts[0] == "" {
+			return nil, 0, fmt.Errorf("%s has an invalid disposition", key.Value)
+		}
+		if _, duplicate := existing[parts[0]]; duplicate {
+			return nil, 0, fmt.Errorf("duplicate disposition for %s", parts[0])
+		}
+		existing[parts[0]] = value.Value
+	}
+	return existing, highest, nil
+}
+
+func maxNodeLine(node *yaml.Node) int {
+	line := node.Line
+	for _, child := range node.Content {
+		line = max(line, maxNodeLine(child))
+	}
+	return line
 }
 
 func splitDocuments(lines []string) [][]string {
@@ -1106,12 +1242,17 @@ func validateAnnotationStyle(lines []string) error {
 }
 
 func mappingValue(mapping *yaml.Node, key string) *yaml.Node {
+	_, value := mappingEntry(mapping, key)
+	return value
+}
+
+func mappingEntry(mapping *yaml.Node, key string) (*yaml.Node, *yaml.Node) {
 	for index := 0; index+1 < len(mapping.Content); index += 2 {
 		if mapping.Content[index].Value == key {
-			return mapping.Content[index+1]
+			return mapping.Content[index], mapping.Content[index+1]
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 func mappingScalar(mapping *yaml.Node, key string) string {
@@ -1120,6 +1261,32 @@ func mappingScalar(mapping *yaml.Node, key string) string {
 		return ""
 	}
 	return value.Value
+}
+
+func walkManifestResources(root *yaml.Node, visit func(*yaml.Node) error) error {
+	if root.Kind != yaml.MappingNode {
+		return errors.New("manifest resource must be a mapping")
+	}
+	if err := visit(root); err != nil {
+		return err
+	}
+	kind := mappingScalar(root, "kind")
+	if kind != "List" && !strings.HasSuffix(kind, "List") {
+		return nil
+	}
+	items := mappingValue(root, "items")
+	if items == nil {
+		return nil
+	}
+	if items.Kind != yaml.SequenceNode {
+		return fmt.Errorf("%s items must be a sequence", kind)
+	}
+	for index, item := range items.Content {
+		if err := walkManifestResources(item, visit); err != nil {
+			return fmt.Errorf("%s item %d: %w", kind, index+1, err)
+		}
+	}
+	return nil
 }
 
 func existingCheckovAnnotations(lines []string, start, end int) (map[string]string, int, error) {
