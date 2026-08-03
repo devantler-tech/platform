@@ -227,6 +227,23 @@ else
     "${from_oci_calls}/${attest_calls} carried --bundle-from-oci: ${argv}"
 fi
 
+# --repo scopes an attestation check to the repository; it does NOT pin WHICH
+# workflow produced the attestation. Without --cert-identity any workflow in
+# this repo that can mint an attestation satisfies the gate, so a less-trusted
+# one becomes a path to a promotable digest — the exact substitution the cosign
+# check already refuses via --certificate-identity. Counted like the flag above,
+# so a third attestation added without it cannot hide behind the two that
+# carry it.
+identity_calls="$(grep -- "attestation verify" <<<"${argv}" |
+  grep -c -- "--cert-identity https://github.com/${workflow_ref}" || true)"
+
+if [[ "${attest_calls}" != "0" && "${attest_calls}" == "${identity_calls}" ]]; then
+  ok "every attestation check pins the calling workflow's identity (${identity_calls}/${attest_calls})"
+else
+  bad "every attestation check pins the calling workflow's identity" \
+    "${identity_calls}/${attest_calls} carried --cert-identity: ${argv}"
+fi
+
 # An absent identity must refuse rather than fall back to a wildcard: verifying
 # that SOMEONE signed the bytes is not the property being asserted.
 dir="$(stub_dir 0 0)"

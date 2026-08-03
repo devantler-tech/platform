@@ -108,16 +108,25 @@ check "cosign signature" \
 # and fail for ABSENT evidence — indistinguishable in the verdict from evidence
 # that is genuinely missing or invalid, which is the one distinction this gate
 # exists to make.
+#
+# --cert-identity on both: --repo scopes the lookup to this repository but says
+# nothing about WHICH workflow signed. Without it, any workflow here that can
+# mint an attestation satisfies the gate, so a less-trusted one becomes a path
+# to a promotable digest. That is the same substitution the cosign check above
+# already refuses, and the two must not disagree about who is allowed to vouch
+# for a digest.
 check "SBOM attestation" \
   gh attestation verify "oci://${ref}" \
   --bundle-from-oci \
   --repo "${repo}" \
+  --cert-identity "${identity}" \
   --predicate-type "${sbom_predicate}"
 
 check "provenance attestation" \
   gh attestation verify "oci://${ref}" \
   --bundle-from-oci \
   --repo "${repo}" \
+  --cert-identity "${identity}" \
   --predicate-type "${provenance_predicate}"
 
 # Compare as a string. A numeric test on a value that somehow became non-numeric
