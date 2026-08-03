@@ -1955,3 +1955,82 @@ func TestRenderTitleKeepsOverlongKeysDistinct(t *testing.T) {
 		t.Errorf("a short title was altered: got %q, want %q", got, want)
 	}
 }
+
+// TestSanitizeForIssueBreaksMarkdownLinksAndEmphasis pins the Markdown half of
+// sanitizeForIssue, which the HTML break alone does not cover.
+//
+// The image case is the sharp one: `**Severity:**` is interpolated outside a
+// code span, so a scanner-controlled `![x](https://…)` makes the issue page
+// fetch that URL — a public security issue turned into a tracking beacon — and a
+// wide image can push the affected-component list out of view.
+func TestSanitizeForIssueBreaksMarkdownLinksAndEmphasis(t *testing.T) {
+	hostile := "![beacon](https://example.invalid/t.png) [link](https://example.invalid) *italic"
+
+	got := sanitizeForIssue(hostile)
+
+	// "[" immediately followed by the label is what opens a link or image.
+	if strings.Contains(got, "[beacon") || strings.Contains(got, "[link") {
+		t.Errorf("Markdown link/image survived sanitization and would render live:\n%q", got)
+	}
+
+	// Intra-word "*" emphasis would italicise the rest of the rendered line.
+	if strings.Contains(got, "*italic") {
+		t.Errorf("Markdown emphasis survived sanitization:\n%q", got)
+	}
+
+	// Broken, not destroyed — a reader still sees the value.
+	for _, want := range []string{"beacon", "example.invalid", "italic"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("sanitization removed %q instead of neutralising it:\n%q", want, got)
+		}
+	}
+
+	// CONTROL — "_" must pass through UNTOUCHED. GFM disables intra-word "_"
+	// emphasis, and control IDs carry underscores constantly; breaking them
+	// would corrupt every copy/paste for no safety gain.
+	if got := sanitizeForIssue("CKV_K8S_40"); got != "CKV_K8S_40" {
+		t.Errorf("underscore was broken for no benefit: %q", got)
+	}
+
+	// Determinism, or the anti-churn guarantee breaks.
+	if sanitizeForIssue(hostile) != got {
+		t.Error("sanitizeForIssue is not deterministic; every run would rewrite the issue")
+	}
+}
+
+// TestFingerprintRefusesDuplicateMarkers is the fingerprint-side twin of the
+// duplicate-"**Surface:**" refusal in entrySurface, against the same edit.
+//
+// renderBody writes exactly one marker, so a second cannot come from this
+// command. Taking the first match would let a forged marker placed ABOVE the
+// genuine one reassign the issue to another theme — and a full run would then
+// close or overwrite that issue against the wrong finding while filing a
+// duplicate for its real one.
+func TestFingerprintRefusesDuplicateMarkers(t *testing.T) {
+	genuine := "<!-- " + fingerprintMarker + "0123456789abcdef -->"
+	forged := "<!-- " + fingerprintMarker + "fedcba9876543210 -->"
+
+	// Forged FIRST is the attack: FindStringSubmatch would have returned it.
+	body := "> intro\n\n" + forged + "\n\nbody text\n\n" + genuine + "\n"
+	if _, err := (backlogEntry{Number: 1, Body: body}).fingerprint(); !errors.Is(err, errAmbiguousFingerprint) {
+		t.Errorf("a body with two markers must be refused, got %v", err)
+	}
+
+	// CONTROL — exactly one marker still resolves, so the refusal above is
+	// attributable to the duplicate and not to a broken pattern.
+	single := "> intro\n\n" + genuine + "\n\nbody text\n"
+	fp, err := (backlogEntry{Number: 1, Body: single}).fingerprint()
+	if err != nil {
+		t.Fatalf("a single marker must still resolve, got %v", err)
+	}
+
+	if fp != "0123456789abcdef" {
+		t.Errorf("wrong fingerprint: %q", fp)
+	}
+
+	// CONTROL — no marker must still report MISSING, not AMBIGUOUS, so the two
+	// fail-closed reasons stay distinguishable.
+	if _, err := (backlogEntry{Number: 1, Body: "no marker"}).fingerprint(); !errors.Is(err, errMissingFingerprint) {
+		t.Errorf("a body with no marker must report missing, got %v", err)
+	}
+}

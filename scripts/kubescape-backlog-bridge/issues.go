@@ -87,6 +87,17 @@ var errAmbiguousEntry = errors.New("two tracked issues carry the same fingerprin
 // looking unfiled, and the next run would create a second issue for it.
 var errMissingFingerprint = errors.New("tracked issue carries no readable fingerprint")
 
+// errAmbiguousFingerprint reports an issue body carrying more than one marker.
+//
+// Fail-closed for the same reason entrySurface refuses a second "**Surface:**"
+// line, and against the same edit. renderBody writes exactly one fingerprint, so
+// a second is not something this command can produce; taking the first match
+// would let an edited body place a forged marker ABOVE the genuine one and
+// silently reassign the issue to another theme. A run would then close or
+// overwrite that issue against the wrong finding and file a duplicate for its
+// real one — so the identity is refused rather than guessed.
+var errAmbiguousFingerprint = errors.New("tracked issue carries more than one fingerprint")
+
 // fingerprintPattern extracts the marker's hex identity.
 //
 // Anchored to a WHOLE LINE. Sanitising folds an embedded newline into a space,
@@ -128,13 +139,20 @@ type backlogEntry struct {
 }
 
 // fingerprint reads the entry's machine identity out of its body.
+//
+// Every marker line is counted, not just the first — see errAmbiguousFingerprint
+// for why the second one is refused rather than ignored.
 func (e backlogEntry) fingerprint() (string, error) {
-	m := fingerprintPattern.FindStringSubmatch(e.Body)
+	m := fingerprintPattern.FindAllStringSubmatch(e.Body, -1)
 	if m == nil {
 		return "", fmt.Errorf("%w: issue #%d", errMissingFingerprint, e.Number)
 	}
 
-	return m[1], nil
+	if len(m) > 1 {
+		return "", fmt.Errorf("%w: issue #%d carries %d", errAmbiguousFingerprint, e.Number, len(m))
+	}
+
+	return m[0][1], nil
 }
 
 // issueAction is one reconciliation step.
@@ -262,6 +280,21 @@ const zeroWidthSpace = "\u200b"
 //     and newlines are already stripped, so a value can never start a line and
 //     forge a blockquote.
 //
+//   - A "[" opens a Markdown link, and "![" an IMAGE. The image is the sharper
+//     of the two: rendering it makes the issue page fetch a scanner-controlled
+//     URL, turning a public security issue into a tracking beacon, and a wide
+//     image can push the affected-component list out of view entirely. Breaking
+//     "[" defeats both, because "![" is only an image when the bracket follows
+//     the bang immediately.
+//
+//   - A "*" opens emphasis, and GitHub applies it INTRA-WORD, so a lone "*" in a
+//     scanner value can italicise the rest of the line and obscure the finding.
+//
+//     "_" is deliberately NOT broken: GFM disables intra-word "_" emphasis, so
+//     it cannot open anything mid-value — and underscores are ubiquitous in the
+//     control IDs this field carries (CKV_K8S_40), where breaking them would
+//     corrupt every copy/paste for no safety gain.
+//
 //   - A NEWLINE lets the string forge body structure — a second
 //     "**Surface:**" line, or a second fingerprint marker. Today both readers
 //     take the FIRST match and the genuine line is rendered above the component
@@ -282,6 +315,8 @@ func sanitizeForIssue(s string) string {
 		"@", "@"+zeroWidthSpace,
 		"#", "#"+zeroWidthSpace,
 		"<", "<"+zeroWidthSpace,
+		"[", "["+zeroWidthSpace,
+		"*", "*"+zeroWidthSpace,
 		"`", "'",
 		"\r", " ",
 		"\n", " ",
