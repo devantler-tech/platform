@@ -255,11 +255,6 @@ func boundField(s string) string {
 	return string(runes[:maxRenderedFieldRunes-len([]rune(ellipsis))]) + ellipsis
 }
 
-// renderTitle and renderBody are the two fields a reconciler compares against
-// the live issue to decide whether anything actually changed. Both are pure
-// functions of the theme, with no timestamps, run ids, or ordering derived from
-// map iteration — an unstable byte anywhere in either one turns every run into
-// an update and reintroduces exactly the churn this design forbids.
 // renderTitle bounds the title for the same reason renderBody bounds the list:
 // GitHub refuses a title over githubIssueTitleLimit, applyPlan stops at the
 // first failure, so ONE over-long scanner-derived key would block every
@@ -289,6 +284,12 @@ func renderTitle(t theme) string {
 }
 
 // renderBody builds the issue body.
+//
+// renderBody and renderTitle are the two fields a reconciler compares against
+// the live issue to decide whether anything actually changed. Both are pure
+// functions of the theme, with no timestamps, run ids, or ordering derived from
+// map iteration — an unstable byte anywhere in either one turns every run into
+// an update and reintroduces exactly the churn this design forbids.
 //
 // It carries the SANITIZED MINIMUM: the control or CVE class, the affected
 // components as namespace/kind/name, and the counts. Node names, pod IPs, image
