@@ -54,37 +54,82 @@ func deployAction(t *testing.T) string {
 // property #2879 asks for: a deliberately mis-ordered publication must be
 // refused on the CD route, not merely on the PR route.
 //
-// It is two facts, and BOTH are required. The contract must reject the bad
-// input (first half), and the CD deploy job must be unable to run without that
-// rejection reaching it (second half). Either alone is satisfied by a workflow
-// that still ships unsigned bytes: a validator nothing depends on, or a
-// dependency on a validator that accepts anything.
+// 🔴 IT DRIVES run() OVER A REAL TREE, and the earlier version did not — it
+// ablated the publisher, checked the ablation separately, then called
+// validateCDWiring with the SHIPPED files. The misordered string never reached
+// the thing under test, so the second half merely repeated
+// TestRealDirectPushWorkflowIsGatedByTheContract and the test as a whole proved
+// only that two independent facts each held. That is the vacuous shape this
+// file exists to catch, and it survived here for a round.
 func TestMisorderedPublicationIsRefusedOnTheDirectPushPath(t *testing.T) {
 	t.Parallel()
 
-	action := repoFile(t, ".github/actions/deploy-prod/publish-platform-manifests/action.yml")
-	if err := validatePublicationAction(action); err != nil {
-		t.Fatalf("precondition: the shipped action must PASS before ablating it: %v", err)
+	// Baseline: the faithful copy must PASS, or the refusal below could be
+	// caused by the copying rather than by the ablation.
+	clean := repoTreeCopy(t, nil)
+	var stdout, stderr bytes.Buffer
+	if code := run(
+		filepath.Join(clean, ".github/workflows/dr-rebuild.yaml"),
+		filepath.Join(clean, "ksail.prod.yaml"),
+		&stdout, &stderr,
+	); code != 0 {
+		t.Fatalf("faithful copy of the shipped tree must pass, got %d: %s", code, stderr.String())
 	}
 
 	// Push straight to the promoted reference instead of the staging one — the
-	// exact ordering defect #2627 tracks.
-	misordered := strings.Replace(
-		action,
-		`workload push "${STAGING_OCI_REF}"`,
-		`workload push "${PROMOTED_OCI_REF}"`,
-		1,
+	// exact ordering defect #2627 tracks — and drive the whole CLI over it.
+	misordered := repoTreeCopy(t, map[string]func(string) string{
+		".github/actions/deploy-prod/publish-platform-manifests/action.yml": func(body string) string {
+			return strings.Replace(body, `workload push "${STAGING_OCI_REF}"`, `workload push "${PROMOTED_OCI_REF}"`, 1)
+		},
+	})
+	stdout.Reset()
+	stderr.Reset()
+	code := run(
+		filepath.Join(misordered, ".github/workflows/dr-rebuild.yaml"),
+		filepath.Join(misordered, "ksail.prod.yaml"),
+		&stdout, &stderr,
 	)
-	if misordered == action {
-		t.Fatal("ablation changed nothing; re-aim it rather than trusting the result")
+	if code == 0 {
+		t.Fatal("a mis-ordered publication was accepted on the direct-push path")
 	}
-	if err := validatePublicationAction(misordered); err == nil {
-		t.Fatal("a mis-ordered publication was accepted by the contract")
+	if !strings.Contains(stderr.String(), "staging") {
+		t.Fatalf("refusal does not name the ordering defect: %q", stderr.String())
 	}
+}
 
-	if err := validateCDWiring(cdWorkflow(t), deployAction(t)); err != nil {
-		t.Fatalf("the refusal never reaches the direct-push deploy: %v", err)
+// repoTreeCopy materialises the files the CLI reads into a temp tree, applying
+// an optional per-path mutation. Copying rather than mutating in place is what
+// lets the test drive the real entry point without touching the repository.
+func repoTreeCopy(t *testing.T, mutate map[string]func(string) string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, rel := range []string{
+		".github/workflows/dr-rebuild.yaml",
+		".github/workflows/cd.yaml",
+		".github/actions/deploy-prod/action.yml",
+		".github/actions/deploy-prod/publish-platform-manifests/action.yml",
+		"ksail.prod.yaml",
+	} {
+		body := repoFile(t, rel)
+		if mutate != nil {
+			if apply, ok := mutate[rel]; ok {
+				mutated := apply(body)
+				if mutated == body {
+					t.Fatalf("%s: mutation changed nothing; re-aim it rather than trusting the result", rel)
+				}
+				body = mutated
+			}
+		}
+		dest := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(dest), 0o750); err != nil {
+			t.Fatalf("mkdir %s: %v", dest, err)
+		}
+		if err := os.WriteFile(dest, []byte(body), 0o600); err != nil {
+			t.Fatalf("write %s: %v", dest, err)
+		}
 	}
+	return root
 }
 
 func TestCDWiringRejectsEachAblation(t *testing.T) {
@@ -231,13 +276,15 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 			)
 		},
 	} {
-		ablatedCD, ablatedAction := ablate(cd, action)
-		if ablatedCD == cd && ablatedAction == action {
-			t.Fatalf("%s: ablation changed nothing; re-aim it rather than trusting the result", name)
-		}
-		if err := validateCDWiring(ablatedCD, ablatedAction); err == nil {
-			t.Fatalf("%s: ablation was accepted, so the check does not constrain it", name)
-		}
+		t.Run(name, func(t *testing.T) {
+			ablatedCD, ablatedAction := ablate(cd, action)
+			if ablatedCD == cd && ablatedAction == action {
+				t.Fatalf("ablation changed nothing; re-aim it rather than trusting the result")
+			}
+			if err := validateCDWiring(ablatedCD, ablatedAction); err == nil {
+				t.Fatal("ablation was accepted, so the check does not constrain it")
+			}
+		})
 	}
 }
 
@@ -294,6 +341,34 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 	nested := map[string]any{"steps": []any{map[string]any{"uses": "./a/b/c"}}}
 	if jobUsesAction(nested, "./a/b") {
 		t.Fatal("a nested path must not satisfy an action check")
+	}
+	// POSITIVE case — without it a jobUsesAction that always returned false
+	// would pass both assertions above. Same argument as the enforcesFailure
+	// positive case; it applies here too and I had not applied it.
+	exact := map[string]any{"steps": []any{map[string]any{"uses": "./a/b"}}}
+	if !jobUsesAction(exact, "./a/b") {
+		t.Fatal("the exact action path must satisfy an action check")
+	}
+
+	// runBlockIsSimpleSequence: keywords match as WORDS, operators as
+	// substrings. Raised by CodeRabbit — `strings.Contains` rejected
+	// `docker buildx …` for containing "do", which is the safe direction with a
+	// message that names a token the step does not use. A guard that refuses
+	// correct work with a false explanation is one people route around.
+	ordinary := map[string]any{"run": "docker buildx imagetools inspect x\ngh run download y\ngo run ./scripts/v a b\n"}
+	if err := runBlockIsSimpleSequence(ordinary, "j"); err != nil {
+		t.Fatalf("ordinary commands containing keyword substrings must be accepted: %v", err)
+	}
+	// ...and the NEGATIVE half, or the relaxation above could have disabled it.
+	for name, run := range map[string]string{
+		"conditional":  "if false; then\ngo run ./x\nfi\n",
+		"early exit":   "exit 0\ngo run ./x\n",
+		"chaining":     "true && go run ./x\n",
+		"substitution": "go run $(echo ./x)\n",
+	} {
+		if err := runBlockIsSimpleSequence(map[string]any{"run": run}, "j"); err == nil {
+			t.Fatalf("%s must still be rejected", name)
+		}
 	}
 }
 

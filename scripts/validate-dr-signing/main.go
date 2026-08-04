@@ -363,10 +363,28 @@ func enforcesFailure(node map[string]any, description string) error {
 // shellControlFlow are the tokens that make a run block something other than a
 // straight-line sequence of commands. Any of them means the check can no longer
 // say the validator is reached.
-var shellControlFlow = []string{
-	"if ", "if\t", "then", "else", "elif", "fi",
-	"for ", "while ", "until ", "do", "done",
-	"case ", "esac", "exit", "return", "&&", "||", ";", "|", "trap ", "eval ",
+// Keywords are matched as WORDS, operators as substrings. `strings.Contains`
+// on the keywords was wrong in a way whose failure direction is safe but whose
+// MESSAGE lies: `docker buildx …` contains "do" and `gh run download` contains
+// "do" too, so a legitimate step was rejected naming a token it does not use.
+// A guard that refuses correct work with a false explanation is a guard people
+// learn to route around.
+var (
+	shellKeywords = []string{
+		"if", "then", "else", "elif", "fi",
+		"for", "while", "until", "do", "done",
+		"case", "esac", "exit", "return", "trap", "eval", "source",
+	}
+	shellOperators = []string{"&&", "||", ";", "|", "`", "$("}
+)
+
+// shellWords splits a line on whitespace, which is enough to tell the keyword
+// `do` from the command `docker`. It is not a shell lexer and does not need to
+// be: anything it cannot separate stays in one token and simply fails to match
+// a keyword, which leaves the line accepted only if it also carries no
+// operator — and the operator set is what quoting and substitution live in.
+func shellWords(line string) []string {
+	return strings.Fields(line)
 }
 
 // runBlockIsSimpleSequence requires the gate step to be a straight-line
@@ -392,18 +410,29 @@ func runBlockIsSimpleSequence(step map[string]any, jobName string) error {
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		for _, token := range shellControlFlow {
-			if strings.Contains(trimmed, token) {
-				return fmt.Errorf(
-					"the validator step in %s uses shell control flow or chaining (%q in %q); "+
-						"the gate must be a straight-line sequence of commands, or finding the validator line "+
-						"does not establish that the shell reaches it",
-					jobName, strings.TrimSpace(token), trimmed,
-				)
+		for _, word := range shellWords(trimmed) {
+			for _, keyword := range shellKeywords {
+				if word == keyword {
+					return controlFlowError(jobName, keyword, trimmed)
+				}
+			}
+		}
+		for _, operator := range shellOperators {
+			if strings.Contains(trimmed, operator) {
+				return controlFlowError(jobName, operator, trimmed)
 			}
 		}
 	}
 	return nil
+}
+
+func controlFlowError(jobName string, token string, line string) error {
+	return fmt.Errorf(
+		"the validator step in %s uses shell control flow or chaining (%q in %q); "+
+			"the gate must be a straight-line sequence of commands, or finding the validator line "+
+			"does not establish that the shell reaches it",
+		jobName, token, line,
+	)
 }
 
 // stringListContains reports whether a parsed YAML value is a sequence (or a
