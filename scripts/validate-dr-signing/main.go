@@ -42,6 +42,16 @@ const drIdentitySubject = `^https://github\.com/devantler-tech/platform/\.github
 // cannot drift apart silently.
 const cdContractGateJob = "validate-publication-contract"
 
+// mergeQueueContractGateJob is the ci.yaml job that carries this validator on
+// the merge-queue production path.
+//
+// Unlike cdContractGateJob this is NOT a dedicated gate job: `changes` also
+// detects changed paths and runs the other contract validators. That difference
+// is why the gate-job rule that constrains what else may run beside the
+// validator (gateJobRunsOnlyItsValidator) is deliberately NOT applied here —
+// every OTHER rule is, because none of them depends on the job being dedicated.
+const mergeQueueContractGateJob = "changes"
+
 // mergeQueueProductionJob is a ci.yaml job that reaches production, together
 // with whether its PURPOSE requires it to survive a failed dependency.
 type mergeQueueProductionJob struct {
@@ -343,6 +353,9 @@ func validateProductionRoutes(ci string) error {
 	if !ok {
 		return errors.New("merge-queue workflow has no jobs mapping")
 	}
+	if err := validateMergeQueueContractGate(documents, jobs); err != nil {
+		return err
+	}
 	for _, production := range mergeQueueProductionJobs {
 		jobName := production.name
 		job, ok := jobs[jobName].(map[string]any)
@@ -362,8 +375,64 @@ func validateProductionRoutes(ci string) error {
 		if err := refuseDependencyStatusOverride(job, production); err != nil {
 			return err
 		}
+		// Enforcing the gate step says nothing about whether this job WAITS for
+		// it. Read from the parsed job so only a real `needs` key counts: moving
+		// the validator into a job that production does not require would
+		// otherwise leave every rule above satisfied and the gate unreachable.
+		if !stringListContains(job["needs"], mergeQueueContractGateJob) {
+			return fmt.Errorf(
+				"merge-queue job %s does not require %s, so it can reach production without the job that runs the publication validator",
+				jobName, mergeQueueContractGateJob,
+			)
+		}
 	}
 	return nil
+}
+
+// validateMergeQueueContractGate holds the ci.yaml validator step to the same
+// enforcement rules as its cd.yaml counterpart.
+//
+// 🔴 THE CONTRACT CHECKED THE MERGE-QUEUE ROUTE'S DEPLOY AND NOT ITS GATE, so
+// every bypass already pinned for cd.yaml was reachable on the NORMAL path to
+// production while the exceptional one stayed sealed: `if: false`,
+// `continue-on-error`, a here-doc, `set +e`, a shadowing shell function, a
+// `defaults.run.shell` override, or a `BASH_ENV` injection. `deploy-prod` needs
+// `changes`, so a `changes` job that reported success on a neutered validator
+// was a green light to production.
+//
+// The premise of this whole file is that the guarantee is only as strong as its
+// weakest route, and the weakest route was the one almost every deploy takes.
+func validateMergeQueueContractGate(documents map[string]any, jobs map[string]any) error {
+	gate, ok := jobs[mergeQueueContractGateJob].(map[string]any)
+	if !ok {
+		return fmt.Errorf(
+			"merge-queue workflow is missing the %s job, so the publication validator has no home on the route production normally takes",
+			mergeQueueContractGateJob,
+		)
+	}
+	// Located by the SAME command equality cd.yaml uses, so the two routes
+	// cannot drift into checking different things under one contract.
+	step, err := requireEnforcedStep(
+		gate, runsCommand(validatorCommand),
+		fmt.Errorf(
+			"%s job does not EXECUTE %q as its own command line, so the merge-queue route can reach production without validating the publication contract",
+			mergeQueueContractGateJob, validatorCommand,
+		),
+		"the validator step in "+mergeQueueContractGateJob,
+	)
+	if err != nil {
+		return err
+	}
+	// Straight-line run block, no shell override at any of the three scopes, and
+	// no environment variable that could shadow `go` before the script starts.
+	if err := runBlockRunsOnlyAllowedCommands(
+		documents, gate, step, mergeQueueContractGateJob, gateRunBlockCommands,
+	); err != nil {
+		return err
+	}
+	// The job is the same question one level up: a skipped or failure-suppressed
+	// job still satisfies the `needs` that production depends on.
+	return enforcesFailure(gate, "the "+mergeQueueContractGateJob+" job")
 }
 
 // refuseDependencyStatusOverride is the merge-queue counterpart to the

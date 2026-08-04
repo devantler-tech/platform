@@ -982,3 +982,115 @@ func TestRunCLIRequiresBothPaths(t *testing.T) {
 		t.Fatalf("missing usage line: %q", stderr.String())
 	}
 }
+
+// TestMergeQueueContractGateIsEnforced covers the merge-queue route's VALIDATOR
+// step, which the route check previously left entirely unconstrained.
+//
+// 🔴 EVERY ARM ASSERTS THE REASON, NOT JUST THE REFUSAL. These ablations edit
+// YAML, so a mis-indented arm produces a parse error — and `validateProductionRoutes`
+// refuses an unparseable workflow. An arm checking only `err == nil` would then
+// pass while proving nothing about the rule it names, which is the exact vacuity
+// this file has been bitten by before. Matching the message keeps each arm
+// pinned to its own mechanism.
+func TestMergeQueueContractGateIsEnforced(t *testing.T) {
+	t.Parallel()
+
+	ci := repoFile(t, ".github/workflows/ci.yaml")
+	if err := validateProductionRoutes(ci); err != nil {
+		t.Fatalf("shipped ci.yaml fails the merge-queue gate rules: %v", err)
+	}
+
+	const (
+		stepName      = "      - name: \U0001F58B️ Validate DR signing contract\n"
+		validatorLine = "          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml\n"
+		testLine      = "          go test ./scripts/validate-dr-signing\n"
+		gateJobHeader = "  changes:\n"
+		deployNeeds   = "    needs: [changes, validate-eks-authorization]"
+	)
+
+	for name, arm := range map[string]struct {
+		ablate func(string) string
+		reason string
+	}{
+		// (1) Located by the same command equality cd.yaml uses.
+		"validator command absent from the gate job": {
+			func(s string) string { return strings.Replace(s, validatorLine, "", 1) },
+			"does not EXECUTE",
+		},
+		// (2) Enforced: neither skipped nor failure-suppressed, at either level.
+		"validator step is skipped": {
+			func(s string) string { return strings.Replace(s, stepName, stepName+"        if: false\n", 1) },
+			"declares a condition",
+		},
+		"validator step suppresses failure": {
+			func(s string) string {
+				return strings.Replace(s, stepName, stepName+"        continue-on-error: true\n", 1)
+			},
+			"continue-on-error",
+		},
+		"gate job suppresses failure": {
+			func(s string) string {
+				return strings.Replace(s, gateJobHeader, gateJobHeader+"    continue-on-error: true\n", 1)
+			},
+			"continue-on-error",
+		},
+		// (2) Straight-line: an extra command line can leave the validator present
+		// while the shell never reaches it.
+		"gate run block carries an extra command": {
+			func(s string) string { return strings.Replace(s, testLine, "          echo skipped\n"+testLine, 1) },
+			"which is not one of the commands this gate may contain",
+		},
+		// (2) No shell override at any of the three scopes GitHub applies.
+		"shell overridden at step scope": {
+			func(s string) string { return strings.Replace(s, stepName, stepName+"        shell: bash {0}\n", 1) },
+			"overrides the shell",
+		},
+		"shell overridden at gate-job scope": {
+			func(s string) string {
+				return strings.Replace(s, gateJobHeader, gateJobHeader+"    defaults:\n      run:\n        shell: bash {0}\n", 1)
+			},
+			"job sets defaults.run.shell",
+		},
+		"shell overridden at workflow scope": {
+			func(s string) string {
+				return strings.Replace(s, "\njobs:\n", "\ndefaults:\n  run:\n    shell: bash {0}\njobs:\n", 1)
+			},
+			"the workflow sets defaults.run.shell",
+		},
+		// (2) No inherited environment: BASH_ENV shadows `go` before the run block
+		// executes, so the allowlisted lines stay correct and run nothing.
+		"gate step inherits an environment variable": {
+			func(s string) string {
+				return strings.Replace(s, stepName, stepName+"        env:\n          BASH_ENV: /tmp/shadow\n", 1)
+			},
+			"which the publication-contract gate may not inherit",
+		},
+		// (3) Production must WAIT for the job that carries the validator.
+		"deploy-prod no longer requires the gate job": {
+			func(s string) string {
+				return strings.Replace(s, deployNeeds, "    needs: [validate-eks-authorization]", 1)
+			},
+			"does not require changes",
+		},
+		// The gate job itself moving or vanishing must fail rather than pass by
+		// finding nothing to check.
+		"gate job is renamed, so the validator has no home": {
+			func(s string) string { return strings.Replace(s, gateJobHeader, "  changes-renamed:\n", 1) },
+			"missing the changes job",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ablated := arm.ablate(ci)
+			if ablated == ci {
+				t.Fatal("ablation changed nothing; re-aim it rather than trusting the result")
+			}
+			err := validateProductionRoutes(ablated)
+			if err == nil {
+				t.Fatal("ablation was accepted, so the check does not constrain it")
+			}
+			if !strings.Contains(err.Error(), arm.reason) {
+				t.Fatalf("refused for the wrong reason: want %q in %q", arm.reason, err.Error())
+			}
+		})
+	}
+}
