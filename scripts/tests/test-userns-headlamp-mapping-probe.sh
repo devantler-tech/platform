@@ -282,7 +282,7 @@ fi
 if [ ! -r "${parent}" ]; then
   bad "probe stays staged (commented out) in the apps kustomization" \
     "cannot read ${parent}, so the component's activation state was never established"
-elif grep -qE '^[[:space:]]*-[[:space:]]+\.?/?userns-headlamp-mapping-probe/?[[:space:]]*$' "${parent}"; then
+elif grep -qE '^[[:space:]]*-[[:space:]]+\.?/?userns-headlamp-mapping-probe/?([[:space:]]|$)' "${parent}"; then
   bad "probe stays staged (commented out) in the apps kustomization" \
     "the component is active in ${parent}; it must be activated only by a short-lived PR and removed after (#2858)"
 else
