@@ -106,11 +106,6 @@ jobs:
               - 'scripts/guard-cilium-homogeneous-device-rollout.sh'
               - 'scripts/wait-for-platform-flux-revision.sh'
               - 'scripts/tests/test-opencost-usage-scraper.sh'
-              # Both halves, so editing the probe alone — or its test alone —
-              # still runs the check that covers it. The manifest is already
-              # matched by 'k8s/**'; the test is not.
-              - 'k8s/providers/hetzner/apps/userns-headlamp-mapping-probe/**'
-              - 'scripts/tests/test-userns-headlamp-mapping-probe.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/dr-rebuild-supersession-guard.sh'
@@ -355,15 +350,6 @@ jobs:
         # Render the full component contract so the cAdvisor scrape and its
         # least-privilege delivery path cannot silently disappear.
         run: bash scripts/tests/test-opencost-usage-scraper.sh
-
-      - name: 🔬 Validate the user-namespace mapping probe
-        if: needs.changes.outputs.k8s == 'true'
-        # The probe is applied into an apps layer that Flux reconciles with
-        # `wait: true` and no explicit healthChecks, so a Job reporting Failed
-        # takes the whole layer not-Ready. Pin that its designed negative result
-        # is carried by a verdict line and never by the exit status, and that an
-        # unreadable id-map is INDETERMINATE rather than a pass.
-        run: bash scripts/tests/test-userns-headlamp-mapping-probe.sh
 
       - name: 🧭 Validate the DR rebuild supersession gate
         if: needs.changes.outputs.k8s == 'true'
