@@ -36,6 +36,118 @@ func TestRealClusterConfigAllowsTheDRIdentity(t *testing.T) {
 	}
 }
 
+func TestRealDirectPushWorkflowIsGatedByTheContract(t *testing.T) {
+	t.Parallel()
+
+	if err := validateCDWiring(repoFile(t, ".github/workflows/cd.yaml")); err != nil {
+		t.Fatalf("shipped cd.yaml can deploy to production without the publication contract: %v", err)
+	}
+}
+
+// TestMisorderedPublicationIsRefusedOnTheDirectPushPath is the end-to-end
+// property #2879 asks for: a deliberately mis-ordered publication must be
+// refused on the CD route, not merely on the PR route.
+//
+// It is two facts, and BOTH are required. The contract must reject the bad
+// input (first half), and the CD deploy job must be unable to run without that
+// rejection reaching it (second half). Either alone is satisfied by a workflow
+// that still ships unsigned bytes: a validator nothing depends on, or a
+// dependency on a validator that accepts anything.
+func TestMisorderedPublicationIsRefusedOnTheDirectPushPath(t *testing.T) {
+	t.Parallel()
+
+	action := repoFile(t, ".github/actions/deploy-prod/publish-platform-manifests/action.yml")
+	if err := validatePublicationAction(action); err != nil {
+		t.Fatalf("precondition: the shipped action must PASS before ablating it: %v", err)
+	}
+
+	// Push straight to the promoted reference instead of the staging one — the
+	// exact ordering defect #2627 tracks.
+	misordered := strings.Replace(
+		action,
+		`workload push "${STAGING_OCI_REF}"`,
+		`workload push "${PROMOTED_OCI_REF}"`,
+		1,
+	)
+	if misordered == action {
+		t.Fatal("ablation changed nothing; re-aim it rather than trusting the result")
+	}
+	if err := validatePublicationAction(misordered); err == nil {
+		t.Fatal("a mis-ordered publication was accepted by the contract")
+	}
+
+	if err := validateCDWiring(repoFile(t, ".github/workflows/cd.yaml")); err != nil {
+		t.Fatalf("the refusal never reaches the direct-push deploy: %v", err)
+	}
+}
+
+func TestCDWiringRejectsEachAblation(t *testing.T) {
+	t.Parallel()
+
+	cd := repoFile(t, ".github/workflows/cd.yaml")
+	if err := validateCDWiring(cd); err != nil {
+		t.Fatalf("precondition: the shipped cd.yaml must PASS before ablating it: %v", err)
+	}
+
+	// Each ablation removes exactly one link in the chain that makes the gate
+	// real, and each must be refused. `unwired` matters most: the job is still
+	// present and still runs the validator, so the workflow reads as gated
+	// while the deploy no longer waits for it.
+	for name, ablate := range map[string]func(string) string{
+		"unwired": func(s string) string {
+			return strings.Replace(s, ", validate-publication-contract]", "]", 1)
+		},
+		"gate job removed": func(s string) string {
+			return strings.Replace(s, "  validate-publication-contract:", "  unrelated-job:", 1)
+		},
+		"gate no longer runs the validator": func(s string) string {
+			return strings.Replace(s, "go run ./scripts/validate-dr-signing", "echo skipped", 1)
+		},
+		"needs shape unreadable": func(s string) string {
+			return strings.Replace(
+				s,
+				"    needs: [validate-eks-authorization, validate-publication-contract]",
+				"    needs:\n      - validate-eks-authorization\n      - validate-publication-contract",
+				1,
+			)
+		},
+		"deploy no longer uses the shared action": func(s string) string {
+			return strings.Replace(s, "uses: ./.github/actions/deploy-prod\n", "uses: ./.github/actions/other\n", 1)
+		},
+	} {
+		ablated := ablate(cd)
+		if ablated == cd {
+			t.Fatalf("%s: ablation changed nothing; re-aim it rather than trusting the result", name)
+		}
+		if err := validateCDWiring(ablated); err == nil {
+			t.Fatalf("%s: ablation was accepted, so the check does not constrain it", name)
+		}
+	}
+}
+
+func TestJobNeedsReportsUnreadableShapesAsUnestablished(t *testing.T) {
+	t.Parallel()
+
+	// The failure direction that matters: a shape this cannot parse must never
+	// come back as a populated list, or an unrecognised workflow style would
+	// read as "gated" with nothing having been checked.
+	for name, job := range map[string]string{
+		"block form":   "    needs:\n      - a\n      - b\n",
+		"empty inline": "    needs: []\n",
+		"scalar form":  "    needs: validate-eks-authorization\n",
+		"absent":       "    runs-on: ubuntu-latest\n",
+	} {
+		if names, ok := jobNeeds(job); ok {
+			t.Fatalf("%s: expected unestablished, got %v", name, names)
+		}
+	}
+
+	names, ok := jobNeeds("    needs: [a, b]\n")
+	if !ok || len(names) != 2 || names[0] != "a" || names[1] != "b" {
+		t.Fatalf("inline form should parse to [a b], got %v (ok=%v)", names, ok)
+	}
+}
+
 func TestDRWorkflowContractRejectsEachAblation(t *testing.T) {
 	t.Parallel()
 

@@ -34,6 +34,11 @@ import (
 // DR-published artifact.
 const drIdentitySubject = `^https://github\.com/devantler-tech/platform/\.github/workflows/dr-rebuild\.yaml@refs/heads/main$`
 
+// cdContractGateJob is the cd.yaml job that runs this validator on the
+// direct-push production path. Named once so the wiring check and the workflow
+// cannot drift apart silently.
+const cdContractGateJob = "validate-publication-contract"
+
 func validateDRWorkflow(workflow string) error {
 	job, ok := extractJob(workflow, "  rebuild:")
 	if !ok {
@@ -134,6 +139,93 @@ func validateVerifyAllowList(config string) error {
 	return nil
 }
 
+// validateCDWiring checks that the direct-push production path cannot deploy
+// without this contract having been checked first.
+//
+// The contract above is only as strong as the weakest route to production, and
+// there are two. The merge-queue route runs this validator through ci.yaml,
+// which triggers on pull_request and merge_group. cd.yaml's documented
+// direct-push recovery route has neither event: it is dispatched manually after
+// a push to main, went straight from the authorization job into the shared
+// deploy action, and so reached production without the ordering contract being
+// examined even once.
+//
+// That is the same failure the authorization gate in cd.yaml already exists to
+// prevent, one property along — which is why the fix is the same shape: a
+// separate job before the deploy, not a step folded into the shared action,
+// because that action runs inside the prod environment with deploy secrets in
+// scope and a gate belongs before that.
+//
+// Checking the wiring HERE is deliberate. A gate the destructive job does not
+// depend on protects nothing, and the wiring is exactly the part that goes
+// missing silently: removing the `needs:` entry breaks no test, fails no lint,
+// and leaves a workflow that still looks gated because the job is still there.
+func validateCDWiring(cd string) error {
+	deploy, ok := extractJob(cd, "  deploy-prod:")
+	if !ok {
+		return errors.New("missing deploy-prod job in the direct-push production workflow")
+	}
+	// If the deploy job stops delegating to the shared action, this check is
+	// aimed at the wrong thing and must be re-aimed rather than left passing.
+	if !containsLine(deploy, "uses: ./.github/actions/deploy-prod") {
+		return errors.New(
+			"deploy-prod job no longer uses the shared production deploy action, so this wiring check no longer covers the path it names",
+		)
+	}
+	gate, ok := extractJob(cd, "  "+cdContractGateJob+":")
+	if !ok {
+		return fmt.Errorf(
+			"missing %s job: the direct-push production path has no publication-contract gate",
+			cdContractGateJob,
+		)
+	}
+	if !containsLine(gate, "go run ./scripts/validate-dr-signing") {
+		return fmt.Errorf("%s job does not run the publication contract validator", cdContractGateJob)
+	}
+	needs, ok := jobNeeds(deploy)
+	if !ok {
+		return errors.New(
+			"deploy-prod job has no inline needs: [...] declaration, so its gating cannot be established",
+		)
+	}
+	for _, need := range needs {
+		if need == cdContractGateJob {
+			return nil
+		}
+	}
+	return fmt.Errorf(
+		"deploy-prod does not require %s, so a direct-push deploy can reach production without the publication contract",
+		cdContractGateJob,
+	)
+}
+
+// jobNeeds returns the job names of an inline `needs: [a, b]` declaration.
+//
+// The block form is deliberately NOT parsed. This helper decides whether a
+// destructive job can run without its gate, so a shape it cannot read must
+// report "not established" rather than be guessed at — an unrecognised shape
+// reading as "wired" is the one failure mode that matters here.
+func jobNeeds(job string) ([]string, bool) {
+	for _, line := range strings.Split(job, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "needs:") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(trimmed, "needs:"))
+		if !strings.HasPrefix(value, "[") || !strings.HasSuffix(value, "]") {
+			return nil, false
+		}
+		var names []string
+		for _, part := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(value, "["), "]"), ",") {
+			if part = strings.TrimSpace(part); part != "" {
+				names = append(names, part)
+			}
+		}
+		return names, len(names) > 0
+	}
+	return nil, false
+}
+
 func extractJob(workflow string, header string) (string, bool) {
 	lines := strings.Split(workflow, "\n")
 	start := -1
@@ -217,6 +309,19 @@ func run(workflowPath string, configPath string, stdout io.Writer, stderr io.Wri
 		return 1
 	}
 	if err := validateVerifyAllowList(string(config)); err != nil {
+		_, _ = fmt.Fprintf(stderr, "dr publication contract: %v\n", err)
+		return 1
+	}
+	// Derived from the workflow path, exactly as the publication action above
+	// is — keeping the CLI at two arguments so no caller can run a partial
+	// contract by passing fewer paths.
+	cdPath := filepath.Clean(filepath.Join(filepath.Dir(workflowPath), "cd.yaml"))
+	cd, err := os.ReadFile(cdPath) //nolint:gosec // Derived from the explicit workflow path.
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "dr publication contract: read direct-push deploy workflow: %v\n", err)
+		return 1
+	}
+	if err := validateCDWiring(string(cd)); err != nil {
 		_, _ = fmt.Fprintf(stderr, "dr publication contract: %v\n", err)
 		return 1
 	}
