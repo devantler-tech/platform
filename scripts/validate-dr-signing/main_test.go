@@ -310,6 +310,27 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 				1,
 			)
 		},
+		// CodeRabbit P1: `set +e` runs the validator and DISCARDS its verdict,
+		// then a later succeeding line carries the step to exit 0. The fifth
+		// shape of "does this command count" — quoted, skipped, unreached,
+		// printed, and now ignored.
+		"validator failure is discarded by set +e": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"          go test ./scripts/validate-dr-signing\n",
+				"          set +e\n          go test ./scripts/validate-dr-signing\n",
+				1,
+			), a
+		},
+		// ...and the same question one key over.
+		"validator step overrides the shell": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"      - name: 🖋️ Validate DR signing contract\n",
+				"      - name: 🖋️ Validate DR signing contract\n        shell: bash {0}\n",
+				1,
+			), a
+		},
 		// Codex P2: the contract is checked against the nested publisher, so it
 		// only means anything while the shared action still calls it. Otherwise
 		// the validator verifies an unused file and reports success.

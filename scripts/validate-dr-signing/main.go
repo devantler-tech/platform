@@ -445,6 +445,14 @@ var (
 		"if", "then", "else", "elif", "fi",
 		"for", "while", "until", "do", "done",
 		"case", "esac", "exit", "return", "trap", "eval", "source",
+		// 🔴 `set` is here for the FIFTH shape of "does the command count":
+		// `set +e` runs the validator, discards its failure, and lets a later
+		// succeeding line carry the step to exit 0. The command executes and
+		// its verdict is thrown away. Every `set` is refused rather than only
+		// the disabling forms: GitHub already runs `run:` under `bash -e`, so a
+		// gate has no reason to touch failure modes, and enumerating the safe
+		// spellings is the guessing game the rest of this file avoids.
+		"set",
 	}
 	// Redirection and here-docs belong here for the same reason the chaining
 	// operators do: `cat <<'EOF' … EOF` contains the validator line verbatim
@@ -479,6 +487,17 @@ func shellWords(line string) []string {
 // legitimate gate that needs a conditional will fail this check and have to
 // justify itself, rather than a skipped one passing quietly.
 func runBlockIsSimpleSequence(step map[string]any, jobName string) error {
+	// The same question one key over: a `shell:` override can replace the
+	// default `bash -e {0}` with one that does not stop on error, which
+	// discards the validator verdict exactly as `set +e` does. Refused rather
+	// than parsed, for the reason every other branch here gives.
+	if shell, present := step["shell"]; present {
+		return fmt.Errorf(
+			"the validator step in %s overrides the shell (%v); the default already stops on error, "+
+				"and an override can discard the validator failure the gate exists to surface",
+			jobName, shell,
+		)
+	}
 	run, _ := step["run"].(string)
 	for _, line := range strings.Split(run, "\n") {
 		trimmed := strings.TrimSpace(line)
