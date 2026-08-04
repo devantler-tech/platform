@@ -344,9 +344,6 @@ func decodeWorkflow(contents string) (map[string]any, error) {
 	return document, nil
 }
 
-// jobUsesAction reports whether any step of the job has `uses` EXACTLY equal to
-// the wanted action. Equality, not prefix: a sibling or nested path is a
-// different action and must not satisfy a check about this one.
 // requireEnforcedStep finds a step and proves it is enforced, in ONE call.
 //
 // 🔴 MATCHING AND ENFORCING ARE DELIBERATELY INSEPARABLE HERE. Every reviewed
@@ -513,9 +510,16 @@ func runBlockIsSimpleSequence(workflow map[string]any, job map[string]any, step 
 }
 
 // shellSetting reads the shell configured at ONE scope. A step carries it
-// directly; a workflow and a job carry it under `defaults.run`. A shape this
-// cannot read returns absent, which is the same fail-closed direction the rest
-// of this file takes: an unreadable declaration must not read as "no override".
+// directly; a workflow and a job carry it under `defaults.run`.
+//
+// A shape this cannot read returns absent, and absent means the CALLER ACCEPTS —
+// so this helper is deliberately not fail-closed the way stringListContains is,
+// and the reason is specific rather than a house style. GitHub only applies
+// `defaults.run.shell` when `defaults` and `run` are both mappings carrying that
+// key; anything else is not a working override either, so there is no bypass for
+// refusing to read it. Stated explicitly because the earlier draft of this
+// comment claimed the opposite direction, and a later round would otherwise
+// tighten the code against a guarantee it never made.
 func shellSetting(node map[string]any, viaDefaults bool) (any, bool) {
 	if node == nil {
 		return nil, false

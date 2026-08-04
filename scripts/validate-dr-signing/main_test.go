@@ -482,7 +482,6 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 		t.Fatalf("a plain node must be accepted: %v", err)
 	}
 
-	// jobUsesAction: equality, so a prefix-sharing sibling is a different action.
 	// usesAction: equality, so a prefix-sharing sibling is a different action.
 	if usesAction("./a/b")(map[string]any{"uses": "./a/b-canary"}) {
 		t.Fatal("a sibling path sharing a prefix must not satisfy an action check")
@@ -490,7 +489,7 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 	if usesAction("./a/b")(map[string]any{"uses": "./a/b/c"}) {
 		t.Fatal("a nested path must not satisfy an action check")
 	}
-	// POSITIVE case — without it a jobUsesAction that always returned false
+	// POSITIVE case — without it a usesAction that always returned false
 	// would pass both assertions above. Same argument as the enforcesFailure
 	// positive case; it applies here too and I had not applied it.
 	if !usesAction("./a/b")(map[string]any{"uses": "./a/b"}) {
