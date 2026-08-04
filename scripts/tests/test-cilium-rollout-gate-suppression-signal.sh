@@ -171,4 +171,71 @@ if run_reporter true "${future}"; then
 fi
 ok
 
+# The elapsed count must be an EXACT whole-day difference and identical on GNU
+# and BSD date. BSD `date -j -f '%Y-%m-%d'` fills unspecified fields from the
+# current time while GNU parses a bare date as midnight, so an implicit parse
+# makes this off by one between a Mac and the Linux runner.
+for probe_days in 1 3 9 40; do
+  probe_date="$(date -u -v-"${probe_days}"d +%Y-%m-%d 2>/dev/null || date -u -d "${probe_days} days ago" +%Y-%m-%d)"
+  run_reporter true "${probe_date}" || fail "reporter must exit 0 for a ${probe_days}-day-old gate"
+  grep -Fq "**${probe_days} days**" "${tmp}/summary" ||
+    fail "elapsed must be exactly ${probe_days} days for ${probe_date}, summary said otherwise"
+done
+ok
+
+# NEXT-DAY specifically: bash truncates integer division toward zero, so a date
+# one day ahead yields elapsed_days == 0 and reads as "activated today". The
+# 30-day case above does NOT cover this — the guard must compare epochs, not the
+# divided day count.
+tomorrow="$(date -u -v+1d +%Y-%m-%d 2>/dev/null || date -u -d '1 day' +%Y-%m-%d)"
+if run_reporter true "${tomorrow}"; then
+  fail 'an activation date one day ahead must fail closed (integer division hides it as 0 days)'
+fi
+ok
+
+# EXACT threshold: warn_after_days=7 means the warning belongs on day seven, not
+# day eight. A strict > would silently make the real bound one day longer.
+exactly_threshold="$(date -u -v-"${threshold}"d +%Y-%m-%d 2>/dev/null || date -u -d "${threshold} days ago" +%Y-%m-%d)"
+run_reporter true "${exactly_threshold}" ||
+  fail 'a suppression exactly at the threshold must still exit 0'
+grep -q '^::warning' "${tmp}/out" ||
+  fail 'the warning must fire ON the threshold day, not the day after'
+ok
+
+# One day INSIDE the bound must stay quiet, or the assertion above would pass
+# for a reporter that simply always warns.
+inside="$(date -u -v-"$((threshold - 1))"d +%Y-%m-%d 2>/dev/null || date -u -d "$((threshold - 1)) days ago" +%Y-%m-%d)"
+run_reporter true "${inside}" || fail 'an in-bound suppression must exit 0'
+! grep -q '^::warning' "${tmp}/out" ||
+  fail 'a suppression one day inside the bound must not warn'
+ok
+
+# Duplicate marker: the reporter must not silently date the suppression from
+# whichever declaration happens to come first.
+fixture_root="${tmp}/root"
+fixture_kustomization="${fixture_root}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
+mkdir -p "$(dirname "${fixture_kustomization}")"
+{
+  printf '  # %s 2026-07-26\n' "${activation_marker}"
+  printf '  # %s 2026-01-01\n' "${activation_marker}"
+  printf '  - cilium/components/homogeneous-devices/\n'
+} >"${fixture_kustomization}"
+: >"${tmp}/summary"
+if CILIUM_ROLLOUT_GATE_ACTIVE=true PLATFORM_ROOT="${fixture_root}" \
+  GITHUB_STEP_SUMMARY="${tmp}/summary" "${report_script}" >"${tmp}/out" 2>&1; then
+  fail 'a duplicated activation marker must fail closed, not silently take the first'
+fi
+ok
+
+# Control for the fixture: with exactly one marker the same path succeeds, so the
+# assertion above is about duplication and not about the fixture being unreadable.
+printf '  # %s 2026-07-26\n' "${activation_marker}" >"${fixture_kustomization}"
+: >"${tmp}/summary"
+CILIUM_ROLLOUT_GATE_ACTIVE=true PLATFORM_ROOT="${fixture_root}" \
+  GITHUB_STEP_SUMMARY="${tmp}/summary" "${report_script}" >"${tmp}/out" 2>&1 ||
+  fail 'a single marker read from PLATFORM_ROOT must succeed'
+grep -Fq '2026-07-26' "${tmp}/summary" ||
+  fail 'the fixture summary must carry the declared date'
+ok
+
 printf 'passed: %s failed: 0\n' "${passed}"
