@@ -20,19 +20,6 @@ resources:
   # capture the completed Job's logs, then remove it again so its generic
   # ephemeral PVC and Longhorn volume are garbage-collected.
   # - userns-longhorn-smoke/
-  # ACTIVE for one short-lived PR: disposable measurement of the subordinate
-  # UID/GID mapping a user-namespaced pod receives in the headlamp namespace
-  # (#2651, acceptance criterion 5 — the last one open). Once the completed
-  # Job's log is recorded on #2651, this entry and the component are removed
-  # together (#2858); nothing here is meant to survive.
-  #
-  # This Flux Kustomization runs `wait: true` with no explicit healthChecks, so
-  # kstatus evaluates every applied resource and a Job that reports Failed takes
-  # the whole apps layer not-Ready. The probe therefore reports its reading as a
-  # `USERNS-PROBE-VERDICT=` log line and always exits 0 (#2954), so its own
-  # negative result — the identity map, which is precisely what it is here to
-  # detect — can no longer wedge the layer it is measuring.
-  - userns-headlamp-mapping-probe/
   # Prod-only Coroot Postgres integration for the platform-owned CNPG DBs:
   # additive CiliumNetworkPolicies that let the observability cluster-agent
   # scrape each on 5432 (the Cluster patches below stamp the
