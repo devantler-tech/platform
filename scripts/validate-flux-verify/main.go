@@ -74,14 +74,24 @@ func enabled(provider string) bool {
 // That is the same class as the misplaced-block outage this validator was
 // written for, one level further in.
 //
-// Three shapes constrain a signer, and any one of them is sufficient:
-// an OIDC matcher naming both an issuer and a subject, a secretRef pinning a
-// public key, or a trustedRootSecretRef pinning a trust root. The keyed
-// branches are accepted deliberately — a future keyed setup is a complete
-// configuration, and failing it would only teach someone to bypass the gate.
+// TWO shapes constrain a signer, and either is sufficient: an OIDC matcher
+// naming both an issuer and a subject, or a secretRef pinning a public key.
+// The keyed branch is accepted deliberately — a future keyed setup is a
+// complete configuration, and failing it would only teach someone to bypass
+// the gate.
+//
+// 🔴 THE FIELD SET IS KSAIL'S, FOR THE SAME REASON THE ENABLED PREDICATE IS.
+//
+// KSail's FluxVerifySpec carries exactly three fields — Provider, SecretRef
+// and MatchOIDCIdentity (ksail pkg/apis/cluster/v1alpha1/flux_types.go, v7.178.14,
+// the version this repo pins). It has NO trustedRootSecretRef, so a block
+// written with one has that key dropped in silence and renders as a bare
+// provider: present, enabled, and constraining nobody. Honouring a field the
+// consumer does not model would make this check pass the exact configuration
+// it exists to reject. Only the two fields KSail actually reads count here; if
+// KSail gains a field, this follows it rather than anticipating it.
 func constrainsSigner(block map[string]any) bool {
 	return namesSecret(block["secretRef"]) ||
-		namesSecret(block["trustedRootSecretRef"]) ||
 		hasUsableOIDCMatcher(block["matchOIDCIdentity"])
 }
 
@@ -334,7 +344,8 @@ func validate(config []byte) error {
 		return fmt.Errorf(
 			"%s is enabled but constrains no signer, so it accepts any keylessly-signed artifact "+
 				"from any signer (Flux reads a missing secretRef as keyless): add a matchOIDCIdentity "+
-				"entry with a non-blank issuer and subject, or a secretRef, or a trustedRootSecretRef",
+				"entry with a non-blank issuer and subject, or a secretRef naming a key Secret "+
+				"(those are the only two KSail reads — a trustedRootSecretRef is dropped in silence)",
 			strings.Join(readPath, "."),
 		)
 	}

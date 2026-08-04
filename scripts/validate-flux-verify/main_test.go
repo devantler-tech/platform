@@ -334,9 +334,15 @@ spec:
 `,
 		},
 		{
-			// Same reasoning as secretRef: a pinned trusted root constrains who
-			// may sign.
-			name: "trustedRootSecretRef-only block validates",
+			// 🔴 REGRESSION ARM, and the counter-intuitive one. Flux's own
+			// OCIRepository has a trustedRootSecretRef, so this block LOOKS like a
+			// complete keyed configuration — but KSail's FluxVerifySpec models only
+			// provider, secretRef and matchOIDCIdentity, so the key is dropped in
+			// silence and what reaches the cluster is a bare provider that trusts
+			// everyone. Accepting it because Flux understands it would reproduce
+			// this validator's founding bug: honouring a field the CONSUMER does
+			// not read. Rejected until KSail models it.
+			name: "trustedRootSecretRef-only block is rejected: KSail does not model that field",
 			config: `
 spec:
   workload:
@@ -346,6 +352,7 @@ spec:
         trustedRootSecretRef:
           name: cosign-trusted-root
 `,
+			wantErr: "constrains no signer",
 		},
 		{
 			// A secretRef that names nothing constrains nothing — the same
