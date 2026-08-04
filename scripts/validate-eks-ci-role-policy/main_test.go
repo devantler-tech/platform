@@ -1193,12 +1193,35 @@ func TestManualDeployIsGatedByTheValidator(t *testing.T) {
 		"validate-eks-authorization:",
 		"go test ./scripts/validate-eks-ci-role-policy",
 		"go run ./scripts/validate-eks-ci-role-policy .",
-		"needs: [validate-eks-authorization]",
 	} {
 		if !strings.Contains(contract, required) {
 			t.Errorf("CD workflow is missing %q — the manual deploy path bypasses the "+
 				"EKS authorization gate that the merge-queue path cannot skip", required)
 		}
+	}
+
+	// The dependency is PARSED, not grepped — the same reason the sibling
+	// assertion on ci.yaml parses it. A literal `needs: [validate-eks-authorization]`
+	// proves a RENDERING rather than the property: it passes on the same text
+	// sitting in a comment, and it FAILS the moment a second legitimate gate
+	// joins the list. That combination is the worst of both — it obstructs
+	// correct work while still not proving what it claims. Membership is
+	// stronger and stable under a growing gate list.
+	documents, err := decodeDocuments(workflow)
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("decode CD workflow: documents=%d error=%v", len(documents), err)
+	}
+	jobs, err := nestedMap(documents[0], "jobs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploy, ok := jobs["deploy-prod"].(map[string]any)
+	if !ok {
+		t.Fatal("CD workflow is missing the deploy-prod job")
+	}
+	if !stringListIncludes(deploy["needs"], "validate-eks-authorization") {
+		t.Error("CD deploy-prod must need validate-eks-authorization — the manual deploy " +
+			"path bypasses the EKS authorization gate that the merge-queue path cannot skip")
 	}
 }
 
