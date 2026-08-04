@@ -150,6 +150,44 @@ spec:
 			wantErr: "does not parse",
 		},
 		{
+			// 🔴 REGRESSION ARM. One non-string key switches the WHOLE mapping
+			// from map[string]any to map[any]any in yaml.v3, so a walk that
+			// matched only the former would skip this level entirely and miss
+			// the stray beside it — while the read path below stays valid, so
+			// nothing else reports the problem. Fail-open, in a check that only
+			// exists to fail closed.
+			name: "stray verify beside a non-string key is rejected",
+			config: `
+spec:
+  workload:
+    flux:
+      verify:
+        provider: cosign
+  extras:
+    1: numeric-key-demotes-this-mapping
+    verify:
+      provider: cosign
+`,
+			wantErr: "spec.extras.verify",
+		},
+		{
+			// Determinism: two strays must be listed in a stable order, or the
+			// message differs run to run.
+			name: "multiple strays are reported in sorted order",
+			config: `
+spec:
+  aaa:
+    verify: {provider: cosign}
+  zzz:
+    verify: {provider: cosign}
+  workload:
+    flux:
+      verify:
+        provider: cosign
+`,
+			wantErr: "spec.aaa.verify, spec.zzz.verify",
+		},
+		{
 			// A verify key nested inside a list still counts; the walk must not
 			// stop at the first mapping level.
 			name: "stray verify nested in a sequence is rejected",

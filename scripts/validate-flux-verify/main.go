@@ -42,6 +42,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -61,14 +62,41 @@ func enabled(provider string) bool {
 	return strings.TrimSpace(provider) != ""
 }
 
+// asMapping normalises the two shapes yaml.v3 decodes a mapping into.
+//
+// A mapping whose keys are all strings decodes as map[string]any, but ONE
+// non-string key anywhere in it — `1:`, `true:`, `~:` — switches the ENTIRE
+// mapping to map[any]any. A walk matching only map[string]any would then skip
+// that whole level, so a stray verify block sitting beside an integer key would
+// go unreported while the read-path check still passed. That is a fail-open in
+// a check whose whole purpose is to fail closed, so both shapes are handled
+// here rather than at each call site.
+func asMapping(value any) (map[string]any, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		return typed, true
+	case map[any]any:
+		normalised := make(map[string]any, len(typed))
+		for key, item := range typed {
+			normalised[fmt.Sprintf("%v", key)] = item
+		}
+
+		return normalised, true
+	default:
+		return nil, false
+	}
+}
+
 // lookup walks a decoded YAML tree along path, returning the value at that path.
 func lookup(tree any, path []string) (any, bool) {
 	current := tree
+
 	for _, key := range path {
-		mapping, ok := current.(map[string]any)
+		mapping, ok := asMapping(current)
 		if !ok {
 			return nil, false
 		}
+
 		current, ok = mapping[key]
 		if !ok {
 			return nil, false
@@ -79,24 +107,36 @@ func lookup(tree any, path []string) (any, bool) {
 }
 
 // strayVerifyPaths returns every path holding a `verify` key other than the one
-// KSail reads, in the order encountered.
+// KSail reads. Sorted, because Go randomises map iteration and an error message
+// that lists the same paths in a different order on every run is both harder to
+// read and impossible to assert on.
 func strayVerifyPaths(tree any, path []string) []string {
+	found := collectStrayVerifyPaths(tree, path)
+	sort.Strings(found)
+
+	return found
+}
+
+func collectStrayVerifyPaths(tree any, path []string) []string {
 	var found []string
 
-	switch node := tree.(type) {
-	case map[string]any:
+	if node, ok := asMapping(tree); ok {
 		for key, value := range node {
 			child := append(append([]string{}, path...), key)
 			if key == verifyKey && !samePath(child, readPath) {
 				found = append(found, strings.Join(child, "."))
 			}
 
-			found = append(found, strayVerifyPaths(value, child)...)
+			found = append(found, collectStrayVerifyPaths(value, child)...)
 		}
-	case []any:
+
+		return found
+	}
+
+	if node, ok := tree.([]any); ok {
 		for index, value := range node {
 			child := append(append([]string{}, path...), fmt.Sprintf("[%d]", index))
-			found = append(found, strayVerifyPaths(value, child)...)
+			found = append(found, collectStrayVerifyPaths(value, child)...)
 		}
 	}
 
@@ -144,7 +184,7 @@ func validate(config []byte) error {
 		)
 	}
 
-	block, ok := value.(map[string]any)
+	block, ok := asMapping(value)
 	if !ok {
 		return fmt.Errorf("%s is not a mapping, so KSail cannot decode it into a verify spec",
 			strings.Join(readPath, "."))
