@@ -97,6 +97,19 @@ spec:
 			wantErr: "DISABLED",
 		},
 		{
+			// Fail-closed, and the message must name what the file actually
+			// says rather than the "" the failed type assertion leaves behind.
+			name: "non-string provider is rejected and reported as written",
+			config: `
+spec:
+  workload:
+    flux:
+      verify:
+        provider: 123
+`,
+			wantErr: `provider is 123, which KSail treats as verification DISABLED`,
+		},
+		{
 			name: "verify block with no provider key is rejected",
 			config: `
 spec:

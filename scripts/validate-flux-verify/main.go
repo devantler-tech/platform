@@ -190,12 +190,22 @@ func validate(config []byte) error {
 			strings.Join(readPath, "."))
 	}
 
-	provider, _ := block["provider"].(string)
+	// A non-string provider (`provider: 123`) fails the assertion and lands here
+	// as "", which is the right VERDICT — KSail cannot decode it into its string
+	// field either — but reporting it as "" would misname what the file says and
+	// send the reader looking for an empty value that is not there. Report the
+	// raw node so the message names the edit to make.
+	provider, isString := block["provider"].(string)
 	if !enabled(provider) {
+		reported := any(provider)
+		if !isString {
+			reported = block["provider"]
+		}
+
 		return fmt.Errorf(
-			"%s.provider is %q, which KSail treats as verification DISABLED "+
-				"(it renders spec.verify only when the provider is non-blank): set it to cosign",
-			strings.Join(readPath, "."), provider,
+			"%s.provider is %#v, which KSail treats as verification DISABLED "+
+				"(it renders spec.verify only when the provider is a non-blank string): set it to cosign",
+			strings.Join(readPath, "."), reported,
 		)
 	}
 
