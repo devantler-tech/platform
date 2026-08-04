@@ -194,7 +194,13 @@ spec:
               # map "0 0 4294967295"; the host-start comparisons already reject
               # it, and the width is checked separately so a future kernel
               # reporting a non-zero-based full-width map cannot pass.
+              #
+              # The length must be > 0 as well, or the criterion above is only a
+              # claim in a comment: "0 100000 0" maps NOTHING, yet it clears a
+              # host-start test and an upper-bound width test, so it would have
+              # been reported as a real subordinate range.
               if [ "$uid_host_start" -gt 0 ] && [ "$gid_host_start" -gt 0 ] &&
+                [ "$uid_length" -gt 0 ] && [ "$gid_length" -gt 0 ] &&
                 [ "$uid_length" -lt 4294967295 ] && [ "$gid_length" -lt 4294967295 ]; then
                 verdict NON-IDENTITY "$details"
               fi

@@ -153,6 +153,16 @@ assert_case "gid range bounded but based at host 0" \
 assert_case "uid range bounded but based at host 0" \
   "0 0 65536" "0 100000 65536" "IDENTITY-MAP"
 
+# A zero-LENGTH range maps nothing at all, so it is not a subordinate range
+# either — but it clears both a `host_start > 0` test and an upper-bound width
+# test, so nothing rejected it and it read as a pass. One arm per side: a check
+# that only bounded the uid length would still accept a zero-length gid range.
+assert_case "uid range is zero-length" \
+  "0 100000 0" "0 100000 65536" "IDENTITY-MAP"
+
+assert_case "gid range is zero-length" \
+  "0 100000 65536" "0 100000 0" "IDENTITY-MAP"
+
 echo "▶ Behaviour: an unreadable reading is INDETERMINATE, never a pass"
 
 # An empty or unreadable id-map must not be silently treated as either verdict.
