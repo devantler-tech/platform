@@ -288,10 +288,16 @@ fi
 # having been read. The pattern normalises the optional `./` prefix, which
 # kustomize accepts: an active component written
 # `- ./userns-headlamp-mapping-probe/` must not read as absent.
+#
+# `(\./)?` and not `\.?/?`: the latter is three optional forms, not two, so it
+# also accepted `- .userns-headlamp-mapping-probe/` (a differently-named hidden
+# directory) and `- /userns-headlamp-mapping-probe/` (an absolute path kustomize
+# rejects). Either would satisfy this arm without the intended local component
+# being referenced at all.
 if [ ! -r "${parent}" ]; then
   bad "probe is active in the apps kustomization for this activation PR" \
     "cannot read ${parent}, so the component's activation state was never established"
-elif grep -qE '^[[:space:]]*-[[:space:]]+\.?/?userns-headlamp-mapping-probe/?([[:space:]]|$)' "${parent}"; then
+elif grep -qE '^[[:space:]]*-[[:space:]]+(\./)?userns-headlamp-mapping-probe/?([[:space:]]|$)' "${parent}"; then
   ok "probe is active in the apps kustomization for this activation PR"
 else
   bad "probe is active in the apps kustomization for this activation PR" \
