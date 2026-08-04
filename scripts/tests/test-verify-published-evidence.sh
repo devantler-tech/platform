@@ -418,11 +418,22 @@ fi
 
 # The gate reads the input rather than a constant. Without this, the default
 # above could be correct while the step passed a hardcoded value to ENFORCE.
-# shellcheck disable=SC2016  # the literal ${{ inputs... }} is the text being matched
-if grep -q 'ENFORCE: ${{ inputs.enforce-evidence-verification }}' "${action}"; then
+#
+# Resolved from the verify_evidence step specifically, not grepped over the whole
+# file: any OTHER step carrying the same env line would satisfy a file-wide match
+# while the gate itself was wired to a constant. That would make the assertion
+# about the file containing a string rather than about the gate reading the input
+# — and the input's default, asserted above, only governs enforcement if the gate
+# is what consumes it.
+# shellcheck disable=SC2016  # the literal ${{ inputs... }} is the expected value
+readonly expected_enforce='${{ inputs.enforce-evidence-verification }}'
+gate_enforce="$(yq '.runs.steps[] | select(.id == "verify_evidence") | .env.ENFORCE' "${action}")"
+
+if [[ "${gate_enforce}" == "${expected_enforce}" ]]; then
   ok "the gate step is wired to the declared input"
 else
-  bad "the gate step is wired to the declared input" "ENFORCE is not fed from the input in ${action}"
+  bad "the gate step is wired to the declared input" \
+    "verify_evidence reads ENFORCE='${gate_enforce}', not '${expected_enforce}'"
 fi
 
 echo
