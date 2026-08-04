@@ -28,13 +28,26 @@
 # the headlamp pod, which differs per pod by design.
 #
 # The component is deliberately omitted from the parent kustomization until a
-# short-lived activation PR, matching userns-longhorn-smoke (#2619). The apps
-# Flux Kustomization runs `wait: true` with no explicit healthChecks, so kstatus
-# evaluates every applied resource: a Job reporting Failed takes the whole apps
-# layer not-Ready. That is reachable here by design — a negative result is
-# exactly what the assertions below produce — so activation is deliberate and
-# watched rather than standing. Activate, capture the completed Job's logs onto
-# #2651, then remove the component again (#2858).
+# short-lived activation PR, matching userns-longhorn-smoke (#2619). Activate,
+# capture the completed Job's logs onto #2651, then remove the component again
+# (#2858).
+#
+# How the result is reported, and why it is not the exit status: the apps Flux
+# Kustomization runs `wait: true` with no explicit healthChecks, so kstatus
+# evaluates every applied resource and a Job reporting Failed takes the whole
+# apps layer not-Ready. The identity map is precisely this probe's designed
+# negative result, so an assertion carried by the exit status would let the
+# diagnostic wedge the layer it is measuring — which is what kept the
+# measurement parked. The container therefore always exits 0 and reports a
+# `USERNS-PROBE-VERDICT=` line instead. Nothing consumes the Job's status; the
+# log is the deliverable, and the verdict is strictly richer than an exit code
+# because it separates a measured identity map from an unreadable one.
+#
+# Residual risk, stated rather than implied: an infrastructure failure that
+# never lets the container run — an image pull failure, or exceeding
+# activeDeadlineSeconds — still fails the Job and still blocks the layer. That
+# is true of every resource in this overlay and is not specific to the probe;
+# what this shape removes is the probe's own negative result as a cause.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -91,37 +104,108 @@ spec:
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
-            - -ec
+            # Deliberately NOT `-ec`. Under `-e` a field assignment whose
+            # command substitution fails — `x="$(… | awk …)"` — aborts the
+            # script with that command's status, before any verdict is printed.
+            # That is a non-zero exit, so the Job reports Failed and takes the
+            # apps layer not-Ready: exactly the outcome this probe's shape
+            # exists to prevent, reachable without any bad reading. The script
+            # handles its own error paths explicitly instead, and an empty or
+            # unparsed field lands on INDETERMINATE, which is the honest result.
+            - -c
           args:
             - |
-              set -eu
-              uid_map="$(cat /proc/self/uid_map)"
-              gid_map="$(cat /proc/self/gid_map)"
+              set -u
+
+              # The reading is reported as a VERDICT LINE and this container
+              # always exits 0. The Job is applied into the `apps` Flux
+              # Kustomization, which runs `wait: true` with no explicit
+              # healthChecks, so kstatus evaluates every applied resource and a
+              # Job reporting Failed takes the whole apps layer not-Ready. The
+              # identity map is this probe's designed negative result, so
+              # asserting it through the exit status would let the diagnostic
+              # wedge the layer it is measuring. Nothing consumes the Job's
+              # status; the log is the deliverable, and a verdict line carries
+              # strictly more than an exit code — it separates "measured, and
+              # the mapping is the identity map" from "could not read it".
+              #
+              # The two path variables are a test seam so the shipped script can
+              # be driven against fixtures. The manifest deliberately sets no
+              # `env`, so in-cluster the defaults are the only values used.
+              uid_map_path="${USERNS_PROBE_UID_MAP:-/proc/self/uid_map}"
+              gid_map_path="${USERNS_PROBE_GID_MAP:-/proc/self/gid_map}"
+
+              verdict() {
+                printf 'USERNS-PROBE-VERDICT=%s %s\n' "$1" "$2"
+                exit 0
+              }
+
+              uid_map="$(cat "$uid_map_path" 2>/dev/null || true)"
+              gid_map="$(cat "$gid_map_path" 2>/dev/null || true)"
 
               printf 'running-as=%s:%s\n' "$(id -u)" "$(id -g)"
               printf 'uid_map:\n%s\n' "$uid_map"
               printf 'gid_map:\n%s\n' "$gid_map"
 
-              # A /proc/<pid>/uid_map line is "<container-start> <host-start>
-              # <length>". Read the host-start column of the first line.
+              if [ -z "$uid_map" ] || [ -z "$gid_map" ]; then
+                verdict INDETERMINATE 'reason=empty-or-unreadable-id-map'
+              fi
+
+              # A /proc/<pid>/uid_map line is exactly "<container-start>
+              # <host-start> <length>". Require that shape before reading any
+              # column: a record with a non-numeric container-start, or with a
+              # fourth field, is not the format this probe knows how to read.
+              # Reading columns 2 and 3 out of it anyway would classify a
+              # reading that was never understood — the same fail-open the
+              # numeric check below exists to prevent, one field to the left.
+              uid_field_count="$(printf '%s\n' "$uid_map" | awk 'NR == 1 { print NF }')"
+              gid_field_count="$(printf '%s\n' "$gid_map" | awk 'NR == 1 { print NF }')"
+              if [ "$uid_field_count" != 3 ] || [ "$gid_field_count" != 3 ]; then
+                verdict INDETERMINATE 'reason=malformed-id-map-record'
+              fi
+
+              uid_container_start="$(printf '%s\n' "$uid_map" | awk 'NR == 1 { print $1 }')"
+              gid_container_start="$(printf '%s\n' "$gid_map" | awk 'NR == 1 { print $1 }')"
               uid_host_start="$(printf '%s\n' "$uid_map" | awk 'NR == 1 { print $2 }')"
               gid_host_start="$(printf '%s\n' "$gid_map" | awk 'NR == 1 { print $2 }')"
               uid_length="$(printf '%s\n' "$uid_map" | awk 'NR == 1 { print $3 }')"
               gid_length="$(printf '%s\n' "$gid_map" | awk 'NR == 1 { print $3 }')"
 
-              # The acceptance criterion: a non-zero subordinate range.
-              test "$uid_host_start" -gt 0
-              test "$gid_host_start" -gt 0
+              # Reject a non-numeric field BEFORE any arithmetic test. `[ x -gt
+              # 0 ]` on a non-integer is an error, and an errored test inside an
+              # `if` fails OPEN — which would report a pass for a reading that
+              # was never understood. The container-start columns are checked
+              # too: they are not used in the comparison, but a non-numeric one
+              # means the record is not the format assumed here.
+              for field in "$uid_container_start" "$gid_container_start" \
+                "$uid_host_start" "$gid_host_start" "$uid_length" "$gid_length"; do
+                case "$field" in
+                  '' | *[!0-9]*)
+                    verdict INDETERMINATE 'reason=non-numeric-id-map-field'
+                    ;;
+                esac
+              done
 
-              # A pod left in the host user namespace reports the identity map
-              # "0 0 4294967295". The host-start assertions above already reject
-              # it, but assert the full-width length separately so a future
-              # kernel reporting a non-zero-based identity map cannot pass.
-              test "$uid_length" -lt 4294967295
-              test "$gid_length" -lt 4294967295
+              details="uid_host_start=$uid_host_start gid_host_start=$gid_host_start"
+              details="$details uid_length=$uid_length gid_length=$gid_length"
 
-              printf 'userns-headlamp-mapping=non-identity uid_host_start=%s gid_host_start=%s\n' \
-                "$uid_host_start" "$gid_host_start"
+              # The acceptance criterion: a non-zero subordinate range on BOTH
+              # maps. A pod left in the host user namespace reports the identity
+              # map "0 0 4294967295"; the host-start comparisons already reject
+              # it, and the width is checked separately so a future kernel
+              # reporting a non-zero-based full-width map cannot pass.
+              #
+              # The length must be > 0 as well, or the criterion above is only a
+              # claim in a comment: "0 100000 0" maps NOTHING, yet it clears a
+              # host-start test and an upper-bound width test, so it would have
+              # been reported as a real subordinate range.
+              if [ "$uid_host_start" -gt 0 ] && [ "$gid_host_start" -gt 0 ] &&
+                [ "$uid_length" -gt 0 ] && [ "$gid_length" -gt 0 ] &&
+                [ "$uid_length" -lt 4294967295 ] && [ "$gid_length" -lt 4294967295 ]; then
+                verdict NON-IDENTITY "$details"
+              fi
+
+              verdict IDENTITY-MAP "$details"
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
