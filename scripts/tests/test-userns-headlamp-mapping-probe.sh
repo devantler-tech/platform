@@ -54,12 +54,30 @@ fi
 
 workdir="$(mktemp -d)"
 trap 'rm -rf "${workdir}"' EXIT
-printf '%s\n' "${script}" >"${workdir}/probe.sh"
+
+# Take the INVOCATION from the manifest too, not just the script. The container
+# runs `/bin/sh -ec <script>`, and `-e` stays in force regardless of what the
+# script's own `set` line says — so a test that ran plain `sh` would not be
+# exercising the shipped configuration, and a future command that fails under
+# `-e` would abort the container while the test still passed.
+# Read with a loop rather than `mapfile`, which is bash 4+ and absent on the
+# bash 3.2 shipped with macOS — the suite must be runnable where it is authored,
+# not only on the CI runner.
+probe_command=()
+while IFS= read -r arg; do
+  probe_command+=("${arg}")
+done < <(
+  yq -r '.spec.template.spec.containers[] | select(.name == "read-id-maps") | .command[]' "${job}"
+)
+if [ "${#probe_command[@]}" -eq 0 ]; then
+  echo "::error::could not extract the read-id-maps command from ${job}"
+  exit 1
+fi
 
 # run_probe UID_MAP_CONTENT GID_MAP_CONTENT -> prints "<exit_code>\n<stdout>"
 #
-# Runs the extracted script under `sh`, which is the interpreter the manifest
-# actually invokes, with the id-map files replaced by fixtures.
+# Runs the shipped script through the shipped command, with only the id-map
+# paths redirected at fixtures.
 run_probe() {
   local uid_content="$1" gid_content="$2"
   local dir
@@ -70,7 +88,7 @@ run_probe() {
   local out rc
   set +e
   out="$(USERNS_PROBE_UID_MAP="${dir}/uid_map" USERNS_PROBE_GID_MAP="${dir}/gid_map" \
-    sh "${workdir}/probe.sh" 2>&1)"
+    "${probe_command[@]}" "${script}" 2>&1)"
   rc=$?
   set -e
   printf '%s\n' "${rc}"
