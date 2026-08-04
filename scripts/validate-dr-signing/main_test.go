@@ -393,6 +393,67 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 				1,
 			), a
 		},
+		// Codex P2: `BASH_ENV` names a file bash sources before running the
+		// script, and the runner's default `bash -e {0}` is non-interactive, so
+		// the sourced file is in force for the gate's own commands. A `go()`
+		// function defined there shadows the executable exactly as the sixth
+		// round's inline shadow did — except the allowlist never sees it,
+		// because the run block still contains only the two permitted lines.
+		// Each scope is its own arm for the reason the shell arms give: they are
+		// separate keys in separate maps.
+		"step-level env sources a go shadow into the gate's shell": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"      - name: 🖋️ Validate DR signing contract\n",
+				"      - name: 🖋️ Validate DR signing contract\n        env:\n          BASH_ENV: .ci/shadow-go.sh\n",
+				1,
+			), a
+		},
+		"job-level env sources a go shadow into the gate's shell": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"  validate-publication-contract:\n    name: 🖋️ Validate Publication Contract\n    runs-on: ubuntu-latest\n",
+				"  validate-publication-contract:\n    name: 🖋️ Validate Publication Contract\n    runs-on: ubuntu-latest\n    env:\n      BASH_ENV: .ci/shadow-go.sh\n",
+				1,
+			), a
+		},
+		"workflow-level env sources a go shadow into the gate's shell": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"\njobs:\n",
+				"\nenv:\n  BASH_ENV: .ci/shadow-go.sh\n\njobs:\n",
+				1,
+			), a
+		},
+		// The same environment, reached without an `env:` key anywhere. A step
+		// earlier in the gate job writes to the runner's own `$GITHUB_ENV` /
+		// `$GITHUB_PATH` bridges, which apply to every LATER step — so the
+		// validator step's shell starts shadowed while the validator step itself
+		// is byte-for-byte unchanged and passes every existing check.
+		"an earlier gate step exports BASH_ENV through the runner bridge": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"      - name: 🖋️ Validate DR signing contract\n",
+				"      - name: 😈 Stage a go shadow\n        run: |\n"+
+					"          printf 'go() { true; }\\n' > /tmp/shadow-go.sh\n"+
+					"          echo \"BASH_ENV=/tmp/shadow-go.sh\" >> \"$GITHUB_ENV\"\n\n"+
+					"      - name: 🖋️ Validate DR signing contract\n",
+				1,
+			), a
+		},
+		"an earlier gate step prepends a fake go through the runner bridge": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"      - name: 🖋️ Validate DR signing contract\n",
+				"      - name: 😈 Stage a fake go\n        run: |\n"+
+					"          mkdir -p /tmp/bin\n"+
+					"          printf '#!/bin/sh\\nexit 0\\n' > /tmp/bin/go\n"+
+					"          chmod +x /tmp/bin/go\n"+
+					"          echo /tmp/bin >> \"$GITHUB_PATH\"\n\n"+
+					"      - name: 🖋️ Validate DR signing contract\n",
+				1,
+			), a
+		},
 		// Codex P2: the contract is checked against the nested publisher, so it
 		// only means anything while the shared action still calls it. Otherwise
 		// the validator verifies an unused file and reports success.
@@ -663,6 +724,61 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 	} {
 		if err := refuseShellOverride(scoped[0], scoped[1], scoped[2], "j"); err == nil {
 			t.Fatalf("a shell override at %s must be refused", name)
+		}
+	}
+
+	// envAllowsOnly: same per-scope structure, plus the property an allowlist
+	// can quietly lose. The POSITIVE control comes first deliberately — a
+	// helper that refused every env would satisfy each negative case below
+	// while making a legitimate gate unshippable, so "rejects the payload" and
+	// "still accepts what is permitted" are two different claims and both are
+	// asserted.
+	if err := envAllowsOnly(
+		map[string]any{"env": map[string]any{"GOFLAGS": "-mod=readonly"}},
+		map[string]any{"env": map[string]any{"GOFLAGS": "-mod=readonly"}},
+		map[string]any{"env": map[string]any{"GOFLAGS": "-mod=readonly"}},
+		"j", []string{"GOFLAGS"},
+	); err != nil {
+		t.Fatalf("an allow-listed variable must be accepted at every scope: %v", err)
+	}
+	if err := envAllowsOnly(map[string]any{}, map[string]any{}, map[string]any{}, "j", nil); err != nil {
+		t.Fatalf("a gate that sets no env at all must be accepted: %v", err)
+	}
+	for name, scoped := range map[string][3]map[string]any{
+		"workflow scope": {{"env": map[string]any{"BASH_ENV": "s.sh"}}, nil, {}},
+		"job scope":      {nil, {"env": map[string]any{"BASH_ENV": "s.sh"}}, {}},
+		"step scope":     {nil, nil, {"env": map[string]any{"BASH_ENV": "s.sh"}}},
+		// A shape the helper cannot parse still reaches the shell, so reading
+		// it as absent would accept exactly the payload this refuses.
+		"unreadable shape": {nil, nil, {"env": "BASH_ENV=s.sh"}},
+	} {
+		if err := envAllowsOnly(scoped[0], scoped[1], scoped[2], "j", nil); err == nil {
+			t.Fatalf("an env override at %s must be refused", name)
+		}
+	}
+
+	// gateJobRunsOnlyItsValidator: the validator step itself is the ONE run
+	// step, so the positive control has to include it — a helper that refused
+	// every run step would pass every negative case and refuse the real gate.
+	validatorStep := map[string]any{"run": "go run ./x\n"}
+	if err := gateJobRunsOnlyItsValidator(
+		map[string]any{"steps": []any{
+			map[string]any{"uses": "actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0"},
+			map[string]any{"uses": "actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16"},
+			validatorStep,
+		}}, "j", gateStepActions,
+	); err != nil {
+		t.Fatalf("the real gate job's step list must be accepted: %v", err)
+	}
+	for name, steps := range map[string][]any{
+		"a second run step": {validatorStep, map[string]any{"run": "echo BASH_ENV=s.sh >> \"$GITHUB_ENV\"\n"}},
+		"an unlisted action": {
+			map[string]any{"uses": "some/action@v1"}, validatorStep,
+		},
+		"a step this check cannot read": {"- run: true", validatorStep},
+	} {
+		if err := gateJobRunsOnlyItsValidator(map[string]any{"steps": steps}, "j", gateStepActions); err == nil {
+			t.Fatalf("%s must be refused", name)
 		}
 	}
 }

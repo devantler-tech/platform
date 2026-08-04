@@ -288,6 +288,11 @@ func validateCDWiring(cd string, deployAction string) error {
 	); err != nil {
 		return err
 	}
+	// Constraining the validator step says nothing about what ran BEFORE it in
+	// the same job, and the runner's env/path bridges carry across steps.
+	if err := gateJobRunsOnlyItsValidator(gate, cdContractGateJob, gateStepActions); err != nil {
+		return err
+	}
 	// The gate JOB is the same question one level up: a skipped or
 	// failure-suppressed job still satisfies a `needs` dependency.
 	if err := enforcesFailure(gate, "the "+cdContractGateJob+" job"); err != nil {
@@ -534,6 +539,9 @@ func runBlockRunsOnlyAllowedCommands(
 	if err := refuseShellOverride(workflow, job, step, jobName); err != nil {
 		return err
 	}
+	if err := envAllowsOnly(workflow, job, step, jobName, gateEnvAllowedNames); err != nil {
+		return err
+	}
 	run, _ := step["run"].(string)
 	for _, line := range strings.Split(run, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -611,6 +619,139 @@ func refuseShellOverride(workflow map[string]any, job map[string]any, step map[s
 		}
 	}
 	return nil
+}
+
+// gateEnvAllowedNames are the environment variables the publication-contract
+// gate's shell may inherit from the workflow. Deliberately EMPTY: the gate runs
+// two fixed `go` commands and needs nothing configured.
+//
+// 🔴 THE SEVENTH SHAPE OF "present but does it run", and it is at a layer the
+// run-block allowlist cannot see. `BASH_ENV` names a file bash sources before
+// the script, and the runner's default `bash -e {0}` is non-interactive, so a
+// `go() { true; }` defined there shadows the executable exactly as the sixth
+// round's inline shadow did — while the run block still holds only the two
+// permitted lines and passes every existing check.
+//
+// Refusing the NAME `BASH_ENV` would have been the seventh token, and `PATH`,
+// `GOFLAGS` and the exported-function `BASH_FUNC_*` encoding are each another
+// one behind it. So this is an allowlist for the same reason the run block is:
+// every bypass needs a variable that is not on the list, so none of them is
+// expressible — including the ones nobody has thought of yet. A gate that
+// genuinely needs a variable adds it here, which is a reviewed act.
+var gateEnvAllowedNames []string
+
+// gateStepActions are the only `uses:` actions the gate job may run beside its
+// validator step. Named WITHOUT a version so a pinned-digest bump is an
+// ordinary dependency update rather than a contract change.
+var gateStepActions = []string{
+	"actions/checkout",
+	"actions/setup-go",
+}
+
+// envAllowsOnly rejects an environment variable set at ANY scope GitHub applies
+// to the gate step, unless it is named in allowed.
+//
+// The scopes are a parameter list for the same reason refuseShellOverride's
+// are: a fourth scope must be a signature change the compiler enforces, not a
+// site somebody remembers to visit.
+func envAllowsOnly(
+	workflow map[string]any, job map[string]any, step map[string]any, jobName string, allowed []string,
+) error {
+	for _, scope := range []struct {
+		description string
+		node        map[string]any
+	}{
+		{"the workflow", workflow},
+		{fmt.Sprintf("the %s job", jobName), job},
+		{fmt.Sprintf("the validator step in %s", jobName), step},
+	} {
+		if scope.node == nil {
+			continue
+		}
+		raw, present := scope.node["env"]
+		if !present {
+			continue
+		}
+		// A shape this cannot read is REFUSED rather than skipped: an `env`
+		// mapping it fails to parse still reaches the shell, so treating it as
+		// absent would accept exactly the payload this check exists to stop.
+		env, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf(
+				"%s sets env in a shape this check cannot read (%T); the gate's shell inherits it either way, "+
+					"so it must be expressed as a plain mapping or removed",
+				scope.description, raw,
+			)
+		}
+		for name := range env {
+			if !slices.Contains(allowed, name) {
+				return fmt.Errorf(
+					"%s sets %s, which the publication-contract gate may not inherit (permitted: %s); "+
+						"a variable such as BASH_ENV or PATH can shadow the validator while the run block still "+
+						"reads correctly — add the name here if it genuinely belongs",
+					scope.description, name, allowedNamesForMessage(allowed),
+				)
+			}
+		}
+	}
+	return nil
+}
+
+// gateJobRunsOnlyItsValidator requires every OTHER step in the gate job to be
+// one of a small set of setup actions.
+//
+// 🔴 THE SAME HOLE REACHED WITHOUT AN `env:` KEY ANYWHERE. The runner exposes
+// `$GITHUB_ENV` and `$GITHUB_PATH` bridges whose writes apply to every LATER
+// step, so a step earlier in this job can export BASH_ENV, or drop a fake `go`
+// on PATH, and leave the validator step byte-for-byte unchanged. Both were
+// accepted before this check existed: constraining the validator step says
+// nothing about what ran before it.
+//
+// So the job may contain exactly one `run:` step — the validator, already
+// constrained above — and otherwise only the named setup actions. An arbitrary
+// action is refused too: `uses:` can write those same bridges.
+func gateJobRunsOnlyItsValidator(job map[string]any, jobName string, allowedActions []string) error {
+	steps, _ := job["steps"].([]any)
+	runSteps := 0
+	for index, raw := range steps {
+		step, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf(
+				"step %d of %s is not a mapping this check can read, and an unreadable step still runs before the validator",
+				index+1, jobName,
+			)
+		}
+		if _, carriesRun := step["run"]; carriesRun {
+			runSteps++
+			if runSteps > 1 {
+				return fmt.Errorf(
+					"%s runs more than one command step; a step before the validator can export BASH_ENV or a fake go "+
+						"through $GITHUB_ENV/$GITHUB_PATH and leave the validator step itself looking correct",
+					jobName,
+				)
+			}
+			continue
+		}
+		uses, _ := step["uses"].(string)
+		action, _, _ := strings.Cut(strings.TrimSpace(uses), "@")
+		if !slices.Contains(allowedActions, action) {
+			return fmt.Errorf(
+				"%s runs %q, which is not one of the setup actions this gate may contain (%s); an action can write "+
+					"$GITHUB_ENV/$GITHUB_PATH and shadow the validator — add it here if it genuinely belongs",
+				jobName, uses, strings.Join(allowedActions, ", "),
+			)
+		}
+	}
+	return nil
+}
+
+// allowedNamesForMessage renders an allow-list that is usually empty without
+// producing a message that trails off after "permitted: ".
+func allowedNamesForMessage(allowed []string) string {
+	if len(allowed) == 0 {
+		return "none"
+	}
+	return strings.Join(allowed, ", ")
 }
 
 func disallowedGateCommandError(jobName string, line string, allowed []string) error {
