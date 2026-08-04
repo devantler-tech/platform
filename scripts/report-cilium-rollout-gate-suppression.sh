@@ -45,7 +45,9 @@ if [[ -n "${ROLLOUT_GATE_ACTIVATED_OVERRIDE:-}" ]]; then
 else
   [[ -f "${controllers_kustomization}" ]] ||
     fail "cannot read ${controllers_kustomization} to date the rollout gate"
-  marker_line="$(grep -F "${activation_marker}" "${controllers_kustomization}" || true)"
+  # head -1: the marker is prose-adjacent, so take the first declaration rather
+  # than letting a second mention of it anywhere in the file change the answer.
+  marker_line="$(grep -F "${activation_marker}" "${controllers_kustomization}" | head -1 || true)"
   [[ -n "${marker_line}" ]] ||
     fail "the rollout gate is active but ${activation_marker} <YYYY-MM-DD> is not declared beside the component reference"
   # Parameter expansion, not sed: the marker contains '/', which would collide
@@ -72,6 +74,12 @@ activated_epoch="$(to_epoch "${activated}")" ||
 now_epoch="$(date -u +%s)"
 elapsed_days=$(((now_epoch - activated_epoch) / 86400))
 readonly activated_epoch now_epoch elapsed_days
+
+# A future activation date is a typo, and it would silently buy the rollout
+# unlimited extra time — the elapsed count goes negative and never trips the
+# bound. Fail closed rather than report a suppression as fresh forever.
+((elapsed_days >= 0)) ||
+  fail "the rollout gate activation date is in the future: '${activated}' (${elapsed_days} days)"
 
 summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 

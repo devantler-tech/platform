@@ -163,4 +163,12 @@ if run_reporter true 'not-a-date'; then
 fi
 ok
 
+# A future date would make elapsed negative, so the bound could never trip and
+# the gate would buy itself unlimited time from a single typo.
+future="$(date -u -v+30d +%Y-%m-%d 2>/dev/null || date -u -d '30 days' +%Y-%m-%d)"
+if run_reporter true "${future}"; then
+  fail 'an activation date in the future must fail closed, not read as perpetually fresh'
+fi
+ok
+
 printf 'passed: %s failed: 0\n' "${passed}"
