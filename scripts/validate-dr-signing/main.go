@@ -205,13 +205,11 @@ func validateCDWiring(cd string, deployAction string) error {
 	// aimed at the wrong thing and must be re-aimed rather than left passing.
 	// Compared as a whole step value, so neither a sibling path
 	// (`…/deploy-prod-canary`) nor the nested publisher satisfies it.
-	deployStep, ok := jobStepUsingAction(deploy, sharedDeployAction)
-	if !ok {
-		return errors.New(
-			"deploy-prod job no longer uses the shared production deploy action, so this wiring check no longer covers the path it names",
-		)
-	}
-	if err := enforcesFailure(deployStep, "the deploy step in the direct-push deploy-prod job"); err != nil {
+	if _, err := requireEnforcedStep(
+		deploy, usesAction(sharedDeployAction),
+		errors.New("deploy-prod job no longer uses the shared production deploy action, so this wiring check no longer covers the path it names"),
+		"the deploy step in the direct-push deploy-prod job",
+	); err != nil {
 		return err
 	}
 
@@ -228,11 +226,15 @@ func validateCDWiring(cd string, deployAction string) error {
 	if runs == nil {
 		return errors.New("shared deploy action has no runs mapping")
 	}
-	if _, ok := jobStepUsingAction(map[string]any{"steps": runs["steps"]}, nestedPublisherAction); !ok {
-		return fmt.Errorf(
+	if _, err := requireEnforcedStep(
+		map[string]any{"steps": runs["steps"]}, usesAction(nestedPublisherAction),
+		fmt.Errorf(
 			"the shared deploy action no longer invokes %s as a step, so the publication contract is being checked against code production does not run",
 			nestedPublisherAction,
-		)
+		),
+		"the publisher step in the shared deploy action",
+	); err != nil {
+		return err
 	}
 
 	gate, ok := jobs[cdContractGateJob].(map[string]any)
@@ -245,14 +247,15 @@ func validateCDWiring(cd string, deployAction string) error {
 	// (1) The command must be a complete executable line of a run block, not
 	// text that merely appears inside one — AND the step that carries it must
 	// actually run and actually fail the job.
-	step, ok := jobStepRunningCommand(gate, validatorCommand)
-	if !ok {
-		return fmt.Errorf(
+	step, err := requireEnforcedStep(
+		gate, runsCommand(validatorCommand),
+		fmt.Errorf(
 			"%s job does not EXECUTE %q as its own command line, so the gate can report success without validating anything",
 			cdContractGateJob, validatorCommand,
-		)
-	}
-	if err := enforcesFailure(step, "the validator step in "+cdContractGateJob); err != nil {
+		),
+		"the validator step in "+cdContractGateJob,
+	)
+	if err != nil {
 		return err
 	}
 	if err := runBlockIsSimpleSequence(step, cdContractGateJob); err != nil {
@@ -313,14 +316,14 @@ func validateProductionRoutes(ci string) error {
 		if !ok {
 			return fmt.Errorf("merge-queue workflow is missing the %s job", jobName)
 		}
-		step, ok := jobStepUsingAction(job, sharedDeployAction)
-		if !ok {
-			return fmt.Errorf(
+		if _, err := requireEnforcedStep(
+			job, usesAction(sharedDeployAction),
+			fmt.Errorf(
 				"merge-queue job %s no longer uses %s, so it can publish to production through logic this contract never checks",
 				jobName, sharedDeployAction,
-			)
-		}
-		if err := enforcesFailure(step, "the deploy step in merge-queue job "+jobName); err != nil {
+			),
+			"the deploy step in merge-queue job "+jobName,
+		); err != nil {
 			return err
 		}
 	}
@@ -344,49 +347,59 @@ func decodeWorkflow(contents string) (map[string]any, error) {
 // jobUsesAction reports whether any step of the job has `uses` EXACTLY equal to
 // the wanted action. Equality, not prefix: a sibling or nested path is a
 // different action and must not satisfy a check about this one.
-// jobStepUsingAction returns the step whose `uses` is EXACTLY the wanted
-// action. Equality, not prefix: a sibling or nested path is a different action.
+// requireEnforcedStep finds a step and proves it is enforced, in ONE call.
 //
-// It returns the STEP for the same reason jobStepRunningCommand does — finding
-// the reference proves the text, not that GitHub runs it. A deploy step under
-// `if: false` still names the shared action while the job completes after
-// checkout and reports success. That is the identical question already asked of
-// the validator step, and missing it here left the identical hole.
-func jobStepUsingAction(job map[string]any, want string) (map[string]any, bool) {
-	steps, _ := job["steps"].([]any)
+// 🔴 MATCHING AND ENFORCING ARE DELIBERATELY INSEPARABLE HERE. Every reviewed
+// round of this file found the same defect at one more site: a step was matched
+// and its metadata discarded, so `if: false` or `continue-on-error: true` left
+// it named-but-not-run. It happened at the validator step, then the deploy
+// step, then the merge-queue steps, then the nested publisher — four rounds,
+// one mistake, because "find the step" and "check the step is enforced" were
+// two calls and the second was easy to forget.
+//
+// Returning only through this function makes that omission unrepresentable:
+// there is no way to obtain a matched step without its enforcement having been
+// checked. That is the structural version of a rule I had been applying by
+// memory, and by memory I missed it four times.
+func requireEnforcedStep(
+	container map[string]any,
+	matches func(map[string]any) bool,
+	missing error,
+	description string,
+) (map[string]any, error) {
+	steps, _ := container["steps"].([]any)
 	for _, raw := range steps {
 		step, _ := raw.(map[string]any)
-		if uses, _ := step["uses"].(string); strings.TrimSpace(uses) == want {
-			return step, true
+		if step == nil || !matches(step) {
+			continue
 		}
+		if err := enforcesFailure(step, description); err != nil {
+			return nil, err
+		}
+		return step, nil
 	}
-	return nil, false
+	return nil, missing
 }
 
-// jobStepRunningCommand returns the step that executes `want` as a complete
-// line of its run block.
-//
-// Whole-line equality after trimming is what closes the echo hole: a substring
-// test accepts the command quoted inside another command, which exits 0 having
-// run nothing. This is deliberately strict about the shape rather than clever
-// about shell semantics — a wrapper this cannot recognise reads as ungated,
-// which is the safe direction for a check that guards a production deploy.
-//
-// It returns the STEP rather than a bool because finding the command is only
-// half the question: a step carrying `if: false` or `continue-on-error: true`
-// still contains it verbatim while enforcing nothing. See enforcesFailure.
-func jobStepRunningCommand(job map[string]any, want string) (map[string]any, bool) {
-	steps, _ := job["steps"].([]any)
-	for _, raw := range steps {
-		step, _ := raw.(map[string]any)
+// usesAction matches a step whose `uses` is EXACTLY the wanted action.
+func usesAction(want string) func(map[string]any) bool {
+	return func(step map[string]any) bool {
+		uses, _ := step["uses"].(string)
+		return strings.TrimSpace(uses) == want
+	}
+}
+
+// runsCommand matches a step executing `want` as a complete line of its run block.
+func runsCommand(want string) func(map[string]any) bool {
+	return func(step map[string]any) bool {
 		run, _ := step["run"].(string)
 		for _, line := range strings.Split(run, "\n") {
 			if strings.TrimSpace(line) == want {
-				return step, true
+				return true
 			}
 		}
+		return false
 	}
-	return nil, false
 }
 
 // enforcesFailure rejects a step or job that can be skipped or whose failure is

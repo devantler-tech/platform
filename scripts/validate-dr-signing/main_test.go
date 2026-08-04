@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -288,6 +289,27 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 				1,
 			), a
 		},
+		// Codex P2, round 5: the FOURTH matched step whose metadata I discarded —
+		// the nested publisher itself. Skipping it lets the shared action pass
+		// straight over the stage/sign/attest/promote transaction and carry on
+		// into reconciliation. requireEnforcedStep now makes this cell, and any
+		// future one, unrepresentable.
+		"nested publisher step is skipped": func(w, a string) (string, string) {
+			return w, strings.Replace(
+				a,
+				"      uses: ./.github/actions/deploy-prod/publish-platform-manifests",
+				"      if: false\n      uses: ./.github/actions/deploy-prod/publish-platform-manifests",
+				1,
+			)
+		},
+		"nested publisher step suppresses failure": func(w, a string) (string, string) {
+			return w, strings.Replace(
+				a,
+				"      uses: ./.github/actions/deploy-prod/publish-platform-manifests",
+				"      continue-on-error: true\n      uses: ./.github/actions/deploy-prod/publish-platform-manifests",
+				1,
+			)
+		},
 		// Codex P2: the contract is checked against the nested publisher, so it
 		// only means anything while the shared action still calls it. Otherwise
 		// the validator verifies an unused file and reports success.
@@ -379,13 +401,11 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 		t.Fatal("the lone-scalar needs form must satisfy it")
 	}
 
-	// jobStepRunningCommand: the command quoted inside another command is not run.
-	echoed := map[string]any{"steps": []any{map[string]any{"run": "echo \"go run ./x\"\n"}}}
-	if _, ok := jobStepRunningCommand(echoed, "go run ./x"); ok {
+	// runsCommand: the command quoted inside another command is not run.
+	if runsCommand("go run ./x")(map[string]any{"run": "echo \"go run ./x\"\n"}) {
 		t.Fatal("an echoed command must not count as executed")
 	}
-	executed := map[string]any{"steps": []any{map[string]any{"run": "go test ./x\ngo run ./x\n"}}}
-	if _, ok := jobStepRunningCommand(executed, "go run ./x"); !ok {
+	if !runsCommand("go run ./x")(map[string]any{"run": "go test ./x\ngo run ./x\n"}) {
 		t.Fatal("a command on its own run line must count as executed")
 	}
 
@@ -406,27 +426,44 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 	}
 
 	// jobUsesAction: equality, so a prefix-sharing sibling is a different action.
-	sibling := map[string]any{"steps": []any{map[string]any{"uses": "./a/b-canary"}}}
-	if _, ok := jobStepUsingAction(sibling, "./a/b"); ok {
+	// usesAction: equality, so a prefix-sharing sibling is a different action.
+	if usesAction("./a/b")(map[string]any{"uses": "./a/b-canary"}) {
 		t.Fatal("a sibling path sharing a prefix must not satisfy an action check")
 	}
-	nested := map[string]any{"steps": []any{map[string]any{"uses": "./a/b/c"}}}
-	if _, ok := jobStepUsingAction(nested, "./a/b"); ok {
+	if usesAction("./a/b")(map[string]any{"uses": "./a/b/c"}) {
 		t.Fatal("a nested path must not satisfy an action check")
 	}
 	// POSITIVE case — without it a jobUsesAction that always returned false
 	// would pass both assertions above. Same argument as the enforcesFailure
 	// positive case; it applies here too and I had not applied it.
-	exact := map[string]any{"steps": []any{map[string]any{"uses": "./a/b", "id": "wanted"}}}
-	found, ok := jobStepUsingAction(exact, "./a/b")
-	if !ok {
+	if !usesAction("./a/b")(map[string]any{"uses": "./a/b"}) {
 		t.Fatal("the exact action path must satisfy an action check")
 	}
-	// It must return the MATCHED step, not merely report one exists — the
-	// caller applies enforcesFailure to it, so the wrong step would silently
-	// check the wrong metadata.
+
+	// 🔴 requireEnforcedStep is where matching and enforcing became ONE
+	// operation, after four review rounds each found a different matched step
+	// whose metadata had been discarded. These assert that they cannot be
+	// separated again: a matching-but-skipped step is an ERROR, not a hit.
+	missing := errors.New("no such step")
+	container := map[string]any{"steps": []any{
+		map[string]any{"uses": "./other"},
+		map[string]any{"uses": "./a/b", "id": "wanted"},
+	}}
+	found, err := requireEnforcedStep(container, usesAction("./a/b"), missing, "x")
+	if err != nil {
+		t.Fatalf("an enforced matching step must be returned: %v", err)
+	}
 	if found["id"] != "wanted" {
 		t.Fatalf("returned the wrong step: %v", found)
+	}
+	if _, err := requireEnforcedStep(container, usesAction("./nope"), missing, "x"); !errors.Is(err, missing) {
+		t.Fatalf("an absent step must return the caller's error, got %v", err)
+	}
+	for name, meta := range map[string]any{"if": "false", "continue-on-error": true} {
+		skipped := map[string]any{"steps": []any{map[string]any{"uses": "./a/b", name: meta}}}
+		if _, err := requireEnforcedStep(skipped, usesAction("./a/b"), missing, "x"); err == nil {
+			t.Fatalf("a matching step carrying %s must NOT be returned as a hit", name)
+		}
 	}
 
 	// runBlockIsSimpleSequence: keywords match as WORDS, operators as
