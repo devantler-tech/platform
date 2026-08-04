@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -43,10 +44,34 @@ const cdContractGateJob = "validate-publication-contract"
 
 // The exact action paths and command the direct-push gate must wire together.
 // Named once so the checks, the workflow, and the error text cannot drift.
+// mergeQueueProductionJob is a ci.yaml job that reaches production, together
+// with whether its PURPOSE requires it to survive a failed dependency.
+type mergeQueueProductionJob struct {
+	name string
+	// mayOverrideDependencyStatus is true only where running after a failed
+	// dependency is the job's entire reason to exist. Everywhere else a status
+	// function makes a publishing job eligible after the gate before it FAILED,
+	// which is the bypass this distinction exists to refuse.
+	mayOverrideDependencyStatus bool
+}
+
 // mergeQueueProductionJobs are the ci.yaml jobs that reach production. Both
 // must go through the checked shared action, or the ordering contract covers
 // only the direct-push route.
-var mergeQueueProductionJobs = []string{"deploy-prod", "heal-prod-on-failure"}
+var mergeQueueProductionJobs = []mergeQueueProductionJob{
+	{name: "deploy-prod"},
+	// The unsuccessful-path cleanup: it re-deploys main's signed artifact after
+	// deploy-prod fails or is cancelled, so `always()` is REQUIRED here and
+	// refusing it would break the healing this repo added deliberately.
+	{name: "heal-prod-on-failure", mayOverrideDependencyStatus: true},
+}
+
+// dependencyStatusOverrides are the GitHub status-check functions that make a
+// job eligible even when a job it `needs` has failed. Without one of them a
+// job runs only if every dependency succeeded, which is the property the
+// merge-queue gate relies on; `success()` is absent because it asserts that
+// property rather than overriding it.
+var dependencyStatusOverrides = []string{"always(", "failure(", "cancelled("}
 
 const (
 	sharedDeployAction    = "./.github/actions/deploy-prod"
@@ -258,7 +283,9 @@ func validateCDWiring(cd string, deployAction string) error {
 	if err != nil {
 		return err
 	}
-	if err := runBlockIsSimpleSequence(documents, gate, step, cdContractGateJob); err != nil {
+	if err := runBlockRunsOnlyAllowedCommands(
+		documents, gate, step, cdContractGateJob, gateRunBlockCommands,
+	); err != nil {
 		return err
 	}
 	// The gate JOB is the same question one level up: a skipped or
@@ -311,7 +338,8 @@ func validateProductionRoutes(ci string) error {
 	if !ok {
 		return errors.New("merge-queue workflow has no jobs mapping")
 	}
-	for _, jobName := range mergeQueueProductionJobs {
+	for _, production := range mergeQueueProductionJobs {
+		jobName := production.name
 		job, ok := jobs[jobName].(map[string]any)
 		if !ok {
 			return fmt.Errorf("merge-queue workflow is missing the %s job", jobName)
@@ -325,6 +353,44 @@ func validateProductionRoutes(ci string) error {
 			"the deploy step in merge-queue job "+jobName,
 		); err != nil {
 			return err
+		}
+		if err := refuseDependencyStatusOverride(job, production); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// refuseDependencyStatusOverride is the merge-queue counterpart to the
+// direct-push route's flat refusal of any job-level condition.
+//
+// 🔴 THAT CARVE-OUT WAS TOTAL, AND THAT WAS THE BUG. This route permits a
+// condition because `merge_group` gating is legitimate and necessary — but
+// permitting the key permitted its CONTENTS too, so `always() && <the real
+// condition>` read as correct while making the deploy eligible after the
+// `changes` job, which runs the signing validator, had failed. The condition is
+// therefore permitted and its status functions refused, rather than the key
+// being trusted whole.
+func refuseDependencyStatusOverride(job map[string]any, production mergeQueueProductionJob) error {
+	if production.mayOverrideDependencyStatus {
+		return nil
+	}
+	condition, present := job["if"]
+	if !present {
+		return nil
+	}
+	// Whitespace and case are removed rather than matched around: GitHub's
+	// expression functions are case-insensitive, and a spelling this cannot
+	// read must not fall through to accepted.
+	normalised := strings.ToLower(strings.Join(strings.Fields(fmt.Sprintf("%v", condition)), ""))
+	for _, override := range dependencyStatusOverrides {
+		if strings.Contains(normalised, override) {
+			return fmt.Errorf(
+				"merge-queue job %s conditions its run on %s), which makes it eligible even when a job it "+
+					"`needs` has FAILED — including the job that runs the publication validator, so it can "+
+					"publish to production behind a gate that already failed (condition: %v)",
+				production.name, override, condition,
+			)
 		}
 	}
 	return nil
@@ -428,62 +494,40 @@ func enforcesFailure(node map[string]any, description string) error {
 	return nil
 }
 
-// shellControlFlow are the tokens that make a run block something other than a
-// straight-line sequence of commands. Any of them means the check can no longer
-// say the validator is reached.
-// Keywords are matched as WORDS, operators as substrings. `strings.Contains`
-// on the keywords was wrong in a way whose failure direction is safe but whose
-// MESSAGE lies: `docker buildx …` contains "do" and `gh run download` contains
-// "do" too, so a legitimate step was rejected naming a token it does not use.
-// A guard that refuses correct work with a false explanation is a guard people
-// learn to route around.
-var (
-	shellKeywords = []string{
-		"if", "then", "else", "elif", "fi",
-		"for", "while", "until", "do", "done",
-		"case", "esac", "exit", "return", "trap", "eval", "source",
-		// 🔴 `set` is here for the FIFTH shape of "does the command count":
-		// `set +e` runs the validator, discards its failure, and lets a later
-		// succeeding line carry the step to exit 0. The command executes and
-		// its verdict is thrown away. Every `set` is refused rather than only
-		// the disabling forms: GitHub already runs `run:` under `bash -e`, so a
-		// gate has no reason to touch failure modes, and enumerating the safe
-		// spellings is the guessing game the rest of this file avoids.
-		"set",
-	}
-	// Redirection and here-docs belong here for the same reason the chaining
-	// operators do: `cat <<'EOF' … EOF` contains the validator line verbatim
-	// while the step only PRINTS it. Reported against the previous head, where
-	// the mutation passed and the contract reported success.
-	shellOperators = []string{"&&", "||", ";", "|", "`", "$(", "<<", "<", ">"}
-)
-
-// shellWords splits a line on whitespace, which is enough to tell the keyword
-// `do` from the command `docker`. It is not a shell lexer and does not need to
-// be: anything it cannot separate stays in one token and simply fails to match
-// a keyword, which leaves the line accepted only if it also carries no
-// operator — and the operator set is what quoting and substitution live in.
-func shellWords(line string) []string {
-	return strings.Fields(line)
+// gateRunBlockCommands are the ONLY command lines the publication-contract
+// gate's run block may contain. Named here so the check, the workflow, and the
+// error text cannot drift apart.
+var gateRunBlockCommands = []string{
+	"go test ./scripts/validate-dr-signing",
+	validatorCommand,
 }
 
-// runBlockIsSimpleSequence requires the gate step to be a straight-line
-// sequence of commands, so that finding the validator line also means the shell
-// reaches it.
+// runBlockRunsOnlyAllowedCommands requires every executable line of the gate
+// step to be one of `allowed`, so that finding the validator line also means
+// the shell reaches it and runs it as itself.
 //
-// 🔴 THE THIRD SHAPE OF THE SAME QUESTION. Whole-line equality closed "the
-// command is quoted inside another command"; step metadata closed "the step is
-// skipped or its failure suppressed"; neither says the shell EXECUTES the line.
-// `exit 0` above it, or `if false; then <command>; fi` around it, both leave the
-// exact line present while running nothing.
+// 🔴 THIS REPLACED A DENYLIST, AND THE REPLACEMENT IS THE POINT. Six rounds of
+// review found six ways to leave the exact validator line present while running
+// nothing: quoting it inside another command, skipping the step, sitting after
+// `exit 0`, printing it from a here-doc, discarding its verdict with `set +e`,
+// and — reported independently by two reviewers against the previous head —
+// shadowing `go` with a shell function, since bash resolves a function before
+// an executable. Each round answered with another refused token.
 //
-// Properly answering "is this line reached" is a shell interpreter, which does
-// not belong in a workflow guard. So the run block is instead constrained to a
-// shape where the question does not arise: no control flow, no early exit, no
-// chaining. That is deliberately narrow, and narrow in the SAFE direction — a
-// legitimate gate that needs a conditional will fail this check and have to
-// justify itself, rather than a skipped one passing quietly.
-func runBlockIsSimpleSequence(workflow map[string]any, job map[string]any, step map[string]any, jobName string) error {
+// A denylist over shell syntax is an unbounded guessing game, and the sixth
+// round is the evidence: `go()`, `{` and `}` carried no refused keyword and no
+// refused operator, so a gate that ran neither validator was accepted. Rather
+// than add a seventh token and wait for the eighth shape, the run block is
+// constrained to an ALLOWLIST of exact command lines. Every bypass above needs
+// a line that is not one of the two required commands, so none of them is
+// expressible — including the ones nobody has thought of yet.
+//
+// Deliberately narrow, and narrow in the SAFE direction: a gate that grows a
+// legitimate third line fails this check and has to add it here, which is a
+// reviewed act, rather than a gate that runs nothing passing quietly.
+func runBlockRunsOnlyAllowedCommands(
+	workflow map[string]any, job map[string]any, step map[string]any, jobName string, allowed []string,
+) error {
 	if err := refuseShellOverride(workflow, job, step, jobName); err != nil {
 		return err
 	}
@@ -493,17 +537,8 @@ func runBlockIsSimpleSequence(workflow map[string]any, job map[string]any, step 
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		for _, word := range shellWords(trimmed) {
-			for _, keyword := range shellKeywords {
-				if word == keyword {
-					return controlFlowError(jobName, keyword, trimmed)
-				}
-			}
-		}
-		for _, operator := range shellOperators {
-			if strings.Contains(trimmed, operator) {
-				return controlFlowError(jobName, operator, trimmed)
-			}
+		if !slices.Contains(allowed, trimmed) {
+			return disallowedGateCommandError(jobName, trimmed, allowed)
 		}
 	}
 	return nil
@@ -575,12 +610,12 @@ func refuseShellOverride(workflow map[string]any, job map[string]any, step map[s
 	return nil
 }
 
-func controlFlowError(jobName string, token string, line string) error {
+func disallowedGateCommandError(jobName string, line string, allowed []string) error {
 	return fmt.Errorf(
-		"the validator step in %s uses shell control flow or chaining (%q in %q); "+
-			"the gate must be a straight-line sequence of commands, or finding the validator line "+
-			"does not establish that the shell reaches it",
-		jobName, token, line,
+		"the validator step in %s runs %q, which is not one of the commands this gate may contain (%s); "+
+			"an extra line can leave the validator present while the shell never runs it, so the gate is "+
+			"restricted to exactly these commands — add the line here if it genuinely belongs",
+		jobName, line, strings.Join(allowed, ", "),
 	)
 }
 

