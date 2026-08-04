@@ -71,7 +71,7 @@ var mergeQueueProductionJobs = []mergeQueueProductionJob{
 // job runs only if every dependency succeeded, which is the property the
 // merge-queue gate relies on; `success()` is absent because it asserts that
 // property rather than overriding it.
-var dependencyStatusOverrides = []string{"always(", "failure(", "cancelled("}
+var dependencyStatusOverrides = []string{"always", "failure", "cancelled"}
 
 const (
 	sharedDeployAction    = "./.github/actions/deploy-prod"
@@ -384,9 +384,12 @@ func refuseDependencyStatusOverride(job map[string]any, production mergeQueuePro
 	// read must not fall through to accepted.
 	normalised := strings.ToLower(strings.Join(strings.Fields(fmt.Sprintf("%v", condition)), ""))
 	for _, override := range dependencyStatusOverrides {
-		if strings.Contains(normalised, override) {
+		// The trailing paren is what distinguishes the FUNCTION `failure()` from
+		// the ordinary result comparison `needs.x.result == 'failure'`, which
+		// overrides nothing and must stay allowed.
+		if strings.Contains(normalised, override+"(") {
 			return fmt.Errorf(
-				"merge-queue job %s conditions its run on %s), which makes it eligible even when a job it "+
+				"merge-queue job %s conditions its run on %s(), which makes it eligible even when a job it "+
 					"`needs` has FAILED — including the job that runs the publication validator, so it can "+
 					"publish to production behind a gate that already failed (condition: %v)",
 				production.name, override, condition,

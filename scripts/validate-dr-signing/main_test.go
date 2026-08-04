@@ -479,6 +479,54 @@ func TestMergeQueueProductionRoutesUseTheCheckedAction(t *testing.T) {
 	// "tighten" this into rejecting the real workflow.
 }
 
+// TestDependencyStatusOverrideRefusalSeparatesFunctionsFromComparisons pins the
+// distinction the refusal rests on. Refusing every mention of "failure" would
+// also refuse `needs.x.result == 'failure'`, which overrides nothing — and the
+// heal job's own real condition contains exactly that, so getting this wrong
+// breaks the shipped workflow rather than some hypothetical one.
+func TestDependencyStatusOverrideRefusalSeparatesFunctionsFromComparisons(t *testing.T) {
+	t.Parallel()
+
+	gated := mergeQueueProductionJob{name: "deploy-prod"}
+	exempt := mergeQueueProductionJob{name: "heal-prod-on-failure", mayOverrideDependencyStatus: true}
+
+	allowed := map[string]any{
+		"no condition at all":     nil,
+		"a plain event gate":      "github.event_name == 'merge_group'",
+		"a result COMPARISON":     "needs.deploy-prod.result == 'failure'",
+		"a success() assertion":   "success() && github.event_name == 'merge_group'",
+		"an unrelated identifier": "needs.changes.outputs.always == 'true'",
+	}
+	for name, condition := range allowed {
+		job := map[string]any{}
+		if condition != nil {
+			job["if"] = condition
+		}
+		if err := refuseDependencyStatusOverride(job, gated); err != nil {
+			t.Fatalf("%s must be accepted, or the guard refuses correct work: %v", name, err)
+		}
+	}
+
+	refused := map[string]string{
+		"always":              "always() && github.event_name == 'merge_group'",
+		"failure":             "failure() && needs.changes.outputs.k8s == 'true'",
+		"cancelled":           "!cancelled()",
+		"wrapped in ${{ }}":   "${{ always() }}",
+		"spelled with spaces": "always ()",
+		"upper-cased":         "ALWAYS()",
+	}
+	for name, condition := range refused {
+		if err := refuseDependencyStatusOverride(map[string]any{"if": condition}, gated); err == nil {
+			t.Fatalf("%s must be refused on a job that publishes on the success path", name)
+		}
+		// ...and the exemption must still let the heal job through, or the
+		// carve-out is not actually doing anything.
+		if err := refuseDependencyStatusOverride(map[string]any{"if": condition}, exempt); err != nil {
+			t.Fatalf("%s must remain allowed on the unsuccessful-path heal job: %v", name, err)
+		}
+	}
+}
+
 func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 	t.Parallel()
 
