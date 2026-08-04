@@ -436,7 +436,12 @@ func TestMergeQueueProductionRoutesUseTheCheckedAction(t *testing.T) {
 			// the first and rejoining, so the arm cannot silently hit the wrong one.
 			first := strings.Index(s, "        uses: ./.github/actions/deploy-prod\n")
 			if first < 0 {
-				t.Fatal("fixture no longer contains the shared-action call")
+				// Return the input unchanged rather than calling t.Fatal on the OUTER T from
+				// inside the subtest closure: that runs runtime.Goexit on the subtest goroutine
+				// while marking the parent failed, and `testing` then reports a confusing
+				// "test executed panic(nil) or runtime.Goexit" instead of the real reason. The
+				// caller already refuses an ablation that changed nothing, against the subtest.
+				return s
 			}
 			cut := first + len("        uses: ./.github/actions/deploy-prod\n")
 			return s[:cut] + strings.Replace(s[cut:], "        uses: ./.github/actions/deploy-prod\n", "        uses: ./.github/actions/other\n", 1)

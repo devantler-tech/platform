@@ -42,8 +42,6 @@ const drIdentitySubject = `^https://github\.com/devantler-tech/platform/\.github
 // cannot drift apart silently.
 const cdContractGateJob = "validate-publication-contract"
 
-// The exact action paths and command the direct-push gate must wire together.
-// Named once so the checks, the workflow, and the error text cannot drift.
 // mergeQueueProductionJob is a ci.yaml job that reaches production, together
 // with whether its PURPOSE requires it to survive a failed dependency.
 type mergeQueueProductionJob struct {
@@ -73,6 +71,8 @@ var mergeQueueProductionJobs = []mergeQueueProductionJob{
 // property rather than overriding it.
 var dependencyStatusOverrides = []string{"always", "failure", "cancelled"}
 
+// The exact action paths and command the direct-push gate must wire together.
+// Named once so the checks, the workflow, and the error text cannot drift.
 const (
 	sharedDeployAction    = "./.github/actions/deploy-prod"
 	nestedPublisherAction = "./.github/actions/deploy-prod/publish-platform-manifests"
