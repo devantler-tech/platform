@@ -19,10 +19,17 @@
 # in CI with a clear message, that one refuses the pull. Neither replaces the
 # other.
 #
-# ENFORCE gates only whether a missing-evidence verdict FAILS the deploy. The
-# verification itself always runs, and always reports — a gate wrong about the
-# identity or issuer would break every production deploy, so it earns the right
-# to block by first being observed passing on real deploys.
+# ENFORCE gates only whether a missing-evidence verdict FAILS the deploy; the
+# verification itself always runs and always reports. It defaults to enforcing
+# and is validated against a closed domain, so the gate cannot be turned off by
+# an empty value, a typo, or dropped wiring — a gate that is silently off is
+# indistinguishable from a passing one, and that is the single failure this
+# script exists to prevent.
+#
+# ENFORCE=false remains available to stage a NEW evidence kind through the same
+# warn-then-enforce ratchet this check itself went through: a verification wrong
+# about the identity or issuer would break every production deploy, so a new
+# check earns the right to block by first being observed passing on real ones.
 
 set -uo pipefail
 
@@ -59,8 +66,14 @@ fi
 # would see a ::warning:: and a green job and conclude the gate was refusing
 # promotion, when it was off. Rejected here, with the other input validation, so
 # a misconfigured run fails before it spends registry calls to reach the same
-# verdict. An unset or empty value is not a typo — it is the documented default.
-enforce="${ENFORCE:-false}"
+# verdict.
+#
+# The default is ENFORCING, so the two ways this flag goes missing without being
+# a typo — an empty value from `ENFORCE: ${{ inputs.x }}` when the input is
+# renamed, and an absent variable when the env block is dropped — fail closed
+# rather than silently reverting the gate to warn-only on a green job. Disabling
+# it is therefore always an explicit, reviewable "false".
+enforce="${ENFORCE:-true}"
 if [[ "${enforce}" != "true" && "${enforce}" != "false" ]]; then
   echo "::error::ENFORCE must be exactly 'true' or 'false' (got: '${enforce}')" >&2
   usage
@@ -158,6 +171,10 @@ if [[ "${enforce}" == "true" ]]; then
   exit 1
 fi
 
+# Reached only when a caller explicitly set ENFORCE=false to stage a new evidence
+# kind. Name that as the reason the deploy continued, so the line cannot be read
+# as the gate merely not being armed yet.
 echo "::warning::${failures} evidence check(s) failed for ${digest}." \
-  "This gate is not yet enforcing, so the deploy continues — see platform#2859." >&2
+  "ENFORCE=false was set explicitly, so the deploy continues; promotion is" \
+  "refused whenever this gate runs with its default." >&2
 exit 0

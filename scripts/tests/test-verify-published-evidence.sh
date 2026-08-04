@@ -169,15 +169,42 @@ else
   bad "the refusal names ENFORCE as the cause" "${gate_output}"
 fi
 
-# The control for the guard above: the two VALID values must still reach their
-# verdicts. A guard that rejected everything would pass the assertions above
-# while breaking the gate outright — an empty value included, since the script
-# documents unset as defaulting to non-enforcing.
+# --- An absent flag FAILS CLOSED ----------------------------------------------
+# `ENFORCE: ${{ inputs.enforce-evidence-verification }}` renders an EMPTY string
+# when the wiring is dropped or the input is renamed — not an unset variable and
+# not a typo, so neither the domain guard above nor a caller's review catches it.
+# Defaulting that to non-enforcing would silently return the gate to warn-only
+# while every deploy stayed green, which is the one failure this script exists to
+# prevent. It must still be ACCEPTED rather than rejected (that is the control for
+# the domain guard above, which must not reject everything), so the assertion is
+# rc==1 — enforcing — rather than merely rc!=2.
 run_gate 1 0 ""
-if [[ "${gate_rc}" == "0" ]]; then
-  ok "an EMPTY ENFORCE still defaults to non-enforcing (not rejected)"
+if [[ "${gate_rc}" == "1" ]]; then
+  ok "an EMPTY ENFORCE fails closed: accepted, and enforcing"
 else
-  bad "an EMPTY ENFORCE still defaults to non-enforcing" "exit ${gate_rc}: ${gate_output}"
+  bad "an EMPTY ENFORCE fails closed: accepted, and enforcing" "exit ${gate_rc}: ${gate_output}"
+fi
+
+# The same property for a genuinely ABSENT variable — the shape of deleting the
+# env: block outright. `${ENFORCE:-...}` treats unset and empty alike, so this
+# would pass for the wrong reason if the default were still read from elsewhere;
+# it is asserted separately because the two are different edits by a future
+# maintainer and only one of them is covered above.
+dir="$(stub_dir 1 0)"
+set +e
+(
+  unset ENFORCE
+  PATH="${dir}:${PATH}" WORKFLOW_REF="${workflow_ref}" \
+    bash "${gate}" "${good_digest}"
+) >/dev/null 2>&1
+unset_enforce_rc=$?
+set -e
+rm -rf "${dir}"
+
+if [[ "${unset_enforce_rc}" == "1" ]]; then
+  ok "an UNSET ENFORCE fails closed"
+else
+  bad "an UNSET ENFORCE fails closed" "exit ${unset_enforce_rc}"
 fi
 
 # --- Each evidence kind is load-bearing ---------------------------------------
@@ -372,6 +399,30 @@ if grep -q "enforce-evidence-verification" "${action}"; then
   ok "enforcement is a declared input"
 else
   bad "enforcement is a declared input" "no input in ${action}"
+fi
+
+# The ratchet is now ARMED, and this is the assertion that keeps it armed. No
+# caller passes the input, so this one default decides enforcement for all three
+# publication paths — ci.yaml's merge-queue deploy, cd.yaml's manual deploy and
+# dr-rebuild.yaml's recovery deploy. Read structurally rather than grepped: the
+# literal "false" also appears in this file's prose and in other inputs, so a
+# text match would answer a different question than "what does this input
+# default to".
+action_default="$(yq '.inputs.enforce-evidence-verification.default' "${action}")"
+if [[ "${action_default}" == "true" ]]; then
+  ok "the publication action defaults to ENFORCING (${action_default})"
+else
+  bad "the publication action defaults to ENFORCING" \
+    "default is '${action_default}' — a missing-evidence verdict would only warn"
+fi
+
+# The gate reads the input rather than a constant. Without this, the default
+# above could be correct while the step passed a hardcoded value to ENFORCE.
+# shellcheck disable=SC2016  # the literal ${{ inputs... }} is the text being matched
+if grep -q 'ENFORCE: ${{ inputs.enforce-evidence-verification }}' "${action}"; then
+  ok "the gate step is wired to the declared input"
+else
+  bad "the gate step is wired to the declared input" "ENFORCE is not fed from the input in ${action}"
 fi
 
 echo

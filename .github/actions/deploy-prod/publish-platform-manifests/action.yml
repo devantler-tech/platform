@@ -22,12 +22,16 @@ inputs:
     required: true
   enforce-evidence-verification:
     description: >-
-      Fail the deploy when the published evidence cannot be verified. Default-off
-      while the gate proves itself on real deploys: a verification wrong about the
-      identity or issuer would break every production deploy, so it earns the
-      right to block by first being observed passing (platform#2859).
+      Refuse to promote a digest whose published evidence cannot be verified.
+      Enforcing by default: promotion is the point of no return, so a digest
+      carrying no usable signature or attestation must not reach the tag
+      production follows. Set to "false" only to stage a NEW evidence kind
+      through the same warn-then-enforce ratchet — a verification wrong about
+      the identity or issuer would break every production deploy, including
+      disaster recovery, so a new check earns the right to block by first being
+      observed passing on real deploys.
     required: false
-    default: "false"
+    default: "true"
 
 outputs:
   digest:
