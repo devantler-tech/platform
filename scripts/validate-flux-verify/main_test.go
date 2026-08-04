@@ -238,6 +238,137 @@ spec:
 `,
 			wantErr: "spec.extras",
 		},
+		{
+			// 🔴 #2948. The block is present, at the read path, and "on" by KSail's
+			// predicate — and constrains NOBODY. Flux reads a missing secretRef as
+			// keyless, so this trusts any keylessly-signed artifact from any signer
+			// on the platform's root source. Same failure class the gate exists to
+			// catch: configured, in effect, guaranteeing nothing.
+			name: "provider-only block is rejected",
+			config: `
+spec:
+  workload:
+    flux:
+      verify:
+        provider: cosign
+`,
+			wantErr: "constrains no signer",
+		},
+		{
+			// Presence is not the assertion. An empty list satisfies "the key is
+			// there" while matching no identity at all.
+			name: "empty matchOIDCIdentity is rejected",
+			config: `
+spec:
+  workload:
+    flux:
+      verify:
+        provider: cosign
+        matchOIDCIdentity: []
+`,
+			wantErr: "constrains no signer",
+		},
+		{
+			// A blank issuer leaves the certificate issuer unconstrained, so the
+			// subject alone decides trust. Non-emptiness is the assertion.
+			name: "matchOIDCIdentity entry with a blank issuer is rejected",
+			config: `
+spec:
+  workload:
+    flux:
+      verify:
+        provider: cosign
+        matchOIDCIdentity:
+          - issuer: '   '
+            subject: '^https://github\.com/devantler-tech/platform/.+$'
+`,
+			wantErr: "constrains no signer",
+		},
+		{
+			// The mirror of the arm above: a blank subject trusts every workflow
+			// the issuer will sign for, which on a public OIDC issuer is everyone.
+			name: "matchOIDCIdentity entry with a blank subject is rejected",
+			config: `
+spec:
+  workload:
+    flux:
+      verify:
+        provider: cosign
+        matchOIDCIdentity:
+          - issuer: '^https://token\.actions\.githubusercontent\.com$'
+            subject: ''
+`,
+			wantErr: "constrains no signer",
+		},
+		{
+			// One usable entry is enough. A commented-out or half-written sibling
+			// must not veto a block that does constrain a signer, or the gate
+			// starts failing correct configs.
+			name: "one complete matcher among incomplete ones validates",
+			config: `
+spec:
+  workload:
+    flux:
+      verify:
+        provider: cosign
+        matchOIDCIdentity:
+          - issuer: ''
+            subject: ''
+          - issuer: '^https://token\.actions\.githubusercontent\.com$'
+            subject: '^https://github\.com/devantler-tech/platform/.+$'
+`,
+		},
+		{
+			// Keyed verification constrains the signer without OIDC matchers, so
+			// this is a legitimately complete block and must pass. Rejecting it
+			// would push a future keyed setup into disabling the gate.
+			name: "secretRef-only block validates",
+			config: `
+spec:
+  workload:
+    flux:
+      verify:
+        provider: cosign
+        secretRef:
+          name: cosign-public-key
+`,
+		},
+		{
+			// 🔴 REGRESSION ARM, and the counter-intuitive one. Flux's own
+			// OCIRepository has a trustedRootSecretRef, so this block LOOKS like a
+			// complete keyed configuration — but KSail's FluxVerifySpec models only
+			// provider, secretRef and matchOIDCIdentity, so the key is dropped in
+			// silence and what reaches the cluster is a bare provider that trusts
+			// everyone. Accepting it because Flux understands it would reproduce
+			// this validator's founding bug: honouring a field the CONSUMER does
+			// not read. Rejected until KSail models it.
+			name: "trustedRootSecretRef-only block is rejected: KSail does not model that field",
+			config: `
+spec:
+  workload:
+    flux:
+      verify:
+        provider: cosign
+        trustedRootSecretRef:
+          name: cosign-trusted-root
+`,
+			wantErr: "constrains no signer",
+		},
+		{
+			// A secretRef that names nothing constrains nothing — the same
+			// presence-is-not-the-assertion rule applied to the keyed branch.
+			name: "secretRef with a blank name is rejected",
+			config: `
+spec:
+  workload:
+    flux:
+      verify:
+        provider: cosign
+        secretRef:
+          name: '  '
+`,
+			wantErr: "constrains no signer",
+		},
 	}
 
 	for _, test := range tests {
