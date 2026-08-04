@@ -200,29 +200,26 @@ spec:
     flux:
       # Cosign keyless signature verification for the flux-system OCIRepository.
       # KSail reads this at spec.workload.flux.verify (ksail#4987) and applies it
-      # on its Flux install path. The manifests artifact is cosign-signed keyless
-      # in the deploy-prod composite (push → sign → attest), and the subjects
-      # below are pinned to the production deploy refs rather than `@.+`, so a
-      # signature these workflows might produce on any other ref is not trusted.
+      # to that resource. The manifests artifact is cosign-signed keyless in the
+      # deploy-prod composite (push → sign → attest), and the subjects below are
+      # pinned to the production deploy refs rather than `@.+`, so a signature
+      # these workflows might produce on any other ref is not trusted.
       #
-      # ⚠️ NOT ENFORCED ON THE RUNNING CLUSTER — this block is currently inert
-      # there, and #2922 tracks closing that gap. Two things have to both be true
-      # for it to reach prod, and neither is: KSail applies it from its Flux
-      # INSTALL path, which a routine `workload push` + `cluster update` deploy
-      # does not exercise; and the live `ocirepository/flux-system` is generated
-      # by the flux-operator from FluxInstance.spec.sync, which has no verify
-      # field of its own to carry it (flux-operator v0.50.0).
-      # The config is kept — it is correct, it is what the install path consumes,
-      # and it is what a DR rebuild applies — but do NOT read it as an active
-      # control on the running cluster. Verify live before relying on it:
+      # ⚠️ NOT REACHING THE RUNNING CLUSTER — verified 2026-08-04: the live
+      # ocirepository/flux-system carries no spec.verify. #2922 tracks it.
+      # The cause is NOT this config: the deploy's `ksail cluster update` step is
+      # being skipped entirely by the Cilium rollout gate (#2951 — `outcome=skipped
+      # duration_ms=0` on every prod deploy for days), so the command that would
+      # apply this has not run. Once #2951 releases that gate this may simply
+      # start working — flux-operator owns url/ref/interval/provider/secretRef on
+      # that resource but NOT verify, and Server-Side Apply lets it prune only
+      # what it owns, so a verify written by KSail should survive.
+      # Do NOT read it as an active control until you have checked:
       #   kubectl get ocirepository/flux-system -n flux-system -o yaml | grep -A5 verify
       #
-      # DO NOT "fix" this by hand-writing an in-repo OCIRepository override: the
-      # operator owns url/ref/interval/provider/secretRef on that resource, so a
-      # full override contends for them on the ROOT source, where losing the
-      # reconcile fight stops all GitOps delivery. #2960 is testing whether a
-      # non-operator field manager can hold spec.verify ALONE; until it reports,
-      # this file is where the setting belongs.
+      # DO NOT "fix" this by hand-writing an in-repo OCIRepository override: a full
+      # override contends with the operator for those five fields on the ROOT
+      # source, where losing the reconcile fight stops all GitOps delivery.
       #
       # Signature enforcement that IS live today: tenant/app OCIRepositories carry
       # their own spec.verify, and container images are checked at the Talos
