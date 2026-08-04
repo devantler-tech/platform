@@ -245,8 +245,10 @@ runs:
     - name: 📣 Report suppressed machine-config sync
       # The step above is the pipeline's ONLY Talos machine-config sync, and the
       # rollout gate skips it. A skipped step inside a green deploy reads as
-      # ordinary conditional behaviour, so the suppression was invisible for ten
-      # days and misdirected the diagnosis of two unrelated issues (#2951).
+      # ordinary conditional behaviour, so the suppression went unnoticed for
+      # over a week and misdirected the diagnosis of two unrelated issues
+      # (#2951). The elapsed count belongs in the report, not in this comment,
+      # where it would be stale the day after it was written.
       # Surface it in the job summary, and warn once it outruns the rollout's
       # intended window. always(), so an earlier failure cannot hide it.
       if: >-
