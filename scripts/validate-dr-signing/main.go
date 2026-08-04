@@ -258,7 +258,7 @@ func validateCDWiring(cd string, deployAction string) error {
 	if err != nil {
 		return err
 	}
-	if err := runBlockIsSimpleSequence(step, cdContractGateJob); err != nil {
+	if err := runBlockIsSimpleSequence(documents, gate, step, cdContractGateJob); err != nil {
 		return err
 	}
 	// The gate JOB is the same question one level up: a skipped or
@@ -486,17 +486,9 @@ func shellWords(line string) []string {
 // chaining. That is deliberately narrow, and narrow in the SAFE direction — a
 // legitimate gate that needs a conditional will fail this check and have to
 // justify itself, rather than a skipped one passing quietly.
-func runBlockIsSimpleSequence(step map[string]any, jobName string) error {
-	// The same question one key over: a `shell:` override can replace the
-	// default `bash -e {0}` with one that does not stop on error, which
-	// discards the validator verdict exactly as `set +e` does. Refused rather
-	// than parsed, for the reason every other branch here gives.
-	if shell, present := step["shell"]; present {
-		return fmt.Errorf(
-			"the validator step in %s overrides the shell (%v); the default already stops on error, "+
-				"and an override can discard the validator failure the gate exists to surface",
-			jobName, shell,
-		)
+func runBlockIsSimpleSequence(workflow map[string]any, job map[string]any, step map[string]any, jobName string) error {
+	if err := refuseShellOverride(workflow, job, step, jobName); err != nil {
+		return err
 	}
 	run, _ := step["run"].(string)
 	for _, line := range strings.Split(run, "\n") {
@@ -515,6 +507,65 @@ func runBlockIsSimpleSequence(step map[string]any, jobName string) error {
 			if strings.Contains(trimmed, operator) {
 				return controlFlowError(jobName, operator, trimmed)
 			}
+		}
+	}
+	return nil
+}
+
+// shellSetting reads the shell configured at ONE scope. A step carries it
+// directly; a workflow and a job carry it under `defaults.run`. A shape this
+// cannot read returns absent, which is the same fail-closed direction the rest
+// of this file takes: an unreadable declaration must not read as "no override".
+func shellSetting(node map[string]any, viaDefaults bool) (any, bool) {
+	if node == nil {
+		return nil, false
+	}
+	if !viaDefaults {
+		shell, present := node["shell"]
+		return shell, present
+	}
+	defaults, _ := node["defaults"].(map[string]any)
+	if defaults == nil {
+		return nil, false
+	}
+	run, _ := defaults["run"].(map[string]any)
+	if run == nil {
+		return nil, false
+	}
+	shell, present := run["shell"]
+	return shell, present
+}
+
+// refuseShellOverride rejects a shell setting at ANY scope GitHub applies to
+// the gate step.
+//
+// 🔴 THE FOURTH SHAPE OF "does the validator's verdict survive", and the third
+// time this exact class has been fixed at one site while another stayed open.
+// A `shell:` override replaces the default `bash -e {0}` with one that does not
+// stop on error, so a failing validator no longer ends the step and a later
+// succeeding line carries it to exit 0 — `set +e` by another name. Refusing
+// only `steps[*].shell` left BOTH `defaults.run.shell` scopes open, and GitHub
+// applies workflow defaults, then job defaults, then the step.
+//
+// So the scopes are a parameter LIST rather than a sequence of ifs: every
+// caller must supply all three, and a fourth scope is a signature change the
+// compiler enforces, not a site somebody remembers to visit.
+func refuseShellOverride(workflow map[string]any, job map[string]any, step map[string]any, jobName string) error {
+	for _, scope := range []struct {
+		description string
+		node        map[string]any
+		viaDefaults bool
+	}{
+		{"the workflow sets defaults.run.shell", workflow, true},
+		{fmt.Sprintf("the %s job sets defaults.run.shell", jobName), job, true},
+		{fmt.Sprintf("the validator step in %s overrides the shell", jobName), step, false},
+	} {
+		if shell, present := shellSetting(scope.node, scope.viaDefaults); present {
+			return fmt.Errorf(
+				"%s (%v); the default already stops on error, and an override can discard "+
+					"the validator failure the gate exists to surface",
+				scope.description, shell,
+			)
 		}
 	}
 	return nil

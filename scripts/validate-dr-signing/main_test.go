@@ -331,6 +331,42 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 				1,
 			), a
 		},
+		// CodeRabbit P1: the same key one SCOPE out. Refusing `steps[*].shell`
+		// leaves `defaults.run.shell` untouched at both job and workflow scope,
+		// and GitHub applies those to the very step this gate depends on. A
+		// custom template such as `bash {0}` takes full control of the shell
+		// options, so the default `-e` is gone and the trailing `true` carries
+		// a FAILED validator to exit 0. Both scopes get their own arm: they are
+		// separate keys in separate maps, and a fix that reads one and not the
+		// other passes whichever arm it happens to cover.
+		"job-level defaults.run.shell discards the validator verdict": func(w, a string) (string, string) {
+			w = strings.Replace(
+				w,
+				"  validate-publication-contract:\n    name: 🖋️ Validate Publication Contract\n    runs-on: ubuntu-latest\n",
+				"  validate-publication-contract:\n    name: 🖋️ Validate Publication Contract\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        shell: bash {0}\n",
+				1,
+			)
+			return strings.Replace(
+				w,
+				"          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml\n",
+				"          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml\n          true\n",
+				1,
+			), a
+		},
+		"workflow-level defaults.run.shell discards the validator verdict": func(w, a string) (string, string) {
+			w = strings.Replace(
+				w,
+				"\njobs:\n",
+				"\ndefaults:\n  run:\n    shell: bash {0}\n\njobs:\n",
+				1,
+			)
+			return strings.Replace(
+				w,
+				"          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml\n",
+				"          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml\n          true\n",
+				1,
+			), a
+		},
 		// Codex P2: the contract is checked against the nested publisher, so it
 		// only means anything while the shared action still calls it. Otherwise
 		// the validator verifies an unused file and reports success.
@@ -493,7 +529,7 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 	// message that names a token the step does not use. A guard that refuses
 	// correct work with a false explanation is one people route around.
 	ordinary := map[string]any{"run": "docker buildx imagetools inspect x\ngh run download y\ngo run ./scripts/v a b\n"}
-	if err := runBlockIsSimpleSequence(ordinary, "j"); err != nil {
+	if err := runBlockIsSimpleSequence(nil, nil, ordinary, "j"); err != nil {
 		t.Fatalf("ordinary commands containing keyword substrings must be accepted: %v", err)
 	}
 	// ...and the NEGATIVE half, or the relaxation above could have disabled it.
@@ -503,8 +539,30 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 		"chaining":     "true && go run ./x\n",
 		"substitution": "go run $(echo ./x)\n",
 	} {
-		if err := runBlockIsSimpleSequence(map[string]any{"run": run}, "j"); err == nil {
+		if err := runBlockIsSimpleSequence(nil, nil, map[string]any{"run": run}, "j"); err == nil {
 			t.Fatalf("%s must still be rejected", name)
+		}
+	}
+
+	// refuseShellOverride: each scope is read from its OWN key, so a fix that
+	// covers one scope cannot pass for another. The positive case is here too
+	// because a helper that refused everything would satisfy every negative
+	// case above while making the gate unusable.
+	if err := refuseShellOverride(
+		map[string]any{"defaults": map[string]any{"run": map[string]any{"working-directory": "x"}}},
+		map[string]any{"steps": []any{}},
+		map[string]any{"run": "go run ./x\n"},
+		"j",
+	); err != nil {
+		t.Fatalf("a workflow that sets defaults.run without a shell must be accepted: %v", err)
+	}
+	for name, scoped := range map[string][3]map[string]any{
+		"workflow scope": {{"defaults": map[string]any{"run": map[string]any{"shell": "bash {0}"}}}, nil, {}},
+		"job scope":      {nil, {"defaults": map[string]any{"run": map[string]any{"shell": "bash {0}"}}}, {}},
+		"step scope":     {nil, nil, {"shell": "bash {0}"}},
+	} {
+		if err := refuseShellOverride(scoped[0], scoped[1], scoped[2], "j"); err == nil {
+			t.Fatalf("a shell override at %s must be refused", name)
 		}
 	}
 }
