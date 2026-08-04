@@ -107,6 +107,7 @@ func repoTreeCopy(t *testing.T, mutate map[string]func(string) string) string {
 	for _, rel := range []string{
 		".github/workflows/dr-rebuild.yaml",
 		".github/workflows/cd.yaml",
+		".github/workflows/ci.yaml",
 		".github/actions/deploy-prod/action.yml",
 		".github/actions/deploy-prod/publish-platform-manifests/action.yml",
 		"ksail.prod.yaml",
@@ -266,6 +267,27 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 				1,
 			)
 		},
+		// Codex P2, round 4: a here-doc contains the validator line verbatim
+		// while the step only PRINTS it. Redirection joins the operator set.
+		"validator command is inside a here-doc": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"          go test ./scripts/validate-dr-signing\n",
+				"          cat <<'EOF'\n          go test ./scripts/validate-dr-signing\n",
+				1,
+			), a
+		},
+		// Codex P2, round 4: the DEPLOY step — the same skip/suppression
+		// question already asked of the validator step, at the cell I had not
+		// swept. A skipped deploy step still names the shared action.
+		"deploy step is skipped by a step condition": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"      - name: 🚀 Deploy to Production\n        # The deploy logic",
+				"      - name: 🚀 Deploy to Production\n        if: false\n        # The deploy logic",
+				1,
+			), a
+		},
 		// Codex P2: the contract is checked against the nested publisher, so it
 		// only means anything while the shared action still calls it. Otherwise
 		// the validator verifies an unused file and reports success.
@@ -286,6 +308,56 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMergeQueueProductionRoutesUseTheCheckedAction(t *testing.T) {
+	t.Parallel()
+
+	ci := repoFile(t, ".github/workflows/ci.yaml")
+	if err := validateProductionRoutes(ci); err != nil {
+		t.Fatalf("shipped ci.yaml can reach production outside the checked action: %v", err)
+	}
+
+	// 🔴 The premise of this contract is that the guarantee is only as strong as
+	// its weakest ROUTE, and until this round it checked one of the two. Codex
+	// reproduced the gap: replacing only the merge-queue job's shared-action
+	// call passed every check here while the direct-push route stayed gated.
+	for name, ablate := range map[string]func(string) string{
+		"merge-queue deploy uses a different action": func(s string) string {
+			return strings.Replace(s, "        uses: ./.github/actions/deploy-prod\n", "        uses: ./.github/actions/other\n", 1)
+		},
+		"merge-queue heal uses a different action": func(s string) string {
+			// The SECOND occurrence is the healing job; replace it by cutting at
+			// the first and rejoining, so the arm cannot silently hit the wrong one.
+			first := strings.Index(s, "        uses: ./.github/actions/deploy-prod\n")
+			if first < 0 {
+				t.Fatal("fixture no longer contains the shared-action call")
+			}
+			cut := first + len("        uses: ./.github/actions/deploy-prod\n")
+			return s[:cut] + strings.Replace(s[cut:], "        uses: ./.github/actions/deploy-prod\n", "        uses: ./.github/actions/other\n", 1)
+		},
+		"merge-queue deploy step is skipped": func(s string) string {
+			return strings.Replace(s, "        uses: ./.github/actions/deploy-prod\n", "        if: false\n        uses: ./.github/actions/deploy-prod\n", 1)
+		},
+		"merge-queue deploy step suppresses failure": func(s string) string {
+			return strings.Replace(s, "        uses: ./.github/actions/deploy-prod\n", "        continue-on-error: true\n        uses: ./.github/actions/deploy-prod\n", 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ablated := ablate(ci)
+			if ablated == ci {
+				t.Fatal("ablation changed nothing; re-aim it rather than trusting the result")
+			}
+			if err := validateProductionRoutes(ablated); err == nil {
+				t.Fatal("ablation was accepted, so the check does not constrain it")
+			}
+		})
+	}
+
+	// The job-level condition rule must NOT apply here: ci.yaml gates its deploy
+	// on `merge_group`, which is legitimate and necessary. Asserting the shipped
+	// file passes (above) is what pins that — but state it, or a later round may
+	// "tighten" this into rejecting the real workflow.
 }
 
 func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
@@ -335,19 +407,26 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 
 	// jobUsesAction: equality, so a prefix-sharing sibling is a different action.
 	sibling := map[string]any{"steps": []any{map[string]any{"uses": "./a/b-canary"}}}
-	if jobUsesAction(sibling, "./a/b") {
+	if _, ok := jobStepUsingAction(sibling, "./a/b"); ok {
 		t.Fatal("a sibling path sharing a prefix must not satisfy an action check")
 	}
 	nested := map[string]any{"steps": []any{map[string]any{"uses": "./a/b/c"}}}
-	if jobUsesAction(nested, "./a/b") {
+	if _, ok := jobStepUsingAction(nested, "./a/b"); ok {
 		t.Fatal("a nested path must not satisfy an action check")
 	}
 	// POSITIVE case — without it a jobUsesAction that always returned false
 	// would pass both assertions above. Same argument as the enforcesFailure
 	// positive case; it applies here too and I had not applied it.
-	exact := map[string]any{"steps": []any{map[string]any{"uses": "./a/b"}}}
-	if !jobUsesAction(exact, "./a/b") {
+	exact := map[string]any{"steps": []any{map[string]any{"uses": "./a/b", "id": "wanted"}}}
+	found, ok := jobStepUsingAction(exact, "./a/b")
+	if !ok {
 		t.Fatal("the exact action path must satisfy an action check")
+	}
+	// It must return the MATCHED step, not merely report one exists — the
+	// caller applies enforcesFailure to it, so the wrong step would silently
+	// check the wrong metadata.
+	if found["id"] != "wanted" {
+		t.Fatalf("returned the wrong step: %v", found)
 	}
 
 	// runBlockIsSimpleSequence: keywords match as WORDS, operators as

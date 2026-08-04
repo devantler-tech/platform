@@ -43,6 +43,11 @@ const cdContractGateJob = "validate-publication-contract"
 
 // The exact action paths and command the direct-push gate must wire together.
 // Named once so the checks, the workflow, and the error text cannot drift.
+// mergeQueueProductionJobs are the ci.yaml jobs that reach production. Both
+// must go through the checked shared action, or the ordering contract covers
+// only the direct-push route.
+var mergeQueueProductionJobs = []string{"deploy-prod", "heal-prod-on-failure"}
+
 const (
 	sharedDeployAction    = "./.github/actions/deploy-prod"
 	nestedPublisherAction = "./.github/actions/deploy-prod/publish-platform-manifests"
@@ -200,10 +205,14 @@ func validateCDWiring(cd string, deployAction string) error {
 	// aimed at the wrong thing and must be re-aimed rather than left passing.
 	// Compared as a whole step value, so neither a sibling path
 	// (`…/deploy-prod-canary`) nor the nested publisher satisfies it.
-	if !jobUsesAction(deploy, sharedDeployAction) {
+	deployStep, ok := jobStepUsingAction(deploy, sharedDeployAction)
+	if !ok {
 		return errors.New(
 			"deploy-prod job no longer uses the shared production deploy action, so this wiring check no longer covers the path it names",
 		)
+	}
+	if err := enforcesFailure(deployStep, "the deploy step in the direct-push deploy-prod job"); err != nil {
+		return err
 	}
 
 	// (4) The contract is validated against the nested publisher. That is only
@@ -219,7 +228,7 @@ func validateCDWiring(cd string, deployAction string) error {
 	if runs == nil {
 		return errors.New("shared deploy action has no runs mapping")
 	}
-	if !jobUsesAction(map[string]any{"steps": runs["steps"]}, nestedPublisherAction) {
+	if _, ok := jobStepUsingAction(map[string]any{"steps": runs["steps"]}, nestedPublisherAction); !ok {
 		return fmt.Errorf(
 			"the shared deploy action no longer invokes %s as a step, so the publication contract is being checked against code production does not run",
 			nestedPublisherAction,
@@ -277,6 +286,47 @@ func validateCDWiring(cd string, deployAction string) error {
 	return nil
 }
 
+// validateProductionRoutes checks the OTHER route to production.
+//
+// 🔴 THE PREMISE OF THIS WHOLE CONTRACT IS "the guarantee is only as strong as
+// its weakest route", and until now it checked exactly one of the two. The
+// merge-queue route in ci.yaml is the NORMAL path to production; replacing its
+// shared-action call passed every check here, so an alternative publication
+// implementation could bypass the ordering contract on ordinary deploys while
+// the direct-push route stayed perfectly gated.
+//
+// The job-level condition rule deliberately does NOT apply here: ci.yaml gates
+// its deploy on `merge_group`, which is a legitimate and necessary condition.
+// What must hold is that each production job invokes the CHECKED action and
+// that the invoking step is neither skipped nor failure-suppressed.
+func validateProductionRoutes(ci string) error {
+	documents, err := decodeWorkflow(ci)
+	if err != nil {
+		return fmt.Errorf("merge-queue workflow does not parse, so its production routes cannot be established: %w", err)
+	}
+	jobs, ok := documents["jobs"].(map[string]any)
+	if !ok {
+		return errors.New("merge-queue workflow has no jobs mapping")
+	}
+	for _, jobName := range mergeQueueProductionJobs {
+		job, ok := jobs[jobName].(map[string]any)
+		if !ok {
+			return fmt.Errorf("merge-queue workflow is missing the %s job", jobName)
+		}
+		step, ok := jobStepUsingAction(job, sharedDeployAction)
+		if !ok {
+			return fmt.Errorf(
+				"merge-queue job %s no longer uses %s, so it can publish to production through logic this contract never checks",
+				jobName, sharedDeployAction,
+			)
+		}
+		if err := enforcesFailure(step, "the deploy step in merge-queue job "+jobName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // decodeWorkflow parses a workflow into a generic mapping. `on:` is famously
 // decoded as the boolean true by YAML 1.1 readers; nothing here reads that key,
 // and the jobs mapping is unaffected.
@@ -294,15 +344,23 @@ func decodeWorkflow(contents string) (map[string]any, error) {
 // jobUsesAction reports whether any step of the job has `uses` EXACTLY equal to
 // the wanted action. Equality, not prefix: a sibling or nested path is a
 // different action and must not satisfy a check about this one.
-func jobUsesAction(job map[string]any, want string) bool {
+// jobStepUsingAction returns the step whose `uses` is EXACTLY the wanted
+// action. Equality, not prefix: a sibling or nested path is a different action.
+//
+// It returns the STEP for the same reason jobStepRunningCommand does — finding
+// the reference proves the text, not that GitHub runs it. A deploy step under
+// `if: false` still names the shared action while the job completes after
+// checkout and reports success. That is the identical question already asked of
+// the validator step, and missing it here left the identical hole.
+func jobStepUsingAction(job map[string]any, want string) (map[string]any, bool) {
 	steps, _ := job["steps"].([]any)
 	for _, raw := range steps {
 		step, _ := raw.(map[string]any)
 		if uses, _ := step["uses"].(string); strings.TrimSpace(uses) == want {
-			return true
+			return step, true
 		}
 	}
-	return false
+	return nil, false
 }
 
 // jobStepRunningCommand returns the step that executes `want` as a complete
@@ -375,7 +433,11 @@ var (
 		"for", "while", "until", "do", "done",
 		"case", "esac", "exit", "return", "trap", "eval", "source",
 	}
-	shellOperators = []string{"&&", "||", ";", "|", "`", "$("}
+	// Redirection and here-docs belong here for the same reason the chaining
+	// operators do: `cat <<'EOF' … EOF` contains the validator line verbatim
+	// while the step only PRINTS it. Reported against the previous head, where
+	// the mutation passed and the contract reported success.
+	shellOperators = []string{"&&", "||", ";", "|", "`", "$(", "<<", "<", ">"}
 )
 
 // shellWords splits a line on whitespace, which is enough to tell the keyword
@@ -556,6 +618,16 @@ func run(workflowPath string, configPath string, stdout io.Writer, stderr io.Wri
 		return 1
 	}
 	if err := validateCDWiring(string(cd), string(deployAction)); err != nil {
+		_, _ = fmt.Fprintf(stderr, "dr publication contract: %v\n", err)
+		return 1
+	}
+	ciPath := filepath.Clean(filepath.Join(filepath.Dir(workflowPath), "ci.yaml"))
+	ci, err := os.ReadFile(ciPath) //nolint:gosec // Derived from the explicit workflow path.
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "dr publication contract: read merge-queue workflow: %v\n", err)
+		return 1
+	}
+	if err := validateProductionRoutes(string(ci)); err != nil {
 		_, _ = fmt.Fprintf(stderr, "dr publication contract: %v\n", err)
 		return 1
 	}
