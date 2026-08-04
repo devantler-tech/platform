@@ -223,12 +223,22 @@ func validateCDWiring(cd string, deployAction string) error {
 		)
 	}
 	// (1) The command must be a complete executable line of a run block, not
-	// text that merely appears inside one.
-	if !jobRunsCommand(gate, validatorCommand) {
+	// text that merely appears inside one — AND the step that carries it must
+	// actually run and actually fail the job.
+	step, ok := jobStepRunningCommand(gate, validatorCommand)
+	if !ok {
 		return fmt.Errorf(
 			"%s job does not EXECUTE %q as its own command line, so the gate can report success without validating anything",
 			cdContractGateJob, validatorCommand,
 		)
+	}
+	if err := enforcesFailure(step, "the validator step in "+cdContractGateJob); err != nil {
+		return err
+	}
+	// The gate JOB is the same question one level up: a skipped or
+	// failure-suppressed job still satisfies a `needs` dependency.
+	if err := enforcesFailure(gate, "the "+cdContractGateJob+" job"); err != nil {
+		return err
 	}
 
 	// (2) Read from the parsed job, so only a real `needs` key counts.
@@ -281,26 +291,59 @@ func jobUsesAction(job map[string]any, want string) bool {
 	return false
 }
 
-// jobRunsCommand reports whether any step of the job executes `want` as a
-// complete line of its run block.
+// jobStepRunningCommand returns the step that executes `want` as a complete
+// line of its run block.
 //
 // Whole-line equality after trimming is what closes the echo hole: a substring
 // test accepts the command quoted inside another command, which exits 0 having
 // run nothing. This is deliberately strict about the shape rather than clever
 // about shell semantics — a wrapper this cannot recognise reads as ungated,
 // which is the safe direction for a check that guards a production deploy.
-func jobRunsCommand(job map[string]any, want string) bool {
+//
+// It returns the STEP rather than a bool because finding the command is only
+// half the question: a step carrying `if: false` or `continue-on-error: true`
+// still contains it verbatim while enforcing nothing. See enforcesFailure.
+func jobStepRunningCommand(job map[string]any, want string) (map[string]any, bool) {
 	steps, _ := job["steps"].([]any)
 	for _, raw := range steps {
 		step, _ := raw.(map[string]any)
 		run, _ := step["run"].(string)
 		for _, line := range strings.Split(run, "\n") {
 			if strings.TrimSpace(line) == want {
-				return true
+				return step, true
 			}
 		}
 	}
-	return false
+	return nil, false
+}
+
+// enforcesFailure rejects a step or job that can be skipped or whose failure is
+// suppressed.
+//
+// 🔴 THE SAME CLASS AS THE JOB-LEVEL CONDITION ON deploy-prod, one level down,
+// and missing it left the identical hole: a gate that runs the right command
+// under `if: false` never runs it, and one under `continue-on-error: true` runs
+// it and then reports success anyway. Either way the workflow reads as gated,
+// `needs` is satisfied, and the deploy proceeds on an unenforced check.
+//
+// Both keys are REFUSED rather than interpreted, for the reason the job-level
+// check gives: this decides whether a destructive job runs, so an expression
+// this cannot evaluate must read as ungated.
+func enforcesFailure(node map[string]any, description string) error {
+	if condition, present := node["if"]; present {
+		return fmt.Errorf(
+			"%s declares a condition (%v); a condition can skip it entirely while the workflow still reads as gated, "+
+				"so it must be removed or this check extended to prove the condition always holds",
+			description, condition,
+		)
+	}
+	if suppress, present := node["continue-on-error"]; present && suppress != false {
+		return fmt.Errorf(
+			"%s sets continue-on-error: %v, so it can fail the publication contract and still report success",
+			description, suppress,
+		)
+	}
+	return nil
 }
 
 // stringListContains reports whether a parsed YAML value is a sequence (or a

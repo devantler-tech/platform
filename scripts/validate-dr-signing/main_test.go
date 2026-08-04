@@ -155,6 +155,42 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 				1,
 			), a
 		},
+		// Codex P2, round 2: the SAME class as the job-level condition below,
+		// one level down. The step carries the right command and never runs it,
+		// or runs it and suppresses the failure — either way the workflow reads
+		// as gated and `needs` is satisfied.
+		"validator step is skipped by a step condition": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"      - name: 🖋️ Validate DR signing contract\n",
+				"      - name: 🖋️ Validate DR signing contract\n        if: false\n",
+				1,
+			), a
+		},
+		"validator step suppresses its own failure": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"      - name: 🖋️ Validate DR signing contract\n",
+				"      - name: 🖋️ Validate DR signing contract\n        continue-on-error: true\n",
+				1,
+			), a
+		},
+		"gate JOB is skipped by a job condition": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"  validate-publication-contract:\n    name: 🖋️ Validate Publication Contract\n",
+				"  validate-publication-contract:\n    name: 🖋️ Validate Publication Contract\n    if: false\n",
+				1,
+			), a
+		},
+		"gate JOB suppresses its own failure": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"  validate-publication-contract:\n    name: 🖋️ Validate Publication Contract\n",
+				"  validate-publication-contract:\n    name: 🖋️ Validate Publication Contract\n    continue-on-error: true\n",
+				1,
+			), a
+		},
 		// Codex P2: the contract is checked against the nested publisher, so it
 		// only means anything while the shared action still calls it. Otherwise
 		// the validator verifies an unused file and reports success.
@@ -194,14 +230,30 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 		t.Fatal("the lone-scalar needs form must satisfy it")
 	}
 
-	// jobRunsCommand: the command quoted inside another command is not run.
+	// jobStepRunningCommand: the command quoted inside another command is not run.
 	echoed := map[string]any{"steps": []any{map[string]any{"run": "echo \"go run ./x\"\n"}}}
-	if jobRunsCommand(echoed, "go run ./x") {
+	if _, ok := jobStepRunningCommand(echoed, "go run ./x"); ok {
 		t.Fatal("an echoed command must not count as executed")
 	}
 	executed := map[string]any{"steps": []any{map[string]any{"run": "go test ./x\ngo run ./x\n"}}}
-	if !jobRunsCommand(executed, "go run ./x") {
+	if _, ok := jobStepRunningCommand(executed, "go run ./x"); !ok {
 		t.Fatal("a command on its own run line must count as executed")
+	}
+
+	// enforcesFailure: both suppression shapes are refused, and the plain node
+	// is accepted — the second half matters, or the check could be refusing
+	// everything and still look correct.
+	if enforcesFailure(map[string]any{"if": "false"}, "x") == nil {
+		t.Fatal("a condition must be refused")
+	}
+	if enforcesFailure(map[string]any{"continue-on-error": true}, "x") == nil {
+		t.Fatal("continue-on-error: true must be refused")
+	}
+	if err := enforcesFailure(map[string]any{"continue-on-error": false}, "x"); err != nil {
+		t.Fatalf("an explicit continue-on-error: false is not suppression: %v", err)
+	}
+	if err := enforcesFailure(map[string]any{"run": "go test ./x"}, "x"); err != nil {
+		t.Fatalf("a plain node must be accepted: %v", err)
 	}
 
 	// jobUsesAction: equality, so a prefix-sharing sibling is a different action.
