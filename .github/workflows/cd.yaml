@@ -71,9 +71,41 @@ jobs:
           go test ./scripts/validate-eks-ci-role-policy
           go run ./scripts/validate-eks-ci-role-policy .
 
+  # Same reasoning as the authorization gate above, one property along. The
+  # ordering contract — publish to an immutable staging reference, sign and
+  # attest it, only then promote those bytes to latest — was wired into ci.yaml,
+  # which triggers on pull_request and merge_group. This workflow has neither
+  # event, so the direct-push recovery path reached production without the
+  # contract being examined once, and the merge-queue gate was the only thing
+  # enforcing it. A gate one route can walk around is not a gate.
+  validate-publication-contract:
+    name: 🖋️ Validate Publication Contract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🖋️ Validate DR signing contract
+        # Identical invocation to ci.yaml's, deliberately: the two routes to
+        # production must be gated by the same check, or they drift and the
+        # weaker one becomes the real policy.
+        run: |
+          go test ./scripts/validate-dr-signing
+          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml
+
   deploy-prod:
     name: 🚀 Deploy to Production
-    needs: [validate-eks-authorization]
+    needs: [validate-eks-authorization, validate-publication-contract]
     runs-on: ubuntu-latest
     environment: prod
     permissions:
