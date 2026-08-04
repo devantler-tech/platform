@@ -163,6 +163,27 @@ spec:
 			wantErr: "does not parse",
 		},
 		{
+			// 🔴 REGRESSION ARM. yaml.Unmarshal reads document one and drops the
+			// rest without a word, so this validated CLEAN before: a correct
+			// document one, and a stray block in document two that nothing read
+			// and nothing reported.
+			name: "a second YAML document is rejected",
+			config: goodConfig + `
+---
+spec:
+  cluster:
+    verify:
+      provider: cosign
+`,
+			wantErr: "only the first is read as the cluster spec",
+		},
+		{
+			// A trailing separator is not a second resource and must not trip the
+			// rule above — the real ksail.prod.yaml opens with one.
+			name:   "leading and trailing document separators are fine",
+			config: "---\n" + goodConfig + "\n---\n",
+		},
+		{
 			// 🔴 REGRESSION ARM. One non-string key switches the WHOLE mapping
 			// from map[string]any to map[any]any in yaml.v3, so a walk that
 			// matched only the former would skip this level entirely and miss

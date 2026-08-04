@@ -39,6 +39,8 @@
 package main
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -157,12 +159,61 @@ func samePath(a, b []string) bool {
 	return true
 }
 
+// decodeAll returns every YAML document in the input. yaml.Unmarshal reads only
+// the first and discards the rest silently, which is the behaviour this
+// validator exists to make loud, so it must not rely on it itself.
+func decodeAll(config []byte) ([]any, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(config))
+
+	var documents []any
+
+	for {
+		var document any
+
+		err := decoder.Decode(&document)
+		if errors.Is(err, io.EOF) {
+			return documents, nil
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		// A trailing `---` with nothing after it decodes as a nil document and is
+		// not a second resource, so it must not trip the one-document rule.
+		if document == nil {
+			continue
+		}
+
+		documents = append(documents, document)
+	}
+}
+
 // validate reports why the config's signature verification is not in effect, or
 // nil when it is.
 func validate(config []byte) error {
-	var tree any
-	if err := yaml.Unmarshal(config, &tree); err != nil {
+	documents, err := decodeAll(config)
+	if err != nil {
 		return fmt.Errorf("cluster config does not parse, so verification cannot be established: %w", err)
+	}
+
+	// A cluster config is ONE `kind: Cluster` resource, so everything after the
+	// first document is not read as the cluster spec. yaml.Unmarshal drops those
+	// documents without a word, which makes a second document exactly the kind of
+	// place a verify block can sit while looking configured — measured: a valid
+	// document one plus a stray block in document two validated clean. Refusing
+	// the shape is simpler than guessing which document was meant to win.
+	if len(documents) > 1 {
+		return fmt.Errorf(
+			"cluster config has %d YAML documents; only the first is read as the cluster spec, "+
+				"so anything configured in the rest verifies nothing: keep it to one document",
+			len(documents),
+		)
+	}
+
+	var tree any
+	if len(documents) == 1 {
+		tree = documents[0]
 	}
 
 	// Reported before the read-path check, because a stray block is the reason
