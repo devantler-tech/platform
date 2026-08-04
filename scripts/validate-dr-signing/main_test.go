@@ -1006,6 +1006,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		testLine      = "          go test ./scripts/validate-dr-signing\n"
 		gateJobHeader = "  changes:\n"
 		deployNeeds   = "    needs: [changes, validate-eks-authorization]"
+		healNeeds     = "    needs: [changes, deploy-prod]"
 	)
 
 	for name, arm := range map[string]struct {
@@ -1065,10 +1066,25 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 			},
 			"which the publication-contract gate may not inherit",
 		},
-		// (3) Production must WAIT for the job that carries the validator.
+		// (3) Production must WAIT for the job that carries the validator — and
+		// EVERY production job needs its own arm.
+		//
+		// 🔴 One arm covering only deploy-prod is not coverage of the rule, it is
+		// coverage of one iteration of it. The check runs inside the loop over
+		// mergeQueueProductionJobs, so a regression that narrowed it to the first
+		// entry would still satisfy the shipped-workflow control AND the
+		// deploy-prod arm, leaving the healing job — which also publishes to
+		// production — silently unchecked. The ablation below proves the two arms
+		// are not redundant.
 		"deploy-prod no longer requires the gate job": {
 			func(s string) string {
 				return strings.Replace(s, deployNeeds, "    needs: [validate-eks-authorization]", 1)
+			},
+			"does not require changes",
+		},
+		"heal-prod-on-failure no longer requires the gate job": {
+			func(s string) string {
+				return strings.Replace(s, healNeeds, "    needs: [deploy-prod]", 1)
 			},
 			"does not require changes",
 		},
