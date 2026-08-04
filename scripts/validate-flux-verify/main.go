@@ -64,6 +64,74 @@ func enabled(provider string) bool {
 	return strings.TrimSpace(provider) != ""
 }
 
+// constrainsSigner reports whether the verify block says WHO it trusts.
+//
+// A block that is present, at the read path, and enabled by KSail's predicate
+// can still verify nothing useful: Flux treats a missing secretRef as KEYLESS
+// verification, and matchOIDCIdentity is what pins the certificate issuer and
+// subject. So `verify: {provider: cosign}` accepts any keylessly-signed
+// artifact from any signer — configured, in effect, and guaranteeing nothing.
+// That is the same class as the misplaced-block outage this validator was
+// written for, one level further in.
+//
+// Three shapes constrain a signer, and any one of them is sufficient:
+// an OIDC matcher naming both an issuer and a subject, a secretRef pinning a
+// public key, or a trustedRootSecretRef pinning a trust root. The keyed
+// branches are accepted deliberately — a future keyed setup is a complete
+// configuration, and failing it would only teach someone to bypass the gate.
+func constrainsSigner(block map[string]any) bool {
+	return namesSecret(block["secretRef"]) ||
+		namesSecret(block["trustedRootSecretRef"]) ||
+		hasUsableOIDCMatcher(block["matchOIDCIdentity"])
+}
+
+// namesSecret reports whether a LocalObjectReference actually names something.
+// A `secretRef:` whose name is absent or blank pins no key, so presence of the
+// key is not the assertion — a non-blank name is.
+func namesSecret(value any) bool {
+	reference, ok := asMapping(value)
+	if !ok {
+		return false
+	}
+
+	name, _ := reference["name"].(string)
+
+	return strings.TrimSpace(name) != ""
+}
+
+// hasUsableOIDCMatcher reports whether at least ONE matcher entry pins both an
+// issuer and a subject.
+//
+// Requiring one usable entry rather than every entry is deliberate: a
+// half-written or commented-out sibling must not veto a block that does
+// constrain a signer, or the gate starts failing correct configs and gets
+// switched off. Requiring BOTH fields within that entry is equally deliberate —
+// a blank issuer lets the subject alone decide trust, and a blank subject
+// trusts every workflow the issuer will sign for, which on a public OIDC
+// issuer is everyone.
+func hasUsableOIDCMatcher(value any) bool {
+	entries, ok := value.([]any)
+	if !ok {
+		return false
+	}
+
+	for _, entry := range entries {
+		matcher, ok := asMapping(entry)
+		if !ok {
+			continue
+		}
+
+		issuer, _ := matcher["issuer"].(string)
+		subject, _ := matcher["subject"].(string)
+
+		if strings.TrimSpace(issuer) != "" && strings.TrimSpace(subject) != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
 // asMapping normalises the two shapes yaml.v3 decodes a mapping into.
 //
 // A mapping whose keys are all strings decodes as map[string]any, but ONE
@@ -257,6 +325,17 @@ func validate(config []byte) error {
 			"%s.provider is %#v, which KSail treats as verification DISABLED "+
 				"(it renders spec.verify only when the provider is a non-blank string): set it to cosign",
 			strings.Join(readPath, "."), reported,
+		)
+	}
+
+	// Reported last, because it is the only check here that assumes the block is
+	// otherwise well-formed and switched on.
+	if !constrainsSigner(block) {
+		return fmt.Errorf(
+			"%s is enabled but constrains no signer, so it accepts any keylessly-signed artifact "+
+				"from any signer (Flux reads a missing secretRef as keyless): add a matchOIDCIdentity "+
+				"entry with a non-blank issuer and subject, or a secretRef, or a trustedRootSecretRef",
+			strings.Join(readPath, "."),
 		)
 	}
 
