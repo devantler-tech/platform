@@ -56,10 +56,11 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "${workdir}"' EXIT
 
 # Take the INVOCATION from the manifest too, not just the script. The container
-# runs `/bin/sh -ec <script>`, and `-e` stays in force regardless of what the
-# script's own `set` line says — so a test that ran plain `sh` would not be
-# exercising the shipped configuration, and a future command that fails under
-# `-e` would abort the container while the test still passed.
+# runs `/bin/sh -c <script>`, and the absence of `-e` is the property under test:
+# under `-e` a field assignment whose command substitution fails would abort the
+# script before any verdict was printed. Reading the invocation from the manifest
+# is what makes a future `-ec` a test failure rather than a silent regression —
+# a test that ran plain `sh` would pass either way.
 # Read with a loop rather than `mapfile`, which is bash 4+ and absent on the
 # bash 3.2 shipped with macOS — the suite must be runnable where it is authored,
 # not only on the CI runner.
@@ -166,6 +167,21 @@ assert_case "non-numeric host-start" \
 assert_case "non-numeric length" \
   "0 100000 wide" "0 100000 65536" "INDETERMINATE"
 
+# The columns the comparison does NOT read still decide whether the record is
+# the format this probe knows. Both arms below carry a perfectly valid
+# host-start and length, so every numeric check passes and only the shape check
+# can reject them — which is exactly why they classified as NON-IDENTITY before.
+assert_case "non-numeric container-start" \
+  "x 100000 65536" "0 100000 65536" "INDETERMINATE"
+
+assert_case "extra field on the record" \
+  "0 100000 65536 extra" "0 100000 65536" "INDETERMINATE"
+
+# The same shape defect on the gid side: a check that only validated the uid map
+# would pass this and read a gid record it never understood.
+assert_case "extra field on the gid record" \
+  "0 100000 65536" "0 100000 65536 extra" "INDETERMINATE"
+
 echo "▶ Wiring: nothing re-arms errexit, which would restore the wedge"
 
 # `-e` is the one flag that can defeat the always-exit-0 guarantee without any
@@ -173,15 +189,35 @@ echo "▶ Wiring: nothing re-arms errexit, which would restore the wedge"
 # (`x="$(… | awk …)"`) aborts with that command's status before a verdict is
 # ever printed — a Failed Job, and the layer not-Ready. The guarantee has to be
 # structural, not a promise in a comment, so assert on both places it can enter.
-if printf '%s\n' "${probe_command[@]}" | grep -qE -- '^-[a-z]*e'; then
+# Herestring, not a pipe, for the same reason as the check below: `grep -q` plus
+# `set -o pipefail` reports a MATCH as a failed pipeline. This input is short
+# enough that printf usually finishes before grep exits, so the bug is latent
+# here rather than active — which is exactly why it must not be left in place.
+if grep -qE -- '^-[a-z]*e' <<<"$(printf '%s\n' "${probe_command[@]}")"; then
   bad "the shipped command does not enable errexit" \
     "a command flag carries -e; a failing command substitution would then exit non-zero before any verdict"
 else
   ok "the shipped command does not enable errexit"
 fi
 
-if printf '%s\n' "${script}" | grep -qE '^[[:space:]]*set[[:space:]]+-[a-z]*e'; then
-  bad "the script does not re-enable errexit" "found a 'set -e' in the probe script"
+# BOTH spellings: `set -e` (and its letter-cluster forms) and the long
+# `set -o errexit`, which is exactly equivalent and which a short-form-only
+# pattern does not match.
+#
+# 🔴 FED BY A HERESTRING, NOT A PIPE, AND THAT IS THE WHOLE CHECK. This file runs
+# under `set -o pipefail`. In `printf ... | grep -q PATTERN`, grep exits the
+# instant it matches, so printf is left writing into a closed pipe and dies of
+# SIGPIPE (141). pipefail then reports the PIPELINE as failed — on the match —
+# so the `if` took the else branch and this guard reported ok for a script that
+# did re-enable errexit. It reported ok for a non-matching script too, because
+# grep exits 1 there. It could not fail in either direction.
+#
+# The race needs enough input that printf is still writing when grep exits: a
+# two-line probe passes, the real ~3.9 KB script does not. That is why it has to
+# be verified against the shipped script rather than a fixture.
+if grep -qE '^[[:space:]]*set[[:space:]]+(-[a-z]*e|-o[[:space:]]+errexit)' <<<"${script}"; then
+  bad "the script does not re-enable errexit" \
+    "found a 'set -e' or 'set -o errexit' in the probe script"
 else
   ok "the script does not re-enable errexit"
 fi
@@ -212,9 +248,31 @@ else
   bad "probe container declares no env" "found env on the probe container: ${env_block}"
 fi
 
+# `env:` is not the only way in. envFrom injects every key of a ConfigMap or
+# Secret into the container, so an envFrom source could define
+# USERNS_PROBE_UID_MAP without `env:` ever appearing — the check above would
+# still report ok. The source's contents live in another object this test cannot
+# resolve, so any envFrom at all is refused rather than inspected.
+env_from="$(yq -r '.spec.template.spec.containers[] | select(.name == "read-id-maps") | .envFrom // "none"' "${job}")"
+if [ "${env_from}" = "none" ]; then
+  ok "probe container declares no envFrom, so no external source can define the override keys"
+else
+  bad "probe container declares no envFrom" "found envFrom on the probe container: ${env_from}"
+fi
+
 # The probe is a disposable diagnostic: it must stay out of the parent
 # kustomization until a deliberate activation PR.
-if grep -qE '^[[:space:]]*-[[:space:]]+userns-headlamp-mapping-probe/' "${parent}"; then
+#
+# Fail closed on the file itself first. `grep` exits 2 for an unreadable or
+# missing ${parent} and 1 for no match, and BOTH land in the else branch — so a
+# renamed or deleted kustomization would report "staged" without anything having
+# been checked. The pattern also normalises the optional `./` prefix, which
+# kustomize accepts and the previous pattern did not match: an active component
+# written `- ./userns-headlamp-mapping-probe/` read as absent.
+if [ ! -r "${parent}" ]; then
+  bad "probe stays staged (commented out) in the apps kustomization" \
+    "cannot read ${parent}, so the component's activation state was never established"
+elif grep -qE '^[[:space:]]*-[[:space:]]+\.?/?userns-headlamp-mapping-probe/?[[:space:]]*$' "${parent}"; then
   bad "probe stays staged (commented out) in the apps kustomization" \
     "the component is active in ${parent}; it must be activated only by a short-lived PR and removed after (#2858)"
 else

@@ -151,8 +151,21 @@ spec:
                 verdict INDETERMINATE 'reason=empty-or-unreadable-id-map'
               fi
 
-              # A /proc/<pid>/uid_map line is "<container-start> <host-start>
-              # <length>". Read the host-start column of the first line.
+              # A /proc/<pid>/uid_map line is exactly "<container-start>
+              # <host-start> <length>". Require that shape before reading any
+              # column: a record with a non-numeric container-start, or with a
+              # fourth field, is not the format this probe knows how to read.
+              # Reading columns 2 and 3 out of it anyway would classify a
+              # reading that was never understood — the same fail-open the
+              # numeric check below exists to prevent, one field to the left.
+              uid_field_count="$(printf '%s\n' "$uid_map" | awk 'NR == 1 { print NF }')"
+              gid_field_count="$(printf '%s\n' "$gid_map" | awk 'NR == 1 { print NF }')"
+              if [ "$uid_field_count" != 3 ] || [ "$gid_field_count" != 3 ]; then
+                verdict INDETERMINATE 'reason=malformed-id-map-record'
+              fi
+
+              uid_container_start="$(printf '%s\n' "$uid_map" | awk 'NR == 1 { print $1 }')"
+              gid_container_start="$(printf '%s\n' "$gid_map" | awk 'NR == 1 { print $1 }')"
               uid_host_start="$(printf '%s\n' "$uid_map" | awk 'NR == 1 { print $2 }')"
               gid_host_start="$(printf '%s\n' "$gid_map" | awk 'NR == 1 { print $2 }')"
               uid_length="$(printf '%s\n' "$uid_map" | awk 'NR == 1 { print $3 }')"
@@ -161,8 +174,11 @@ spec:
               # Reject a non-numeric field BEFORE any arithmetic test. `[ x -gt
               # 0 ]` on a non-integer is an error, and an errored test inside an
               # `if` fails OPEN — which would report a pass for a reading that
-              # was never understood.
-              for field in "$uid_host_start" "$gid_host_start" "$uid_length" "$gid_length"; do
+              # was never understood. The container-start columns are checked
+              # too: they are not used in the comparison, but a non-numeric one
+              # means the record is not the format assumed here.
+              for field in "$uid_container_start" "$gid_container_start" \
+                "$uid_host_start" "$gid_host_start" "$uid_length" "$gid_length"; do
                 case "$field" in
                   '' | *[!0-9]*)
                     verdict INDETERMINATE 'reason=non-numeric-id-map-field'
