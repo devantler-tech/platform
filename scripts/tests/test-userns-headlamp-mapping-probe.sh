@@ -166,6 +166,40 @@ assert_case "non-numeric host-start" \
 assert_case "non-numeric length" \
   "0 100000 wide" "0 100000 65536" "INDETERMINATE"
 
+echo "▶ Wiring: nothing re-arms errexit, which would restore the wedge"
+
+# `-e` is the one flag that can defeat the always-exit-0 guarantee without any
+# bad reading: under it, a field assignment whose command substitution fails
+# (`x="$(… | awk …)"`) aborts with that command's status before a verdict is
+# ever printed — a Failed Job, and the layer not-Ready. The guarantee has to be
+# structural, not a promise in a comment, so assert on both places it can enter.
+if printf '%s\n' "${probe_command[@]}" | grep -qE -- '^-[a-z]*e'; then
+  bad "the shipped command does not enable errexit" \
+    "a command flag carries -e; a failing command substitution would then exit non-zero before any verdict"
+else
+  ok "the shipped command does not enable errexit"
+fi
+
+if printf '%s\n' "${script}" | grep -qE '^[[:space:]]*set[[:space:]]+-[a-z]*e'; then
+  bad "the script does not re-enable errexit" "found a 'set -e' in the probe script"
+else
+  ok "the script does not re-enable errexit"
+fi
+
+# Behavioural proof of the same property, driven through the shipped command:
+# a failing command substitution must not stop the verdict being reported.
+# shellcheck disable=SC2016  # deliberately literal: the PROBE's shell must
+# evaluate this substitution, not this one — expanding it here would test nothing.
+errexit_snippet='x="$(exit 3)"
+printf "REACHED-END\n"'
+errexit_out="$("${probe_command[@]}" "${errexit_snippet}" 2>&1 || true)"
+if printf '%s\n' "${errexit_out}" | grep -qxF 'REACHED-END'; then
+  ok "a failing command substitution does not abort under the shipped command"
+else
+  bad "a failing command substitution does not abort under the shipped command" \
+    "the shipped command aborted early, so a verdict would never be printed"
+fi
+
 echo "▶ Wiring: the production Job cannot reach the test seam"
 
 # The override variables exist so these tests can drive the shipped script. If

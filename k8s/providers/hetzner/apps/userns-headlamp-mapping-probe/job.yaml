@@ -104,7 +104,15 @@ spec:
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
-            - -ec
+            # Deliberately NOT `-ec`. Under `-e` a field assignment whose
+            # command substitution fails — `x="$(… | awk …)"` — aborts the
+            # script with that command's status, before any verdict is printed.
+            # That is a non-zero exit, so the Job reports Failed and takes the
+            # apps layer not-Ready: exactly the outcome this probe's shape
+            # exists to prevent, reachable without any bad reading. The script
+            # handles its own error paths explicitly instead, and an empty or
+            # unparsed field lands on INDETERMINATE, which is the honest result.
+            - -c
           args:
             - |
               set -u
