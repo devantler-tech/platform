@@ -1004,9 +1004,9 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		stepName      = "      - name: \U0001F58B️ Validate DR signing contract\n"
 		validatorLine = "          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml\n"
 		testLine      = "          go test ./scripts/validate-dr-signing\n"
-		gateJobHeader = "  changes:\n"
-		deployNeeds   = "    needs: [changes, validate-eks-authorization]"
-		healNeeds     = "    needs: [changes, deploy-prod]"
+		gateJobHeader = "  validate-publication-contract:\n"
+		deployNeeds   = "    needs: [changes, validate-eks-authorization, validate-publication-contract]"
+		healNeeds     = "    needs: [changes, deploy-prod, validate-publication-contract]"
 	)
 
 	for name, arm := range map[string]struct {
@@ -1078,21 +1078,56 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		// are not redundant.
 		"deploy-prod no longer requires the gate job": {
 			func(s string) string {
-				return strings.Replace(s, deployNeeds, "    needs: [validate-eks-authorization]", 1)
+				return strings.Replace(s, deployNeeds, "    needs: [changes, validate-eks-authorization]", 1)
 			},
-			"does not require changes",
+			"does not require validate-publication-contract",
 		},
 		"heal-prod-on-failure no longer requires the gate job": {
 			func(s string) string {
-				return strings.Replace(s, healNeeds, "    needs: [deploy-prod]", 1)
+				return strings.Replace(s, healNeeds, "    needs: [changes, deploy-prod]", 1)
 			},
-			"does not require changes",
+			"does not require validate-publication-contract",
 		},
 		// The gate job itself moving or vanishing must fail rather than pass by
 		// finding nothing to check.
 		"gate job is renamed, so the validator has no home": {
-			func(s string) string { return strings.Replace(s, gateJobHeader, "  changes-renamed:\n", 1) },
-			"missing the changes job",
+			func(s string) string {
+				return strings.Replace(s, gateJobHeader, "  validate-publication-contract-renamed:\n", 1)
+			},
+			"missing the validate-publication-contract job",
+		},
+		// The rule the shared-job arrangement could not carry (#2950). The
+		// runner's $GITHUB_ENV/$GITHUB_PATH bridges apply to every LATER step, so
+		// a step earlier in this job can shadow `go` for the validator while the
+		// validator step stays byte-for-byte correct. Both arms leave the
+		// validator step untouched, which is exactly why every other rule above
+		// still passes on them — the poison is only visible at job scope.
+		//
+		// 🔴 Anchored on the validator step, which is unique to this job. The
+		// obvious anchor (the Setup Go step) occurs in FOUR jobs, so a
+		// first-occurrence replace lands in `changes` and the arm silently tests
+		// a job the contract no longer gates — an ablation that changes the file
+		// without changing the thing under test, which the changed-nothing guard
+		// cannot catch.
+		"gate job runs a second command step before the validator": {
+			func(s string) string {
+				return strings.Replace(
+					s, stepName,
+					"      - name: \U0001F4A5 Poison\n        run: echo 'PATH=/tmp/shadow:$PATH' >> \"$GITHUB_ENV\"\n\n"+stepName,
+					1,
+				)
+			},
+			"runs more than one command step",
+		},
+		"gate job runs an unlisted action that could write the bridges": {
+			func(s string) string {
+				return strings.Replace(
+					s, stepName,
+					"      - name: \U0001F4A5 Poison\n        uses: some-org/writes-github-env@v1\n\n"+stepName,
+					1,
+				)
+			},
+			"which is not one of the setup actions this gate may contain",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

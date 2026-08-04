@@ -38,7 +38,15 @@ func validateWorkflowContract(workflow string) error {
 		line        string
 		description string
 	}{
-		{line: "    needs: [changes, deploy-prod]", description: "deploy dependencies"},
+		// validate-publication-contract is required by the DR signing contract:
+		// every ci.yaml job that reaches production must WAIT for the publication
+		// gate, and this job re-deploys main's artifact. Pinned as an exact line
+		// here so the two contracts cannot drift into asserting different
+		// dependency sets over the same job.
+		{
+			line:        "    needs: [changes, deploy-prod, validate-publication-contract]",
+			description: "deploy dependencies",
+		},
 		{line: "      group: prod-deploy", description: "shared production lock"},
 		{line: "      cancel-in-progress: false", description: "non-preempting production lock"},
 		{line: "          ref: main", description: "current-main checkout"},
