@@ -39,9 +39,15 @@ func TestRealClusterConfigAllowsTheDRIdentity(t *testing.T) {
 func TestRealDirectPushWorkflowIsGatedByTheContract(t *testing.T) {
 	t.Parallel()
 
-	if err := validateCDWiring(repoFile(t, ".github/workflows/cd.yaml")); err != nil {
+	if err := validateCDWiring(cdWorkflow(t), deployAction(t)); err != nil {
 		t.Fatalf("shipped cd.yaml can deploy to production without the publication contract: %v", err)
 	}
+}
+
+func cdWorkflow(t *testing.T) string { t.Helper(); return repoFile(t, ".github/workflows/cd.yaml") }
+func deployAction(t *testing.T) string {
+	t.Helper()
+	return repoFile(t, ".github/actions/deploy-prod/action.yml")
 }
 
 // TestMisorderedPublicationIsRefusedOnTheDirectPushPath is the end-to-end
@@ -76,7 +82,7 @@ func TestMisorderedPublicationIsRefusedOnTheDirectPushPath(t *testing.T) {
 		t.Fatal("a mis-ordered publication was accepted by the contract")
 	}
 
-	if err := validateCDWiring(repoFile(t, ".github/workflows/cd.yaml")); err != nil {
+	if err := validateCDWiring(cdWorkflow(t), deployAction(t)); err != nil {
 		t.Fatalf("the refusal never reaches the direct-push deploy: %v", err)
 	}
 }
@@ -84,82 +90,128 @@ func TestMisorderedPublicationIsRefusedOnTheDirectPushPath(t *testing.T) {
 func TestCDWiringRejectsEachAblation(t *testing.T) {
 	t.Parallel()
 
-	cd := repoFile(t, ".github/workflows/cd.yaml")
-	if err := validateCDWiring(cd); err != nil {
-		t.Fatalf("precondition: the shipped cd.yaml must PASS before ablating it: %v", err)
+	cd := cdWorkflow(t)
+	action := deployAction(t)
+	if err := validateCDWiring(cd, action); err != nil {
+		t.Fatalf("precondition: the shipped workflow must PASS before ablating it: %v", err)
 	}
 
 	// Each ablation removes exactly one link in the chain that makes the gate
-	// real, and each must be refused. `unwired` matters most: the job is still
-	// present and still runs the validator, so the workflow reads as gated
-	// while the deploy no longer waits for it.
-	for name, ablate := range map[string]func(string) string{
-		"unwired": func(s string) string {
-			return strings.Replace(s, ", validate-publication-contract]", "]", 1)
+	// real, and each must be refused. The last four were raised by Codex against
+	// the text-scanning version of this check, and every one of them left a
+	// workflow that READ as gated — which is what makes them worth pinning
+	// rather than fixing quietly.
+	for name, ablate := range map[string]func(string, string) (string, string){
+		"unwired": func(w, a string) (string, string) {
+			return strings.Replace(w, ", validate-publication-contract]", "]", 1), a
 		},
-		"gate job removed": func(s string) string {
-			return strings.Replace(s, "  validate-publication-contract:", "  unrelated-job:", 1)
+		"gate job removed": func(w, a string) (string, string) {
+			return strings.Replace(w, "  validate-publication-contract:", "  unrelated-job:", 1), a
 		},
-		"gate no longer runs the validator": func(s string) string {
-			return strings.Replace(s, "go run ./scripts/validate-dr-signing", "echo skipped", 1)
+		"gate no longer runs the validator": func(w, a string) (string, string) {
+			return strings.Replace(w, "go run ./scripts/validate-dr-signing", "echo skipped", 1), a
 		},
-		"needs shape unreadable": func(s string) string {
+		"deploy no longer uses the shared action": func(w, a string) (string, string) {
+			return strings.Replace(w, "uses: ./.github/actions/deploy-prod\n", "uses: ./.github/actions/other\n", 1), a
+		},
+		"deploy uses a SIBLING action with the same prefix": func(w, a string) (string, string) {
+			return strings.Replace(w, "uses: ./.github/actions/deploy-prod\n", "uses: ./.github/actions/deploy-prod-canary\n", 1), a
+		},
+		"deploy uses a NESTED action under the same path": func(w, a string) (string, string) {
 			return strings.Replace(
-				s,
+				w, "uses: ./.github/actions/deploy-prod\n",
+				"uses: ./.github/actions/deploy-prod/publish-platform-manifests\n", 1,
+			), a
+		},
+		// Codex P2: the gate ECHOES the command instead of running it. Exits 0,
+		// validates nothing, and a substring scan of the run block accepts it.
+		"gate ECHOES the validator instead of running it": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml",
+				`          echo "go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml"`,
+				1,
+			), a
+		},
+		// Codex P2: the dependency is deleted, but text that LOOKS like it
+		// survives elsewhere in the job. A line scan reports a dependency
+		// GitHub does not have.
+		"needs deleted while a heredoc still contains the text": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
 				"    needs: [validate-eks-authorization, validate-publication-contract]",
-				"    needs:\n      - validate-eks-authorization\n      - validate-publication-contract",
+				"    needs: [validate-eks-authorization]\n    env:\n      NOTE: \"needs: [validate-publication-contract]\"",
 				1,
-			)
+			), a
 		},
-		"deploy no longer uses the shared action": func(s string) string {
-			return strings.Replace(s, "uses: ./.github/actions/deploy-prod\n", "uses: ./.github/actions/other\n", 1)
-		},
-		// Raised by CodeRabbit: a substring match is satisfied by a longer path
-		// that merely starts with the wanted one, so the tripwire would stay
-		// green across exactly the change it exists to notice. Both directions
-		// of that mistake are pinned — a sibling action and a nested one.
-		"deploy uses a SIBLING action with the same prefix": func(s string) string {
-			return strings.Replace(s, "uses: ./.github/actions/deploy-prod\n", "uses: ./.github/actions/deploy-prod-canary\n", 1)
-		},
-		"deploy uses a NESTED action under the same path": func(s string) string {
+		// Codex P2, and the most dangerous of the set: `needs` is intact and
+		// `if: always()` schedules the deploy after the gate FAILS. Membership
+		// alone cannot see it, and the workflow reads entirely correct.
+		"deploy carries a job-level condition that survives a failed gate": func(w, a string) (string, string) {
 			return strings.Replace(
-				s,
-				"uses: ./.github/actions/deploy-prod\n",
-				"uses: ./.github/actions/deploy-prod/publish-platform-manifests\n",
+				w,
+				"    needs: [validate-eks-authorization, validate-publication-contract]",
+				"    needs: [validate-eks-authorization, validate-publication-contract]\n    if: always()",
 				1,
+			), a
+		},
+		// Codex P2: the contract is checked against the nested publisher, so it
+		// only means anything while the shared action still calls it. Otherwise
+		// the validator verifies an unused file and reports success.
+		"shared action no longer invokes the checked publisher": func(w, a string) (string, string) {
+			return w, strings.Replace(
+				a, "uses: ./.github/actions/deploy-prod/publish-platform-manifests",
+				"uses: ./.github/actions/deploy-prod/some-other-publisher", 1,
 			)
 		},
 	} {
-		ablated := ablate(cd)
-		if ablated == cd {
+		ablatedCD, ablatedAction := ablate(cd, action)
+		if ablatedCD == cd && ablatedAction == action {
 			t.Fatalf("%s: ablation changed nothing; re-aim it rather than trusting the result", name)
 		}
-		if err := validateCDWiring(ablated); err == nil {
+		if err := validateCDWiring(ablatedCD, ablatedAction); err == nil {
 			t.Fatalf("%s: ablation was accepted, so the check does not constrain it", name)
 		}
 	}
 }
 
-func TestJobNeedsReportsUnreadableShapesAsUnestablished(t *testing.T) {
+func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 	t.Parallel()
 
-	// The failure direction that matters: a shape this cannot parse must never
-	// come back as a populated list, or an unrecognised workflow style would
-	// read as "gated" with nothing having been checked.
-	for name, job := range map[string]string{
-		"block form":   "    needs:\n      - a\n      - b\n",
-		"empty inline": "    needs: []\n",
-		"scalar form":  "    needs: validate-eks-authorization\n",
-		"absent":       "    runs-on: ubuntu-latest\n",
-	} {
-		if names, ok := jobNeeds(job); ok {
-			t.Fatalf("%s: expected unestablished, got %v", name, names)
-		}
+	// The failure direction that matters for all three: a shape the helper
+	// cannot read must report absence, never presence. An unrecognised workflow
+	// style reading as "gated" is the one outcome that lets a deploy through.
+	if stringListContains(map[string]any{"a": true}, "a") {
+		t.Fatal("a mapping must not satisfy a sequence membership test")
+	}
+	if stringListContains(nil, "a") {
+		t.Fatal("an absent value must not satisfy a membership test")
+	}
+	if !stringListContains([]any{"x", "validate-publication-contract"}, "validate-publication-contract") {
+		t.Fatal("a real sequence entry must satisfy it")
+	}
+	if !stringListContains("validate-publication-contract", "validate-publication-contract") {
+		t.Fatal("the lone-scalar needs form must satisfy it")
 	}
 
-	names, ok := jobNeeds("    needs: [a, b]\n")
-	if !ok || len(names) != 2 || names[0] != "a" || names[1] != "b" {
-		t.Fatalf("inline form should parse to [a b], got %v (ok=%v)", names, ok)
+	// jobRunsCommand: the command quoted inside another command is not run.
+	echoed := map[string]any{"steps": []any{map[string]any{"run": "echo \"go run ./x\"\n"}}}
+	if jobRunsCommand(echoed, "go run ./x") {
+		t.Fatal("an echoed command must not count as executed")
+	}
+	real := map[string]any{"steps": []any{map[string]any{"run": "go test ./x\ngo run ./x\n"}}}
+	if !jobRunsCommand(real, "go run ./x") {
+		t.Fatal("a command on its own run line must count as executed")
+	}
+
+	// jobUsesAction: equality, so a prefix-sharing sibling is a different action.
+	sibling := map[string]any{"steps": []any{map[string]any{"uses": "./a/b-canary"}}}
+	if jobUsesAction(sibling, "./a/b") {
+		t.Fatal("a sibling path sharing a prefix must not satisfy an action check")
+	}
+	nested := map[string]any{"steps": []any{map[string]any{"uses": "./a/b/c"}}}
+	if jobUsesAction(nested, "./a/b") {
+		t.Fatal("a nested path must not satisfy an action check")
 	}
 }
 
