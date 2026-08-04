@@ -199,8 +199,8 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 	if jobRunsCommand(echoed, "go run ./x") {
 		t.Fatal("an echoed command must not count as executed")
 	}
-	real := map[string]any{"steps": []any{map[string]any{"run": "go test ./x\ngo run ./x\n"}}}
-	if !jobRunsCommand(real, "go run ./x") {
+	executed := map[string]any{"steps": []any{map[string]any{"run": "go test ./x\ngo run ./x\n"}}}
+	if !jobRunsCommand(executed, "go run ./x") {
 		t.Fatal("a command on its own run line must count as executed")
 	}
 
