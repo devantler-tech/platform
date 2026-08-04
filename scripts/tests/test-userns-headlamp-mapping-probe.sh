@@ -270,23 +270,32 @@ else
   bad "probe container declares no envFrom" "found envFrom on the probe container: ${env_from}"
 fi
 
-# The probe is a disposable diagnostic: it must stay out of the parent
-# kustomization until a deliberate activation PR.
+# THIS IS THE ACTIVATION PR. The component is deliberately referenced by the
+# parent kustomization for exactly as long as it takes the merge-queue deploy to
+# run the Job once and put its log on #2651; #2858 then deletes the component,
+# this test file, and the parent's resource entry together.
+#
+# So the arm is inverted rather than deleted. Its job either way is to make the
+# component's activation state an ASSERTED fact instead of an incidental one: a
+# commented-out entry here would mean the merge deploys nothing and the Job never
+# runs, which is indistinguishable at the CI level from a successful activation —
+# a green run over a measurement that was never taken. Deleting the arm for the
+# duration would give exactly that silence.
 #
 # Fail closed on the file itself first. `grep` exits 2 for an unreadable or
 # missing ${parent} and 1 for no match, and BOTH land in the else branch — so a
-# renamed or deleted kustomization would report "staged" without anything having
-# been checked. The pattern also normalises the optional `./` prefix, which
-# kustomize accepts and the previous pattern did not match: an active component
-# written `- ./userns-headlamp-mapping-probe/` read as absent.
+# renamed or deleted kustomization would satisfy the check without anything
+# having been read. The pattern normalises the optional `./` prefix, which
+# kustomize accepts: an active component written
+# `- ./userns-headlamp-mapping-probe/` must not read as absent.
 if [ ! -r "${parent}" ]; then
-  bad "probe stays staged (commented out) in the apps kustomization" \
+  bad "probe is active in the apps kustomization for this activation PR" \
     "cannot read ${parent}, so the component's activation state was never established"
 elif grep -qE '^[[:space:]]*-[[:space:]]+\.?/?userns-headlamp-mapping-probe/?([[:space:]]|$)' "${parent}"; then
-  bad "probe stays staged (commented out) in the apps kustomization" \
-    "the component is active in ${parent}; it must be activated only by a short-lived PR and removed after (#2858)"
+  ok "probe is active in the apps kustomization for this activation PR"
 else
-  ok "probe stays staged (commented out) in the apps kustomization"
+  bad "probe is active in the apps kustomization for this activation PR" \
+    "the component is not referenced in ${parent}, so the merge-queue deploy would apply nothing and the criterion-5 reading would never be taken"
 fi
 
 # backoffLimit 0 keeps a single reading rather than retrying a measurement.
