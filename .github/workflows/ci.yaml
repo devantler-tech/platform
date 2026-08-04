@@ -39,13 +39,8 @@ jobs:
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
-      - name: 🖋️ Validate DR signing contract
-        run: |
-          go test ./scripts/validate-dr-signing
-          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml
-
-      # The DR contract above checks WHAT the verify block allows. This checks
-      # that the block is in effect at all: it ran at spec.cluster.verify for
+      # The DR contract runs in its own dedicated job (below). This checks that
+      # the verify block is in effect at all: it ran at spec.cluster.verify for
       # ~3 weeks, where KSail discards it, and every text-based check passed
       # throughout (#2920).
       - name: 🔐 Validate Flux verification is in effect
@@ -151,6 +146,37 @@ jobs:
               - 'talos/**'
               - 'talos-local/**'
               - '.github/workflows/ci.yaml'
+
+  validate-publication-contract:
+    name: 🖋️ Validate Publication Contract
+    # A DEDICATED job, mirroring cd.yaml's, and that is the point rather than a
+    # style choice. The runner's $GITHUB_ENV and $GITHUB_PATH bridges carry
+    # across steps, so any step sharing a job with this validator could shadow
+    # `go` for it while the validator step itself still read as correct. Keeping
+    # the job to nothing but its own validator is what the contract's
+    # gateJobRunsOnlyItsValidator rule asserts, and it can only hold here.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🖋️ Validate DR signing contract
+        # Identical invocation to cd.yaml's, deliberately: the two routes to
+        # production must be gated by the same check, or they drift and the
+        # weaker one becomes the real policy.
+        run: |
+          go test ./scripts/validate-dr-signing
+          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml
 
   validate-eks-authorization:
     name: 🔐 Validate EKS Authorization
@@ -769,7 +795,7 @@ jobs:
 
   deploy-prod:
     name: 🚀 Deploy to Prod
-    needs: [changes, validate-eks-authorization]
+    needs: [changes, validate-eks-authorization, validate-publication-contract]
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
     environment: prod
@@ -808,7 +834,7 @@ jobs:
 
   heal-prod-on-failure:
     name: 🩹 Heal Prod (restore main after unsuccessful merge-group deploy)
-    needs: [changes, deploy-prod]
+    needs: [changes, deploy-prod, validate-publication-contract]
     # The deploy above runs on the SPECULATIVE merge ref, before the PR lands on
     # `main`. When it fails the merge group is ejected — but the OCI `latest` tag
     # (and the prod cluster reconciling it) is left pointing at that ejected
@@ -877,6 +903,7 @@ jobs:
     needs:
       [
         changes,
+        validate-publication-contract,
         validate-eks-authorization,
         validate,
         naming,
@@ -891,6 +918,7 @@ jobs:
         with:
           job-results: >-
             ${{ needs.changes.result }}
+            ${{ needs.validate-publication-contract.result }}
             ${{ needs.validate-eks-authorization.result }}
             ${{ needs.validate.result }}
             ${{ needs.naming.result }}

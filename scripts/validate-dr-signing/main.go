@@ -45,12 +45,15 @@ const cdContractGateJob = "validate-publication-contract"
 // mergeQueueContractGateJob is the ci.yaml job that carries this validator on
 // the merge-queue production path.
 //
-// Unlike cdContractGateJob this is NOT a dedicated gate job: `changes` also
-// detects changed paths and runs the other contract validators. That difference
-// is why the gate-job rule that constrains what else may run beside the
-// validator (gateJobRunsOnlyItsValidator) is deliberately NOT applied here —
-// every OTHER rule is, because none of them depends on the job being dedicated.
-const mergeQueueContractGateJob = "changes"
+// It is a DEDICATED gate job, exactly like cdContractGateJob, so both routes
+// carry the identical rule set. It previously rode along in `changes`, which
+// also detects changed paths and runs the other contract validators — and a
+// shared job cannot satisfy gateJobRunsOnlyItsValidator, because that rule
+// exists to assert the job runs nothing BUT its validator. Leaving the rule off
+// left the runner's $GITHUB_ENV/$GITHUB_PATH bridges open on this route: a step
+// earlier in the shared job could shadow `go` for the validator step while that
+// step's own run block still read as correct.
+const mergeQueueContractGateJob = "validate-publication-contract"
 
 // mergeQueueProductionJob is a ci.yaml job that reaches production, together
 // with whether its PURPOSE requires it to survive a failed dependency.
@@ -428,6 +431,12 @@ func validateMergeQueueContractGate(documents map[string]any, jobs map[string]an
 	if err := runBlockRunsOnlyAllowedCommands(
 		documents, gate, step, mergeQueueContractGateJob, gateRunBlockCommands,
 	); err != nil {
+		return err
+	}
+	// Constraining the validator step says nothing about what ran BEFORE it in
+	// the same job, and the runner's env/path bridges carry across steps. This
+	// is the rule the shared-job arrangement could not carry.
+	if err := gateJobRunsOnlyItsValidator(gate, mergeQueueContractGateJob, gateStepActions); err != nil {
 		return err
 	}
 	// The job is the same question one level up: a skipped or failure-suppressed
