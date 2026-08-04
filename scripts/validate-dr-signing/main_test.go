@@ -191,6 +191,36 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 				1,
 			), a
 		},
+		// Codex P2, round 3: the THIRD shape of "the line is present but does it
+		// run". Whole-line equality closed the quoted case, step metadata closed
+		// the skipped case, and neither says the SHELL reaches it.
+		"validator command sits after an early exit": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"          go test ./scripts/validate-dr-signing\n",
+				"          exit 0\n          go test ./scripts/validate-dr-signing\n",
+				1,
+			), a
+		},
+		"validator command is wrapped in a false conditional": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"          go test ./scripts/validate-dr-signing\n",
+				"          if false; then\n          go test ./scripts/validate-dr-signing\n",
+				1,
+			), a
+		},
+		// Codex P2, round 3: the composite action was still SCANNED while
+		// cd.yaml was parsed — a heredoc in a run block carries the exact
+		// `uses:` text while the action invokes nothing of the sort.
+		"publisher uses: text survives only inside a heredoc": func(w, a string) (string, string) {
+			return w, strings.Replace(
+				a,
+				"      uses: ./.github/actions/deploy-prod/publish-platform-manifests",
+				"      run: |\n        cat <<'EOF'\n        uses: ./.github/actions/deploy-prod/publish-platform-manifests\n        EOF",
+				1,
+			)
+		},
 		// Codex P2: the contract is checked against the nested publisher, so it
 		// only means anything while the shared action still calls it. Otherwise
 		// the validator verifies an unused file and reports success.

@@ -207,10 +207,21 @@ func validateCDWiring(cd string, deployAction string) error {
 	}
 
 	// (4) The contract is validated against the nested publisher. That is only
-	// meaningful while the shared action still calls it.
-	if !containsTrimmedLine(deployAction, "uses: "+nestedPublisherAction) {
+	// meaningful while the shared action still calls it — and the composite
+	// action is PARSED for the same reason cd.yaml is: a YAML block scalar (a
+	// heredoc inside a run block) can contain the exact `uses:` text while the
+	// action invokes nothing of the sort.
+	composite, err := decodeWorkflow(deployAction)
+	if err != nil {
+		return fmt.Errorf("shared deploy action does not parse, so its publisher link cannot be established: %w", err)
+	}
+	runs, _ := composite["runs"].(map[string]any)
+	if runs == nil {
+		return errors.New("shared deploy action has no runs mapping")
+	}
+	if !jobUsesAction(map[string]any{"steps": runs["steps"]}, nestedPublisherAction) {
 		return fmt.Errorf(
-			"the shared deploy action no longer invokes %s, so the publication contract is being checked against code production does not run",
+			"the shared deploy action no longer invokes %s as a step, so the publication contract is being checked against code production does not run",
 			nestedPublisherAction,
 		)
 	}
@@ -233,6 +244,9 @@ func validateCDWiring(cd string, deployAction string) error {
 		)
 	}
 	if err := enforcesFailure(step, "the validator step in "+cdContractGateJob); err != nil {
+		return err
+	}
+	if err := runBlockIsSimpleSequence(step, cdContractGateJob); err != nil {
 		return err
 	}
 	// The gate JOB is the same question one level up: a skipped or
@@ -346,6 +360,52 @@ func enforcesFailure(node map[string]any, description string) error {
 	return nil
 }
 
+// shellControlFlow are the tokens that make a run block something other than a
+// straight-line sequence of commands. Any of them means the check can no longer
+// say the validator is reached.
+var shellControlFlow = []string{
+	"if ", "if\t", "then", "else", "elif", "fi",
+	"for ", "while ", "until ", "do", "done",
+	"case ", "esac", "exit", "return", "&&", "||", ";", "|", "trap ", "eval ",
+}
+
+// runBlockIsSimpleSequence requires the gate step to be a straight-line
+// sequence of commands, so that finding the validator line also means the shell
+// reaches it.
+//
+// 🔴 THE THIRD SHAPE OF THE SAME QUESTION. Whole-line equality closed "the
+// command is quoted inside another command"; step metadata closed "the step is
+// skipped or its failure suppressed"; neither says the shell EXECUTES the line.
+// `exit 0` above it, or `if false; then <command>; fi` around it, both leave the
+// exact line present while running nothing.
+//
+// Properly answering "is this line reached" is a shell interpreter, which does
+// not belong in a workflow guard. So the run block is instead constrained to a
+// shape where the question does not arise: no control flow, no early exit, no
+// chaining. That is deliberately narrow, and narrow in the SAFE direction — a
+// legitimate gate that needs a conditional will fail this check and have to
+// justify itself, rather than a skipped one passing quietly.
+func runBlockIsSimpleSequence(step map[string]any, jobName string) error {
+	run, _ := step["run"].(string)
+	for _, line := range strings.Split(run, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		for _, token := range shellControlFlow {
+			if strings.Contains(trimmed, token) {
+				return fmt.Errorf(
+					"the validator step in %s uses shell control flow or chaining (%q in %q); "+
+						"the gate must be a straight-line sequence of commands, or finding the validator line "+
+						"does not establish that the shell reaches it",
+					jobName, strings.TrimSpace(token), trimmed,
+				)
+			}
+		}
+	}
+	return nil
+}
+
 // stringListContains reports whether a parsed YAML value is a sequence (or a
 // lone scalar) containing want. A shape it cannot read returns false, so an
 // unrecognised `needs` declaration reads as ungated.
@@ -393,23 +453,6 @@ func extractJob(workflow string, header string) (string, bool) {
 func containsExactLine(block string, want string) bool {
 	for _, line := range strings.Split(block, "\n") {
 		if line == want {
-			return true
-		}
-	}
-	return false
-}
-
-// containsTrimmedLine matches a WHOLE line ignoring leading/trailing space.
-//
-// It sits between the two existing helpers deliberately. containsExactLine
-// compares the raw line, so it pins indentation and breaks on a reformat;
-// containsLine is a substring match, so a longer path that merely starts with
-// the wanted one satisfies it. Neither is right for a tripwire on a specific
-// `uses:` value, which must survive reindentation and must not survive a
-// changed target.
-func containsTrimmedLine(block string, want string) bool {
-	for _, line := range strings.Split(block, "\n") {
-		if strings.TrimSpace(line) == want {
 			return true
 		}
 	}
