@@ -167,7 +167,13 @@ func validateCDWiring(cd string) error {
 	}
 	// If the deploy job stops delegating to the shared action, this check is
 	// aimed at the wrong thing and must be re-aimed rather than left passing.
-	if !containsLine(deploy, "uses: ./.github/actions/deploy-prod") {
+	//
+	// Matched as a WHOLE line (modulo indentation), not as a substring. A
+	// substring match is satisfied by `…/deploy-prod-canary` and by the nested
+	// `…/deploy-prod/publish-platform-manifests`, so the tripwire would stay
+	// green across exactly the change it exists to notice — and a tripwire that
+	// survives its own trigger is worse than none, because it reads as checked.
+	if !containsTrimmedLine(deploy, "uses: ./.github/actions/deploy-prod") {
 		return errors.New(
 			"deploy-prod job no longer uses the shared production deploy action, so this wiring check no longer covers the path it names",
 		)
@@ -256,6 +262,23 @@ func extractJob(workflow string, header string) (string, bool) {
 func containsExactLine(block string, want string) bool {
 	for _, line := range strings.Split(block, "\n") {
 		if line == want {
+			return true
+		}
+	}
+	return false
+}
+
+// containsTrimmedLine matches a WHOLE line ignoring leading/trailing space.
+//
+// It sits between the two existing helpers deliberately. containsExactLine
+// compares the raw line, so it pins indentation and breaks on a reformat;
+// containsLine is a substring match, so a longer path that merely starts with
+// the wanted one satisfies it. Neither is right for a tripwire on a specific
+// `uses:` value, which must survive reindentation and must not survive a
+// changed target.
+func containsTrimmedLine(block string, want string) bool {
+	for _, line := range strings.Split(block, "\n") {
+		if strings.TrimSpace(line) == want {
 			return true
 		}
 	}

@@ -114,6 +114,21 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 		"deploy no longer uses the shared action": func(s string) string {
 			return strings.Replace(s, "uses: ./.github/actions/deploy-prod\n", "uses: ./.github/actions/other\n", 1)
 		},
+		// Raised by CodeRabbit: a substring match is satisfied by a longer path
+		// that merely starts with the wanted one, so the tripwire would stay
+		// green across exactly the change it exists to notice. Both directions
+		// of that mistake are pinned — a sibling action and a nested one.
+		"deploy uses a SIBLING action with the same prefix": func(s string) string {
+			return strings.Replace(s, "uses: ./.github/actions/deploy-prod\n", "uses: ./.github/actions/deploy-prod-canary\n", 1)
+		},
+		"deploy uses a NESTED action under the same path": func(s string) string {
+			return strings.Replace(
+				s,
+				"uses: ./.github/actions/deploy-prod\n",
+				"uses: ./.github/actions/deploy-prod/publish-platform-manifests\n",
+				1,
+			)
+		},
 	} {
 		ablated := ablate(cd)
 		if ablated == cd {
