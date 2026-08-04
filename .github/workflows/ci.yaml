@@ -44,6 +44,15 @@ jobs:
           go test ./scripts/validate-dr-signing
           go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml
 
+      # The DR contract above checks WHAT the verify block allows. This checks
+      # that the block is in effect at all: it ran at spec.cluster.verify for
+      # ~3 weeks, where KSail discards it, and every text-based check passed
+      # throughout (#2920).
+      - name: 🔐 Validate Flux verification is in effect
+        run: |
+          go test ./scripts/validate-flux-verify
+          go run ./scripts/validate-flux-verify ksail.prod.yaml
+
       # .github/actionlint.yaml silences actionlint's "unexpected key" diagnostic
       # for concurrency.queue, which also removes its enum check. This restores it.
       - name: 🚦 Validate concurrency queue values
