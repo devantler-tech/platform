@@ -242,6 +242,22 @@ runs:
         WG_SERVER_PRIVATE_KEY: ${{ inputs.wg-server-private-key }}
       run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update
 
+    - name: 📣 Report suppressed machine-config sync
+      # The step above is the pipeline's ONLY Talos machine-config sync, and the
+      # rollout gate skips it. A skipped step inside a green deploy reads as
+      # ordinary conditional behaviour, so the suppression was invisible for ten
+      # days and misdirected the diagnosis of two unrelated issues (#2951).
+      # Surface it in the job summary, and warn once it outruns the rollout's
+      # intended window. always(), so an earlier failure cannot hide it.
+      if: >-
+        always() && steps.cilium_rollout_gate.outputs.active == 'true'
+      shell: bash
+      env:
+        # Take the gate state from the gate itself — re-deriving it here would
+        # let the two drift apart silently, which is the original defect.
+        CILIUM_ROLLOUT_GATE_ACTIVE: ${{ steps.cilium_rollout_gate.outputs.active }}
+      run: ./scripts/report-cilium-rollout-gate-suppression.sh
+
     - name: 🛡️ Reassert or release the Cilium rollout gate
       # Reassert the suspension after delivery while OnDelete is active.
       # A later, reviewed rollout-completion or rollback artifact removes the
