@@ -416,6 +416,29 @@ guard_max_active_seconds=$((604801 * 2))
 run_guard --before-publish
 unset guard_max_active_seconds
 
+# Zero-padded digit strings must be read as DECIMAL, not octal. Bash `((...))`
+# treats a leading zero as base 8, and the digits-only validation admits one, so
+# `08` aborts with "value too great for base" while an all-octal-valid string
+# like `0012345` silently evaluates to 5349 — a window that quietly shrinks is
+# exactly the failure this guard exists to prevent.
+printf '%s\n' "$(printf '%020d' "$((backfilled_at - 3600))")" >"${state_dir}/activated-at"
+guard_max_active_seconds=0000604800
+run_guard --before-publish
+unset guard_max_active_seconds
+# ...and the padded form must still EXPIRE when it genuinely is past the window,
+# rather than passing because octal made the elapsed time look smaller.
+printf '%s\n' "$(printf '%020d' "$((backfilled_at - 604801))")" >"${state_dir}/activated-at"
+if run_guard --before-publish; then
+  fail 'a zero-padded activation stamp past the window must still fail the deploy'
+fi
+# A window value containing an invalid octal digit (9) must not abort the guard.
+# Deliberately a LARGE padded value: a small one like `08` would make the
+# assertion a race against the suite's own runtime.
+printf '%s\n' "$((backfilled_at - 3600))" >"${state_dir}/activated-at"
+guard_max_active_seconds=0999999
+run_guard --before-publish
+unset guard_max_active_seconds
+
 # A corrupt or future activation stamp fails closed rather than reading as fresh.
 printf 'not-epoch\n' >"${state_dir}/activated-at"
 if run_guard --before-publish; then

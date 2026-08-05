@@ -45,7 +45,7 @@ readonly revision_ready="${CILIUM_ROLLOUT_REVISION_READY:-false}"
 # skipping its own Talos machine-config sync. Seven days is the window a
 # one-node-at-a-time step of the fleet was designed for; the gate outran it by
 # days before anyone noticed, because every suppressed deploy was still green.
-readonly max_active_seconds="${CILIUM_ROLLOUT_MAX_ACTIVE_SECONDS:-604800}"
+max_active_seconds="${CILIUM_ROLLOUT_MAX_ACTIVE_SECONDS:-604800}"
 
 fail() {
   printf 'ERROR: %s\n' "$1" >&2
@@ -68,6 +68,13 @@ fail() {
   fail "CILIUM_ROLLOUT_REVISION_READY must be true or false: ${revision_ready}"
 [[ "${max_active_seconds}" =~ ^[0-9]+$ ]] ||
   fail "CILIUM_ROLLOUT_MAX_ACTIVE_SECONDS is not a non-negative integer: ${max_active_seconds}"
+# Pin base 10 once, after validation. Bash arithmetic reads a leading zero as
+# octal, and the digits-only regex above happily admits one — so `08` would
+# abort with "value too great for base", and (worse, because it is silent)
+# `0012345` would evaluate as octal 5349. A window that quietly shrinks by a
+# factor of two is precisely the failure this guard exists to prevent.
+max_active_seconds="$((10#${max_active_seconds}))"
+readonly max_active_seconds
 
 kubectl_prod() {
   "${kubectl_bin}" --context admin@prod "$@"
@@ -135,6 +142,9 @@ require_gate_within_window() {
 
   [[ "${activated_at}" =~ ^[0-9]+$ ]] ||
     fail "the recorded Cilium rollout activation time is not epoch seconds: ${activated_at}"
+  # Same base-10 pin as the window above: the annotation is cluster state and a
+  # hand-edited or zero-padded value must not be read as octal.
+  activated_at="$((10#${activated_at}))"
 
   now="$(date -u +%s)"
   elapsed=$((now - activated_at))
