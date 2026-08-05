@@ -102,8 +102,13 @@ DISABLE_ERRORS_LINTERS:
   # question for those. It was written when there were four: the Headlamp mapping probe was the
   # fourth, and #2959 removed that probe outright.
   #
-  # The vault-config Job is the one remaining site with no demonstrated constraint, so it is a
-  # candidate to simply raise. CoreDNS was the other, and is now resolved: its image already runs
+  # The vault-config Job's UID is image-baked, so it wants a scoped skip naming that reason rather
+  # than a raise: the openbao image carries `openbao:x:100:1000` in its own /etc/passwd, which is
+  # exactly the `runAsUser: 100` / `runAsGroup: 1000` the Job sets. That puts it in #2898's
+  # image-baked class alongside the other openbao workloads. Its sibling images decide nothing
+  # either way — `minio/mc` and `alpine/k8s` declare no `User` and bake no uid-100 identity.
+  #
+  # CoreDNS is resolved rather than excepted: its image already runs
   # as the distroless nonroot identity (65532), so the manifest states that UID rather than
   # inheriting it — which also cleared CKV_K8S_23. Binding :53 needs no ambient capability, because
   # the capability is a file capability on the binary and NET_BIND_SERVICE is in the bounding set;
