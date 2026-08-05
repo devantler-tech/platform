@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Report, in the deploy's own job summary, that the Cilium rollout gate has
-# suppressed the Talos machine-config sync — and warn once that suppression
-# outlives its intended window.
+# suppressed the Talos machine-config sync — and escalate, from a warning to a
+# failed deploy, once that suppression outlives its intended window.
 #
 # The coupling itself is deliberate and stays: KSail owns Cluster Autoscaler and
 # could reconcile it back to one replica mid-rollout, racing a scale-up before
@@ -13,7 +13,10 @@
 # (platform#2951).
 #
 # Releasing the gate stays an operational judgement about the Cilium rollout, so
-# this never fails the deploy. It makes the suppression legible and bounded.
+# the deploy asks before it insists: it warns from `warn_after_days`, and only
+# once the suppression reaches `fail_after_days` does it fail. That escalation is
+# the point — a warning inside an otherwise-green deploy is not a forcing
+# function, and the suppression has to end in something other than silence.
 
 set -euo pipefail
 
@@ -26,6 +29,16 @@ readonly activation_marker='platform.devantler.tech/rollout-gate-activated:'
 # soak". A week is generous for that. Past it, the rollout is not progressing as
 # designed and the un-synced machine-config delta is the larger risk.
 readonly warn_after_days=7
+
+# Past this, the deploy FAILS rather than warning inside a green run. A warning
+# in a green job is not a forcing function: the gate ran 10 days over its warn
+# threshold while every deploy stayed green and silently skipped its only Talos
+# machine-config sync, which is exactly how that went unnoticed (platform#2963).
+# The gap between the two thresholds is deliberate — a week of warnings first,
+# so the escalation is never a surprise — and it is measured from the reviewed
+# activation marker in Git, so completing or rolling back the rollout is the
+# only way to clear it. Raising this constant is not a resolution.
+readonly fail_after_days="${CILIUM_ROLLOUT_FAIL_AFTER_DAYS_OVERRIDE:-14}"
 
 readonly gate_active="${CILIUM_ROLLOUT_GATE_ACTIVE:-false}"
 
@@ -113,6 +126,10 @@ summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
   printf '| Gate active since | `%s` |\n' "${activated}"
   printf '| Elapsed | **%s days** |\n' "${elapsed_days}"
   printf '| Warn threshold | %s days |\n' "${warn_after_days}"
+  # State the hard bound too. The summary is where an operator meets this gate,
+  # and a deploy that will start FAILING on a known day is exactly the thing
+  # they need to see before it happens rather than on the day it does.
+  printf '| Fail threshold | %s days |\n' "${fail_after_days}"
   printf '\nThis also blocks anything that depends on `cluster update` applying '
   printf 'configuration to the live cluster — including the root OCIRepository '
   printf 'cosign `verify` block (platform#2922, platform#2938).\n\n'
@@ -127,6 +144,13 @@ summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 if ((elapsed_days >= warn_after_days)); then
   printf '::warning::Talos machine-config sync has been suppressed by the Cilium rollout gate for %s days (threshold %s). Machine config in Git is diverging from the nodes, and platform#2922/#2938 are blocked behind it. Finish or roll back the rollout — see the component runbook.\n' \
     "${elapsed_days}" "${warn_after_days}"
+fi
+
+# Escalate past the hard bound. Same `>=` reasoning as the warning above:
+# fail_after_days=14 means "fail once this has run fourteen days", so the failure
+# belongs ON day fourteen.
+if ((elapsed_days >= fail_after_days)); then
+  fail "the Cilium rollout gate has suppressed every Talos machine-config sync (\`ksail cluster update\`) for ${elapsed_days} days and has reached its ${fail_after_days}-day bound. A deploy will not silently skip its own config sync any longer. Resolve it by stepping the remaining Cilium agents onto the current DaemonSet revision, or by rolling the homogeneous-devices component back — see the component runbook. Raising the bound is not a resolution."
 fi
 
 exit 0
