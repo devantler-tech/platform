@@ -378,6 +378,16 @@ suspend_autoscaler() {
 
 restore_autoscaler_if_owned() {
   local previous_replicas
+  # Clear the activation stamp FIRST, and before the unowned early return
+  # below. The gate is inactive on this path, so no window can apply — and a
+  # stamp that outlives its rollout is worse than no stamp: the NEXT rollout
+  # would inherit it, fail immediately, and name only remedies that cannot
+  # work (stepping agents, rolling back) for a stale annotation the operator
+  # was never told about. Clearing it first also means an interrupted release
+  # leaves the ownership marker set, so the next --after-deploy self-heals.
+  kubectl_prod -n "${namespace}" annotate deployment "${deployment}" \
+    "${activated_at_annotation}-"
+
   previous_replicas="$(get_previous_replicas)"
   if [[ -z "${previous_replicas}" ]]; then
     printf 'Cilium homogeneous-device rollout gate inactive: no owned autoscaler suspension to restore.\n'
@@ -392,8 +402,6 @@ restore_autoscaler_if_owned() {
     "${previous_replicas_annotation}-"
   kubectl_prod -n "${namespace}" annotate deployment "${deployment}" \
     "${approved_template_annotation}-"
-  kubectl_prod -n "${namespace}" annotate deployment "${deployment}" \
-    "${activated_at_annotation}-"
   printf 'Cilium homogeneous-device rollout gate released: Cluster Autoscaler restored to %s replicas.\n' \
     "${previous_replicas}"
 }

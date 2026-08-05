@@ -217,8 +217,12 @@ EOF
     : >"${KUBECTL_STATE}/activated-at"
     ;;
   *"annotate deployment"*"cilium-device-rollout-activated-at="*)
+    # Capture the value VERBATIM, not a digits-only sub-match: a digit capture
+    # would truncate an ISO timestamp to its year and let the epoch-format
+    # assertion pass for a formatted date — the exact regression it exists to
+    # catch. Real kubectl stores the whole string, so the fake must too.
     printf '%s\n' "$*" |
-      sed 's/.*cilium-device-rollout-activated-at=\([0-9][0-9]*\).*/\1/' \
+      sed 's/.*cilium-device-rollout-activated-at=\([^ ]*\).*/\1/' \
         >"${KUBECTL_STATE}/activated-at"
     ;;
   *"annotate deployment"*"cilium-device-rollout-previous-replicas-"*)
@@ -392,6 +396,12 @@ run_guard --before-publish
   fail 'an active gate inside its window must not restart its own clock'
 
 # Past the window: the deploy fails instead of silently skipping cluster update.
+# Un-suspend the autoscaler first, so the suspension assertion below observes
+# THIS run's suspension rather than one left behind by an earlier run — with
+# replicas already 0 the assertion holds no matter what the guard does, and
+# would pass even if the window check ran before the suspension.
+printf '1\n' >"${state_dir}/replicas"
+printf '1\n' >"${state_dir}/status-replicas"
 printf '%s\n' "$((backfilled_at - 604801))" >"${state_dir}/activated-at"
 if run_guard --before-publish; then
   fail 'a gate active past its window must fail the deploy'
@@ -423,6 +433,16 @@ sed -i.bak '/cilium\/components\/homogeneous-devices\//d' \
 run_guard --after-deploy true
 [[ ! -s "${state_dir}/activated-at" ]] ||
   fail 'releasing the rollout gate must clear its recorded activation time'
+
+# A stamp must not outlive its rollout on the UNOWNED release path either. If a
+# manual restore (or an interrupted release) clears the ownership marker while
+# the stamp survives, the next rollout would inherit a stale clock, fail on
+# arrival, and name only remedies that cannot fix a stale annotation.
+printf '%s\n' "${backfilled_at}" >"${state_dir}/activated-at"
+: >"${state_dir}/previous-replicas"
+run_guard --after-deploy true
+[[ ! -s "${state_dir}/activated-at" ]] ||
+  fail 'an unowned gate release must still clear the recorded activation time'
 cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" \
   "${fixture_controllers}/kustomization.yaml"
 
