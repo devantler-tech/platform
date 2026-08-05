@@ -47,9 +47,11 @@
 # kube-apiserver, hooks.slack.com:443 and DNS egress. It does not depend on
 # Coroot itself.
 #
-# The webhook is injected by Flux substitution from the per-cluster SOPS secret;
-# unset (local/CI) it defaults to an invalid URL so the alert reaches nowhere and
-# local/CI stays quiet by design, exactly as cluster-heartbeat does.
+# The webhook is injected by Flux substitution from the per-cluster SOPS secret.
+# Unset (local/CI) it defaults to the reserved example.invalid host, which the
+# script matches explicitly and skips, so local/CI stays quiet by design. Every
+# OTHER delivery failure fails the Job: nothing outside this Job would notice a
+# silently dropped alert.
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -150,11 +152,28 @@ spec:
                     "$degraded" "${GRACE_SECONDS}")
                   jq -n --arg t "$text" '{text: $t}' > /tmp/payload.json
 
+                  # Only the known placeholder host is allowed to skip delivery.
+                  # example.invalid is RFC 2606 reserved, so it can never be a
+                  # real endpoint — matching it explicitly keeps local/CI inert
+                  # without also swallowing a REAL prod delivery failure.
+                  case "$WEBHOOK_URL" in
+                    https://example.invalid/*)
+                      echo "No Slack webhook configured; alert not delivered."
+                      exit 0
+                      ;;
+                  esac
+
+                  # No `|| true` here, deliberately. Unlike cluster-heartbeat --
+                  # a dead-man's-switch whose MISSING ping is what the external
+                  # monitor alerts on -- nothing outside this Job notices if the
+                  # POST fails. Swallowing that would record a successful run
+                  # having sent nothing: the same silent-zero failure the API
+                  # read above is guarded against, at the other end of the check.
                   curl -sf --max-time 15 \
                     --retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused \
                     -H 'Content-Type: application/json' \
                     --data @/tmp/payload.json \
-                    "$WEBHOOK_URL" || echo "WARN: could not deliver alert to webhook" >&2
+                    "$WEBHOOK_URL"
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
