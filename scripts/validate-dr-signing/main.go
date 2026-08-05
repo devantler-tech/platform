@@ -180,7 +180,62 @@ func validatePublicationAction(action string) error {
 		return errors.New("publication action must verify latest resolves to the staged digest")
 	}
 
+	return publicationStepsAreEnforced(action)
+}
+
+// publicationStepsAreEnforced proves every publication step's failure actually
+// stops the run.
+//
+// 🔴 THE FIFTH SITE OF THE requireEnforcedStep MISTAKE, and the one the checks
+// above cannot reach. Everything before this point is positional: it proves a
+// step EXISTS and sits in the right place in the chain. Position says nothing
+// about whether the step's verdict is honoured. `continue-on-error: true` on
+// `verify_evidence` keeps the gate present, correctly ordered, invoked with the
+// resolved digest and reading ENFORCE=true — so the ordering chain here, the
+// wiring assertions in test-verify-published-evidence.sh, and the enforcement
+// ratchet all still pass — while the gate's failure is discarded and
+// `promote_latest` moves the mutable tag onto bytes with no usable evidence.
+// That is precisely the state root verification exists to make impossible.
+//
+// Every step is covered rather than a named subset: this action's whole purpose
+// is producing bytes production will trust, so a step whose failure does not
+// stop it has no place in the chain, and an allowlist would need extending each
+// time a step is added — the omission this file has already made four times.
+func publicationStepsAreEnforced(action string) error {
+	document, err := decodeWorkflow(action)
+	if err != nil {
+		return fmt.Errorf("publication action is unreadable, so its steps cannot be proven enforced: %w", err)
+	}
+	runs, ok := document["runs"].(map[string]any)
+	if !ok {
+		return errors.New("publication action has no runs mapping, so its steps cannot be proven enforced")
+	}
+	steps, ok := runs["steps"].([]any)
+	if !ok || len(steps) == 0 {
+		return errors.New("publication action declares no steps, so nothing can be proven enforced")
+	}
+	for index, raw := range steps {
+		step, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("publication action step %d is not a mapping, so it cannot be proven enforced", index)
+		}
+		if err := enforcesFailure(step, describePublicationStep(step, index)); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// describePublicationStep names a step the way its author will recognise it, so
+// the failure points at the line to change rather than an index to count to.
+func describePublicationStep(step map[string]any, index int) string {
+	if id, ok := step["id"].(string); ok && id != "" {
+		return fmt.Sprintf("publication action step %q", id)
+	}
+	if name, ok := step["name"].(string); ok && name != "" {
+		return fmt.Sprintf("publication action step %q", name)
+	}
+	return fmt.Sprintf("publication action step %d", index)
 }
 
 func validateVerifyAllowList(config string) error {

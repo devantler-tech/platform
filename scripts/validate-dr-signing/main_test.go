@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -912,6 +913,79 @@ func TestPublicationActionRejectsEachAblation(t *testing.T) {
 			err := validatePublicationAction(ablated)
 			if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
 				t.Fatalf("wrong result: got %v, want error mentioning %q", err, testCase.wantErr)
+			}
+		})
+	}
+}
+
+// TestPublicationActionRejectsSuppressedPublicationSteps pins the half of the
+// contract that ordering cannot see.
+//
+// 🔴 THE SAME CLASS AS enforcesFailure's job-level check, ONE LEVEL FURTHER
+// DOWN — inside the composite action's own steps, where every existing check
+// was blind. `continue-on-error: true` on `verify_evidence` leaves the step
+// present, in the right place, invoked with the right digest, reading
+// ENFORCE=true — so the ordering chain, the wiring test, and the enforcement
+// ratchet all still pass — while the gate's verdict is discarded and
+// `promote_latest` moves the mutable tag onto bytes carrying no usable
+// evidence. Position proves a step is reached; it says nothing about whether
+// its failure stops the run.
+func TestPublicationActionRejectsSuppressedPublicationSteps(t *testing.T) {
+	t.Parallel()
+
+	publisher := repoFile(t, ".github/actions/deploy-prod/publish-platform-manifests/action.yml")
+	cases := []struct {
+		name     string
+		stepID   string
+		injected string
+		wantErr  string
+	}{
+		{
+			name:     "a discarded evidence verdict promotes unevidenced bytes",
+			stepID:   "verify_evidence",
+			injected: "      continue-on-error: true",
+			wantErr:  "continue-on-error",
+		},
+		{
+			name:     "a suppressed signature failure promotes unsigned bytes",
+			stepID:   "cosign_sign",
+			injected: "      continue-on-error: true",
+			wantErr:  "continue-on-error",
+		},
+		{
+			name:     "a suppressed provenance failure promotes bytes lacking evidence",
+			stepID:   "attest_provenance",
+			injected: "      continue-on-error: true",
+			wantErr:  "continue-on-error",
+		},
+		{
+			name:     "a conditional gate can be skipped while the action still reads as gated",
+			stepID:   "verify_evidence",
+			injected: "      if: always()",
+			wantErr:  "condition",
+		},
+		{
+			name:     "a conditional promotion can run on a path the contract never checked",
+			stepID:   "promote_latest",
+			injected: "      if: always()",
+			wantErr:  "condition",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			anchor := "      id: " + testCase.stepID
+			ablated := strings.Replace(publisher, anchor, anchor+"\n"+testCase.injected, 1)
+			if ablated == publisher {
+				t.Fatalf("ablation changed nothing — no step carries id %q", testCase.stepID)
+			}
+			err := validatePublicationAction(ablated)
+			if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("wrong result: got %v, want error mentioning %q", err, testCase.wantErr)
+			}
+			if !strings.Contains(fmt.Sprint(err), testCase.stepID) {
+				t.Fatalf("error does not name the offending step %q: %v", testCase.stepID, err)
 			}
 		})
 	}
