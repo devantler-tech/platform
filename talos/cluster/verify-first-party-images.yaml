@@ -58,20 +58,20 @@ rules:
   # Mirrors the verify-app-images ImageValidatingPolicy provider-upjet-*
   # attestor (#2382). MUST precede the catch-all below (first-match-wins) or the
   # catch-all's publish-app.yaml identity rejects these (ImagePullBackOff).
+  # The ref is pinned to the default branch: publish-provider-package.yml is
+  # workflow_dispatch-only and publishes from main, so main is the sole
+  # legitimate signing ref. Pinning it rejects a package signed from an
+  # arbitrary feature branch, which an unconstrained ref accepts.
   - image: ghcr.io/devantler-tech/provider-upjet-*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@.+$
-  # First-party APP images signed by the shared publish-app.yaml workflow.
-  # publish-app.yaml moved from devantler-tech/reusable-workflows into
-  # devantler-tech/actions (actions#425): images published after the move
-  # carry the actions identity, which this rule's old reusable-workflows-only
-  # regex rejected at the node pull layer (ImagePullBackOff on every new app
-  # release). Accept BOTH identities until every app has published a fresh
-  # actions-signed image, then narrow to actions-only — the same transition
-  # alternation as the apps' Flux OCIRepository verify blocks and the
-  # verify-app-images ImageValidatingPolicy.
+      subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/heads/main$
+  # First-party APP images signed by the shared publish-app.yaml workflow in
+  # devantler-tech/actions. Callers pin that reusable workflow either by commit
+  # SHA or by release tag, so the ref alternation admits exactly those two forms
+  # and rejects a mutable ref such as @main. Same shape as the apps' Flux
+  # OCIRepository verify blocks and the verify-app-images ImageValidatingPolicy.
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/(actions|reusable-workflows)/\.github/workflows/publish-app\.yaml@.+$
+      subjectRegex: ^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@([0-9a-f]{40}|refs/tags/v.+)$
