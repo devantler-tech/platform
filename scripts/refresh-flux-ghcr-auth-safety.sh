@@ -63,6 +63,46 @@ select_talos_node_targets() {
   rm -f "${unsorted_targets}"
 }
 
+# Validate that an unclaimed node is still exactly what the capturing read saw,
+# so a rejected atomic claim can be retried against a fresh resourceVersion.
+# A Node object has several independent writers (kubelet status heartbeats, the
+# cloud controller manager, the CNI operator), and any of their writes rejects
+# the claim's resourceVersion test without changing anything relevant to drain
+# safety. Retrying is only sound while every fact the caller captured still
+# holds: same node identity, not being deleted, still unowned by this bridge,
+# and unchanged scheduling intent. A concurrent cordon, ownership grab, taint
+# edit, or node replacement therefore still refuses instead of retrying.
+node_claim_preconditions_still_hold() {
+  local state_file="$1"
+  local initial_node_uid="$2"
+  local was_cordoned="$3"
+  local initial_node_taints="$4"
+
+  jq -e \
+    --arg owner_annotation \
+    "platform.devantler.tech/ghcr-auth-drain-owner" \
+    --arg recovery_annotation \
+    "platform.devantler.tech/ghcr-auth-drain-recovery" \
+    --arg uid "${initial_node_uid}" \
+    --argjson was_cordoned "${was_cordoned}" \
+    --argjson initial_taints "${initial_node_taints}" '
+    .metadata.uid == $uid
+    and .metadata.deletionTimestamp == null
+    and ((.metadata.annotations[$owner_annotation] // "") == "")
+    and ((.metadata.annotations[$recovery_annotation] // "") == "")
+    and ((if (.spec.unschedulable // false) then 1 else 0 end)
+      == $was_cordoned)
+    and (((.spec.taints // [])
+      | map(select((
+          .key == "node.kubernetes.io/unschedulable"
+          and .effect == "NoSchedule"
+          and (.value // "") == ""
+        ) | not))
+      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]))
+      == $initial_taints)
+  ' "${state_file}" >/dev/null
+}
+
 # Validate the scheduling state captured immediately before a Talos reboot.
 # The bridge must still own its serialization annotation while the node stays
 # cordoned; neither a bridge-created nor a pre-existing cordon may proceed after

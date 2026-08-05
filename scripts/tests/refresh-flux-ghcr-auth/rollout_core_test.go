@@ -333,6 +333,40 @@ func TestSchedulableNodeIsClaimedAndCordonedAtomically(t *testing.T) {
 	requireNoLine(t, operations, "node-claim:prod-worker-1")
 }
 
+func TestUnrelatedNodeWriteBeforeAtomicClaimIsRetried(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_UNRELATED_NODE_WRITE_BEFORE_CLAIM_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	// The conflict really happened, and the claim still landed after it.
+	requireLine(t, operations, "unrelated-node-write:prod-worker-1")
+	claim := lineIndex(t, operations, "node-claim-cordon:prod-worker-1")
+	drain := lineIndex(t, operations, "node-drain:prod-worker-1")
+	if claim >= drain {
+		t.Errorf("claim index %d is not before drain index %d", claim, drain)
+	}
+}
+
+func TestRetriedClaimStillRefusesWhenTheRetryBudgetIsExhausted(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_CLAIM_FAIL_NODE": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "Could not atomically claim and cordon")
+	operations := readLines(f.operationLog)
+	for _, unexpected := range []string{"node-claim-cordon:prod-worker-1", "node-drain:prod-worker-1", "talos-reboot:10.0.0.2", "root-patch"} {
+		requireNoLine(t, operations, unexpected)
+	}
+	if pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-1")) {
+		t.Error("exhausted claim retries left an owner marker")
+	}
+}
+
 func TestConcurrentCordonBeforeAtomicClaimStopsTheRoll(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

@@ -1477,6 +1477,23 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 			appendEnvFile("OPERATION_LOG", "operator-cordon:"+nodeName+"\n")
 			return commandFailure(56, "resourceVersion test failed after concurrent cordon")
 		}
+		// A conflict that never clears, so the bounded retry budget runs out
+		// and the claim must still refuse rather than drain.
+		if nodeName == os.Getenv("FAKE_CLAIM_FAIL_NODE") {
+			setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+			return commandFailure(56, "resourceVersion test failed")
+		}
+		// An unrelated writer (a kubelet status heartbeat, the cloud
+		// controller manager) bumps resourceVersion between the capturing
+		// read and this patch, so the CAS test fails while nothing relevant
+		// to drain safety changed. Fires once, so a re-read then succeeds.
+		if nodeName == os.Getenv("FAKE_UNRELATED_NODE_WRITE_BEFORE_CLAIM_NODE") &&
+			!markerExists("unrelated-write-"+nodeName) {
+			touchMarker("unrelated-write-" + nodeName)
+			setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+			appendEnvFile("OPERATION_LOG", "unrelated-node-write:"+nodeName+"\n")
+			return commandFailure(56, "resourceVersion test failed")
+		}
 		owner := patchValueString(patch, "add", "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner")
 		if owner == "" || markerExists("cordon-owner-"+nodeName) ||
 			len(patch) == 0 || patch[0].Operation != "test" ||

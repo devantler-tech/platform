@@ -921,6 +921,53 @@ verify_bootstrap_quarantine_covers_unproved_destinations() {
 claim_node_cordon_ownership() {
   local node_name="$1" owner_token="$2" state_file="$3" result_file="$4"
   local recovery_record="${5:-}"
+  local was_cordoned="${6:-}" initial_taints="${7:-}"
+  local resource_version node_uid initial_node_uid
+  local attempt=1
+  local max_attempts="${CORDON_CLAIM_MAX_ATTEMPTS:-5}"
+
+  initial_node_uid="$(jq -er '.metadata.uid' "${state_file}")"
+
+  while :; do
+    build_and_apply_cordon_claim \
+      "${node_name}" "${owner_token}" "${state_file}" "${result_file}" \
+      "${recovery_record}" && return 0
+
+    # Only a conflict against a still-conforming node is retryable, and only
+    # when the caller supplied the scheduling facts needed to re-verify that.
+    if [[ -z "${was_cordoned}" || -z "${initial_taints}" ]] ||
+      ((attempt >= max_attempts)); then
+      break
+    fi
+
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get node "${node_name}" \
+      --output json \
+      >"${state_file}" 2>"${result_file}"; then
+      break
+    fi
+
+    if ! node_claim_preconditions_still_hold \
+      "${state_file}" "${initial_node_uid}" \
+      "${was_cordoned}" "${initial_taints}"; then
+      break
+    fi
+
+    attempt=$((attempt + 1))
+  done
+
+  echo "::error::Could not atomically claim and cordon Talos node ${node_name}; refusing to drain it."
+  emit_safe_operation_output "cordon-claim" "${result_file}"
+  return 1
+}
+
+# Render the claim patch from the current captured state and apply it. Split out
+# so a rejected claim can be rebuilt against a re-read resourceVersion without
+# duplicating the patch shape.
+build_and_apply_cordon_claim() {
+  local node_name="$1" owner_token="$2" state_file="$3" result_file="$4"
+  local recovery_record="${5:-}"
   local resource_version node_uid
   resource_version="$(jq -er '.metadata.resourceVersion' "${state_file}")"
   node_uid="$(jq -er '.metadata.uid' "${state_file}")"
@@ -978,16 +1025,12 @@ claim_node_cordon_ownership() {
     ' >"${cordon_claim_patch_file}"
   fi
 
-  if ! kubectl \
+  kubectl \
     --context "${KUBE_CONTEXT}" \
     patch node "${node_name}" \
     --type=json \
     --patch-file="${cordon_claim_patch_file}" \
-    >"${result_file}" 2>&1; then
-    echo "::error::Could not atomically claim and cordon Talos node ${node_name}; refusing to drain it."
-    emit_safe_operation_output "cordon-claim" "${result_file}"
-    return 1
-  fi
+    >"${result_file}" 2>&1
 }
 
 # The atomic claim cordons the node before kubectl drain. Restore schedulability
@@ -1734,7 +1777,7 @@ prepare_runtime_bootstrap_roll() {
     if ! claim_node_cordon_ownership \
       "${node_name}" "${owner_token}" \
       "${cordon_state_file}" "${drain_result_file}" \
-      "${recovery_record}"; then
+      "${recovery_record}" "${was_cordoned}" "${initial_taints}"; then
       return 1
     fi
     assert_sync_lease_held || return 1
@@ -2061,7 +2104,8 @@ process_talos_node_target() {
     assert_sync_lease_held || return 1
     claim_node_cordon_ownership \
       "${node_name}" "${cordon_owner_token}" \
-      "${cordon_state_file}" "${drain_result_file}" || return 1
+      "${cordon_state_file}" "${drain_result_file}" \
+      "" "${was_cordoned}" "${initial_node_taints}" || return 1
   fi
 
   # A node resourceVersion fences only the claim itself. Renew after the claim
