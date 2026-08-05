@@ -377,7 +377,12 @@ func TestConcurrentCordonBeforeAtomicClaimStopsTheRoll(t *testing.T) {
 	// deciding not to retry, and that read must not clobber the conflict output:
 	// a bare refusal with no reason is the least actionable thing to hand an
 	// operator precisely when another actor is competing for the node.
-	requireContains(t, result.stdout+result.stderr, "cordon-claim: ")
+	//
+	// Assert the conflict TEXT, not just the "cordon-claim: " prefix. The prefix
+	// alone is satisfied by any non-empty result_file -- whitespace included --
+	// so it would pass on output carrying no actionable cause at all.
+	requireContains(t, result.stdout+result.stderr,
+		"cordon-claim: resourceVersion test failed after concurrent cordon")
 	operations := readLines(f.operationLog)
 	requireLine(t, operations, "operator-cordon:prod-worker-1")
 	for _, unexpected := range []string{"node-claim-cordon:prod-worker-1", "talos-auth:10.0.0.2", "node-drain:prod-worker-1", "talos-reboot:10.0.0.2", "root-patch"} {

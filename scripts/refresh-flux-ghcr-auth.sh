@@ -951,8 +951,15 @@ claim_node_cordon_ownership() {
       --output json \
       >"${state_file}" 2>"${reread_error_file}"; then
       # A failed re-read is now the actionable cause, so it replaces the claim
-      # conflict in the emitted output.
-      cat "${reread_error_file}" >"${result_file}" 2>/dev/null || true
+      # conflict in the emitted output. The redirection truncates result_file
+      # before cat runs, so a failed copy would leave it EMPTY -- and
+      # emit_safe_operation_output skips an empty file entirely, which is the
+      # very silence this block exists to prevent. Fall back to a deterministic
+      # non-empty line instead of discarding the failure.
+      if ! cat "${reread_error_file}" >"${result_file}" 2>/dev/null; then
+        echo "node re-read failed; its diagnostic could not be read" \
+          >"${result_file}"
+      fi
       break
     fi
 
