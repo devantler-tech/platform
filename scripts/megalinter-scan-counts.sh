@@ -11,7 +11,7 @@
 #   checkov — MegaLinter reports the SUM of "Failed checks:" across the frameworks it runs. That is
 #   a real finding count, and this script reproduces it exactly.
 #
-#   trivy — MegaLinter reports "1 non blocking error" on a scan that actually fails 620 checks. The
+#   trivy — MegaLinter reports "1 non blocking error" on a scan that actually fails 612 checks. The
 #   1 is an artifact of how MegaLinter counts trivy's output, NOT a finding count. Do not read it as
 #   "one finding left". This script reports what trivy actually found.
 #
@@ -57,7 +57,7 @@ readonly CI_TRIVY_VERSION='0.71.2'
 # What protects against the known defect is structural rather than a check: this script always runs
 # checkov from the repository root with a literal ".", the invocation whose absence caused the
 # kubernetes framework to vanish in the first place.
-readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:18 secrets:0 github_actions:0)
+readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:15 secrets:0 github_actions:0)
 
 # A parsing error means a file was NOT analysed, so findings can hide behind it. CI's run has
 # exactly one (in the cloudformation framework) and so does a correct local run, which is why this
