@@ -14,7 +14,7 @@
 #
 # Releasing the gate stays an operational judgement about the Cilium rollout, so
 # the deploy asks before it insists: it warns from `warn_after_days`, and only
-# once the suppression passes `fail_after_days` does it fail. That escalation is
+# once the suppression reaches `fail_after_days` does it fail. That escalation is
 # the point — a warning inside an otherwise-green deploy is not a forcing
 # function, and the suppression has to end in something other than silence.
 
@@ -150,7 +150,7 @@ fi
 # fail_after_days=14 means "fail once this has run fourteen days", so the failure
 # belongs ON day fourteen.
 if ((elapsed_days >= fail_after_days)); then
-  fail "the Cilium rollout gate has suppressed every Talos machine-config sync (\`ksail cluster update\`) for ${elapsed_days} days, beyond its ${fail_after_days}-day bound. A deploy will not silently skip its own config sync any longer. Resolve it by stepping the remaining Cilium agents onto the current DaemonSet revision, or by rolling the homogeneous-devices component back — see the component runbook. Raising the bound is not a resolution."
+  fail "the Cilium rollout gate has suppressed every Talos machine-config sync (\`ksail cluster update\`) for ${elapsed_days} days and has reached its ${fail_after_days}-day bound. A deploy will not silently skip its own config sync any longer. Resolve it by stepping the remaining Cilium agents onto the current DaemonSet revision, or by rolling the homogeneous-devices component back — see the component runbook. Raising the bound is not a resolution."
 fi
 
 exit 0
