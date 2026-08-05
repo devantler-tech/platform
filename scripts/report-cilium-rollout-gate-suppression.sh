@@ -27,6 +27,16 @@ readonly activation_marker='platform.devantler.tech/rollout-gate-activated:'
 # designed and the un-synced machine-config delta is the larger risk.
 readonly warn_after_days=7
 
+# Past this, the deploy FAILS rather than warning inside a green run. A warning
+# in a green job is not a forcing function: the gate ran 10 days over its warn
+# threshold while every deploy stayed green and silently skipped its only Talos
+# machine-config sync, which is exactly how that went unnoticed (platform#2963).
+# The gap between the two thresholds is deliberate — a week of warnings first,
+# so the escalation is never a surprise — and it is measured from the reviewed
+# activation marker in Git, so completing or rolling back the rollout is the
+# only way to clear it. Raising this constant is not a resolution.
+readonly fail_after_days="${CILIUM_ROLLOUT_FAIL_AFTER_DAYS_OVERRIDE:-14}"
+
 readonly gate_active="${CILIUM_ROLLOUT_GATE_ACTIVE:-false}"
 
 fail() {
@@ -127,6 +137,13 @@ summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
 if ((elapsed_days >= warn_after_days)); then
   printf '::warning::Talos machine-config sync has been suppressed by the Cilium rollout gate for %s days (threshold %s). Machine config in Git is diverging from the nodes, and platform#2922/#2938 are blocked behind it. Finish or roll back the rollout — see the component runbook.\n' \
     "${elapsed_days}" "${warn_after_days}"
+fi
+
+# Escalate past the hard bound. Same `>=` reasoning as the warning above:
+# fail_after_days=14 means "fail once this has run fourteen days", so the failure
+# belongs ON day fourteen.
+if ((elapsed_days >= fail_after_days)); then
+  fail "the Cilium rollout gate has suppressed every Talos machine-config sync and all ksail reconciliation for ${elapsed_days} days, beyond its ${fail_after_days}-day bound. A deploy will not silently skip its own config sync any longer. Resolve it by stepping the remaining Cilium agents onto the current DaemonSet revision, or by rolling the homogeneous-devices component back — see the component runbook. Raising the bound is not a resolution."
 fi
 
 exit 0

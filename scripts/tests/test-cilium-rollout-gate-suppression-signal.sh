@@ -146,14 +146,44 @@ ok
   fail 'an in-bound suppression must not emit a warning annotation'
 ok
 
-# Active + long overdue: must warn loudly, and still exit 0 (releasing the
-# gate is an operational judgement, not something a deploy may decide).
-run_reporter true "${long_ago}" || fail 'an over-threshold gate must warn, not fail the deploy'
+# Active + past the WARN bound but inside the FAIL bound: warn loudly, exit 0.
+# Releasing the gate is an operational judgement, so the deploy asks first.
+mid_band="$(date -u -v-10d +%Y-%m-%d 2>/dev/null || date -u -d '10 days ago' +%Y-%m-%d)"
+run_reporter true "${mid_band}" ||
+  fail 'a gate past the warn bound but inside the fail bound must warn, not fail'
 grep -q '^::warning' "${tmp}/out" ||
-  fail 'a suppression past the threshold must emit a ::warning:: annotation'
+  fail 'a suppression past the warn threshold must emit a ::warning:: annotation'
 ok
-grep -Fq '90' "${tmp}/summary" ||
+grep -Fq '10' "${tmp}/summary" ||
   fail 'the summary must state the elapsed day count'
+ok
+
+# Active + past the FAIL bound: the deploy FAILS. This deliberately replaces the
+# previous "warn forever, always exit 0" behaviour — a warning inside a green job
+# is not a forcing function, and that is precisely how this gate ran 10 days past
+# its warn threshold unnoticed while every deploy skipped its only Talos
+# machine-config sync (platform#2963, criterion 5).
+if run_reporter true "${long_ago}"; then
+  fail 'a gate past the fail bound must fail the deploy, not merely warn'
+fi
+ok
+grep -q '^::error' "${tmp}/out" ||
+  fail 'a suppression past the fail bound must emit an ::error:: annotation'
+ok
+grep -Fq 'Raising the bound is not a resolution' "${tmp}/out" ||
+  fail 'the failure must rule out raising the bound as a way out'
+ok
+
+# EXACT fail boundary: fail_after_days=14 means the failure belongs ON day 14,
+# not day 15 — the same >=-not-> reasoning the warn threshold already documents.
+day_14="$(date -u -v-14d +%Y-%m-%d 2>/dev/null || date -u -d '14 days ago' +%Y-%m-%d)"
+if run_reporter true "${day_14}"; then
+  fail 'the deploy must fail ON the fail-bound day, not the day after'
+fi
+ok
+day_13="$(date -u -v-13d +%Y-%m-%d 2>/dev/null || date -u -d '13 days ago' +%Y-%m-%d)"
+run_reporter true "${day_13}" ||
+  fail 'the day before the fail bound must still only warn'
 ok
 
 # Fail closed: an active gate with an unreadable start date must NOT pass
@@ -175,9 +205,13 @@ ok
 # and BSD date. BSD `date -j -f '%Y-%m-%d'` fills unspecified fields from the
 # current time while GNU parses a bare date as midnight, so an implicit parse
 # makes this off by one between a Mac and the Linux runner.
+# The fail bound is lifted for this loop only: these probes measure day-count
+# ARITHMETIC, and the 40-day case would otherwise trip the hard bound and exit
+# non-zero for a reason that has nothing to do with what is being measured.
 for probe_days in 1 3 9 40; do
   probe_date="$(date -u -v-"${probe_days}"d +%Y-%m-%d 2>/dev/null || date -u -d "${probe_days} days ago" +%Y-%m-%d)"
-  run_reporter true "${probe_date}" || fail "reporter must exit 0 for a ${probe_days}-day-old gate"
+  CILIUM_ROLLOUT_FAIL_AFTER_DAYS_OVERRIDE=99999 \
+    run_reporter true "${probe_date}" || fail "reporter must exit 0 for a ${probe_days}-day-old gate"
   grep -Fq "**${probe_days} days**" "${tmp}/summary" ||
     fail "elapsed must be exactly ${probe_days} days for ${probe_date}, summary said otherwise"
 done
