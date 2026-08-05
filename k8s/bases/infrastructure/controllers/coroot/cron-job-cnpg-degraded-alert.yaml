@@ -51,58 +51,6 @@
 # unset (local/CI) it defaults to an invalid URL so the alert reaches nowhere and
 # local/CI stays quiet by design, exactly as cluster-heartbeat does.
 ---
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: cnpg-degraded-alert
-  namespace: observability
----
-# The webhook goes in a Secret rather than inline in the CronJob's env, matching
-# flux-notifications/secret.yaml and alertmanager/secret.yaml (the two other
-# consumers of this same URL). An inline env value is readable from the CronJob
-# spec itself by anyone who can `get cronjob`, and would lean on the C-0012
-# exception the observability namespace already carries — reusing an exception to
-# hold a weaker pattern in place is not the same as not needing one.
-# The inline default keeps `ksail workload validate` (no SOPS access) building and
-# leaves local/CI inert.
-apiVersion: v1
-kind: Secret
-metadata:
-  name: cnpg-degraded-alert-webhook
-  namespace: observability
-type: Opaque
-stringData:
-  url: ${alertmanager_webhook_url:=https://example.invalid/no-slack-configured}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: cnpg-degraded-alert
-rules:
-  # Read-only, and ONLY the CNPG Cluster CR. The check needs to see clusters in
-  # every namespace (umami, wedding-app, backstage, observability), so this is
-  # cluster-scoped by necessity — but it is list-only on a single resource type,
-  # which is the least privilege that satisfies that.
-  - apiGroups:
-      - postgresql.cnpg.io
-    resources:
-      - clusters
-    verbs:
-      - list
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: cnpg-degraded-alert
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: cnpg-degraded-alert
-subjects:
-  - kind: ServiceAccount
-    name: cnpg-degraded-alert
-    namespace: observability
----
 apiVersion: batch/v1
 kind: CronJob
 metadata:

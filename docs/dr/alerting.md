@@ -94,7 +94,7 @@ stays quiet by design, exactly as the old Alertmanager did.
   2026-08-05, the latter degraded for over five hours with no alert). Coroot's
   inspections cover crashloops, but the 07-14 case was a pod that stayed
   Running, never Ready, with zero restarts.
-  `bases/infrastructure/controllers/coroot/cron-job-cnpg-degraded.yaml` now
+  `bases/infrastructure/controllers/coroot/cron-job-cnpg-degraded-alert.yaml` now
   checks every CNPG `Cluster` every 30 minutes and posts to the same Slack
   webhook when one has been degraded past a 15-minute grace. It is deliberately
   independent of any Flux health gate, so relaxing that gate cannot silently
