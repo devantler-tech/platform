@@ -500,12 +500,18 @@ jobs:
         #
         # The scan consumes the platform's justified exceptions: the
         # ClusterSecurityException CRs (k8s/bases/infrastructure/
-        # cluster-security-exceptions/ — the single source of truth, also
-        # consumed in-cluster by the kubescape-operator) are converted at scan
-        # time into Kubescape's native exceptions format by
+        # cluster-security-exceptions/ — the single source of truth) are
+        # converted at scan time into Kubescape's native exceptions format by
         # scripts/generate-kubescape-exceptions (#2264). With runtime-
         # enforced and except-only findings suppressed, the threshold gates the
         # residual REAL posture instead of sitting ~15 points under it.
+        #
+        # Two surfaces apply these exceptions: this scan, and the Headlamp view
+        # via the generated headlamp-exceptions ConfigMap. The kubescape-operator's
+        # stored scan resources (workloadconfigurationscans and the two summary
+        # kinds) do NOT — their appliedIgnoreRules is empty, so they carry
+        # pre-exception verdicts. Never read a posture number off those to judge
+        # an exception's effect; use this scan's output (#2823).
         #
         # The threshold is a regression FLOOR, not the live score. The
         # Kubescape compliance score has historically been environment-
