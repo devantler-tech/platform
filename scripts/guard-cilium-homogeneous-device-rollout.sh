@@ -34,11 +34,18 @@ readonly previous_replicas_annotation='platform.devantler.tech/cilium-device-rol
 readonly previous_replicas_jsonpath='{.metadata.annotations.platform\.devantler\.tech/cilium-device-rollout-previous-replicas}'
 readonly approved_template_annotation='platform.devantler.tech/cilium-device-rollout-approved-template-sha'
 readonly approved_template_jsonpath='{.metadata.annotations.platform\.devantler\.tech/cilium-device-rollout-approved-template-sha}'
+readonly activated_at_annotation='platform.devantler.tech/cilium-device-rollout-activated-at'
+readonly activated_at_jsonpath='{.metadata.annotations.platform\.devantler\.tech/cilium-device-rollout-activated-at}'
 readonly rollout_wait_seconds="${ROLLOUT_WAIT_SECONDS:-120}"
 readonly rollout_poll_seconds="${ROLLOUT_POLL_SECONDS:-2}"
 readonly provider_stability_seconds="${PROVIDER_STABILITY_SECONDS:-30}"
 readonly provider_poll_seconds="${PROVIDER_POLL_SECONDS:-5}"
 readonly revision_ready="${CILIUM_ROLLOUT_REVISION_READY:-false}"
+# How long the gate may stay active before a deploy fails instead of silently
+# skipping its own Talos machine-config sync. Seven days is the window a
+# one-node-at-a-time step of the fleet was designed for; the gate outran it by
+# days before anyone noticed, because every suppressed deploy was still green.
+readonly max_active_seconds="${CILIUM_ROLLOUT_MAX_ACTIVE_SECONDS:-604800}"
 
 fail() {
   printf 'ERROR: %s\n' "$1" >&2
@@ -59,6 +66,8 @@ fail() {
   fail "PROVIDER_POLL_SECONDS is not a non-negative number: ${provider_poll_seconds}"
 [[ "${revision_ready}" == true || "${revision_ready}" == false ]] ||
   fail "CILIUM_ROLLOUT_REVISION_READY must be true or false: ${revision_ready}"
+[[ "${max_active_seconds}" =~ ^[0-9]+$ ]] ||
+  fail "CILIUM_ROLLOUT_MAX_ACTIVE_SECONDS is not a non-negative integer: ${max_active_seconds}"
 
 kubectl_prod() {
   "${kubectl_bin}" --context admin@prod "$@"
@@ -90,6 +99,54 @@ get_previous_replicas() {
 get_approved_template_sha() {
   kubectl_prod -n "${namespace}" get deployment "${deployment}" \
     -o "jsonpath=${approved_template_jsonpath}"
+}
+
+get_activated_at() {
+  kubectl_prod -n "${namespace}" get deployment "${deployment}" \
+    -o "jsonpath=${activated_at_jsonpath}"
+}
+
+# Fail the deploy once the gate has been active longer than the window it was
+# designed for. An over-running gate is not a slow rollout: it silently skips
+# the pipeline's only Talos machine-config sync and its only `ksail cluster
+# update` on every deploy, and it does so inside a GREEN job, which is exactly
+# why it survived unnoticed for over a week.
+#
+# The activation instant is stored as epoch seconds rather than a formatted
+# date so the comparison is integer arithmetic. BSD `date -j -f` fills the
+# unspecified time-of-day from the current clock while GNU `date -d` uses
+# midnight, so any parsed-date comparison behaves differently on a developer's
+# macOS shell and on the Linux runner — and could not be ablated locally.
+require_gate_within_window() {
+  local activated_at now elapsed
+  activated_at="$(get_activated_at)"
+
+  if [[ -z "${activated_at}" ]]; then
+    # The gate is already active but predates this check, so its true start is
+    # unknowable here. Start the clock now rather than either failing every
+    # deploy immediately or letting an unbounded gate stay invisible.
+    activated_at="$(date -u +%s)"
+    kubectl_prod -n "${namespace}" annotate deployment "${deployment}" \
+      "${activated_at_annotation}=${activated_at}" --overwrite
+    printf 'Cilium homogeneous-device rollout gate had no recorded activation time; starting the window now (%s).\n' \
+      "${activated_at}"
+    return
+  fi
+
+  [[ "${activated_at}" =~ ^[0-9]+$ ]] ||
+    fail "the recorded Cilium rollout activation time is not epoch seconds: ${activated_at}"
+
+  now="$(date -u +%s)"
+  elapsed=$((now - activated_at))
+  ((elapsed >= 0)) ||
+    fail "the recorded Cilium rollout activation time is in the future: activated_at=${activated_at} now=${now}"
+
+  if ((elapsed > max_active_seconds)); then
+    fail "the Cilium homogeneous-device rollout gate has been active for $((elapsed / 86400))d $(((elapsed % 86400) / 3600))h, beyond its $((max_active_seconds / 86400))d window. Every deploy since has skipped its Talos machine-config sync and all ksail reconciliation. Resolve it by stepping the remaining Cilium agents onto the current DaemonSet revision, or by rolling the homogeneous-devices component back; raising CILIUM_ROLLOUT_MAX_ACTIVE_SECONDS is not a resolution."
+  fi
+
+  printf 'Cilium homogeneous-device rollout gate active for %sd %sh of its %sd window.\n' \
+    "$((elapsed / 86400))" "$(((elapsed % 86400) / 3600))" "$((max_active_seconds / 86400))"
 }
 
 candidate_template_sha() {
@@ -335,6 +392,8 @@ restore_autoscaler_if_owned() {
     "${previous_replicas_annotation}-"
   kubectl_prod -n "${namespace}" annotate deployment "${deployment}" \
     "${approved_template_annotation}-"
+  kubectl_prod -n "${namespace}" annotate deployment "${deployment}" \
+    "${activated_at_annotation}-"
   printf 'Cilium homogeneous-device rollout gate released: Cluster Autoscaler restored to %s replicas.\n' \
     "${previous_replicas}"
 }
@@ -401,7 +460,13 @@ require_cilium_fleet_current() {
 }
 
 if [[ "${rollout_gate_active}" == true ]]; then
+  # Suspend first, check the window second: a stalled rollout must stay fenced.
+  # Failing before suspension would trade the autoscaler safety property for the
+  # new forcing function instead of adding it.
   suspend_autoscaler
+  if [[ "${phase}" == '--before-publish' ]]; then
+    require_gate_within_window
+  fi
   if [[ "${phase}" == '--after-deploy' && "${revision_ready}" == true ]]; then
     record_approved_template_sha
   fi

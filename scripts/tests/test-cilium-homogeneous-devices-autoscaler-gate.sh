@@ -108,6 +108,7 @@ printf 'true\n' >"${state_dir}/cilium-pod-present"
 printf 'approved\n' >"${state_dir}/cilium-template-value"
 printf '2\n' >"${state_dir}/cilium-substitution-value"
 : >"${state_dir}/approved-template-sha"
+: >"${state_dir}/activated-at"
 : >"${state_dir}/github-output"
 
 cat >"${fake_kubectl}" <<'FAKE_KUBECTL'
@@ -209,6 +210,17 @@ EOF
       sed 's/.*cilium-device-rollout-approved-template-sha=\([0-9a-f][0-9a-f]*\).*/\1/' \
         >"${KUBECTL_STATE}/approved-template-sha"
     ;;
+  *"get deployment"*"cilium-device-rollout-activated-at"*)
+    cat "${KUBECTL_STATE}/activated-at"
+    ;;
+  *"annotate deployment"*"cilium-device-rollout-activated-at-"*)
+    : >"${KUBECTL_STATE}/activated-at"
+    ;;
+  *"annotate deployment"*"cilium-device-rollout-activated-at="*)
+    printf '%s\n' "$*" |
+      sed 's/.*cilium-device-rollout-activated-at=\([0-9][0-9]*\).*/\1/' \
+        >"${KUBECTL_STATE}/activated-at"
+    ;;
   *"annotate deployment"*"cilium-device-rollout-previous-replicas-"*)
     : >"${KUBECTL_STATE}/previous-replicas"
     ;;
@@ -251,6 +263,7 @@ run_guard() {
     GITHUB_OUTPUT="${state_dir}/github-output" \
     HCLOUD_TOKEN='test-token' \
     CILIUM_ROLLOUT_REVISION_READY="${revision_ready}" \
+    CILIUM_ROLLOUT_MAX_ACTIVE_SECONDS="${guard_max_active_seconds:-604800}" \
     PROVIDER_STABILITY_SECONDS=0 \
     "${guard_script}" "${phase}"
 }
@@ -350,6 +363,68 @@ printf '0\n' >"${state_dir}/replicas"
 run_guard --after-deploy true
 [[ "$(<"${state_dir}/replicas")" == '0' ]] ||
   fail 'an unowned manual autoscaler suspension must remain untouched'
+
+# --- the gate's own window: an over-running gate must fail the deploy ---------
+# Re-arm an active gate (the block above ended with the component rolled back
+# and restored, so the ownership markers are clear).
+cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/cilium/components/homogeneous-devices/kustomization.yaml" \
+  "${fixture_component}/kustomization.yaml"
+printf '1\n' >"${state_dir}/replicas"
+printf '1\n' >"${state_dir}/status-replicas"
+: >"${state_dir}/previous-replicas"
+: >"${state_dir}/activated-at"
+
+# A gate that has never been timestamped — today's live prod state — must record
+# its activation and stay green rather than reddening every deploy at once.
+run_guard --before-publish
+[[ -s "${state_dir}/activated-at" ]] ||
+  fail 'an active gate with no recorded activation must start its window'
+[[ "$(<"${state_dir}/activated-at")" =~ ^[0-9]+$ ]] ||
+  fail 'the recorded gate activation must be epoch seconds, not a formatted date'
+backfilled_at="$(<"${state_dir}/activated-at")"
+readonly backfilled_at
+
+# Inside the window: still green, and the recorded activation is not reset (a
+# clock that restarted every deploy could never expire).
+printf '%s\n' "$((backfilled_at - 3600))" >"${state_dir}/activated-at"
+run_guard --before-publish
+[[ "$(<"${state_dir}/activated-at")" == "$((backfilled_at - 3600))" ]] ||
+  fail 'an active gate inside its window must not restart its own clock'
+
+# Past the window: the deploy fails instead of silently skipping cluster update.
+printf '%s\n' "$((backfilled_at - 604801))" >"${state_dir}/activated-at"
+if run_guard --before-publish; then
+  fail 'a gate active past its window must fail the deploy'
+fi
+# ...and it stays fenced while it fails — the forcing function must not trade
+# away the autoscaler suspension it is layered on top of.
+[[ "$(<"${state_dir}/replicas")" == '0' ]] ||
+  fail 'a gate failing its window check must still suspend the autoscaler'
+
+# The window is configurable for a deliberate, reviewed extension.
+guard_max_active_seconds=$((604801 * 2))
+run_guard --before-publish
+unset guard_max_active_seconds
+
+# A corrupt or future activation stamp fails closed rather than reading as fresh.
+printf 'not-epoch\n' >"${state_dir}/activated-at"
+if run_guard --before-publish; then
+  fail 'a non-epoch activation stamp must fail closed'
+fi
+printf '%s\n' "$((backfilled_at + 86400))" >"${state_dir}/activated-at"
+if run_guard --before-publish; then
+  fail 'an activation stamp in the future must fail closed'
+fi
+
+# Releasing the gate clears the clock, so a later rollout starts a fresh window.
+printf '%s\n' "${backfilled_at}" >"${state_dir}/activated-at"
+sed -i.bak '/cilium\/components\/homogeneous-devices\//d' \
+  "${fixture_controllers}/kustomization.yaml"
+run_guard --after-deploy true
+[[ ! -s "${state_dir}/activated-at" ]] ||
+  fail 'releasing the rollout gate must clear its recorded activation time'
+cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" \
+  "${fixture_controllers}/kustomization.yaml"
 
 if grep -Ev '(^kustomize[[:space:]]|(^|[[:space:]])--context admin@prod([[:space:]]|$))' "${state_dir}/commands" |
   grep -q .; then
