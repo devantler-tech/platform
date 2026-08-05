@@ -141,6 +141,15 @@ ok
 grep -Fq "${today}" "${tmp}/summary" ||
   fail 'the summary must state when the suppression began'
 ok
+# The summary must state BOTH bounds. An operator who only ever sees the warn
+# threshold has no notice that this gate turns into a failed deploy on a fixed
+# day — and the first time they would learn it is the deploy that breaks.
+grep -Fq '| Warn threshold | 7 days |' "${tmp}/summary" ||
+  fail 'the summary must state the warn threshold'
+ok
+grep -Fq '| Fail threshold | 14 days |' "${tmp}/summary" ||
+  fail 'the summary must state the fail threshold, not just the warn threshold'
+ok
 # In-bound: informative, but NOT a warning annotation.
 ! grep -q '^::warning' "${tmp}/out" ||
   fail 'an in-bound suppression must not emit a warning annotation'

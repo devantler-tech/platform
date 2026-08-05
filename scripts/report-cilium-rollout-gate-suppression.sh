@@ -126,6 +126,10 @@ summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
   printf '| Gate active since | `%s` |\n' "${activated}"
   printf '| Elapsed | **%s days** |\n' "${elapsed_days}"
   printf '| Warn threshold | %s days |\n' "${warn_after_days}"
+  # State the hard bound too. The summary is where an operator meets this gate,
+  # and a deploy that will start FAILING on a known day is exactly the thing
+  # they need to see before it happens rather than on the day it does.
+  printf '| Fail threshold | %s days |\n' "${fail_after_days}"
   printf '\nThis also blocks anything that depends on `cluster update` applying '
   printf 'configuration to the live cluster — including the root OCIRepository '
   printf 'cosign `verify` block (platform#2922, platform#2938).\n\n'
