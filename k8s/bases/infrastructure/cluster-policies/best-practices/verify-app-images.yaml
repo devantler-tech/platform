@@ -109,8 +109,8 @@ spec:
         .all(e, e > 0)
       message: >-
         first-party app image is not signed by the publish-app release
-        pipeline (keyless cosign, actions/reusable-workflows publish-app.yaml
-        identity)
+        pipeline (keyless cosign, actions publish-app.yaml identity, pinned by
+        commit SHA or release tag)
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image, image.startsWith('ghcr.io/devantler-tech/provider-upjet-'))
@@ -118,7 +118,7 @@ spec:
         .all(e, e > 0)
       message: >-
         provider-upjet package image is not signed by its repo's
-        publish-provider-package workflow (keyless cosign)
+        publish-provider-package workflow on main (keyless cosign)
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image, image.startsWith('ghcr.io/devantler-tech/ksail'))
