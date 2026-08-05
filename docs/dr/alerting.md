@@ -86,6 +86,19 @@ stays quiet by design, exactly as the old Alertmanager did.
   and **cert-expiry** checks are not Flux resources, so they need a scan-safe
   synthetic check (e.g. per-CronJob dead-man pings like the heartbeat below, tied
   to the silent vault snapshot in #1970) and are still TODO.
+- **Degraded CNPG clusters alert on their own, not via the merge-queue gate.**
+  A database losing a replica used to reach Slack only through the gate
+  described above — as a *Flux* error naming a Kustomization, 20 minutes late,
+  after `apps` had already timed out and evicted every PR from the merge queue.
+  That happened twice in three weeks (coroot-db 2026-07-14, umami-db
+  2026-08-05, the latter degraded for over five hours with no alert). Coroot's
+  inspections cover crashloops, but the 07-14 case was a pod that stayed
+  Running, never Ready, with zero restarts.
+  `bases/infrastructure/controllers/coroot/cron-job-cnpg-degraded.yaml` now
+  checks every CNPG `Cluster` every 30 minutes and posts to the same Slack
+  webhook when one has been degraded past a 15-minute grace. It is deliberately
+  independent of any Flux health gate, so relaxing that gate cannot silently
+  remove this coverage.
 - **kube-apiserver audit logs are searchable in Coroot again.** Coroot's
   node-agent ingests container logs/traces, not host audit-log files, so the
   previous alloy-audit → Loki pipeline was removed with the migration. The

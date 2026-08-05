@@ -13,3 +13,4 @@ resources:
   - http-route.yaml
   - cilium-network-policy.yaml
   - cron-job.yaml
+  - cron-job-cnpg-degraded.yaml
