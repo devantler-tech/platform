@@ -86,18 +86,21 @@ DISABLE_ERRORS_LINTERS:
   # checkov (15) and trivy (612): Kubernetes misconfiguration in k8s/, which the section above
   # explains is NOT covered elsewhere. Tracked by #2787.
   #
-  # checkov's 15 are all `kubernetes` framework, and 4 of them are CKV_K8S_40: the two vault-backup
-  # jobs and the userns-longhorn-smoke probe, whose withdrawn scoped skips #2904 carries, plus the
-  # vault-config Job, which has no demonstrated constraint. A further 3 were dispositioned by
-  # #2901 and are NOT in the 4 — the original count was 11.
-  # Four scoped skips were tried and withdrawn: each named a per-site technical constraint that does
-  # not survive checking. The two vault-backup jobs claimed to share the vault-snapshots PVC with the
-  # OpenBao StatefulSet — but the live StatefulSet mounts `config`/`unseal-keys`/`tmp`/`home` plus
-  # claim templates `data`/`audit`, and never that PVC at all, so there is no shared ownership to
-  # preserve. The two user-namespace probes claimed their UID was the measurement subject — but
-  # `/proc/self/uid_map` describes the pod's namespace and reads identically for every process in it
-  # regardless of UID, and `fsGroup` supplies volume access as a GID independent of `runAsUser`.
-  # #2904 carries the per-site remediation and the risk-acceptance question for those four.
+  # checkov's 15 are all `kubernetes` framework, and 4 of them are CKV_K8S_40, at exactly these
+  # sites: the two vault-backup jobs, the userns-longhorn-smoke probe, and the vault-config Job.
+  # Re-derive that list from the scan rather than adjusting a number here — every figure in this
+  # block is a measurement, and the running arithmetic that used to track it went stale twice.
+  #
+  # The first three carry scoped skips that were tried and withdrawn, because each named a per-site
+  # technical constraint that does not survive checking. The two vault-backup jobs claimed to share
+  # the vault-snapshots PVC with the OpenBao StatefulSet — but the live StatefulSet mounts
+  # `config`/`unseal-keys`/`tmp`/`home` plus claim templates `data`/`audit`, and never that PVC at
+  # all, so there is no shared ownership to preserve. The user-namespace probes claimed their UID was
+  # the measurement subject — but `/proc/self/uid_map` describes the pod's namespace and reads
+  # identically for every process in it regardless of UID, and `fsGroup` supplies volume access as a
+  # GID independent of `runAsUser`. #2904 carries the per-site remediation and the risk-acceptance
+  # question for those. It was written when there were four: the Headlamp mapping probe was the
+  # fourth, and #2959 removed that probe outright.
   #
   # The vault-config Job is the one remaining site with no demonstrated constraint, so it is a
   # candidate to simply raise. CoreDNS was the other, and is now resolved: its image already runs
@@ -105,8 +108,8 @@ DISABLE_ERRORS_LINTERS:
   # inheriting it — which also cleared CKV_K8S_23. Binding :53 needs no ambient capability, because
   # the capability is a file capability on the binary and NET_BIND_SERVICE is in the bounding set;
   # the prod cluster's own CoreDNS demonstrates it, serving :53 as a ready kube-dns endpoint under
-  # exactly that identity and capability set. Of the original 11, #2901 dispositioned three,
-  # while #2899 removed the two vendored operator findings. #2901 checked each image rather than
+  # exactly that identity and capability set. #2901 dispositioned three of the original 11 and
+  # #2899 removed the two vendored operator findings. #2901 checked each image rather than
   # reasoning about it: the MinIO
   # server and its bucket-creation Job declare no `User` at all and carry no /etc/passwd entry for
   # the UID they ran under, so both were raised to 65532; the umami CronJob's 1001 turned out to BE
