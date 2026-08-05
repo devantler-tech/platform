@@ -57,6 +57,23 @@ metadata:
   name: cnpg-degraded-alert
   namespace: observability
 ---
+# The webhook goes in a Secret rather than inline in the CronJob's env, matching
+# flux-notifications/secret.yaml and alertmanager/secret.yaml (the two other
+# consumers of this same URL). An inline env value is readable from the CronJob
+# spec itself by anyone who can `get cronjob`, and would lean on the C-0012
+# exception the observability namespace already carries — reusing an exception to
+# hold a weaker pattern in place is not the same as not needing one.
+# The inline default keeps `ksail workload validate` (no SOPS access) building and
+# leaves local/CI inert.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cnpg-degraded-alert-webhook
+  namespace: observability
+type: Opaque
+stringData:
+  url: ${alertmanager_webhook_url:=https://example.invalid/no-slack-configured}
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -126,7 +143,10 @@ spec:
                 - name: GRACE_SECONDS
                   value: "900"
                 - name: WEBHOOK_URL
-                  value: ${alertmanager_webhook_url:=https://example.invalid/no-slack-configured}
+                  valueFrom:
+                    secretKeyRef:
+                      name: cnpg-degraded-alert-webhook
+                      key: url
               command:
                 - /bin/sh
                 - -c
