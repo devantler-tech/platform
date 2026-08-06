@@ -23,7 +23,12 @@ permissions: {}
 
 concurrency:
   group: validate-main-${{ github.ref }}
-  cancel-in-progress: true
+  # This workflow only ever runs on push to main, so every run shares one group
+  # key. Cancelling would let a second push evict the first push's gate result
+  # and leave main green on a check that never finished — reopening the exact
+  # hole described above, from the other side. Each push is its own subject and
+  # its result is its own record, so runs here are allowed to complete.
+  cancel-in-progress: false
 
 jobs:
   validate-eks-authorization:
