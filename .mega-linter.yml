@@ -143,7 +143,7 @@ DISABLE_ERRORS_LINTERS:
   # exact commands this job runs, so a slice can show the number moved without a CI round trip.
   #
   # ⚠️ Read trivy's number from that script, NOT from the MegaLinter summary. MegaLinter reports
-  # this trivy scan as "1 non blocking error" while the scan actually fails 612 checks across 457
+  # this trivy scan as "1 non blocking error" while the scan actually fails 164 checks across 73
   # targets; the 1 is an artifact of how MegaLinter counts trivy's output. checkov's number is a
   # genuine sum of "Failed checks:" and needs no such caveat.
   #
