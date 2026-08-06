@@ -57,6 +57,28 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
+// Measured against main 72fe7919 before approving this value: 520 documents on
+// both sides, with membership IDENTICAL -- zero added, removed, or renamed by
+// set difference over every apiVersion|kind|namespace|name identity. Exactly
+// three rendered entries move, and they are precisely the three individually
+// pinned entries re-approved alongside this value:
+//
+//	kro.run/v1alpha1                 ResourceGraphDefinition  tenant.kro.run
+//	kustomize.toolkit.fluxcd.io/v1  Kustomization            flux-system/apps
+//	kustomize.toolkit.fluxcd.io/v1  Kustomization            flux-system/infrastructure
+//
+// The complete rendered delta between the two trees is 19 lines, every one of
+// them ADDED and every one part of a `healthCheckExprs` entry gating on a
+// serving CNPG `Cluster`. No line is removed or modified. A health-check
+// expression is read-only deploy-gating input to kstatus; it cannot grant an
+// identity or a permission.
+//
+// No grant-bearing object moved: the surface carries 67 Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount documents on BOTH sides and
+// all 67 are byte-identical. Every `aws`-bearing line is byte-identical too
+// (116 on each side, zero of them in the delta), so nothing granted to the
+// aws/aws service account this validator exists to protect is touched.
+//
 // Measured by comparing base 4673fe2d with manifest head d0f130a0 before
 // approving this value: all five production render trees contain 1,019 documents
 // on both sides, with membership IDENTICAL by
@@ -227,7 +249,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "6af27989825d60e4139a4d8754ff6e4be4ed5e20b75181dacade8653c14cc5aa"
+const expectedRenderedSurfaceSHA = "54a89058810f22786ebeeb546e3b2c71e85f925c3f888ccdf0c0ccb4ee6ee8b7"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -281,12 +303,12 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "opencost-usage-scraper"}:                            "4b28e1da280a7940a1cb4d538bc31ede1b5d272c17189a81afeae48acbb8b7a0",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "a4ab25489f2548aec728d4706aff02246d4669538b0f577c57bef132051910b6",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "33f21e92144c84754577e5c3ae681658c469414c7adc00d454b2def7c6bcbe95",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "1a2ecb3104630c44466d846159ee68ff6a98888887c02ecd0278782793dead4a",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "a0b12b336d39709cb2f491662a3c8dd98269485b6a33935101e0bf9f03ec8925",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "7f674a1762f298330c7c9e4d9d4e8bf46108b10727e02a25ca5096d7913cc0a7",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "312d84288f510b4a38d985385487a52cb2dc1c634bbcbab8dc5e438689891189",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "d1bc403b6458bd22cf967bd570e24718341cbd584f58e7f0069aaffe1e187945",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "9d9b62d3221442d6355d16a34d31c198619fb3b3728df960fd67222a531ece7b",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "8e9f72b0f4f982d050aff0b97d246c68b538cbc397cdd45d031c95cfae981e7c",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "47c63f6a762caeacf257ddd32cbbeb3f3568eeea0e258ec006621579114731ff",
