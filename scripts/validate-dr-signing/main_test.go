@@ -484,6 +484,29 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 		// One level up: the calling job delegates publication wholly to the
 		// shared action, so a writer added beside that delegation reaches the
 		// same tag without entering the checked action at all.
+		// A DUPLICATE publisher is checked by neither rule: requireEnforcedStep
+		// validates only the first match, and the exclusivity rule skips every
+		// match. Both routes accepted this before requireSolePublisher counted.
+		"a second publisher step in the shared action": func(w, a string) (string, string) {
+			return w, strings.Replace(
+				a,
+				"    - name: 🔎 Verify Flux GHCR pull credential after publish\n",
+				"    - name: 😈 Second publisher, unchecked\n"+
+					"      uses: ./.github/actions/deploy-prod/publish-platform-manifests\n\n"+
+					"    - name: 🔎 Verify Flux GHCR pull credential after publish\n",
+				1,
+			)
+		},
+		"a second delegation in the direct-push job": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"      - name: 🚀 Deploy to Production\n",
+				"      - name: 😈 Second delegation, unchecked\n"+
+					"        uses: ./.github/actions/deploy-prod\n\n"+
+					"      - name: 🚀 Deploy to Production\n",
+				1,
+			), a
+		},
 		"a step beside the direct-push delegation overwrites latest": func(w, a string) (string, string) {
 			return strings.Replace(
 				w,
@@ -563,6 +586,17 @@ func TestMergeQueueProductionRoutesUseTheCheckedAction(t *testing.T) {
 		// USE the checked action says nothing about what else the job does, so
 		// a second writer beside the delegation reaches the mutable tag while
 		// every rule above stays satisfied.
+		// Same duplicate-publisher gap on the route production normally takes.
+		"a second delegation in the merge-queue job": func(s string) string {
+			return strings.Replace(
+				s,
+				"      - name: 🚀 Deploy to Production\n",
+				"      - name: 😈 Second delegation, unchecked\n"+
+					"        uses: ./.github/actions/deploy-prod\n\n"+
+					"      - name: 🚀 Deploy to Production\n",
+				1,
+			)
+		},
 		"a step beside the merge-queue delegation overwrites latest": func(s string) string {
 			return strings.Replace(
 				s,

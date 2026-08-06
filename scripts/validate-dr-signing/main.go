@@ -847,6 +847,7 @@ func requireEnforcedStep(
 // carries its own staging-only allowlist for exactly that reason.
 func requireSolePublisher(container map[string]any, publisher func(map[string]any) bool, location string) error {
 	steps, _ := container["steps"].([]any)
+	publishers := 0
 	for index, raw := range steps {
 		step, ok := raw.(map[string]any)
 		if !ok {
@@ -857,6 +858,21 @@ func requireSolePublisher(container map[string]any, publisher func(map[string]an
 			)
 		}
 		if publisher(step) {
+			// SOLE means exactly one, not at-least-one. A second matching step
+			// is exempted from the naming rule below, and requireEnforcedStep
+			// only ever validates the FIRST match — so a duplicate publisher is
+			// checked by neither: it can carry its own `with:` inputs, an `if:`,
+			// or continue-on-error and still move the tag. Verified accepted on
+			// all three routes before this counter existed.
+			publishers++
+			if publishers > 1 {
+				return fmt.Errorf(
+					"step %d of %s is a SECOND step matching the checked publisher; only the first is held to the "+
+						"enforcement contract, so the duplicate can publish different bytes to %s unchecked",
+					index+1, location, mutableProductionTagRepository,
+				)
+			}
+
 			continue
 		}
 		// Re-encoded whole rather than reading `run`: a `with` input, an `env`
@@ -879,6 +895,17 @@ func requireSolePublisher(container map[string]any, publisher func(map[string]an
 			)
 		}
 	}
+	// Self-sufficient rather than trusting call order: every caller happens to
+	// run requireEnforcedStep first today, so this is unreachable — but that is
+	// a property of the callers, not of this function, and "sole" is meaningless
+	// if the step is absent entirely.
+	if publishers == 0 {
+		return fmt.Errorf(
+			"%s contains no step matching the checked publisher, so nothing establishes who writes %s",
+			location, mutableProductionTagRepository,
+		)
+	}
+
 	return nil
 }
 
