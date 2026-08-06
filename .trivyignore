@@ -1,0 +1,30 @@
+# Trivy misconfiguration checks skipped on this repository, with the reason each one is skipped.
+#
+# The bar here is the same one .mega-linter.yml applies: a skip names a technical reason that
+# survives checking, and nothing is hidden merely because it is noisy. Anything that describes real
+# state stays enabled and gets fixed at the manifest instead — see #2787, which tracks driving
+# checkov and trivy to zero on k8s/ so both can leave DISABLE_ERRORS_LINTERS.
+
+# KSV-0039 "limit range usage" — 450 of trivy's 614 findings on this tree (73%), all LOW.
+#
+# The check is evaluated per FILE, but a LimitRange is a namespace-scoped object that this
+# repository deliberately keeps in its own base (k8s/bases/infrastructure/limit-ranges/, plus the
+# longhorn overlay). So the check asks every file whether it contains a LimitRange, and every file
+# that is not one answers no. That includes objects which cannot carry a LimitRange at all — the
+# firing set is 46 helm-release.yaml, 46 cilium-network-policy.yaml, 42 helm-repository.yaml,
+# 23 pod-disruption-budget.yaml, 14 http-route.yaml, 13 external-secret.yaml, 8 network-policy.yaml,
+# 6 flux-kustomization.yaml.
+#
+# It also fires on the LimitRange manifests themselves — limit-ranges/kube-system.yaml,
+# limit-ranges/kyverno.yaml and controllers/longhorn/limit-range.yaml. A check reporting "limit
+# range usage" against a LimitRange is reading file contents rather than namespace state, and no
+# per-file edit can satisfy it.
+#
+# Skipping it is therefore not a threshold or a deferral: there is nothing to fix. It is also what
+# makes the rest of the scan readable — the residual 164 findings contain 29 HIGH/CRITICAL (RBAC
+# breadth: KSV-0114, KSV-0046, KSV-0041, KSV-0056) that were previously buried in a count of 614.
+#
+# Measured at 005761c0: with this entry trivy fails 164 checks, without it 614, and KSV-0039 drops
+# to 0 while no other check id changes. Re-derive with scripts/megalinter-scan-counts.sh rather than
+# trusting this number if it matters — every figure here is a measurement.
+KSV-0039

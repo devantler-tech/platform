@@ -83,8 +83,14 @@ DISABLE_ERRORS_LINTERS:
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (15) and trivy (612): Kubernetes misconfiguration in k8s/, which the section above
+  # checkov (15) and trivy (164): Kubernetes misconfiguration in k8s/, which the section above
   # explains is NOT covered elsewhere. Tracked by #2787.
+  #
+  # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore — 450 of those
+  # 614 were that one LOW check, evaluated per-file against objects that cannot carry a LimitRange
+  # (HelmRepository, HTTPRoute, PodDisruptionBudget) and against the LimitRange manifests
+  # themselves. See .trivyignore for the reason and #2988 for the measurement. The residual 164 is
+  # real: 29 of it is HIGH/CRITICAL, mostly RBAC breadth.
   #
   # checkov's 15 are all `kubernetes` framework, and 4 of them are CKV_K8S_40, at exactly these
   # sites: the two vault-backup jobs, the userns-longhorn-smoke probe, and the vault-config Job.
