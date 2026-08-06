@@ -1,0 +1,29 @@
+---
+# Default-off component for platform#2820.
+#
+# A Crossplane managed resource can report Ready=True while Synced=False, which
+# means no declared setting is reaching the provider while every health check
+# keyed on Ready reads the fleet as healthy. Nothing in the cluster observes the
+# Synced condition today, so that state is silent.
+#
+# This component supplies the missing metric, which is the prerequisite for the
+# alerting rule — the rule cannot be written before the series exists. It does
+# not alert; delivery is a separate change, and so is extending coverage beyond
+# Repository to the remaining managed-resource kinds.
+#
+# No CiliumNetworkPolicy is included: the base `allow-coroot` policy
+# (controllers/coroot/cilium-network-policy.yaml, endpointSelector: {}) already
+# grants every observability pod egress to the kube-apiserver, intra-namespace
+# traffic to coroot-prometheus, and DNS — which is the whole of what this pod
+# needs.
+#
+# Keep the component unreferenced until a separate activation change can deploy,
+# observe, and roll it back independently.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - service-account.yaml
+  - cluster-role.yaml
+  - cluster-role-binding.yaml
+  - config-map.yaml
+  - deployment.yaml
