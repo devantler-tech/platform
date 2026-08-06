@@ -1,0 +1,17 @@
+# Read-only, and scoped to the one managed-resource kind this exporter reads.
+# It is deliberately not `apiGroups: ["*"]`: a metrics exporter that could read
+# every custom resource in the cluster would also be able to read the spec of
+# resources that carry provider configuration.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane-sync-exporter
+rules:
+  - apiGroups:
+      - repo.github.m.upbound.io
+    resources:
+      - repositories
+    verbs:
+      - get
+      - list
+      - watch

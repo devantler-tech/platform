@@ -37,6 +37,11 @@ import (
 // DR-published artifact.
 const drIdentitySubject = `^https://github\.com/devantler-tech/platform/\.github/workflows/dr-rebuild\.yaml@refs/heads/main$`
 
+// drIdentityIssuer is the OIDC issuer half of that identity. cosign matches an
+// identity on the issuer/subject PAIR, so a correct subject under a different
+// issuer does not admit the DR signature and must not satisfy this gate.
+const drIdentityIssuer = `^https://token\.actions\.githubusercontent\.com$`
+
 // cdContractGateJob is the cd.yaml job that runs this validator on the
 // direct-push production path. Named once so the wiring check and the workflow
 // cannot drift apart silently.
@@ -92,37 +97,170 @@ const (
 	validatorCommand      = "go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml"
 )
 
+// mutableProductionTagRepository is the OCI repository whose `latest` tag
+// production's root Flux source follows. The registry host is deliberately NOT
+// part of it: `ghcr.io/…`, a bare `devantler-tech/…`, and a mirror spelling all
+// reach the same tag, and only the repository path is common to them.
+const mutableProductionTagRepository = "devantler-tech/platform/manifests"
+
+// drRebuildJob is the dr-rebuild.yaml job that reaches production.
+const drRebuildJob = "rebuild"
+
+// drRequiredPermission is a job-level grant the rebuild job must carry, together
+// with what stops working without it.
+type drRequiredPermission struct {
+	name string
+	// consequence completes "so …", naming what the DR rebuild cannot do.
+	consequence string
+}
+
+// drRequiredPermissions are the three write grants the publication transaction
+// needs. Matched on the PARSED key and value, so the trailing comment on each
+// line is documentation rather than part of the contract.
+var drRequiredPermissions = []drRequiredPermission{
+	{"id-token", "keyless cosign signing cannot mint a Fulcio certificate"},
+	{"packages", "the publication transaction cannot update GHCR"},
+	{"attestations", "the SBOM and provenance cannot be recorded"},
+}
+
+// drPublisherCredential is an input the publisher step must receive, and the
+// exact expression it must receive it from.
+type drPublisherCredential struct {
+	input      string
+	expression string
+}
+
+// drPublisherCredentials are the two secrets the shared publication action needs.
+// Asserted on the publisher STEP's `with` mapping, not anywhere in the job.
+var drPublisherCredentials = []drPublisherCredential{
+	{"ghcr-token", "${{ secrets.GHCR_TOKEN }}"},
+	{"hcloud-token", "${{ secrets.HCLOUD_TOKEN }}"},
+}
+
+// validateDRWorkflow checks that the disaster-recovery route publishes through
+// the same checked action as every other route, with the grants and credentials
+// that action needs.
+//
+// 🔴 THE WORKFLOW IS PARSED, NOT SCANNED — the third route, and the last one to
+// be converted. The two production routes were parsed in #2939; this one still
+// asked `containsLine`, which is satisfied by the expected text appearing
+// ANYWHERE in the job's text. Five ways that said "wired" about a DR route that
+// was not, each reproduced as an ablation and each returning nil against the
+// scanning version:
+//
+//  1. The `uses:` line survives as a COMMENT while the step invokes a different
+//     action. A comment runs nothing, so the gate certified a publisher that is
+//     not called.
+//  2. The same text inside a BLOCK SCALAR — an `echo` in a run block — with no
+//     `uses:` step anywhere.
+//  3. The credentials named on a DIFFERENT step. A scan over the job text cannot
+//     tell which step receives them, so the publisher could be invoked with none.
+//  4. The publisher step carries `if: false`, so it never runs while the workflow
+//     reads as correct.
+//  5. The publisher step carries `continue-on-error: true`, so it runs, fails,
+//     and the rebuild continues to promote the mutable tag anyway.
+//
+// (4) and (5) are the requireEnforcedStep class this file has now fixed at six
+// sites; matching and enforcing are inseparable there for exactly this reason.
+// A DR publish that silently skipped its evidence is unrecoverable by hand at
+// the one moment nobody can afford to debug it.
 func validateDRWorkflow(workflow string) error {
-	job, ok := extractJob(workflow, "  rebuild:")
+	document, err := decodeWorkflow(workflow)
+	if err != nil {
+		return fmt.Errorf(
+			"disaster-recovery workflow does not parse, so its publication wiring cannot be established: %w", err,
+		)
+	}
+	jobs, ok := document["jobs"].(map[string]any)
+	if !ok {
+		return errors.New("disaster-recovery workflow has no jobs mapping")
+	}
+	job, ok := jobs[drRebuildJob].(map[string]any)
 	if !ok {
 		return errors.New("missing rebuild job")
 	}
 
-	if !containsExactLine(job, "      id-token: write # keyless cosign signing (Fulcio OIDC)") {
-		return errors.New(
-			"rebuild job is missing `id-token: write`, so keyless cosign signing cannot mint a Fulcio certificate",
-		)
+	if err := requireJobPermissions(job); err != nil {
+		return err
 	}
-	if !containsExactLine(job, "      packages: write # push OCI artifacts to GHCR") {
-		return errors.New(
-			"rebuild job is missing `packages: write`, so the publication transaction cannot update GHCR",
-		)
-	}
-	if !containsExactLine(job, "      attestations: write # write SBOM + SLSA provenance attestations") {
-		return errors.New(
-			"rebuild job is missing `attestations: write`, so the SBOM and provenance cannot be recorded",
-		)
-	}
-	if !containsLine(job, "uses: ./.github/actions/deploy-prod/publish-platform-manifests") {
-		return errors.New(
+
+	// The rebuild JOB legitimately carries `if:` — the supersession gate — so the
+	// job-level condition is deliberately NOT refused here, unlike cd.yaml's
+	// deploy-prod. What must hold is that the publisher STEP is neither skipped
+	// nor failure-suppressed, which is requireEnforcedStep's whole contract.
+	step, err := requireEnforcedStep(
+		job, usesAction(nestedPublisherAction),
+		errors.New(
 			"rebuild job must use the shared publication action so normal and disaster-recovery delivery cannot drift",
+		),
+		"the publisher step in the DR rebuild job",
+	)
+	if err != nil {
+		return err
+	}
+
+	return requirePublisherCredentials(step)
+}
+
+// requireJobPermissions proves the rebuild job grants each required permission
+// as `write`, read from the parsed mapping.
+//
+// A `permissions` value this cannot read is REFUSED rather than skipped, for the
+// reason every other shape check in this file gives: it decides whether a
+// disaster-recovery publish is trusted, so a grant that cannot be established
+// must not fall through to accepted. That includes the blanket `write-all`
+// scalar — which does grant enough, but names none of these three, so a later
+// narrowing could drop one silently while this check kept passing.
+func requireJobPermissions(job map[string]any) error {
+	raw, present := job["permissions"]
+	if !present {
+		return errors.New(
+			"rebuild job declares no permissions, so it grants none of the writes the publication transaction needs",
 		)
 	}
-	if !containsLine(job, "ghcr-token: ${{ secrets.GHCR_TOKEN }}") ||
-		!containsLine(job, "hcloud-token: ${{ secrets.HCLOUD_TOKEN }}") {
-		return errors.New("rebuild job does not pass the required publication credentials to the shared action")
+	permissions, ok := raw.(map[string]any)
+	if !ok {
+		return fmt.Errorf(
+			"rebuild job declares permissions in a shape this check cannot read (%v); each of %s must be granted "+
+				"explicitly as `write`, so a later narrowing cannot drop one silently",
+			raw, drRequiredPermissionNames(),
+		)
+	}
+	for _, required := range drRequiredPermissions {
+		if value, _ := permissions[required.name].(string); strings.TrimSpace(value) != "write" {
+			return fmt.Errorf(
+				"rebuild job does not grant `%s: write`, so %s",
+				required.name, required.consequence,
+			)
+		}
 	}
 	return nil
+}
+
+// requirePublisherCredentials proves the publisher step itself receives both
+// secrets. Asserted on the step's own `with` mapping: the scanning version read
+// them from anywhere in the job, so credentials on an unrelated step satisfied
+// it while the publisher was invoked with none.
+func requirePublisherCredentials(step map[string]any) error {
+	with, _ := step["with"].(map[string]any)
+	for _, credential := range drPublisherCredentials {
+		if value, _ := with[credential.input].(string); strings.TrimSpace(value) != credential.expression {
+			return fmt.Errorf(
+				"the publisher step in the DR rebuild job does not pass %s: %s, so it cannot complete the "+
+					"publication credentials the shared action requires",
+				credential.input, credential.expression,
+			)
+		}
+	}
+	return nil
+}
+
+func drRequiredPermissionNames() string {
+	names := make([]string, 0, len(drRequiredPermissions))
+	for _, required := range drRequiredPermissions {
+		names = append(names, required.name)
+	}
+	return strings.Join(names, ", ")
 }
 
 func validatePublicationAction(action string) error {
@@ -238,13 +376,85 @@ func describePublicationStep(step map[string]any, index int) string {
 	return fmt.Sprintf("publication action step %d", index)
 }
 
+// clusterVerifyConfig mirrors only the fragment of the KSail cluster config this
+// gate reads: the cosign allow-list at spec.workload.flux.verify, which is the
+// path KSail renders onto the root OCIRepository. Decoding the exact path is
+// what makes a block sitting anywhere else a failure rather than a pass, because
+// such a block yields zero entries here.
+//
+// Decoding reads the FIRST YAML document only, which is what a KSail cluster
+// config is. A verify block hidden in a later document would therefore yield no
+// entries and FAIL this gate rather than satisfy it — the safe direction, and the
+// same direction every other shape below fails in.
+type clusterVerifyConfig struct {
+	Spec struct {
+		Workload struct {
+			Flux struct {
+				Verify struct {
+					MatchOIDCIdentity []struct {
+						Issuer  string `yaml:"issuer"`
+						Subject string `yaml:"subject"`
+					} `yaml:"matchOIDCIdentity"`
+				} `yaml:"verify"`
+			} `yaml:"flux"`
+		} `yaml:"workload"`
+	} `yaml:"spec"`
+}
+
+// validateVerifyAllowList checks that the cluster's cosign allow-list actually
+// admits the DR rebuild identity.
+//
+// 🔴 THE CONFIG IS PARSED, NOT SCANNED, for the same reason validateCDWiring
+// parses workflows rather than scanning them — this is the config half of that
+// same correction. Four ways a text scan says "allowed" about an allow-list that
+// is not in effect, each reproduced as an ablation in the tests:
+//
+//  1. The identity appears in a COMMENT. A comment has no effect on the cluster,
+//     so the gate certifies an allow-list that does not exist. Measured on the
+//     scanning version: removing the real matcher and re-adding the identical
+//     regex as `# …` returned "contract passed", exit 0.
+//  2. The whole verify block sits at a path KSail DISCARDS — spec.cluster.verify
+//     is exactly the #2627 outage. The bytes are in the file, so a scan finds
+//     them; KSail never renders them onto the OCIRepository.
+//  3. A subject that merely CONTAINS this identity satisfies a substring match,
+//     and that direction is the dangerous one: `^dr$|^attacker$` contains the DR
+//     identity while also admitting a second signer.
+//  4. The right subject under the WRONG ISSUER. cosign matches on the
+//     issuer/subject pair, so such an entry does not admit the DR signature — but
+//     a scan looking only for the subject line accepts it.
+//
+// An allow-list entry that is inert, discarded, over-broad, or issued by someone
+// else does not make a DR-published artifact verifiable, which is the one failure
+// that is unrecoverable by hand during an incident.
 func validateVerifyAllowList(config string) error {
-	if !containsLine(config, drIdentitySubject) {
-		return errors.New(
-			"cosign matchOIDCIdentity does not allow the DR rebuild identity, so a DR-published artifact stays unverifiable",
+	var parsed clusterVerifyConfig
+	if err := yaml.Unmarshal([]byte(config), &parsed); err != nil {
+		return fmt.Errorf(
+			"cluster config does not parse, so its verification allow-list cannot be established: %w", err,
 		)
 	}
-	return nil
+
+	entries := parsed.Spec.Workload.Flux.Verify.MatchOIDCIdentity
+	if len(entries) == 0 {
+		return errors.New(
+			"no cosign matchOIDCIdentity entries at spec.workload.flux.verify, the path KSail renders onto the root " +
+				"OCIRepository, so a DR-published artifact stays unverifiable; a verify block at any other path " +
+				"(spec.cluster.verify in particular) is discarded and does not count",
+		)
+	}
+
+	for _, entry := range entries {
+		if entry.Issuer == drIdentityIssuer && entry.Subject == drIdentitySubject {
+			return nil
+		}
+	}
+
+	return fmt.Errorf(
+		"cosign matchOIDCIdentity at spec.workload.flux.verify has %d entries but none is exactly the DR rebuild "+
+			"identity, so a DR-published artifact stays unverifiable; add an entry with issuer %s and subject %s "+
+			"(both compared exactly — a wider regex containing this one is not accepted)",
+		len(entries), drIdentityIssuer, drIdentitySubject,
+	)
 }
 
 // validateCDWiring checks that the direct-push production path cannot deploy
@@ -306,6 +516,15 @@ func validateCDWiring(cd string, deployAction string) error {
 		return err
 	}
 
+	// The job delegates publication wholly to that action, so nothing else in
+	// it may reach the tag production follows.
+	if err := requireSolePublisher(
+		deploy, usesAction(sharedDeployAction),
+		"the deploy-prod job in the direct-push production workflow",
+	); err != nil {
+		return err
+	}
+
 	// (4) The contract is validated against the nested publisher. That is only
 	// meaningful while the shared action still calls it — and the composite
 	// action is PARSED for the same reason cd.yaml is: a YAML block scalar (a
@@ -326,6 +545,16 @@ func validateCDWiring(cd string, deployAction string) error {
 			nestedPublisherAction,
 		),
 		"the publisher step in the shared deploy action",
+	); err != nil {
+		return err
+	}
+
+	// …and it must be the only step in that action which reaches the tag. The
+	// check above proves the publisher is invoked; this proves nothing follows
+	// it onto the same tag.
+	if err := requireSolePublisher(
+		map[string]any{"steps": runs["steps"]}, usesAction(nestedPublisherAction),
+		"the shared production deploy action",
 	); err != nil {
 		return err
 	}
@@ -427,6 +656,13 @@ func validateProductionRoutes(ci string) error {
 				jobName, sharedDeployAction,
 			),
 			"the deploy step in merge-queue job "+jobName,
+		); err != nil {
+			return err
+		}
+		// Exclusivity on the route production normally takes. Using the checked
+		// action says nothing about what else the job does beside it.
+		if err := requireSolePublisher(
+			job, usesAction(sharedDeployAction), "merge-queue job "+jobName,
 		); err != nil {
 			return err
 		}
@@ -583,6 +819,94 @@ func requireEnforcedStep(
 		return step, nil
 	}
 	return nil, missing
+}
+
+// requireSolePublisher proves the checked publication step is the ONLY step in
+// `container` that names the mutable production tag's repository.
+//
+// 🔴 EVERY OTHER CHECK IN THIS FILE IS AN EXISTENCE PROOF, and existence is not
+// exclusivity. requireEnforcedStep establishes that the checked publisher is
+// present, reached, and failure-honouring — all of which stay true when a
+// SECOND step writes the same tag immediately afterwards. The ordering contract
+// then holds exactly as specified and is bypassed at a different point: the
+// signed digest is published, and something else moves `latest` off it before
+// reconciliation reads it.
+//
+// The rule refuses NAMING the repository rather than writing to it, and that is
+// deliberate. Deciding whether a shell line writes means enumerating the verbs
+// that can — `workload push`, `imagetools create`, `crane`, `oras`, `docker
+// push`, whatever ships next — which is the denylist
+// runBlockRunsOnlyAllowedCommands already had to replace once, for the reason
+// it gives: each round of review found one more spelling. A step outside the
+// checked publisher has no business naming production's mutable tag at all, so
+// the allowlist here is a single step and everything else is refused.
+//
+// The boundary is one level deep, and stating it is part of the check: this
+// reads the step, not the scripts a step invokes. `run: ./scripts/x.sh` that
+// pushes internally is not caught here — `run-ksail-prod-with-pull-auth.sh`
+// carries its own staging-only allowlist for exactly that reason.
+func requireSolePublisher(container map[string]any, publisher func(map[string]any) bool, location string) error {
+	steps, _ := container["steps"].([]any)
+	publishers := 0
+	for index, raw := range steps {
+		step, ok := raw.(map[string]any)
+		if !ok {
+			// Fail closed: a shape this cannot read is a shape this cannot clear.
+			return fmt.Errorf(
+				"step %d of %s is not a mapping, so it cannot be shown to leave %s alone",
+				index+1, location, mutableProductionTagRepository,
+			)
+		}
+		if publisher(step) {
+			// SOLE means exactly one, not at-least-one. A second matching step
+			// is exempted from the naming rule below, and requireEnforcedStep
+			// only ever validates the FIRST match — so a duplicate publisher is
+			// checked by neither: it can carry its own `with:` inputs, an `if:`,
+			// or continue-on-error and still move the tag. Verified accepted on
+			// all three routes before this counter existed.
+			publishers++
+			if publishers > 1 {
+				return fmt.Errorf(
+					"step %d of %s is a SECOND step matching the checked publisher; only the first is held to the "+
+						"enforcement contract, so the duplicate can publish different bytes to %s unchecked",
+					index+1, location, mutableProductionTagRepository,
+				)
+			}
+
+			continue
+		}
+		// Re-encoded whole rather than reading `run`: a `with` input, an `env`
+		// value, or a `uses` path can carry the reference just as effectively,
+		// and naming the keys that may not carry it is the same enumeration
+		// this check exists to avoid.
+		encoded, err := yaml.Marshal(step)
+		if err != nil {
+			return fmt.Errorf(
+				"step %d of %s cannot be re-encoded, so it cannot be shown to leave %s alone: %w",
+				index+1, location, mutableProductionTagRepository, err,
+			)
+		}
+		if strings.Contains(string(encoded), mutableProductionTagRepository) {
+			return fmt.Errorf(
+				"step %d of %s names %s while not being the checked publication step, so it can move the "+
+					"mutable production tag off the digest that was signed and attested; publication must go "+
+					"through the checked step alone",
+				index+1, location, mutableProductionTagRepository,
+			)
+		}
+	}
+	// Self-sufficient rather than trusting call order: every caller happens to
+	// run requireEnforcedStep first today, so this is unreachable — but that is
+	// a property of the callers, not of this function, and "sole" is meaningless
+	// if the step is absent entirely.
+	if publishers == 0 {
+		return fmt.Errorf(
+			"%s contains no step matching the checked publisher, so nothing establishes who writes %s",
+			location, mutableProductionTagRepository,
+		)
+	}
+
+	return nil
 }
 
 // usesAction matches a step whose `uses` is EXACTLY the wanted action.
@@ -908,42 +1232,6 @@ func stringListContains(value any, want string) bool {
 			if name, ok := item.(string); ok && strings.TrimSpace(name) == want {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-func extractJob(workflow string, header string) (string, bool) {
-	lines := strings.Split(workflow, "\n")
-	start := -1
-	for i, line := range lines {
-		if line == header {
-			start = i + 1
-			break
-		}
-	}
-	if start < 0 {
-		return "", false
-	}
-
-	end := len(lines)
-	for i := start; i < len(lines); i++ {
-		line := lines[i]
-		if strings.HasPrefix(line, "  ") &&
-			!strings.HasPrefix(line, "   ") &&
-			strings.HasSuffix(line, ":") {
-			end = i
-			break
-		}
-	}
-
-	return strings.Join(lines[start:end], "\n"), true
-}
-
-func containsExactLine(block string, want string) bool {
-	for _, line := range strings.Split(block, "\n") {
-		if line == want {
-			return true
 		}
 	}
 	return false

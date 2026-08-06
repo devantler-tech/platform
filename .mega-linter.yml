@@ -83,8 +83,14 @@ DISABLE_ERRORS_LINTERS:
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (15) and trivy (612): Kubernetes misconfiguration in k8s/, which the section above
+  # checkov (15) and trivy (164): Kubernetes misconfiguration in k8s/, which the section above
   # explains is NOT covered elsewhere. Tracked by #2787.
+  #
+  # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore — 450 of those
+  # 614 were that one LOW check, evaluated per-file against objects that cannot carry a LimitRange
+  # (HelmRepository, HTTPRoute, PodDisruptionBudget) and against the LimitRange manifests
+  # themselves. See .trivyignore for the reason and #2988 for the measurement. The residual 164 is
+  # real: 29 of it is HIGH/CRITICAL, mostly RBAC breadth.
   #
   # checkov's 15 are all `kubernetes` framework, and 4 of them are CKV_K8S_40, at exactly these
   # sites: the two vault-backup jobs, the userns-longhorn-smoke probe, and the vault-config Job.
@@ -137,7 +143,7 @@ DISABLE_ERRORS_LINTERS:
   # exact commands this job runs, so a slice can show the number moved without a CI round trip.
   #
   # ⚠️ Read trivy's number from that script, NOT from the MegaLinter summary. MegaLinter reports
-  # this trivy scan as "1 non blocking error" while the scan actually fails 612 checks across 457
+  # this trivy scan as "1 non blocking error" while the scan actually fails 164 checks across 73
   # targets; the 1 is an artifact of how MegaLinter counts trivy's output. checkov's number is a
   # genuine sum of "Failed checks:" and needs no such caveat.
   #

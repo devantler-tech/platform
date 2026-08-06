@@ -133,6 +133,38 @@ const (
 // trees, so nothing granted to the aws/aws service account this validator
 // exists to protect is touched.
 //
+// Measured against main 875f5dc3 before approving THIS value: the rendered
+// surface moves from 514 -> 519 documents, purely additive. Membership was
+// proven by set difference in BOTH directions over apiVersion|kind|namespace|name
+// (not by count, which cannot see a rename): zero removed, zero renamed, and the
+// five additions are exactly the degraded-CNPG-cluster alert —
+//
+//	v1                          ServiceAccount      observability/cnpg-degraded-alert
+//	v1                          Secret              observability/cnpg-degraded-alert-webhook
+//	rbac.authorization.k8s.io/v1 ClusterRole        cnpg-degraded-alert
+//	rbac.authorization.k8s.io/v1 ClusterRoleBinding cnpg-degraded-alert
+//	batch/v1                    CronJob             observability/cnpg-degraded-alert
+//
+// Grant-bearing objects DID move here, additively: 64 -> 67 Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount documents, being the three
+// above. That is the same shape as the OpenCost usage-scraper approval below —
+// one dedicated ServiceAccount, one narrow ClusterRole, one binding between
+// exactly those two identities. The ClusterRole is list-only on a single resource
+// type (`clusters.postgresql.cnpg.io`); it is cluster-scoped only because the
+// check must see databases in every namespace that runs one.
+//
+// Exactly ONE existing entry's content moved:
+//
+//	kubescape.io/v1beta1  ClusterSecurityException  gitops-managed-cronjobs
+//
+// and its rendered delta is one prose sentence in `reason`, naming the new
+// CronJob in the enumeration that field already carries. Its `match` scope is
+// unchanged, so the exception grants nothing new.
+//
+// Every `aws`-bearing line in the rendered surface is byte-identical across the
+// two trees (116 on both sides), so nothing granted to the aws/aws service
+// account this validator exists to protect is touched.
+//
 // Measured against main fa041449 before approving the previous value: the
 // production infrastructure overlay moves from 204 -> 210 documents, with
 // exactly six additive OpenCost usage-scraper resources and no existing
@@ -195,7 +227,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "fef511d40d44624fcd81d26a7c09b84c7a08ebb25eae7d643cfacd9519146927"
+const expectedRenderedSurfaceSHA = "6af27989825d60e4139a4d8754ff6e4be4ed5e20b75181dacade8653c14cc5aa"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

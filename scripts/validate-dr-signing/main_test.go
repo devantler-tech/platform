@@ -464,6 +464,60 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 				"uses: ./.github/actions/deploy-prod/some-other-publisher", 1,
 			)
 		},
+		// Codex P2 on #2939, tracked as #2942: every check above proves the
+		// checked publisher is PRESENT and enforced. None of them proves it is
+		// the ONLY step that writes the tag production follows, so a second
+		// writer appended after it replaces the promoted digest while the whole
+		// ordering contract still reports success.
+		"a later step in the shared action overwrites latest": func(w, a string) (string, string) {
+			return w, strings.Replace(
+				a,
+				"    - name: 🔎 Verify Flux GHCR pull credential after publish\n",
+				"    - name: 😈 Republish latest outside the checked publisher\n"+
+					"      shell: bash\n"+
+					"      run: |\n"+
+					"        ksail workload push oci://ghcr.io/devantler-tech/platform/manifests:latest\n\n"+
+					"    - name: 🔎 Verify Flux GHCR pull credential after publish\n",
+				1,
+			)
+		},
+		// One level up: the calling job delegates publication wholly to the
+		// shared action, so a writer added beside that delegation reaches the
+		// same tag without entering the checked action at all.
+		// A DUPLICATE publisher is checked by neither rule: requireEnforcedStep
+		// validates only the first match, and the exclusivity rule skips every
+		// match. Both routes accepted this before requireSolePublisher counted.
+		"a second publisher step in the shared action": func(w, a string) (string, string) {
+			return w, strings.Replace(
+				a,
+				"    - name: 🔎 Verify Flux GHCR pull credential after publish\n",
+				"    - name: 😈 Second publisher, unchecked\n"+
+					"      uses: ./.github/actions/deploy-prod/publish-platform-manifests\n\n"+
+					"    - name: 🔎 Verify Flux GHCR pull credential after publish\n",
+				1,
+			)
+		},
+		"a second delegation in the direct-push job": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"      - name: 🚀 Deploy to Production\n",
+				"      - name: 😈 Second delegation, unchecked\n"+
+					"        uses: ./.github/actions/deploy-prod\n\n"+
+					"      - name: 🚀 Deploy to Production\n",
+				1,
+			), a
+		},
+		"a step beside the direct-push delegation overwrites latest": func(w, a string) (string, string) {
+			return strings.Replace(
+				w,
+				"      - name: 🚀 Deploy to Production\n",
+				"      - name: 😈 Republish latest beside the shared action\n"+
+					"        run: |\n"+
+					"          docker buildx imagetools create --tag ghcr.io/devantler-tech/platform/manifests:latest scratch\n\n"+
+					"      - name: 🚀 Deploy to Production\n",
+				1,
+			), a
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ablatedCD, ablatedAction := ablate(cd, action)
@@ -525,6 +579,32 @@ func TestMergeQueueProductionRoutesUseTheCheckedAction(t *testing.T) {
 				s,
 				"    if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'",
 				"    if: always() && github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true'",
+				1,
+			)
+		},
+		// #2942 on the route production normally takes. Requiring the job to
+		// USE the checked action says nothing about what else the job does, so
+		// a second writer beside the delegation reaches the mutable tag while
+		// every rule above stays satisfied.
+		// Same duplicate-publisher gap on the route production normally takes.
+		"a second delegation in the merge-queue job": func(s string) string {
+			return strings.Replace(
+				s,
+				"      - name: 🚀 Deploy to Production\n",
+				"      - name: 😈 Second delegation, unchecked\n"+
+					"        uses: ./.github/actions/deploy-prod\n\n"+
+					"      - name: 🚀 Deploy to Production\n",
+				1,
+			)
+		},
+		"a step beside the merge-queue delegation overwrites latest": func(s string) string {
+			return strings.Replace(
+				s,
+				"      - name: 🚀 Deploy to Production\n",
+				"      - name: 😈 Republish latest beside the shared action\n"+
+					"        run: |\n"+
+					"          docker buildx imagetools create --tag ghcr.io/devantler-tech/platform/manifests:latest scratch\n\n"+
+					"      - name: 🚀 Deploy to Production\n",
 				1,
 			)
 		},
@@ -784,6 +864,20 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 	}
 }
 
+// drPublisherStep is the DR rebuild's publisher step, byte-exact. The ablations
+// below replace this whole block so each one MOVES the mechanism rather than
+// deleting it: the text the old scanning check looked for survives somewhere the
+// workflow does not execute it, which is the only shape that separates a scan
+// from a parse. An ablation that merely deleted the step would be refused by
+// both implementations and would prove nothing.
+const drPublisherStep = `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        uses: ./.github/actions/deploy-prod/publish-platform-manifests
+        with:
+          ghcr-token: ${{ secrets.GHCR_TOKEN }}
+          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+`
+
 func TestDRWorkflowContractRejectsEachAblation(t *testing.T) {
 	t.Parallel()
 
@@ -810,10 +904,92 @@ func TestDRWorkflowContractRejectsEachAblation(t *testing.T) {
 			wantErr: "attestations: write",
 		},
 		{
+			name:    "a permission granted as read does not authorise the transaction",
+			old:     "      packages: write # push OCI artifacts to GHCR\n",
+			new:     "      packages: read # push OCI artifacts to GHCR\n",
+			wantErr: "packages: write",
+		},
+		{
 			name:    "without the shared action DR can drift from normal deploy",
 			old:     "uses: ./.github/actions/deploy-prod/publish-platform-manifests",
 			new:     "uses: ./.github/actions/other-publisher",
 			wantErr: "shared publication action",
+		},
+		{
+			name: "the publisher text survives in a COMMENT while another action runs",
+			old:  drPublisherStep,
+			new: `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        # uses: ./.github/actions/deploy-prod/publish-platform-manifests
+        uses: ./.github/actions/other-publisher
+        with:
+          ghcr-token: ${{ secrets.GHCR_TOKEN }}
+          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+`,
+			wantErr: "shared publication action",
+		},
+		{
+			name: "the publisher text survives in a BLOCK SCALAR while nothing invokes it",
+			old:  drPublisherStep,
+			new: `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        run: |
+          echo "uses: ./.github/actions/deploy-prod/publish-platform-manifests"
+          echo "ghcr-token: ${{ secrets.GHCR_TOKEN }}"
+          echo "hcloud-token: ${{ secrets.HCLOUD_TOKEN }}"
+`,
+			wantErr: "shared publication action",
+		},
+		{
+			name: "credentials named on a DIFFERENT step never reach the publisher",
+			old:  drPublisherStep,
+			new: `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        uses: ./.github/actions/deploy-prod/publish-platform-manifests
+
+      - name: 🔑 Unrelated step that merely names the credentials
+        run: |
+          echo "ghcr-token: ${{ secrets.GHCR_TOKEN }}"
+          echo "hcloud-token: ${{ secrets.HCLOUD_TOKEN }}"
+`,
+			wantErr: "publication credentials",
+		},
+		{
+			name: "one credential present and the other missing is still unpublishable",
+			old:  drPublisherStep,
+			new: `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        uses: ./.github/actions/deploy-prod/publish-platform-manifests
+        with:
+          ghcr-token: ${{ secrets.GHCR_TOKEN }}
+`,
+			wantErr: "hcloud-token",
+		},
+		{
+			name: "a SKIPPED publisher step leaves the workflow reading as correct",
+			old:  drPublisherStep,
+			new: `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        if: false
+        uses: ./.github/actions/deploy-prod/publish-platform-manifests
+        with:
+          ghcr-token: ${{ secrets.GHCR_TOKEN }}
+          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+`,
+			wantErr: "declares a condition",
+		},
+		{
+			name: "a FAILURE-SUPPRESSED publisher step discards its own verdict",
+			old:  drPublisherStep,
+			new: `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        continue-on-error: true
+        uses: ./.github/actions/deploy-prod/publish-platform-manifests
+        with:
+          ghcr-token: ${{ secrets.GHCR_TOKEN }}
+          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+`,
+			wantErr: "continue-on-error",
 		},
 		{
 			name:    "a renamed rebuild job hides the whole contract",
@@ -829,6 +1005,74 @@ func TestDRWorkflowContractRejectsEachAblation(t *testing.T) {
 			ablated := strings.ReplaceAll(workflow, testCase.old, testCase.new)
 			if ablated == workflow {
 				t.Fatalf("ablation changed nothing — the control does not target a real line")
+			}
+			err := validateDRWorkflow(ablated)
+			if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("wrong result: got %v, want error mentioning %q", err, testCase.wantErr)
+			}
+		})
+	}
+}
+
+// TestDRPermissionsAreReadFromTheParsedGrantNotItsComment pins the direction the
+// scanning check got wrong in the SAFE-looking way: it compared each permission
+// against a whole line INCLUDING its trailing comment, so rewording the comment
+// broke the gate while the grant itself was untouched. A contract that fails on
+// a documentation edit trains people to weaken it.
+func TestDRPermissionsAreReadFromTheParsedGrantNotItsComment(t *testing.T) {
+	t.Parallel()
+
+	workflow := repoFile(t, ".github/workflows/dr-rebuild.yaml")
+	reworded := strings.ReplaceAll(
+		workflow,
+		"      id-token: write # keyless cosign signing (Fulcio OIDC)",
+		"      id-token: write # mints the Fulcio certificate for keyless signing",
+	)
+	if reworded == workflow {
+		t.Fatal("ablation changed nothing — the control does not target a real line")
+	}
+	if err := validateDRWorkflow(reworded); err != nil {
+		t.Fatalf("rewording a permission's comment must not break the contract: %v", err)
+	}
+}
+
+// TestDRWorkflowFailsClosedOnShapesItCannotRead covers the shapes a parser can
+// meet that a scanner never did. Each must be REFUSED rather than skipped: this
+// decides whether a disaster-recovery publish is trusted, so a grant this cannot
+// read must not fall through to accepted.
+func TestDRWorkflowFailsClosedOnShapesItCannotRead(t *testing.T) {
+	t.Parallel()
+
+	workflow := repoFile(t, ".github/workflows/dr-rebuild.yaml")
+	for _, testCase := range []struct {
+		name    string
+		old     string
+		new     string
+		wantErr string
+	}{
+		{
+			name: "permissions collapsed to a blanket scalar names no specific grant",
+			old: `    permissions:
+      contents: read # checkout repository
+      packages: write # push OCI artifacts to GHCR
+      id-token: write # keyless cosign signing (Fulcio OIDC)
+      attestations: write # write SBOM + SLSA provenance attestations
+`,
+			new:     "    permissions: write-all\n",
+			wantErr: "permissions",
+		},
+		{
+			name:    "a workflow that does not parse cannot establish anything",
+			old:     "\n  rebuild:\n",
+			new:     "\n  rebuild:\n    : : :\n",
+			wantErr: "does not parse",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			ablated := strings.ReplaceAll(workflow, testCase.old, testCase.new)
+			if ablated == workflow {
+				t.Fatal("ablation changed nothing — the control does not target a real line")
 			}
 			err := validateDRWorkflow(ablated)
 			if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
@@ -1017,6 +1261,96 @@ func TestVerifyAllowListRejectsAMissingDRIdentity(t *testing.T) {
 	}
 	if err := validateVerifyAllowList(ablated); err == nil {
 		t.Fatal("allow-list without the DR identity was accepted")
+	}
+}
+
+// allowListConfig builds a minimal cluster config carrying one matchOIDCIdentity
+// entry at the given dotted path, so the path tests below differ in exactly one
+// variable: where the verify block sits.
+func allowListConfig(path string, issuer string, subject string) string {
+	var builder strings.Builder
+	builder.WriteString("apiVersion: ksail.io/v1alpha1\nkind: Cluster\n")
+	indent := ""
+	for _, key := range strings.Split(path, ".") {
+		builder.WriteString(indent + key + ":\n")
+		indent += "  "
+	}
+	builder.WriteString(indent + "provider: cosign\n")
+	builder.WriteString(indent + "matchOIDCIdentity:\n")
+	builder.WriteString(indent + "  - issuer: '" + issuer + "'\n")
+	builder.WriteString(indent + "    subject: '" + subject + "'\n")
+	return builder.String()
+}
+
+// This is the positive control for the three path/shape ablations that follow.
+// Without it, any of them could pass merely because the synthetic YAML is
+// malformed — a rejection for the wrong reason is indistinguishable from a
+// rejection for the right one.
+func TestVerifyAllowListAcceptsTheDRIdentityAtThePathKSailReads(t *testing.T) {
+	t.Parallel()
+
+	config := allowListConfig("spec.workload.flux.verify", drIdentityIssuer, drIdentitySubject)
+	if err := validateVerifyAllowList(config); err != nil {
+		t.Fatalf("the DR identity at the path KSail reads was rejected: %v", err)
+	}
+}
+
+// The bypass #2945 measured: a comment has no effect on the cluster, so a gate
+// satisfied by one certifies an allow-list that is not in effect.
+func TestVerifyAllowListRejectsACommentedDRIdentity(t *testing.T) {
+	t.Parallel()
+
+	config := repoFile(t, "ksail.prod.yaml")
+	removed := strings.ReplaceAll(config, drIdentitySubject, `^https://example\.invalid$`)
+	if removed == config {
+		t.Fatal("ablation changed nothing — the DR identity is not present to remove")
+	}
+	bypassed := removed + "\n# " + drIdentitySubject + "\n"
+	if err := validateVerifyAllowList(bypassed); err == nil {
+		t.Fatal("a commented-out DR identity was accepted as an allow-list entry")
+	}
+}
+
+// The second shape #2945 records: the whole block at a path KSail discards.
+// spec.cluster.verify is exactly the #2627 outage.
+func TestVerifyAllowListRejectsAVerifyBlockAtAPathKSailDiscards(t *testing.T) {
+	t.Parallel()
+
+	config := allowListConfig("spec.cluster.verify", drIdentityIssuer, drIdentitySubject)
+	err := validateVerifyAllowList(config)
+	if err == nil {
+		t.Fatal("a verify block at spec.cluster.verify — a path KSail discards — was accepted")
+	}
+	// Assert WHICH failure this is. Without this the test would also pass if the
+	// synthetic config were merely malformed, which would prove nothing about the
+	// path being discarded.
+	if !strings.Contains(err.Error(), "no cosign matchOIDCIdentity entries") {
+		t.Fatalf("rejected for the wrong reason — expected zero entries at the read path, got: %v", err)
+	}
+}
+
+// A substring match is blind in the LENGTHENING direction, and that direction is
+// dangerous here: `^dr$|^evil$` contains the DR identity and also allows a
+// second signer.
+func TestVerifyAllowListRejectsASubjectThatMerelyContainsTheDRIdentity(t *testing.T) {
+	t.Parallel()
+
+	widened := drIdentitySubject + `|^https://github\.com/attacker/repo/\.github/workflows/x\.yaml@refs/heads/main$`
+	config := allowListConfig("spec.workload.flux.verify", drIdentityIssuer, widened)
+	if err := validateVerifyAllowList(config); err == nil {
+		t.Fatal("a widened subject regex that merely contains the DR identity was accepted")
+	}
+}
+
+// An OIDC identity is the issuer/subject PAIR. A correct subject under a
+// different issuer does not match the DR signature, so it must not satisfy the
+// gate either.
+func TestVerifyAllowListRejectsTheDRSubjectUnderTheWrongIssuer(t *testing.T) {
+	t.Parallel()
+
+	config := allowListConfig("spec.workload.flux.verify", `^https://accounts\.google\.com$`, drIdentitySubject)
+	if err := validateVerifyAllowList(config); err == nil {
+		t.Fatal("the DR subject under a non-GitHub issuer was accepted")
 	}
 }
 

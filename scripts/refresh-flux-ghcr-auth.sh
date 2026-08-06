@@ -925,6 +925,11 @@ claim_node_cordon_ownership() {
   local resource_version node_uid initial_node_uid
   local attempt=1
   local max_attempts="${CORDON_CLAIM_MAX_ATTEMPTS:-5}"
+  # The re-read below needs its own stderr sink. Pointed at result_file it would
+  # succeed, write nothing, and truncate the conflict output that explains why
+  # the claim was refused — leaving the operator a bare refusal with no cause in
+  # exactly the case that matters most, a concurrent actor changing the node.
+  local reread_error_file="${result_file}.reread"
 
   initial_node_uid="$(jq -er '.metadata.uid' "${state_file}")"
 
@@ -944,7 +949,17 @@ claim_node_cordon_ownership() {
       --context "${KUBE_CONTEXT}" \
       get node "${node_name}" \
       --output json \
-      >"${state_file}" 2>"${result_file}"; then
+      >"${state_file}" 2>"${reread_error_file}"; then
+      # A failed re-read is now the actionable cause, so it replaces the claim
+      # conflict in the emitted output. The redirection truncates result_file
+      # before cat runs, so a failed copy would leave it EMPTY -- and
+      # emit_safe_operation_output skips an empty file entirely, which is the
+      # very silence this block exists to prevent. Fall back to a deterministic
+      # non-empty line instead of discarding the failure.
+      if ! cat "${reread_error_file}" >"${result_file}" 2>/dev/null; then
+        echo "node re-read failed; its diagnostic could not be read" \
+          >"${result_file}"
+      fi
       break
     fi
 
@@ -957,6 +972,7 @@ claim_node_cordon_ownership() {
     attempt=$((attempt + 1))
   done
 
+  rm -f "${reread_error_file}"
   echo "::error::Could not atomically claim and cordon Talos node ${node_name}; refusing to drain it."
   emit_safe_operation_output "cordon-claim" "${result_file}"
   return 1
