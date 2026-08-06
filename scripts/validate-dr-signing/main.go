@@ -37,6 +37,11 @@ import (
 // DR-published artifact.
 const drIdentitySubject = `^https://github\.com/devantler-tech/platform/\.github/workflows/dr-rebuild\.yaml@refs/heads/main$`
 
+// drIdentityIssuer is the OIDC issuer half of that identity. cosign matches an
+// identity on the issuer/subject PAIR, so a correct subject under a different
+// issuer does not admit the DR signature and must not satisfy this gate.
+const drIdentityIssuer = `^https://token\.actions\.githubusercontent\.com$`
+
 // cdContractGateJob is the cd.yaml job that runs this validator on the
 // direct-push production path. Named once so the wiring check and the workflow
 // cannot drift apart silently.
@@ -238,13 +243,85 @@ func describePublicationStep(step map[string]any, index int) string {
 	return fmt.Sprintf("publication action step %d", index)
 }
 
+// clusterVerifyConfig mirrors only the fragment of the KSail cluster config this
+// gate reads: the cosign allow-list at spec.workload.flux.verify, which is the
+// path KSail renders onto the root OCIRepository. Decoding the exact path is
+// what makes a block sitting anywhere else a failure rather than a pass, because
+// such a block yields zero entries here.
+//
+// Decoding reads the FIRST YAML document only, which is what a KSail cluster
+// config is. A verify block hidden in a later document would therefore yield no
+// entries and FAIL this gate rather than satisfy it — the safe direction, and the
+// same direction every other shape below fails in.
+type clusterVerifyConfig struct {
+	Spec struct {
+		Workload struct {
+			Flux struct {
+				Verify struct {
+					MatchOIDCIdentity []struct {
+						Issuer  string `yaml:"issuer"`
+						Subject string `yaml:"subject"`
+					} `yaml:"matchOIDCIdentity"`
+				} `yaml:"verify"`
+			} `yaml:"flux"`
+		} `yaml:"workload"`
+	} `yaml:"spec"`
+}
+
+// validateVerifyAllowList checks that the cluster's cosign allow-list actually
+// admits the DR rebuild identity.
+//
+// 🔴 THE CONFIG IS PARSED, NOT SCANNED, for the same reason validateCDWiring
+// parses workflows rather than scanning them — this is the config half of that
+// same correction. Four ways a text scan says "allowed" about an allow-list that
+// is not in effect, each reproduced as an ablation in the tests:
+//
+//  1. The identity appears in a COMMENT. A comment has no effect on the cluster,
+//     so the gate certifies an allow-list that does not exist. Measured on the
+//     scanning version: removing the real matcher and re-adding the identical
+//     regex as `# …` returned "contract passed", exit 0.
+//  2. The whole verify block sits at a path KSail DISCARDS — spec.cluster.verify
+//     is exactly the #2627 outage. The bytes are in the file, so a scan finds
+//     them; KSail never renders them onto the OCIRepository.
+//  3. A subject that merely CONTAINS this identity satisfies a substring match,
+//     and that direction is the dangerous one: `^dr$|^attacker$` contains the DR
+//     identity while also admitting a second signer.
+//  4. The right subject under the WRONG ISSUER. cosign matches on the
+//     issuer/subject pair, so such an entry does not admit the DR signature — but
+//     a scan looking only for the subject line accepts it.
+//
+// An allow-list entry that is inert, discarded, over-broad, or issued by someone
+// else does not make a DR-published artifact verifiable, which is the one failure
+// that is unrecoverable by hand during an incident.
 func validateVerifyAllowList(config string) error {
-	if !containsLine(config, drIdentitySubject) {
-		return errors.New(
-			"cosign matchOIDCIdentity does not allow the DR rebuild identity, so a DR-published artifact stays unverifiable",
+	var parsed clusterVerifyConfig
+	if err := yaml.Unmarshal([]byte(config), &parsed); err != nil {
+		return fmt.Errorf(
+			"cluster config does not parse, so its verification allow-list cannot be established: %w", err,
 		)
 	}
-	return nil
+
+	entries := parsed.Spec.Workload.Flux.Verify.MatchOIDCIdentity
+	if len(entries) == 0 {
+		return errors.New(
+			"no cosign matchOIDCIdentity entries at spec.workload.flux.verify, the path KSail renders onto the root " +
+				"OCIRepository, so a DR-published artifact stays unverifiable; a verify block at any other path " +
+				"(spec.cluster.verify in particular) is discarded and does not count",
+		)
+	}
+
+	for _, entry := range entries {
+		if entry.Issuer == drIdentityIssuer && entry.Subject == drIdentitySubject {
+			return nil
+		}
+	}
+
+	return fmt.Errorf(
+		"cosign matchOIDCIdentity at spec.workload.flux.verify has %d entries but none is exactly the DR rebuild "+
+			"identity, so a DR-published artifact stays unverifiable; add an entry with issuer %s and subject %s "+
+			"(both compared exactly — a wider regex containing this one is not accepted)",
+		len(entries), drIdentityIssuer, drIdentitySubject,
+	)
 }
 
 // validateCDWiring checks that the direct-push production path cannot deploy

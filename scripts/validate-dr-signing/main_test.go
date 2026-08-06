@@ -1020,6 +1020,96 @@ func TestVerifyAllowListRejectsAMissingDRIdentity(t *testing.T) {
 	}
 }
 
+// allowListConfig builds a minimal cluster config carrying one matchOIDCIdentity
+// entry at the given dotted path, so the path tests below differ in exactly one
+// variable: where the verify block sits.
+func allowListConfig(path string, issuer string, subject string) string {
+	var builder strings.Builder
+	builder.WriteString("apiVersion: ksail.io/v1alpha1\nkind: Cluster\n")
+	indent := ""
+	for _, key := range strings.Split(path, ".") {
+		builder.WriteString(indent + key + ":\n")
+		indent += "  "
+	}
+	builder.WriteString(indent + "provider: cosign\n")
+	builder.WriteString(indent + "matchOIDCIdentity:\n")
+	builder.WriteString(indent + "  - issuer: '" + issuer + "'\n")
+	builder.WriteString(indent + "    subject: '" + subject + "'\n")
+	return builder.String()
+}
+
+// This is the positive control for the three path/shape ablations that follow.
+// Without it, any of them could pass merely because the synthetic YAML is
+// malformed — a rejection for the wrong reason is indistinguishable from a
+// rejection for the right one.
+func TestVerifyAllowListAcceptsTheDRIdentityAtThePathKSailReads(t *testing.T) {
+	t.Parallel()
+
+	config := allowListConfig("spec.workload.flux.verify", drIdentityIssuer, drIdentitySubject)
+	if err := validateVerifyAllowList(config); err != nil {
+		t.Fatalf("the DR identity at the path KSail reads was rejected: %v", err)
+	}
+}
+
+// The bypass #2945 measured: a comment has no effect on the cluster, so a gate
+// satisfied by one certifies an allow-list that is not in effect.
+func TestVerifyAllowListRejectsACommentedDRIdentity(t *testing.T) {
+	t.Parallel()
+
+	config := repoFile(t, "ksail.prod.yaml")
+	removed := strings.ReplaceAll(config, drIdentitySubject, `^https://example\.invalid$`)
+	if removed == config {
+		t.Fatal("ablation changed nothing — the DR identity is not present to remove")
+	}
+	bypassed := removed + "\n# " + drIdentitySubject + "\n"
+	if err := validateVerifyAllowList(bypassed); err == nil {
+		t.Fatal("a commented-out DR identity was accepted as an allow-list entry")
+	}
+}
+
+// The second shape #2945 records: the whole block at a path KSail discards.
+// spec.cluster.verify is exactly the #2627 outage.
+func TestVerifyAllowListRejectsAVerifyBlockAtAPathKSailDiscards(t *testing.T) {
+	t.Parallel()
+
+	config := allowListConfig("spec.cluster.verify", drIdentityIssuer, drIdentitySubject)
+	err := validateVerifyAllowList(config)
+	if err == nil {
+		t.Fatal("a verify block at spec.cluster.verify — a path KSail discards — was accepted")
+	}
+	// Assert WHICH failure this is. Without this the test would also pass if the
+	// synthetic config were merely malformed, which would prove nothing about the
+	// path being discarded.
+	if !strings.Contains(err.Error(), "no cosign matchOIDCIdentity entries") {
+		t.Fatalf("rejected for the wrong reason — expected zero entries at the read path, got: %v", err)
+	}
+}
+
+// A substring match is blind in the LENGTHENING direction, and that direction is
+// dangerous here: `^dr$|^evil$` contains the DR identity and also allows a
+// second signer.
+func TestVerifyAllowListRejectsASubjectThatMerelyContainsTheDRIdentity(t *testing.T) {
+	t.Parallel()
+
+	widened := drIdentitySubject + `|^https://github\.com/attacker/repo/\.github/workflows/x\.yaml@refs/heads/main$`
+	config := allowListConfig("spec.workload.flux.verify", drIdentityIssuer, widened)
+	if err := validateVerifyAllowList(config); err == nil {
+		t.Fatal("a widened subject regex that merely contains the DR identity was accepted")
+	}
+}
+
+// An OIDC identity is the issuer/subject PAIR. A correct subject under a
+// different issuer does not match the DR signature, so it must not satisfy the
+// gate either.
+func TestVerifyAllowListRejectsTheDRSubjectUnderTheWrongIssuer(t *testing.T) {
+	t.Parallel()
+
+	config := allowListConfig("spec.workload.flux.verify", `^https://accounts\.google\.com$`, drIdentitySubject)
+	if err := validateVerifyAllowList(config); err == nil {
+		t.Fatal("the DR subject under a non-GitHub issuer was accepted")
+	}
+}
+
 func TestRunReportsSuccessAndFailure(t *testing.T) {
 	t.Parallel()
 
