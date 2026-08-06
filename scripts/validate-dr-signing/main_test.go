@@ -784,6 +784,20 @@ func TestParsedHelpersFailClosedOnShapesTheyCannotRead(t *testing.T) {
 	}
 }
 
+// drPublisherStep is the DR rebuild's publisher step, byte-exact. The ablations
+// below replace this whole block so each one MOVES the mechanism rather than
+// deleting it: the text the old scanning check looked for survives somewhere the
+// workflow does not execute it, which is the only shape that separates a scan
+// from a parse. An ablation that merely deleted the step would be refused by
+// both implementations and would prove nothing.
+const drPublisherStep = `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        uses: ./.github/actions/deploy-prod/publish-platform-manifests
+        with:
+          ghcr-token: ${{ secrets.GHCR_TOKEN }}
+          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+`
+
 func TestDRWorkflowContractRejectsEachAblation(t *testing.T) {
 	t.Parallel()
 
@@ -810,10 +824,92 @@ func TestDRWorkflowContractRejectsEachAblation(t *testing.T) {
 			wantErr: "attestations: write",
 		},
 		{
+			name:    "a permission granted as read does not authorise the transaction",
+			old:     "      packages: write # push OCI artifacts to GHCR\n",
+			new:     "      packages: read # push OCI artifacts to GHCR\n",
+			wantErr: "packages: write",
+		},
+		{
 			name:    "without the shared action DR can drift from normal deploy",
 			old:     "uses: ./.github/actions/deploy-prod/publish-platform-manifests",
 			new:     "uses: ./.github/actions/other-publisher",
 			wantErr: "shared publication action",
+		},
+		{
+			name: "the publisher text survives in a COMMENT while another action runs",
+			old:  drPublisherStep,
+			new: `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        # uses: ./.github/actions/deploy-prod/publish-platform-manifests
+        uses: ./.github/actions/other-publisher
+        with:
+          ghcr-token: ${{ secrets.GHCR_TOKEN }}
+          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+`,
+			wantErr: "shared publication action",
+		},
+		{
+			name: "the publisher text survives in a BLOCK SCALAR while nothing invokes it",
+			old:  drPublisherStep,
+			new: `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        run: |
+          echo "uses: ./.github/actions/deploy-prod/publish-platform-manifests"
+          echo "ghcr-token: ${{ secrets.GHCR_TOKEN }}"
+          echo "hcloud-token: ${{ secrets.HCLOUD_TOKEN }}"
+`,
+			wantErr: "shared publication action",
+		},
+		{
+			name: "credentials named on a DIFFERENT step never reach the publisher",
+			old:  drPublisherStep,
+			new: `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        uses: ./.github/actions/deploy-prod/publish-platform-manifests
+
+      - name: 🔑 Unrelated step that merely names the credentials
+        run: |
+          echo "ghcr-token: ${{ secrets.GHCR_TOKEN }}"
+          echo "hcloud-token: ${{ secrets.HCLOUD_TOKEN }}"
+`,
+			wantErr: "publication credentials",
+		},
+		{
+			name: "one credential present and the other missing is still unpublishable",
+			old:  drPublisherStep,
+			new: `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        uses: ./.github/actions/deploy-prod/publish-platform-manifests
+        with:
+          ghcr-token: ${{ secrets.GHCR_TOKEN }}
+`,
+			wantErr: "hcloud-token",
+		},
+		{
+			name: "a SKIPPED publisher step leaves the workflow reading as correct",
+			old:  drPublisherStep,
+			new: `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        if: false
+        uses: ./.github/actions/deploy-prod/publish-platform-manifests
+        with:
+          ghcr-token: ${{ secrets.GHCR_TOKEN }}
+          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+`,
+			wantErr: "declares a condition",
+		},
+		{
+			name: "a FAILURE-SUPPRESSED publisher step discards its own verdict",
+			old:  drPublisherStep,
+			new: `      - name: 📦 Publish evidenced manifests to GHCR
+        id: publish_platform_manifest
+        continue-on-error: true
+        uses: ./.github/actions/deploy-prod/publish-platform-manifests
+        with:
+          ghcr-token: ${{ secrets.GHCR_TOKEN }}
+          hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
+`,
+			wantErr: "continue-on-error",
 		},
 		{
 			name:    "a renamed rebuild job hides the whole contract",
@@ -829,6 +925,74 @@ func TestDRWorkflowContractRejectsEachAblation(t *testing.T) {
 			ablated := strings.ReplaceAll(workflow, testCase.old, testCase.new)
 			if ablated == workflow {
 				t.Fatalf("ablation changed nothing — the control does not target a real line")
+			}
+			err := validateDRWorkflow(ablated)
+			if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {
+				t.Fatalf("wrong result: got %v, want error mentioning %q", err, testCase.wantErr)
+			}
+		})
+	}
+}
+
+// TestDRPermissionsAreReadFromTheParsedGrantNotItsComment pins the direction the
+// scanning check got wrong in the SAFE-looking way: it compared each permission
+// against a whole line INCLUDING its trailing comment, so rewording the comment
+// broke the gate while the grant itself was untouched. A contract that fails on
+// a documentation edit trains people to weaken it.
+func TestDRPermissionsAreReadFromTheParsedGrantNotItsComment(t *testing.T) {
+	t.Parallel()
+
+	workflow := repoFile(t, ".github/workflows/dr-rebuild.yaml")
+	reworded := strings.ReplaceAll(
+		workflow,
+		"      id-token: write # keyless cosign signing (Fulcio OIDC)",
+		"      id-token: write # mints the Fulcio certificate for keyless signing",
+	)
+	if reworded == workflow {
+		t.Fatal("ablation changed nothing — the control does not target a real line")
+	}
+	if err := validateDRWorkflow(reworded); err != nil {
+		t.Fatalf("rewording a permission's comment must not break the contract: %v", err)
+	}
+}
+
+// TestDRWorkflowFailsClosedOnShapesItCannotRead covers the shapes a parser can
+// meet that a scanner never did. Each must be REFUSED rather than skipped: this
+// decides whether a disaster-recovery publish is trusted, so a grant this cannot
+// read must not fall through to accepted.
+func TestDRWorkflowFailsClosedOnShapesItCannotRead(t *testing.T) {
+	t.Parallel()
+
+	workflow := repoFile(t, ".github/workflows/dr-rebuild.yaml")
+	for _, testCase := range []struct {
+		name    string
+		old     string
+		new     string
+		wantErr string
+	}{
+		{
+			name: "permissions collapsed to a blanket scalar names no specific grant",
+			old: `    permissions:
+      contents: read # checkout repository
+      packages: write # push OCI artifacts to GHCR
+      id-token: write # keyless cosign signing (Fulcio OIDC)
+      attestations: write # write SBOM + SLSA provenance attestations
+`,
+			new:     "    permissions: write-all\n",
+			wantErr: "permissions",
+		},
+		{
+			name:    "a workflow that does not parse cannot establish anything",
+			old:     "\n  rebuild:\n",
+			new:     "\n  rebuild:\n    : : :\n",
+			wantErr: "does not parse",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			ablated := strings.ReplaceAll(workflow, testCase.old, testCase.new)
+			if ablated == workflow {
+				t.Fatal("ablation changed nothing — the control does not target a real line")
 			}
 			err := validateDRWorkflow(ablated)
 			if err == nil || !strings.Contains(err.Error(), testCase.wantErr) {

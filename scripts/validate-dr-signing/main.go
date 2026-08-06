@@ -97,37 +97,164 @@ const (
 	validatorCommand      = "go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml"
 )
 
+// drRebuildJob is the dr-rebuild.yaml job that reaches production.
+const drRebuildJob = "rebuild"
+
+// drRequiredPermission is a job-level grant the rebuild job must carry, together
+// with what stops working without it.
+type drRequiredPermission struct {
+	name string
+	// consequence completes "so …", naming what the DR rebuild cannot do.
+	consequence string
+}
+
+// drRequiredPermissions are the three write grants the publication transaction
+// needs. Matched on the PARSED key and value, so the trailing comment on each
+// line is documentation rather than part of the contract.
+var drRequiredPermissions = []drRequiredPermission{
+	{"id-token", "keyless cosign signing cannot mint a Fulcio certificate"},
+	{"packages", "the publication transaction cannot update GHCR"},
+	{"attestations", "the SBOM and provenance cannot be recorded"},
+}
+
+// drPublisherCredential is an input the publisher step must receive, and the
+// exact expression it must receive it from.
+type drPublisherCredential struct {
+	input      string
+	expression string
+}
+
+// drPublisherCredentials are the two secrets the shared publication action needs.
+// Asserted on the publisher STEP's `with` mapping, not anywhere in the job.
+var drPublisherCredentials = []drPublisherCredential{
+	{"ghcr-token", "${{ secrets.GHCR_TOKEN }}"},
+	{"hcloud-token", "${{ secrets.HCLOUD_TOKEN }}"},
+}
+
+// validateDRWorkflow checks that the disaster-recovery route publishes through
+// the same checked action as every other route, with the grants and credentials
+// that action needs.
+//
+// 🔴 THE WORKFLOW IS PARSED, NOT SCANNED — the third route, and the last one to
+// be converted. The two production routes were parsed in #2939; this one still
+// asked `containsLine`, which is satisfied by the expected text appearing
+// ANYWHERE in the job's text. Five ways that said "wired" about a DR route that
+// was not, each reproduced as an ablation and each returning nil against the
+// scanning version:
+//
+//  1. The `uses:` line survives as a COMMENT while the step invokes a different
+//     action. A comment runs nothing, so the gate certified a publisher that is
+//     not called.
+//  2. The same text inside a BLOCK SCALAR — an `echo` in a run block — with no
+//     `uses:` step anywhere.
+//  3. The credentials named on a DIFFERENT step. A scan over the job text cannot
+//     tell which step receives them, so the publisher could be invoked with none.
+//  4. The publisher step carries `if: false`, so it never runs while the workflow
+//     reads as correct.
+//  5. The publisher step carries `continue-on-error: true`, so it runs, fails,
+//     and the rebuild continues to promote the mutable tag anyway.
+//
+// (4) and (5) are the requireEnforcedStep class this file has now fixed at six
+// sites; matching and enforcing are inseparable there for exactly this reason.
+// A DR publish that silently skipped its evidence is unrecoverable by hand at
+// the one moment nobody can afford to debug it.
 func validateDRWorkflow(workflow string) error {
-	job, ok := extractJob(workflow, "  rebuild:")
+	document, err := decodeWorkflow(workflow)
+	if err != nil {
+		return fmt.Errorf(
+			"disaster-recovery workflow does not parse, so its publication wiring cannot be established: %w", err,
+		)
+	}
+	jobs, ok := document["jobs"].(map[string]any)
+	if !ok {
+		return errors.New("disaster-recovery workflow has no jobs mapping")
+	}
+	job, ok := jobs[drRebuildJob].(map[string]any)
 	if !ok {
 		return errors.New("missing rebuild job")
 	}
 
-	if !containsExactLine(job, "      id-token: write # keyless cosign signing (Fulcio OIDC)") {
-		return errors.New(
-			"rebuild job is missing `id-token: write`, so keyless cosign signing cannot mint a Fulcio certificate",
-		)
+	if err := requireJobPermissions(job); err != nil {
+		return err
 	}
-	if !containsExactLine(job, "      packages: write # push OCI artifacts to GHCR") {
-		return errors.New(
-			"rebuild job is missing `packages: write`, so the publication transaction cannot update GHCR",
-		)
-	}
-	if !containsExactLine(job, "      attestations: write # write SBOM + SLSA provenance attestations") {
-		return errors.New(
-			"rebuild job is missing `attestations: write`, so the SBOM and provenance cannot be recorded",
-		)
-	}
-	if !containsLine(job, "uses: ./.github/actions/deploy-prod/publish-platform-manifests") {
-		return errors.New(
+
+	// The rebuild JOB legitimately carries `if:` — the supersession gate — so the
+	// job-level condition is deliberately NOT refused here, unlike cd.yaml's
+	// deploy-prod. What must hold is that the publisher STEP is neither skipped
+	// nor failure-suppressed, which is requireEnforcedStep's whole contract.
+	step, err := requireEnforcedStep(
+		job, usesAction(nestedPublisherAction),
+		errors.New(
 			"rebuild job must use the shared publication action so normal and disaster-recovery delivery cannot drift",
+		),
+		"the publisher step in the DR rebuild job",
+	)
+	if err != nil {
+		return err
+	}
+
+	return requirePublisherCredentials(step)
+}
+
+// requireJobPermissions proves the rebuild job grants each required permission
+// as `write`, read from the parsed mapping.
+//
+// A `permissions` value this cannot read is REFUSED rather than skipped, for the
+// reason every other shape check in this file gives: it decides whether a
+// disaster-recovery publish is trusted, so a grant that cannot be established
+// must not fall through to accepted. That includes the blanket `write-all`
+// scalar — which does grant enough, but names none of these three, so a later
+// narrowing could drop one silently while this check kept passing.
+func requireJobPermissions(job map[string]any) error {
+	raw, present := job["permissions"]
+	if !present {
+		return errors.New(
+			"rebuild job declares no permissions, so it grants none of the writes the publication transaction needs",
 		)
 	}
-	if !containsLine(job, "ghcr-token: ${{ secrets.GHCR_TOKEN }}") ||
-		!containsLine(job, "hcloud-token: ${{ secrets.HCLOUD_TOKEN }}") {
-		return errors.New("rebuild job does not pass the required publication credentials to the shared action")
+	permissions, ok := raw.(map[string]any)
+	if !ok {
+		return fmt.Errorf(
+			"rebuild job declares permissions in a shape this check cannot read (%v); each of %s must be granted "+
+				"explicitly as `write`, so a later narrowing cannot drop one silently",
+			raw, drRequiredPermissionNames(),
+		)
+	}
+	for _, required := range drRequiredPermissions {
+		if value, _ := permissions[required.name].(string); strings.TrimSpace(value) != "write" {
+			return fmt.Errorf(
+				"rebuild job does not grant `%s: write`, so %s",
+				required.name, required.consequence,
+			)
+		}
 	}
 	return nil
+}
+
+// requirePublisherCredentials proves the publisher step itself receives both
+// secrets. Asserted on the step's own `with` mapping: the scanning version read
+// them from anywhere in the job, so credentials on an unrelated step satisfied
+// it while the publisher was invoked with none.
+func requirePublisherCredentials(step map[string]any) error {
+	with, _ := step["with"].(map[string]any)
+	for _, credential := range drPublisherCredentials {
+		if value, _ := with[credential.input].(string); strings.TrimSpace(value) != credential.expression {
+			return fmt.Errorf(
+				"the publisher step in the DR rebuild job does not pass %s: %s, so it cannot complete the "+
+					"publication credentials the shared action requires",
+				credential.input, credential.expression,
+			)
+		}
+	}
+	return nil
+}
+
+func drRequiredPermissionNames() string {
+	names := make([]string, 0, len(drRequiredPermissions))
+	for _, required := range drRequiredPermissions {
+		names = append(names, required.name)
+	}
+	return strings.Join(names, ", ")
 }
 
 func validatePublicationAction(action string) error {
@@ -985,42 +1112,6 @@ func stringListContains(value any, want string) bool {
 			if name, ok := item.(string); ok && strings.TrimSpace(name) == want {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-func extractJob(workflow string, header string) (string, bool) {
-	lines := strings.Split(workflow, "\n")
-	start := -1
-	for i, line := range lines {
-		if line == header {
-			start = i + 1
-			break
-		}
-	}
-	if start < 0 {
-		return "", false
-	}
-
-	end := len(lines)
-	for i := start; i < len(lines); i++ {
-		line := lines[i]
-		if strings.HasPrefix(line, "  ") &&
-			!strings.HasPrefix(line, "   ") &&
-			strings.HasSuffix(line, ":") {
-			end = i
-			break
-		}
-	}
-
-	return strings.Join(lines[start:end], "\n"), true
-}
-
-func containsExactLine(block string, want string) bool {
-	for _, line := range strings.Split(block, "\n") {
-		if line == want {
-			return true
 		}
 	}
 	return false
