@@ -196,10 +196,20 @@ spec:
             path: /spec/verify
             value:
               provider: cosign
+              # 🔴 EXACTLY ONE ENTRY. cosign's keyless verification rejects a
+              # multi-entry matchOIDCIdentity outright — "unsupported: multiple
+              # identities are not supported at this time" — and it fails CLOSED
+              # for the whole set, so a list verifies nothing while looking
+              # stricter than a single matcher. Flux documents the field as an
+              # OR'd list and the schema accepts one, so a list is both
+              # docs-valid and schema-valid and still refuses every artifact.
+              # Alternation therefore lives INSIDE the subject regex.
+              # The three trusted signers, in order: ci.yaml (automatic prod
+              # deploy, signs under the merge-queue ref), cd.yaml (manual
+              # workflow_dispatch from main), dr-rebuild.yaml (disaster recovery
+              # from main, which republishes this same artifact).
+              # scripts/validate-flux-verify fails the build on any list longer
+              # than one, so this cannot regress silently.
               matchOIDCIdentity:
                 - issuer: '^https://token\.actions\.githubusercontent\.com$'
-                  subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/ci\.yaml@refs/heads/gh-readonly-queue/main/.+$'
-                - issuer: '^https://token\.actions\.githubusercontent\.com$'
-                  subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/cd\.yaml@refs/heads/main$'
-                - issuer: '^https://token\.actions\.githubusercontent\.com$'
-                  subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/dr-rebuild\.yaml@refs/heads/main$'
+                  subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/(ci\.yaml@refs/heads/gh-readonly-queue/main/.+|(cd|dr-rebuild)\.yaml@refs/heads/main)$'

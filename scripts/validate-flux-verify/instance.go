@@ -210,6 +210,22 @@ func checkVerifyValue(value any) (map[string]any, error) {
 		)
 	}
 
+	// Asserted here as well as in the cluster-config half, rather than relying on
+	// checkNoDrift to notice. Drift-checking makes the two halves EQUAL; it does
+	// not make either CORRECT, so two identically-broken copies pass it. This half
+	// is also the one that actually reaches a running cluster, so it is the worse
+	// of the two to leave covered only transitively.
+	if count := oidcMatcherCount(block["matchOIDCIdentity"]); count > 1 {
+		return nil, fmt.Errorf(
+			"the %s patch has %d matchOIDCIdentity entries, and cosign supports exactly ONE: keyless "+
+				"verification rejects a multi-entry matcher outright (\"unsupported: multiple identities "+
+				"are not supported at this time\") and fails CLOSED for the whole set, so this patch would "+
+				"apply a control that verifies NOTHING to the running cluster — collapse the %d subjects "+
+				"into one entry using regex alternation inside the subject",
+			verifyOpPath, count, count,
+		)
+	}
+
 	return block, nil
 }
 

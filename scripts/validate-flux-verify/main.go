@@ -109,6 +109,32 @@ func namesSecret(value any) bool {
 	return strings.TrimSpace(name) != ""
 }
 
+// oidcMatcherCount reports how many entries the matchOIDCIdentity list carries,
+// and 0 for anything that is not a list.
+//
+// 🔴 MORE THAN ONE ENTRY VERIFIES NOTHING. cosign's keyless path rejects a
+// multi-entry matcher outright — "unsupported: multiple identities are not
+// supported at this time" — and it fails CLOSED for the entire set rather than
+// falling back to the first entry. Flux documents the field as an OR'd list and
+// the CRD schema accepts one, so such a block is docs-valid, schema-valid,
+// present at the right path, enabled, and constrains a signer — it passes every
+// other check in this file while refusing every artifact.
+//
+// That is not hypothetical: a three-entry matcher on the root OCIRepository
+// halted all GitOps delivery on prod for hours, and the config was green in CI
+// throughout. This count is the check that would have caught it, which is why
+// it is asserted separately from hasUsableOIDCMatcher below — that one asks
+// whether ANY entry is usable, and is deliberately tolerant of extra entries.
+// Tolerance is right for judging usability and wrong for judging arity.
+func oidcMatcherCount(value any) int {
+	entries, ok := value.([]any)
+	if !ok {
+		return 0
+	}
+
+	return len(entries)
+}
+
 // hasUsableOIDCMatcher reports whether at least ONE matcher entry pins both an
 // issuer and a subject.
 //
@@ -355,6 +381,18 @@ func configVerifyBlock(config []byte) (map[string]any, error) {
 				"entry with a non-blank issuer and subject, or a secretRef naming a key Secret "+
 				"(those are the only two KSail reads — a trustedRootSecretRef is dropped in silence)",
 			strings.Join(readPath, "."),
+		)
+	}
+
+	if count := oidcMatcherCount(block["matchOIDCIdentity"]); count > 1 {
+		return nil, fmt.Errorf(
+			"%s.matchOIDCIdentity has %d entries, and cosign supports exactly ONE: keyless "+
+				"verification rejects a multi-entry matcher outright (\"unsupported: multiple "+
+				"identities are not supported at this time\") and fails CLOSED for the whole set, "+
+				"so the block verifies NOTHING while reading as stricter than a single matcher — "+
+				"collapse the %d subjects into one entry using regex alternation inside the subject, "+
+				"e.g. '^https://github\\.com/org/repo/\\.github/workflows/(a|b)\\.yaml@refs/heads/main$'",
+			strings.Join(readPath, "."), count, count,
 		)
 	}
 

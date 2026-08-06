@@ -185,6 +185,45 @@ spec:
 			wantErr: "removes it again",
 		},
 		{
+			// 🔴 THE SHAPE THAT HALTED PROD, pinned on the half that actually
+			// reaches a running cluster. Three individually well-formed entries:
+			// the patch targets correctly, the provider is cosign, and a signer is
+			// constrained — so every other assertion in this file passes. cosign
+			// still refuses every artifact, because a multi-entry matcher fails
+			// CLOSED for the whole set.
+			//
+			// Asserted here as well as in the cluster-config half deliberately.
+			// checkNoDrift only makes the two halves EQUAL, so two identically
+			// broken copies satisfy it; equality is not correctness.
+			name: "a multi-entry matchOIDCIdentity is rejected",
+			manifest: `
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  kustomize:
+    patches:
+      - target:
+          kind: OCIRepository
+          name: flux-system
+          namespace: flux-system
+        patch: |
+          - op: add
+            path: /spec/verify
+            value:
+              provider: cosign
+              matchOIDCIdentity:
+                - issuer: '^https://token\.actions\.githubusercontent\.com$'
+                  subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/ci\.yaml@refs/heads/gh-readonly-queue/main/.+$'
+                - issuer: '^https://token\.actions\.githubusercontent\.com$'
+                  subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/cd\.yaml@refs/heads/main$'
+                - issuer: '^https://token\.actions\.githubusercontent\.com$'
+                  subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/dr-rebuild\.yaml@refs/heads/main$'
+`,
+			wantErr: "supports exactly ONE",
+		},
+		{
 			// add-then-remove ACROSS two patches on the same target: the first
 			// write says verified, the effective state is not.
 			name: "a later patch removing the field is rejected",

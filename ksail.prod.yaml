@@ -227,22 +227,31 @@ spec:
       # pull layer plus the Kyverno image-verification policy.
       verify:
         provider: cosign
+        # 🔴 EXACTLY ONE ENTRY. cosign's keyless verification rejects a
+        # multi-entry matchOIDCIdentity outright — "unsupported: multiple
+        # identities are not supported at this time" — and fails CLOSED for the
+        # whole set, so a list verifies nothing while looking stricter than a
+        # single matcher. Flux documents the field as an OR'd list and the schema
+        # accepts one, so a list is both docs-valid and schema-valid and still
+        # refuses every artifact. Alternation lives INSIDE the subject regex.
+        #
+        # This is the BOOTSTRAP and DISASTER-RECOVERY path, so a broken matcher
+        # here stays dormant until the moment it is least affordable: a DR
+        # rebuild would produce a correctly-signed artifact that Flux then
+        # refuses, with no cluster left to work around it from.
+        #
+        # The three trusted signers, alternated in the subject below:
+        #   ci.yaml          automatic prod deploy; deploy-prod runs on
+        #                    merge_group, signing under the merge-queue ref
+        #                    refs/heads/gh-readonly-queue/main/<pr>
+        #   cd.yaml          manual prod deploy; workflow_dispatch from main
+        #   dr-rebuild.yaml  disaster recovery; workflow_dispatch from main,
+        #                    republishing this same artifact
+        # cd and dr-rebuild are both pinned to refs/heads/main, so a run
+        # dispatched from any other ref is not trusted.
         matchOIDCIdentity:
-          # Automatic prod deploy: ci.yaml deploy-prod runs on merge_group, which
-          # signs under the merge-queue ref refs/heads/gh-readonly-queue/main/<pr>.
           - issuer: '^https://token\.actions\.githubusercontent\.com$'
-            subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/ci\.yaml@refs/heads/gh-readonly-queue/main/.+$'
-          # Manual prod deploy: cd.yaml is workflow_dispatch, run from main.
-          - issuer: '^https://token\.actions\.githubusercontent\.com$'
-            subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/cd\.yaml@refs/heads/main$'
-          # Disaster recovery: dr-rebuild.yaml is workflow_dispatch, run from main,
-          # and republishes this same artifact while rebuilding prod from zero.
-          # Without this entry a recovery produces a correctly-signed artifact that
-          # Flux still refuses — the one situation where a manual workaround is
-          # least available. Pinned to refs/heads/main, like cd.yaml above, so a DR
-          # run dispatched from any other ref is not trusted.
-          - issuer: '^https://token\.actions\.githubusercontent\.com$'
-            subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/dr-rebuild\.yaml@refs/heads/main$'
+            subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/(ci\.yaml@refs/heads/gh-readonly-queue/main/.+|(cd|dr-rebuild)\.yaml@refs/heads/main)$'
     validation:
       # Parity with ksail.yaml: the prod kustomization pulls the same shared
       # bases (Coroot + Flagger), so `ksail --config ksail.prod.yaml workload
