@@ -248,6 +248,11 @@ func describePublicationStep(step map[string]any, index int) string {
 // path KSail renders onto the root OCIRepository. Decoding the exact path is
 // what makes a block sitting anywhere else a failure rather than a pass, because
 // such a block yields zero entries here.
+//
+// Decoding reads the FIRST YAML document only, which is what a KSail cluster
+// config is. A verify block hidden in a later document would therefore yield no
+// entries and FAIL this gate rather than satisfy it — the safe direction, and the
+// same direction every other shape below fails in.
 type clusterVerifyConfig struct {
 	Spec struct {
 		Workload struct {

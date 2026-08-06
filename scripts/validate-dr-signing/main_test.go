@@ -1073,8 +1073,15 @@ func TestVerifyAllowListRejectsAVerifyBlockAtAPathKSailDiscards(t *testing.T) {
 	t.Parallel()
 
 	config := allowListConfig("spec.cluster.verify", drIdentityIssuer, drIdentitySubject)
-	if err := validateVerifyAllowList(config); err == nil {
+	err := validateVerifyAllowList(config)
+	if err == nil {
 		t.Fatal("a verify block at spec.cluster.verify — a path KSail discards — was accepted")
+	}
+	// Assert WHICH failure this is. Without this the test would also pass if the
+	// synthetic config were merely malformed, which would prove nothing about the
+	// path being discarded.
+	if !strings.Contains(err.Error(), "no cosign matchOIDCIdentity entries") {
+		t.Fatalf("rejected for the wrong reason — expected zero entries at the read path, got: %v", err)
 	}
 }
 
