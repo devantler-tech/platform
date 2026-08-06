@@ -484,7 +484,7 @@ func TestCDWiringRejectsEachAblation(t *testing.T) {
 		// One level up: the calling job delegates publication wholly to the
 		// shared action, so a writer added beside that delegation reaches the
 		// same tag without entering the checked action at all.
-		"a later step in the direct-push job overwrites latest": func(w, a string) (string, string) {
+		"a step beside the direct-push delegation overwrites latest": func(w, a string) (string, string) {
 			return strings.Replace(
 				w,
 				"      - name: 🚀 Deploy to Production\n",
