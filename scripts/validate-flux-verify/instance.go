@@ -48,6 +48,11 @@ const (
 	rootSourceKind = "OCIRepository"
 	rootSourceName = "flux-system"
 	verifyOpPath   = "/spec/verify"
+
+	// instanceName/instanceNamespace identify the operator instance this platform
+	// actually reconciles; confirmed live as fluxinstance/flux in flux-system.
+	instanceName      = "flux"
+	instanceNamespace = "flux-system"
 )
 
 // writingOps are the JSON-patch operations that PUT a value at a path. `test`
@@ -58,7 +63,9 @@ var writingOps = map[string]bool{"add": true, "replace": true}
 // errNoInstance is returned when the manifest carries no FluxInstance, which
 // means this check was pointed at the wrong file — a failure of the check's own
 // wiring, not of the platform's configuration.
-var errNoInstance = errors.New("no FluxInstance in manifest")
+var errNoInstance = errors.New(
+	"no FluxInstance named flux-system/flux in manifest: this check is pointed at the wrong file, " +
+		"or the deployed instance was renamed")
 
 // validateInstance reports why the FluxInstance does not put an effective
 // verify block on the live root source, or nil when it does.
@@ -89,10 +96,20 @@ func instanceVerifyBlock(manifest []byte) (map[string]any, error) {
 		entries = nil
 	}
 
+	// The state is FOLDED over every operation in declared order, not taken
+	// from the first write.
+	//
+	// A patch may `add` /spec/verify and a later operation — in the same body or
+	// in a later patch on the same target — may `remove` it. Reading the first
+	// write would report a verified platform whose effective state is no
+	// verification at all: the same present-but-inert shape this command exists
+	// to reject, one layer further in. Only the FINAL state is a fact about the
+	// cluster.
 	var (
 		mistargeted []string
 		value       any
-		found       bool
+		present     bool
+		wrote       bool
 	)
 
 	for _, entry := range entries {
@@ -101,25 +118,19 @@ func instanceVerifyBlock(manifest []byte) (map[string]any, error) {
 			continue
 		}
 
-		operation, ok := verifyWrite(patch["patch"])
-		if !ok {
-			continue
-		}
-
+		// Every patch is inspected, so the mistargeted report never depends on
+		// declaration order.
 		if !targetsRootSource(patch["target"]) {
-			mistargeted = append(mistargeted, describeTarget(patch["target"]))
+			if _, _, writes := applyVerifyOps(patch["patch"], nil, false); writes {
+				mistargeted = append(mistargeted, describeTarget(patch["target"]))
+			}
 
 			continue
 		}
 
-		// Deliberately NOT a break: stopping at the first hit would make the
-		// mistargeted report depend on patch ORDER, so the same pair of patches
-		// would be reported or ignored according to which came first. Every
-		// verify patch is inspected, and the first correctly-targeted value is
-		// the one checked.
-		if !found {
-			value, found = operation["value"], true
-		}
+		next, nextPresent, writes := applyVerifyOps(patch["patch"], value, present)
+		value, present = next, nextPresent
+		wrote = wrote || writes
 	}
 
 	// Reported before the missing-patch case, because a mistargeted patch is
@@ -136,7 +147,16 @@ func instanceVerifyBlock(manifest []byte) (map[string]any, error) {
 		)
 	}
 
-	if !found {
+	if !present {
+		if wrote {
+			return nil, fmt.Errorf(
+				"a kustomize patch writes %s on the %s/%s source and a later operation removes it again, "+
+					"so the effective state is NO verification — the block is in the file and absent from "+
+					"the cluster: drop the removing operation",
+				verifyOpPath, rootSourceKind, rootSourceName,
+			)
+		}
+
 		return nil, fmt.Errorf(
 			"no kustomize patch adds %s to the %s/%s source, so the live root source pulls unverified "+
 				"however the cluster config reads (flux-operator owns that resource; a patch is how the "+
@@ -303,37 +323,82 @@ func difference(a, b []string) []string {
 	return only
 }
 
-// findInstance returns the single FluxInstance document. The manifest opens
-// with a comment-only document, which decodes to nil, so selecting by kind
-// rather than by position is what keeps this pointed at the right document.
+// findInstance returns the DEPLOYED FluxInstance, selected by identity.
+//
+// The manifest opens with a comment-only document, which decodes to nil, so
+// selecting by content rather than by position is what keeps this pointed at
+// the right document. Kind alone is not enough: a second FluxInstance carrying
+// a correct verify patch would satisfy every check while the instance that is
+// actually deployed carries none — the check would pass on a resource nobody
+// runs. Only flux-system/flux is the operator instance this platform reconciles
+// (confirmed live), so that is the one identity accepted.
+//
+// A duplicate is refused rather than resolved. Two documents with this identity
+// mean the file no longer says which one wins, and guessing is how a check ends
+// up certifying the copy that is not applied.
 func findInstance(documents []any) (any, error) {
+	var found []any
+
 	for _, document := range documents {
 		mapping, ok := asMapping(document)
 		if !ok {
 			continue
 		}
 
-		if kind, _ := mapping["kind"].(string); kind == "FluxInstance" {
-			return document, nil
+		kind, _ := mapping["kind"].(string)
+		if kind != "FluxInstance" {
+			continue
 		}
+
+		metadata, _ := asMapping(mapping["metadata"])
+		name, _ := metadata["name"].(string)
+		namespace, _ := metadata["namespace"].(string)
+
+		if name != instanceName || namespace != instanceNamespace {
+			continue
+		}
+
+		found = append(found, document)
 	}
 
-	return nil, errNoInstance
+	switch len(found) {
+	case 0:
+		return nil, errNoInstance
+	case 1:
+		return found[0], nil
+	default:
+		return nil, fmt.Errorf(
+			"%d FluxInstance documents named %s/%s: the file does not say which one is applied, "+
+				"so verification cannot be established from it — keep one",
+			len(found), instanceNamespace, instanceName,
+		)
+	}
 }
 
-// verifyWrite returns the operation writing verifyOpPath within one patch body,
-// which flux-operator carries as a STRING holding a JSON6902 op list — so it
-// has to be parsed a second time rather than walked as part of the outer tree.
-func verifyWrite(body any) (map[string]any, bool) {
+// applyVerifyOps folds one patch body's operations over the running
+// verifyOpPath state, in declared order, and reports whether it WROTE that
+// path.
+//
+// flux-operator carries a patch body as a STRING holding a JSON6902 op list, so
+// it has to be parsed a second time rather than walked as part of the outer
+// tree. `add` and `replace` set the value; `remove` clears it; `test` asserts
+// and changes nothing. The third return reports whether an add/replace was
+// applied — deliberately NOT merely whether the path was mentioned. It is what
+// lets the caller tell "configured, then removed" from "never configured": a
+// body holding only a `remove` or a `test` never delivered the control, so it
+// reads as missing rather than as retracted.
+func applyVerifyOps(body, value any, present bool) (any, bool, bool) {
 	text, ok := body.(string)
 	if !ok {
-		return nil, false
+		return value, present, false
 	}
 
 	var operations []any
 	if err := yaml.Unmarshal([]byte(text), &operations); err != nil {
-		return nil, false
+		return value, present, false
 	}
+
+	wrote := false
 
 	for _, item := range operations {
 		operation, ok := asMapping(item)
@@ -346,12 +411,23 @@ func verifyWrite(body any) (map[string]any, bool) {
 			continue
 		}
 
-		if op, _ := operation["op"].(string); writingOps[strings.TrimSpace(op)] {
-			return operation, true
+		switch op := strings.TrimSpace(operationName(operation)); {
+		case writingOps[op]:
+			value, present, wrote = operation["value"], true, true
+		case op == "remove":
+			value, present = nil, false
 		}
 	}
 
-	return nil, false
+	return value, present, wrote
+}
+
+// operationName reads the `op` key, tolerating a non-string so a malformed
+// entry is skipped rather than panicking.
+func operationName(operation map[string]any) string {
+	name, _ := operation["op"].(string)
+
+	return name
 }
 
 // targetsRootSource reports whether a patch target names the root source

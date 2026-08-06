@@ -61,6 +61,9 @@ func TestValidateInstance(t *testing.T) {
 			name: "no verify patch is rejected",
 			manifest: `
 kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
 spec:
   kustomize:
     patches:
@@ -106,6 +109,9 @@ spec:
 			name: "verify patch that constrains no signer is rejected",
 			manifest: `
 kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
 spec:
   kustomize:
     patches:
@@ -120,6 +126,102 @@ spec:
               provider: cosign
 `,
 			wantErr: "constrains no signer",
+		},
+		{
+			// A FluxInstance under another identity is not the one the platform
+			// reconciles, so a correct patch on it certifies nothing.
+			name:     "a FluxInstance under another identity is not accepted",
+			manifest: strings.Replace(goodInstance, "  name: flux\n", "  name: some-other-instance\n", 1),
+			wantErr:  "no FluxInstance",
+		},
+		{
+			// The decoy case, and the reason kind alone is not enough: the
+			// instance that IS deployed carries no verify patch while a second
+			// document does. Selecting by kind would pass this.
+			name: "a decoy instance cannot satisfy the check for the real one",
+			manifest: strings.Replace(goodInstance, "  name: flux\n", "  name: decoy\n", 1) + `
+---
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  kustomize:
+    patches: []
+`,
+			wantErr: "no kustomize patch adds /spec/verify",
+		},
+		{
+			name:     "duplicate FluxInstance documents are rejected",
+			manifest: goodInstance + "\n---" + goodInstance,
+			wantErr:  "does not say which one is applied",
+		},
+		{
+			// add-then-remove WITHIN one patch body.
+			name: "add then remove in one patch body is rejected",
+			manifest: `
+kind: FluxInstance
+metadata:
+  name: flux
+  namespace: flux-system
+spec:
+  kustomize:
+    patches:
+      - target:
+          kind: OCIRepository
+          name: flux-system
+          namespace: flux-system
+        patch: |
+          - op: add
+            path: /spec/verify
+            value:
+              provider: cosign
+              matchOIDCIdentity:
+                - issuer: 'https://example.invalid'
+                  subject: 'https://example.invalid/workflow'
+          - op: remove
+            path: /spec/verify
+`,
+			wantErr: "removes it again",
+		},
+		{
+			// add-then-remove ACROSS two patches on the same target: the first
+			// write says verified, the effective state is not.
+			name: "a later patch removing the field is rejected",
+			manifest: goodInstance + `      - target:
+          kind: OCIRepository
+          name: flux-system
+          namespace: flux-system
+        patch: |
+          - op: remove
+            path: /spec/verify
+`,
+			wantErr: "removes it again",
+		},
+		{
+			// The LAST write wins, so a later replace that constrains nobody is
+			// what gets judged — not the well-formed earlier one.
+			name: "a later replace that constrains no signer is rejected",
+			manifest: goodInstance + `      - target:
+          kind: OCIRepository
+          name: flux-system
+          namespace: flux-system
+        patch: |
+          - op: replace
+            path: /spec/verify
+            value:
+              provider: cosign
+`,
+			wantErr: "constrains no signer",
+		},
+		{
+			// remove-then-add leaves the field PRESENT, so it must pass:
+			// rejecting it would fail a legitimate reset-and-set.
+			name: "remove then add is accepted",
+			manifest: strings.Replace(goodInstance,
+				"          - op: add\n            path: /spec/verify",
+				"          - op: remove\n            path: /spec/verify\n          - op: add\n            path: /spec/verify",
+				1),
 		},
 		{
 			// Mirrors KSail's own Enabled() predicate: a blank provider renders
