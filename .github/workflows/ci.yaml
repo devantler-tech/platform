@@ -110,6 +110,7 @@ jobs:
               - 'scripts/tests/test-cilium-rollout-gate-suppression-signal.sh'
               - 'scripts/wait-for-platform-flux-revision.sh'
               - 'scripts/tests/test-opencost-usage-scraper.sh'
+              - 'scripts/tests/test-crossplane-sync-exporter.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/dr-rebuild-supersession-guard.sh'
@@ -362,6 +363,14 @@ jobs:
         # Render the full component contract so the cAdvisor scrape and its
         # least-privilege delivery path cannot silently disappear.
         run: bash scripts/tests/test-opencost-usage-scraper.sh
+
+      - name: 🔄 Validate Crossplane sync exporter metrics path
+        if: needs.changes.outputs.k8s == 'true'
+        # A wrong GVK, a renamed series, or a scrape target that drifts from the
+        # kube-state-metrics listen address all export nothing — and no series
+        # reads exactly like a fleet with nothing wrong. Schema validation cannot
+        # see any of it, so render the component contract instead.
+        run: bash scripts/tests/test-crossplane-sync-exporter.sh
 
       - name: 🧭 Validate the DR rebuild supersession gate
         if: needs.changes.outputs.k8s == 'true'
