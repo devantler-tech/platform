@@ -33,6 +33,29 @@ require_text() {
   grep -Fq -- "$needle" <<<"${haystack}" || fail "${description}"
 }
 
+# Exact-value assertion. A substring match is wrong for every value below,
+# because the failure being guarded against is a RENAME — and a renamed value is
+# usually a LONGER one (`crossplane` -> `crossplane_mr`), which a substring match
+# accepts. Anchoring to the whole line is what makes the assertion mean what it
+# says.
+require_line() {
+  local haystack="$1"
+  local value="$2"
+  local description="$3"
+  local line
+
+  # Exact string comparison on the trimmed line, deliberately not a regex: every
+  # value here contains `.`, `[`, `-` or `/`, and escaping them for grep is both
+  # error-prone and easy to get subtly wrong in the permissive direction.
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ "${line}" = "${value}" ] && return 0
+  done <<<"${haystack}"
+
+  fail "${description}"
+}
+
 reject_text() {
   local haystack="$1"
   local needle="$2"
@@ -123,23 +146,23 @@ config_map="$(
 
 # Coroot's bundled Prometheus exposes no scrape configuration, so remote-write is
 # the only ingest path into the store the alerting rule will query.
-require_text \
+require_line \
   "${config_map}" \
-  'url: http://coroot-prometheus.observability.svc.cluster.local:9090/api/v1/write' \
+  '- url: http://coroot-prometheus.observability.svc.cluster.local:9090/api/v1/write' \
   'the exporter must remote-write into the Prometheus Coroot queries'
 
 # The GVK is matched exactly by CustomResourceStateMetrics — there is no wildcard
 # and no `categories: managed` selector — so a drifted group or version silently
 # exports nothing at all.
-require_text \
+require_line \
   "${config_map}" \
   'group: repo.github.m.upbound.io' \
   'the exporter must target the GitHub repository managed-resource group'
-require_text \
+require_line \
   "${config_map}" \
   'version: v1alpha1' \
   'the exporter must target the served Repository version'
-require_text \
+require_line \
   "${config_map}" \
   'kind: Repository' \
   'the exporter must target the Repository kind'
@@ -147,37 +170,37 @@ require_text \
 # The emitted series name is metricNamePrefix + name. The scrape config filters on
 # the joined result, so renaming either half without the other drops every series
 # while both files still look individually correct. This assertion is the coupling.
-require_text \
+require_line \
   "${config_map}" \
   'metricNamePrefix: crossplane' \
   'the exported series must carry the crossplane prefix the scrape filter expects'
-require_text \
+require_line \
   "${config_map}" \
-  'name: managed_resource_condition' \
+  '- name: managed_resource_condition' \
   'the exported series must carry the name the scrape filter expects'
-require_text \
+require_line \
   "${config_map}" \
   'regex: crossplane_managed_resource_condition' \
   'the scrape filter must keep exactly the series the exporter emits'
 
 # Ready is exported alongside Synced deliberately: the defect being detected is
 # the PAIR, so a rule cannot express it if the conditions are filtered apart.
-require_text \
+require_line \
   "${config_map}" \
   'path: [status, conditions]' \
   'the exporter must read every condition, not a single hard-coded one'
-require_text \
+require_line \
   "${config_map}" \
   'valueFrom: [status]' \
   'the condition status must supply the gauge value'
-require_text \
+require_line \
   "${config_map}" \
   'condition: [type]' \
   'each series must be labelled with its condition type'
 
 # The agent scrapes kube-state-metrics inside the pod, so this target must stay
 # equal to the kube-state-metrics listen address asserted on the Deployment below.
-require_text \
+require_line \
   "${config_map}" \
   '- 127.0.0.1:8080' \
   'the agent must scrape kube-state-metrics over loopback'
@@ -185,7 +208,7 @@ require_text \
 deployment="$(
   extract_resource Deployment crossplane-sync-exporter <<<"${rendered}"
 )" || fail 'the component must render the exporter Deployment'
-require_text \
+require_line \
   "${deployment}" \
   'serviceAccountName: crossplane-sync-exporter' \
   'the exporter must use its dedicated service account'
@@ -197,30 +220,30 @@ require_text \
   "${deployment}" \
   'ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:' \
   'the agent image must be immutable and match the deployed Coroot Prometheus line'
-require_text \
+require_line \
   "${deployment}" \
-  '--enable-feature=agent' \
+  '- --enable-feature=agent' \
   'the scraper must run Prometheus in lightweight agent mode'
 
 # Built-in kube-state metrics would duplicate what Coroot's cluster agent already
 # sends, so the exporter must stay restricted to the custom resource state.
-require_text \
+require_line \
   "${deployment}" \
-  '--custom-resource-state-only=true' \
+  '- --custom-resource-state-only=true' \
   'the exporter must not emit a second copy of the built-in kube-state metrics'
-require_text \
+require_line \
   "${deployment}" \
-  '--host=127.0.0.1' \
+  '- --host=127.0.0.1' \
   'kube-state-metrics must not be reachable from outside the pod'
-require_text \
+require_line \
   "${deployment}" \
-  '--port=8080' \
+  '- --port=8080' \
   'the kube-state-metrics port must match the loopback scrape target'
-require_text \
+require_line \
   "${deployment}" \
   'platform.devantler.tech/replica-floor: exempt' \
   'the intentionally singleton exporter must document its replica-floor exemption'
-require_text \
+require_line \
   "${deployment}" \
   'readOnlyRootFilesystem: true' \
   'the exporter must keep its root filesystem immutable'
@@ -232,11 +255,11 @@ require_text \
 cluster_role="$(
   extract_resource ClusterRole crossplane-sync-exporter <<<"${rendered}"
 )" || fail 'the component must render the exporter ClusterRole'
-require_text \
+require_line \
   "${cluster_role}" \
   '- repo.github.m.upbound.io' \
   'the exporter must be limited to the managed-resource group it exports'
-require_text \
+require_line \
   "${cluster_role}" \
   '- repositories' \
   'the exporter must be limited to the resource it exports'
