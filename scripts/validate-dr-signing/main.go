@@ -97,6 +97,12 @@ const (
 	validatorCommand      = "go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml"
 )
 
+// mutableProductionTagRepository is the OCI repository whose `latest` tag
+// production's root Flux source follows. The registry host is deliberately NOT
+// part of it: `ghcr.io/…`, a bare `devantler-tech/…`, and a mirror spelling all
+// reach the same tag, and only the repository path is common to them.
+const mutableProductionTagRepository = "devantler-tech/platform/manifests"
+
 // drRebuildJob is the dr-rebuild.yaml job that reaches production.
 const drRebuildJob = "rebuild"
 
@@ -510,6 +516,15 @@ func validateCDWiring(cd string, deployAction string) error {
 		return err
 	}
 
+	// The job delegates publication wholly to that action, so nothing else in
+	// it may reach the tag production follows.
+	if err := requireSolePublisher(
+		deploy, usesAction(sharedDeployAction),
+		"the deploy-prod job in the direct-push production workflow",
+	); err != nil {
+		return err
+	}
+
 	// (4) The contract is validated against the nested publisher. That is only
 	// meaningful while the shared action still calls it — and the composite
 	// action is PARSED for the same reason cd.yaml is: a YAML block scalar (a
@@ -530,6 +545,16 @@ func validateCDWiring(cd string, deployAction string) error {
 			nestedPublisherAction,
 		),
 		"the publisher step in the shared deploy action",
+	); err != nil {
+		return err
+	}
+
+	// …and it must be the only step in that action which reaches the tag. The
+	// check above proves the publisher is invoked; this proves nothing follows
+	// it onto the same tag.
+	if err := requireSolePublisher(
+		map[string]any{"steps": runs["steps"]}, usesAction(nestedPublisherAction),
+		"the shared production deploy action",
 	); err != nil {
 		return err
 	}
@@ -631,6 +656,13 @@ func validateProductionRoutes(ci string) error {
 				jobName, sharedDeployAction,
 			),
 			"the deploy step in merge-queue job "+jobName,
+		); err != nil {
+			return err
+		}
+		// Exclusivity on the route production normally takes. Using the checked
+		// action says nothing about what else the job does beside it.
+		if err := requireSolePublisher(
+			job, usesAction(sharedDeployAction), "merge-queue job "+jobName,
 		); err != nil {
 			return err
 		}
@@ -787,6 +819,94 @@ func requireEnforcedStep(
 		return step, nil
 	}
 	return nil, missing
+}
+
+// requireSolePublisher proves the checked publication step is the ONLY step in
+// `container` that names the mutable production tag's repository.
+//
+// 🔴 EVERY OTHER CHECK IN THIS FILE IS AN EXISTENCE PROOF, and existence is not
+// exclusivity. requireEnforcedStep establishes that the checked publisher is
+// present, reached, and failure-honouring — all of which stay true when a
+// SECOND step writes the same tag immediately afterwards. The ordering contract
+// then holds exactly as specified and is bypassed at a different point: the
+// signed digest is published, and something else moves `latest` off it before
+// reconciliation reads it.
+//
+// The rule refuses NAMING the repository rather than writing to it, and that is
+// deliberate. Deciding whether a shell line writes means enumerating the verbs
+// that can — `workload push`, `imagetools create`, `crane`, `oras`, `docker
+// push`, whatever ships next — which is the denylist
+// runBlockRunsOnlyAllowedCommands already had to replace once, for the reason
+// it gives: each round of review found one more spelling. A step outside the
+// checked publisher has no business naming production's mutable tag at all, so
+// the allowlist here is a single step and everything else is refused.
+//
+// The boundary is one level deep, and stating it is part of the check: this
+// reads the step, not the scripts a step invokes. `run: ./scripts/x.sh` that
+// pushes internally is not caught here — `run-ksail-prod-with-pull-auth.sh`
+// carries its own staging-only allowlist for exactly that reason.
+func requireSolePublisher(container map[string]any, publisher func(map[string]any) bool, location string) error {
+	steps, _ := container["steps"].([]any)
+	publishers := 0
+	for index, raw := range steps {
+		step, ok := raw.(map[string]any)
+		if !ok {
+			// Fail closed: a shape this cannot read is a shape this cannot clear.
+			return fmt.Errorf(
+				"step %d of %s is not a mapping, so it cannot be shown to leave %s alone",
+				index+1, location, mutableProductionTagRepository,
+			)
+		}
+		if publisher(step) {
+			// SOLE means exactly one, not at-least-one. A second matching step
+			// is exempted from the naming rule below, and requireEnforcedStep
+			// only ever validates the FIRST match — so a duplicate publisher is
+			// checked by neither: it can carry its own `with:` inputs, an `if:`,
+			// or continue-on-error and still move the tag. Verified accepted on
+			// all three routes before this counter existed.
+			publishers++
+			if publishers > 1 {
+				return fmt.Errorf(
+					"step %d of %s is a SECOND step matching the checked publisher; only the first is held to the "+
+						"enforcement contract, so the duplicate can publish different bytes to %s unchecked",
+					index+1, location, mutableProductionTagRepository,
+				)
+			}
+
+			continue
+		}
+		// Re-encoded whole rather than reading `run`: a `with` input, an `env`
+		// value, or a `uses` path can carry the reference just as effectively,
+		// and naming the keys that may not carry it is the same enumeration
+		// this check exists to avoid.
+		encoded, err := yaml.Marshal(step)
+		if err != nil {
+			return fmt.Errorf(
+				"step %d of %s cannot be re-encoded, so it cannot be shown to leave %s alone: %w",
+				index+1, location, mutableProductionTagRepository, err,
+			)
+		}
+		if strings.Contains(string(encoded), mutableProductionTagRepository) {
+			return fmt.Errorf(
+				"step %d of %s names %s while not being the checked publication step, so it can move the "+
+					"mutable production tag off the digest that was signed and attested; publication must go "+
+					"through the checked step alone",
+				index+1, location, mutableProductionTagRepository,
+			)
+		}
+	}
+	// Self-sufficient rather than trusting call order: every caller happens to
+	// run requireEnforcedStep first today, so this is unreachable — but that is
+	// a property of the callers, not of this function, and "sole" is meaningless
+	// if the step is absent entirely.
+	if publishers == 0 {
+		return fmt.Errorf(
+			"%s contains no step matching the checked publisher, so nothing establishes who writes %s",
+			location, mutableProductionTagRepository,
+		)
+	}
+
+	return nil
 }
 
 // usesAction matches a step whose `uses` is EXACTLY the wanted action.
