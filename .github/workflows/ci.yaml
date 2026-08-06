@@ -46,7 +46,9 @@ jobs:
       - name: 🔐 Validate Flux verification is in effect
         run: |
           go test ./scripts/validate-flux-verify
-          go run ./scripts/validate-flux-verify ksail.prod.yaml
+          go run ./scripts/validate-flux-verify \
+            ksail.prod.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml
 
       # .github/actionlint.yaml silences actionlint's "unexpected key" diagnostic
       # for concurrency.queue, which also removes its enum check. This restores it.
