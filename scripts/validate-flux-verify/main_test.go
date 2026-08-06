@@ -460,6 +460,13 @@ func TestRunExitCodes(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
+	drifted := filepath.Join(dir, "drifted.yaml")
+	if err := os.WriteFile(drifted, []byte(strings.Replace(
+		goodInstance, `platform/.+$`, `platform/some-other-workflow\.yaml@refs/heads/main$`, 1,
+	)), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
 	unpatched := filepath.Join(dir, "unpatched.yaml")
 	if err := os.WriteFile(unpatched, []byte("kind: FluxInstance\nspec:\n  kustomize:\n    patches: []\n"), 0o600); err != nil {
 		t.Fatalf("write fixture: %v", err)
@@ -471,6 +478,10 @@ func TestRunExitCodes(t *testing.T) {
 		want int
 	}{
 		{name: "valid config and instance exits 0", args: []string{good, instance}, want: 0},
+		// Both halves are individually valid and they trust DIFFERENT
+		// publishers, so a rebuilt cluster and a running one would disagree
+		// about who may sign. Neither half's own checks can see this.
+		{name: "drifted signer lists exit 1", args: []string{good, drifted}, want: 1},
 		{name: "misplaced block exits 1", args: []string{bad, instance}, want: 1},
 		// The half #2922 is about: a correct cluster config beside a
 		// FluxInstance that never puts verify on the live root source.

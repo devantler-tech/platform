@@ -186,3 +186,35 @@ func TestRealFluxInstanceValidates(t *testing.T) {
 		t.Fatalf("the shipped FluxInstance should carry an effective verify patch: %v", err)
 	}
 }
+
+// TestRealHalvesAgree pins the SHIPPED pair against each other. The two files
+// are the ones CI passes, so this asserts the live duplication is consistent
+// rather than only that each file is individually well-formed.
+func TestRealHalvesAgree(t *testing.T) {
+	t.Parallel()
+
+	config, err := os.ReadFile("../../ksail.prod.yaml")
+	if err != nil {
+		t.Fatalf("read cluster config: %v", err)
+	}
+
+	manifest, err := os.ReadFile(
+		"../../k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml")
+	if err != nil {
+		t.Fatalf("read FluxInstance: %v", err)
+	}
+
+	configBlock, err := configVerifyBlock(config)
+	if err != nil {
+		t.Fatalf("cluster config half: %v", err)
+	}
+
+	instanceBlock, err := instanceVerifyBlock(manifest)
+	if err != nil {
+		t.Fatalf("FluxInstance half: %v", err)
+	}
+
+	if err := checkNoDrift(configBlock, instanceBlock); err != nil {
+		t.Fatalf("the two halves must pin the same signers: %v", err)
+	}
+}

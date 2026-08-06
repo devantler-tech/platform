@@ -270,9 +270,17 @@ func decodeAll(config []byte) ([]any, error) {
 // validate reports why the config's signature verification is not in effect, or
 // nil when it is.
 func validate(config []byte) error {
+	_, err := configVerifyBlock(config)
+
+	return err
+}
+
+// configVerifyBlock is validate() plus the block it validated, so the drift
+// check can compare the two halves without re-walking the tree.
+func configVerifyBlock(config []byte) (map[string]any, error) {
 	documents, err := decodeAll(config)
 	if err != nil {
-		return fmt.Errorf("cluster config does not parse, so verification cannot be established: %w", err)
+		return nil, fmt.Errorf("cluster config does not parse, so verification cannot be established: %w", err)
 	}
 
 	// A cluster config is ONE `kind: Cluster` resource, so everything after the
@@ -282,7 +290,7 @@ func validate(config []byte) error {
 	// document one plus a stray block in document two validated clean. Refusing
 	// the shape is simpler than guessing which document was meant to win.
 	if len(documents) > 1 {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"cluster config has %d YAML documents; only the first is read as the cluster spec, "+
 				"so anything configured in the rest verifies nothing: keep it to one document",
 			len(documents),
@@ -297,7 +305,7 @@ func validate(config []byte) error {
 	// Reported before the read-path check, because a stray block is the reason
 	// the read path is usually empty and naming it is the actionable half.
 	if stray := strayVerifyPaths(tree, nil); len(stray) > 0 {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"verify block at %s, which KSail does not read: move it to %s or delete it "+
 				"(a block at any other path is discarded in silence and verifies nothing)",
 			strings.Join(stray, ", "), strings.Join(readPath, "."),
@@ -306,7 +314,7 @@ func validate(config []byte) error {
 
 	value, ok := lookup(tree, readPath)
 	if !ok {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"no verify block at %s, so the generated flux-system OCIRepository pulls unverified: "+
 				"add a cosign block there",
 			strings.Join(readPath, "."),
@@ -315,7 +323,7 @@ func validate(config []byte) error {
 
 	block, ok := asMapping(value)
 	if !ok {
-		return fmt.Errorf("%s is not a mapping, so KSail cannot decode it into a verify spec",
+		return nil, fmt.Errorf("%s is not a mapping, so KSail cannot decode it into a verify spec",
 			strings.Join(readPath, "."))
 	}
 
@@ -331,7 +339,7 @@ func validate(config []byte) error {
 			reported = block["provider"]
 		}
 
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%s.provider is %#v, which KSail treats as verification DISABLED "+
 				"(it renders spec.verify only when the provider is a non-blank string): set it to cosign",
 			strings.Join(readPath, "."), reported,
@@ -341,7 +349,7 @@ func validate(config []byte) error {
 	// Reported last, because it is the only check here that assumes the block is
 	// otherwise well-formed and switched on.
 	if !constrainsSigner(block) {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%s is enabled but constrains no signer, so it accepts any keylessly-signed artifact "+
 				"from any signer (Flux reads a missing secretRef as keyless): add a matchOIDCIdentity "+
 				"entry with a non-blank issuer and subject, or a secretRef naming a key Secret "+
@@ -350,7 +358,7 @@ func validate(config []byte) error {
 		)
 	}
 
-	return nil
+	return block, nil
 }
 
 // run checks BOTH halves of the contract, and requires both paths rather than
@@ -373,7 +381,8 @@ func run(args []string, stderr io.Writer) int {
 		return 1
 	}
 
-	if err := validate(config); err != nil {
+	configBlock, err := configVerifyBlock(config)
+	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "flux verify contract: %v\n", err)
 
 		return 1
@@ -386,7 +395,17 @@ func run(args []string, stderr io.Writer) int {
 		return 1
 	}
 
-	if err := validateInstance(manifest); err != nil {
+	instanceBlock, err := instanceVerifyBlock(manifest)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "flux verify contract: %v\n", err)
+
+		return 1
+	}
+
+	// Last, because it is the only check that assumes BOTH halves are already
+	// well-formed: comparing a block that failed its own checks would report
+	// drift where the real fault is the block itself.
+	if err := checkNoDrift(configBlock, instanceBlock); err != nil {
 		_, _ = fmt.Fprintf(stderr, "flux verify contract: %v\n", err)
 
 		return 1
