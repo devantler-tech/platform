@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/part-of: coroot
     app.kubernetes.io/component: metrics-exporter
     platform.devantler.tech/replica-floor: exempt
+  annotations:
+    checkov.io/skip1: CKV_K8S_38=kube-state-metrics reads the managed resources it exports through the API server
 spec:
   # A second replica would export identical series and race them into the
   # remote-write receiver. Recreate avoids an overlapping rollout; the agent's
