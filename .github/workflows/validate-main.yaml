@@ -22,8 +22,16 @@ on:
 permissions: {}
 
 concurrency:
-  group: validate-main-${{ github.ref }}
-  cancel-in-progress: true
+  # Every push to main is its own subject and its gate result is its own record,
+  # so each run gets its own group and none of them can suppress another.
+  #
+  # Disabling cancellation is not enough on a shared key: a concurrency group
+  # holds one running plus one pending run, and a third push cancels the pending
+  # one. With a shared `github.ref` key the second push's gate would still be
+  # evicted while queued, leaving main green on a check that never finished —
+  # reopening the exact hole described above, from the other side.
+  group: validate-main-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   validate-eks-authorization:
