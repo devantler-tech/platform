@@ -353,9 +353,15 @@ func validate(config []byte) error {
 	return nil
 }
 
+// run checks BOTH halves of the contract, and requires both paths rather than
+// making the second optional. The two configure different lifecycle stages —
+// the cluster config covers bootstrap, the FluxInstance patch covers the
+// running cluster — and either alone leaves a real window unverified. An
+// optional second argument would let a caller silently drop the half that #2922
+// was actually about, which is the failure this command exists to make loud.
 func run(args []string, stderr io.Writer) int {
-	if len(args) != 1 {
-		_, _ = fmt.Fprintln(stderr, "usage: validate-flux-verify <ksail-config.yaml>")
+	if len(args) != 2 {
+		_, _ = fmt.Fprintln(stderr, "usage: validate-flux-verify <ksail-config.yaml> <flux-instance.yaml>")
 
 		return 1
 	}
@@ -368,6 +374,19 @@ func run(args []string, stderr io.Writer) int {
 	}
 
 	if err := validate(config); err != nil {
+		_, _ = fmt.Fprintf(stderr, "flux verify contract: %v\n", err)
+
+		return 1
+	}
+
+	manifest, err := os.ReadFile(args[1]) //nolint:gosec // Explicit path from the caller.
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "flux verify contract: read FluxInstance manifest: %v\n", err)
+
+		return 1
+	}
+
+	if err := validateInstance(manifest); err != nil {
 		_, _ = fmt.Fprintf(stderr, "flux verify contract: %v\n", err)
 
 		return 1

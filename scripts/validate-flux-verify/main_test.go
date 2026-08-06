@@ -455,16 +455,31 @@ func TestRunExitCodes(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
+	instance := filepath.Join(dir, "instance.yaml")
+	if err := os.WriteFile(instance, []byte(goodInstance), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	unpatched := filepath.Join(dir, "unpatched.yaml")
+	if err := os.WriteFile(unpatched, []byte("kind: FluxInstance\nspec:\n  kustomize:\n    patches: []\n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
 	tests := []struct {
 		name string
 		args []string
 		want int
 	}{
-		{name: "valid config exits 0", args: []string{good}, want: 0},
-		{name: "misplaced block exits 1", args: []string{bad}, want: 1},
-		{name: "missing file exits 1", args: []string{filepath.Join(dir, "absent.yaml")}, want: 1},
+		{name: "valid config and instance exits 0", args: []string{good, instance}, want: 0},
+		{name: "misplaced block exits 1", args: []string{bad, instance}, want: 1},
+		// The half #2922 is about: a correct cluster config beside a
+		// FluxInstance that never puts verify on the live root source.
+		{name: "unpatched instance exits 1", args: []string{good, unpatched}, want: 1},
+		{name: "missing config file exits 1", args: []string{filepath.Join(dir, "absent.yaml"), instance}, want: 1},
+		{name: "missing instance file exits 1", args: []string{good, filepath.Join(dir, "absent.yaml")}, want: 1},
 		{name: "no arguments exits 1", args: nil, want: 1},
-		{name: "two arguments exits 1", args: []string{good, good}, want: 1},
+		{name: "one argument exits 1", args: []string{good}, want: 1},
+		{name: "three arguments exits 1", args: []string{good, instance, good}, want: 1},
 	}
 
 	for _, test := range tests {
