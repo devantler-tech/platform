@@ -62,6 +62,15 @@ data:
         metric_relabel_configs:
           # Ship only the condition series. kube-state-metrics also emits its own
           # build and self-telemetry metrics, which Coroot already has.
+          #
+          # This `keep` does NOT drop `up`: metric relabeling excludes
+          # automatically generated timeseries, so `up{job="crossplane-sync-exporter"}`
+          # is still delivered. That matters more here than it looks — without it,
+          # "no condition series" would be ambiguous between a healthy fleet and a
+          # dead exporter, which is the same silent-sensor failure this component
+          # exists to surface. An alert on the condition series should gate on `up`
+          # for exactly that reason. Do not add `up` to this regex: it is already
+          # exempt, and listing it would imply the others are too.
           - source_labels:
               - __name__
             regex: crossplane_managed_resource_condition
