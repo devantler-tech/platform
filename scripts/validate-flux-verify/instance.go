@@ -1,5 +1,3 @@
-package main
-
 // This file asserts the half of the contract that reaches the RUNNING cluster.
 //
 // validate() (main.go) checks ksail.prod.yaml, which is what KSail renders when
@@ -31,6 +29,7 @@ package main
 // That is why a verify patch pointing anywhere other than the root source is
 // reported as a failure here rather than ignored as irrelevant: it is far
 // likelier to be the intended control that missed than a deliberate one.
+package main
 
 import (
 	"errors"
