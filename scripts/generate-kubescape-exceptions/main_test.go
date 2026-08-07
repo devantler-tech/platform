@@ -170,13 +170,36 @@ spec:
 
 // TestClusterWideAnnotationFailsClosed covers the marker's own malformed
 // shapes. A typo'd value must not be read as a declaration.
+//
+// Each case asserts WHICH error it got, not merely that it got one. Every
+// fixture here also has no spec.match, so a regression that ignored this
+// annotation entirely would still be rejected — by the undeclared-scope guard —
+// and a bare `err != nil` check would stay green while the marker did nothing.
 func TestClusterWideAnnotationFailsClosed(t *testing.T) {
-	for name, annotation := range map[string]string{
-		"wrong value":  `platform.devantler.tech/cluster-wide: "true"`,
-		"empty value":  `platform.devantler.tech/cluster-wide: ""`,
-		"non-string":   `platform.devantler.tech/cluster-wide: true`,
-		"capitalised":  `platform.devantler.tech/cluster-wide: Declared`,
-		"padded value": `platform.devantler.tech/cluster-wide: " declared "`,
+	for name, tc := range map[string]struct {
+		annotation string
+		want       string
+	}{
+		"wrong value": {
+			annotation: `platform.devantler.tech/cluster-wide: "true"`,
+			want:       `unsupported platform.devantler.tech/cluster-wide value "true"`,
+		},
+		"empty value": {
+			annotation: `platform.devantler.tech/cluster-wide: ""`,
+			want:       `unsupported platform.devantler.tech/cluster-wide value ""`,
+		},
+		"non-string": {
+			annotation: `platform.devantler.tech/cluster-wide: true`,
+			want:       "platform.devantler.tech/cluster-wide must be a string",
+		},
+		"capitalised": {
+			annotation: `platform.devantler.tech/cluster-wide: Declared`,
+			want:       `unsupported platform.devantler.tech/cluster-wide value "Declared"`,
+		},
+		"padded value": {
+			annotation: `platform.devantler.tech/cluster-wide: " declared "`,
+			want:       `unsupported platform.devantler.tech/cluster-wide value " declared "`,
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := generate(writeCSE(t, `
@@ -184,14 +207,18 @@ kind: ClusterSecurityException
 metadata:
   name: malformed-marker
   annotations:
-    `+annotation+`
+    `+tc.annotation+`
 spec:
   posture:
     - controlID: C-0013
       action: ignore
 `))
 			if err == nil {
-				t.Fatal("malformed cluster-wide marker must fail closed, got nil error")
+				t.Fatalf("malformed cluster-wide marker must fail closed, want an error containing %q, got none", tc.want)
+			}
+
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to contain %q", err, tc.want)
 			}
 		})
 	}
