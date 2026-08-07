@@ -532,9 +532,17 @@ func validateVerifyAllowList(config string) error {
 
 		// The entry is one of the permitted forms. Prove that form is actually
 		// correct rather than merely familiar: it must admit the DR rebuild's
-		// real certificate and refuse every known-bad subject. This is what
-		// catches a typo baked into the constant, which equality alone cannot
-		// see because a wrong constant still equals itself.
+		// real certificate and refuse every known-bad value. This is what
+		// catches a typo baked into a constant, which equality alone cannot see
+		// because a wrong constant still equals itself.
+		//
+		// Both halves are checked because cosign matches on the PAIR: an
+		// over-broad issuer admits a signature minted outside GitHub's OIDC
+		// provider however tight the subject is.
+		if err := verifyPermittedIssuer(entry.Issuer); err != nil {
+			return err
+		}
+
 		if err := verifyPermittedSubject(entry.Subject); err != nil {
 			return err
 		}
@@ -550,6 +558,38 @@ func validateVerifyAllowList(config string) error {
 			"inside the subject, never in a second entry",
 		len(entries), drIdentityIssuer, drIdentitySharedSubject, drIdentitySubject,
 	)
+}
+
+// verifyPermittedIssuer checks the permitted issuer regex against GitHub's real
+// OIDC issuer and against an issuer we must never trust.
+//
+// It guards the constant for the same reason verifyPermittedSubject does, and
+// it matters independently: cosign matches the issuer/subject PAIR, so an
+// issuer that admits anyone makes the subject's precision irrelevant.
+func verifyPermittedIssuer(issuer string) error {
+	compiled, err := regexp.Compile(issuer)
+	if err != nil {
+		return fmt.Errorf(
+			"permitted issuer %s is not a valid regular expression, so cosign cannot evaluate it and it admits "+
+				"nothing: %w", issuer, err,
+		)
+	}
+
+	if !compiled.MatchString(drIdentityIssuerLiteral) {
+		return fmt.Errorf(
+			"permitted issuer %s does not match GitHub's OIDC issuer %s, so no GitHub-signed artifact verifies",
+			issuer, drIdentityIssuerLiteral,
+		)
+	}
+
+	if compiled.MatchString(untrustedIssuer) {
+		return fmt.Errorf(
+			"permitted issuer %s also admits %s, so a signature minted outside GitHub's OIDC provider would "+
+				"verify; anchor the expression with ^…$ and escape every dot", issuer, untrustedIssuer,
+		)
+	}
+
+	return nil
 }
 
 // verifyPermittedSubject checks a permitted subject regex against the DR

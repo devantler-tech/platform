@@ -1401,6 +1401,25 @@ func TestPermittedSubjectsAdmitTheDRIdentityAndRefuseUntrustedSigners(t *testing
 			t.Errorf("permitted subject %s is not a correct matcher: %v", permitted, err)
 		}
 	}
+
+	if err := verifyPermittedIssuer(drIdentityIssuer); err != nil {
+		t.Errorf("permitted issuer %s is not a correct matcher: %v", drIdentityIssuer, err)
+	}
+}
+
+// The issuer half of the pair, with the same two ablations the subject guard
+// gets: a matcher that admits nobody, and one that admits everybody. Without
+// these the issuer guard could pass while asserting nothing.
+func TestPermittedIssuerGuardFiresInBothDirections(t *testing.T) {
+	t.Parallel()
+
+	if err := verifyPermittedIssuer(`^https://example\.invalid$`); err == nil {
+		t.Fatal("an issuer that does not match GitHub's OIDC provider was accepted")
+	}
+
+	if err := verifyPermittedIssuer(`^.*$`); err == nil {
+		t.Fatal("a catch-all issuer was accepted, so the issuer over-breadth guard never fires")
+	}
 }
 
 // The positive control for the test above: it passes only because the untrusted
