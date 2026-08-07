@@ -40,6 +40,10 @@ metadata:
     # emit a cluster-wide `kind: ".*"` designator for it, which the plugin would
     # apply to every workload in the cluster.
     platform.devantler.tech/headlamp-mirror: exclude
+    # Cluster-wide on purpose: every control here is a host-scanner finding on
+    # the worker node, which has no workload, namespace or kind to scope
+    # against. See the NO-`match:` note above.
+    platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
     CIS worker-node checks that are false positives on Talos Linux, matching Sidero's
