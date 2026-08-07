@@ -25,6 +25,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -41,6 +42,87 @@ const drIdentitySubject = `^https://github\.com/devantler-tech/platform/\.github
 // identity on the issuer/subject PAIR, so a correct subject under a different
 // issuer does not admit the DR signature and must not satisfy this gate.
 const drIdentityIssuer = `^https://token\.actions\.githubusercontent\.com$`
+
+// drIdentityIssuerLiteral and drIdentitySubjectLiteral are the CONCRETE strings
+// Fulcio puts in the DR rebuild's certificate — the values cosign actually
+// matches the allow-list regexes against.
+//
+// They exist because the allow-list can no longer carry the DR identity as its
+// own entry. cosign rejects a multi-entry matchOIDCIdentity outright, so all
+// three trusted signers (ci.yaml on the merge-queue ref, cd.yaml on main, and
+// dr-rebuild.yaml on main) have to share ONE entry, and that entry is therefore
+// an alternation which can never be string-equal to any single identity.
+// Comparing regex text to regex text is the wrong question; the right one is
+// whether the shipped matcher ADMITS this certificate, so the check evaluates
+// the matcher against these literals instead.
+const (
+	drIdentityIssuerLiteral  = `https://token.actions.githubusercontent.com`
+	drIdentitySubjectLiteral = `https://github.com/devantler-tech/platform/.github/workflows/dr-rebuild.yaml@refs/heads/main`
+)
+
+// drIdentitySharedSubject is the ONE subject regex that carries all three
+// trusted signers: ci.yaml on the merge-queue ref, cd.yaml on main, and
+// dr-rebuild.yaml on main. cosign accepts exactly one matchOIDCIdentity entry,
+// so trusting three signers means one entry whose alternation is INSIDE the
+// subject — there is nowhere else to put it.
+const drIdentitySharedSubject = `^https://github\.com/devantler-tech/platform/\.github/workflows/(ci\.yaml@refs/heads/gh-readonly-queue/main/.+|(cd|dr-rebuild)\.yaml@refs/heads/main)$`
+
+// permittedSubjects are the only subject regexes production may ship, compared
+// EXACTLY.
+//
+// Exact comparison is deliberate and is the property this file refuses to give
+// up. Evaluating the regex against the DR identity alone cannot replace it: a
+// widened matcher such as `<real>|^https://github\.com/attacker/…$` still admits
+// the DR identity, so every match-based check passes while a second signer has
+// been let in. Only string equality is blind to nothing in the lengthening
+// direction. What the single-entry cosign limit changed is not whether to
+// compare exactly, but WHAT to compare against — a list of one identity was
+// never satisfiable once three signers had to share one entry.
+//
+// Adding or removing a trusted signer is therefore a deliberate edit here, on a
+// pull request, which is the review point a supply-chain allow-list should have.
+var permittedSubjects = []string{
+	// The three-signer form production ships.
+	drIdentitySharedSubject,
+	// The DR identity alone — the correct shape for a cluster whose only
+	// publisher is the DR rebuild, and the narrowest thing that can satisfy
+	// this contract.
+	drIdentitySubject,
+}
+
+// untrustedSubjects are certificate subjects a permitted matcher must REFUSE.
+//
+// These do not replace the exact comparison above; they guard the constants
+// themselves. A typo in drIdentitySharedSubject — a dot left unescaped, a
+// missing anchor — would be copied verbatim into permittedSubjects and compare
+// equal to itself forever, so the allow-list would be wrong and the gate would
+// still pass. Evaluating the permitted form against known-bad subjects is what
+// catches that. Each entry varies exactly one field of the real subject —
+// owner, repo, workflow, ref — plus the two boundary escapes an unanchored or
+// partially-anchored regex lets through.
+var untrustedSubjects = []string{
+	// A different owner, including one that merely extends the real one — the
+	// case an unescaped `.` or a missing anchor waves through.
+	`https://github.com/attacker/platform/.github/workflows/dr-rebuild.yaml@refs/heads/main`,
+	`https://github.com/devantler-tech-attacker/platform/.github/workflows/dr-rebuild.yaml@refs/heads/main`,
+	// A different repository under the real owner.
+	`https://github.com/devantler-tech/attacker/.github/workflows/dr-rebuild.yaml@refs/heads/main`,
+	// A different workflow in the real repository: any workflow that can be
+	// added by a PR must not be able to sign a production artifact.
+	`https://github.com/devantler-tech/platform/.github/workflows/attacker.yaml@refs/heads/main`,
+	// The real workflow at a ref an outside contributor controls.
+	`https://github.com/devantler-tech/platform/.github/workflows/dr-rebuild.yaml@refs/heads/attacker`,
+	`https://github.com/devantler-tech/platform/.github/workflows/dr-rebuild.yaml@refs/pull/1/merge`,
+	// Boundary escapes: an unanchored regex matches these because the real
+	// subject is a substring of each.
+	`https://attacker.example/https://github.com/devantler-tech/platform/.github/workflows/dr-rebuild.yaml@refs/heads/main`,
+	`https://github.com/devantler-tech/platform/.github/workflows/dr-rebuild.yaml@refs/heads/main.attacker`,
+}
+
+// untrustedIssuer stands in for the wrong-issuer half of the pair. cosign
+// matches issuer AND subject, so an allow-list that admits any issuer admits a
+// signature minted somewhere other than GitHub's OIDC provider.
+const untrustedIssuer = `https://attacker.example`
 
 // cdContractGateJob is the cd.yaml job that runs this validator on the
 // direct-push production path. Named once so the wiring check and the workflow
@@ -444,17 +526,65 @@ func validateVerifyAllowList(config string) error {
 	}
 
 	for _, entry := range entries {
-		if entry.Issuer == drIdentityIssuer && entry.Subject == drIdentitySubject {
-			return nil
+		if entry.Issuer != drIdentityIssuer || !slices.Contains(permittedSubjects, entry.Subject) {
+			continue
 		}
+
+		// The entry is one of the permitted forms. Prove that form is actually
+		// correct rather than merely familiar: it must admit the DR rebuild's
+		// real certificate and refuse every known-bad subject. This is what
+		// catches a typo baked into the constant, which equality alone cannot
+		// see because a wrong constant still equals itself.
+		if err := verifyPermittedSubject(entry.Subject); err != nil {
+			return err
+		}
+
+		return nil
 	}
 
 	return fmt.Errorf(
-		"cosign matchOIDCIdentity at spec.workload.flux.verify has %d entries but none is exactly the DR rebuild "+
-			"identity, so a DR-published artifact stays unverifiable; add an entry with issuer %s and subject %s "+
-			"(both compared exactly — a wider regex containing this one is not accepted)",
-		len(entries), drIdentityIssuer, drIdentitySubject,
+		"cosign matchOIDCIdentity at spec.workload.flux.verify has %d entries but none is exactly a permitted DR "+
+			"rebuild matcher, so a DR-published artifact stays unverifiable; use issuer %s with subject %s (the "+
+			"three-signer form) or %s (DR alone), each compared exactly — a wider regex that merely contains one of "+
+			"them is not accepted. cosign supports exactly ONE entry, so a second signer belongs in the alternation "+
+			"inside the subject, never in a second entry",
+		len(entries), drIdentityIssuer, drIdentitySharedSubject, drIdentitySubject,
 	)
+}
+
+// verifyPermittedSubject checks a permitted subject regex against the DR
+// rebuild's real certificate subject and against the known-bad subjects.
+//
+// It guards the CONSTANTS, not the config: an allow-list entry that compares
+// equal to a mistyped permitted form is accepted by the equality check and
+// still admits the wrong signers, and that mistake would survive review
+// precisely because the file and the constant agree with each other.
+func verifyPermittedSubject(subject string) error {
+	compiled, err := regexp.Compile(subject)
+	if err != nil {
+		return fmt.Errorf(
+			"permitted subject %s is not a valid regular expression, so cosign cannot evaluate it and it admits "+
+				"nothing: %w", subject, err,
+		)
+	}
+
+	if !compiled.MatchString(drIdentitySubjectLiteral) {
+		return fmt.Errorf(
+			"permitted subject %s does not match the DR rebuild's certificate subject %s, so a DR-published "+
+				"artifact stays unverifiable", subject, drIdentitySubjectLiteral,
+		)
+	}
+
+	for _, untrusted := range untrustedSubjects {
+		if compiled.MatchString(untrusted) {
+			return fmt.Errorf(
+				"permitted subject %s also admits %s, so a signer we do not trust could publish an artifact Flux "+
+					"accepts; anchor the expression with ^…$ and escape every dot", subject, untrusted,
+			)
+		}
+	}
+
+	return nil
 }
 
 // validateCDWiring checks that the direct-push production path cannot deploy

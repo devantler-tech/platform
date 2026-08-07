@@ -1251,14 +1251,36 @@ func TestPublicationActionRejectsPromotionBeforeEvidence(t *testing.T) {
 	}
 }
 
+// ablateShippedMatcher replaces whichever permitted subject the shipped config
+// carries with the given replacement.
+//
+// The ablations below must not name one permitted form directly. The config
+// legitimately ships either the three-signer alternation or the DR identity
+// alone, so a test pinned to one of them silently stops ablating anything the
+// day the other is adopted — which is exactly what happened when the allow-list
+// collapsed to a single shared entry: the substitution matched nothing, the
+// ablation became a no-op, and it was the "changed nothing" guard rather than
+// the assertion that caught it. Failing loudly when no permitted form is
+// present keeps that guard.
+func ablateShippedMatcher(t *testing.T, config string, replacement string) string {
+	t.Helper()
+
+	for _, permitted := range permittedSubjects {
+		if strings.Contains(config, permitted) {
+			return strings.ReplaceAll(config, permitted, replacement)
+		}
+	}
+
+	t.Fatal("ablation changed nothing — the shipped config carries no permitted DR matcher to remove")
+
+	return ""
+}
+
 func TestVerifyAllowListRejectsAMissingDRIdentity(t *testing.T) {
 	t.Parallel()
 
 	config := repoFile(t, "ksail.prod.yaml")
-	ablated := strings.ReplaceAll(config, drIdentitySubject, `^https://example\.invalid$`)
-	if ablated == config {
-		t.Fatal("ablation changed nothing — the DR identity is not present to remove")
-	}
+	ablated := ablateShippedMatcher(t, config, `^https://example\.invalid$`)
 	if err := validateVerifyAllowList(ablated); err == nil {
 		t.Fatal("allow-list without the DR identity was accepted")
 	}
@@ -1301,11 +1323,8 @@ func TestVerifyAllowListRejectsACommentedDRIdentity(t *testing.T) {
 	t.Parallel()
 
 	config := repoFile(t, "ksail.prod.yaml")
-	removed := strings.ReplaceAll(config, drIdentitySubject, `^https://example\.invalid$`)
-	if removed == config {
-		t.Fatal("ablation changed nothing — the DR identity is not present to remove")
-	}
-	bypassed := removed + "\n# " + drIdentitySubject + "\n"
+	removed := ablateShippedMatcher(t, config, `^https://example\.invalid$`)
+	bypassed := removed + "\n# " + drIdentitySharedSubject + "\n"
 	if err := validateVerifyAllowList(bypassed); err == nil {
 		t.Fatal("a commented-out DR identity was accepted as an allow-list entry")
 	}
@@ -1339,6 +1358,71 @@ func TestVerifyAllowListRejectsASubjectThatMerelyContainsTheDRIdentity(t *testin
 	config := allowListConfig("spec.workload.flux.verify", drIdentityIssuer, widened)
 	if err := validateVerifyAllowList(config); err == nil {
 		t.Fatal("a widened subject regex that merely contains the DR identity was accepted")
+	}
+}
+
+// The lengthening attack, aimed at the form production actually ships. The test
+// above widens the DR-only matcher; this one widens the three-signer
+// alternation, which is the entry a pull request would really be editing. A
+// check that evaluated the regex against the DR identity would pass here — the
+// widened expression still admits the DR rebuild — which is why the comparison
+// stayed exact.
+func TestVerifyAllowListRejectsAWidenedSharedMatcher(t *testing.T) {
+	t.Parallel()
+
+	widened := strings.TrimSuffix(drIdentitySharedSubject, `$`) +
+		`|^https://github\.com/attacker/repo/\.github/workflows/x\.yaml@refs/heads/main$`
+	config := allowListConfig("spec.workload.flux.verify", drIdentityIssuer, widened)
+
+	err := validateVerifyAllowList(config)
+	if err == nil {
+		t.Fatal("a widened three-signer matcher admitting an extra signer was accepted")
+	}
+	// Rejected for the RIGHT reason: the exact comparison, not a parse failure.
+	if !strings.Contains(err.Error(), "is exactly a permitted DR") {
+		t.Fatalf("rejected for the wrong reason — expected the exact-match refusal, got: %v", err)
+	}
+}
+
+// The constants themselves are the remaining single point of failure: a
+// permitted form is compared against the shipped config, so a mistake baked
+// into the constant agrees with itself forever and the gate keeps passing.
+// verifyPermittedSubject is what notices, so assert it on every permitted form
+// rather than only the one production happens to ship.
+func TestPermittedSubjectsAdmitTheDRIdentityAndRefuseUntrustedSigners(t *testing.T) {
+	t.Parallel()
+
+	if len(permittedSubjects) == 0 {
+		t.Fatal("no permitted subjects to check — the allow-list contract would admit nothing")
+	}
+
+	for _, permitted := range permittedSubjects {
+		if err := verifyPermittedSubject(permitted); err != nil {
+			t.Errorf("permitted subject %s is not a correct matcher: %v", permitted, err)
+		}
+	}
+}
+
+// The positive control for the test above: it passes only because the untrusted
+// subjects are genuinely refused, not because the list is empty or the matcher
+// refuses everything. A matcher that admitted nothing would also "refuse" them.
+func TestUntrustedSubjectsAreDistinguishedFromTheRealOne(t *testing.T) {
+	t.Parallel()
+
+	if len(untrustedSubjects) == 0 {
+		t.Fatal("no untrusted subjects — the over-breadth guard would assert nothing")
+	}
+
+	for _, untrusted := range untrustedSubjects {
+		if untrusted == drIdentitySubjectLiteral {
+			t.Errorf("untrusted subject %s IS the real DR identity, so the guard contradicts itself", untrusted)
+		}
+	}
+
+	// An anchored `.*` admits everything, so it must fail — proving the guard
+	// can fail at all, rather than passing because nothing exercises it.
+	if err := verifyPermittedSubject(`^.*$`); err == nil {
+		t.Fatal("a catch-all subject was accepted, so the over-breadth guard never fires")
 	}
 }
 
