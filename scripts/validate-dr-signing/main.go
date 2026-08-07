@@ -525,6 +525,24 @@ func validateVerifyAllowList(config string) error {
 		)
 	}
 
+	// cosign refuses a multi-entry matchOIDCIdentity outright — "unsupported:
+	// multiple identities are not supported at this time" — and it fails CLOSED
+	// for the whole list, so a second entry does not add a signer, it removes
+	// every one of them. Finding a correct entry somewhere in a longer list
+	// therefore says nothing about whether a DR artifact verifies, which is the
+	// only question this contract asks. validate-flux-verify refuses the same
+	// shape; it is repeated here because this gate is what stands between a
+	// disaster recovery and an artifact production will not accept.
+	if len(entries) > 1 {
+		return fmt.Errorf(
+			"cosign matchOIDCIdentity at spec.workload.flux.verify has %d entries, and cosign supports exactly ONE: "+
+				"it rejects a multi-entry list for the whole set, so a DR-published artifact stays unverifiable even "+
+				"though a correct entry is present; express several trusted signers as an alternation inside one "+
+				"entry's subject regex",
+			len(entries),
+		)
+	}
+
 	for _, entry := range entries {
 		if entry.Issuer != drIdentityIssuer || !slices.Contains(permittedSubjects, entry.Subject) {
 			continue

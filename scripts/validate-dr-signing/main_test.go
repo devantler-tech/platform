@@ -1407,6 +1407,37 @@ func TestPermittedSubjectsAdmitTheDRIdentityAndRefuseUntrustedSigners(t *testing
 	}
 }
 
+// A correct entry buried in a longer list. cosign fails CLOSED on a multi-entry
+// matchOIDCIdentity, so the second entry does not add a signer — it removes
+// every one of them, and the DR artifact stops verifying. A check that returned
+// as soon as it found a permitted entry would call this configuration fine.
+func TestVerifyAllowListRejectsAPermittedEntryAmongSeveral(t *testing.T) {
+	t.Parallel()
+
+	single := allowListConfig("spec.workload.flux.verify", drIdentityIssuer, drIdentitySharedSubject)
+	// Positive control: the same entry ALONE must pass, so the rejection below
+	// is attributable to the extra entry and not to the synthetic YAML.
+	if err := validateVerifyAllowList(single); err != nil {
+		t.Fatalf("the permitted entry alone was rejected, so this test proves nothing: %v", err)
+	}
+
+	// allowListConfig indents two spaces per path segment, so a four-segment
+	// path puts the list items ten spaces in. Derive it rather than hard-coding
+	// the depth, or this test breaks the day the path changes.
+	itemIndent := strings.Repeat("  ", len(strings.Split("spec.workload.flux.verify", "."))+1)
+	twoEntries := single +
+		itemIndent + "- issuer: '" + drIdentityIssuer + "'\n" +
+		itemIndent + "  subject: '" + drIdentitySubject + "'\n"
+
+	err := validateVerifyAllowList(twoEntries)
+	if err == nil {
+		t.Fatal("a permitted entry alongside a second entry was accepted, but cosign verifies neither")
+	}
+	if !strings.Contains(err.Error(), "supports exactly ONE") {
+		t.Fatalf("rejected for the wrong reason — expected the multi-entry refusal, got: %v", err)
+	}
+}
+
 // The issuer half of the pair, with the same two ablations the subject guard
 // gets: a matcher that admits nobody, and one that admits everybody. Without
 // these the issuer guard could pass while asserting nothing.
