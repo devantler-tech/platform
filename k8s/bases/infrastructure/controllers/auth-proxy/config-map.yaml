@@ -33,6 +33,10 @@ data:
           rule: "Host(`opencost.${domain}`)"
           entryPoints: ["web"]
           service: opencost
+        ksail:
+          rule: "Host(`ksail.${domain}`)"
+          entryPoints: ["web"]
+          service: ksail-operator
         # Hetzner-only: Longhorn is deployed solely on prod. On local/CI the
         # backend (longhorn-frontend.longhorn-system) does not exist, but this
         # router is inert there -- no HTTPRoute sends longhorn.${domain} to
@@ -72,6 +76,10 @@ data:
           loadBalancer:
             servers:
               - url: "http://opencost.opencost.svc.cluster.local:9090"
+        ksail-operator:
+          loadBalancer:
+            servers:
+              - url: "http://ksail-operator.ksail-operator.svc.cluster.local:8080"
         # Longhorn UI (longhorn-frontend Service :80 -> longhorn-ui pod :8000).
         # Hetzner-only and inert on local (longhorn-system has no pods there).
         longhorn:
