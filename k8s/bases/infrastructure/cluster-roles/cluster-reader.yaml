@@ -1,13 +1,13 @@
 # Read-only ClusterRole for the resources the built-in `view` role omits.
 # Bound ALONGSIDE `view` (see cluster-role-bindings/oidc-cluster-reader.yaml) so an
 # OIDC identity gets a COMPLETE read-only picture of the cluster — including
-# every custom resource, so the Headlamp UI can display all of them:
+# every safe-to-read custom resource, so the Headlamp UI can display them:
 #   - `view`           → namespaced workloads/config (pods, deployments,
 #                        configmaps, pod logs, events, ...), minus Secrets.
 #   - `cluster-reader` → cluster-scoped core resources `view` omits (nodes,
 #                        PVs), PLUS get/list/watch on every non-core API group
-#                        on the cluster (all CRDs: gateway, keda, kubescape,
-#                        cert-manager, Flux, KubeVirt, Crossplane, Longhorn,
+#                        on the cluster (CRDs: gateway, keda, kubescape,
+#                        cert-manager, KubeVirt, Crossplane, Longhorn,
 #                        monitoring, Velero, Kyverno, ...).
 #
 # Secrets are deliberately EXCLUDED: the core ("") group is enumerated, never
@@ -18,8 +18,9 @@
 #
 # Excluding Secrets is WHY the non-core groups are listed explicitly: an
 # `apiGroups: ["*"]` wildcard would re-include the core group (and thus
-# Secrets). When a new operator adds a new API group, add it below so it shows
-# in Headlamp. Regenerate the full set (kept sorted) with:
+# Secrets). When a new operator adds a new API group, add it below only after
+# confirming the group's custom resources cannot persist substituted or inline
+# secrets. Keep the set sorted; review candidates with:
 #   kubectl api-resources -o name | sed 's/^[^.]*//;s/^\.//' | grep . | sort -u
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -34,9 +35,9 @@ rules:
       - nodes
       - persistentvolumes
     verbs: ["get", "list", "watch"]
-  # Every non-core API group on the cluster — all resources, read-only. This is
-  # the catch-all that lets Headlamp display all custom resources. No Secrets
-  # here: `secrets` is a CORE resource, granted nowhere in this role.
+  # Safe-to-read non-core API groups on the cluster — all resources, read-only.
+  # Do not add API groups whose custom resources persist substituted or inline
+  # secret material (for example helm.toolkit.fluxcd.io HelmRelease specs).
   - apiGroups:
       - acme.cert-manager.io
       - actions.github.m.upbound.io
@@ -80,7 +81,6 @@ rules:
       - github.m.upbound.io
       - github.upbound.io
       - groupsnapshot.storage.k8s.io
-      - helm.toolkit.fluxcd.io
       - hostdata.kubescape.cloud
       - image.toolkit.fluxcd.io
       - infra.contrib.fluxcd.io
