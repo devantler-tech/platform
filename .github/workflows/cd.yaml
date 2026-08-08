@@ -81,6 +81,14 @@ jobs:
   validate-publication-contract:
     name: 🖋️ Validate Publication Contract
     runs-on: ubuntu-latest
+    # The pin guard gates the deploy THROUGH this job rather than by joining
+    # deploy-prod's own `needs`. Two reasons, both load-bearing: this job may run
+    # only one command step (see the guard's own job below), and deploy-prod's
+    # `needs` line is the literal that validate-dr-signing's ablations mutate — a
+    # third entry wraps it past the formatter's width and those ablations silently
+    # stop biting, which their "ablation changed nothing" failure caught. Depending
+    # on it here keeps that line byte-identical and still blocks the deploy.
+    needs: [validate-shared-publish-pin]
     permissions:
       contents: read # checkout repository
     steps:
@@ -131,12 +139,7 @@ jobs:
 
   deploy-prod:
     name: 🚀 Deploy to Production
-    needs:
-      [
-        validate-eks-authorization,
-        validate-publication-contract,
-        validate-shared-publish-pin,
-      ]
+    needs: [validate-eks-authorization, validate-publication-contract]
     runs-on: ubuntu-latest
     environment: prod
     permissions:
