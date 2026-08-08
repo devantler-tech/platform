@@ -103,17 +103,40 @@ jobs:
           go test ./scripts/validate-dr-signing
           go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml
 
-      # Same reasoning as the step above, and the same invocation as ci.yaml's.
-      # ci.yaml runs this guard on `pull_request` and `merge_group` only, so a
-      # matcher widened by a DIRECT PUSH to main reaches production through this
-      # manual route without it ever having run — the weakened trust policy would
-      # be reconciled to the cluster unchecked (#2818).
+  # Deliberately its OWN job rather than a second step in the contract job above.
+  # scripts/validate-dr-signing requires validate-publication-contract to run
+  # exactly one command step, because any other step in that job could export
+  # BASH_ENV or a fake `go` through $GITHUB_ENV/$GITHUB_PATH and leave the
+  # validator looking correct while it was subverted. Adding this guard there
+  # broke that invariant, which is the invariant doing its job — so it gets its
+  # own job and gates the deploy through `needs` instead.
+  #
+  # ci.yaml runs this guard on `pull_request` and `merge_group` only, so a matcher
+  # widened by a DIRECT PUSH to main reaches production through this manual route
+  # without it ever having run — the weakened trust policy would be reconciled to
+  # the cluster unchecked (#2818).
+  validate-shared-publish-pin:
+    name: 🔐 Validate Shared Publish Workflow Pins
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
   deploy-prod:
     name: 🚀 Deploy to Production
-    needs: [validate-eks-authorization, validate-publication-contract]
+    needs:
+      [
+        validate-eks-authorization,
+        validate-publication-contract,
+        validate-shared-publish-pin,
+      ]
     runs-on: ubuntu-latest
     environment: prod
     permissions:
