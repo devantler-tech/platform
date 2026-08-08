@@ -36,6 +36,9 @@ spec:
       - "${cloudflare_zone}"
     extraArgs:
       - --exclude-target-net=10.0.0.0/8
+      # Restrict Gateway HTTPRoute-derived records to this cluster's delegated
+      # DNS subtree while domainFilters still selects the Cloudflare zone apex.
+      - --regex-domain-filter=^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)*${external_dns_domain_regex}$
       - --cloudflare-proxied
     env:
       - name: CF_API_TOKEN
