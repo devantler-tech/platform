@@ -1,0 +1,260 @@
+# Immediate bootstrap run for the scheduled Umami tenant provisioner.
+#
+# The CronJob in cron-job.yaml is the long-lived self-healing reconcile loop, but
+# Kubernetes CronJobs do not run immediately on creation. Keeping this Job in the
+# app resources closes the fresh-install/default-admin-password exposure window by
+# starting the same idempotent provisioning logic as soon as Flux applies the app.
+#
+# Flux force-recreates immutable Jobs when the spec changes, so TENANTS/image/script
+# edits still trigger an immediate converge in addition to the scheduled CronJob.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: umami-provision-tenants-bootstrap
+  namespace: umami
+  annotations:
+    kustomize.toolkit.fluxcd.io/force: enabled
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 20
+  activeDeadlineSeconds: 900
+  template:
+    metadata:
+      labels:
+        app: umami-provision-tenants
+    spec:
+      # Retry inside the bootstrap Job so fresh installs keep trying until Umami
+      # becomes reachable; the CronJob takes over long-term reconciliation.
+      restartPolicy: OnFailure
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: provision
+          image: ghcr.io/umami-software/umami:3.1.0@sha256:e3f80c0625aad7179b49da27d475357cabb1068b8cacd9a792cfd6966888b123
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              # CPU limit for kubescape C-0270; generous so the provisioning
+              # job never throttles.
+              cpu: 250m
+              memory: 128Mi
+          env:
+            - name: UMAMI_BASE
+              value: http://umami-umami.umami.svc.cluster.local
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: umami-admin
+                  key: password
+            # One-time BOOTSTRAP password for the AS - Coaching, vaner og ro customer's
+            # read-only login, OpenBao-generated (apps/umami/ascoachingogvaner) and
+            # referenced by the member's `passwordEnv` in TENANTS below. Used only
+            # at account creation; the customer changes it on first login and owns
+            # it thereafter, so this value then sits inert (never re-applied).
+            - name: ASCOACHINGOGVANER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: umami-ascoachingogvaner
+                  key: password
+                  # Bootstrap only: read solely when first creating the user.
+                  # optional so the Job still starts (and re-runs cleanly) if the
+                  # bootstrap Secret is removed once the customer owns their password.
+                  optional: true
+            # Declarative source of truth: one team per tenant, its websites, and
+            # any extra member logins. The website UUIDs are the values hard-pinned
+            # in each site's tracking script — adding a site = add an entry here +
+            # reference the same id in that site's script. Adding a customer =
+            # add a team with its website(s) + a member (and wire that member's
+            # password via a new OpenBao generator/PushSecret/ExternalSecret).
+            - name: TENANTS
+              value: |
+                [
+                  {
+                    "team": "devantler-tech",
+                    "websites": [
+                      { "id": "2f8d150e-c6f0-4a90-ab77-431c9ef9dc59", "name": "devantler.tech", "domain": "devantler.tech" },
+                      { "id": "27f83d6b-8ce4-4239-9387-eabc7f57cd68", "name": "KSail Docs", "domain": "ksail.devantler.tech" },
+                      { "id": "814417b8-13cd-427f-93b0-4aba673c511c", "name": "Wedding", "domain": "wedding.platform.devantler.tech" }
+                    ]
+                  },
+                  {
+                    "team": "ascoachingogvaner",
+                    "websites": [
+                      { "id": "5e76b00b-67e5-4aef-b4df-17fca43e9a33", "name": "AS - Coaching, vaner og ro", "domain": "ascoachingogvaner.dk" }
+                    ],
+                    "members": [
+                      { "username": "ascoachingogvaner", "passwordEnv": "ASCOACHINGOGVANER_PASSWORD", "accountRole": "view-only", "teamRole": "team-view-only" }
+                    ]
+                  }
+                ]
+          command:
+            - node
+            - -e
+            - |
+              const base = process.env.UMAMI_BASE;
+              const newPw = process.env.ADMIN_PASSWORD;
+              const tenants = JSON.parse(process.env.TENANTS);
+              const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+              const H = (t) => ({ 'content-type': 'application/json', ...(t ? { authorization: 'Bearer ' + t } : {}) });
+              const asArray = (j) => Array.isArray(j) ? j : (j && Array.isArray(j.data) ? j.data : []);
+              // This cluster enforces Cilium mutual authentication
+              // (CiliumClusterwideNetworkPolicy require-mutual-auth, mode:
+              // required). The FIRST packet from this short-lived pod to umami is
+              // dropped while the SPIRE handshake is established, so a one-shot
+              // fetch intermittently throws `TypeError: fetch failed`. The
+              // ensureAuth loop below already absorbs that for login, but
+              // ensureTeam/ensureWebsite/ensureMember called fetch exactly once
+              // each -- a single dropped packet failed the whole run (observed:
+              // `fetch failed at async ensureTeam`). Retry only THROWN (network)
+              // errors; an HTTP error RESPONSE is returned untouched so every
+              // caller's existing !r.ok / status handling is preserved.
+              const fetchRetry = async (u, o) => {
+                for (let i = 0; ; i++) {
+                  try { return await globalThis.fetch(u, o); }
+                  catch (e) { if (i >= 4) throw e; await sleep(500 * (i + 1)); }
+                }
+              };
+              // Why each login attempt failed, for the retry-loop log line and the
+              // final error. Distinguishing rejected credentials (401) from a broken
+              // backend (500, e.g. Umami's DB password drifted -> Prisma P1000) from
+              // network unreachability matters: during the 2026-06-09 incident every
+              // run reported only 'could not authenticate after retries' while the
+              // real failure was the app 500ing on a stale DB password.
+              let lastLoginFailure = 'no attempt yet';
+              async function login(pw) {
+                try {
+                  const r = await fetchRetry(base + '/api/auth/login', { method: 'POST', headers: H(), body: JSON.stringify({ username: 'admin', password: pw }) });
+                  if (r.ok) return (await r.json()).token;
+                  lastLoginFailure = r.status === 401
+                    ? 'HTTP 401 (credentials rejected)'
+                    : 'HTTP ' + r.status + ' ' + (await r.text()).slice(0, 120);
+                  return null;
+                } catch (e) { lastLoginFailure = 'network: ' + String((e && e.cause) || e).slice(0, 120); return null; }
+              }
+              async function ensureAuth() {
+                let token = await login(newPw);
+                if (token) return token;
+                const def = await login('umami');
+                if (!def) return null; // not ready yet
+                const r = await fetchRetry(base + '/api/me/password', { method: 'POST', headers: H(def), body: JSON.stringify({ currentPassword: 'umami', newPassword: newPw }) });
+                if (!r.ok) throw new Error('admin password rotation failed: ' + r.status + ' ' + (await r.text()));
+                console.log('rotated default admin password to the managed value');
+                return await login(newPw);
+              }
+              // Umami does not enforce unique team names, so match by name then create.
+              async function ensureTeam(token, name) {
+                const r = await fetchRetry(base + '/api/teams?pageSize=200', { headers: H(token) });
+                if (!r.ok) throw new Error('list teams failed: ' + r.status + ' ' + (await r.text()));
+                const existing = asArray(await r.json()).find((t) => t.name === name);
+                if (existing) return existing.id;
+                const c = await fetchRetry(base + '/api/teams', { method: 'POST', headers: H(token), body: JSON.stringify({ name }) });
+                if (!c.ok) throw new Error('create team ' + name + ' failed: ' + c.status + ' ' + (await c.text()));
+                console.log('team created:', name);
+                return (await c.json()).id;
+              }
+              async function ensureWebsite(token, s, teamId) {
+                const g = await fetchRetry(base + '/api/websites/' + s.id, { headers: H(token) });
+                // Umami returns 200 with a `null` body (NOT a 404) for a website id
+                // that doesn't exist yet, so a 2xx alone doesn't mean it's present —
+                // only treat it as existing when the body is a real website object,
+                // otherwise fall through to create. (Dereferencing the null body here
+                // is what crashed every run, leaving Umami with no websites.)
+                const w = g.ok ? await g.json() : null;
+                if (w && w.id) {
+                  // Move a pre-existing personal site into its team.
+                  if (w.teamId !== teamId) {
+                    const t = await fetchRetry(base + '/api/websites/' + s.id + '/transfer', { method: 'POST', headers: H(token), body: JSON.stringify({ teamId }) });
+                    if (!t.ok) throw new Error('transfer website ' + s.domain + ' failed: ' + t.status + ' ' + (await t.text()));
+                    console.log('website moved to team:', s.domain);
+                  }
+                  // Reconcile name/domain so TENANTS stays the source of truth for an
+                  // existing site too (Umami updates via POST to the website id) — e.g. a
+                  // domain migration applies on the next tick instead of a hand-edit in
+                  // the Umami UI. Guarded so a steady-state tick stays a no-op.
+                  if (w.name !== s.name || w.domain !== s.domain) {
+                    const u = await fetchRetry(base + '/api/websites/' + s.id, { method: 'POST', headers: H(token), body: JSON.stringify({ name: s.name, domain: s.domain }) });
+                    if (!u.ok) throw new Error('update website ' + s.domain + ' failed: ' + u.status + ' ' + (await u.text()));
+                    console.log('website updated:', s.domain);
+                  } else {
+                    console.log('website ok:', s.domain);
+                  }
+                  return;
+                }
+                const c = await fetchRetry(base + '/api/websites', { method: 'POST', headers: H(token), body: JSON.stringify({ id: s.id, name: s.name, domain: s.domain, teamId }) });
+                if (!c.ok) throw new Error('create website ' + s.domain + ' failed: ' + c.status + ' ' + (await c.text()));
+                console.log('website created:', s.domain);
+              }
+              async function findUserId(token, username) {
+                // List users via the admin endpoint: in Umami 3.x `/api/users`
+                // only handles POST (create); GET lives at `/api/admin/users`
+                // (paged + `search`, admin-gated). Hitting `/api/users` here
+                // returned 405 and aborted every member-provisioning run.
+                const r = await fetchRetry(base + '/api/admin/users?pageSize=200&search=' + encodeURIComponent(username), { headers: H(token) });
+                if (!r.ok) throw new Error('list users failed: ' + r.status + ' ' + (await r.text()));
+                const u = asArray(await r.json()).find((u) => u.username === username);
+                return u ? u.id : null;
+              }
+              async function ensureMember(token, teamId, m) {
+                // Resolve the member, creating it only if missing. The bootstrap
+                // password is read ONLY on the create path — once the user exists
+                // (and owns its own password after first login), m.passwordEnv is
+                // never touched, so the bootstrap Secret can be removed after
+                // onboarding without breaking re-runs.
+                let userId = await findUserId(token, m.username);
+                if (userId) {
+                  console.log('user exists:', m.username);
+                } else {
+                  const password = process.env[m.passwordEnv];
+                  if (!password) throw new Error('cannot create member ' + m.username + ': bootstrap password env ' + m.passwordEnv + ' is empty');
+                  const c = await fetchRetry(base + '/api/users', { method: 'POST', headers: H(token), body: JSON.stringify({ username: m.username, password, role: m.accountRole || 'user' }) });
+                  if (c.ok) {
+                    userId = (await c.json()).id;
+                    console.log('user created:', m.username);
+                  } else {
+                    const body = await c.text();
+                    // Created by a racing run between our lookup and this POST: re-resolve.
+                    if (c.status === 400 && /exist/i.test(body)) {
+                      userId = await findUserId(token, m.username);
+                      if (!userId) throw new Error('user ' + m.username + ' exists but id not resolvable');
+                      console.log('user exists:', m.username);
+                    } else {
+                      throw new Error('create user ' + m.username + ' failed: ' + c.status + ' ' + body);
+                    }
+                  }
+                }
+                const role = m.teamRole || 'team-view-only';
+                const a = await fetchRetry(base + '/api/teams/' + teamId + '/users', { method: 'POST', headers: H(token), body: JSON.stringify({ userId, role }) });
+                if (a.ok) { console.log('member added:', m.username, '->', role); return; }
+                const ab = await a.text();
+                if (a.status === 400 && /member/i.test(ab)) { console.log('member ok:', m.username); return; }
+                throw new Error('add member ' + m.username + ' failed: ' + a.status + ' ' + ab);
+              }
+              (async () => {
+                let token = null;
+                for (let i = 0; i < 60 && !token; i++) {
+                  token = await ensureAuth();
+                  if (!token) { console.log('waiting for umami to be ready... (last login failure: ' + lastLoginFailure + ')'); await sleep(5000); }
+                }
+                if (!token) throw new Error('could not authenticate to umami after retries; last login failure: ' + lastLoginFailure);
+                for (const t of tenants) {
+                  const teamId = await ensureTeam(token, t.team);
+                  for (const s of (t.websites || [])) await ensureWebsite(token, s, teamId);
+                  for (const m of (t.members || [])) await ensureMember(token, teamId, m);
+                }
+                console.log('umami tenant provisioning complete');
+              })().catch((e) => { console.error(String((e && e.stack) || e)); process.exit(1); });
