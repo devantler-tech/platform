@@ -71,6 +71,31 @@ jobs:
           go test ./scripts/validate-eks-ci-role-policy
           go run ./scripts/validate-eks-ci-role-policy .
 
+  # The cosign subjects that trust the SHARED actions publish workflows must pin a
+  # fixed revision, or a compromised branch build could be verified as first-party.
+  # ci.yaml gates that on `pull_request` and `merge_group`; this is the same gate on
+  # the push itself, for exactly the reason in this workflow's header — a direct push
+  # to main fires neither of those, so a widened matcher would sit on main unreported
+  # and be deployed by the manual CD route (#2818).
+  #
+  # Its own job, not a second step in the one above: a validator job that runs other
+  # command steps can be subverted by one of them (BASH_ENV / a fake tool on $PATH),
+  # which is the property scripts/validate-dr-signing enforces on cd.yaml's contract
+  # job. Same shape here, so neither validator's job grows a tampering surface.
+  validate-shared-publish-pin:
+    name: 🔐 Validate Shared Publish Workflow Pins
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: 🔐 Validate shared publish workflows are pinned
+        run: ./scripts/guard-shared-publish-workflow-pin.sh
+
   kubescape-baseline:
     name: 🛡️ Publish Kubescape Baseline
     runs-on: ubuntu-latest

@@ -50,6 +50,14 @@ jobs:
             ksail.prod.yaml \
             k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml
 
+      # The step above covers the ROOT source. These are the other eight cosign
+      # subjects — app OCIRepositories, the tenant RGD, the Kyverno policy and the
+      # Talos image config — which trust the SHARED actions publish workflows and
+      # must therefore pin a fixed revision. #2816 set that by hand in eight places;
+      # this is what keeps it set (#2818).
+      - name: 🔐 Validate shared publish workflows are pinned
+        run: ./scripts/guard-shared-publish-workflow-pin.sh
+
       # .github/actionlint.yaml silences actionlint's "unexpected key" diagnostic
       # for concurrency.queue, which also removes its enum check. This restores it.
       - name: 🚦 Validate concurrency queue values
