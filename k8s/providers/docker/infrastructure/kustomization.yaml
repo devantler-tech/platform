@@ -53,3 +53,50 @@ patches:
       metadata:
         name: velero-r2-credentials
         namespace: velero
+  # Local-path-provisioner helper pods are a Docker/local-only storage
+  # implementation detail. They create/delete PV directories by running as root
+  # with hostPath in the consuming app namespace, so keep the exception out of
+  # the shared/prod policy and re-add it only for the Docker provider overlay.
+  - target:
+      kind: ClusterPolicy
+      name: validate-host-restrictions
+    patch: |
+      - op: add
+        path: /spec/rules/0/exclude/any/-
+        value:
+          resources:
+            names:
+              - "helper-pod-create-pvc-*"
+              - "helper-pod-delete-pvc-*"
+      - op: add
+        path: /spec/rules/1/exclude/any/-
+        value:
+          resources:
+            names:
+              - "helper-pod-create-pvc-*"
+              - "helper-pod-delete-pvc-*"
+  - target:
+      kind: ClusterPolicy
+      name: validate-pod-security
+    patch: |
+      - op: add
+        path: /spec/rules/0/exclude/any/-
+        value:
+          resources:
+            names:
+              - "helper-pod-create-pvc-*"
+              - "helper-pod-delete-pvc-*"
+      - op: add
+        path: /spec/rules/1/exclude/any/-
+        value:
+          resources:
+            names:
+              - "helper-pod-create-pvc-*"
+              - "helper-pod-delete-pvc-*"
+      - op: add
+        path: /spec/rules/2/exclude/any/-
+        value:
+          resources:
+            names:
+              - "helper-pod-create-pvc-*"
+              - "helper-pod-delete-pvc-*"
