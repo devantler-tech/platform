@@ -245,7 +245,32 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "e28f84558cdc773eafbde8d04a819e1623b839ea4e743625e875f6bc3790cae2"
+//
+// Measured against base 0ca55381 while re-enabling the Kubescape posture
+// scanner's policy-artifact fetch: 514 rendered documents on both sides across
+// all five roots (122 apps, 209 infrastructure, 176 controllers, 4 bootstrap,
+// 3 prod), with membership IDENTICAL — zero added, removed, or renamed. Four of
+// the five roots are byte-identical. Exactly ONE line moves in the whole
+// production render:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  kubescape/kubescape
+//	  values.capabilities.kubescapeOffline: enable -> disable
+//
+// That field decides one thing in the chart: whether KS_OFFLINE=true is set on
+// the scanner container. It reaches no identity, binding, policy document, or
+// service account. Its only other chart use ORs into clusterData.keepLocal,
+// which is `or (offline) (not serviceDiscovery.enabled)` — serviceDiscovery is
+// false here, so that value stays true either way and does not move. The
+// accompanying cilium-network-policy.yaml edit is comment-only and renders to
+// nothing, which the byte-identical infrastructure root confirms.
+//
+// All Role / ClusterRole / RoleBinding / ClusterRoleBinding / ServiceAccount
+// documents are byte-identical, as is every `aws`-bearing line — trivially so,
+// since a single non-RBAC line differs across the entire surface.
+//
+// The fingerprint itself was read from the required job's own output on the
+// approved renderer, because the local toolchain is refused as unapproved.
+const expectedRenderedSurfaceSHA = "cb575e34b191a662da108421fdff7c67f0cc00bf3c9b2b7cf0c5a4e49b46fc52"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
