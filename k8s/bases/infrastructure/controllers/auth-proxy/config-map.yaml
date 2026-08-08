@@ -55,6 +55,10 @@ data:
           rule: "Host(`policy-reporter.${domain}`)"
           entryPoints: ["web"]
           service: policy-reporter
+        openbao:
+          rule: "Host(`vault.${domain}`)"
+          entryPoints: ["web"]
+          service: openbao
       services:
         homepage:
           loadBalancer:
@@ -88,3 +92,9 @@ data:
           loadBalancer:
             servers:
               - url: "http://policy-reporter-ui.policy-reporter.svc.cluster.local:8080"
+        # OpenBao UI/API, routed only after oauth2-proxy SSO. Use the active
+        # Service to avoid sending UI/API requests to sealed standby pods.
+        openbao:
+          loadBalancer:
+            servers:
+              - url: "http://openbao-active.openbao.svc.cluster.local:8200"
