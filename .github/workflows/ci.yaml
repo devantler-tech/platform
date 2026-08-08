@@ -92,6 +92,13 @@ jobs:
               # contract for the vendored CDI/KubeVirt manifests.
               - 'scripts/annotate-vendored-checkov/**'
               - 'scripts/update-vendored-operators.sh'
+              # The Trivy dispositions and the local CI-equivalent scan are one
+              # contract: a path-scoped ignore is inert unless both callers load it.
+              - '.mega-linter.yml'
+              - '.trivyignore'
+              - '.trivyignore.yaml'
+              - 'scripts/megalinter-scan-counts.sh'
+              - 'scripts/tests/test-megalinter-scan-counts-ignorefile.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/normalize-sarif-paths.sh'
@@ -299,6 +306,13 @@ jobs:
           shellcheck scripts/update-vendored-operators.sh
           go test ./scripts/annotate-vendored-checkov
           scripts/update-vendored-operators.sh --validate-committed
+
+      - name: 🔎 Validate Trivy ignore-file wiring
+        if: needs.changes.outputs.k8s == 'true'
+        # The path-scoped YAML format is not auto-loaded. Exercise the real
+        # reproduction helper at its command boundary so a future argument
+        # cleanup cannot silently turn every scoped disposition back on.
+        run: bash scripts/tests/test-megalinter-scan-counts-ignorefile.sh
 
       - name: 🔐 Validate OpenBao OIDC admin role
         if: needs.changes.outputs.k8s == 'true'
