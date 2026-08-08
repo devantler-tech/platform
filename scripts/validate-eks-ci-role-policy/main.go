@@ -218,6 +218,24 @@ const (
 // cosign matcher tightening on the then-four live trust rules: 503 documents on
 // both sides, four changed `subject:` lines, no grant-bearing object moved.)
 //
+// This value covers narrowing the github-config tenant Role from a resources
+// wildcard to the managed-resource kinds its ManagedResourceActivationPolicy
+// activates. Measured against main 72fe7919: 515 documents on both sides, with
+// membership IDENTICAL — set difference in BOTH directions over
+// apiVersion|kind|namespace|name returned zero, so nothing was added, removed
+// or renamed. Exactly ONE entry's content moved:
+//
+//	rbac.authorization.k8s.io/v1  Role  github-config/github-config-managed-resources
+//
+// Its rendered delta replaces `resources: ['*']` on five
+// `*.github.m.upbound.io` groups with the ten activated kinds, and adds
+// `providerconfigs` for the ProviderConfig the tenant applies. It is strictly a
+// tightening: every resource the new rules admit, the wildcard already admitted.
+// The surface carries 133 Role / ClusterRole / RoleBinding / ClusterRoleBinding
+// / ServiceAccount documents on BOTH sides, and every `aws`-bearing line is
+// byte-identical across the two trees, so nothing granted to the aws/aws
+// service account this validator exists to protect is touched.
+//
 // NOTE for whoever re-approves this next: an opaque ciphertext in the surface
 // moves on ANY re-encryption — this value also absorbed a SOPS version bump
 // (3.13.2 -> 3.13.3) — so a routine secret rotation reds this gate with no
@@ -227,7 +245,7 @@ const (
 // kubectl render diff — render k8s/providers/hetzner/{apps,infrastructure,
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
-const expectedRenderedSurfaceSHA = "6af27989825d60e4139a4d8754ff6e4be4ed5e20b75181dacade8653c14cc5aa"
+const expectedRenderedSurfaceSHA = "e28f84558cdc773eafbde8d04a819e1623b839ea4e743625e875f6bc3790cae2"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
