@@ -156,3 +156,11 @@ spec:
             useLoginAsID: false
             orgs:
               - name: devantler-tech
+                # Dex is the authorization boundary for apps that authenticate
+                # natively (for example Actual Budget) instead of routing
+                # through oauth2-proxy's allowed_groups gate. Keep the upstream
+                # GitHub connector narrowed to the same maintainer team so org
+                # members who are not platform maintainers cannot claim or
+                # access sensitive native-OIDC apps.
+                teams:
+                  - maintainers

@@ -247,8 +247,8 @@ spec:
       # id_token, so no JWKS/issuer match is required.
       #
       # SECURITY NOTE: crossview has no oauth2-proxy allowed_groups gate, so the
-      # effective gate is any devantler-tech ORG member that Dex authenticates
-      # (its github connector is org-scoped). They land as a non-admin `user` on
+      # effective gate is Dex's GitHub connector, which is narrowed to
+      # devantler-tech/maintainers. They land as a non-admin `user` on
       # a read-only dashboard (the first login is the break-glass `admin` seeded
       # at boot, so SSO users are never `admin`). With the public route gone the
       # practical surface shrinks further: reaching the login page at all now
