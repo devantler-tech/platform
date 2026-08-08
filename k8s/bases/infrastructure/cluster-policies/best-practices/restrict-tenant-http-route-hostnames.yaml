@@ -1,0 +1,67 @@
+# Tenant GitOps service accounts may create HTTPRoutes in their own namespaces,
+# but they must not be able to claim arbitrary hosts on the shared Gateway.
+# Keep this allow-list in platform config so a compromised tenant artifact cannot
+# intercept another platform hostname under the wildcard Gateway certificate.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-tenant-http-route-hostnames
+  annotations:
+    policies.kyverno.io/title: Restrict Tenant HTTPRoute Hostnames
+    policies.kyverno.io/category: Multi-Tenancy, Gateway API, Best Practices
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: HTTPRoute
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      Requires tenant-managed HTTPRoutes to declare hostnames and confines each
+      tenant namespace to its approved public hostnames. This prevents tenant
+      OCI artifacts from attaching routes for other platform services to the
+      shared hostname-less Gateway listener.
+spec:
+  validationFailureAction: Enforce
+  # Uses admission request context, so it cannot run as a background scan.
+  background: false
+  rules:
+    - name: restrict-wedding-app-hostnames
+      match:
+        any:
+          - resources:
+              kinds:
+                - HTTPRoute
+              namespaces:
+                - wedding-app
+      validate:
+        message: "wedding-app HTTPRoutes may only use approved wedding-app hostnames."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.hostnames || `[]` }}"
+                operator: Equals
+                value: []
+              - key: "{{ request.object.spec.hostnames || `[]` }}"
+                operator: AnyNotIn
+                value:
+                  - wedding.platform.devantler.tech
+                  - wedding.platform.lan
+    - name: restrict-ascoachingogvaner-hostnames
+      match:
+        any:
+          - resources:
+              kinds:
+                - HTTPRoute
+              namespaces:
+                - ascoachingogvaner
+      validate:
+        message: "ascoachingogvaner HTTPRoutes may only use approved ascoachingogvaner hostnames."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.hostnames || `[]` }}"
+                operator: Equals
+                value: []
+              - key: "{{ request.object.spec.hostnames || `[]` }}"
+                operator: AnyNotIn
+                value:
+                  - ascoachingogvaner.dk
+                  - www.ascoachingogvaner.dk
+                  - ascoachingogvaner.platform.lan

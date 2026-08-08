@@ -220,8 +220,12 @@ carry itself**:
 here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes, and app config:
 
 - List all of a tenant's hostnames (local + prod + any custom domains) directly in its
-  `deploy/httproute.yaml`. The Gateway attaches only the hostnames that match a listener in a
-  given environment, so listing them all is safe everywhere.
+  `deploy/httproute.yaml`, and add every approved hostname to the platform-side
+  Kyverno allow-list in
+  [`restrict-tenant-http-route-hostnames.yaml`](../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-http-route-hostnames.yaml).
+  The shared platform Gateway intentionally accepts routes from all namespaces, so the
+  admission policy is the boundary that prevents a tenant artifact from claiming another
+  platform hostname.
 - The platform's `homepage` app discovers `gethomepage.dev/*` annotations on the tenant's
   HTTPRoute cluster-wide, so the tenant authors them in its own artifact — they are tenant
   self-presentation, not platform config.
