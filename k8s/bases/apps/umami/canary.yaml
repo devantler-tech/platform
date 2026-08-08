@@ -39,6 +39,18 @@ spec:
     gatewayRefs:
       - name: platform
         namespace: kube-system
+    # Only expose Umami's public collection endpoints at the edge. The admin UI
+    # and login API must not be reachable from the internet because Umami creates
+    # a built-in admin/umami account before our in-cluster provisioning CronJob
+    # can rotate it. Keeping the public HTTPRoute collector-only removes that
+    # first-boot takeover race while preserving tracking. If the dashboard needs
+    # browser access later, add a separate SSO-protected route instead of widening
+    # this Flagger-owned route.
+    match:
+      - uri:
+          prefix: /api/send
+      - uri:
+          prefix: /script.js
     # Tile metadata for the Homepage dashboard. Flagger copies spec.service.apex
     # annotations/labels onto the HTTPRoute it generates (pkg/router/gateway_api.go),
     # so the gethomepage.dev/* annotations the hand-written route used to carry are
