@@ -147,8 +147,11 @@ EOF
     # shape here so an unparsed construct can never reach the allow-list below.
     local alternatives alternative
     case "$ref" in
-      '('*')') alternatives="${ref#\(}"; alternatives="${alternatives%\)}" ;;
-      '('*|*')')
+      '('*')')
+        alternatives="${ref#\(}"
+        alternatives="${alternatives%\)}"
+        ;;
+      '('* | *')')
         printf '%s: ref %s is not a fully grouped alternation; this guard cannot prove it pins a revision\n' \
           "$location" "$ref" >&2
         status=1
