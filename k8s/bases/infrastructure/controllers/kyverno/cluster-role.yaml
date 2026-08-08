@@ -8,11 +8,16 @@
 # access to Deployments.
 #
 # The propagate-reloader-to-flagger-primary ClusterPolicy (cluster-policies, the
-# next Flux layer) uses mutateExisting to patch annotations onto Flagger
-# "<name>-primary" Deployments. Kyverno checks this grant at policy admission and
+# next Flux layer) uses mutateExisting to patch one annotation onto umami's
+# Flagger primary Deployment. Kyverno checks this grant at policy admission and
 # rejects the policy without it, so the grant ships here -- one layer earlier
 # (infrastructure-controllers) than the policy (infrastructure) -- ensuring it is
 # live and aggregated before the policy is admitted.
+#
+# Keep this permission pinned to the one generated Deployment that currently
+# needs the workaround. Kubernetes RBAC cannot limit patch/update to metadata
+# annotations, so granting write on every Deployment would let a compromised
+# background-controller token mutate arbitrary workload pod templates.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -24,9 +29,9 @@ rules:
       - apps
     resources:
       - deployments
+    resourceNames:
+      - umami-umami-primary
     verbs:
       - get
-      - list
-      - watch
       - update
       - patch
