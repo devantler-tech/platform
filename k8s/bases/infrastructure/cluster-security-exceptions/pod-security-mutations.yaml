@@ -15,6 +15,19 @@ apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
   name: pod-security-mutations
+  annotations:
+    # Cluster-wide, and KNOWN to be wider than its own rationale (#2824). The
+    # compensating mutation named below excludes twelve namespaces —
+    # kube-system, kube-public, kube-node-lease, flux-system, longhorn-system,
+    # local-path-storage, kubescape, kubevirt, cdi, observability, velero,
+    # chaos-mesh — so in exactly those namespaces this exception suppresses
+    # C-0013/C-0016/C-0055/C-0211 with nothing injecting them. Six of the twelve
+    # are separately and deliberately excepted for C-0013/C-0016/C-0055 in
+    # infrastructure-privileged.yaml; C-0211 and the other six are not covered
+    # anywhere. Narrowing it needs a scope the CSE designators cannot yet spell
+    # (an In-list would fail every newly-onboarded namespace), which is why this
+    # is declared rather than fixed here.
+    platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
     Kyverno mutate policy "add-security-context" injects these controls

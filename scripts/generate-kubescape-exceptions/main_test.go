@@ -113,13 +113,16 @@ spec:
 	}
 }
 
-// TestGenerateNoMatchIsClusterWide verifies an omitted match targets every
-// resource, including cluster-scoped resources that have no namespace.
+// TestGenerateNoMatchIsClusterWide verifies a DECLARED cluster-wide exception
+// targets every resource, including cluster-scoped resources that have no
+// namespace.
 func TestGenerateNoMatchIsClusterWide(t *testing.T) {
 	dir := writeCSE(t, `
 kind: ClusterSecurityException
 metadata:
   name: cluster-wide
+  annotations:
+    platform.devantler.tech/cluster-wide: declared
 spec:
   posture:
     - controlID: C-0034
@@ -141,6 +144,115 @@ spec:
 	}
 }
 
+// TestUndeclaredClusterWideScopeFailsClosed is the guard: an exception with no
+// spec.match suppresses its controls for EVERY workload, and until this fired
+// that scope was reached by writing nothing at all. An author who forgot to
+// scope an exception and one who deliberately chose cluster-wide produced byte
+// for byte the same CR, so review had no signal to catch the first.
+func TestUndeclaredClusterWideScopeFailsClosed(t *testing.T) {
+	_, err := generate(writeCSE(t, `
+kind: ClusterSecurityException
+metadata:
+  name: undeclared
+spec:
+  posture:
+    - controlID: C-0013
+      action: ignore
+`))
+	if err == nil {
+		t.Fatal("undeclared cluster-wide scope must fail closed, got nil error")
+	}
+
+	if !strings.Contains(err.Error(), clusterWideAnnotation) {
+		t.Errorf("error %q must name %s so the fix is obvious", err, clusterWideAnnotation)
+	}
+}
+
+// TestClusterWideAnnotationFailsClosed covers the marker's own malformed
+// shapes. A typo'd value must not be read as a declaration.
+//
+// Each case asserts WHICH error it got, not merely that it got one. Every
+// fixture here also has no spec.match, so a regression that ignored this
+// annotation entirely would still be rejected — by the undeclared-scope guard —
+// and a bare `err != nil` check would stay green while the marker did nothing.
+func TestClusterWideAnnotationFailsClosed(t *testing.T) {
+	for name, tc := range map[string]struct {
+		annotation string
+		want       string
+	}{
+		"wrong value": {
+			annotation: `platform.devantler.tech/cluster-wide: "true"`,
+			want:       `unsupported platform.devantler.tech/cluster-wide value "true"`,
+		},
+		"empty value": {
+			annotation: `platform.devantler.tech/cluster-wide: ""`,
+			want:       `unsupported platform.devantler.tech/cluster-wide value ""`,
+		},
+		"non-string": {
+			annotation: `platform.devantler.tech/cluster-wide: true`,
+			want:       "platform.devantler.tech/cluster-wide must be a string",
+		},
+		"capitalised": {
+			annotation: `platform.devantler.tech/cluster-wide: Declared`,
+			want:       `unsupported platform.devantler.tech/cluster-wide value "Declared"`,
+		},
+		"padded value": {
+			annotation: `platform.devantler.tech/cluster-wide: " declared "`,
+			want:       `unsupported platform.devantler.tech/cluster-wide value " declared "`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := generate(writeCSE(t, `
+kind: ClusterSecurityException
+metadata:
+  name: malformed-marker
+  annotations:
+    `+tc.annotation+`
+spec:
+  posture:
+    - controlID: C-0013
+      action: ignore
+`))
+			if err == nil {
+				t.Fatalf("malformed cluster-wide marker must fail closed, want an error containing %q, got none", tc.want)
+			}
+
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error = %q, want it to contain %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// TestDeclaredClusterWideWithMatchFailsClosed rejects a CR that both declares
+// cluster-wide scope and scopes itself. The two statements contradict, and
+// silently honouring the match would leave a marker on file claiming a scope
+// the generated exception does not have — the same invisible-scope problem one
+// level up.
+func TestDeclaredClusterWideWithMatchFailsClosed(t *testing.T) {
+	_, err := generate(writeCSE(t, `
+kind: ClusterSecurityException
+metadata:
+  name: contradictory
+  annotations:
+    platform.devantler.tech/cluster-wide: declared
+spec:
+  posture:
+    - controlID: C-0013
+      action: ignore
+  match:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - flux-system
+`))
+	if err == nil {
+		t.Fatal("declaring cluster-wide scope alongside a match must fail closed, got nil error")
+	}
+}
+
 // TestGenerateFrameworkScopedPosture verifies a CSE framework constraint is
 // preserved in Kubescape's native posture policy instead of being widened.
 func TestGenerateFrameworkScopedPosture(t *testing.T) {
@@ -148,6 +260,8 @@ func TestGenerateFrameworkScopedPosture(t *testing.T) {
 kind: ClusterSecurityException
 metadata:
   name: nsa-only
+  annotations:
+    platform.devantler.tech/cluster-wide: declared
 spec:
   posture:
     - frameworkName: NSA
@@ -187,6 +301,8 @@ metadata:
 kind: ClusterSecurityException
 metadata:
   name: zzz-last
+  annotations:
+    platform.devantler.tech/cluster-wide: declared
 spec:
   posture:
     - controlID: C-0002
@@ -195,6 +311,8 @@ spec:
 kind: ClusterSecurityException
 metadata:
   name: aaa-first
+  annotations:
+    platform.devantler.tech/cluster-wide: declared
 spec:
   posture:
     - controlID: C-0002
@@ -362,11 +480,13 @@ func TestGenerateRejectsDuplicateNames(t *testing.T) {
 kind: ClusterSecurityException
 metadata: {name: dupe}
 spec:
+  match: {namespaceSelector: {matchExpressions: [{key: kubernetes.io/metadata.name, operator: In, values: [flux-system]}]}}
   posture: [{controlID: C-0002, action: ignore}]
 ---
 kind: ClusterSecurityException
 metadata: {name: dupe}
 spec:
+  match: {namespaceSelector: {matchExpressions: [{key: kubernetes.io/metadata.name, operator: In, values: [flux-system]}]}}
   posture: [{controlID: C-0013, action: ignore}]
 `)
 
@@ -411,6 +531,7 @@ metadata:
   name: host-only
   annotations:
     platform.devantler.tech/headlamp-mirror: exclude
+    platform.devantler.tech/cluster-wide: declared
 spec:
   posture: [{controlID: C-0092, action: ignore}]
 ---
@@ -418,6 +539,7 @@ kind: ClusterSecurityException
 metadata:
   name: workload-scoped
 spec:
+  match: {namespaceSelector: {matchExpressions: [{key: kubernetes.io/metadata.name, operator: In, values: [flux-system]}]}}
   posture: [{controlID: C-0002, action: ignore}]
 `)
 
@@ -445,6 +567,7 @@ func TestMirrorDefaultsToIncluded(t *testing.T) {
 kind: ClusterSecurityException
 metadata: {name: no-annotations}
 spec:
+  match: {namespaceSelector: {matchExpressions: [{key: kubernetes.io/metadata.name, operator: In, values: [flux-system]}]}}
   posture: [{controlID: C-0002, action: ignore}]
 `)
 
@@ -522,6 +645,7 @@ metadata:
   name: empty-annotations
   annotations:
 spec:
+  match: {namespaceSelector: {matchExpressions: [{key: kubernetes.io/metadata.name, operator: In, values: [flux-system]}]}}
   posture: [{controlID: C-0002, action: ignore}]
 `)
 
@@ -539,6 +663,7 @@ metadata:
   name: host-only
   annotations:
     platform.devantler.tech/headlamp-mirror: exclude
+    platform.devantler.tech/cluster-wide: declared
 spec:
   posture: [{controlID: C-0092, action: ignore}]
 `)

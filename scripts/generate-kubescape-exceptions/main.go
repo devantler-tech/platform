@@ -60,6 +60,20 @@ const (
 	// cluster-wide designator would except that control for every workload.
 	mirrorExclude = "exclude"
 
+	// clusterWideAnnotation declares that an exception is MEANT to suppress its
+	// controls for every workload in the cluster. An omitted `spec.match` is
+	// what produces that scope, so without this marker the widest exception the
+	// repository can express is also the one written by typing the least, and a
+	// forgotten scope is indistinguishable from a deliberate one. Suppression is
+	// silent — an excepted workload that genuinely violates a control reads
+	// exactly like a compliant one — so the scope has to be stated, not inferred
+	// from an absence.
+	clusterWideAnnotation = "platform.devantler.tech/cluster-wide"
+	// clusterWideDeclared is the only accepted clusterWideAnnotation value. As
+	// with mirrorExclude, any other value fails closed rather than being read as
+	// a declaration: a typo must not grant cluster-wide suppression.
+	clusterWideDeclared = "declared"
+
 	formatKubescape = "kubescape"
 	formatConfigMap = "headlamp-configmap"
 
@@ -362,6 +376,42 @@ func resolveMirrorExclusion(metadata map[string]any, path, name string) (bool, e
 	return true, nil
 }
 
+// resolveClusterWideDeclaration reads the CR's cluster-wide scope marker.
+//
+// Absent annotation => not declared, which is the safe default: an exception
+// that forgot to scope itself then fails closed at conversion instead of
+// silently excepting its controls for every workload in the cluster.
+func resolveClusterWideDeclaration(metadata map[string]any, path, name string) (bool, error) {
+	rawAnnotations, present := metadata["annotations"]
+	if !present || rawAnnotations == nil {
+		return false, nil
+	}
+
+	// Same fail-closed reasoning as resolveMirrorExclusion: a malformed
+	// annotations block must not be read as "no marker", because here that
+	// reading is the permissive one.
+	annotations, ok := rawAnnotations.(map[string]any)
+	if !ok {
+		return false, cseErrorf(path, name, "metadata.annotations must be a mapping, got %v", rawAnnotations)
+	}
+
+	raw, ok := annotations[clusterWideAnnotation]
+	if !ok {
+		return false, nil
+	}
+
+	value, ok := raw.(string)
+	if !ok {
+		return false, cseErrorf(path, name, "%s must be a string, got %v", clusterWideAnnotation, raw)
+	}
+
+	if value != clusterWideDeclared {
+		return false, cseErrorf(path, name, "unsupported %s value %q (only %q is recognised)", clusterWideAnnotation, value, clusterWideDeclared)
+	}
+
+	return true, nil
+}
+
 // convertDocument converts one ClusterSecurityException document; nil for other kinds.
 func convertDocument(doc any, path string) (*policy, error) {
 	document, ok := doc.(map[string]any)
@@ -436,6 +486,22 @@ func convertDocument(doc any, path string) (*policy, error) {
 		}
 
 		match = parsed
+	}
+
+	clusterWide, err := resolveClusterWideDeclaration(metadata, path, name)
+	if err != nil {
+		return nil, err
+	}
+
+	switch {
+	case len(match) == 0 && !clusterWide:
+		return nil, cseErrorf(path, name,
+			"no spec.match, which excepts these controls for EVERY workload; scope it, or declare the scope with the %s: %s annotation",
+			clusterWideAnnotation, clusterWideDeclared)
+	case len(match) > 0 && clusterWide:
+		return nil, cseErrorf(path, name,
+			"declares %s: %s but also sets spec.match; the marker would claim a scope the exception does not have",
+			clusterWideAnnotation, clusterWideDeclared)
 	}
 
 	resources, err := resolveMatch(match, path, name)
