@@ -76,6 +76,44 @@ main() {
     return 1
   fi
 
+  # DISCOVER independently of formatting, then require discovery and validation to
+  # agree. The floor above only proves that the eight KNOWN subjects are still
+  # found; it says nothing about a NINTH consumer written differently. A valid
+  # multiline form (`subject: >-` with the identity on the next line) or a fourth
+  # key spelling is invisible to SUBJECT_PATTERN while the eight existing matches
+  # still satisfy the floor — so a new consumer could pin nothing and the guard
+  # would report a clean repository.
+  #
+  # This pattern keys on the shared workflow IDENTITY alone, with no key name and
+  # no line structure, so it finds a reference however it is written. Anything it
+  # finds that the strict pattern did not validate is reported rather than skipped.
+  local discovered_lines unvalidated
+  discovered_lines="$(grep -rlE 'devantler-tech/actions/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml' \
+    --include='*.yaml' . || true)"
+
+  unvalidated=""
+  local file discovered_count validated_count
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    discovered_count="$(grep -cE 'devantler-tech/actions/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml' "$file" || true)"
+    validated_count="$(grep -cE "$SUBJECT_PATTERN" "$file" || true)"
+    if [ "$discovered_count" -gt "$validated_count" ]; then
+      unvalidated="$unvalidated  $file (references: $discovered_count, validated as subjects: $validated_count)
+"
+    fi
+  done <<EOF
+$discovered_lines
+EOF
+
+  if [ -n "$unvalidated" ]; then
+    printf 'guard: found reference(s) to the shared publish workflows that this guard did not validate:\n' >&2
+    printf '%s' "$unvalidated" >&2
+    printf 'A consumer written in a form the subject pattern does not match is NOT checked, so it could\n' >&2
+    printf 'pin nothing while this guard reports success. Either extend SUBJECT_PATTERN to cover the new\n' >&2
+    printf 'form and raise EXPECTED_MIN_SUBJECTS, or confirm the reference is not a cosign subject.\n' >&2
+    return 1
+  fi
+
   local status=0
   local line location subject ref
   while IFS= read -r line; do
@@ -103,20 +141,48 @@ main() {
     # wildcard inside `refs/tags/v.+` widens the tag NAME, never the ref KIND, so it
     # stays valid — which is why this is judged per alternative rather than on the
     # whole string.
+    # A grouped ref must be FULLY grouped. `(A|B)` is the shape this understands;
+    # `(A)?B` is not, and stripping a leading paren from it would silently hand the
+    # trailing `B` to the per-alternative check as part of A's text. Reject the
+    # shape here so an unparsed construct can never reach the allow-list below.
     local alternatives alternative
-    alternatives="${ref#\(}"
-    alternatives="${alternatives%\)}"
+    case "$ref" in
+      '('*')') alternatives="${ref#\(}"; alternatives="${alternatives%\)}" ;;
+      '('*|*')')
+        printf '%s: ref %s is not a fully grouped alternation; this guard cannot prove it pins a revision\n' \
+          "$location" "$ref" >&2
+        status=1
+        continue
+        ;;
+      *) alternatives="$ref" ;;
+    esac
 
     while IFS= read -r alternative; do
-      case "$alternative" in
-        '[0-9a-f]{40}') ;;
-        'refs/tags/'*) ;;
-        *)
-          printf '%s: ref alternative %s does not pin a fixed revision (subject: %s)\n' \
-            "$location" "$alternative" "$ref" >&2
-          status=1
-          ;;
-      esac
+      # Match each alternative WHOLE, never by prefix.
+      #
+      # `refs/tags/*` as a shell glob accepts anything that merely STARTS with the
+      # tag prefix, so `(refs/tags/v.+)?refs/heads/.+$` — where the tag group is
+      # optional and a branch ref follows it — was accepted and the guard reported
+      # all eight subjects pinned. Reproduced against the real repository before
+      # this fix: exit 0 with a subject that permits `refs/heads/`.
+      #
+      # The tag form therefore allows only characters that widen the tag NAME. `/`
+      # is excluded because it is what lets a second ref kind be appended, and the
+      # grouping and alternation metacharacters are excluded because a matcher that
+      # needs them is not a plain tag pattern and must be reviewed here deliberately.
+      if printf '%s' "$alternative" | grep -qxE '\[0-9a-f\]\{40\}'; then
+        continue
+      fi
+      # NOTE the bracket expression's ordering: a backslash is LITERAL inside a
+      # POSIX bracket, so `\]` does not escape anything — it ends the class early.
+      # `]` must therefore come first and `-` last, which is what makes `[` and `]`
+      # members rather than delimiters.
+      if printf '%s' "$alternative" | grep -qxE 'refs/tags/[]A-Za-z0-9._*+{}[-]+'; then
+        continue
+      fi
+      printf '%s: ref alternative %s does not pin a fixed revision (subject: %s)\n' \
+        "$location" "$alternative" "$ref" >&2
+      status=1
     done < <(printf '%s\n' "$alternatives" | tr '|' '\n')
   done <<EOF
 $matches

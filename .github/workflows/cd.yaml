@@ -103,6 +103,14 @@ jobs:
           go test ./scripts/validate-dr-signing
           go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml
 
+      # Same reasoning as the step above, and the same invocation as ci.yaml's.
+      # ci.yaml runs this guard on `pull_request` and `merge_group` only, so a
+      # matcher widened by a DIRECT PUSH to main reaches production through this
+      # manual route without it ever having run — the weakened trust policy would
+      # be reconciled to the cluster unchecked (#2818).
+      - name: 🔐 Validate shared publish workflows are pinned
+        run: ./scripts/guard-shared-publish-workflow-pin.sh
+
   deploy-prod:
     name: 🚀 Deploy to Production
     needs: [validate-eks-authorization, validate-publication-contract]
