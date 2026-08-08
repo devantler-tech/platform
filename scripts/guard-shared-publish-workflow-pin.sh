@@ -11,6 +11,10 @@
 # matcher — it verifies, it just verifies less — so no schema, no kubeconform pass and
 # no deploy will notice.
 #
+# The ref is judged by an ALLOW-LIST — a 40-hex commit, or a tag under refs/tags/ —
+# because enumerating forbidden shapes only catches the regressions someone thought
+# of, and would wave through `@main` or `@v1`.
+#
 # 🔴 THE ROOT SOURCE IS DELIBERATELY EXCLUDED, AND THAT IS THE WHOLE DESIGN.
 #
 # The platform's own root OCIRepository is signed by devantler-tech/PLATFORM workflows
@@ -87,20 +91,33 @@ main() {
     ref="${ref%\"}"
     ref="${ref%$}"
 
-    if printf '%s' "$ref" | grep -qE 'refs/heads/'; then
-      printf '%s: accepts a BRANCH ref (%s) for a shared publish workflow\n' "$location" "$ref" >&2
-      status=1
-      continue
-    fi
+    # An ALLOW-LIST over each alternative, not a list of bad shapes to reject.
+    #
+    # Enumerating what is forbidden only ever catches the regressions someone thought
+    # of: rejecting `refs/heads/` and a bare `.+` still waves through `@main`, `@v1`
+    # or `@my-branch`, none of which pins a revision. Requiring each alternative to be
+    # positively recognisable inverts that — an unfamiliar shape fails, and adding a
+    # legitimately new one is a deliberate edit here rather than a silent widening.
+    #
+    # Exactly two forms qualify: a 40-hex commit, and a tag under refs/tags/. The
+    # wildcard inside `refs/tags/v.+` widens the tag NAME, never the ref KIND, so it
+    # stays valid — which is why this is judged per alternative rather than on the
+    # whole string.
+    local alternatives alternative
+    alternatives="${ref#\(}"
+    alternatives="${alternatives%\)}"
 
-    # A bare unbounded wildcard as a whole alternative accepts every ref, which is the
-    # exact `@.+` state #2816 removed. Checked per alternative, so `refs/tags/v.+` —
-    # where the wildcard only widens the tag NAME, not the ref KIND — stays valid.
-    if printf '%s' "$ref" | grep -qE '(^|\()(\.[*+]\??)(\||\)|$)'; then
-      printf '%s: accepts ANY ref (%s) for a shared publish workflow\n' "$location" "$ref" >&2
-      status=1
-      continue
-    fi
+    while IFS= read -r alternative; do
+      case "$alternative" in
+        '[0-9a-f]{40}') ;;
+        'refs/tags/'*) ;;
+        *)
+          printf '%s: ref alternative %s does not pin a fixed revision (subject: %s)\n' \
+            "$location" "$alternative" "$ref" >&2
+          status=1
+          ;;
+      esac
+    done < <(printf '%s\n' "$alternatives" | tr '|' '\n')
   done <<EOF
 $matches
 EOF
