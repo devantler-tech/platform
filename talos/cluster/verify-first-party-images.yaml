@@ -17,8 +17,8 @@
 #      its default branch (that workflow is workflow_dispatch-only).
 #   3. the app images (wedding-app, ascoachingogvaner, …) are signed by the
 #      shared publish-app.yaml workflow in devantler-tech/actions, pinned by
-#      commit SHA or release tag — the SAME form their Flux OCIRepository verify
-#      blocks and the verify-app-images ImageValidatingPolicy pin.
+#      commit SHA — the SAME form their Flux OCIRepository verify blocks and the
+#      verify-app-images ImageValidatingPolicy pin (#3022).
 # Talos evaluates rules in order, first match wins, so the two specific rules
 # MUST precede the ghcr.io/devantler-tech/* catch-all.
 #
@@ -68,11 +68,11 @@ rules:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/provider-upjet-[a-z0-9-]+/\.github/workflows/publish-provider-package\.yml@refs/heads/main$
   # First-party APP images signed by the shared publish-app.yaml workflow in
-  # devantler-tech/actions. Callers pin that reusable workflow either by commit
-  # SHA or by release tag, so the ref alternation admits exactly those two forms
-  # and rejects a mutable ref such as @main. Same shape as the apps' Flux
+  # devantler-tech/actions. Callers pin that reusable workflow by commit SHA, so
+  # the ref admits that form alone and rejects everything else — a mutable ref
+  # such as @main, and a release tag (#3022). Same shape as the apps' Flux
   # OCIRepository verify blocks and the verify-app-images ImageValidatingPolicy.
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@([0-9a-f]{40}|refs/tags/v.+)$
+      subjectRegex: ^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$
