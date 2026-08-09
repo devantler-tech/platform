@@ -280,8 +280,11 @@ fence_report_liveness() {
     run_attempt="${run_reference##* }"
     printf '    holder ran as GitHub run %s attempt %s. Confirm it is terminal:\n' \
       "${run_id}" "${run_attempt}"
-    printf '      gh run view %s --repo devantler-tech/platform --json status,conclusion\n' \
-      "${run_id}"
+    # --attempt, because a rerun REUSES the run id: without it `gh` reports the
+    # latest attempt, so an orphan from a finished attempt 1 reads as live while
+    # attempt 2 runs — blocking recovery on a holder that is already dead.
+    printf '      gh run view %s --repo devantler-tech/platform --attempt %s --json status,conclusion\n' \
+      "${run_id}" "${run_attempt}"
     printf '    A status other than "completed" means the holder is LIVE — do not recover.\n'
     return 0
   fi
@@ -289,12 +292,14 @@ fence_report_liveness() {
   printf '    local run). Prove the process is dead before recovering.\n'
 }
 
-report_fences_now() {
-  local state="${work_dir}/fence-report.json"
-  local held=0
-  local holder now_epoch renew_epoch duration name uid suspend
-
-  printf '== GHCR deploy fences on context %s ==\n\n' "${KUBE_CONTEXT}"
+# Reported LAST on purpose. The Lease is the global exclusion fence: releasing
+# it while a policy or node fence is still held lets a queued or newly
+# dispatched deploy start against a half-recovered cluster and collide with the
+# state the operator is still restoring. This mirrors cleanup_refresh_work,
+# which releases the Lease after everything it guards.
+fence_report_lease() {
+  local state="$1"
+  local holder now_epoch renew_epoch duration
 
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
@@ -305,29 +310,35 @@ report_fences_now() {
     echo "::error::Could not read the GHCR synchronization lease."
     return 1
   fi
-  if [[ -s "${state}" ]]; then
-    holder="$(jq -r '.spec.holderIdentity // ""' "${state}")"
-    if [[ -n "${holder}" ]]; then
-      held=$((held + 1))
-      duration="$(jq -r '.spec.leaseDurationSeconds // 0' "${state}")"
-      now_epoch="$(date -u +%s)"
-      renew_epoch="$(fence_report_epoch "$(jq -r '.spec.renewTime // ""' "${state}")")"
-      printf 'HELD  Lease flux-system/%s\n' "${SYNC_LEASE_NAME}"
-      printf '    holder: %s\n' "${holder}"
-      if [[ -n "${renew_epoch}" ]] &&
-        ((now_epoch - renew_epoch < duration)); then
-        printf '    renewed %ss ago, inside its %ss duration — the holder is LIVE. Do not recover.\n' \
-          "$((now_epoch - renew_epoch))" "${duration}"
-      else
-        printf '    last renewed %s (duration %ss) — heartbeat has stopped.\n' \
-          "$(jq -r '.spec.renewTime // "never"' "${state}")" "${duration}"
-        fence_report_liveness "${holder}"
-        printf '    release:\n      %s\n' \
-          "$(fence_lease_release_command "${state}" "${holder}")"
-      fi
-      printf '\n'
-    fi
+  [[ -s "${state}" ]] || return 0
+  holder="$(jq -r '.spec.holderIdentity // ""' "${state}")"
+  [[ -n "${holder}" ]] || return 0
+  held=$((held + 1))
+  duration="$(jq -r '.spec.leaseDurationSeconds // 0' "${state}")"
+  now_epoch="$(date -u +%s)"
+  renew_epoch="$(fence_report_epoch "$(jq -r '.spec.renewTime // ""' "${state}")")"
+  printf 'HELD  Lease flux-system/%s\n' "${SYNC_LEASE_NAME}"
+  printf '    holder: %s\n' "${holder}"
+  if [[ -n "${renew_epoch}" ]] &&
+    ((now_epoch - renew_epoch < duration)); then
+    printf '    renewed %ss ago, inside its %ss duration — the holder is LIVE. Do not recover.\n' \
+      "$((now_epoch - renew_epoch))" "${duration}"
+  else
+    printf '    last renewed %s (duration %ss) — heartbeat has stopped.\n' \
+      "$(jq -r '.spec.renewTime // "never"' "${state}")" "${duration}"
+    fence_report_liveness "${holder}"
+    printf '    release LAST, after every fence above is released:\n      %s\n' \
+      "$(fence_lease_release_command "${state}" "${holder}")"
   fi
+  printf '\n'
+}
+
+report_fences_now() {
+  local state="${work_dir}/fence-report.json"
+  local held=0
+  local holder name uid suspend phase
+
+  printf '== GHCR deploy fences on context %s ==\n\n' "${KUBE_CONTEXT}"
 
   for name in "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
     "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}"; do
@@ -383,6 +394,29 @@ report_fences_now() {
     printf '    recovery record: %s\n' "${recovery:-<none — claimed without a journal>}"
     printf '    unschedulable: %s\n' "${unschedulable}"
     [[ -n "${owner}" ]] && fence_report_liveness "${owner}"
+    # A journal in `active` or `retain` is NOT releasable by annotation removal:
+    # `active` may hold an interrupted pre-reboot mutation and `retain` has
+    # crossed the reboot edge without a release-ready runtime proof, which is
+    # why reconcile_bootstrap_recovery refuses both. Printing the removals for
+    # them would discard the only durable recovery state and invite restoring an
+    # unverified node, so those phases get directed to bootstrap recovery
+    # instead of a command.
+    phase="$(printf '%s' "${recovery}" |
+      jq -r 'if type == "object" and (.phase | type) == "string"
+             then .phase else "" end' 2>/dev/null || printf '')"
+    case "${phase}" in
+      active | retain)
+        printf '    NOT releasable by annotation removal: journal phase is %s.\n' "${phase}"
+        printf '    %s\n' "$(
+          [[ "${phase}" == active ]] &&
+            printf 'A pre-reboot mutation may have been interrupted.' ||
+            printf 'The node crossed the reboot edge without a release-ready proof.'
+        )"
+        printf '    Run the bridge so bootstrap recovery reconciles this node; do not\n'
+        printf '    hand-clear the journal, it is the only durable record of that state.\n\n'
+        continue
+        ;;
+    esac
     printf '    release: restore the node, then drop the fence annotation(s):\n'
     # Only uncordon a node this transaction is RECORDED to have cordoned. The
     # journal keeps the pre-claim state precisely because a node can already be
@@ -391,18 +425,19 @@ report_fences_now() {
     # owned. Without a journal that state is unknown, so say so and let the
     # operator decide rather than emitting a command that might be wrong.
     if [[ "${unschedulable}" == "true" ]]; then
-      # `has` rather than `//`: jq's alternative operator treats `false` as
-      # empty, so `.wasCordoned // "unknown"` would report the recorded
-      # not-previously-cordoned case as unrecorded — the one case that may
-      # safely uncordon.
+      # The journal serializes wasCordoned as NUMERIC 0/1 — it is validated as
+      # `== 0 or == 1` — so match those, not the booleans this once compared
+      # against and never matched. `has` rather than `//`, because jq's
+      # alternative operator treats a falsy value as empty and would report the
+      # recorded 0 case as unrecorded: the one case that may safely uncordon.
       case "$(printf '%s' "${recovery}" |
         jq -r 'if type == "object" and has("wasCordoned")
                then (.wasCordoned | tostring) else "unknown" end' 2>/dev/null ||
         printf 'unknown')" in
-        false)
+        0)
           printf '      kubectl --context %s uncordon %s\n' "${KUBE_CONTEXT}" "${name}"
           ;;
-        true)
+        1)
           printf '      # node was ALREADY cordoned before this transaction — leave it cordoned.\n'
           ;;
         *)
@@ -428,11 +463,16 @@ report_fences_now() {
     | @tsv
   ' "${state}")
 
+  fence_report_lease "${state}" || return 1
+
   if ((held == 0)); then
     printf 'No fence is held. A deploy can acquire cleanly.\n'
   else
     printf 'ATTENTION: %s fence(s) held. Recover ONLY after proving the holder is dead.\n' \
       "${held}"
+    printf 'Release in the order printed above — policy fences, then nodes, then the\n'
+    printf 'Lease. The Lease is the global exclusion fence: clearing it first lets a\n'
+    printf 'deploy start against a half-recovered cluster.\n'
   fi
 }
 

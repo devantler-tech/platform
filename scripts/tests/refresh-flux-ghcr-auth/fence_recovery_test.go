@@ -203,16 +203,83 @@ func TestFenceReportNeverUncordonsANodeItDidNotCordon(t *testing.T) {
 	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
 	report := functionBody(t, script, "report_fences_now")
 
-	// `has`, never `//`: jq's alternative treats false as empty, which would
-	// misreport the one state that may safely uncordon. Checked against the
-	// CODE only — the rationale comment names the anti-pattern it forbids.
+	// `has`, never `//`: jq's alternative treats a falsy value as empty, which
+	// would misreport the one state that may safely uncordon. Checked against
+	// the CODE only — the rationale comment names the anti-pattern it forbids.
 	requireContains(t, report, `has("wasCordoned")`)
 	requireNotContains(t, stepDirectives(report), `.wasCordoned // `)
-	// All three states are answered, and only the recorded-false one uncordons.
+	// All three states are answered, and only the recorded-safe one uncordons.
 	requireContains(t, report, "uncordon")
 	for _, state := range []string{"ALREADY cordoned", "UNRECORDED"} {
 		requireContains(t, report, state)
 	}
+
+	// The branch values must match the journal's OWN schema. wasCordoned is
+	// serialized with --argjson and validated as numeric `== 0 or == 1`, so a
+	// switch on the booleans matches nothing and every real journal falls to
+	// UNRECORDED — the safe uncordon never printed. An earlier version of this
+	// test asserted against a hand-written `false` fixture that the code never
+	// produces, so it passed over exactly that defect.
+	schema := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	requireContains(t, schema, `($record.wasCordoned == 0 or $record.wasCordoned == 1)`)
+	directives := stepDirectives(report)
+	requireContains(t, directives, "\n        0)\n")
+	requireContains(t, directives, "\n        1)\n")
+	for _, boolean := range []string{"\n        false)\n", "\n        true)\n"} {
+		requireNotContains(t, directives, boolean)
+	}
+}
+
+// A journal in `active` or `retain` is not releasable by removing annotations:
+// reconcile_bootstrap_recovery refuses both, because one may hold an
+// interrupted pre-reboot mutation and the other crossed the reboot edge with no
+// release-ready proof. Printing removals for them discards the only durable
+// record of that state.
+func TestFenceReportRefusesToReleasePreProofBootstrapJournals(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+
+	requireContains(t, report, "active | retain)")
+	requireContains(t, report, "NOT releasable by annotation removal")
+	// Those phases must skip the release block entirely, not merely warn.
+	requireContains(t, report, "\n        continue\n")
+	// The phases really are the ones the reconciler refuses.
+	for _, phase := range []string{`.phase == "active"`, `.phase == "retain"`} {
+		requireContains(t, script, phase)
+	}
+}
+
+// The Lease is the global exclusion fence. Released before the fences it
+// guards, it lets a queued or newly dispatched deploy start against a
+// half-recovered cluster — so the report must print it last, mirroring
+// cleanup_refresh_work's own release order.
+func TestFenceReportPrintsTheLeaseLast(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+
+	nodes := requireIndex(t, report, "HELD  Node")
+	lease := requireIndex(t, report, "fence_report_lease")
+	requireBefore(t, nodes, lease, "node fences reported before the Lease")
+	requireContains(t, script, "release LAST, after every fence above is released")
+	requireContains(t, report, "Release in the order printed above")
+}
+
+// A rerun REUSES the run id and increments the attempt, so `gh run view`
+// without --attempt inspects the newest attempt: an orphan from a finished
+// attempt reads as live while a later one runs, blocking recovery on a holder
+// that is provably dead.
+func TestFenceLivenessCommandPinsTheRecordedAttempt(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	liveness := functionBody(t, script, "fence_report_liveness")
+
+	// Assert the flag inside the printed command itself. Checking positions
+	// across the whole function would match the rationale comment above it,
+	// which names the flag before the command uses it.
+	requireContains(t, liveness,
+		`gh run view %s --repo devantler-tech/platform --attempt %s --json status,conclusion`)
 }
 
 // A failing cluster read is exactly when an operator runs this, so the failure
