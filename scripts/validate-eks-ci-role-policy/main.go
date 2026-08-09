@@ -246,31 +246,33 @@ const (
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
 //
-// Measured against base 0ca55381 while re-enabling the Kubescape posture
-// scanner's policy-artifact fetch: 514 rendered documents on both sides across
-// all five roots (122 apps, 209 infrastructure, 176 controllers, 4 bootstrap,
-// 3 prod), with membership IDENTICAL — zero added, removed, or renamed. Four of
-// the five roots are byte-identical. Exactly ONE line moves in the whole
-// production render:
+// Measured against base 4eab6531 while rolling back the Cilium
+// homogeneous-device component (#3028): 519 rendered documents on both sides
+// across all five roots (123 apps, 210 infrastructure, 177 controllers,
+// 5 bootstrap, 4 prod), with membership IDENTICAL — zero added, removed, or
+// renamed. Four of the five roots are byte-identical; only the controllers root
+// moves. EIGHT lines change in the whole production render, all of them
+// `spec.values` / `spec.upgrade` fields of one HelmRelease:
 //
-//	helm.toolkit.fluxcd.io/v2  HelmRelease  kubescape/kubescape
-//	  values.capabilities.kubescapeOffline: enable -> disable
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  kube-system/cilium
+//	  values.devices:            en+ eth+ -> enp7s0 eth1
+//	  values.updateStrategy:     {rollingUpdate: null, type: OnDelete} -> removed
+//	  values.nodePort.addresses: [10.0.0.0/16]                         -> removed
+//	  upgrade.disableWait:       true                                  -> removed
 //
-// That field decides one thing in the chart: whether KS_OFFLINE=true is set on
-// the scanner container. It reaches no identity, binding, policy document, or
-// service account. Its only other chart use ORs into clusterData.keepLocal,
-// which is `or (offline) (not serviceDiscovery.enabled)` — serviceDiscovery is
-// false here, so that value stays true either way and does not move. The
-// accompanying cilium-network-policy.yaml edit is comment-only and renders to
-// nothing, which the byte-identical infrastructure root confirms.
+// Those fields decide which NICs the agent attaches its eBPF programs to, how
+// the DaemonSet replaces pods, which CIDR NodePort listens on, and whether Helm
+// waits for the upgrade. None reaches an identity, binding, policy document, or
+// service account, and none is an AWS-facing field.
 //
 // All Role / ClusterRole / RoleBinding / ClusterRoleBinding / ServiceAccount
-// documents are byte-identical, as is every `aws`-bearing line — trivially so,
-// since a single non-RBAC line differs across the entire surface.
+// documents are byte-identical — 67 documents, 38196 bytes, compared directly
+// rather than inferred from the line diff — as is every `aws`-bearing line
+// (123 of them). A planted-change control confirms that comparison is not blind.
 //
 // The fingerprint itself was read from the required job's own output on the
 // approved renderer, because the local toolchain is refused as unapproved.
-const expectedRenderedSurfaceSHA = "cb575e34b191a662da108421fdff7c67f0cc00bf3c9b2b7cf0c5a4e49b46fc52"
+const expectedRenderedSurfaceSHA = "4c06f17870f9eb129abf9c49e89fef2613154f22713929a9eb5835190312177d"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
