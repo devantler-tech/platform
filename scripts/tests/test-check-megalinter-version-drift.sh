@@ -106,7 +106,10 @@ expect 'missing log file fails closed' 2 "$scratch/does-not-exist.log"
 # substring matcher reads 9.9.9 from it; with the real trivy marker absent the run must fail closed
 # rather than compare against the sbom's version.
 grep -q 'trivy-sbom v9.9.9' "$scratch/no-tv.log" ||
-  { printf 'FAIL: fixture lost its trivy-sbom decoy line\n' >&2; failures=$((failures + 1)); }
+  {
+    printf 'FAIL: fixture lost its trivy-sbom decoy line\n' >&2
+    failures=$((failures + 1))
+  }
 
 # ---- Ambiguity is not resolved silently --------------------------------------------------------
 # Two different versions for one tool means the log is not describing a single run.
