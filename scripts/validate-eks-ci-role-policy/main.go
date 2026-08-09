@@ -270,7 +270,27 @@ const (
 //
 // The fingerprint itself was read from the required job's own output on the
 // approved renderer, because the local toolchain is refused as unapproved.
-const expectedRenderedSurfaceSHA = "cb575e34b191a662da108421fdff7c67f0cc00bf3c9b2b7cf0c5a4e49b46fc52"
+// Measured against main 56536122 while adding the CNPG serving health gate:
+// 520 rendered documents on BOTH sides across all five roots, with membership
+// IDENTICAL — set difference in BOTH directions over every
+// apiVersion|kind|namespace|name identity returned zero, so nothing was added,
+// removed, or renamed. Exactly three pinned entries move, and they are the three
+// re-approved alongside this value:
+//
+//	kro.run/v1alpha1                ResourceGraphDefinition  tenant.kro.run
+//	kustomize.toolkit.fluxcd.io/v1  Kustomization            flux-system/apps
+//	kustomize.toolkit.fluxcd.io/v1  Kustomization            flux-system/infrastructure
+//
+// The complete rendered delta is 19 lines, every one of them ADDED and every one
+// part of a `healthCheckExprs` entry gating on a serving CNPG `Cluster`; none is
+// removed or modified. A health-check expression is read-only deploy-gating
+// input to kstatus — it cannot grant an identity or a permission.
+//
+// No grant-bearing object moved: the Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding / ServiceAccount projection is BYTE-IDENTICAL across the
+// two trees (37,932 bytes each), so nothing granted to the aws/aws service
+// account this validator exists to protect is touched.
+const expectedRenderedSurfaceSHA = "782ba69f44639c670528e359be4608d32233d06c301b0e06766b238bff193984"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
