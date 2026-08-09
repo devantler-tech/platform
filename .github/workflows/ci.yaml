@@ -46,7 +46,17 @@ jobs:
       - name: 🔐 Validate Flux verification is in effect
         run: |
           go test ./scripts/validate-flux-verify
-          go run ./scripts/validate-flux-verify ksail.prod.yaml
+          go run ./scripts/validate-flux-verify \
+            ksail.prod.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml
+
+      # The step above covers the ROOT source. These are the other eight cosign
+      # subjects — app OCIRepositories, the tenant RGD, the Kyverno policy and the
+      # Talos image config — which trust the SHARED actions publish workflows and
+      # must therefore pin a fixed revision. #2816 set that by hand in eight places;
+      # this is what keeps it set (#2818).
+      - name: 🔐 Validate shared publish workflows are pinned
+        run: ./scripts/guard-shared-publish-workflow-pin.sh
 
       # .github/actionlint.yaml silences actionlint's "unexpected key" diagnostic
       # for concurrency.queue, which also removes its enum check. This restores it.
@@ -80,6 +90,7 @@ jobs:
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
               - 'scripts/tests/test-openbao-oidc-role.sh'
+              - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
               - 'scripts/tests/test-kyverno-admission-vpa.sh'
               - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
@@ -89,6 +100,13 @@ jobs:
               # contract for the vendored CDI/KubeVirt manifests.
               - 'scripts/annotate-vendored-checkov/**'
               - 'scripts/update-vendored-operators.sh'
+              # The Trivy dispositions and the local CI-equivalent scan are one
+              # contract: a path-scoped ignore is inert unless both callers load it.
+              - '.mega-linter.yml'
+              - '.trivyignore'
+              - '.trivyignore.yaml'
+              - 'scripts/megalinter-scan-counts.sh'
+              - 'scripts/tests/test-megalinter-scan-counts-ignorefile.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/normalize-sarif-paths.sh'
@@ -297,11 +315,28 @@ jobs:
           go test ./scripts/annotate-vendored-checkov
           scripts/update-vendored-operators.sh --validate-committed
 
+      - name: 🔎 Validate Trivy ignore-file wiring
+        if: needs.changes.outputs.k8s == 'true'
+        # The path-scoped YAML format is not auto-loaded. Exercise the real
+        # reproduction helper at its command boundary so a future argument
+        # cleanup cannot silently turn every scoped disposition back on.
+        run: bash scripts/tests/test-megalinter-scan-counts-ignorefile.sh
+
       - name: 🔐 Validate OpenBao OIDC admin role
         if: needs.changes.outputs.k8s == 'true'
         # bound_claims is a map. Passing JSON-looking text as one CLI argument
         # serializes it as a string and leaves the role unenforced.
         run: bash scripts/tests/test-openbao-oidc-role.sh
+
+      - name: 🔑 Validate github-config Role covers the activated MR kinds
+        if: needs.changes.outputs.k8s == 'true'
+        # The tenant Role enumerates managed-resource kinds instead of `*`, so
+        # activating a kind without granting it would fail at apply time inside
+        # a separately published OCI artifact. Catch the divergence here. Bash,
+        # yq and the runner's kubectl; no cluster or secrets required.
+        run: |
+          shellcheck scripts/tests/test-github-config-role-activation-parity.sh
+          bash scripts/tests/test-github-config-role-activation-parity.sh
 
       - name: ⚖️ Install Kyverno CLI
         if: needs.changes.outputs.k8s == 'true'
@@ -438,7 +473,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.178.19"
+          KSAIL_VERSION: "7.178.20"
         run: |
           curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
           tar -xzf /tmp/ksail.tar.gz -C /tmp

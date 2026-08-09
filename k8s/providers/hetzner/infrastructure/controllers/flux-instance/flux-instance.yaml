@@ -147,3 +147,69 @@ spec:
               options:
                 - name: ndots
                   value: "1"
+      # Enforce cosign signature verification on the ROOT source — the
+      # flux-system OCIRepository every controller, tenant binding and policy
+      # arrives through. Without this the root artifact is pulled from a mutable
+      # tag with nothing checking who produced it.
+      #
+      # PATCH THROUGH THE OPERATOR, not from the cluster config and not from a
+      # hand-written OCIRepository override. flux-operator generates this
+      # resource and is its Apply field manager, owning
+      # url/ref/interval/provider/secretRef. Two consequences, both measured
+      # live: KSail's spec.workload.flux.verify (ksail.prod.yaml) is applied
+      # only on the bootstrap path — on a routine deploy KSail writes no spec
+      # key on this resource at all, so that setting never reaches an existing
+      # cluster; and a full in-repo override would contend with the operator for
+      # those five fields on the root source, where losing the reconcile fight
+      # stops all GitOps delivery. A kustomize patch avoids both: the operator
+      # itself writes the field, so it lands under the manager that already owns
+      # the resource — no second writer, no field contention, no SSA pruning
+      # question. This is flux-operator's documented route for exactly this
+      # case ("OCI sync with Cosign verification").
+      #
+      # The subjects are pinned to the three workflows that legitimately publish
+      # this artifact, on the refs they publish from, rather than `@.+` — so a
+      # signature these same workflows produce on any other ref is not trusted:
+      #   ci.yaml on the merge-queue ref  — automatic deploy on merge
+      #   cd.yaml on main                 — manual workflow_dispatch deploy
+      #   dr-rebuild.yaml on main         — disaster recovery, which republishes
+      #                                     this artifact while rebuilding prod
+      #                                     from zero; omitting it would leave a
+      #                                     recovery producing a correctly-signed
+      #                                     artifact that Flux still refuses.
+      # They are kept identical to spec.workload.flux.verify in ksail.prod.yaml,
+      # which covers the bootstrap path; scripts/validate-flux-verify asserts
+      # both halves on every pull request.
+      #
+      # ⚠️ A MISTARGETED KUSTOMIZE PATCH RENDERS NOTHING, EXITS 0 AND WARNS
+      # NOBODY (measured with kubectl kustomize on this file). A typo in the
+      # target below yields a security control that is present here, absent from
+      # the cluster, and green in CI. scripts/validate-flux-verify checks the
+      # target, and the effect is confirmed by reading the live resource back:
+      #   kubectl get ocirepository/flux-system -n flux-system -o yaml | grep -A5 verify
+      - target:
+          kind: OCIRepository
+          name: flux-system
+          namespace: flux-system
+        patch: |
+          - op: add
+            path: /spec/verify
+            value:
+              provider: cosign
+              # 🔴 EXACTLY ONE ENTRY. cosign's keyless verification rejects a
+              # multi-entry matchOIDCIdentity outright — "unsupported: multiple
+              # identities are not supported at this time" — and it fails CLOSED
+              # for the whole set, so a list verifies nothing while looking
+              # stricter than a single matcher. Flux documents the field as an
+              # OR'd list and the schema accepts one, so a list is both
+              # docs-valid and schema-valid and still refuses every artifact.
+              # Alternation therefore lives INSIDE the subject regex.
+              # The three trusted signers, in order: ci.yaml (automatic prod
+              # deploy, signs under the merge-queue ref), cd.yaml (manual
+              # workflow_dispatch from main), dr-rebuild.yaml (disaster recovery
+              # from main, which republishes this same artifact).
+              # scripts/validate-flux-verify fails the build on any list longer
+              # than one, so this cannot regress silently.
+              matchOIDCIdentity:
+                - issuer: '^https://token\.actions\.githubusercontent\.com$'
+                  subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/(ci\.yaml@refs/heads/gh-readonly-queue/main/.+|(cd|dr-rebuild)\.yaml@refs/heads/main)$'

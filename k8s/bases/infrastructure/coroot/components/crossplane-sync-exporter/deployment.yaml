@@ -10,6 +10,15 @@ metadata:
     platform.devantler.tech/replica-floor: exempt
   annotations:
     checkov.io/skip1: CKV_K8S_38=kube-state-metrics reads the managed resources it exports through the API server
+    # Both containers bind 127.0.0.1 only (--host/--telemetry-host and --web.listen-address
+    # below), because the agent scrapes kube-state-metrics from inside the pod and nothing
+    # reaches either port from the network. A kubelet httpGet/tcpSocket probe dials the POD IP,
+    # so it cannot reach a loopback listener; this component ships no Service for the same
+    # reason. Binding either port to the pod network purely to satisfy the check would widen
+    # the attack surface this design deliberately closes, so the workload is dispositioned
+    # rather than changed.
+    checkov.io/skip2: CKV_K8S_8=loopback-only listeners are unreachable from a kubelet probe; see the note above
+    checkov.io/skip3: CKV_K8S_9=loopback-only listeners are unreachable from a kubelet probe; see the note above
 spec:
   # A second replica would export identical series and race them into the
   # remote-write receiver. Recreate avoids an overlapping rollout; the agent's

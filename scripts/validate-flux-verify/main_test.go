@@ -301,10 +301,21 @@ spec:
 			wantErr: "constrains no signer",
 		},
 		{
-			// One usable entry is enough. A commented-out or half-written sibling
-			// must not veto a block that does constrain a signer, or the gate
-			// starts failing correct configs.
-			name: "one complete matcher among incomplete ones validates",
+			// 🔴 THIS ARM WAS INVERTED, and the reason matters more than the arm.
+			//
+			// It previously expected this config to VALIDATE, reasoning that one
+			// usable entry is enough and a half-written sibling must not veto a
+			// block that does constrain a signer. That reasoning describes Flux's
+			// documented OR semantics — and cosign does not implement them. Keyless
+			// verification rejects any multi-entry matcher outright and fails CLOSED
+			// for the whole set, so the "usable" entry below never gets a chance to
+			// match. The old expectation therefore blessed a block that verifies
+			// NOTHING.
+			//
+			// Not a hypothetical correction: a three-entry matcher on the root
+			// OCIRepository halted all GitOps delivery on prod for hours while every
+			// check, including this validator, stayed green.
+			name: "a second matcher entry is rejected even when one entry is complete",
 			config: `
 spec:
   workload:
@@ -316,6 +327,44 @@ spec:
             subject: ''
           - issuer: '^https://token\.actions\.githubusercontent\.com$'
             subject: '^https://github\.com/devantler-tech/platform/.+$'
+`,
+			wantErr: "supports exactly ONE",
+		},
+		{
+			// The exact shape that took prod down, pinned so it cannot return: three
+			// well-formed entries, each individually correct, collectively inert.
+			// Every other check in this file passes on it.
+			name: "the three-entry prod matcher is rejected",
+			config: `
+spec:
+  workload:
+    flux:
+      verify:
+        provider: cosign
+        matchOIDCIdentity:
+          - issuer: '^https://token\.actions\.githubusercontent\.com$'
+            subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/ci\.yaml@refs/heads/gh-readonly-queue/main/.+$'
+          - issuer: '^https://token\.actions\.githubusercontent\.com$'
+            subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/cd\.yaml@refs/heads/main$'
+          - issuer: '^https://token\.actions\.githubusercontent\.com$'
+            subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/dr-rebuild\.yaml@refs/heads/main$'
+`,
+			wantErr: "has 3 entries",
+		},
+		{
+			// The non-vacuity control for the two arms above: the SAME three signers,
+			// alternated inside one subject, must still validate. Without this a
+			// guard that rejected every matcher would look equally green.
+			name: "the three signers alternated in one subject validate",
+			config: `
+spec:
+  workload:
+    flux:
+      verify:
+        provider: cosign
+        matchOIDCIdentity:
+          - issuer: '^https://token\.actions\.githubusercontent\.com$'
+            subject: '^https://github\.com/devantler-tech/platform/\.github/workflows/(ci\.yaml@refs/heads/gh-readonly-queue/main/.+|(cd|dr-rebuild)\.yaml@refs/heads/main)$'
 `,
 		},
 		{
@@ -455,16 +504,42 @@ func TestRunExitCodes(t *testing.T) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
+	instance := filepath.Join(dir, "instance.yaml")
+	if err := os.WriteFile(instance, []byte(goodInstance), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	drifted := filepath.Join(dir, "drifted.yaml")
+	if err := os.WriteFile(drifted, []byte(strings.Replace(
+		goodInstance, `platform/.+$`, `platform/some-other-workflow\.yaml@refs/heads/main$`, 1,
+	)), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	unpatched := filepath.Join(dir, "unpatched.yaml")
+	if err := os.WriteFile(unpatched, []byte("kind: FluxInstance\nspec:\n  kustomize:\n    patches: []\n"), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
 	tests := []struct {
 		name string
 		args []string
 		want int
 	}{
-		{name: "valid config exits 0", args: []string{good}, want: 0},
-		{name: "misplaced block exits 1", args: []string{bad}, want: 1},
-		{name: "missing file exits 1", args: []string{filepath.Join(dir, "absent.yaml")}, want: 1},
+		{name: "valid config and instance exits 0", args: []string{good, instance}, want: 0},
+		// Both halves are individually valid and they trust DIFFERENT
+		// publishers, so a rebuilt cluster and a running one would disagree
+		// about who may sign. Neither half's own checks can see this.
+		{name: "drifted signer lists exit 1", args: []string{good, drifted}, want: 1},
+		{name: "misplaced block exits 1", args: []string{bad, instance}, want: 1},
+		// The half #2922 is about: a correct cluster config beside a
+		// FluxInstance that never puts verify on the live root source.
+		{name: "unpatched instance exits 1", args: []string{good, unpatched}, want: 1},
+		{name: "missing config file exits 1", args: []string{filepath.Join(dir, "absent.yaml"), instance}, want: 1},
+		{name: "missing instance file exits 1", args: []string{good, filepath.Join(dir, "absent.yaml")}, want: 1},
 		{name: "no arguments exits 1", args: nil, want: 1},
-		{name: "two arguments exits 1", args: []string{good, good}, want: 1},
+		{name: "one argument exits 1", args: []string{good}, want: 1},
+		{name: "three arguments exits 1", args: []string{good, instance, good}, want: 1},
 	}
 
 	for _, test := range tests {

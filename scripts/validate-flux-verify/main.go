@@ -109,6 +109,32 @@ func namesSecret(value any) bool {
 	return strings.TrimSpace(name) != ""
 }
 
+// oidcMatcherCount reports how many entries the matchOIDCIdentity list carries,
+// and 0 for anything that is not a list.
+//
+// 🔴 MORE THAN ONE ENTRY VERIFIES NOTHING. cosign's keyless path rejects a
+// multi-entry matcher outright — "unsupported: multiple identities are not
+// supported at this time" — and it fails CLOSED for the entire set rather than
+// falling back to the first entry. Flux documents the field as an OR'd list and
+// the CRD schema accepts one, so such a block is docs-valid, schema-valid,
+// present at the right path, enabled, and constrains a signer — it passes every
+// other check in this file while refusing every artifact.
+//
+// That is not hypothetical: a three-entry matcher on the root OCIRepository
+// halted all GitOps delivery on prod for hours, and the config was green in CI
+// throughout. This count is the check that would have caught it, which is why
+// it is asserted separately from hasUsableOIDCMatcher below — that one asks
+// whether ANY entry is usable, and is deliberately tolerant of extra entries.
+// Tolerance is right for judging usability and wrong for judging arity.
+func oidcMatcherCount(value any) int {
+	entries, ok := value.([]any)
+	if !ok {
+		return 0
+	}
+
+	return len(entries)
+}
+
 // hasUsableOIDCMatcher reports whether at least ONE matcher entry pins both an
 // issuer and a subject.
 //
@@ -270,9 +296,17 @@ func decodeAll(config []byte) ([]any, error) {
 // validate reports why the config's signature verification is not in effect, or
 // nil when it is.
 func validate(config []byte) error {
+	_, err := configVerifyBlock(config)
+
+	return err
+}
+
+// configVerifyBlock is validate() plus the block it validated, so the drift
+// check can compare the two halves without re-walking the tree.
+func configVerifyBlock(config []byte) (map[string]any, error) {
 	documents, err := decodeAll(config)
 	if err != nil {
-		return fmt.Errorf("cluster config does not parse, so verification cannot be established: %w", err)
+		return nil, fmt.Errorf("cluster config does not parse, so verification cannot be established: %w", err)
 	}
 
 	// A cluster config is ONE `kind: Cluster` resource, so everything after the
@@ -282,7 +316,7 @@ func validate(config []byte) error {
 	// document one plus a stray block in document two validated clean. Refusing
 	// the shape is simpler than guessing which document was meant to win.
 	if len(documents) > 1 {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"cluster config has %d YAML documents; only the first is read as the cluster spec, "+
 				"so anything configured in the rest verifies nothing: keep it to one document",
 			len(documents),
@@ -297,7 +331,7 @@ func validate(config []byte) error {
 	// Reported before the read-path check, because a stray block is the reason
 	// the read path is usually empty and naming it is the actionable half.
 	if stray := strayVerifyPaths(tree, nil); len(stray) > 0 {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"verify block at %s, which KSail does not read: move it to %s or delete it "+
 				"(a block at any other path is discarded in silence and verifies nothing)",
 			strings.Join(stray, ", "), strings.Join(readPath, "."),
@@ -306,7 +340,7 @@ func validate(config []byte) error {
 
 	value, ok := lookup(tree, readPath)
 	if !ok {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"no verify block at %s, so the generated flux-system OCIRepository pulls unverified: "+
 				"add a cosign block there",
 			strings.Join(readPath, "."),
@@ -315,7 +349,7 @@ func validate(config []byte) error {
 
 	block, ok := asMapping(value)
 	if !ok {
-		return fmt.Errorf("%s is not a mapping, so KSail cannot decode it into a verify spec",
+		return nil, fmt.Errorf("%s is not a mapping, so KSail cannot decode it into a verify spec",
 			strings.Join(readPath, "."))
 	}
 
@@ -331,7 +365,7 @@ func validate(config []byte) error {
 			reported = block["provider"]
 		}
 
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%s.provider is %#v, which KSail treats as verification DISABLED "+
 				"(it renders spec.verify only when the provider is a non-blank string): set it to cosign",
 			strings.Join(readPath, "."), reported,
@@ -341,7 +375,7 @@ func validate(config []byte) error {
 	// Reported last, because it is the only check here that assumes the block is
 	// otherwise well-formed and switched on.
 	if !constrainsSigner(block) {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"%s is enabled but constrains no signer, so it accepts any keylessly-signed artifact "+
 				"from any signer (Flux reads a missing secretRef as keyless): add a matchOIDCIdentity "+
 				"entry with a non-blank issuer and subject, or a secretRef naming a key Secret "+
@@ -350,12 +384,30 @@ func validate(config []byte) error {
 		)
 	}
 
-	return nil
+	if count := oidcMatcherCount(block["matchOIDCIdentity"]); count > 1 {
+		return nil, fmt.Errorf(
+			"%s.matchOIDCIdentity has %d entries, and cosign supports exactly ONE: keyless "+
+				"verification rejects a multi-entry matcher outright (\"unsupported: multiple "+
+				"identities are not supported at this time\") and fails CLOSED for the whole set, "+
+				"so the block verifies NOTHING while reading as stricter than a single matcher — "+
+				"collapse the %d subjects into one entry using regex alternation inside the subject, "+
+				"e.g. '^https://github\\.com/org/repo/\\.github/workflows/(a|b)\\.yaml@refs/heads/main$'",
+			strings.Join(readPath, "."), count, count,
+		)
+	}
+
+	return block, nil
 }
 
+// run checks BOTH halves of the contract, and requires both paths rather than
+// making the second optional. The two configure different lifecycle stages —
+// the cluster config covers bootstrap, the FluxInstance patch covers the
+// running cluster — and either alone leaves a real window unverified. An
+// optional second argument would let a caller silently drop the half that #2922
+// was actually about, which is the failure this command exists to make loud.
 func run(args []string, stderr io.Writer) int {
-	if len(args) != 1 {
-		_, _ = fmt.Fprintln(stderr, "usage: validate-flux-verify <ksail-config.yaml>")
+	if len(args) != 2 {
+		_, _ = fmt.Fprintln(stderr, "usage: validate-flux-verify <ksail-config.yaml> <flux-instance.yaml>")
 
 		return 1
 	}
@@ -367,7 +419,31 @@ func run(args []string, stderr io.Writer) int {
 		return 1
 	}
 
-	if err := validate(config); err != nil {
+	configBlock, err := configVerifyBlock(config)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "flux verify contract: %v\n", err)
+
+		return 1
+	}
+
+	manifest, err := os.ReadFile(args[1]) //nolint:gosec // Explicit path from the caller.
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "flux verify contract: read FluxInstance manifest: %v\n", err)
+
+		return 1
+	}
+
+	instanceBlock, err := instanceVerifyBlock(manifest)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "flux verify contract: %v\n", err)
+
+		return 1
+	}
+
+	// Last, because it is the only check that assumes BOTH halves are already
+	// well-formed: comparing a block that failed its own checks would report
+	// drift where the real fault is the block itself.
+	if err := checkNoDrift(configBlock, instanceBlock); err != nil {
 		_, _ = fmt.Fprintf(stderr, "flux verify contract: %v\n", err)
 
 		return 1

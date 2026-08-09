@@ -18,7 +18,8 @@
 # HOW THE INVOCATIONS WERE DERIVED
 # Both command lines are copied from MegaLinter's own log, which prints the exact command it ran:
 #   - Command: [checkov --skip-path tests/ --config-file /action/lib/.automation/.checkov.yml --directory .]
-#   - Command: [trivy fs --scanners vuln,misconfig --exit-code 1 --skip-dirs tests .]
+#   - Command: [trivy fs --scanners vuln,misconfig --exit-code 1 --ignorefile
+#     .trivyignore.yaml --skip-dirs tests .]
 # Read them from a "🧹 Lint - mega-linter" job log if they ever need re-deriving:
 #   gh api repos/devantler-tech/platform/actions/jobs/<job-id>/logs | grep -aE '^\S+ - Command: '
 #
@@ -208,7 +209,8 @@ scan_checkov() {
 scan_trivy() {
   local out="$OUT_DIR/trivy.txt" rc=0
   printf '\nRunning trivy (this takes ~1 minute)...\n' >&2
-  (cd "$REPO_ROOT" && trivy fs --scanners vuln,misconfig --exit-code 1 --skip-dirs tests .) \
+  (cd "$REPO_ROOT" && trivy fs --scanners vuln,misconfig --exit-code 1 \
+    --ignorefile .trivyignore.yaml --skip-dirs tests .) \
     >"$out" 2>"$OUT_DIR/trivy.err" || rc=$?
   if [ "$rc" -gt 1 ]; then
     printf 'trivy exited %d — refusing to report a count from an incomplete run\n' "$rc" >&2
