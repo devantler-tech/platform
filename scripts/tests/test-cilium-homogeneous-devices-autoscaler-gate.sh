@@ -87,6 +87,28 @@ cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.y
 cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/cilium/components/homogeneous-devices/kustomization.yaml" \
   "${fixture_component}/kustomization.yaml"
 
+# CONSTRUCT the active-gate state these assertions exercise instead of
+# inheriting whatever the repository currently ships (platform#3031). The
+# overrides below exist only while a rollout is being stepped, so once one
+# completes and they are removed, an inherited fixture starts INACTIVE and every
+# active-gate assertion here either fails for the wrong reason or passes
+# vacuously — the test would stop covering the gate exactly when the gate is
+# most likely to be reintroduced incorrectly. Appending keeps the block valid:
+# these lines extend the component's trailing `patch: |` literal.
+if ! grep -Eq '^[[:space:]]*type:[[:space:]]*OnDelete[[:space:]]*$' \
+  "${fixture_component}/kustomization.yaml"; then
+  cat >>"${fixture_component}/kustomization.yaml" <<'ACTIVE_GATE'
+      - op: replace
+        path: /spec/values/updateStrategy
+        value:
+          rollingUpdate: null
+          type: OnDelete
+      - op: add
+        path: /spec/upgrade/disableWait
+        value: true
+ACTIVE_GATE
+fi
+
 fake_kubectl="${tmp_dir}/kubectl"
 fake_curl="${tmp_dir}/curl"
 state_dir="${tmp_dir}/state"
