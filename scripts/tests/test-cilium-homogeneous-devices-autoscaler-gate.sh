@@ -24,20 +24,30 @@ guard_calls="$(
 readonly guard_calls
 guard_call_count="$(printf '%s\n' "${guard_calls}" | grep -c .)"
 readonly guard_call_count
-[[ "${guard_call_count}" -eq 2 ]] ||
-  fail 'the deploy action must invoke the rollout guard exactly twice'
+[[ "${guard_call_count}" -eq 3 ]] ||
+  fail 'the deploy action must invoke the rollout guard exactly three times'
 first_guard_call_line="$(printf '%s\n' "${guard_calls}" | sed -n '1p')"
 second_guard_call_line="$(printf '%s\n' "${guard_calls}" | sed -n '2p')"
-readonly first_guard_call_line second_guard_call_line
+third_guard_call_line="$(printf '%s\n' "${guard_calls}" | sed -n '3p')"
+readonly first_guard_call_line second_guard_call_line third_guard_call_line
 
 push_line="$(grep -nF 'id: publish_platform_manifest' "${deploy_action}" | cut -d: -f1)"
 reconcile_line="$(grep -nF 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile' "${deploy_action}" | cut -d: -f1)"
+revision_line="$(grep -nF 'id: wait_flux_revision' "${deploy_action}" | cut -d: -f1)"
 cluster_update_line="$(grep -nF 'run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update' "${deploy_action}" | cut -d: -f1)"
 
 ((first_guard_call_line < push_line)) ||
   fail 'the first rollout guard must suspend autoscaling before publishing manifests'
-((second_guard_call_line > reconcile_line && second_guard_call_line > cluster_update_line)) ||
-  fail 'the second rollout guard must reassert or release the gate after deployment'
+# The middle call restores a RELEASED gate's suspension between the
+# exact-revision proof and cluster update. Both bounds are load-bearing: after
+# the proof because autoscaling may not resume before the safe artifact is
+# deployed, and before cluster update because that step waits for the
+# cluster-autoscaler Deployment and KSail treats zero replicas as never-ready —
+# a released gate would otherwise hang the deploy that releases it.
+((second_guard_call_line > revision_line && second_guard_call_line < cluster_update_line)) ||
+  fail 'the second rollout guard must restore autoscaling after the revision proof and before cluster update'
+((third_guard_call_line > reconcile_line && third_guard_call_line > cluster_update_line)) ||
+  fail 'the third rollout guard must reassert or release the gate after deployment'
 
 grep -Fq 'id: cilium_rollout_gate' "${deploy_action}" ||
   fail 'the pre-publish guard must expose whether the rollout gate is active'
@@ -86,6 +96,28 @@ cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.y
   "${fixture_controllers}/kustomization.yaml"
 cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/cilium/components/homogeneous-devices/kustomization.yaml" \
   "${fixture_component}/kustomization.yaml"
+
+# CONSTRUCT the active-gate state these assertions exercise instead of
+# inheriting whatever the repository currently ships (platform#3031). The
+# overrides below exist only while a rollout is being stepped, so once one
+# completes and they are removed, an inherited fixture starts INACTIVE and every
+# active-gate assertion here either fails for the wrong reason or passes
+# vacuously — the test would stop covering the gate exactly when the gate is
+# most likely to be reintroduced incorrectly. Appending keeps the block valid:
+# these lines extend the component's trailing `patch: |` literal.
+if ! grep -Eq '^[[:space:]]*type:[[:space:]]*OnDelete[[:space:]]*$' \
+  "${fixture_component}/kustomization.yaml"; then
+  cat >>"${fixture_component}/kustomization.yaml" <<'ACTIVE_GATE'
+      - op: replace
+        path: /spec/values/updateStrategy
+        value:
+          rollingUpdate: null
+          type: OnDelete
+      - op: add
+        path: /spec/upgrade/disableWait
+        value: true
+ACTIVE_GATE
+fi
 
 fake_kubectl="${tmp_dir}/kubectl"
 fake_curl="${tmp_dir}/curl"
@@ -340,11 +372,19 @@ run_guard --before-publish
   fail 'the pre-publish phase must release cluster update after the safe gate removal'
 [[ "$(<"${state_dir}/replicas")" == '0' ]] ||
   fail 'the pre-publish phase must not restore autoscaling before the safe artifact is deployed'
-run_guard --after-deploy true
+# `ksail cluster update` waits for the cluster-autoscaler Deployment and KSail
+# treats zero replicas as never-ready, so a released gate MUST hand that step a
+# running autoscaler. Restoring only after deployment fails the very deploy that
+# releases the gate — observed in prod on 2026-08-09, where cluster update timed
+# out polling a Deployment the gate itself held at zero.
+run_guard --after-revision-ready
 [[ "$(<"${state_dir}/replicas")" == '1' ]] ||
-  fail 'removing the rollout gate must restore the owned replica count after deployment'
+  fail 'a released gate must restore autoscaling before cluster update waits on it'
 [[ ! -s "${state_dir}/previous-replicas" ]] ||
   fail 'restoring autoscaling must release the rollout guard ownership marker'
+run_guard --after-deploy true
+[[ "$(<"${state_dir}/replicas")" == '1' ]] ||
+  fail 'the post-deploy phase must leave an already-restored autoscaler running'
 
 printf '0\n' >"${state_dir}/replicas"
 run_guard --after-deploy true
