@@ -151,14 +151,43 @@ prove org-managed provenance. Re-establish how the mega-linter job is identified
     fi
   }
 
+  # Succeeds only when the managed workflow is POSITIVELY absent at revision $1.
+  #
+  # The repository-level check above proves only that MAIN does not define it. A run's `.path` is
+  # the workflow's path IN THE REVISION THAT RAN, so a pull request that adds
+  # `.github/workflows/validate-go-project.yaml` on its own branch produces a run whose path matches
+  # the selector exactly while main stays clean — and its `mega-linter` job would then supply
+  # whatever versions it likes. Provenance therefore has to be established per candidate.
+  #
+  # The commit is resolved first because a 404 from the contents endpoint is ambiguous on its own:
+  # it means "no such file" OR "no such commit". With the commit known to resolve, the second 404
+  # can only mean the file is absent. Anything other than a clean 404 is not evidence of absence,
+  # so it returns non-zero and the candidate is skipped rather than trusted.
+  managed_path_absent_at() {
+    local sha="$1" resp status
+    gh api "repos/$REPO/commits/$sha" >/dev/null 2>&1 || return 1
+    resp="$(gh api -i "repos/$REPO/contents/$MANAGED_WORKFLOW_PATH?ref=$sha" 2>/dev/null || true)"
+    status="$(printf '%s\n' "$resp" | sed -n '1s|^HTTP/[0-9.]* \([0-9][0-9][0-9]\).*|\1|p')"
+    [ "$status" = 404 ]
+  }
+
   # Select by the managed workflow's PATH, not the run's display name, then by job name within it.
   runs="$(gh api "repos/$REPO/actions/runs?per_page=$MAX_RUNS" \
-    --jq ".workflow_runs[] | select(.path == \"$MANAGED_WORKFLOW_PATH\") | .id" 2>/dev/null)" ||
+    --jq ".workflow_runs[] | select(.path == \"$MANAGED_WORKFLOW_PATH\") | \"\(.id) \(.head_sha)\"" \
+    2>/dev/null)" ||
     die_unverifiable "could not list recent runs for $REPO"
   [ -n "$runs" ] ||
     die_unverifiable "no recent runs of $MANAGED_WORKFLOW_PATH in the last $MAX_RUNS runs of $REPO"
 
-  for run_id in $runs; do
+  local head_sha
+  while read -r run_id head_sha; do
+    [ -n "$run_id" ] || continue
+    if ! managed_path_absent_at "$head_sha"; then
+      printf 'Skipping run %s: %s is not provably absent at its revision %s, so that run is not\n' \
+        "$run_id" "$MANAGED_WORKFLOW_PATH" "$head_sha" >&2
+      printf '  org-managed and its log is not evidence of anything.\n' >&2
+      continue
+    fi
     # A skipped job states no versions, so require one that actually executed.
     job_id="$(gh api "repos/$REPO/actions/runs/$run_id/jobs?per_page=100" \
       --jq ".jobs[]
@@ -172,8 +201,11 @@ prove org-managed provenance. Re-establish how the mega-linter job is identified
         die_unverifiable "could not download the log for job $job_id"
       return 0
     fi
-  done
-  die_unverifiable "no completed '$MEGALINTER_JOB_MATCH' job in the last $MAX_RUNS runs of $REPO"
+  done <<EOF
+$runs
+EOF
+  die_unverifiable "no completed '$MEGALINTER_JOB_MATCH' job from a provably org-managed run in the
+last $MAX_RUNS runs of $REPO"
 }
 
 ci_megalinter="$(read_const CI_MEGALINTER_VERSION)"

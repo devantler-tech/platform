@@ -158,6 +158,122 @@ else
   printf 'ok: control — without the in-repo copy the provenance check does not fire\n'
 fi
 
+# ---- PROVENANCE, PER CANDIDATE RUN -------------------------------------------------------------
+# The case above only proves MAIN does not define the managed workflow. A run's `.path` is the
+# workflow's path IN THE REVISION THAT RAN, so a pull request that adds a file at that same path
+# produces a run matching the selector exactly while main stays clean — and its `mega-linter` job
+# can then print any versions it likes. Provenance must therefore be re-checked at each candidate's
+# own revision.
+#
+# These cases drive the live selection path (no --log-file) through a `gh` stand-in that emits what
+# the real command would after its own --jq filtering.
+cat >"$scratch/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+args="$*"
+case "$args" in
+  *--help*) printf -- '--allow-escape-sequences\n' ;;
+  *actions/jobs/*/logs*)
+    job="${args##*actions/jobs/}"
+    job="${job%%/logs*}"
+    cat "$GH_STUB_LOGDIR/$job.log" ;;
+  *actions/runs/*/jobs*)
+    run="${args##*actions/runs/}"
+    run="${run%%/jobs*}"
+    printf 'job%s\n' "$run" ;;
+  *actions/runs*per_page*) cat "$GH_STUB_RUNS" ;;
+  *contents/.github/workflows/validate-go-project.yaml*)
+    sha="${args##*ref=}"
+    if grep -qxF -- "$sha" "$GH_STUB_TAINTED"; then
+      printf 'HTTP/2.0 200 OK\n'
+    else
+      printf 'HTTP/2.0 404 Not Found\n'
+    fi ;;
+  *commits/*)
+    sha="${args##*commits/}"
+    if grep -qxF -- "$sha" "$GH_STUB_UNRESOLVABLE"; then exit 1; fi
+    printf 'resolved\n' ;;
+  *) printf 'unexpected gh call: %s\n' "$args" >&2; exit 99 ;;
+esac
+STUB
+chmod +x "$scratch/bin/gh"
+mkdir -p "$scratch/logs"
+export GH_STUB_LOGDIR="$scratch/logs"
+export GH_STUB_RUNS="$scratch/runs.txt"
+export GH_STUB_TAINTED="$scratch/tainted.txt"
+export GH_STUB_UNRESOLVABLE="$scratch/unresolvable.txt"
+: >"$scratch/unresolvable.txt"
+
+tainted_sha='deadbeefdeadbeefdeadbeefdeadbeefdeadbeef'
+genuine_sha='cafebabecafebabecafebabecafebabecafebabe'
+
+# Run 111 is attacker-controlled: its revision defines the managed workflow, and its log states
+# versions that do NOT match the constants — so trusting it is visible as drift.
+make_log '9.9.9' '9.9.9' '9.9.9' "$scratch/logs/job111.log"
+make_log "$ci_megalinter" "$ci_checkov" "$ci_trivy" "$scratch/logs/job222.log"
+printf '%s\n' "$tainted_sha" >"$scratch/tainted.txt"
+
+run_live() {
+  out="$(DRIFT_REPO_ROOT="$scratch/fakerepo" PATH="$scratch/bin:$PATH" "$script" 2>&1)" && rc=0 || rc=$?
+}
+
+# A tainted run as the ONLY candidate must never have its log consumed.
+printf '111 %s\n' "$tainted_sha" >"$scratch/runs.txt"
+run_live
+if [ "$rc" -ne 2 ]; then
+  printf 'FAIL: tainted-only candidate — expected exit 2, got %d (its log was trusted)\n%s\n' \
+    "$rc" "$out" >&2
+  failures=$((failures + 1))
+elif ! printf '%s' "$out" | grep -qF 'CANNOT VERIFY'; then
+  printf 'FAIL: tainted-only candidate — exit 2 but not a fail-closed refusal\n%s\n' "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: a run whose own revision defines the managed workflow is not trusted\n'
+fi
+
+# Negative control: the SAME candidate, now untainted, must be consumed and read as in sync. Without
+# this the assertion above would pass for any unrelated refusal.
+: >"$scratch/tainted.txt"
+cp "$scratch/logs/job222.log" "$scratch/logs/job111.log"
+run_live
+if [ "$rc" -ne 0 ]; then
+  printf 'FAIL: control — an untainted candidate should be consumed, got exit %d\n%s\n' \
+    "$rc" "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: control — an untainted candidate is still consumed\n'
+fi
+
+# Discrimination: the newest candidate is tainted, the next is genuine. The guard must SKIP the
+# first and use the second. Consuming the first reports drift (exit 1) and aborting on it fails
+# closed (exit 2), so only skipping-and-continuing yields exit 0.
+make_log '9.9.9' '9.9.9' '9.9.9' "$scratch/logs/job111.log"
+printf '%s\n' "$tainted_sha" >"$scratch/tainted.txt"
+printf '111 %s\n222 %s\n' "$tainted_sha" "$genuine_sha" >"$scratch/runs.txt"
+run_live
+if [ "$rc" -ne 0 ]; then
+  printf 'FAIL: discrimination — expected exit 0 from the genuine run, got %d\n%s\n' "$rc" "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: a tainted candidate is skipped and a later genuine one is used\n'
+fi
+
+# A revision that does not resolve is not evidence of absence. The contents endpoint answers 404
+# for "no such file" AND for "no such commit", so without resolving the commit first an
+# unresolvable revision would read as provably clean and its log would be trusted.
+printf '%s\n' "$genuine_sha" >"$scratch/unresolvable.txt"
+: >"$scratch/tainted.txt"
+make_log '9.9.9' '9.9.9' '9.9.9' "$scratch/logs/job222.log"
+printf '222 %s\n' "$genuine_sha" >"$scratch/runs.txt"
+run_live
+if [ "$rc" -ne 2 ]; then
+  printf 'FAIL: unresolvable revision — expected exit 2, got %d (its log was trusted)\n%s\n' \
+    "$rc" "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: a candidate whose revision does not resolve is not trusted\n'
+fi
+: >"$scratch/unresolvable.txt"
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d check(s) failed\n' "$failures" >&2
   exit 1
