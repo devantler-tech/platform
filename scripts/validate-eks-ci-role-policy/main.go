@@ -274,14 +274,15 @@ const (
 // 520 rendered documents on BOTH sides across all five roots, with membership
 // IDENTICAL — set difference in BOTH directions over every
 // apiVersion|kind|namespace|name identity returned zero, so nothing was added,
-// removed, or renamed. Exactly three pinned entries move, and they are the three
+// removed, or renamed. Exactly four pinned entries move, and they are the four
 // re-approved alongside this value:
 //
 //	kro.run/v1alpha1                ResourceGraphDefinition  tenant.kro.run
 //	kustomize.toolkit.fluxcd.io/v1  Kustomization            flux-system/apps
 //	kustomize.toolkit.fluxcd.io/v1  Kustomization            flux-system/infrastructure
+//	kustomize.toolkit.fluxcd.io/v1  Kustomization            wedding-app/wedding-app
 //
-// The complete rendered delta is 19 lines, every one of them ADDED and every one
+// The complete rendered delta is 24 lines, every one of them ADDED and every one
 // part of a `healthCheckExprs` entry gating on a serving CNPG `Cluster`; none is
 // removed or modified. A health-check expression is read-only deploy-gating
 // input to kstatus — it cannot grant an identity or a permission.
@@ -290,7 +291,7 @@ const (
 // ClusterRoleBinding / ServiceAccount projection is BYTE-IDENTICAL across the
 // two trees (37,932 bytes each), so nothing granted to the aws/aws service
 // account this validator exists to protect is touched.
-const expectedRenderedSurfaceSHA = "782ba69f44639c670528e359be4608d32233d06c301b0e06766b238bff193984"
+const expectedRenderedSurfaceSHA = "77253fcfb010d7798ba94af325529a883983b7a6f2a856e0b95a769cddaf535c"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -353,7 +354,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "9d9b62d3221442d6355d16a34d31c198619fb3b3728df960fd67222a531ece7b",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "8e9f72b0f4f982d050aff0b97d246c68b538cbc397cdd45d031c95cfae981e7c",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "47c63f6a762caeacf257ddd32cbbeb3f3568eeea0e258ec006621579114731ff",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "6cca0d2d0e7874bf3f0c82f4e04f151d6c172eeae7929a8dbacbf37ed9793a6c",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "8af27d4845565c57b9ebc618f186669f18ada89e070cf4e6514924717a2532f8",
 }
 
 // fingerprint returns the SHA-256 identity used for byte-exact source checks.
