@@ -370,19 +370,37 @@ report_fences_now() {
     echo "::error::Could not read nodes."
     return 1
   fi
-  while IFS=$'\t' read -r name holder; do
+  # The OWNER annotation is the fence; the recovery journal is optional context.
+  # The ordinary per-node path claims cordon ownership with an empty recovery
+  # record, so a node killed there carries an owner and no journal — keying this
+  # on the journal alone would report "no fence held" while that node stays
+  # cordoned and the next run refuses its existing owner.
+  while IFS=$'\t' read -r name owner recovery unschedulable; do
     [[ -n "${name}" ]] || continue
     held=$((held + 1))
     printf 'HELD  Node %s (drain quarantine)\n' "${name}"
-    printf '    recovery record: %s\n' "${holder}"
-    printf '    release: inspect the record, restore the node, then remove it:\n'
-    printf '      kubectl --context %s annotate node %s %s-\n\n' \
+    printf '    cordon owner: %s\n' "${owner:-<none>}"
+    printf '    recovery record: %s\n' "${recovery:-<none — claimed without a journal>}"
+    printf '    unschedulable: %s\n' "${unschedulable}"
+    [[ -n "${owner}" ]] && fence_report_liveness "${owner}"
+    printf '    release: restore the node, then drop the fence annotation(s):\n'
+    if [[ "${unschedulable}" == "true" ]]; then
+      printf '      kubectl --context %s uncordon %s\n' "${KUBE_CONTEXT}" "${name}"
+    fi
+    [[ -n "${owner}" ]] && printf '      kubectl --context %s annotate node %s %s-\n' \
+      "${KUBE_CONTEXT}" "${name}" "${CORDON_OWNER_ANNOTATION}"
+    [[ -n "${recovery}" ]] && printf '      kubectl --context %s annotate node %s %s-\n' \
       "${KUBE_CONTEXT}" "${name}" "${CORDON_RECOVERY_ANNOTATION}"
+    printf '\n'
   done < <(jq -r \
-    --arg a "${CORDON_RECOVERY_ANNOTATION}" '
+    --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
+    --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" '
     .items[]
-    | select(((.metadata.annotations // {})[$a] // "") != "")
-    | [.metadata.name, (.metadata.annotations[$a])]
+    | (.metadata.annotations // {}) as $a
+    | ($a[$owner_annotation] // "") as $owner
+    | ($a[$recovery_annotation] // "") as $recovery
+    | select($owner != "" or $recovery != "")
+    | [.metadata.name, $owner, $recovery, ((.spec.unschedulable // false) | tostring)]
     | @tsv
   ' "${state}")
 
@@ -426,24 +444,39 @@ fence_kustomization_release_command() {
   local holder="$3"
   local owner_path patch
 
+  # Only the CHILD handoff carries `reconcile: disabled` — pause_flux_policy_parent
+  # writes the owner annotation and spec.suspend and nothing else. Emitting the
+  # reconcile test for the parent would make the whole patch fail its test op,
+  # so the printed command could never release the root Kustomization. Mirror
+  # each resume_* function exactly.
   if [[ "${name}" == "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" ]]; then
     owner_path="${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}"
+    patch="$(jq -nc \
+      --arg uid "${uid}" \
+      --arg owner_path "${owner_path}" \
+      --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
+      --arg holder "${holder}" '[
+      {op: "test", path: "/metadata/uid", value: $uid},
+      {op: "test", path: $owner_path, value: $holder},
+      {op: "test", path: $reconcile_path, value: "disabled"},
+      {op: "test", path: "/spec/suspend", value: true},
+      {op: "add", path: "/spec/suspend", value: false},
+      {op: "remove", path: $owner_path},
+      {op: "remove", path: $reconcile_path}
+    ]')"
   else
     owner_path="${FLUX_POLICY_PARENT_OWNER_JSON_PATH}"
+    patch="$(jq -nc \
+      --arg uid "${uid}" \
+      --arg owner_path "${owner_path}" \
+      --arg holder "${holder}" '[
+      {op: "test", path: "/metadata/uid", value: $uid},
+      {op: "test", path: $owner_path, value: $holder},
+      {op: "test", path: "/spec/suspend", value: true},
+      {op: "add", path: "/spec/suspend", value: false},
+      {op: "remove", path: $owner_path}
+    ]')"
   fi
-  patch="$(jq -nc \
-    --arg uid "${uid}" \
-    --arg owner_path "${owner_path}" \
-    --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
-    --arg holder "${holder}" '[
-    {op: "test", path: "/metadata/uid", value: $uid},
-    {op: "test", path: $owner_path, value: $holder},
-    {op: "test", path: $reconcile_path, value: "disabled"},
-    {op: "test", path: "/spec/suspend", value: true},
-    {op: "add", path: "/spec/suspend", value: false},
-    {op: "remove", path: $owner_path},
-    {op: "remove", path: $reconcile_path}
-  ]')"
   printf "kubectl --context %s -n flux-system patch %s %s --type=json -p '%s'" \
     "${KUBE_CONTEXT}" "${FLUX_KUSTOMIZATION_RESOURCE}" "${name}" "${patch}"
 }
