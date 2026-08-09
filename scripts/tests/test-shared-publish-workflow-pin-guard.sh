@@ -66,7 +66,7 @@ build_tree() {
 # run_tree <dir> — exit status of the guard as that tree's repository root.
 run_tree() {
   local dir="$1" status=0
-  ( cd "${dir}" && bash "${dir}/scripts/guard-shared-publish-workflow-pin.sh" ) \
+  (cd "${dir}" && bash "${dir}/scripts/guard-shared-publish-workflow-pin.sh") \
     >"${dir}/stdout" 2>"${dir}/stderr" || status=$?
   return "${status}"
 }
@@ -95,19 +95,19 @@ assert_rejected() {
   if run_tree "${dir}"; then
     fail "guard ACCEPTED ${label} (ref: ${ref}) — the widening is not enforced"
   fi
-  grep -q 'does not pin\|not a fully grouped' "${dir}/stderr" \
-    || fail "guard rejected ${label} but not for the ref reason: $(head -1 "${dir}/stderr")"
+  grep -q 'does not pin\|not a fully grouped' "${dir}/stderr" ||
+    fail "guard rejected ${label} but not for the ref reason: $(head -1 "${dir}/stderr")"
   ok "rejects ${label}"
 }
 
 assert_rejected "the pre-#3022 SHA-or-tag alternation" '([0-9a-f]{40}|refs/tags/v.+)' alternation
-assert_rejected "a bare tag ref"                       'refs/tags/v.+'                 tagonly
-assert_rejected "a tag ref with a literal version"     'refs/tags/v1.2.3'              tagliteral
-assert_rejected "a wildcard ref"                       '.+'                            wildcard
-assert_rejected "a branch ref"                         'refs/heads/main'               branchref
-assert_rejected "a bare moving ref"                    'main'                          bareref
-assert_rejected "a short commit"                       '0123456'                       shortsha
-assert_rejected "a partially grouped alternation"      '([0-9a-f]{40})?refs/heads/.+'   partialgroup
+assert_rejected "a bare tag ref" 'refs/tags/v.+' tagonly
+assert_rejected "a tag ref with a literal version" 'refs/tags/v1.2.3' tagliteral
+assert_rejected "a wildcard ref" '.+' wildcard
+assert_rejected "a branch ref" 'refs/heads/main' branchref
+assert_rejected "a bare moving ref" 'main' bareref
+assert_rejected "a short commit" '0123456' shortsha
+assert_rejected "a partially grouped alternation" '([0-9a-f]{40})?refs/heads/.+' partialgroup
 
 # --- RED: the floor fails closed on a shrunken match set ---------------------
 #
@@ -160,7 +160,7 @@ fi
 
 # --- Integration: the real repository satisfies the narrowed guard -----------
 
-if ( cd "${root_dir}" && bash "${guard}" >/dev/null 2>"${work_dir}/real.stderr" ); then
+if (cd "${root_dir}" && bash "${guard}" >/dev/null 2>"${work_dir}/real.stderr"); then
   ok "the real repository passes the narrowed guard"
 else
   printf '%s\n' "$(cat "${work_dir}/real.stderr")" >&2
@@ -183,15 +183,15 @@ ok "no shared-publish-workflow subject accepts a tag ref"
 for wf in ci cd validate-main; do
   file="${root_dir}/.github/workflows/${wf}.yaml"
   [ -f "${file}" ] || fail "expected workflow ${file} to exist"
-  grep -q 'scripts/guard-shared-publish-workflow-pin\.sh' "${file}" \
-    || fail "${wf}.yaml does not invoke the guard — it would protect nothing there"
+  grep -q 'scripts/guard-shared-publish-workflow-pin\.sh' "${file}" ||
+    fail "${wf}.yaml does not invoke the guard — it would protect nothing there"
   ok "${wf}.yaml invokes the guard"
 done
 
 # The guard must NOT sit behind a paths filter: its subjects live in k8s/, talos/
 # and the tenant RGD, so a PR touching only one of those trees must still run it.
-if grep -n -B4 'scripts/guard-shared-publish-workflow-pin\.sh' "${root_dir}/.github/workflows/ci.yaml" \
-  | grep -q "if:.*needs\.changes"; then
+if grep -n -B4 'scripts/guard-shared-publish-workflow-pin\.sh' "${root_dir}/.github/workflows/ci.yaml" |
+  grep -q "if:.*needs\.changes"; then
   fail "the guard is gated on a paths filter in ci.yaml; it must run unconditionally"
 fi
 ok "the guard runs unconditionally in ci.yaml"
