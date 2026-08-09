@@ -269,7 +269,33 @@ const (
 //
 // The fingerprint itself was read from the required job's own output on the
 // approved renderer, because the local toolchain is refused as unapproved.
-const expectedRenderedSurfaceSHA = "94b0082679234b6c6c2ddf7f655f5445e3022ba486c8cb3e86826d5b2730a896"
+//
+// This value covers removing the `refs/tags/v.+` signer alternative from the
+// shared-publish-workflow cosign matchers (#3022). Measured against main
+// cd47606c by rendering all five roots from both trees: 515 documents on both
+// sides, membership IDENTICAL — set difference in BOTH directions over
+// apiVersion|kind|namespace|name returned zero, so nothing was added, removed
+// or renamed. Exactly SEVEN lines move in the whole production render, and
+// every one of them is a cosign subject matcher losing its tag alternative:
+//
+//	source.toolkit.fluxcd.io/v1  OCIRepository  {wedding-app, ascoachingogvaner,
+//	                                             doggy-countdown, github-config, aws}
+//	kro.run/v1alpha1             ResourceGraphDefinition  tenant.kro.run
+//	policies.kyverno.io/v1alpha1 ImageValidatingPolicy    verify-app-images
+//
+//	  @([0-9a-f]{40}|refs/tags/v.+)  ->  @[0-9a-f]{40}
+//
+// It is strictly a tightening: every subject the new matcher accepts, the old
+// one already accepted. No grant-bearing object moved — those seven lines are
+// the ENTIRE delta across the surface, so every Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount document is byte-identical,
+// as is every `aws`-bearing line. Nothing granted to the aws/aws service
+// account this validator exists to protect is touched.
+//
+// (The eighth narrowed subject lives in talos/cluster/verify-first-party-images
+// .yaml, which is Talos machine config rather than a Kubernetes manifest and so
+// is outside this rendered surface entirely.)
+const expectedRenderedSurfaceSHA = "4d54629149b43fc6aa43004353fc92e3f1f95e154bcb750bf6b2b70fb4848e49"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -323,7 +349,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "opencost-usage-scraper"}:                            "4b28e1da280a7940a1cb4d538bc31ede1b5d272c17189a81afeae48acbb8b7a0",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "a4ab25489f2548aec728d4706aff02246d4669538b0f577c57bef132051910b6",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "e23c61eb872c6aafaceed74e400479d034ee636735880d6b4a6de338cd0c32a9",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "1a2ecb3104630c44466d846159ee68ff6a98888887c02ecd0278782793dead4a",

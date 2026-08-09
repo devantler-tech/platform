@@ -136,6 +136,12 @@ jobs:
               # Both halves, for the same reason as the guard above.
               - 'scripts/verify-published-evidence.sh'
               - 'scripts/tests/test-verify-published-evidence.sh'
+              # The pin guard itself runs unconditionally in the validate job, so
+              # only its TEST is selected here. Both halves are listed anyway: a PR
+              # that edits the guard must also run the test that pins its ablations,
+              # or a widened allow-list would ship with every check still green.
+              - 'scripts/guard-shared-publish-workflow-pin.sh'
+              - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
@@ -423,6 +429,15 @@ jobs:
         # verdict in both rollout states and the wiring that reaches it — a gate
         # that runs after latest already moved has verified nothing that matters.
         run: bash scripts/tests/test-verify-published-evidence.sh
+
+      - name: 🔐 Validate the shared-publish-workflow pin guard
+        if: needs.changes.outputs.k8s == 'true'
+        # The guard fails by PASSING: a widened cosign matcher still verifies, so
+        # nothing else in CI notices. This pins the shapes it must reject — above
+        # all the SHA-or-tag alternation removed in #3022, which is the exact
+        # prior contents of all eight subjects and would otherwise revert in
+        # silence — plus the floor and the wiring that reaches it.
+        run: bash scripts/tests/test-shared-publish-workflow-pin-guard.sh
 
       - name: 📋 Validate Kubescape finding summary
         if: needs.changes.outputs.k8s == 'true'
