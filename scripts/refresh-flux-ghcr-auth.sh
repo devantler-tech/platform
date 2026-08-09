@@ -18,16 +18,18 @@ require_flux_ghcr_yaml_tool
 
 check_only=false
 allow_incomplete_fanout=false
+report_fences=false
 if (($# > 1)); then
-  echo "Usage: $0 [--check-only|--allow-incomplete-fanout]" >&2
+  echo "Usage: $0 [--check-only|--allow-incomplete-fanout|--fences]" >&2
   exit 64
 fi
 if (($# == 1)); then
   case "$1" in
     --check-only) check_only=true ;;
     --allow-incomplete-fanout) allow_incomplete_fanout=true ;;
+    --fences) report_fences=true ;;
     *)
-      echo "Usage: $0 [--check-only|--allow-incomplete-fanout]" >&2
+      echo "Usage: $0 [--check-only|--allow-incomplete-fanout|--fences]" >&2
       exit 64
       ;;
   esac
@@ -245,6 +247,221 @@ flux_policy_parent_owner=""
 flux_policy_parent_uid=""
 runtime_probe_sequence=0
 runtime_probe_bootstrap_needed=0
+
+# Every fence below is released by cleanup_refresh_work in one ordered pass. A
+# hard kill leaves an arbitrary prefix released and the remainder held, and a
+# held fence is never auto-reclaimed: Talos machine-config writes expose no
+# fencing token, so a surviving process could still write after any timeout
+# takeover. Recovery is therefore deliberately human. This read-only report is
+# what makes it a procedure rather than an improvisation — it names each fence
+# still held, states whether the holder is provably dead, and prints the exact
+# CAS-guarded release. It performs no mutation by design: an operator running
+# the printed command is the explicit step the fencing model requires.
+fence_run_segment() {
+  if [[ -n "${GITHUB_RUN_ID:-}" ]]; then
+    printf 'gh%s.%s' "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT:-1}"
+    return 0
+  fi
+  printf 'local'
+}
+
+fence_holder_run_reference() {
+  local holder="$1"
+  [[ "${holder}" =~ -gh([0-9]+)\.([0-9]+)- ]] || return 1
+  printf '%s %s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+}
+
+fence_report_liveness() {
+  local holder="$1"
+  local run_reference run_id run_attempt
+
+  if run_reference="$(fence_holder_run_reference "${holder}")"; then
+    run_id="${run_reference%% *}"
+    run_attempt="${run_reference##* }"
+    printf '    holder ran as GitHub run %s attempt %s. Confirm it is terminal:\n' \
+      "${run_id}" "${run_attempt}"
+    printf '      gh run view %s --repo devantler-tech/platform --json status,conclusion\n' \
+      "${run_id}"
+    printf '    A status other than "completed" means the holder is LIVE — do not recover.\n'
+    return 0
+  fi
+  printf '    holder carries no run reference (written before that was recorded, or a\n'
+  printf '    local run). Prove the process is dead before recovering.\n'
+}
+
+report_fences_now() {
+  local state="${work_dir}/fence-report.json"
+  local held=0
+  local holder now_epoch renew_epoch duration name uid suspend
+
+  printf '== GHCR deploy fences on context %s ==\n\n' "${KUBE_CONTEXT}"
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get lease "${SYNC_LEASE_NAME}" \
+    --ignore-not-found \
+    -o json >"${state}"; then
+    echo "::error::Could not read the GHCR synchronization lease."
+    return 1
+  fi
+  if [[ -s "${state}" ]]; then
+    holder="$(jq -r '.spec.holderIdentity // ""' "${state}")"
+    if [[ -n "${holder}" ]]; then
+      held=$((held + 1))
+      duration="$(jq -r '.spec.leaseDurationSeconds // 0' "${state}")"
+      now_epoch="$(date -u +%s)"
+      renew_epoch="$(fence_report_epoch "$(jq -r '.spec.renewTime // ""' "${state}")")"
+      printf 'HELD  Lease flux-system/%s\n' "${SYNC_LEASE_NAME}"
+      printf '    holder: %s\n' "${holder}"
+      if [[ -n "${renew_epoch}" ]] &&
+        ((now_epoch - renew_epoch < duration)); then
+        printf '    renewed %ss ago, inside its %ss duration — the holder is LIVE. Do not recover.\n' \
+          "$((now_epoch - renew_epoch))" "${duration}"
+      else
+        printf '    last renewed %s (duration %ss) — heartbeat has stopped.\n' \
+          "$(jq -r '.spec.renewTime // "never"' "${state}")" "${duration}"
+        fence_report_liveness "${holder}"
+        printf '    release:\n      %s\n' \
+          "$(fence_lease_release_command "${state}" "${holder}")"
+      fi
+      printf '\n'
+    fi
+  fi
+
+  for name in "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" \
+    "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}"; do
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace flux-system \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" "${name}" \
+      --ignore-not-found \
+      -o json >"${state}"; then
+      echo "::error::Could not read Kustomization flux-system/${name}."
+      return 1
+    fi
+    [[ -s "${state}" ]] || continue
+    if [[ "${name}" == "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" ]]; then
+      holder="$(jq -r \
+        --arg a "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" \
+        '(.metadata.annotations // {})[$a] // ""' "${state}")"
+    else
+      holder="$(jq -r \
+        --arg a "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" \
+        '(.metadata.annotations // {})[$a] // ""' "${state}")"
+    fi
+    [[ -n "${holder}" ]] || continue
+    held=$((held + 1))
+    uid="$(jq -r '.metadata.uid' "${state}")"
+    suspend="$(jq -r '.spec.suspend // false' "${state}")"
+    printf 'HELD  Kustomization flux-system/%s\n' "${name}"
+    printf '    holder: %s\n' "${holder}"
+    printf '    suspend=%s — Flux reconciliation of this layer is STOPPED while held.\n' \
+      "${suspend}"
+    fence_report_liveness "${holder}"
+    printf '    release:\n      %s\n' \
+      "$(fence_kustomization_release_command "${name}" "${uid}" "${holder}")"
+    printf '\n'
+  done
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get nodes -o json >"${state}"; then
+    echo "::error::Could not read nodes."
+    return 1
+  fi
+  while IFS=$'\t' read -r name holder; do
+    [[ -n "${name}" ]] || continue
+    held=$((held + 1))
+    printf 'HELD  Node %s (drain quarantine)\n' "${name}"
+    printf '    recovery record: %s\n' "${holder}"
+    printf '    release: inspect the record, restore the node, then remove it:\n'
+    printf '      kubectl --context %s annotate node %s %s-\n\n' \
+      "${KUBE_CONTEXT}" "${name}" "${CORDON_RECOVERY_ANNOTATION}"
+  done < <(jq -r \
+    --arg a "${CORDON_RECOVERY_ANNOTATION}" '
+    .items[]
+    | select(((.metadata.annotations // {})[$a] // "") != "")
+    | [.metadata.name, (.metadata.annotations[$a])]
+    | @tsv
+  ' "${state}")
+
+  if ((held == 0)); then
+    printf 'No fence is held. A deploy can acquire cleanly.\n'
+  else
+    printf 'ATTENTION: %s fence(s) held. Recover ONLY after proving the holder is dead.\n' \
+      "${held}"
+  fi
+}
+
+fence_report_epoch() {
+  local stamp="${1%%.*}"
+  [[ -n "${stamp}" ]] || return 0
+  stamp="${stamp%Z}"
+  date -u -j -f '%Y-%m-%dT%H:%M:%S' "${stamp}" +%s 2>/dev/null ||
+    date -u -d "${stamp}Z" +%s 2>/dev/null ||
+    true
+}
+
+fence_lease_release_command() {
+  local state="$1"
+  local holder="$2"
+  local patch
+
+  patch="$(jq -nc \
+    --arg rv "$(jq -r '.metadata.resourceVersion' "${state}")" \
+    --arg holder "${holder}" '[
+    {op: "test", path: "/metadata/resourceVersion", value: $rv},
+    {op: "test", path: "/spec/holderIdentity", value: $holder},
+    {op: "replace", path: "/spec/holderIdentity", value: ""},
+    {op: "replace", path: "/spec/leaseDurationSeconds", value: 1}
+  ]')"
+  printf "kubectl --context %s -n flux-system patch lease %s --type=json -p '%s'" \
+    "${KUBE_CONTEXT}" "${SYNC_LEASE_NAME}" "${patch}"
+}
+
+fence_kustomization_release_command() {
+  local name="$1"
+  local uid="$2"
+  local holder="$3"
+  local owner_path patch
+
+  if [[ "${name}" == "${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}" ]]; then
+    owner_path="${FLUX_POLICY_HANDOFF_OWNER_JSON_PATH}"
+  else
+    owner_path="${FLUX_POLICY_PARENT_OWNER_JSON_PATH}"
+  fi
+  patch="$(jq -nc \
+    --arg uid "${uid}" \
+    --arg owner_path "${owner_path}" \
+    --arg reconcile_path "${FLUX_RECONCILE_JSON_PATH}" \
+    --arg holder "${holder}" '[
+    {op: "test", path: "/metadata/uid", value: $uid},
+    {op: "test", path: $owner_path, value: $holder},
+    {op: "test", path: $reconcile_path, value: "disabled"},
+    {op: "test", path: "/spec/suspend", value: true},
+    {op: "add", path: "/spec/suspend", value: false},
+    {op: "remove", path: $owner_path},
+    {op: "remove", path: $reconcile_path}
+  ]')"
+  printf "kubectl --context %s -n flux-system patch %s %s --type=json -p '%s'" \
+    "${KUBE_CONTEXT}" "${FLUX_KUSTOMIZATION_RESOURCE}" "${name}" "${patch}"
+}
+
+# Read-only, and deliberately before any credential work: an operator reaches
+# for this exactly when a deploy is refusing to start, so it must not need a
+# GHCR credential, a SOPS key, or a healthy fence to answer.
+if [[ "${report_fences}" == "true" ]]; then
+  report_fences_now
+  fence_report_status=$?
+  # This mode acquires nothing, so the release pass has nothing to do — and it
+  # runs before the rest of the file is parsed into functions, so letting the
+  # EXIT trap fire would call a cleanup helper that does not exist yet and turn
+  # a clean report into a failure.
+  trap - EXIT
+  rm -rf "${work_dir}"
+  exit "${fence_report_status}"
+fi
 
 # Force an ESO resource to reconcile and observe a post-annotation Ready edge.
 force_sync_resource() {
@@ -2708,7 +2925,12 @@ acquire_sync_lease() {
   local desired_revision="$1"
   local attempt now resource_version current_holder transitions failure_detail
 
-  sync_lease_holder="${desired_revision:0:16}-$$-${RANDOM}"
+  # The identity is what a later operator has to judge for liveness, and a PID
+  # belongs to a runner that no longer exists. Record the GitHub run and
+  # attempt so a held fence can be resolved against the API instead of by
+  # correlating timestamps across workflow runs. The policy fences below reuse
+  # this same identity, so every fence becomes decidable together.
+  sync_lease_holder="${desired_revision:0:16}-$(fence_run_segment)-$$-${RANDOM}"
   export FLUX_GHCR_SYNC_LEASE_HOLDER="${sync_lease_holder}"
   for attempt in 1 2 3; do
     : >"${sync_lease_file}"
@@ -2765,7 +2987,7 @@ acquire_sync_lease() {
       return 1
     fi
     if ! sync_lease_is_available; then
-      echo "::error::Another GHCR synchronization transaction holds the synchronization lease; automatic expiry takeover is disabled because Talos writes cannot be fenced. Prove the prior process is dead before explicitly recovering the Lease."
+      echo "::error::Another GHCR synchronization transaction holds the synchronization lease; automatic expiry takeover is disabled because Talos writes cannot be fenced. Prove the prior process is dead before explicitly recovering the Lease. Run './scripts/refresh-flux-ghcr-auth.sh --fences' to list every held fence with its liveness evidence and exact release command, and see docs/dr/runbook.md → 'Recover an orphaned GHCR deploy fence'."
       return 1
     fi
     resource_version="$(jq -er '.metadata.resourceVersion' "${sync_lease_file}")"
@@ -3394,7 +3616,7 @@ pause_flux_policy_handoff() {
         --arg annotation "${FLUX_POLICY_HANDOFF_OWNER_ANNOTATION}" '
         ((.metadata.annotations // {})[$annotation] // "") != ""
       ' "${flux_policy_handoff_state_file}" >/dev/null; then
-        echo "::error::Another transaction already owns the image-verification policy handoff; refusing cluster mutation."
+        echo "::error::Another transaction already owns the image-verification policy handoff; refusing cluster mutation. Run './scripts/refresh-flux-ghcr-auth.sh --fences' to list every held fence with its liveness evidence and exact release command, and see docs/dr/runbook.md → 'Recover an orphaned GHCR deploy fence'."
         return 1
       fi
       if ! jq -e \
