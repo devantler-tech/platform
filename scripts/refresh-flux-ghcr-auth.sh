@@ -232,6 +232,9 @@ sync_lease_result_file="${work_dir}/sync-lease-result.txt"
 sync_lease_lost_file="${work_dir}/sync-lease-lost"
 root_secret_state_file="${work_dir}/root-secret-state.json"
 root_secret_cas_patch_file="${work_dir}/root-secret-cas-patch.json"
+# resourceVersion the unfenced fast path made its decision against; empty until
+# the drift probe has observed one.
+probed_root_secret_version=""
 variables_secret_state_file="${work_dir}/variables-secret-state.json"
 variables_secret_cas_patch_file="${work_dir}/variables-secret-cas-patch.json"
 sync_lease_holder=""
@@ -406,7 +409,37 @@ ghcr_state_already_matches_git() {
     "${desired_revision}" \
     "${operator_image}" \
     "${targets_file}" >/dev/null 2>&1 || return 1
-  [[ ! -s "${targets_file}" ]]
+  [[ ! -s "${targets_file}" ]] || return 1
+
+  # Pin what the probe observed. The unfenced patch below is only sound while
+  # the cluster still looks the way it did here, so record the version the
+  # decision was made against rather than trusting that nothing moved.
+  probed_root_secret_version="$(jq -r '.metadata.resourceVersion // ""' \
+    "${probe_dir}/root-secret.json" 2>/dev/null)" || return 1
+  [[ -n "${probed_root_secret_version}" ]]
+}
+
+# The fast path patches root auth outside the fence, so the probe's conclusion
+# must still hold at the moment of the write. Re-read and require the exact
+# resourceVersion the probe decided on; anything else means a writer moved
+# under us and the run falls through to the fenced transaction, which is the
+# unchanged behaviour. The remaining read/write window is closed by
+# patch_secret_data_with_cas, whose own CAS test rejects a patch built from a
+# superseded read.
+root_secret_unchanged_since_probe() {
+  local recheck_file="${work_dir}/drift-probe/root-secret-recheck.json"
+  local current_version
+
+  [[ -n "${probed_root_secret_version}" ]] || return 1
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get secret ksail-registry-credentials \
+    -o json \
+    >"${recheck_file}" 2>/dev/null || return 1
+  current_version="$(jq -r '.metadata.resourceVersion // ""' \
+    "${recheck_file}" 2>/dev/null)" || return 1
+  [[ "${current_version}" == "${probed_root_secret_version}" ]]
 }
 
 # Emit bounded, printable output only from operations that cannot contain the
@@ -3824,7 +3857,8 @@ fi
 if ghcr_state_already_matches_git \
   "${pull_revision}" \
   "${KSAIL_OPERATOR_IMAGE}" \
-  "${FANOUT_NAMESPACES[@]}"; then
+  "${FANOUT_NAMESPACES[@]}" &&
+  root_secret_unchanged_since_probe; then
   patch_root_secret
   echo "✅ Every consumer, node proof and root credential already matched Git/SOPS; reasserted root Flux auth without fencing Flux."
   exit 0

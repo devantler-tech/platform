@@ -1825,6 +1825,18 @@ func fakeKubectlGetRootSecret() int {
 		"FAKE_SYNC_LEASE_LOST_AFTER_ROOT_SECRET_GET",
 		"sync-lease-lost-after-root-secret-get",
 	)
+	// Move the Secret once, immediately after the drift probe has read it. This
+	// is the only way to exercise the window between an unfenced probe and the
+	// patch it authorises: a concurrent writer that lands after the decision was
+	// made but before it was acted on.
+	if os.Getenv("FAKE_ROOT_SECRET_MOVES_AFTER_PROBE") == "true" &&
+		!markerExists("root-secret-moved-after-probe") {
+		touchMarker("root-secret-moved-after-probe")
+		setMarkerContent(
+			"root-secret-resource-version",
+			incrementDecimal(defaultString(markerContent("root-secret-resource-version"), "20")),
+		)
+	}
 	return 0
 }
 

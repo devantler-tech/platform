@@ -92,3 +92,27 @@ func TestReassertWithPartiallyAppliedNodeConfigStillFences(t *testing.T) {
 		t.Error("root patch missing after the fenced transaction")
 	}
 }
+
+// CodeRabbit raised this on #3041 and it is a real window: the probe reads the
+// root Secret, then the fast path patches it OUTSIDE the fence. A writer that
+// lands in between would have its change overwritten by a decision made against
+// a cluster that no longer exists. The fast path therefore pins the observed
+// resourceVersion, and anything else falls through to the fenced transaction.
+func TestRootSecretMovingAfterTheProbeFallsBackToTheFence(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	current := map[string]string{"FAKE_TALOS_NODES_CURRENT": "true"}
+
+	requireSuccessResult(t, f.runHelper(validConfig(), nil, current))
+	afterStage := fluxControllerRestartCount(t, f)
+
+	result := f.runHelperPreservingClusterState(validConfig(), nil, map[string]string{
+		"FAKE_TALOS_NODES_CURRENT":           "true",
+		"FAKE_ROOT_SECRET_MOVES_AFTER_PROBE": "true",
+	})
+	requireSuccessResult(t, result)
+
+	if after := fluxControllerRestartCount(t, f); after == afterStage {
+		t.Errorf("root Secret moved after the probe but the run still took the unfenced fast path (count stayed %q)", afterStage)
+	}
+}
