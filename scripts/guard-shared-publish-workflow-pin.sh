@@ -42,6 +42,14 @@
 # actions SHA still matches `[0-9a-f]{40}`. Restricting to approved revisions needs a
 # generated allow-list and is tracked separately on #2818. This guard keeps the
 # property #2816 established from silently regressing.
+#
+# Note for whoever implements that allow-list: the check below matches the literal
+# PATTERN text `[0-9a-f]{40}`, because these subjects are regexes. A subject naming one
+# concrete commit — which is what a generated approved-revision list would emit — is
+# therefore REJECTED here today, despite being strictly narrower than what is accepted.
+# That is a limit of this check, not a judgement about the shape; extend the allow-list
+# deliberately when the generator lands, rather than reading the failure as a defect in
+# the generated output.
 
 set -euo pipefail
 
