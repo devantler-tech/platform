@@ -2047,9 +2047,9 @@ func fakeKubectlGetConsumerSecret(namespace string) int {
 	encoded := ""
 	if mismatch {
 		encoded = base64.StdEncoding.EncodeToString([]byte(`{"auths":{}}`))
-	} else {
+	} else if capture := os.Getenv("VARIABLES_PATCH_CAPTURE"); pathExists(capture) {
 		var patch map[string]any
-		if err := json.Unmarshal([]byte(mustReadCommandFile(os.Getenv("VARIABLES_PATCH_CAPTURE"))), &patch); err != nil {
+		if err := json.Unmarshal([]byte(mustReadCommandFile(capture)), &patch); err != nil {
 			return commandFailure(91, "parse variables-base patch: %v", err)
 		}
 		data, _ := patch["data"].(map[string]any)
@@ -2057,6 +2057,14 @@ func fakeKubectlGetConsumerSecret(namespace string) int {
 		if variablesPatchCount >= 3 {
 			removeMarker(revertedMarker)
 		}
+	} else {
+		// No variables-base patch in THIS run. The materialised consumer Secret
+		// is cluster state, not a per-run artifact: it persists across deploys
+		// and reflects whatever variables-base currently holds. The per-run
+		// capture is cleared between runs, so without this the fixture could not
+		// express an already-converged cluster — a second invocation would read
+		// an absent file and look like drift no matter what the cluster held.
+		encoded = markerContent("variables-secret-value")
 	}
 	fmt.Println(encodeJSON(map[string]any{
 		"data": map[string]any{".dockerconfigjson": encoded},
