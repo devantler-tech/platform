@@ -179,21 +179,52 @@ fi
 ok "no shared-publish-workflow subject accepts a tag ref"
 
 # --- Wiring: the guard is actually reached, in all three workflows -----------
+#
+# Match the STEP, never the string. `ci.yaml` names this guard twice — once as a
+# paths-filter entry and once as the step that runs it — so a substring test is
+# satisfied by the filter entry alone. Deleting the actual invocation would then
+# leave this file reporting every assertion green while no pull request executes
+# the guard at all: the exact vacuous pass this suite exists to prevent, and one
+# the filter entry added in this same change introduced.
+#
+# So ask the workflow's structure what it will RUN, via each job's steps, rather
+# than asking the file what text it contains.
+
+# guard_steps <workflow-file> — one line per step that invokes the guard,
+# formatted `<job>|<step-if>|<job-if>`. Empty output means nothing runs it.
+guard_steps() {
+  yq e -o=json '.jobs // {}' "$1" 2>/dev/null | jq -r '
+    to_entries[]
+    | .key as $job
+    | (.value.if // "") as $jobif
+    | (.value.steps // [])[]
+    | select((.run // "") | test("scripts/guard-shared-publish-workflow-pin\\.sh"))
+    | [$job, (.if // ""), $jobif] | join("|")
+  '
+}
 
 for wf in ci cd validate-main; do
   file="${root_dir}/.github/workflows/${wf}.yaml"
   [ -f "${file}" ] || fail "expected workflow ${file} to exist"
-  grep -q 'scripts/guard-shared-publish-workflow-pin\.sh' "${file}" ||
-    fail "${wf}.yaml does not invoke the guard — it would protect nothing there"
-  ok "${wf}.yaml invokes the guard"
+  steps="$(guard_steps "${file}")"
+  [ -n "${steps}" ] ||
+    fail "${wf}.yaml has no step whose run: invokes the guard — it would protect nothing there"
+  ok "${wf}.yaml runs the guard ($(printf '%s\n' "${steps}" | wc -l | tr -d ' ') step(s))"
 done
 
 # The guard must NOT sit behind a paths filter: its subjects live in k8s/, talos/
 # and the tenant RGD, so a PR touching only one of those trees must still run it.
-if grep -n -B4 'scripts/guard-shared-publish-workflow-pin\.sh' "${root_dir}/.github/workflows/ci.yaml" |
-  grep -q "if:.*needs\.changes"; then
-  fail "the guard is gated on a paths filter in ci.yaml; it must run unconditionally"
-fi
+# Check the step's own `if:` AND its job's — either one gates it.
+while IFS='|' read -r job stepif jobif; do
+  [ -n "${job}" ] || continue
+  case "${stepif}${jobif}" in
+    *needs.changes*)
+      fail "the guard is gated on a paths filter in ci.yaml (job ${job}: step-if='${stepif}' job-if='${jobif}'); it must run unconditionally"
+      ;;
+  esac
+done <<EOF
+$(guard_steps "${root_dir}/.github/workflows/ci.yaml")
+EOF
 ok "the guard runs unconditionally in ci.yaml"
 
 printf '\n%d assertion(s) passed.\n' "${pass_count}"
