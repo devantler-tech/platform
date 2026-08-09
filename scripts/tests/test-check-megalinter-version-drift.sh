@@ -119,6 +119,45 @@ grep -q 'trivy-sbom v9.9.9' "$scratch/no-tv.log" ||
 } >"$scratch/dup.log"
 expect 'conflicting versions for one tool fail closed' 2 "$scratch/dup.log" 'conflicting'
 
+# ---- PROVENANCE: the managed workflow must not be definable inside this repository -------------
+# The live path picks a job out of arbitrary recent runs, so it binds to the org-managed workflow's
+# PATH. That binding is only proof of provenance while this repository does not define a workflow at
+# that same path — if it ever does, the file could be edited to emit any versions it likes. The
+# guard must then refuse rather than trust it.
+#
+# Uses a synthetic tree via DRIFT_REPO_ROOT, and a PATH-shadowed `gh` that fails if called: reaching
+# the network here would mean the provenance check ran too late to protect anything.
+mkdir -p "$scratch/fakerepo/.github/workflows" "$scratch/bin" "$scratch/fakerepo/scripts"
+cp "$repo_root/scripts/megalinter-scan-counts.sh" "$scratch/fakerepo/scripts/"
+printf 'name: impostor\n' >"$scratch/fakerepo/.github/workflows/validate-go-project.yaml"
+printf '#!/usr/bin/env bash\necho "gh must not be reached before the provenance check" >&2\nexit 99\n' \
+  >"$scratch/bin/gh"
+chmod +x "$scratch/bin/gh"
+
+out="$(DRIFT_REPO_ROOT="$scratch/fakerepo" PATH="$scratch/bin:$PATH" "$script" 2>&1)" && rc=0 || rc=$?
+if [ "$rc" -ne 2 ]; then
+  printf 'FAIL: in-repo managed workflow — expected exit 2, got %d\n%s\n' "$rc" "$out" >&2
+  failures=$((failures + 1))
+elif ! printf '%s' "$out" | grep -qF 'no longer'; then
+  printf 'FAIL: in-repo managed workflow — exit 2 but message did not explain provenance\n%s\n' \
+    "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: an in-repo copy of the managed workflow fails closed\n'
+fi
+
+# Negative control for the case above: with the impostor workflow REMOVED, the same synthetic tree
+# must get PAST the provenance check and reach gh (which is stubbed to fail loudly). Without this,
+# the assertion above would pass just as well if the guard refused for some unrelated reason.
+rm "$scratch/fakerepo/.github/workflows/validate-go-project.yaml"
+out="$(DRIFT_REPO_ROOT="$scratch/fakerepo" PATH="$scratch/bin:$PATH" "$script" 2>&1)" && rc=0 || rc=$?
+if printf '%s' "$out" | grep -qF 'no longer'; then
+  printf 'FAIL: provenance refusal fired with no in-repo workflow present\n%s\n' "$out" >&2
+  failures=$((failures + 1))
+else
+  printf 'ok: control — without the in-repo copy the provenance check does not fire\n'
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d check(s) failed\n' "$failures" >&2
   exit 1

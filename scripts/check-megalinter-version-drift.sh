@@ -39,7 +39,16 @@ REPO="${GITHUB_REPOSITORY:-devantler-tech/platform}"
 MEGALINTER_JOB_MATCH='mega-linter'
 MAX_RUNS=40
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# The org-managed workflow that runs mega-linter for this repository. Binding to it is a PROVENANCE
+# check, not decoration: the job is selected out of arbitrary recent runs, and a job's display name
+# is attacker-controllable — a pull request can add a workflow with a job called "mega-linter" that
+# prints three convincing `- Using [...]` lines. Matching the name alone would let that run supply
+# the versions, which could mask real drift or wedge main red.
+readonly MANAGED_WORKFLOW_PATH='.github/workflows/validate-go-project.yaml'
+
+# Overridable so the contract suite can exercise the provenance branch below against a synthetic
+# tree. Defaults to this script's own repository, which is what CI uses.
+REPO_ROOT="${DRIFT_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 readonly REPO_ROOT
 CONSTANTS_FILE="$REPO_ROOT/scripts/megalinter-scan-counts.sh"
 readonly CONSTANTS_FILE
@@ -108,10 +117,46 @@ extract_one() {
 resolve_log() {
   command -v gh >/dev/null 2>&1 || die_unverifiable 'gh is not installed'
   local dest="$1" run_id job_id runs
+
+  # This repository must NOT define the managed workflow itself. If it ever does, the path stops
+  # being proof of org-managed provenance — an in-repo file could then be edited to emit whatever
+  # versions it likes. Fail closed and make a human look rather than silently trusting it.
+  if [ -f "$REPO_ROOT/$MANAGED_WORKFLOW_PATH" ]; then
+    die_unverifiable "$MANAGED_WORKFLOW_PATH now exists in this repository, so its runs no longer
+prove org-managed provenance. Re-establish how the mega-linter job is identified before trusting it."
+  fi
+
+  # `gh api` refuses a response containing terminal escape sequences unless allowed explicitly, and
+  # Actions logs always contain them — but the flag only exists on newer gh (present and required on
+  # 2.97.0; reported absent on 2.96.0). Probe for it rather than assuming either way: passing an
+  # unknown flag aborts, and omitting a needed one aborts too.
+  #
+  # Written as two literal calls rather than an argument array on purpose: under `set -u`, expanding
+  # an EMPTY array as "${arr[@]}" is an unbound-variable error on bash 3.2, which is what macOS
+  # ships. That aborted this function mid-run when the flag was absent.
+  # NOT `gh api --help | grep -q …`: under `pipefail`, `grep -q` exits on the first match and closes
+  # the pipe, gh dies of SIGPIPE, and the pipeline reports FAILURE — so the probe answers "absent"
+  # on a gh that has the flag. Measured here on 2.97.0. Capture the text, then match it.
+  local esc_supported=no help_text
+  help_text="$(gh api --help 2>&1 || true)"
+  case "$help_text" in
+    *--allow-escape-sequences*) esc_supported=yes ;;
+  esac
+
+  fetch_log() { # $1 job id, $2 destination
+    if [ "$esc_supported" = yes ]; then
+      gh api --allow-escape-sequences "repos/$REPO/actions/jobs/$1/logs" >"$2"
+    else
+      gh api "repos/$REPO/actions/jobs/$1/logs" >"$2"
+    fi
+  }
+
+  # Select by the managed workflow's PATH, not the run's display name, then by job name within it.
   runs="$(gh api "repos/$REPO/actions/runs?per_page=$MAX_RUNS" \
-    --jq '.workflow_runs[].id' 2>/dev/null)" ||
+    --jq ".workflow_runs[] | select(.path == \"$MANAGED_WORKFLOW_PATH\") | .id" 2>/dev/null)" ||
     die_unverifiable "could not list recent runs for $REPO"
-  [ -n "$runs" ] || die_unverifiable "no recent workflow runs found for $REPO"
+  [ -n "$runs" ] ||
+    die_unverifiable "no recent runs of $MANAGED_WORKFLOW_PATH in the last $MAX_RUNS runs of $REPO"
 
   for run_id in $runs; do
     # A skipped job states no versions, so require one that actually executed.
@@ -121,8 +166,9 @@ resolve_log() {
             | select(.conclusion == \"success\" or .conclusion == \"failure\")
             | .id" 2>/dev/null | head -1)" || continue
     if [ -n "$job_id" ]; then
-      printf 'Reading mega-linter job %s (run %s) in %s\n' "$job_id" "$run_id" "$REPO" >&2
-      gh api --allow-escape-sequences "repos/$REPO/actions/jobs/$job_id/logs" >"$dest" 2>/dev/null ||
+      printf 'Reading mega-linter job %s (run %s of %s) in %s\n' \
+        "$job_id" "$run_id" "$MANAGED_WORKFLOW_PATH" "$REPO" >&2
+      fetch_log "$job_id" "$dest" ||
         die_unverifiable "could not download the log for job $job_id"
       return 0
     fi
