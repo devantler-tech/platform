@@ -58,6 +58,8 @@ kind: CronJob
 metadata:
   name: cnpg-degraded-alert
   namespace: observability
+  annotations:
+    checkov.io/skip1: CKV_K8S_38=the check container reads its SA token to list CNPG Clusters through the API server
 spec:
   schedule: "*/30 * * * *"
   concurrencyPolicy: Forbid
