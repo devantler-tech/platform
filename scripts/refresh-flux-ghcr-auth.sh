@@ -384,8 +384,32 @@ report_fences_now() {
     printf '    unschedulable: %s\n' "${unschedulable}"
     [[ -n "${owner}" ]] && fence_report_liveness "${owner}"
     printf '    release: restore the node, then drop the fence annotation(s):\n'
+    # Only uncordon a node this transaction is RECORDED to have cordoned. The
+    # journal keeps the pre-claim state precisely because a node can already be
+    # cordoned for maintenance or ill health, and an unconditional uncordon
+    # would make it schedulable again — reversing an intent this script never
+    # owned. Without a journal that state is unknown, so say so and let the
+    # operator decide rather than emitting a command that might be wrong.
     if [[ "${unschedulable}" == "true" ]]; then
-      printf '      kubectl --context %s uncordon %s\n' "${KUBE_CONTEXT}" "${name}"
+      # `has` rather than `//`: jq's alternative operator treats `false` as
+      # empty, so `.wasCordoned // "unknown"` would report the recorded
+      # not-previously-cordoned case as unrecorded — the one case that may
+      # safely uncordon.
+      case "$(printf '%s' "${recovery}" |
+        jq -r 'if type == "object" and has("wasCordoned")
+               then (.wasCordoned | tostring) else "unknown" end' 2>/dev/null ||
+        printf 'unknown')" in
+        false)
+          printf '      kubectl --context %s uncordon %s\n' "${KUBE_CONTEXT}" "${name}"
+          ;;
+        true)
+          printf '      # node was ALREADY cordoned before this transaction — leave it cordoned.\n'
+          ;;
+        *)
+          printf '      # pre-claim schedulability is UNRECORDED — confirm the node should be\n'
+          printf '      # schedulable before uncordoning it; this fence cannot tell you.\n'
+          ;;
+      esac
     fi
     [[ -n "${owner}" ]] && printf '      kubectl --context %s annotate node %s %s-\n' \
       "${KUBE_CONTEXT}" "${name}" "${CORDON_OWNER_ANNOTATION}"
@@ -485,12 +509,18 @@ fence_kustomization_release_command() {
 # for this exactly when a deploy is refusing to start, so it must not need a
 # GHCR credential, a SOPS key, or a healthy fence to answer.
 if [[ "${report_fences}" == "true" ]]; then
-  report_fences_now
-  fence_report_status=$?
   # This mode acquires nothing, so the release pass has nothing to do — and it
   # runs before the rest of the file is parsed into functions, so letting the
   # EXIT trap fire would call a cleanup helper that does not exist yet and turn
-  # a clean report into a failure.
+  # the report into a confusing secondary failure. Run it as an `if` condition:
+  # errexit is suspended there, so a FAILED cluster read still reaches the
+  # trap-disable below. A bare call would exit through the very handler this
+  # has to avoid — and a failing read is exactly when an operator is reading.
+  if report_fences_now; then
+    fence_report_status=0
+  else
+    fence_report_status=$?
+  fi
   trap - EXIT
   rm -rf "${work_dir}"
   exit "${fence_report_status}"
@@ -1937,7 +1967,9 @@ prepare_runtime_bootstrap_roll() {
     return 1
   fi
 
-  bootstrap_owner="bootstrap-${desired_revision:0:12}-$$-${RANDOM}"
+  # Carries the run reference for the same reason the lease holder does: a node
+  # fence outlives the runner that took it, and a PID cannot be checked.
+  bootstrap_owner="bootstrap-${desired_revision:0:12}-$(fence_run_segment)-$$-${RANDOM}"
   while IFS=$'\t' read -r \
     node_role node_name node_ip node_mode node_uid; do
     [[ "${node_mode}" == "reboot" ]] || continue
@@ -2366,7 +2398,7 @@ process_talos_node_target() {
     else
       was_cordoned=0
     fi
-    cordon_owner_token="${desired_revision:0:16}-$$-${RANDOM}"
+    cordon_owner_token="${desired_revision:0:16}-$(fence_run_segment)-$$-${RANDOM}"
     assert_sync_lease_held || return 1
     claim_node_cordon_ownership \
       "${node_name}" "${cordon_owner_token}" \
@@ -3291,7 +3323,10 @@ pause_flux_policy_parent() {
     and ((.metadata.annotations // {}) | type == "object")
     and ((.spec.suspend // false) == false)
   ' "${flux_policy_parent_state_file}" >/dev/null; then
-    echo "::error::The parent Flux reconciliation is malformed or already suspended."
+    # A run that stops here never reaches the child-handoff refusal, so it needs
+    # its own pointer: an orphaned parent fence is exactly the staged-fence case
+    # the report exists to make discoverable.
+    echo "::error::The parent Flux reconciliation is malformed or already suspended. If a previous transaction was killed, run './scripts/refresh-flux-ghcr-auth.sh --fences' to list every held fence with its liveness evidence and exact release command, and see docs/dr/runbook.md → 'Recover an orphaned GHCR deploy fence'."
     return 1
   fi
 

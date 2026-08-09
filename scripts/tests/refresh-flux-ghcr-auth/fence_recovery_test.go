@@ -72,6 +72,10 @@ func TestFenceRefusalsPointAtTheReportAndTheRunbook(t *testing.T) {
 	refusals := []string{
 		"holds the synchronization lease",
 		"already owns the image-verification policy handoff",
+		// A run blocked on the PARENT fence stops before it can reach the
+		// child-handoff refusal, so it needs its own pointer or the staged-fence
+		// case the report exists for stays undiscoverable.
+		"The parent Flux reconciliation is malformed or already suspended",
 	}
 	for _, refusal := range refusals {
 		index := strings.Index(script, refusal)
@@ -158,6 +162,69 @@ func TestFenceReleaseCommandsMirrorTheReleaseTheyStandInFor(t *testing.T) {
 				testCase.name, emitted, release)
 		}
 	}
+}
+
+// Every fence outlives the runner that took it, so a node owner built from a
+// PID alone is unresolvable exactly like the lease holder was. Without this the
+// liveness check reports "no run reference" for precisely the fences the report
+// was added to make decidable.
+func TestNodeFenceOwnersCarryTheGitHubRunReference(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+
+	for _, owner := range []string{
+		`bootstrap_owner="bootstrap-${desired_revision:0:12}-$(fence_run_segment)-$$-${RANDOM}"`,
+		`cordon_owner_token="${desired_revision:0:16}-$(fence_run_segment)-$$-${RANDOM}"`,
+	} {
+		requireContains(t, script, owner)
+	}
+	// No fence OWNER may be minted without it. Scoped to ownership identities —
+	// a reconcile-trigger stamp also ends in PID/RANDOM but is never resolved
+	// for liveness, so a blanket count would fail on an unrelated line.
+	ownerAssignment := regexp.MustCompile(`(?m)^\s*(?:local\s+)?(\w*(?:owner|owner_token|holder))="([^"]*\$\$[^"]*)"`)
+	found := 0
+	for _, match := range ownerAssignment.FindAllStringSubmatch(script, -1) {
+		found++
+		if !strings.Contains(match[2], "fence_run_segment") {
+			t.Errorf("fence owner %s is minted without a run reference: %s", match[1], match[2])
+		}
+	}
+	if found != 3 {
+		t.Fatalf("fence owner assignments inspected = %d, want 3", found)
+	}
+}
+
+// The report prints commands an operator pastes against production. A node can
+// already be cordoned for maintenance or ill health before the bridge ever
+// claimed it, and the journal records that. An unconditional uncordon would
+// reverse an intent this script never owned.
+func TestFenceReportNeverUncordonsANodeItDidNotCordon(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+
+	// `has`, never `//`: jq's alternative treats false as empty, which would
+	// misreport the one state that may safely uncordon. Checked against the
+	// CODE only — the rationale comment names the anti-pattern it forbids.
+	requireContains(t, report, `has("wasCordoned")`)
+	requireNotContains(t, stepDirectives(report), `.wasCordoned // `)
+	// All three states are answered, and only the recorded-false one uncordons.
+	requireContains(t, report, "uncordon")
+	for _, state := range []string{"ALREADY cordoned", "UNRECORDED"} {
+		requireContains(t, report, state)
+	}
+}
+
+// A failing cluster read is exactly when an operator runs this, so the failure
+// path must not exit through the EXIT trap: later cleanup helpers are not
+// defined yet at that point and turn the report into a secondary failure.
+func TestFenceReportFailurePathStillDisablesTheCleanupTrap(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+
+	// errexit is suspended inside an `if` condition; a bare call is not.
+	requireContains(t, script, "if report_fences_now; then")
+	requireNotContains(t, script, "\n  report_fences_now\n")
 }
 
 // A node whose cordon was claimed by the ordinary per-node path carries the
