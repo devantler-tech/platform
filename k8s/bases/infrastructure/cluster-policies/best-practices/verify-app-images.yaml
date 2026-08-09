@@ -110,7 +110,7 @@ spec:
       message: >-
         first-party app image is not signed by the publish-app release
         pipeline (keyless cosign, actions publish-app.yaml identity, pinned by
-        commit SHA or release tag)
+        commit SHA — a release tag is not accepted)
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image, image.startsWith('ghcr.io/devantler-tech/provider-upjet-'))
