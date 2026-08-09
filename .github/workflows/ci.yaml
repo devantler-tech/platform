@@ -107,6 +107,10 @@ jobs:
               - '.trivyignore.yaml'
               - 'scripts/megalinter-scan-counts.sh'
               - 'scripts/tests/test-megalinter-scan-counts-ignorefile.sh'
+              # The version-drift guard reads its constants out of
+              # megalinter-scan-counts.sh, so the three move together.
+              - 'scripts/check-megalinter-version-drift.sh'
+              - 'scripts/tests/test-check-megalinter-version-drift.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/normalize-sarif-paths.sh'
@@ -321,6 +325,17 @@ jobs:
         # reproduction helper at its command boundary so a future argument
         # cleanup cannot silently turn every scoped disposition back on.
         run: bash scripts/tests/test-megalinter-scan-counts-ignorefile.sh
+
+      - name: 🔢 Validate scanner version-drift guard
+        if: needs.changes.outputs.k8s == 'true'
+        # Guards the guard, offline. The live comparison runs on main
+        # (validate-main.yaml) because it needs to read Actions logs, which a
+        # fork PR's token cannot do — gating PRs on it would fail closed on
+        # every fork. What is checked here is the parsing contract, whose
+        # dangerous direction is a log-format change reading as "no drift".
+        run: |
+          shellcheck scripts/check-megalinter-version-drift.sh
+          bash scripts/tests/test-check-megalinter-version-drift.sh
 
       - name: 🔐 Validate OpenBao OIDC admin role
         if: needs.changes.outputs.k8s == 'true'

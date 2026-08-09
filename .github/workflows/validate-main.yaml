@@ -242,3 +242,33 @@ jobs:
         run: |
           shellcheck scripts/summarize-sarif-findings.sh
           bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.raw.sarif"
+
+  validate-scanner-versions:
+    name: 🔢 Validate Scanner Versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+      actions: read # read the mega-linter job log to learn the live versions
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: 🔢 Compare recorded scanner versions against the live MegaLinter run
+        # scripts/megalinter-scan-counts.sh reproduces CI's checkov and trivy
+        # counts, and #2787 reads those counts as backlog movement. Its
+        # equivalence holds only at the versions it records — and nothing in
+        # THIS repository selects them: the MegaLinter action is pinned in
+        # devantler-tech/actions, so the constants here go stale with no signal
+        # when that pin moves. A rule-set change then looks exactly like someone
+        # fixing findings.
+        #
+        # On main rather than on PRs for two reasons: reading Actions logs needs
+        # a token a fork PR does not have, and version drift is slow-moving, so
+        # per-PR is the wrong cadence. The offline parsing contract IS gated on
+        # PRs, in ci.yaml.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/check-megalinter-version-drift.sh
