@@ -328,6 +328,87 @@ verify_consumer_secret() {
   fi
 }
 
+# Compare one Secret data key against the expected Docker config without ever
+# printing the credential. Any read, decode or shape failure counts as drift, so
+# an unreadable cluster can never be mistaken for a matching one.
+secret_data_key_matches_expected() {
+  local namespace="$1" name="$2" key="$3" state_file="$4"
+  local decoded_file="${state_file%.json}-decoded.json"
+  local normalized_file="${state_file%.json}-normalized.json"
+
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace "${namespace}" \
+    get secret "${name}" \
+    -o json \
+    >"${state_file}" 2>/dev/null || return 1
+  jq -er --arg key "${key}" '.data[$key] | @base64d' \
+    "${state_file}" >"${decoded_file}" 2>/dev/null || return 1
+  jq -S -c . "${decoded_file}" >"${normalized_file}" 2>/dev/null || return 1
+  cmp -s "${expected_normalized}" "${normalized_file}"
+}
+
+# Read-only drift probe, so a deploy with nothing to repair does not pay for the
+# repair machinery.
+#
+# The transaction below fences Flux to mutate safely: it pauses the parent and
+# child policy reconciliations and RESTARTS kustomize-controller, because Flux
+# documents that suspending does not stop an execution that already started.
+# That fence is correct when something is being written. It is also the dominant
+# cost of a deploy that writes nothing — measured 2026-08-09, the post-`cluster
+# update` reassert took 62 s of a 276 s deploy while reporting "(no change)" on
+# both Secrets, and the script runs twice per deploy (platform#3039).
+#
+# So prove first, with reads only, that every endpoint the transaction would
+# write already matches Git/SOPS. FAIL CLOSED: any drift, any read error, or any
+# residual bridge ownership returns non-zero and falls through to the unchanged
+# transaction. A false "matches" is the dangerous direction, so every check must
+# pass affirmatively — nothing here is skipped on error.
+#
+# This deliberately covers MORE than --check-only, which returns after proving
+# the SOPS credential can pull from GHCR *on the runner*. That says nothing
+# about cluster state, so it would pass straight over the partial machine-config
+# write this reassert exists to repair.
+ghcr_state_already_matches_git() {
+  local desired_revision="$1" operator_image="$2"
+  shift 2
+  local namespace
+  local probe_dir="${work_dir}/drift-probe"
+  local nodes_file="${probe_dir}/nodes.json"
+  local targets_file="${probe_dir}/targets.tsv"
+
+  mkdir -p "${probe_dir}" || return 1
+
+  # Root Flux auth, and the variables-base payload the whole fan-out derives
+  # from. Both carry the same credential under different keys.
+  secret_data_key_matches_expected \
+    flux-system ksail-registry-credentials '.dockerconfigjson' \
+    "${probe_dir}/root-secret.json" || return 1
+  secret_data_key_matches_expected \
+    flux-system variables-base 'ghcr_dockerconfigjson' \
+    "${probe_dir}/variables-base.json" || return 1
+
+  # Every materialised tenant/Kyverno consumer.
+  for namespace in "$@"; do
+    verify_consumer_secret "${namespace}" >/dev/null 2>&1 || return 1
+  done
+
+  # Every node's v2 proof. select_talos_node_targets is side-effect free and
+  # FAILS on residual GHCR bridge ownership — a recovery state that must never
+  # take the fast path — so its failure correctly falls through.
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get nodes \
+    --output json \
+    >"${nodes_file}" 2>/dev/null || return 1
+  select_talos_node_targets \
+    "${nodes_file}" \
+    "${desired_revision}" \
+    "${operator_image}" \
+    "${targets_file}" >/dev/null 2>&1 || return 1
+  [[ ! -s "${targets_file}" ]]
+}
+
 # Emit bounded, printable output only from operations that cannot contain the
 # registry credential. Prefix each line so it cannot become a workflow command.
 emit_safe_operation_output() {
@@ -3732,6 +3813,20 @@ if [[ "${fanout_complete}" != "true" ]]; then
   patch_variables_base
   patch_root_secret
   echo "✅ Staged the Git/SOPS credential and refreshed root Flux auth; the first reconcile will complete the missing downstream fan-out."
+  exit 0
+fi
+
+# Nothing to write means nothing to fence. Root auth is still reasserted from
+# Git/SOPS, so the documented "reasserts root auth on every run" property holds;
+# what is skipped is only the Flux pause and kustomize-controller restart that
+# exist to make a MUTATION safe. The probe proved the root Secret already
+# matches, so this patch is the same no-op the fenced path performs today.
+if ghcr_state_already_matches_git \
+  "${pull_revision}" \
+  "${KSAIL_OPERATOR_IMAGE}" \
+  "${FANOUT_NAMESPACES[@]}"; then
+  patch_root_secret
+  echo "✅ Every consumer, node proof and root credential already matched Git/SOPS; reasserted root Flux auth without fencing Flux."
   exit 0
 fi
 
