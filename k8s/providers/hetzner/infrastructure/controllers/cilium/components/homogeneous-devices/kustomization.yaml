@@ -74,6 +74,47 @@
 # referenceable; bandwidth-manager-bbr follows its own soak (see those
 # components' guards).
 #
+# STEPPED-ROLLOUT RUNBOOK — the procedure for any FUTURE change to this
+# component's device set, and the steps
+# scripts/report-cilium-rollout-gate-suppression.sh cites when the gate's
+# 7-day warning or 14-day failure fires. It is live guidance, not a record of
+# the completed rollout: reintroducing `updateStrategy: OnDelete` plus
+# `spec.upgrade.disableWait` here is what re-arms the gate, and nothing else
+# does (the guard reads it as active only when this component is referenced AND
+# carries `type: OnDelete`).
+#   0. Confirm `cluster-autoscaler-hetzner-cluster-autoscaler` is at zero — the
+#      deploy records its replica count and scales it down before publishing —
+#      and that over-provisioning headroom is idle enough that no scale-up would
+#      have fired. The guard is fail-closed; never bypass a failed suspension.
+#   1. Reference the component with both overrides and declare
+#      `platform.devantler.tech/rollout-gate-activated: <YYYY-MM-DD>` beside it.
+#      Under OnDelete no agent restarts yet; the set is staged in the agent
+#      ConfigMap only. Watch for INVOLUNTARY canaries from here: any cilium pod
+#      that restarts for an unrelated reason boots the new set — verify it at
+#      once with step 2.
+#   2. Delete ONE node's cilium pod and verify its replacement before touching
+#      the next: agent Ready; its log shows the intended device set; the node's
+#      advertised router/tunnel addresses stay 10.0.1.x (`kubectl get
+#      ciliumnodes`) — a PUBLIC primary is a rollback, not a warning;
+#      cilium-health reachable; no new policy-verdict DROPs or auth-timeout
+#      storms.
+#   3. Repeat node by node, then soak. If any desired Cilium pod template value
+#      changes mid-rollout, compare every agent's `pod-template-generation`
+#      against the DaemonSet generation and re-step every stale node, including
+#      ones verified before the change. An older canary never approves a newer
+#      template.
+#   4. RELEASE: once every agent is Ready at the current DaemonSet generation,
+#      a follow-up PR removes the `updateStrategy` and `spec.upgrade.disableWait`
+#      overrides and the activation marker. The pre-publish guard independently
+#      re-checks that no agent is stale, so it refuses a premature release. With
+#      the fleet already on the current template, returning to RollingUpdate
+#      rolls nothing. A chart or other Helm-value change stages and soaks
+#      separately.
+#   5. That release restores the deploy: `ksail cluster update` runs again and
+#      the post-deploy guard restores the recorded autoscaler replica count.
+#      Verify the FIRST autoscaler-created node afterwards like a stepped one —
+#      it boots the new set directly.
+#
 # MERGE-ORDER NOTE (load-bearing): parent `patches:` are applied AFTER all
 # component patches — a devices value carried by
 # patches/enforce-wireguard-strict-mode.yaml could NEVER be overridden by this
