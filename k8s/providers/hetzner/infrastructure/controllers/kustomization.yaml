@@ -70,13 +70,14 @@ components:
   # strict-mode patch so the homogeneous-devices/ successor below can
   # override it — parent `patches:` apply after component patches, so a value
   # they carry is un-overridable by any component; see the component header).
-  # Keep referenced during the operator-stepped activation and soak; the
-  # later homogeneous component wins because it is listed after this one.
+  # This is the device set the fleet actually runs. Keep it referenced while
+  # homogeneous-devices/ is activated too — that component is listed after this
+  # one, so its wildcards win for as long as it is enabled.
   - cilium/components/private-nic-devices/
-  # ACTIVE homogeneous device selection (#2610): widens the device set to
+  # Default-off homogeneous device selection (#2610): widens the device set to
   # the public default-route NICs via wildcards ("en+ eth+") so
   # ebpf-host-routing's BPF masquerade can attach where pod egress actually
-  # leaves. MUST stay listed AFTER private-nic-devices/ when enabled (later
+  # leaves. MUST be listed AFTER private-nic-devices/ when enabled (later
   # component wins). The component also sets updateStrategy OnDelete, so
   # referencing it stages config without rolling any agent — the operator steps
   # the roll pod-by-pod per the component's runbook (verify each node keeps a
@@ -84,12 +85,16 @@ components:
   # nodes roll back automatically under the restored RollingUpdate).
   #
   # While this reference is active the deploy skips `ksail cluster update` — the
-  # pipeline's only Talos machine-config sync. The date below is what makes that
-  # suppression measurable: the deploy reports it in its job summary and warns
-  # once it outruns the rollout's intended window. Set it when activating, and
-  # remove it in the same diff that re-comments the reference.
-  # platform.devantler.tech/rollout-gate-activated: 2026-07-26
-  - cilium/components/homogeneous-devices/
+  # pipeline's only Talos machine-config sync — so activating it also means
+  # adding a `platform.devantler.tech/rollout-gate-activated` marker line
+  # directly above the reference, with the activation date after its colon.
+  # (Deliberately written here without that colon: the reporter counts the
+  # marker with a plain substring match and fails when it finds more than one,
+  # so an example carrying the exact literal would collide with the real one.)
+  # That date is what makes the suppression measurable: the deploy reports it in
+  # its job summary, warns from 7 days and fails the deploy from 14. Set it when
+  # activating, and remove it in the same diff that re-comments the reference.
+  # - cilium/components/homogeneous-devices/
   # Default-off Cilium bandwidth-manager + host-only BBR staging component
   # (#2607). It is not activation-ready: #2609 must prove pod-BBR datapath
   # prerequisites and #2610's homogeneous-devices/ must be activated first.

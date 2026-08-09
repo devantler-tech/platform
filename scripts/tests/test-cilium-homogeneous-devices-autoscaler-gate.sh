@@ -82,8 +82,25 @@ fixture_root="${tmp_dir}/platform"
 fixture_controllers="${fixture_root}/k8s/providers/hetzner/infrastructure/controllers"
 fixture_component="${fixture_controllers}/cilium/components/homogeneous-devices"
 mkdir -p "${fixture_component}"
-cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" \
-  "${fixture_controllers}/kustomization.yaml"
+# Every gate-ACTIVE scenario below needs the component REFERENCED, but the real
+# overlay only references it while an operator is mid-rollout. Copying the live
+# file made those scenarios depend on the repository's current rollout state, so
+# they broke the moment the component was rolled back — a fixture that asserts
+# the gate is active while the fixture itself says inactive. Construct the state
+# instead of inheriting it. The rollback scenarios still build their own state by
+# deleting the reference.
+install_active_controllers_fixture() {
+  cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" \
+    "${fixture_controllers}/kustomization.yaml"
+  sed -i.bak -E 's|^[[:space:]]*#[[:space:]]*-[[:space:]]*cilium/components/homogeneous-devices/[[:space:]]*$|  - cilium/components/homogeneous-devices/|' \
+    "${fixture_controllers}/kustomization.yaml"
+  rm -f "${fixture_controllers}/kustomization.yaml.bak"
+  grep -Eq '^[[:space:]]*-[[:space:]]*cilium/components/homogeneous-devices/?[[:space:]]*(#.*)?$' \
+    "${fixture_controllers}/kustomization.yaml" ||
+    fail 'the fixture must reference the homogeneous component for a gate-active scenario'
+}
+
+install_active_controllers_fixture
 cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/cilium/components/homogeneous-devices/kustomization.yaml" \
   "${fixture_component}/kustomization.yaml"
 
@@ -290,8 +307,7 @@ run_guard --after-deploy true
   fail 'a reconciled component rollback must restore the owned autoscaler replica count'
 [[ ! -s "${state_dir}/approved-template-sha" ]] ||
   fail 'a reconciled component rollback must clear the approved template hash'
-cp "${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" \
-  "${fixture_controllers}/kustomization.yaml"
+install_active_controllers_fixture
 run_guard --before-publish
 run_guard --after-deploy true
 

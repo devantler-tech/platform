@@ -172,66 +172,104 @@ read -r private_line homogeneous_line < <(
   ' "${controllers_kustomization}"
 )
 
+# The homogeneous component is a staged rollout that is referenced only while an
+# operator is stepping the fleet, so BOTH states are real production states and
+# both are asserted here. Which one applies is read from the same signal the
+# deploy gate reads — whether the component is referenced — so this file cannot
+# drift from `scripts/guard-cilium-homogeneous-device-rollout.sh`.
 [[ -n "${private_line}" ]] ||
-  fail 'the private-NIC component must remain active during the stepped rollout'
-[[ -n "${homogeneous_line}" ]] ||
-  fail 'the production controllers overlay must activate homogeneous device selection'
-((private_line < homogeneous_line)) ||
-  fail 'the homogeneous device component must follow the private-NIC component so its values win'
+  fail 'the private-NIC component must remain referenced in both rollout states'
 
 production_release="$(kubectl kustomize "${controllers_dir}" | extract_cilium_release)" ||
   fail 'the production controllers render has no Cilium HelmRelease'
-production_update_strategy="$(extract_top_level_block updateStrategy <<<"${production_release}")" ||
-  fail 'the production Cilium HelmRelease has no top-level update strategy'
 production_encryption="$(extract_top_level_block encryption <<<"${production_release}")" ||
   fail 'the production Cilium HelmRelease has no top-level encryption settings'
-production_node_port="$(extract_top_level_block nodePort <<<"${production_release}")" ||
-  fail 'the production Cilium HelmRelease has no top-level NodePort settings'
 production_upgrade="$(extract_upgrade <<<"${production_release}")" ||
-  fail 'the production Cilium HelmRelease has no temporary upgrade handoff'
+  fail 'the production Cilium HelmRelease has no upgrade block'
 
-require_pattern \
-  "${production_release}" \
-  "${homogeneous_devices_pattern}" \
-  'the active production render must select both public and private device families'
-reject_pattern \
-  "${production_release}" \
-  "${private_devices_pattern}" \
-  'the active production render must not retain the private-only device pin'
-readonly expected_node_port=$'    nodePort:\n      addresses:\n      - 10.0.0.0/16'
-[[ "${production_node_port}" == "${expected_node_port}" ]] ||
-  fail 'the public-NIC device set must expose NodePort on only the private node CIDR'
-require_text \
-  "${production_update_strategy}" \
-  'rollingUpdate: null' \
-  'the activation must clear the chart default rollingUpdate map'
-require_text \
-  "${production_update_strategy}" \
-  'type: OnDelete' \
-  'the activation must clear rollingUpdate while staging an operator-stepped OnDelete rollout'
-require_pattern \
-  "${production_upgrade}" \
-  '^[[:space:]]*disableWait:[[:space:]]*true[[:space:]]*$' \
-  'the operator-stepped rollout must not block Flux dependency convergence'
+if [[ -n "${homogeneous_line}" ]]; then
+  ((private_line < homogeneous_line)) ||
+    fail 'the homogeneous device component must follow the private-NIC component so its values win'
+
+  production_update_strategy="$(extract_top_level_block updateStrategy <<<"${production_release}")" ||
+    fail 'the production Cilium HelmRelease has no top-level update strategy'
+  production_node_port="$(extract_top_level_block nodePort <<<"${production_release}")" ||
+    fail 'the production Cilium HelmRelease has no top-level NodePort settings'
+
+  require_pattern \
+    "${production_release}" \
+    "${homogeneous_devices_pattern}" \
+    'the active production render must select both public and private device families'
+  reject_pattern \
+    "${production_release}" \
+    "${private_devices_pattern}" \
+    'the active production render must not retain the private-only device pin'
+  expected_node_port=$'    nodePort:\n      addresses:\n      - 10.0.0.0/16'
+  [[ "${production_node_port}" == "${expected_node_port}" ]] ||
+    fail 'the public-NIC device set must expose NodePort on only the private node CIDR'
+  require_text \
+    "${production_update_strategy}" \
+    'rollingUpdate: null' \
+    'the activation must clear the chart default rollingUpdate map'
+  require_text \
+    "${production_update_strategy}" \
+    'type: OnDelete' \
+    'the activation must clear rollingUpdate while staging an operator-stepped OnDelete rollout'
+  require_pattern \
+    "${production_upgrade}" \
+    '^[[:space:]]*disableWait:[[:space:]]*true[[:space:]]*$' \
+    'the operator-stepped rollout must not block Flux dependency convergence'
+
+  state_summary='activates homogeneous Cilium devices behind an OnDelete rollout gate'
+else
+  # Rolled back: the private pin is the live device set again, and BOTH gate
+  # fields must be gone. Leaving either behind is the dangerous half-state —
+  # OnDelete without the component freezes the fleet against every future
+  # template change while the deploy reports the gate inactive, which is exactly
+  # the two-week divergence #3028 was filed for.
+  require_pattern \
+    "${production_release}" \
+    "${private_devices_pattern}" \
+    'the rolled-back production render must restore the private-only device pin'
+  reject_pattern \
+    "${production_release}" \
+    "${homogeneous_devices_pattern}" \
+    'the rolled-back production render must not keep the widened device families'
+  if extract_top_level_block updateStrategy <<<"${production_release}" >/dev/null; then
+    fail 'the rolled-back render must drop the updateStrategy override so the chart default RollingUpdate resumes'
+  fi
+  if extract_top_level_block nodePort <<<"${production_release}" >/dev/null; then
+    fail 'the rolled-back render must drop the public-NIC NodePort restriction with its device set'
+  fi
+  reject_pattern \
+    "${production_upgrade}" \
+    '^[[:space:]]*disableWait:[[:space:]]*true[[:space:]]*$' \
+    'the rolled-back render must drop the temporary Helm wait handoff'
+
+  state_summary='pins Cilium to the private NICs with the rollout gate rolled back'
+fi
+
+# Invariant in both states: Helm remediation and WireGuard encryption survive the
+# gate going up or coming down.
 require_pattern \
   "${production_upgrade}" \
   '^[[:space:]]*retries:[[:space:]]*-1[[:space:]]*$' \
-  'the temporary Helm wait handoff must preserve infinite upgrade remediation'
+  'the upgrade block must preserve infinite upgrade remediation'
 require_pattern \
   "${production_upgrade}" \
   '^[[:space:]]*remediateLastFailure:[[:space:]]*true[[:space:]]*$' \
-  'the temporary Helm wait handoff must preserve last-failure remediation'
+  'the upgrade block must preserve last-failure remediation'
 require_pattern \
   "${production_encryption}" \
   '^[[:space:]]*enabled:[[:space:]]*true[[:space:]]*$' \
-  'the activation must preserve enabled WireGuard encryption'
+  'the render must preserve enabled WireGuard encryption'
 require_pattern \
   "${production_encryption}" \
   '^[[:space:]]*nodeEncryption:[[:space:]]*false[[:space:]]*$' \
-  'the activation must preserve the production encryption settings'
+  'the render must preserve the production encryption settings'
 require_text \
   "${production_release}" \
   'type: wireguard' \
-  'the activation must preserve WireGuard encryption'
+  'the render must preserve WireGuard encryption'
 
-printf 'PASS: production activates homogeneous Cilium devices behind an OnDelete rollout gate\n'
+printf 'PASS: production %s\n' "${state_summary}"
