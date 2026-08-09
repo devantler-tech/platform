@@ -386,6 +386,20 @@ run_guard --after-deploy true
 [[ "$(<"${state_dir}/replicas")" == '1' ]] ||
   fail 'the post-deploy phase must leave an already-restored autoscaler running'
 
+# A remembered count of ZERO — the autoscaler was already scaled down when the
+# gate claimed it — cannot be "restored" into something cluster update can wait
+# on. Honouring it would hand that step the same never-ready Deployment AND
+# clear the ownership marker a retry needs, so the release must fail loudly and
+# keep the marker instead.
+printf '0\n' >"${state_dir}/previous-replicas"
+printf '0\n' >"${state_dir}/replicas"
+if run_guard --after-revision-ready; then
+  fail 'releasing a gate that owns a remembered zero replica count must fail loudly'
+fi
+[[ "$(<"${state_dir}/previous-replicas")" == '0' ]] ||
+  fail 'a refused zero-count release must preserve the ownership marker for a retry'
+: >"${state_dir}/previous-replicas"
+
 printf '0\n' >"${state_dir}/replicas"
 run_guard --after-deploy true
 [[ "$(<"${state_dir}/replicas")" == '0' ]] ||

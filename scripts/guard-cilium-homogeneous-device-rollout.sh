@@ -417,6 +417,17 @@ elif [[ "${phase}" == '--after-revision-ready' ]]; then
   # the very deploy that releases the gate. Restoring in --after-deploy is too
   # late for that wait, and restoring in --before-publish would do it before the
   # safe artifact is deployed, which the gate deliberately forbids.
+  #
+  # A remembered count of ZERO is a different situation and must not be
+  # "restored": the autoscaler was already scaled down before the gate claimed
+  # it, so honouring that intent leaves the Deployment at zero — which is
+  # exactly what cluster update cannot wait on. Restoring it would also clear
+  # the ownership marker and destroy the state a retry needs. Fail here, with
+  # the conflict named, rather than hand cluster update a hang.
+  remembered_replicas="$(get_previous_replicas)"
+  if [[ "${remembered_replicas}" == "0" ]]; then
+    fail 'the rollout gate owns a remembered autoscaler count of 0, so releasing it cannot satisfy the readiness check that ksail cluster update performs (KSail treats a zero-replica Deployment as never-ready). Restore the intended replica count on cluster-autoscaler-hetzner-cluster-autoscaler, or release the gate in a deploy that skips cluster update, before retrying.'
+  fi
   restore_autoscaler_if_owned
 elif [[ "${phase}" == '--after-deploy' ]]; then
   restore_autoscaler_if_owned
