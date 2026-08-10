@@ -617,12 +617,23 @@ jobs:
         # an exception). Ratchet the floor up as genuine gaps close; never
         # lower it.
         #
-        # --format sarif -o writes the findings to a file IN ADDITION to the
-        # human-readable posture table, which still goes to this log unchanged
-        # (verified on both a passing and a failing scan) — so the SARIF is a
-        # pure addition, not a swap. The upload step below turns those findings
-        # into Code Scanning alerts. The threshold flag is untouched and remains
-        # the merge gate; this step's pass/fail behaviour does not change.
+        # --format sarif -o writes the findings to a file IN ADDITION to a
+        # human-readable posture table, and the upload step below turns those
+        # findings into Code Scanning alerts.
+        #
+        # 🔴 That table OMITS the `Overall compliance-score` line — measured on
+        # this repo's own CI run 2026-08-10 and reproduced locally: `--format
+        # json` prints it, `--format sarif` does not. So THIS LOG CANNOT TELL
+        # YOU THE SCORE, which is why the re-baselining note above cannot be
+        # followed from the log alone. #3058 tracks making it visible; until it
+        # lands, bisect the score by re-running with a raised
+        # `--compliance-threshold` and reading the exit code.
+        #
+        # The threshold itself is unaffected by the format and still gates:
+        # ablated 2026-08-10 at thresholds 95/99/100 under `--format sarif`,
+        # giving exit 0/1/1 against a combined score of 97. A silent-pass here
+        # would be the worst failure this step could have, so that ablation is
+        # the check to repeat if the flag or format ever changes.
         run: |
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
