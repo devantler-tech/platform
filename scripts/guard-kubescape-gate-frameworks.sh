@@ -88,12 +88,60 @@ main() {
     "${#REQUIRED_FRAMEWORKS[@]}" "${#WORKFLOWS[@]}"
 }
 
+# Echo the ONE scan invocation of a workflow as `<lineno>:<text>`.
+#
+# 🔴 MORE THAN ONE IS REJECTED, NOT MERGED. The earlier version unioned every
+# matching line, which loses WHICH set produced the SARIF that actually reaches
+# the uploader: a workflow scanning `nsa,mitre,pss` and then overwriting the same
+# SARIF with an `nsa,mitre` scan unions to `nsa,mitre,pss` and compares equal to a
+# main baseline that only ever analysed three. The uploaded analyses differ while
+# the guard reports them identical. (Codex raised this on #3057.)
+#
+# Both workflows run exactly one scan today, so this is the real shape rather
+# than a restriction. A future second invocation trips the fail-closed path and
+# has to teach the guard which one feeds the upload.
+workflow_invocation() {
+  local workflow="$1"
+  local -a scan_lines=()
+  local match
+
+  while IFS= read -r match; do
+    [ -n "$match" ] && scan_lines+=("$match")
+  done < <(scan_invocations "$workflow")
+
+  if [ "${#scan_lines[@]}" -eq 0 ]; then
+    printf '::error::no executable "ksail workload scan --framework ..." invocation found in %s.\n' "$workflow" >&2
+    printf '::error::The gate moved, was renamed, or the framework list became a variable this guard cannot read.\n' >&2
+    printf '::error::Point the guard at it rather than deleting the guard.\n' >&2
+    return 1
+  fi
+
+  if [ "${#scan_lines[@]}" -gt 1 ]; then
+    printf '::error::%s has %d scan invocations; the guard cannot tell which one produces the uploaded SARIF.\n' \
+      "$workflow" "${#scan_lines[@]}" >&2
+    printf '::error::Both workflows upload under one Code Scanning category, so the uploaded set is what must match. See #2823.\n' >&2
+    return 1
+  fi
+
+  printf '%s\n' "${scan_lines[0]}"
+}
+
 # Echo a workflow's framework list, normalised (deduplicated, sorted, comma-joined)
 # so ordering and repetition cannot make two equal sets compare unequal.
 framework_set() {
-  scan_invocations "$1" |
-    sed -nE 's/.*--framework[[:space:]]+([a-z,]+).*/\1/p' |
-    tr ',' '\n' | sed '/^$/d' | sort -u | paste -sd, -
+  local workflow="$1" invocation argument
+
+  invocation="$(workflow_invocation "$workflow")" || return 1
+  argument="$(framework_argument "$invocation")"
+
+  if [ -z "$argument" ]; then
+    printf '::error file=%s,line=%s::could not read the --framework value.\n' \
+      "$workflow" "${invocation%%:*}" >&2
+    return 1
+  fi
+
+  framework_tokens "$argument" "${workflow}:${invocation%%:*}" |
+    sort -u | paste -sd, -
 }
 
 check_workflow() {
@@ -104,55 +152,33 @@ check_workflow() {
     return 1
   fi
 
-  # A floor, because an empty result from a filtered read is a claim about the
-  # FILTER. If the step is renamed, moved into a composite action, or the flag is
-  # spelled differently, this grep returns nothing — and without the floor the
-  # guard would exit 0 having checked precisely nothing.
-  # `mapfile` is bash 4+; macOS ships bash 3.2, so a contributor on a Mac would
-  # get `command not found` (exit 127) while CI's Ubuntu bash passed. Read the
-  # matches into the array the portable way instead.
+  # The floor lives in workflow_invocation: an empty result from a filtered read
+  # is a claim about the FILTER, so zero invocations is an error rather than a
+  # silent pass, and more than one is rejected instead of merged.
   #
-  # COMMENTS ARE EXCLUDED, and that is load-bearing rather than tidiness. This
-  # reads raw YAML, so without it a stale comment naming both frameworks would
-  # satisfy the guard while the real command ran `--framework "$SOMEVAR"` — the
-  # grep would never see the variable form, find only the comment, and exit 0
-  # on a repository scanning one framework. A decoy is covered by the test
-  # suite. (Codex raised this on #3057.)
-  local -a scan_lines=()
-  local match
-  while IFS= read -r match; do
-    [ -n "$match" ] && scan_lines+=("$match")
-  done < <(scan_invocations "$WORKFLOW")
+  # COMMENTS ARE EXCLUDED by scan_invocations' allow-list, and that is
+  # load-bearing rather than tidiness. This reads raw YAML, so without it a stale
+  # comment naming both frameworks would satisfy the guard while the real command
+  # ran `--framework "$SOMEVAR"`. A decoy is covered by the test suite.
+  # (Codex raised this on #3057.)
+  local frameworks
+  frameworks="$(framework_set "$WORKFLOW")" || return 1
 
-  if [ "${#scan_lines[@]}" -eq 0 ]; then
-    printf '::error::no executable "ksail workload scan --framework ..." invocation found in %s.\n' "$WORKFLOW" >&2
-    printf '::error::The gate moved, was renamed, or the framework list became a variable this guard cannot read.\n' >&2
-    printf '::error::Point the guard at it rather than deleting the guard.\n' >&2
+  if [ -z "$frameworks" ]; then
+    printf '::error::%s: the --framework list read as empty.\n' "$WORKFLOW" >&2
     return 1
   fi
 
-  local rc=0 line lineno frameworks fw
-  for line in "${scan_lines[@]}"; do
-    lineno="${line%%:*}"
-    # The frameworks are the comma-separated token after `--framework`.
-    frameworks="$(printf '%s' "$line" | sed -nE 's/.*--framework[[:space:]]+([a-z,]+).*/\1/p')"
-
-    if [ -z "$frameworks" ]; then
-      printf '::error file=%s,line=%s::could not read the --framework value.\n' "$WORKFLOW" "$lineno" >&2
+  local rc=0 fw
+  for fw in "${REQUIRED_FRAMEWORKS[@]}"; do
+    # Match a whole comma-separated element, never a substring: `nsa` must not
+    # be satisfied by some future `nsa-extended`.
+    if ! printf ',%s,' "$frameworks" | grep -qF ",${fw},"; then
+      printf '::error file=%s::the Kubescape gate must evaluate "%s", but --framework is "%s".\n' \
+        "$WORKFLOW" "$fw" "$frameworks" >&2
+      printf '::error::Dropping a framework REMOVES findings, so the compliance score RISES and CI stays green. See #2823.\n' >&2
       rc=1
-      continue
     fi
-
-    for fw in "${REQUIRED_FRAMEWORKS[@]}"; do
-      # Match a whole comma-separated element, never a substring: `nsa` must not
-      # be satisfied by some future `nsa-extended`.
-      if ! printf ',%s,' "$frameworks" | grep -qF ",${fw},"; then
-        printf '::error file=%s,line=%s::the Kubescape gate must evaluate "%s", but --framework is "%s".\n' \
-          "$WORKFLOW" "$lineno" "$fw" "$frameworks" >&2
-        printf '::error::Dropping a framework REMOVES findings, so the compliance score RISES and CI stays green. See #2823.\n' >&2
-        rc=1
-      fi
-    done
   done
 
   return "$rc"
@@ -195,7 +221,55 @@ scan_invocations() {
     case "$stripped" in
       ksail[[:space:]]*) printf '%s\n' "$match" ;;
     esac
-  done < <(grep -nE 'ksail workload scan[^|]*--framework[[:space:]]+[a-z,]+' "$1" || true)
+  done < <(grep -nE 'ksail workload scan[^|]*--framework[[:space:]]+[^[:space:]]+' "$1" || true)
+}
+
+# Echo the raw `--framework` argument of one `<lineno>:<text>` invocation.
+#
+# 🔴 THE CHARACTER CLASS IS DELIBERATELY `[^[:space:]]`, NOT `[a-z,]`. A class
+# that lists the characters a framework name may contain does not FAIL on an
+# unexpected one, it TRUNCATES at it — silently. Measured on #3057: with
+# `[a-z,]+`, both `nsa,mitre,cis-v1.23-t1.0.1` and `nsa,mitre,cis-v1.24-t1.0.0`
+# normalise to `cis,mitre,nsa`, so two workflows scanning genuinely different
+# framework sets compare EQUAL and the exact-set check reports them identical.
+# Reading to the next space captures the whole argument, and validation below
+# then rejects anything unexpected instead of quietly discarding it.
+framework_argument() {
+  printf '%s' "${1#*:}" | sed -nE 's/.*--framework[[:space:]]+([^[:space:]]+).*/\1/p'
+}
+
+# Echo each comma-separated framework token of one invocation, one per line,
+# failing closed on any token that is not a plain framework name.
+#
+# A `--framework "$FRAMEWORKS"` variable form lands here as `"$FRAMEWORKS"`,
+# fails this pattern, and trips the fail-closed path — which is the point. The
+# guard refuses to bless a list it cannot read rather than guessing at one.
+# Split on commas WITHOUT a pipeline: a `while` at the end of a pipe runs in a
+# subshell, where `return 1` unwinds only that subshell and the caller reads a
+# success it never earned.
+framework_tokens() {
+  local argument="$1" location="$2" token rest="$1"
+
+  while [ -n "$rest" ]; do
+    token="${rest%%,*}"
+    if [ "$token" = "$rest" ]; then
+      rest=''
+    else
+      rest="${rest#*,}"
+    fi
+    [ -n "$token" ] || continue
+    case "$token" in
+      *[!a-z0-9._-]*)
+        printf '::error::%s: framework token "%s" is not a plain framework name.\n' \
+          "$location" "$token" >&2
+        printf '::error::The guard reads the literal list; a variable or expression cannot be verified. See #2823.\n' >&2
+        return 1
+        ;;
+    esac
+    printf '%s\n' "$token"
+  done
+
+  return 0
 }
 
 main "$@"

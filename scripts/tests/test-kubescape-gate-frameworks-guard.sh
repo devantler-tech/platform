@@ -161,24 +161,51 @@ ok 'fails closed when no scan invocation is found'
 "$guard" >/dev/null || fail 'wiring: the guard does not pass against the real ci.yaml'
 ok 'the real ci.yaml satisfies the guard'
 
-grep -qF 'scripts/guard-kubescape-gate-frameworks.sh' "$workflow" ||
-  fail 'wiring: ci.yaml never invokes the guard — an uncalled guard protects nothing'
-ok 'ci.yaml invokes the guard'
+# 🔴 THE WIRING ASSERTIONS READ PARSED `run:` VALUES, NEVER RAW FILE TEXT.
+#
+# A raw-text `grep` for the guard's path is satisfied by any MENTION of it, and
+# both workflows contain one: validate-main.yaml carries the comment
+# `# scripts/guard-kubescape-gate-frameworks.sh enforces the match.` beside the
+# scan step. So deleting the actual `run:` step left this assertion green while a
+# direct push to main went unguarded — the exact push-path gap the assertion
+# claims to pin. Measured on #3057; Codex raised it.
+#
+# ⚠️ RESIDUAL, same axis as #3060: this reads the `run:` SCALAR, so a comment
+# INSIDE a run block still matches. That is the shell-context class, not the
+# YAML-context class closed here, and pretending otherwise is how the previous
+# round overclaimed. What is closed is a mention anywhere OUTSIDE an executable
+# step, which is where both real decoys live.
+workflow_run_values() {
+  yq -r '[.jobs[]?.steps[]?.run // ""] | .[]' "$1"
+}
+
+command -v yq >/dev/null ||
+  fail 'wiring: yq is required to read parsed workflow steps'
+
+# 🔴 CAPTURE FIRST, THEN MATCH — never `yq … | grep -q`. `grep -q` exits on its
+# first match and closes the pipe, `yq` dies of SIGPIPE (141), and `pipefail`
+# turns the whole pipeline non-zero. The assertion then reports "the guard is not
+# wired" on a repository where it IS wired: a false FAILURE that would be
+# "fixed" by deleting the assertion. Measured while fixing #3057.
+ci_run_values="$(workflow_run_values "$workflow")"
+main_run_values="$(workflow_run_values "${root_dir}/.github/workflows/validate-main.yaml")"
+
+grep -qF 'scripts/guard-kubescape-gate-frameworks.sh' <<<"$ci_run_values" ||
+  fail 'wiring: no ci.yaml step RUNS the guard — an uncalled guard protects nothing'
+ok 'ci.yaml runs the guard in an executable step'
 
 # The guard reads validate-main.yaml, so the real file must satisfy it too — this
 # is what would have caught the nsa-only baseline before it shipped.
-grep -qE 'ksail workload scan .*--framework[[:space:]]+nsa,mitre' \
-  "${root_dir}/.github/workflows/validate-main.yaml" ||
+grep -qE 'ksail workload scan .*--framework[[:space:]]+nsa,mitre' <<<"$main_run_values" ||
   fail 'wiring: validate-main.yaml does not scan nsa,mitre — the main baseline would not match the PR analysis'
 ok 'validate-main.yaml scans the same frameworks as the PR gate'
 
-grep -qF 'scripts/guard-kubescape-gate-frameworks.sh' \
-  "${root_dir}/.github/workflows/validate-main.yaml" ||
-  fail 'wiring: validate-main.yaml never invokes the guard — a direct push to main would be unchecked'
-ok 'validate-main.yaml invokes the guard'
+grep -qF 'scripts/guard-kubescape-gate-frameworks.sh' <<<"$main_run_values" ||
+  fail 'wiring: no validate-main.yaml step RUNS the guard — a direct push to main would be unchecked'
+ok 'validate-main.yaml runs the guard in an executable step'
 
-grep -qF 'scripts/tests/test-kubescape-gate-frameworks-guard.sh' "$workflow" ||
-  fail 'wiring: ci.yaml never runs THIS test — the guard could be widened with every check green'
-ok 'ci.yaml runs this test'
+grep -qF 'scripts/tests/test-kubescape-gate-frameworks-guard.sh' <<<"$ci_run_values" ||
+  fail 'wiring: no ci.yaml step RUNS this test — the guard could be widened with every check green'
+ok 'ci.yaml runs this test in an executable step'
 
 printf '\nAll %d assertions passed.\n' "$pass_count"
