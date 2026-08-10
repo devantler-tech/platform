@@ -44,6 +44,15 @@ metadata:
     # The Job script itself is idempotent — each command checks state first.
     kustomize.toolkit.fluxcd.io/force: enabled
     checkov.io/skip1: CKV_K8S_38=the store-keys container writes the openbao-unseal Secret through kubectl
+    # The pod's 100:1000 IS the openbao image's own baked identity, not a choice
+    # this manifest makes: the image carries `openbao:x:100:1000::/home/openbao`
+    # in its /etc/passwd (verified against the pinned digest, not the tag), and
+    # runAsUser/runAsGroup restate exactly that uid:gid pair. Raising the UID
+    # would run the openbao binary as an identity its own image does not define.
+    # Both sibling images decide nothing either way — `minio/mc` and `alpine/k8s`
+    # declare no `User` and bake no uid-100 entry — so the openbao pair is what
+    # fixes the pod-level value. Same image-baked class as umami's 1001 (#2901).
+    checkov.io/skip2: CKV_K8S_40=UID 100 is the openbao image's baked `openbao` user (openbao:x:100:1000 in its /etc/passwd), which runAsUser/runAsGroup restate
 spec:
   # Auto-delete the Job (and its pods) 10 minutes after completion. Without
   # this, the `kustomize.toolkit.fluxcd.io/force: enabled` annotation above
