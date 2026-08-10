@@ -160,7 +160,7 @@ check_workflow() {
 
 # Emit `<lineno>:<text>` for each line that invokes the scan, excluding comments.
 #
-# ⚠️ RESIDUAL, tracked on #3059: this reads raw YAML rather than parsing the
+# ⚠️ RESIDUAL, tracked on #3060: this reads raw YAML rather than parsing the
 # workflow's `run:` scalars, so an OUTPUT-ONLY command that merely prints the
 # invocation (`echo 'ksail workload scan --framework nsa,mitre'`) still counts.
 # Closing that needs a YAML-aware parser, not another excluded prefix — every
