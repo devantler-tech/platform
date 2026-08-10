@@ -124,9 +124,13 @@ DISABLE_ERRORS_LINTERS:
   # 1001 carries (#2901). Whether the two remaining vault-backup writers are the same class is open
   # in #2904 and is not settled here — #2898 named an image-baked class covering them, but on a
   # shared-PVC reason that issue itself refuted, so their membership needs its own evidence.
-  # Its sibling images decide nothing either way — `minio/mc` and `alpine/k8s`
-  # declare no `User` and carry no uid-100 line in their own /etc/passwd either, checked on that
-  # same surface rather than inferred from the unset `config.User`.
+  #
+  # `checkov.io/skipN` is RESOURCE-scoped, so the Job sets `runAsUser` per container instead of
+  # once on the pod: its `minio/mc` and `alpine/k8s` containers carry no uid-100 line in their own
+  # /etc/passwd (checked on that same layer surface, not inferred from the unset `config.User`),
+  # so an inherited pod-level 100 would have been an unjustified low-UID execution that this
+  # suppression then hid. They run the pod's high 65532 default; only the two openbao containers
+  # take 100, which is exactly what the disposition accounts for.
   #
   # An image's `config.User` is NOT the evidence for that claim and answers a different question:
   # all three of these images leave `config.User` unset, so reading it alone says only that no
