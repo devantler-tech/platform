@@ -27,7 +27,7 @@ report_residual_bridge_ownership() {
     | (.metadata.annotations[$owner_annotation] // "") as $owner
     | (.metadata.annotations[$recovery_annotation] // "") as $recovery
     | select($owner != "" or $recovery != "")
-    | "  node \(.metadata.name) (cordoned=\(.spec.unschedulable // false))"
+    | "  node \(.metadata.name) (cordoned=\(.spec.unschedulable == true))"
       + (if $owner == "" then ""
          else "\n    \($owner_annotation) = \($owner)" end)
       + (if $recovery == "" then ""
