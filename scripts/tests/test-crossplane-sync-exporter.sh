@@ -291,6 +291,33 @@ require_line \
   '- repositories' \
   'the exporter must be limited to the resource it exports'
 
+# The DISCOVERY half of the RBAC, and the reason this component shipped dead
+# (#3068). kube-state-metrics resolves a CustomResourceStateMetrics
+# `groupVersionKind` through the CRD API before it can build a store for it, so
+# the managed-resource grant above is necessary but NOT sufficient: without this
+# rule the reflector retry-loops on a forbidden list and the exporter emits zero
+# condition series while reporting itself 1/1 Ready.
+#
+# That is the same silent-sensor shape the rest of this contract guards, one
+# level down — an absent series is indistinguishable from a healthy fleet — and
+# nothing else in the pipeline catches it, because every assertion above passes
+# on a manifest whose exporter cannot read a single resource.
+#
+# `resourceNames` cannot narrow this: Kubernetes RBAC only honours it for
+# get/update/delete/patch, never for list or watch, and the discovery path
+# lists. Reading CRD *definitions* is schema access, which is what keeps this
+# consistent with the scoping rationale on the rule above: managed-resource
+# access, where provider configuration actually lives, stays pinned to the
+# kinds listed there.
+require_line \
+  "${cluster_role}" \
+  '- apiextensions.k8s.io' \
+  'the exporter must be able to reach the CRD API its GVK discovery requires'
+require_line \
+  "${cluster_role}" \
+  '- customresourcedefinitions' \
+  'the exporter must be able to read the CRD definitions it resolves its GVK through'
+
 # A metrics exporter able to read every custom resource could also read provider
 # configuration it has no need for.
 reject_text \
