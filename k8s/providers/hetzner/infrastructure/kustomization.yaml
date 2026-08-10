@@ -122,6 +122,17 @@ components:
   # bounded cAdvisor scraper default-off; Hetzner runs Kubernetes v1.36, whose
   # fine-grained kubelet authorization maps /metrics/* to nodes/metrics.
   - ../../../bases/infrastructure/opencost/components/usage-scraper
+  # Prod-only activation for platform#2986. Exports each Crossplane managed
+  # resource's conditions as metrics, so a resource that stops reconciling is
+  # visible instead of silent: a managed resource can report Ready=True while
+  # Synced=False — measured on 3 of the 20 Repository resources — and every
+  # health check keyed on Ready reads that fleet as healthy while no declared
+  # setting is reaching the provider. Referenced here rather than from the
+  # shared Coroot base because Crossplane and the `github-config` app it
+  # observes exist only on this provider.
+  #
+  # The metric is the prerequisite for alerting on it; delivery is #2987.
+  - ../../../bases/infrastructure/coroot/components/crossplane-sync-exporter
   # Platform-wide HelmRelease drift detection (mode: enabled) — covers the
   # opencost HelmRelease in this layer. See
   # bases/components/helmrelease-drift-detection.

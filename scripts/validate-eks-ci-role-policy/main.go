@@ -246,31 +246,54 @@ const (
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
 //
-// Measured against base 0ca55381 while re-enabling the Kubescape posture
-// scanner's policy-artifact fetch: 514 rendered documents on both sides across
-// all five roots (122 apps, 209 infrastructure, 176 controllers, 4 bootstrap,
-// 3 prod), with membership IDENTICAL — zero added, removed, or renamed. Four of
-// the five roots are byte-identical. Exactly ONE line moves in the whole
-// production render:
+// Measured while releasing the Cilium homogeneous-device rollout gate, by
+// rendering all five roots from both trees and diffing them. Four of the five
+// roots — apps, infrastructure, bootstrap, prod — are byte-identical.
+// Membership is unchanged: zero documents added, removed, or renamed. Exactly
+// FOUR lines move in the whole production render, all of them inside the same
+// document:
 //
-//	helm.toolkit.fluxcd.io/v2  HelmRelease  kubescape/kubescape
-//	  values.capabilities.kubescapeOffline: enable -> disable
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  kube-system/cilium
+//	  spec.upgrade.disableWait: true            (removed)
+//	  spec.values.updateStrategy.type: OnDelete (removed)
+//	  spec.values.updateStrategy.rollingUpdate  (removed)
 //
-// That field decides one thing in the chart: whether KS_OFFLINE=true is set on
-// the scanner container. It reaches no identity, binding, policy document, or
-// service account. Its only other chart use ORs into clusterData.keepLocal,
-// which is `or (offline) (not serviceDiscovery.enabled)` — serviceDiscovery is
-// false here, so that value stays true either way and does not move. The
-// accompanying cilium-network-policy.yaml edit is comment-only and renders to
-// nothing, which the byte-identical infrastructure root confirms.
-//
-// All Role / ClusterRole / RoleBinding / ClusterRoleBinding / ServiceAccount
-// documents are byte-identical, as is every `aws`-bearing line — trivially so,
-// since a single non-RBAC line differs across the entire surface.
+// Both were temporary overrides carried only while the widened device set was
+// being introduced one node at a time. `updateStrategy` selects how the Cilium
+// DaemonSet replaces pods and `upgrade.disableWait` selects whether Helm waits
+// for them; neither reaches an identity, binding, policy document, or service
+// account, and neither is an `aws`-bearing line. Every Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount document is byte-identical
+// — trivially so, since the four differing lines are the entire delta across
+// the surface and all four belong to one HelmRelease's rollout mechanics.
 //
 // The fingerprint itself was read from the required job's own output on the
 // approved renderer, because the local toolchain is refused as unapproved.
-const expectedRenderedSurfaceSHA = "cb575e34b191a662da108421fdff7c67f0cc00bf3c9b2b7cf0c5a4e49b46fc52"
+//
+// This value covers activating the Crossplane sync-state exporter (#2986) — the
+// first change to reference that component, so its three objects enter the
+// rendered surface for the first time. Measured by rendering the production
+// roots with and without the single `components:` reference: grant-bearing
+// documents go 67 -> 70, the set difference in the removal direction is EMPTY,
+// and the three additions are the component's own:
+//
+//	ServiceAccount       observability/crossplane-sync-exporter
+//	ClusterRole          crossplane-sync-exporter
+//	ClusterRoleBinding   crossplane-sync-exporter
+//
+// Nothing else is added, removed or renamed, and no existing grant changes.
+//
+// The ClusterRole is get/list/watch on `repo.github.m.upbound.io/repositories`
+// and nothing else — one API group, one resource, read-only. That is narrower
+// than the alternative the issue originally specified (binding the aggregated
+// `crossplane-view`, which carries 49 rules), which is why the deviation was
+// taken; `scripts/tests/test-crossplane-sync-exporter.sh` pins the read-only
+// verb set and rejects wildcard access so it cannot widen unobserved.
+//
+// Nothing granted to the aws/aws service account this validator exists to
+// protect is touched: the additions are in `observability`, and the exporter
+// cannot read any AWS-bearing resource.
+const expectedRenderedSurfaceSHA = "927693205f5fdf2c53d5ef92d5bcb3fa777d4a84910d24fe4501153bf82cf904"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -324,7 +347,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "opencost-usage-scraper"}:                            "4b28e1da280a7940a1cb4d538bc31ede1b5d272c17189a81afeae48acbb8b7a0",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "a4ab25489f2548aec728d4706aff02246d4669538b0f577c57bef132051910b6",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "e23c61eb872c6aafaceed74e400479d034ee636735880d6b4a6de338cd0c32a9",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "1a2ecb3104630c44466d846159ee68ff6a98888887c02ecd0278782793dead4a",

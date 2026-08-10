@@ -83,7 +83,7 @@ DISABLE_ERRORS_LINTERS:
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (15) and trivy (163 in the local v0.72.0 reproduction): Kubernetes misconfiguration
+  # checkov (9) and trivy (110 in the local v0.73.0 reproduction): Kubernetes misconfiguration
   # in k8s/, which the section above explains is NOT covered elsewhere. Tracked by #2787.
   #
   # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of
@@ -93,31 +93,67 @@ DISABLE_ERRORS_LINTERS:
   # themselves. See .trivyignore.yaml for the reason and #2988 for the measurement. The residual is
   # real and still includes HIGH/CRITICAL RBAC breadth.
   #
+  # It then went 157 -> 110 when KSV-0037 ("user resources should not be placed in kube-system")
+  # was scoped to the infrastructure trees — 47 findings, every one a cluster component that
+  # belongs in kube-system by construction (CNI, DNS, CSI, cloud-controller-manager and their
+  # namespace-local VPAs, PDBs and Gateway material). The check stays live for application trees;
+  # see .trivyignore.yaml for the disposition and the paired control that demonstrates the boundary.
+  #
+  # ⚠️ That 157 is NOT 163 minus a fix. 163 was measured on trivy v0.72.0 and 157 on v0.73.0 with
+  # no manifest change in between, so those 6 are a scanner rule-set difference, not backlog
+  # movement — exactly the drift this block warns about below. Only the 47 are this slice's work.
+  #
   # KSV-0109's two HIGH findings are path-scoped false positives (#2990): one ConfigMap embeds
   # JavaScript that reads an ESO-mounted Secret and the other exposes the public
   # `external_secrets_replicas` count. Trivy matched those identifier strings, not credential data.
   #
-  # checkov's 15 are all `kubernetes` framework, and 4 of them are CKV_K8S_40, at exactly these
-  # sites: the two vault-backup jobs, the userns-longhorn-smoke probe, and the vault-config Job.
+  # checkov's 9 are all `kubernetes` framework, and 2 of them are CKV_K8S_40, at exactly these
+  # sites: the two vault-backup jobs.
   # Re-derive that list from the scan rather than adjusting a number here — every figure in this
   # block is a measurement, and the running arithmetic that used to track it went stale twice.
   #
-  # The first three carry scoped skips that were tried and withdrawn, because each named a per-site
-  # technical constraint that does not survive checking. The two vault-backup jobs claimed to share
-  # the vault-snapshots PVC with the OpenBao StatefulSet — but the live StatefulSet mounts
-  # `config`/`unseal-keys`/`tmp`/`home` plus claim templates `data`/`audit`, and never that PVC at
-  # all, so there is no shared ownership to preserve. The user-namespace probes claimed their UID was
-  # the measurement subject — but `/proc/self/uid_map` describes the pod's namespace and reads
-  # identically for every process in it regardless of UID, and `fsGroup` supplies volume access as a
-  # GID independent of `runAsUser`. #2904 carries the per-site remediation and the risk-acceptance
-  # question for those. It was written when there were four: the Headlamp mapping probe was the
-  # fourth, and #2959 removed that probe outright.
+  # The two vault-backup jobs carry no suppression: their scoped skip claimed to share the
+  # vault-snapshots PVC with the OpenBao StatefulSet, and the live StatefulSet mounts
+  # `config`/`unseal-keys`/`tmp`/`home` plus claim templates `data`/`audit`, never that PVC at all,
+  # so there is no shared ownership to preserve. They are two of the three `vault-snapshots`
+  # writers — the third is the dr-rebuild workflow's helper pod, which this check does not reach
+  # because it is not a committed Kubernetes manifest — and all three
+  # share one RWO PVC at `100:1000`, so they move together. That touches the DR restore path, so
+  # #2904 holds their remediation and the risk-acceptance question.
   #
-  # The vault-config Job's UID is image-baked, so it wants a scoped skip naming that reason rather
-  # than a raise: the openbao image carries `openbao:x:100:1000` in its own /etc/passwd, which is
-  # exactly the `runAsUser: 100` / `runAsGroup: 1000` the Job sets. That puts it in #2898's
-  # image-baked class alongside the other openbao workloads. Its sibling images decide nothing
-  # either way — `minio/mc` and `alpine/k8s` declare no `User` and bake no uid-100 identity.
+  # The user-namespace probes are resolved rather than excepted, because the UID was never the
+  # measurement subject: `/proc/self/uid_map` describes the pod's namespace and reads identically
+  # for every process in it regardless of UID, and `fsGroup` supplies volume access as a GID
+  # independent of `runAsUser`. `userns-longhorn-smoke` therefore states 65532 and passes the
+  # check outright; #2959 removed the Headlamp mapping probe.
+  #
+  # The vault-config Job carries a scoped `checkov.io/skip2` because its UID is image-baked: the
+  # openbao image carries `openbao:x:100:1000::/home/openbao` in its own /etc/passwd — read from
+  # the pinned digest's layers, not the tag — which is exactly the `runAsUser: 100` /
+  # `runAsGroup: 1000` the Job sets. That is the same demonstrated image-baked disposition umami's
+  # 1001 carries (#2901). Whether the two remaining vault-backup writers are the same class is open
+  # in #2904 and is not settled here — #2898 named an image-baked class covering them, but on a
+  # shared-PVC reason that issue itself refuted, so their membership needs its own evidence.
+  #
+  # `checkov.io/skipN` is RESOURCE-scoped, so the Job sets `runAsUser` per container instead of
+  # once on the pod: its `minio/mc` and `alpine/k8s` containers carry no uid-100 line in their own
+  # /etc/passwd (checked on that same layer surface, not inferred from the unset `config.User`),
+  # so an inherited pod-level 100 would have been an unjustified low-UID execution that this
+  # suppression then hid. They run the pod's high 65532 default; only the two openbao containers
+  # take 100, which is exactly what the disposition accounts for.
+  #
+  # An image's `config.User` is NOT the evidence for that claim and answers a different question:
+  # all three of these images leave `config.User` unset, so reading it alone says only that no
+  # image defaults its own user, never that no baked identity exists. The /etc/passwd entry is
+  # what makes the UID the image's rather than the manifest's.
+  #
+  # For the `kubernetes` framework a `checkov.io/skipN` directive keys on the check id it NAMES,
+  # unlike the `secrets` framework's presence-keyed behaviour (#2892). #2898 established that with
+  # a five-variant matrix; re-measured on this Job, which is what the disposition rests on:
+  # naming CKV_K8S_40 moves it 10 -> 9 failed / 31 -> 32 skipped, while renaming the same
+  # directive to an unrelated id leaves CKV_K8S_40 failing at 10 and instead skips a passing
+  # check (1853 -> 1852 passed). A suppression here therefore cannot be an incidental parser
+  # perturbation.
   #
   # CoreDNS is resolved rather than excepted: its image already runs
   # as the distroless nonroot identity (65532), so the manifest states that UID rather than
@@ -148,8 +184,8 @@ DISABLE_ERRORS_LINTERS:
   # exact commands this job runs, so a slice can show the number moved without a CI round trip.
   #
   # ⚠️ Read trivy's number from that script, NOT from the MegaLinter summary. MegaLinter reports
-  # this trivy scan as "1 non blocking error" while the local v0.72.0 scan actually fails 163 checks
-  # across 73 targets; the 1 is an artifact of how MegaLinter counts trivy's output. checkov's
+  # this trivy scan as "1 non blocking error" while the local v0.73.0 scan actually fails 110 checks
+  # across 27 targets; the 1 is an artifact of how MegaLinter counts trivy's output. checkov's
   # number is a genuine sum of "Failed checks:" and needs no such caveat.
   #
   # ⚠️ Both numbers above DRIFT without anyone touching this file — they moved between the slice

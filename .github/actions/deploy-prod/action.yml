@@ -217,6 +217,23 @@ runs:
         PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
       run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
 
+    - name: 🛡️ Restore autoscaling once the released revision is Ready
+      id: cilium_rollout_gate_release
+      # `ksail cluster update` waits for the cluster-autoscaler Deployment to be
+      # ready, and KSail treats zero replicas as never-ready — so a deploy that
+      # releases the gate would hang on the suspension the gate itself owns and
+      # fail at its own config sync. Restore between the exact-revision proof and
+      # cluster update: the safe artifact is deployed by now, which is what the
+      # gate requires before autoscaling may resume, and the autoscaler is ready
+      # before the step that waits on it. A still-active gate stays suspended.
+      if: >-
+        !cancelled() &&
+        steps.wait_flux_revision.outcome == 'success'
+      shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-revision-ready
+
     - name: 🔄 Update cluster (Talos machine config)
       id: cluster_update
       # Runs LAST, after manifest delivery, so an unreachable control-plane

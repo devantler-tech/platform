@@ -46,6 +46,17 @@ set -euo pipefail
 readonly CI_CHECKOV_VERSION='3.3.2'
 readonly CI_TRIVY_VERSION='0.71.2'
 
+# The MegaLinter release those two versions came from. It is not a local concept — nothing here runs
+# MegaLinter — but it is what makes the pair above checkable: MegaLinter bundles both scanners AND
+# the .checkov.yml this script deliberately drops, all inside one immutable image tag. So the image
+# version is the single provenance for every CI-side input this script models, and the only one of
+# them that a log states directly.
+#
+# Nothing in THIS repository selects it: the MegaLinter action is pinned in devantler-tech/actions,
+# so all three constants go stale here when that pin moves, silently and in both directions.
+# scripts/check-megalinter-version-drift.sh is the CI-side guard that catches it (#2853).
+readonly CI_MEGALINTER_VERSION='9.6.0'
+
 # The frameworks MegaLinter's checkov run reports, and their current contribution to the CI total.
 #
 # A missing framework is REPORTED, never refused, because the two causes are indistinguishable from
@@ -65,6 +76,24 @@ readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:15 secrets:0 github_
 # is a ceiling rather than a zero check — refusing on any parsing error would refuse on the current,
 # CI-matching state. Anything above the ceiling is local-only and breaks comparability.
 readonly CI_CHECKOV_PARSING_ERRORS=1
+
+# TWO RESIDUAL DRIFT RISKS, REVIEWED AND ACCEPTED (#2853). Recorded here rather than fixed, because
+# in both cases the fix costs more than the failure it prevents. Revisit if either assumption moves.
+#
+#   Parsing-error IDENTITY, not just count. The check above compares a count, so one file becoming
+#   parsable while another stops would net to zero and pass. Detecting that needs per-file parse
+#   errors, which --compact suppresses — so closing it means dropping --compact and parsing full
+#   output, a large rewrite of every count path here. Accepted because the blast radius is small and
+#   self-limiting: the swap would have to happen between two runs, and any findings hidden behind the
+#   newly-unparsable file still surface in CI, which does not use this script. The count remains a
+#   ceiling, so the common direction — a NEW parse error appearing — is still caught.
+#
+#   Trivy's vulnerability DATABASE revision moves independently of the CLI version, so
+#   check-megalinter-version-drift.sh cannot pin it. No effect today: this repository reports 0
+#   vulnerabilities, and the misconfiguration counts that #2787 tracks come from built-in policies
+#   rather than the DB. Accepted on that basis, and the reason the two categories are reported
+#   SEPARATELY below is to keep it visible — a vulnerability count that moves without a code change
+#   is the signal that this assumption has expired.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
@@ -271,7 +300,7 @@ report_version() {
   fi
 }
 
-printf 'Scanner versions:\n'
+printf 'Scanner versions (CI runs them from MegaLinter %s):\n' "$CI_MEGALINTER_VERSION"
 if [ "$scanner" != trivy ]; then
   require_tool checkov 'brew install checkov'
   report_version checkov "$CI_CHECKOV_VERSION" "$(checkov --version 2>/dev/null | tr -d '[:space:]')"
