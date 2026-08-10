@@ -2875,6 +2875,82 @@ renew_sync_lease() {
   ' "${lease_file}" >/dev/null
 }
 
+# Reclaim drain fences that were ALREADY leaked when this transaction acquired
+# the synchronization Lease.
+#
+# The liveness proof is the Lease itself. sync_lease_is_available refuses any
+# non-empty holderIdentity, so acquiring it proves that at that instant no
+# bridge transaction was running — and a node fence is only ever held by a
+# running transaction, which asserts the Lease at every mutation point. A fence
+# already present at acquisition therefore has no owner alive to protect, and
+# reclaiming it cannot race a live drain. That needs no run id and no timestamp,
+# so it also recovers fences leaked by earlier versions of this script (#3070).
+#
+# It does NOT weaken the refusal against a live holder: a live holder holds the
+# Lease, so this transaction would never have acquired it and would never reach
+# here. A fence that appears AFTER acquisition is not reclaimed either — it is
+# not in the snapshot, and the selector still fails closed on it.
+#
+# Deliberately narrow, in two ways:
+#   * A fence carrying a recovery journal is left alone. The journal records an
+#     interrupted bootstrap whose phase decides what is safe to do, bootstrap
+#     recovery owns that state, and clearing it would destroy the only durable
+#     record of an in-flight Talos mutation.
+#   * The node is left CORDONED, loudly. Without a journal the pre-claim
+#     schedulability was never recorded, so uncordoning could re-admit a node an
+#     operator had deliberately drained. Losing capacity is recoverable by hand;
+#     silently re-admitting a drained node is not.
+reclaim_orphaned_node_fences() {
+  local nodes_file="${work_dir}/reclaim-fence-nodes.json"
+  local patch_file_local="${work_dir}/reclaim-fence-patch.json"
+  local result_file="${work_dir}/reclaim-fence-result.txt"
+  local name uid owner cordoned reclaimed=0
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get nodes -o json >"${nodes_file}"; then
+    echo "::error::Could not read nodes to reclaim leaked GHCR drain fences."
+    return 1
+  fi
+
+  while IFS=$'\t' read -r name uid owner cordoned; do
+    [[ -n "${name}" ]] || continue
+    # CAS on identity AND the exact owner value: a node replaced under the same
+    # name, or a fence that changed hands since the read, must not be cleared.
+    jq -n \
+      --arg uid "${uid}" \
+      --arg owner_path "${CORDON_OWNER_JSON_PATH}" \
+      --arg owner "${owner}" '
+      [
+        {op: "test", path: "/metadata/uid", value: $uid},
+        {op: "test", path: $owner_path, value: $owner},
+        {op: "remove", path: $owner_path}
+      ]
+    ' >"${patch_file_local}"
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      patch node "${name}" \
+      --type=json \
+      --patch-file="${patch_file_local}" \
+      >"${result_file}" 2>&1; then
+      echo "::error::Could not reclaim the leaked GHCR drain fence on node ${name}; it changed while being reclaimed."
+      return 1
+    fi
+    reclaimed=$((reclaimed + 1))
+    printf '::warning::Reclaimed a leaked GHCR drain fence on node %s (owner %s). The synchronization Lease was free when this transaction acquired it, so no owner was alive to protect it.\n' \
+      "${name}" "${owner}"
+    if [[ "${cordoned}" == "true" ]]; then
+      printf '::warning::Node %s is left CORDONED on purpose: the killed transaction recorded no pre-claim schedulability, so this cannot tell whether it was already drained. Confirm it should be schedulable, then: kubectl --context %s uncordon %s\n' \
+        "${name}" "${KUBE_CONTEXT}" "${name}"
+    fi
+    # The selection lives in the safety library so the decision — what counts as
+    # provably orphaned — is unit-testable against real leaked-fence JSON,
+    # separately from the mutation it authorises.
+  done < <(select_orphaned_node_fences "${nodes_file}" /dev/stdout)
+
+  ((reclaimed == 0)) || assert_sync_lease_held || return 1
+}
+
 sync_lease_heartbeat_loop() {
   local elapsed
   while true; do
@@ -3643,6 +3719,7 @@ patch_variables_base() {
 }
 
 acquire_sync_lease "${pull_revision}"
+reclaim_orphaned_node_fences || exit 1
 
 # A fresh DR cluster does not have variables-base or the ESO fan-out resources
 # until its first Flux reconcile. In that case the current artifact creates the

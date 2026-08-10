@@ -142,6 +142,64 @@ else
   fail "a changed image with current credentials selects image-only mode"
 fi
 
+
+# Reclaiming a leaked drain fence (#3070). The JSON below is the shape observed
+# in prod on 2026-08-10: an owner annotation, no recovery journal, node left
+# cordoned by the killed transaction.
+orphan_nodes="${work_dir}/orphan-nodes.json"
+orphan_targets="${work_dir}/orphan-targets.tsv"
+
+if declare -F select_orphaned_node_fences >/dev/null; then
+  jq -n '
+    {items: [
+      {metadata: {name: "prod-control-plane-2", uid: "uid-leaked",
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "4384f07cc5a864b0-2430-6444"}},
+       spec: {unschedulable: true}},
+      {metadata: {name: "prod-worker-1", uid: "uid-journalled",
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "4384f07cc5a864b0-9-9",
+                      "platform.devantler.tech/ghcr-auth-drain-recovery": "{\"phase\":\"active\"}"}},
+       spec: {unschedulable: true}},
+      {metadata: {name: "prod-worker-2", uid: "uid-clean", annotations: {}}, spec: {}}
+    ]}
+  ' >"${orphan_nodes}"
+
+  if select_orphaned_node_fences "${orphan_nodes}" "${orphan_targets}" &&
+    [[ "$(cut -f1 "${orphan_targets}")" == "prod-control-plane-2" ]] &&
+    [[ "$(wc -l <"${orphan_targets}" | tr -d ' ')" == "1" ]]; then
+    pass "a leaked fence with no recovery journal is reclaimable"
+  else
+    fail "a leaked fence with no recovery journal is reclaimable"
+  fi
+
+  # Negative control: the journalled node must NOT be reclaimed, because its
+  # phase decides what is safe and bootstrap recovery owns that state.
+  if ! grep -q "prod-worker-1" "${orphan_targets}"; then
+    pass "a fence carrying a recovery journal is never reclaimed"
+  else
+    fail "a fence carrying a recovery journal is never reclaimed"
+  fi
+
+  # Negative control: an unfenced node is never touched.
+  if ! grep -q "prod-worker-2" "${orphan_targets}"; then
+    pass "an unfenced node is never reclaimed"
+  else
+    fail "an unfenced node is never reclaimed"
+  fi
+
+  # The cordon state travels with the selection so the caller can report it
+  # rather than silently uncordoning a node whose pre-claim state is unknown.
+  if [[ "$(cut -f4 "${orphan_targets}")" == "true" ]]; then
+    pass "a reclaimed fence reports the cordon it leaves behind"
+  else
+    fail "a reclaimed fence reports the cordon it leaves behind"
+  fi
+else
+  fail "a leaked fence with no recovery journal is reclaimable"
+  fail "a fence carrying a recovery journal is never reclaimed"
+  fail "an unfenced node is never reclaimed"
+  fail "a reclaimed fence reports the cordon it leaves behind"
+fi
+
 operation_log="${work_dir}/operations.log"
 patch_variables_base() {
   printf '%s\n' variables-patch >>"${operation_log}"
