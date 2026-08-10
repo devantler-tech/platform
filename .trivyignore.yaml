@@ -29,6 +29,39 @@ misconfigurations:
       LimitRange is namespace-scoped but this check evaluates each file independently, including
       resources that cannot carry a LimitRange and the LimitRange manifests themselves.
 
+  # KSV-0037 "user resources should not be placed in kube-system namespace" — 47 of trivy's 157
+  # findings on this tree (30%), all MEDIUM.
+  #
+  # The control protects a real property: kube-system carries elevated trust, so an APPLICATION
+  # does not belong there. Every one of the 47 is instead a cluster component that belongs in
+  # kube-system by construction, and the firing set says so — 17 VerticalPodAutoscaler,
+  # 12 HelmRelease, 5 PodDisruptionBudget, 5 HelmRepository, 2 HTTPRoute, 2 Gateway, 1 LimitRange,
+  # 1 Deployment, 1 CiliumNetworkPolicy, 1 Certificate. Their subjects are the CNI (cilium,
+  # cilium-operator, cilium-envoy, hubble-relay, hubble-ui), DNS (coredns), the Hetzner CSI and
+  # cloud-controller-manager, metrics-server, snapshot-controller, cluster-autoscaler, descheduler,
+  # spire and tetragon.
+  #
+  # Most of the set is not merely conventional but structurally forced: a VerticalPodAutoscaler's
+  # targetRef and a PodDisruptionBudget's selector are both namespace-local, so an autoscaler or
+  # budget for a kube-system workload cannot itself live anywhere else. The LimitRange IS the
+  # kube-system namespace's own default limit range, and the Certificate is the TLS material for the
+  # Gateway in the same namespace. The single Deployment is CoreDNS — the canonical kube-system
+  # component.
+  #
+  # So this is scoped to the infrastructure trees rather than skipped outright, and that boundary is
+  # what keeps the control working: all 47 sit under an infrastructure path, while k8s/bases/apps/**
+  # and the tenant trees stay covered. A user application given `namespace: kube-system` is still
+  # reported — verified with a temporary app manifest, which fails this check with the entry below
+  # in place.
+  - id: KSV-0037
+    paths:
+      - k8s/bases/infrastructure/**
+      - k8s/providers/*/infrastructure/**
+    statement: >-
+      These are cluster infrastructure components that belong in kube-system by construction — CNI,
+      DNS, CSI, cloud-controller-manager and their namespace-local VerticalPodAutoscalers,
+      PodDisruptionBudgets and Gateway material. Application trees remain covered by this check.
+
   # KSV-0109 matches identifier text rather than secret material at both sites below. Keep the
   # dispositions separate so each path carries the reason that was checked against its content.
   - id: KSV-0109
