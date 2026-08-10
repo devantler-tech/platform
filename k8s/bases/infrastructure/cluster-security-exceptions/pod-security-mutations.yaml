@@ -37,11 +37,14 @@ metadata:
     # what makes the declaration reviewable rather than open ended: half of the
     # twelve namespaces run no workloads at all. kube-public and kube-node-lease
     # exist but are empty; local-path-storage, kubevirt, cdi and chaos-mesh have
-    # no namespace in prod, the VM stack and chaos tooling being opt-in. In the
-    # six that do run workloads, the container-level fields these controls check
-    # are already set in-spec everywhere except the kubescape, kubevuln and
-    # operator Deployments, which lack capabilities.drop: [ALL] and a
-    # container-level seccompProfile. Hardening those three is tracked in #3064.
+    # no namespace in prod, the VM stack and chaos tooling being opt-in. Six run
+    # workloads, and four of those — kube-system, longhorn-system, observability
+    # and velero — are the excepted set above, leaving flux-system and kubescape
+    # as the genuinely uncovered pair. In those two, the container-level fields
+    # these controls check are set in-spec everywhere except the kubescape,
+    # kubevuln and operator Deployments, which lack capabilities.drop: [ALL] and
+    # a container-level seccompProfile. Hardening those three is tracked in
+    # #3064; the four excepted namespaces were not measured, being out of scope.
     # These counts are a prod-only snapshot: the local overlay opts in to a
     # different set, so re-measure rather than assuming they still hold.
     #
