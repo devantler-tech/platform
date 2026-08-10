@@ -656,6 +656,7 @@ func TestUnreadyNodeAfterRebootStopsTheRoll(t *testing.T) {
 		"fanout:externalsecret/ascoachingogvaner/ghcr-auth",
 		"fanout:externalsecret/kyverno/ghcr-auth",
 		"node-claim-cordon:prod-worker-1",
+		"node-fence-phase:prod-worker-1",
 		"talos-auth:10.0.0.2",
 		"node-drain:prod-worker-1",
 		"talos-reboot:10.0.0.2",
@@ -717,5 +718,36 @@ func TestTalosFailureAfterSafeFanoutKeepsRootAuthUnchanged(t *testing.T) {
 			}
 			requireNotContains(t, result.stdout+result.stderr, "fixture-secret-token")
 		})
+	}
+}
+
+// The fence phase marker is only trustworthy if it is advanced to "mutating"
+// BEFORE the first Talos mutation. If the order ever inverted, a node could be
+// mutated under a fence still reading "claimed" -- which the #3070 reclaim
+// treats as provably untouched and would clear. That is the one direction that
+// is never safe, so pin the order rather than the mechanism.
+func TestFencePhaseAdvancesBeforeTalosMutation(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, nil)
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	phase := lineIndex(t, operations, "node-fence-phase:prod-worker-1")
+	auth := lineIndex(t, operations, "talos-auth:10.0.0.2")
+	if phase >= auth {
+		t.Fatalf("Talos was mutated before the fence phase advanced: phase=%d auth=%d", phase, auth)
+	}
+}
+
+// A node whose phase marker cannot be advanced must not be mutated at all.
+func TestFencePhaseFailureBlocksTalosMutation(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FENCE_PHASE_FAIL_NODE": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	if pathExists(f.talosLog) {
+		t.Fatal("Talos was mutated although the fence phase could not be advanced")
 	}
 }

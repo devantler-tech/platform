@@ -69,6 +69,16 @@ readonly CORDON_OWNER_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-owner"
 readonly CORDON_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner"
 readonly CORDON_RECOVERY_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-recovery"
 readonly CORDON_RECOVERY_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-recovery"
+# Records how far a fence got, so a LEAKED fence is self-describing (#3070).
+# Written "claimed" in the claim patch itself, then advanced to "mutating"
+# BEFORE the first Talos mutation. That ordering is what makes the marker
+# trustworthy in both kill directions: killed before the advance lands, the
+# fence still reads "claimed" and nothing was mutated; killed after it lands but
+# before the mutation runs, it reads "mutating" and we refuse — conservative,
+# never the reverse. There is no window in which Talos is mutated under a fence
+# still reading "claimed".
+readonly CORDON_PHASE_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-phase"
+readonly CORDON_PHASE_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase"
 KSAIL_OPERATOR_VERSION="$(yq -er '.spec.chart.spec.version' \
   k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml)"
 readonly KSAIL_OPERATOR_VERSION
@@ -995,6 +1005,7 @@ build_and_apply_cordon_claim() {
       --arg owner "${owner_token}" \
       --arg recovery_path "${CORDON_RECOVERY_JSON_PATH}" \
       --arg recovery "${recovery_record}" \
+      --arg phase_path "${CORDON_PHASE_JSON_PATH}" \
       --arg uid "${node_uid}" \
       --arg resource_version "${resource_version}" '
       [
@@ -1004,7 +1015,8 @@ build_and_apply_cordon_claim() {
           value: $resource_version
         },
         {op: "test", path: "/metadata/uid", value: $uid},
-        {op: "add", path: $owner_path, value: $owner}
+        {op: "add", path: $owner_path, value: $owner},
+        {op: "add", path: $phase_path, value: "claimed"}
       ]
       + (if $recovery == "" then [] else
           [{op: "add", path: $recovery_path, value: $recovery}]
@@ -1019,6 +1031,7 @@ build_and_apply_cordon_claim() {
       --arg owner "${owner_token}" \
       --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
       --arg recovery "${recovery_record}" \
+      --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" \
       --arg uid "${node_uid}" \
       --arg resource_version "${resource_version}" '
       [
@@ -1031,7 +1044,8 @@ build_and_apply_cordon_claim() {
         {
           op: "add",
           path: "/metadata/annotations",
-          value: ({($owner_annotation): $owner}
+          value: ({($owner_annotation): $owner,
+                   ($phase_annotation): "claimed"}
             + (if $recovery == "" then {} else
                 {($recovery_annotation): $recovery}
               end))
@@ -2139,6 +2153,20 @@ process_talos_node_target() {
     return 1
   fi
 
+  # Past this point Talos is mutated, so a fence leaked from here on must NOT be
+  # reclaimed automatically: the Lease proves no owner is alive, never that the
+  # node reached a known state. Advance the marker first and fail closed if it
+  # cannot be advanced -- an un-advanced marker would make a mutated node look
+  # reclaimable, which is the one direction that is never safe.
+  if ! mark_node_fence_mutating \
+    "${node_name}" "${cordon_owner_token}" "${initial_node_uid}"; then
+    restore_node_schedulability_if_needed \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${drain_result_file}" "${recovery_record}" || true
+    return 1
+  fi
+
   if [[ "${node_mode}" == "reboot" ]]; then
     if ! talosctl \
       --nodes "${node_ip}" \
@@ -2494,6 +2522,17 @@ sync_talos_registry_auth() {
     fi
     if ! validate_talos_node_inventory "${talos_nodes_file}"; then
       echo "::error::Every Talos node must expose a non-empty unique UID and exactly one non-empty unique InternalIP before GHCR auth can be synchronized."
+      return 1
+    fi
+    # Reclaim leaked fences from the inventory this loop already read, rather
+    # than reading nodes of its own straight after acquiring the Lease. The
+    # liveness proof is a property of the ACQUISITION — the Lease was free, so
+    # no transaction was alive — and holding it since means none has started,
+    # so acting on that proof here is equally sound. Reading nodes earlier
+    # would move a node-discovery failure ahead of the credential fan-out,
+    # which is deliberately staged first so a discovery failure cannot leave
+    # the fan-out half-applied.
+    if ! reclaim_orphaned_node_fences "${talos_nodes_file}"; then
       return 1
     fi
     if ! select_talos_node_targets \
@@ -2900,18 +2939,41 @@ renew_sync_lease() {
 #     schedulability was never recorded, so uncordoning could re-admit a node an
 #     operator had deliberately drained. Losing capacity is recoverable by hand;
 #     silently re-admitting a drained node is not.
+mark_node_fence_mutating() {
+  local node_name="$1" owner_token="$2" node_uid="$3"
+  local patch_file_local="${work_dir}/fence-phase-patch.json"
+  local result_file="${work_dir}/fence-phase-result.txt"
+
+  # CAS on uid + our own owner value so this can never advance a fence that
+  # changed hands, and never resurrect one on a replaced node of the same name.
+  jq -n \
+    --arg uid "${node_uid}" \
+    --arg owner_path "${CORDON_OWNER_JSON_PATH}" \
+    --arg owner "${owner_token}" \
+    --arg phase_path "${CORDON_PHASE_JSON_PATH}" '
+    [
+      {op: "test", path: "/metadata/uid", value: $uid},
+      {op: "test", path: $owner_path, value: $owner},
+      {op: "add", path: $phase_path, value: "mutating"}
+    ]
+  ' >"${patch_file_local}"
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    patch node "${node_name}" \
+    --type=json \
+    --patch-file="${patch_file_local}" \
+    >"${result_file}" 2>&1; then
+    echo "::error::Could not mark node ${node_name} as entering Talos mutation; refusing to mutate it."
+    emit_safe_operation_output "fence-phase" "${result_file}"
+    return 1
+  fi
+}
+
 reclaim_orphaned_node_fences() {
-  local nodes_file="${work_dir}/reclaim-fence-nodes.json"
+  local nodes_file="$1"
   local patch_file_local="${work_dir}/reclaim-fence-patch.json"
   local result_file="${work_dir}/reclaim-fence-result.txt"
   local name uid owner cordoned reclaimed=0
-
-  if ! kubectl \
-    --context "${KUBE_CONTEXT}" \
-    get nodes -o json >"${nodes_file}"; then
-    echo "::error::Could not read nodes to reclaim leaked GHCR drain fences."
-    return 1
-  fi
 
   while IFS=$'\t' read -r name uid owner cordoned; do
     [[ -n "${name}" ]] || continue
@@ -2920,11 +2982,14 @@ reclaim_orphaned_node_fences() {
     jq -n \
       --arg uid "${uid}" \
       --arg owner_path "${CORDON_OWNER_JSON_PATH}" \
-      --arg owner "${owner}" '
+      --arg owner "${owner}" \
+      --arg phase_path "${CORDON_PHASE_JSON_PATH}" '
       [
         {op: "test", path: "/metadata/uid", value: $uid},
         {op: "test", path: $owner_path, value: $owner},
-        {op: "remove", path: $owner_path}
+        {op: "test", path: $phase_path, value: "claimed"},
+        {op: "remove", path: $owner_path},
+        {op: "remove", path: $phase_path}
       ]
     ' >"${patch_file_local}"
     if ! kubectl \
@@ -3719,7 +3784,6 @@ patch_variables_base() {
 }
 
 acquire_sync_lease "${pull_revision}"
-reclaim_orphaned_node_fences || exit 1
 
 # A fresh DR cluster does not have variables-base or the ESO fan-out resources
 # until its first Flux reconcile. In that case the current artifact creates the

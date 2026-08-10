@@ -452,11 +452,16 @@ select_orphaned_node_fences() {
 
   jq -r \
     --arg owner_annotation "platform.devantler.tech/ghcr-auth-drain-owner" \
-    --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" '
+    --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" \
+    --arg phase_annotation "platform.devantler.tech/ghcr-auth-drain-phase" '
     .items[]
     | (.metadata.annotations // {}) as $annotations
     | select((($annotations[$owner_annotation]) // "") != "")
     | select((($annotations[$recovery_annotation]) // "") == "")
+    # Only a fence that never reached Talos mutation is provably safe to clear.
+    # A missing phase is a PRE-#3070 fence of unknown depth, so it fails closed
+    # here exactly like "mutating" does -- absence is never read as innocence.
+    | select((($annotations[$phase_annotation]) // "") == "claimed")
     | [
         .metadata.name,
         (.metadata.uid // ""),

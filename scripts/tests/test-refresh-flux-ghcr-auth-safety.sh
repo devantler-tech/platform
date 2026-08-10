@@ -153,11 +153,20 @@ if declare -F select_orphaned_node_fences >/dev/null; then
   jq -n '
     {items: [
       {metadata: {name: "prod-control-plane-2", uid: "uid-leaked",
-        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "4384f07cc5a864b0-2430-6444"}},
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "4384f07cc5a864b0-2430-6444",
+                      "platform.devantler.tech/ghcr-auth-drain-phase": "claimed"}},
+       spec: {unschedulable: true}},
+      {metadata: {name: "prod-worker-3", uid: "uid-mutating",
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "4384f07cc5a864b0-7-7",
+                      "platform.devantler.tech/ghcr-auth-drain-phase": "mutating"}},
+       spec: {unschedulable: true}},
+      {metadata: {name: "prod-worker-4", uid: "uid-phaseless",
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "4384f07cc5a864b0-8-8"}},
        spec: {unschedulable: true}},
       {metadata: {name: "prod-worker-1", uid: "uid-journalled",
         annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "4384f07cc5a864b0-9-9",
-                      "platform.devantler.tech/ghcr-auth-drain-recovery": "{\"phase\":\"active\"}"}},
+                      "platform.devantler.tech/ghcr-auth-drain-recovery": "{\"phase\":\"active\"}",
+                      "platform.devantler.tech/ghcr-auth-drain-phase": "claimed"}},
        spec: {unschedulable: true}},
       {metadata: {name: "prod-worker-2", uid: "uid-clean", annotations: {}}, spec: {}}
     ]}
@@ -179,6 +188,23 @@ if declare -F select_orphaned_node_fences >/dev/null; then
     fail "a fence carrying a recovery journal is never reclaimed"
   fi
 
+  # Negative control: a fence that reached Talos mutation is NEVER reclaimed.
+  # The Lease proves no owner is alive; it never proves the node reached a known
+  # state, and that distinction is the whole reason the phase marker exists.
+  if ! grep -q "prod-worker-3" "${orphan_targets}"; then
+    pass "a fence that reached Talos mutation is never reclaimed"
+  else
+    fail "a fence that reached Talos mutation is never reclaimed"
+  fi
+
+  # Negative control: a PRE-#3070 fence carries no phase at all. Absence is
+  # unknown depth, so it must fail closed exactly like "mutating".
+  if ! grep -q "prod-worker-4" "${orphan_targets}"; then
+    pass "a fence with no phase marker is never reclaimed"
+  else
+    fail "a fence with no phase marker is never reclaimed"
+  fi
+
   # Negative control: an unfenced node is never touched.
   if ! grep -q "prod-worker-2" "${orphan_targets}"; then
     pass "an unfenced node is never reclaimed"
@@ -196,6 +222,8 @@ if declare -F select_orphaned_node_fences >/dev/null; then
 else
   fail "a leaked fence with no recovery journal is reclaimable"
   fail "a fence carrying a recovery journal is never reclaimed"
+  fail "a fence that reached Talos mutation is never reclaimed"
+  fail "a fence with no phase marker is never reclaimed"
   fail "an unfenced node is never reclaimed"
   fail "a reclaimed fence reports the cordon it leaves behind"
 fi

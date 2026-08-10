@@ -1083,6 +1083,9 @@ func fakeInventoryNode(
 	if owner := markerContent("cordon-owner-" + name); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-owner"] = owner
 	}
+	if phase := markerContent("cordon-phase-" + name); phase != "" {
+		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = phase
+	}
 	if recovery := markerContent("cordon-recovery-" + name); recovery != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
 	}
@@ -1218,6 +1221,9 @@ func fakeKubectlGetNode(args []string) int {
 	annotations := map[string]any{}
 	if owner := markerContent("cordon-owner-" + nodeName); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-owner"] = owner
+	}
+	if phase := markerContent("cordon-phase-" + nodeName); phase != "" {
+		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = phase
 	}
 	if recovery := markerContent("cordon-recovery-" + nodeName); recovery != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
@@ -1429,6 +1435,32 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 	}
 	currentResourceVersion := defaultString(markerContent("resource-version-"+nodeName), "10")
 	isClaim := hasPatchOperation(patch, "add", "/spec/unschedulable", true)
+	isFencePhase := hasPatchPath(
+		patch,
+		"add",
+		"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+	) && !hasPatchOperation(patch, "add", "/spec/unschedulable", true)
+	if isFencePhase {
+		expectedOwner := patchValueString(
+			patch,
+			"test",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner",
+		)
+		if nodeName == os.Getenv("FAKE_FENCE_PHASE_FAIL_NODE") ||
+			expectedOwner == "" || expectedOwner != markerContent("cordon-owner-"+nodeName) ||
+			!hasPatchOperation(patch, "test", "/metadata/uid", nodeName+"-uid") {
+			return commandFailure(57, "invalid fence phase update")
+		}
+		setMarkerContent("cordon-phase-"+nodeName, patchValueString(
+			patch,
+			"add",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+		))
+		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+		appendEnvFile("OPERATION_LOG", "node-fence-phase:"+nodeName+"\n")
+		fmt.Printf("node/%s patched\n", nodeName)
+		return 0
+	}
 	isRecoveryPhase := hasPatchPath(
 		patch,
 		"replace",
@@ -1504,6 +1536,13 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 			return commandFailure(56, "atomic cordon claim omitted node UID")
 		}
 		setMarkerContent("cordon-owner-"+nodeName, owner)
+		if phase := patchValueString(
+			patch,
+			"add",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+		); phase != "" {
+			setMarkerContent("cordon-phase-"+nodeName, phase)
+		}
 		if recovery := patchValueString(
 			patch,
 			"add",
