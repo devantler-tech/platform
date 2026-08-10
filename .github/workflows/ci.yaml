@@ -524,7 +524,44 @@ jobs:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
           KSAIL_VERSION: "7.178.20"
         run: |
-          curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
+          set -euo pipefail
+          BASE="https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}"
+          ASSET="ksail_${KSAIL_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL "${BASE}/${ASSET}" -o /tmp/ksail.tar.gz
+          # A version-pinned URL names WHICH asset to fetch, not WHAT BYTES to
+          # expect. This archive is `sudo install`ed and executed on the runner,
+          # and this job runs on `pull_request` including FORK PRs, so a replaced
+          # release asset would execute here on every contributor's build.
+          # (This job is `pull_request`-only — the prod deploy paths install the
+          # same archive separately and are tracked in #3075.)
+          #
+          # Checked against the published list rather than a literal SHA pinned
+          # here: Renovate bumps KSAIL_VERSION and cannot update an opaque digest
+          # beside it, so a pinned SHA would break every bump until hand-edited —
+          # a control that reliably breaks the routine path is one that gets
+          # removed. LIMIT, stated plainly: archive and checksum list share an
+          # origin, so this detects a corrupted, truncated or individually
+          # substituted asset, not a fully compromised release.
+          #
+          # Kept byte-identical to the same block in validate-main.yaml.
+          curl -fsSL "${BASE}/ksail_${KSAIL_VERSION}_checksums.txt" -o /tmp/ksail_checksums.txt
+          # Match the filename field EXACTLY. A regex match treats the dots in
+          # the asset name as metacharacters, so `ksail_7x178x20_…` would select
+          # a different line's digest and report a confusing mismatch instead of
+          # the actionable "no published checksum" below. awk also exits 0 with
+          # no match, so the empty-result check is the single fail-closed path.
+          expected=$(awk -v a="${ASSET}" '$2 == a {print $1}' /tmp/ksail_checksums.txt)
+          # Fail closed on a MISSING entry too — otherwise a renamed asset
+          # silently skips verification instead of failing.
+          if [ -z "$expected" ]; then
+            echo "::error::no published checksum for ${ASSET} — refusing to install unverified"
+            exit 1
+          fi
+          actual=$(sha256sum /tmp/ksail.tar.gz | cut -d' ' -f1)
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::checksum mismatch for ${ASSET}: expected ${expected}, got ${actual}"
+            exit 1
+          fi
           tar -xzf /tmp/ksail.tar.gz -C /tmp
           sudo install /tmp/ksail /usr/local/bin/ksail
           ksail --version
