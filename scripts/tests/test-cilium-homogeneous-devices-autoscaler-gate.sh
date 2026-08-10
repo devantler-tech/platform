@@ -393,9 +393,19 @@ run_guard --after-deploy true
 # keep the marker instead.
 printf '0\n' >"${state_dir}/previous-replicas"
 printf '0\n' >"${state_dir}/replicas"
-if run_guard --after-revision-ready; then
+# Pass revision_ready=true and assert the MESSAGE, not merely a non-zero exit:
+# run_guard defaults that flag to false, so a phase that rejected it would fail
+# for an unrelated reason and this test would pass without ever reaching the
+# zero-count branch it exists to cover.
+if zero_count_output="$(run_guard --after-revision-ready true 2>&1)"; then
   fail 'releasing a gate that owns a remembered zero replica count must fail loudly'
 fi
+[[ "${zero_count_output}" == *'remembered autoscaler count of 0'* ]] ||
+  fail "the zero-count refusal must name the conflict; got: ${zero_count_output}"
+# The remediation has to change the REMEMBERED value, or an operator who
+# follows it hits this same refusal on the retry.
+[[ "${zero_count_output}" == *"${previous_replicas_annotation:-cilium-device-rollout-previous-replicas}"* ]] ||
+  fail "the zero-count refusal must name the annotation that records the count; got: ${zero_count_output}"
 [[ "$(<"${state_dir}/previous-replicas")" == '0' ]] ||
   fail 'a refused zero-count release must preserve the ownership marker for a retry'
 : >"${state_dir}/previous-replicas"

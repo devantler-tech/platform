@@ -426,7 +426,11 @@ elif [[ "${phase}" == '--after-revision-ready' ]]; then
   # the conflict named, rather than hand cluster update a hang.
   remembered_replicas="$(get_previous_replicas)"
   if [[ "${remembered_replicas}" == "0" ]]; then
-    fail 'the rollout gate owns a remembered autoscaler count of 0, so releasing it cannot satisfy the readiness check that ksail cluster update performs (KSail treats a zero-replica Deployment as never-ready). Restore the intended replica count on cluster-autoscaler-hetzner-cluster-autoscaler, or release the gate in a deploy that skips cluster update, before retrying.'
+    # The remediation must change the REMEMBERED value, not just the running
+    # replica count: get_previous_replicas reads the annotation, so scaling the
+    # Deployment alone leaves the same 0 recorded and the next attempt fails
+    # here again.
+    fail "the rollout gate owns a remembered autoscaler count of 0, so releasing it cannot satisfy the readiness check that ksail cluster update performs (KSail treats a zero-replica Deployment as never-ready). Record the intended count and scale to match, then retry: kubectl -n ${namespace} annotate deployment ${deployment} ${previous_replicas_annotation}=<count> --overwrite && kubectl -n ${namespace} scale deployment ${deployment} --replicas=<count>. Scaling alone is not enough — the remembered value is what this check reads."
   fi
   restore_autoscaler_if_owned
 elif [[ "${phase}" == '--after-deploy' ]]; then
