@@ -2875,6 +2875,49 @@ renew_sync_lease() {
   ' "${lease_file}" >/dev/null
 }
 
+# Report what the Lease looked like at the moment a renewal was refused.
+#
+# "The GHCR synchronization lease was lost" is currently indistinguishable
+# between two very different causes: another transaction genuinely took the
+# Lease, or this one simply failed to renew it (a throttled or dropped read, a
+# resourceVersion race whose re-read also failed). They call for opposite
+# responses, and the current message supports neither — a prod investigation on
+# 2026-08-10 could not separate them from the logs at all (platform#3071).
+#
+# Purely diagnostic: every read is best-effort and the caller's control flow is
+# unchanged whether this succeeds, fails, or finds nothing. The Lease holds no
+# credential material, so printing it verbatim is safe.
+report_sync_lease_state() {
+  local context="$1"
+  local probe="${work_dir}/sync-lease-diagnostic-$$-${RANDOM}.json"
+
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get lease "${SYNC_LEASE_NAME}" \
+    -o json >"${probe}" 2>/dev/null; then
+    printf '::warning::sync-lease diagnostic (%s): the Lease could not be read, so ownership is UNKNOWN — this is the transient-failure shape, not proof of loss. ours=%s\n' \
+      "${context}" "${sync_lease_holder:-<unset>}"
+    return 0
+  fi
+  jq -r \
+    --arg context "${context}" \
+    --arg ours "${sync_lease_holder:-}" '
+    "::warning::sync-lease diagnostic (" + $context + "): "
+    + "ours=" + (if $ours == "" then "<unset>" else $ours end)
+    + " holder=" + ((.spec.holderIdentity // "") | if . == "" then "<released>" else . end)
+    + " same_holder=" + (((.spec.holderIdentity // "") == $ours) | tostring)
+    + " transitions=" + ((.spec.leaseTransitions // 0) | tostring)
+    + " renewTime=" + ((.spec.renewTime // .spec.acquireTime // "<none>") | tostring)
+    + " durationSeconds=" + ((.spec.leaseDurationSeconds // 0) | tostring)
+    + " resourceVersion=" + (.metadata.resourceVersion // "<none>")
+  ' "${probe}" 2>/dev/null ||
+    printf '::warning::sync-lease diagnostic (%s): the Lease was read but could not be parsed.\n' \
+      "${context}"
+  rm -f "${probe}"
+  return 0
+}
+
 sync_lease_heartbeat_loop() {
   local elapsed
   while true; do
@@ -2882,6 +2925,7 @@ sync_lease_heartbeat_loop() {
       sleep 1
     done
     if ! renew_sync_lease; then
+      report_sync_lease_state 'heartbeat renewal failed'
       : >"${sync_lease_lost_file}"
       return 1
     fi
@@ -2889,7 +2933,15 @@ sync_lease_heartbeat_loop() {
 }
 
 assert_sync_lease_held() {
-  if [[ -e "${sync_lease_lost_file}" ]] || ! renew_sync_lease; then
+  # Distinguish the two refusal paths as well: a latched heartbeat failure
+  # happened earlier and elsewhere, so its state has already been reported,
+  # while a foreground failure is happening right now.
+  if [[ -e "${sync_lease_lost_file}" ]]; then
+    echo "::error::The GHCR synchronization lease was lost; refusing further cluster mutation. (The heartbeat recorded the loss earlier — see its sync-lease diagnostic above.)"
+    return 1
+  fi
+  if ! renew_sync_lease; then
+    report_sync_lease_state 'foreground guard renewal failed'
     echo "::error::The GHCR synchronization lease was lost; refusing further cluster mutation."
     return 1
   fi
