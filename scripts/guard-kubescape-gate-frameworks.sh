@@ -177,6 +177,15 @@ check_workflow() {
 # `ksail …` line (wrapped in `env`, `xargs`, or a shell function) stops matching
 # and trips the fail-closed path. That is the correct direction — the guard
 # refuses to bless a form it cannot read, rather than guessing.
+#
+# ⚠️ RESIDUAL, tracked on #3060. This closes the command-SHAPE class but not the
+# shell-CONTEXT one: a heredoc BODY line genuinely begins with `ksail`, so it
+# still matches while executing nothing. Those are different axes and the
+# inversion only covers the first. Closing the second means parsing the `run:`
+# scalars with shell awareness, not detecting heredocs here — that is how a
+# line-oriented matcher becomes a half-written shell parser. What survives is a
+# deliberately-constructed decoy, not a plausible edit; the realistic regression
+# is caught.
 scan_invocations() {
   local match text stripped
   while IFS= read -r match; do
