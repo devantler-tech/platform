@@ -29,13 +29,14 @@ spec:
       # subject is that workflow's path, NOT .github's own cd.yaml — same
       # convention as the publish-app.yaml-signed app artifacts.
       #
-      # The ref part accepts only a 40-hex commit SHA or a release tag, so an
-      # artifact signed from a floating ref (e.g. @main) does not verify.
-      # Consumers pin the workflow by SHA, so only the SHA branch is exercised
-      # today; the tag branch is kept so a tag-pinned caller also verifies.
+      # The ref part accepts only a 40-hex commit SHA, so an artifact signed
+      # from any other ref — a floating @main, or a release tag — does not
+      # verify. Every caller of the shared publish workflows pins them by
+      # commit across its whole history, which is what makes the commit form
+      # sufficient on its own (#3022).
       # cosign's keyless attestation verification rejects MULTIPLE identity
       # entries outright ("unsupported: multiple identities are not supported at
       # this time"), so any future alternation must stay inside one subject
       # regex.
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@([0-9a-f]{40}|refs/tags/v.+)$'
+        subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@[0-9a-f]{40}$'

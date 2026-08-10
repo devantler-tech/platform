@@ -3,14 +3,14 @@
 set -euo pipefail
 
 usage() {
-  printf 'Usage: %s --before-publish|--after-deploy\n' "${0##*/}" >&2
+  printf 'Usage: %s --before-publish|--after-revision-ready|--after-deploy\n' "${0##*/}" >&2
   exit 2
 }
 
 [[ "$#" -eq 1 ]] || usage
 readonly phase="$1"
 case "${phase}" in
-  --before-publish | --after-deploy) ;;
+  --before-publish | --after-revision-ready | --after-deploy) ;;
   *) usage ;;
 esac
 
@@ -401,10 +401,23 @@ require_cilium_fleet_current() {
 }
 
 if [[ "${rollout_gate_active}" == true ]]; then
+  # An active gate keeps autoscaling suspended in every phase, including the
+  # post-revision one: the whole point is that no node may join while agents are
+  # being stepped.
   suspend_autoscaler
   if [[ "${phase}" == '--after-deploy' && "${revision_ready}" == true ]]; then
     record_approved_template_sha
   fi
+elif [[ "${phase}" == '--after-revision-ready' ]]; then
+  # The release artifact has reconciled and Flux reports this exact revision
+  # Ready, so the suspension the retired gate owned has served its purpose.
+  # Restore it HERE, before `ksail cluster update`, because that step waits for
+  # the cluster-autoscaler Deployment to become ready and KSail treats
+  # `Status.Replicas == 0` as never-ready — it polls to its deadline and fails
+  # the very deploy that releases the gate. Restoring in --after-deploy is too
+  # late for that wait, and restoring in --before-publish would do it before the
+  # safe artifact is deployed, which the gate deliberately forbids.
+  restore_autoscaler_if_owned
 elif [[ "${phase}" == '--after-deploy' ]]; then
   restore_autoscaler_if_owned
 elif [[ -n "$(get_previous_replicas)" ]]; then

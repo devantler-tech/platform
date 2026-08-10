@@ -107,6 +107,10 @@ jobs:
               - '.trivyignore.yaml'
               - 'scripts/megalinter-scan-counts.sh'
               - 'scripts/tests/test-megalinter-scan-counts-ignorefile.sh'
+              # The version-drift guard reads its constants out of
+              # megalinter-scan-counts.sh, so the three move together.
+              - 'scripts/check-megalinter-version-drift.sh'
+              - 'scripts/tests/test-check-megalinter-version-drift.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/normalize-sarif-paths.sh'
@@ -136,6 +140,12 @@ jobs:
               # Both halves, for the same reason as the guard above.
               - 'scripts/verify-published-evidence.sh'
               - 'scripts/tests/test-verify-published-evidence.sh'
+              # The pin guard itself runs unconditionally in the validate job, so
+              # only its TEST is selected here. Both halves are listed anyway: a PR
+              # that edits the guard must also run the test that pins its ablations,
+              # or a widened allow-list would ship with every check still green.
+              - 'scripts/guard-shared-publish-workflow-pin.sh'
+              - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
@@ -322,6 +332,17 @@ jobs:
         # cleanup cannot silently turn every scoped disposition back on.
         run: bash scripts/tests/test-megalinter-scan-counts-ignorefile.sh
 
+      - name: 🔢 Validate scanner version-drift guard
+        if: needs.changes.outputs.k8s == 'true'
+        # Guards the guard, offline. The live comparison runs on main
+        # (validate-main.yaml) because it needs to read Actions logs, which a
+        # fork PR's token cannot do — gating PRs on it would fail closed on
+        # every fork. What is checked here is the parsing contract, whose
+        # dangerous direction is a log-format change reading as "no drift".
+        run: |
+          shellcheck scripts/check-megalinter-version-drift.sh
+          bash scripts/tests/test-check-megalinter-version-drift.sh
+
       - name: 🔐 Validate OpenBao OIDC admin role
         if: needs.changes.outputs.k8s == 'true'
         # bound_claims is a map. Passing JSON-looking text as one CLI argument
@@ -423,6 +444,15 @@ jobs:
         # verdict in both rollout states and the wiring that reaches it — a gate
         # that runs after latest already moved has verified nothing that matters.
         run: bash scripts/tests/test-verify-published-evidence.sh
+
+      - name: 🔐 Validate the shared-publish-workflow pin guard
+        if: needs.changes.outputs.k8s == 'true'
+        # The guard fails by PASSING: a widened cosign matcher still verifies, so
+        # nothing else in CI notices. This pins the shapes it must reject — above
+        # all the SHA-or-tag alternation removed in #3022, which is the exact
+        # prior contents of all eight subjects and would otherwise revert in
+        # silence — plus the floor and the wiring that reaches it.
+        run: bash scripts/tests/test-shared-publish-workflow-pin-guard.sh
 
       - name: 📋 Validate Kubescape finding summary
         if: needs.changes.outputs.k8s == 'true'

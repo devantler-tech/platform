@@ -246,52 +246,56 @@ const (
 // infrastructure/controllers} plus k8s/clusters/prod/{bootstrap,} for both
 // trees and diff them.
 //
-// Measured against base 0ca55381 while re-enabling the Kubescape posture
-// scanner's policy-artifact fetch: 514 rendered documents on both sides across
-// all five roots (122 apps, 209 infrastructure, 176 controllers, 4 bootstrap,
-// 3 prod), with membership IDENTICAL — zero added, removed, or renamed. Four of
-// the five roots are byte-identical. Exactly ONE line moves in the whole
-// production render:
+// Measured while releasing the Cilium homogeneous-device rollout gate, by
+// rendering all five roots from both trees and diffing them. Four of the five
+// roots — apps, infrastructure, bootstrap, prod — are byte-identical.
+// Membership is unchanged: zero documents added, removed, or renamed. Exactly
+// FOUR lines move in the whole production render, all of them inside the same
+// document:
 //
-//	helm.toolkit.fluxcd.io/v2  HelmRelease  kubescape/kubescape
-//	  values.capabilities.kubescapeOffline: enable -> disable
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  kube-system/cilium
+//	  spec.upgrade.disableWait: true            (removed)
+//	  spec.values.updateStrategy.type: OnDelete (removed)
+//	  spec.values.updateStrategy.rollingUpdate  (removed)
 //
-// That field decides one thing in the chart: whether KS_OFFLINE=true is set on
-// the scanner container. It reaches no identity, binding, policy document, or
-// service account. Its only other chart use ORs into clusterData.keepLocal,
-// which is `or (offline) (not serviceDiscovery.enabled)` — serviceDiscovery is
-// false here, so that value stays true either way and does not move. The
-// accompanying cilium-network-policy.yaml edit is comment-only and renders to
-// nothing, which the byte-identical infrastructure root confirms.
-//
-// All Role / ClusterRole / RoleBinding / ClusterRoleBinding / ServiceAccount
-// documents are byte-identical, as is every `aws`-bearing line — trivially so,
-// since a single non-RBAC line differs across the entire surface.
+// Both were temporary overrides carried only while the widened device set was
+// being introduced one node at a time. `updateStrategy` selects how the Cilium
+// DaemonSet replaces pods and `upgrade.disableWait` selects whether Helm waits
+// for them; neither reaches an identity, binding, policy document, or service
+// account, and neither is an `aws`-bearing line. Every Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount document is byte-identical
+// — trivially so, since the four differing lines are the entire delta across
+// the surface and all four belong to one HelmRelease's rollout mechanics.
 //
 // The fingerprint itself was read from the required job's own output on the
 // approved renderer, because the local toolchain is refused as unapproved.
-// Measured against main 56536122 while adding the CNPG serving health gate:
-// 520 rendered documents on BOTH sides across all five roots, with membership
-// IDENTICAL — set difference in BOTH directions over every
-// apiVersion|kind|namespace|name identity returned zero, so nothing was added,
-// removed, or renamed. Exactly four pinned entries move, and they are the four
-// re-approved alongside this value:
 //
-//	kro.run/v1alpha1                ResourceGraphDefinition  tenant.kro.run
-//	kustomize.toolkit.fluxcd.io/v1  Kustomization            flux-system/apps
-//	kustomize.toolkit.fluxcd.io/v1  Kustomization            flux-system/infrastructure
-//	kustomize.toolkit.fluxcd.io/v1  Kustomization            wedding-app/wedding-app
+// This value covers removing the `refs/tags/v.+` signer alternative from the
+// shared-publish-workflow cosign matchers (#3022). Measured against main
+// cd47606c by rendering all five roots from both trees: 515 documents on both
+// sides, membership IDENTICAL — set difference in BOTH directions over
+// apiVersion|kind|namespace|name returned zero, so nothing was added, removed
+// or renamed. Exactly SEVEN lines move in the whole production render, and
+// every one of them is a cosign subject matcher losing its tag alternative:
 //
-// The complete rendered delta is 24 lines, every one of them ADDED and every one
-// part of a `healthCheckExprs` entry gating on a serving CNPG `Cluster`; none is
-// removed or modified. A health-check expression is read-only deploy-gating
-// input to kstatus — it cannot grant an identity or a permission.
+//	source.toolkit.fluxcd.io/v1  OCIRepository  {wedding-app, ascoachingogvaner,
+//	                                             doggy-countdown, github-config, aws}
+//	kro.run/v1alpha1             ResourceGraphDefinition  tenant.kro.run
+//	policies.kyverno.io/v1alpha1 ImageValidatingPolicy    verify-app-images
 //
-// No grant-bearing object moved: the Role / ClusterRole / RoleBinding /
-// ClusterRoleBinding / ServiceAccount projection is BYTE-IDENTICAL across the
-// two trees (37,932 bytes each), so nothing granted to the aws/aws service
+//	  @([0-9a-f]{40}|refs/tags/v.+)  ->  @[0-9a-f]{40}
+//
+// It is strictly a tightening: every subject the new matcher accepts, the old
+// one already accepted. No grant-bearing object moved — those seven lines are
+// the ENTIRE delta across the surface, so every Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount document is byte-identical,
+// as is every `aws`-bearing line. Nothing granted to the aws/aws service
 // account this validator exists to protect is touched.
-const expectedRenderedSurfaceSHA = "77253fcfb010d7798ba94af325529a883983b7a6f2a856e0b95a769cddaf535c"
+//
+// (The eighth narrowed subject lives in talos/cluster/verify-first-party-images
+// .yaml, which is Talos machine config rather than a Kubernetes manifest and so
+// is outside this rendered surface entirely.)
+const expectedRenderedSurfaceSHA = "4d54629149b43fc6aa43004353fc92e3f1f95e154bcb750bf6b2b70fb4848e49"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -345,16 +349,16 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "opencost-usage-scraper"}:                            "4b28e1da280a7940a1cb4d538bc31ede1b5d272c17189a81afeae48acbb8b7a0",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "33f21e92144c84754577e5c3ae681658c469414c7adc00d454b2def7c6bcbe95",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "e23c61eb872c6aafaceed74e400479d034ee636735880d6b4a6de338cd0c32a9",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "a0b12b336d39709cb2f491662a3c8dd98269485b6a33935101e0bf9f03ec8925",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "1a2ecb3104630c44466d846159ee68ff6a98888887c02ecd0278782793dead4a",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "7f674a1762f298330c7c9e4d9d4e8bf46108b10727e02a25ca5096d7913cc0a7",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "d1bc403b6458bd22cf967bd570e24718341cbd584f58e7f0069aaffe1e187945",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "312d84288f510b4a38d985385487a52cb2dc1c634bbcbab8dc5e438689891189",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "9d9b62d3221442d6355d16a34d31c198619fb3b3728df960fd67222a531ece7b",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "8e9f72b0f4f982d050aff0b97d246c68b538cbc397cdd45d031c95cfae981e7c",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "47c63f6a762caeacf257ddd32cbbeb3f3568eeea0e258ec006621579114731ff",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "8af27d4845565c57b9ebc618f186669f18ada89e070cf4e6514924717a2532f8",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "6cca0d2d0e7874bf3f0c82f4e04f151d6c172eeae7929a8dbacbf37ed9793a6c",
 }
 
 // fingerprint returns the SHA-256 identity used for byte-exact source checks.
