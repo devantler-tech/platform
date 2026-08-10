@@ -574,12 +574,16 @@ jobs:
         #
         # TWO frameworks, because one does not cover the exception surface. The
         # ClusterSecurityException CRs name 76 distinct controls; NSA-CISA
-        # evaluates 20 of them, so 59 excepted controls were outside the gate
+        # evaluates 17 of them, so 59 excepted controls were outside the gate
         # entirely — including every RBAC control the CRs exist to govern, whose
-        # findings were therefore neither gated nor reported. MITRE ATT&CK adds
-        # 10 of those back (measured 2026-08-10), among them C-0053, C-0015 and
-        # C-0007, which carry real residual findings. The remaining 49 are in
-        # neither framework; #2823 tracks that residue.
+        # findings were therefore neither gated nor reported. MITRE ATT&CK brings
+        # 7 of those under it (measured 2026-08-10): C-0007, C-0015, C-0031,
+        # C-0037, C-0045, C-0048, C-0053 — of which C-0053, C-0015 and C-0007
+        # carry real residual findings. 52 excepted controls remain in neither
+        # framework; #2823 tracks that residue.
+        #
+        # NB the two counts differ: MITRE adds 10 controls to the SCAN (nsa 20,
+        # mitre 17, union 30), but only 7 of them are ones we except.
         #
         # The scan consumes the platform's justified exceptions: the
         # ClusterSecurityException CRs (k8s/bases/infrastructure/
