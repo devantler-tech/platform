@@ -158,22 +158,34 @@ check_workflow() {
   return "$rc"
 }
 
-# Emit `<lineno>:<text>` for each line that invokes the scan, excluding comments.
+# Emit `<lineno>:<text>` for each line that INVOKES the scan.
 #
-# ⚠️ RESIDUAL, tracked on #3060: this reads raw YAML rather than parsing the
-# workflow's `run:` scalars, so an OUTPUT-ONLY command that merely prints the
-# invocation (`echo 'ksail workload scan --framework nsa,mitre'`) still counts.
-# Closing that needs a YAML-aware parser, not another excluded prefix — every
-# blacklisted spelling invites the next one. The fail-closed path already covers
-# the realistic case: any form this cannot read is a failure, never a pass.
+# 🔴 THIS IS AN ALLOW-LIST, AND THAT IS THE WHOLE DESIGN. The line's first
+# non-blank token must be `ksail`. Anything else — a comment, `echo`, `printf`,
+# `cat`, a heredoc body, `:`, `true &&`, a quoted string in a `with:` block — is
+# not an invocation and does not count.
+#
+# The earlier version subtracted known decoys instead: first comments, and then
+# `echo` would have been next. That list is unbounded, and each round closes one
+# spelling while leaving the class open — so the direction is inverted here.
+# Requiring the one shape both workflows actually use closes every spelling at
+# once, including the ones nobody has thought of.
+#
+# Both reviewers on #3057 arrived at this independently, from different decoys.
+#
+# The cost is deliberate: a legitimate future invocation that is NOT a bare
+# `ksail …` line (wrapped in `env`, `xargs`, or a shell function) stops matching
+# and trips the fail-closed path. That is the correct direction — the guard
+# refuses to bless a form it cannot read, rather than guessing.
 scan_invocations() {
-  local match text
+  local match text stripped
   while IFS= read -r match; do
     [ -n "$match" ] || continue
     text="${match#*:}"
-    # Reject a line whose first non-blank character is `#`.
-    case "${text#"${text%%[![:space:]]*}"}" in '#'*) continue ;; esac
-    printf '%s\n' "$match"
+    stripped="${text#"${text%%[![:space:]]*}"}"
+    case "$stripped" in
+      ksail[[:space:]]*) printf '%s\n' "$match" ;;
+    esac
   done < <(grep -nE 'ksail workload scan[^|]*--framework[[:space:]]+[a-z,]+' "$1" || true)
 }
 

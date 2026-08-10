@@ -114,6 +114,17 @@ assert_rejected 'a stale COMMENT naming both frameworks over a variable invocati
   '# ksail workload scan --framework nsa,mitre  <- stale comment'
 assert_rejected 'an indented comment decoy' \
   '   # ksail workload scan --framework nsa,mitre'
+# The allow-list closes the whole class, not just the two spellings reviewers
+# happened to send. Each of these would have needed its own exclusion under a
+# blacklist; all are rejected by requiring `ksail` as the first token.
+assert_rejected 'an echo decoy (output-only, executable)' \
+  "echo 'ksail workload scan --framework nsa,mitre'"
+assert_rejected 'a printf decoy' \
+  "printf '%s' 'ksail workload scan --framework nsa,mitre'"
+assert_rejected 'a decoy behind a shell prefix' \
+  'true && echo ksail workload scan --framework nsa,mitre'
+assert_rejected 'a decoy inside a quoted YAML string value' \
+  'FRAMEWORKS_DOC="ksail workload scan --framework nsa,mitre"'
 
 # --- The MAIN-BRANCH BASELINE must match, or alerts never persist ------------
 # Both workflows upload under one Code Scanning category, so a baseline scanning
