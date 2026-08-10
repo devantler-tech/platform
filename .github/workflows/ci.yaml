@@ -58,6 +58,14 @@ jobs:
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
+      # Dropping a framework from the Kubescape gate REMOVES findings, so the
+      # compliance score RISES and every check stays green — a coverage
+      # regression that looks like an improvement. That is what un-gated 59
+      # excepted controls for weeks (#2823). Unconditional, like the guard
+      # above: the property it protects is not confined to the k8s paths.
+      - name: 🔐 Validate the Kubescape gate's framework coverage
+        run: ./scripts/guard-kubescape-gate-frameworks.sh
+
       # .github/actionlint.yaml silences actionlint's "unexpected key" diagnostic
       # for concurrency.queue, which also removes its enum check. This restores it.
       - name: 🚦 Validate concurrency queue values
@@ -146,6 +154,9 @@ jobs:
               # or a widened allow-list would ship with every check still green.
               - 'scripts/guard-shared-publish-workflow-pin.sh'
               - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
+              # Both halves, for the same reason as the guard above.
+              - 'scripts/guard-kubescape-gate-frameworks.sh'
+              - 'scripts/tests/test-kubescape-gate-frameworks-guard.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
@@ -453,6 +464,14 @@ jobs:
         # prior contents of all eight subjects and would otherwise revert in
         # silence — plus the floor and the wiring that reaches it.
         run: bash scripts/tests/test-shared-publish-workflow-pin-guard.sh
+
+      - name: 🧪 Test the Kubescape framework-coverage guard
+        if: needs.changes.outputs.k8s == 'true'
+        # Pins the shapes the guard must reject — above all the pre-#3057
+        # `--framework nsa` gate, which is the exact prior configuration and
+        # would otherwise revert in silence — plus its fail-closed behaviour
+        # when the scan step moves, and the wiring that reaches it.
+        run: bash scripts/tests/test-kubescape-gate-frameworks-guard.sh
 
       - name: 📋 Validate Kubescape finding summary
         if: needs.changes.outputs.k8s == 'true'
