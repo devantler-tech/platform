@@ -173,6 +173,11 @@ assert_accepted 'a punctuated framework name present identically in both' \
 
 # A framework list the guard cannot read literally must FAIL CLOSED rather than
 # be silently truncated to whatever prefix happens to match.
+#
+# The single quotes are the fixture: this is the literal TEXT `--framework
+# "$FRAMEWORKS"` written into a synthetic workflow, not an expansion. Expanding
+# it here would write whatever this shell holds and test nothing.
+# shellcheck disable=SC2016
 assert_rejected 'a variable framework list' \
   'ksail workload scan --framework "$FRAMEWORKS" --compliance-threshold 95'
 
