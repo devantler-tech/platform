@@ -133,6 +133,38 @@ require_rule() {
     "${description}"
 }
 
+# The closed half of the contract: every rule present must be one of the rules
+# named here.
+#
+# `require_rule` only proves a signature is PRESENT, which is a one-directional
+# claim. A third entry granting get/list/watch on some unrelated resource — core
+# `configmaps`, say — satisfies both required-rule assertions, carries no
+# wildcard, and uses no mutating verb, so it passes every other check in this
+# file while quietly widening what the exporter can read.
+#
+# Least privilege is a statement about the WHOLE role, not about the rules
+# someone remembered to assert, so the allowed set has to be closed. This is
+# also what makes the "exactly one ... rule" wording on the assertions below
+# true rather than aspirational.
+reject_unexpected_rules() {
+  local cluster_role="$1"
+  shift
+
+  local actual expected_signature matched
+  while IFS= read -r actual; do
+    [ -z "${actual}" ] && continue
+    matched=0
+    for expected_signature in "$@"; do
+      if [ "${actual}" = "${expected_signature}" ]; then
+        matched=1
+        break
+      fi
+    done
+    [ "${matched}" -eq 1 ] ||
+      fail "the exporter must hold no RBAC rule beyond the two it needs (found: ${actual})"
+  done <<<"$(rule_signatures <<<"${cluster_role}")"
+}
+
 extract_resource() {
   local kind="$1"
   local name="$2"
@@ -376,6 +408,12 @@ require_rule \
   "${cluster_role}" \
   'apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[get,list,watch]' \
   'the exporter must hold exactly one read-only rule granting the CRD read its GVK discovery requires'
+
+# Closes the set: the two rules above are the ONLY rules this role may carry.
+reject_unexpected_rules \
+  "${cluster_role}" \
+  'apiGroups=[repo.github.m.upbound.io] resources=[repositories] verbs=[get,list,watch]' \
+  'apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[get,list,watch]'
 
 # A metrics exporter able to read every custom resource could also read provider
 # configuration it has no need for.
