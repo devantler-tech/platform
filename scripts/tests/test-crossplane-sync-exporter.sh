@@ -119,18 +119,37 @@ rule_signatures() {
   '
 }
 
-# Assert one whole rule, by signature. `require_line` on the signature stream is
-# deliberate: it is the same exact-whole-line comparison used everywhere else in
+# Assert one whole rule, by signature, and assert there is EXACTLY one of it.
+#
+# Counting rather than matching is what makes the "exactly one ... rule" wording
+# on the assertions below true. A presence check answers "at least one", so a
+# role carrying the same grant twice satisfies it, and `reject_unexpected_rules`
+# cannot catch that either: a duplicate is by definition a member of the allowed
+# set. The pair would then enforce "at least one of each, and no other KIND of
+# rule" while claiming to enforce "exactly one of each".
+#
+# The duplicate grants no additional Kubernetes permission — RBAC is a union, so
+# two identical rules authorise exactly what one does. It is asserted anyway
+# because a role that accumulated a duplicate is a role someone edited without
+# noticing what was already there, and that is the edit most likely to widen the
+# next grant by mistake.
+#
+# The comparison stays the exact trimmed-whole-line one used everywhere else in
 # this file, now applied to a unit that carries meaning.
 require_rule() {
   local cluster_role="$1"
   local signature="$2"
   local description="$3"
+  local line matches=0
 
-  require_line \
-    "$(rule_signatures <<<"${cluster_role}")" \
-    "${signature}" \
-    "${description}"
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ "${line}" = "${signature}" ] && matches=$((matches + 1))
+  done <<<"$(rule_signatures <<<"${cluster_role}")"
+
+  [ "${matches}" -eq 1 ] ||
+    fail "${description} (found ${matches} matching rules, expected exactly 1)"
 }
 
 # The closed half of the contract: every rule present must be one of the rules
@@ -143,9 +162,10 @@ require_rule() {
 # file while quietly widening what the exporter can read.
 #
 # Least privilege is a statement about the WHOLE role, not about the rules
-# someone remembered to assert, so the allowed set has to be closed. This is
-# also what makes the "exactly one ... rule" wording on the assertions below
-# true rather than aspirational.
+# someone remembered to assert, so the allowed set has to be closed. This closes
+# it in one direction only — no rule outside the allowed set — which is why
+# `require_rule` counts rather than merely matching: a duplicate of an allowed
+# rule is a member of the allowed set, so nothing here would reject it.
 reject_unexpected_rules() {
   local cluster_role="$1"
   shift
