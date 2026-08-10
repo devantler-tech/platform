@@ -172,6 +172,14 @@ jobs:
           sudo install /tmp/ksail /usr/local/bin/ksail
           ksail --version
 
+      # The guard runs HERE too, not only in ci.yaml. A direct push to main
+      # bypasses the merge queue, so without this a push that reduced the scan
+      # below would execute that reduced scan with nothing checking it — the
+      # exact gap this workflow exists to close, reopened one level up.
+      # (Codex raised this on #3057.)
+      - name: 🔐 Validate the Kubescape gate's framework coverage
+        run: ./scripts/guard-kubescape-gate-frameworks.sh
+
       - name: 🔎 Scan manifests (Kubescape NSA + MITRE)
         # Same invocation and same justified exceptions as ci.yaml's gate, so
         # the two analyses are comparable. The threshold is kept: main can only

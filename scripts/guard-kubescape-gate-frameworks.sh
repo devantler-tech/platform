@@ -58,12 +58,42 @@ main() {
     check_workflow "$workflow" || rc=1
   done
 
+  # The required members are a FLOOR; the workflows must also agree EXACTLY.
+  # Both upload under one Code Scanning category, so any framework present in
+  # one and absent from the other is findings that appear on PRs but never
+  # persist on main, or a framework main gates on that PRs never see. Checking
+  # membership alone accepted `nsa,mitre,pss` against an `nsa,mitre` baseline.
+  # (Codex raised this on #3057.)
+  if [ "$rc" -eq 0 ]; then
+    local first_set='' first_wf='' set_i
+    for workflow in "${WORKFLOWS[@]}"; do
+      set_i="$(framework_set "$workflow")"
+      if [ -z "$first_set" ]; then
+        first_set="$set_i"
+        first_wf="$workflow"
+      elif [ "$set_i" != "$first_set" ]; then
+        printf '::error::framework sets differ: %s has [%s] but %s has [%s].\n' \
+          "$first_wf" "$first_set" "$workflow" "$set_i" >&2
+        printf '::error::Both upload to one Code Scanning category, so a difference means findings that never persist. See #2823.\n' >&2
+        rc=1
+      fi
+    done
+  fi
+
   if [ "$rc" -ne 0 ]; then
     exit 1
   fi
 
-  printf 'Kubescape gate evaluates all %d required framework(s) in %d workflow(s).\n' \
+  printf 'Kubescape gate: %d required framework(s), identical sets across %d workflow(s).\n' \
     "${#REQUIRED_FRAMEWORKS[@]}" "${#WORKFLOWS[@]}"
+}
+
+# Echo a workflow's framework list, normalised (deduplicated, sorted, comma-joined)
+# so ordering and repetition cannot make two equal sets compare unequal.
+framework_set() {
+  scan_invocations "$1" |
+    sed -nE 's/.*--framework[[:space:]]+([a-z,]+).*/\1/p' |
+    tr ',' '\n' | sed '/^$/d' | sort -u | paste -sd, -
 }
 
 check_workflow() {
@@ -89,14 +119,10 @@ check_workflow() {
   # on a repository scanning one framework. A decoy is covered by the test
   # suite. (Codex raised this on #3057.)
   local -a scan_lines=()
-  local match text
+  local match
   while IFS= read -r match; do
-    [ -n "$match" ] || continue
-    # Strip the `N:` prefix, then reject a line whose first non-blank char is #.
-    text="${match#*:}"
-    case "${text#"${text%%[![:space:]]*}"}" in '#'*) continue ;; esac
-    scan_lines+=("$match")
-  done < <(grep -nE 'ksail workload scan[^|]*--framework[[:space:]]+[a-z,]+' "$WORKFLOW" || true)
+    [ -n "$match" ] && scan_lines+=("$match")
+  done < <(scan_invocations "$WORKFLOW")
 
   if [ "${#scan_lines[@]}" -eq 0 ]; then
     printf '::error::no executable "ksail workload scan --framework ..." invocation found in %s.\n' "$WORKFLOW" >&2
@@ -130,6 +156,25 @@ check_workflow() {
   done
 
   return "$rc"
+}
+
+# Emit `<lineno>:<text>` for each line that invokes the scan, excluding comments.
+#
+# ⚠️ RESIDUAL, tracked on #3059: this reads raw YAML rather than parsing the
+# workflow's `run:` scalars, so an OUTPUT-ONLY command that merely prints the
+# invocation (`echo 'ksail workload scan --framework nsa,mitre'`) still counts.
+# Closing that needs a YAML-aware parser, not another excluded prefix — every
+# blacklisted spelling invites the next one. The fail-closed path already covers
+# the realistic case: any form this cannot read is a failure, never a pass.
+scan_invocations() {
+  local match text
+  while IFS= read -r match; do
+    [ -n "$match" ] || continue
+    text="${match#*:}"
+    # Reject a line whose first non-blank character is `#`.
+    case "${text#"${text%%[![:space:]]*}"}" in '#'*) continue ;; esac
+    printf '%s\n' "$match"
+  done < <(grep -nE 'ksail workload scan[^|]*--framework[[:space:]]+[a-z,]+' "$1" || true)
 }
 
 main "$@"

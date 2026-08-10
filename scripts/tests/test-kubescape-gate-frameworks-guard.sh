@@ -78,8 +78,21 @@ assert_accepted 'the current nsa,mitre configuration' \
   'ksail workload scan --framework nsa,mitre --exceptions /tmp/e.json --compliance-threshold 95 --format sarif -o out.sarif'
 assert_accepted 'a different framework ORDER' \
   'ksail workload scan --framework mitre,nsa --exceptions /tmp/e.json --compliance-threshold 95'
-assert_accepted 'an ADDITIONAL framework alongside the required ones' \
+# An extra framework is fine ONLY if BOTH workflows carry it — otherwise the two
+# analyses disagree under one Code Scanning category. My first version asserted
+# the mismatched case as GREEN, which encoded the bug Codex then found.
+assert_accepted 'an ADDITIONAL framework present in BOTH workflows' \
+  'ksail workload scan --framework nsa,mitre,pss --compliance-threshold 95' \
   'ksail workload scan --framework nsa,mitre,pss --compliance-threshold 95'
+assert_rejected 'an ADDITIONAL framework in ci.yaml ONLY (sets differ)' \
+  'ksail workload scan --framework nsa,mitre,pss --compliance-threshold 95' \
+  'ksail workload scan --framework nsa,mitre --compliance-threshold 95'
+assert_rejected 'an ADDITIONAL framework in the MAIN baseline only' \
+  'ksail workload scan --framework nsa,mitre --compliance-threshold 95' \
+  'ksail workload scan --framework nsa,mitre,pss --compliance-threshold 95'
+assert_accepted 'sets equal but written in a different ORDER' \
+  'ksail workload scan --framework mitre,nsa,pss --compliance-threshold 95' \
+  'ksail workload scan --framework pss,nsa,mitre --compliance-threshold 95'
 
 # --- RED: every way the coverage could silently regress ----------------------
 # This is the exact pre-#3057 state, and the regression the guard exists for.
@@ -147,6 +160,11 @@ grep -qE 'ksail workload scan .*--framework[[:space:]]+nsa,mitre' \
   "${root_dir}/.github/workflows/validate-main.yaml" ||
   fail 'wiring: validate-main.yaml does not scan nsa,mitre — the main baseline would not match the PR analysis'
 ok 'validate-main.yaml scans the same frameworks as the PR gate'
+
+grep -qF 'scripts/guard-kubescape-gate-frameworks.sh' \
+  "${root_dir}/.github/workflows/validate-main.yaml" ||
+  fail 'wiring: validate-main.yaml never invokes the guard — a direct push to main would be unchecked'
+ok 'validate-main.yaml invokes the guard'
 
 grep -qF 'scripts/tests/test-kubescape-gate-frameworks-guard.sh' "$workflow" ||
   fail 'wiring: ci.yaml never runs THIS test — the guard could be widened with every check green'
