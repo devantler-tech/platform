@@ -9,6 +9,13 @@ apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
   name: vpa-managed-resources
+  annotations:
+    # Cluster-wide, and KNOWN to be wider than its own rationale: the reason
+    # below holds only where a VPA object actually right-sizes the workload,
+    # which is not every namespace. Narrowing it to the workloads VPA manages
+    # is tracked in #2824 alongside the same defect in pod-security-mutations.
+    # Declared here so the scope is a recorded decision rather than an omission.
+    platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
     VPA manages resource requests and limits at pod admission time.

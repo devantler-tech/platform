@@ -162,77 +162,92 @@ Flux reconciliation.
 > secrets, because `ksail cluster create` writes fresh configs on the runner.
 > The manual procedure below is the fallback when GitHub Actions itself is
 > unavailable.
-
-```bash
-# 1. Set credentials locally
-export HCLOUD_TOKEN=<hetzner-cloud-api-token>
-export WG_SERVER_PRIVATE_KEY=<wireguard-server-private-key>
-export GHCR_TOKEN=<ghcr-pat-with-packages-read-write>
-export GITHUB_ACTOR=devantler
-export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt  # points at the env's Age key
-talosctl version --client  # must be installed; use the prod-pinned v1.13.5
-
-# 2. Prove the Git/SOPS pull credential can read every private package before
-#    creating infrastructure or publishing a mutable latest tag
-./scripts/refresh-flux-ghcr-auth.sh --check-only
-
-# 3. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
-./scripts/run-ksail-prod-with-pull-auth.sh cluster create
-
-# 4. Bootstrap Flux from this repo
-./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
-./scripts/run-ksail-prod-with-pull-auth.sh workload push
-./scripts/refresh-flux-ghcr-auth.sh --check-only
-./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
-
-# 5. Wait for Flux to settle
-for k in bootstrap infrastructure-controllers infrastructure apps; do
-  kubectl --context admin@prod -n flux-system wait "kustomization/${k}" \
-    --for=condition=Ready --timeout=20m
-done
-./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out + every stale node
-
-# 6. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
-#     in R2 — the vault came up fresh): re-feed the user-fed secrets that
-#     SOPS deliberately does not seed (see the push-secret-seed-* files in
-#     k8s/bases/infrastructure/vault-seed/). Until then,
-#     cert-manager DNS01, external-dns, and fleetdm stay pending:
-kubectl -n openbao exec openbao-0 -- \
-  bao kv put secret/infrastructure/dns/cloudflare api_token=<cloudflare-token>
-kubectl -n openbao exec openbao-0 -- \
-  bao kv put secret/apps/fleetdm/license license-key=<fleet-license-jwt>
-
-# 5. DNS — normally NO manual step: external-dns (hetzner overlay,
-#    policy: sync, gateway-httproute source) repoints the Cloudflare
-#    records at the new load balancer automatically once the HTTPRoutes
-#    are Ready and its Cloudflare token has re-synced from the vault.
-#    Verify, and only intervene if external-dns itself is broken:
-kubectl -n external-dns logs deploy/external-dns | tail -20
-kubectl -n kube-system get svc cilium-gateway-platform \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-# Fallback only: update A/AAAA records for ${domain} at your DNS provider.
-
-# 6. Restore Velero backups (apps + PVCs)
-kubectl -n velero create -f - <<EOF
-apiVersion: velero.io/v1
-kind: Restore
-metadata:
-  name: rebuild-$(date +%s)
-  namespace: velero
-spec:
-  backupName: <pick-latest-from-velero-backup-get>
-  includedNamespaces:
-    - "*"
-  excludedNamespaces:
-    - kube-system
-    - velero
-EOF
-
-# 7. (If any CNPG Cluster exists) restore from R2
-kubectl cnpg restore <new-cluster-name> \
-  --backup <backup-name> \
-  --target-time '<RFC3339-timestamp-or-omit-for-latest>'
-```
+>
+> ```bash
+> # 1. Set credentials locally
+> export HCLOUD_TOKEN=<hetzner-cloud-api-token>
+> export WG_SERVER_PRIVATE_KEY=<wireguard-server-private-key>
+> export GHCR_TOKEN=<ghcr-pat-with-packages-read>
+> export GITHUB_ACTOR=devantler
+> export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt  # points at the env's Age key
+> talosctl version --client  # must be installed; use the prod-pinned v1.13.7
+>
+> # 2. Prove the Git/SOPS pull credential can read every private package before
+> #    creating infrastructure or publishing a mutable latest tag
+> ./scripts/refresh-flux-ghcr-auth.sh --check-only
+>
+> # 3. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
+> ./scripts/run-ksail-prod-with-pull-auth.sh cluster create
+>
+> # 4. Bootstrap Flux from the most recently evidenced latest artifact. The
+> #    Actions-unavailable fallback cannot mint the workflow OIDC evidence, so
+> #    it deliberately leaves latest untouched instead of publishing weaker
+> #    bytes. Use the one-button workflow for a new publication transaction.
+> ./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
+> ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
+> export DOCKER_CONFIG="$(mktemp -d)"
+> trap 'rm -rf "${DOCKER_CONFIG}"' EXIT
+> printf '%s' "${GHCR_TOKEN}" |
+>   docker login ghcr.io --username "${GITHUB_ACTOR}" --password-stdin
+> PLATFORM_MANIFEST_DIGEST="$(docker buildx imagetools inspect 'ghcr.io/devantler-tech/platform/manifests:latest' --format '{{.Manifest.Digest}}')"
+> [[ "${PLATFORM_MANIFEST_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+>   printf 'Invalid platform manifest digest: %s\n' "${PLATFORM_MANIFEST_DIGEST:-<empty>}" >&2
+>   exit 1
+> }
+> ./scripts/refresh-flux-ghcr-auth.sh --check-only
+> ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
+> ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
+>
+> # 5. Wait for Flux to settle
+> for k in bootstrap infrastructure-controllers infrastructure apps; do
+>   kubectl --context admin@prod -n flux-system wait "kustomization/${k}" \
+>     --for=condition=Ready --timeout=20m
+> done
+> ./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out + every stale node
+> CILIUM_ROLLOUT_REVISION_READY=true \
+>   ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
+>
+> # 6. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
+> #     in R2 — the vault came up fresh): re-feed the user-fed secrets that
+> #     SOPS deliberately does not seed (see the push-secret-seed-* files in
+> #     k8s/bases/infrastructure/vault-seed/). Until then,
+> #     cert-manager DNS01, external-dns, and fleetdm stay pending:
+> kubectl -n openbao exec openbao-0 -- \
+>   bao kv put secret/infrastructure/dns/cloudflare api_token=<cloudflare-token>
+> kubectl -n openbao exec openbao-0 -- \
+>   bao kv put secret/apps/fleetdm/license license-key=<fleet-license-jwt>
+>
+> # 5. DNS — normally NO manual step: external-dns (hetzner overlay,
+> #    policy: sync, gateway-httproute source) repoints the Cloudflare
+> #    records at the new load balancer automatically once the HTTPRoutes
+> #    are Ready and its Cloudflare token has re-synced from the vault.
+> #    Verify, and only intervene if external-dns itself is broken:
+> kubectl -n external-dns logs deploy/external-dns | tail -20
+> kubectl -n kube-system get svc cilium-gateway-platform \
+>   -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+> # Fallback only: update A/AAAA records for ${domain} at your DNS provider.
+>
+> # 6. Restore Velero backups (apps + PVCs)
+> kubectl -n velero create -f - <<EOF
+> apiVersion: velero.io/v1
+> kind: Restore
+> metadata:
+>   name: rebuild-$(date +%s)
+>   namespace: velero
+> spec:
+>   backupName: <pick-latest-from-velero-backup-get>
+>   includedNamespaces:
+>     - "*"
+>   excludedNamespaces:
+>     - kube-system
+>     - velero
+> EOF
+>
+> # 7. (If any CNPG Cluster exists) restore from R2
+> kubectl cnpg restore <new-cluster-name> \
+>   --backup <backup-name> \
+>   --target-time '<RFC3339-timestamp-or-omit-for-latest>'
+> ```
 
 If this is the **first time** restoring after losing the SOPS keys, replace
 step 3 with the rotation flow in Scenario 6 first.
@@ -438,7 +453,7 @@ Common causes:
 Autoscaler. Clean up manually:
 
 ```bash
-hcloud server list --selector cluster.autoscaler.nodeGroupLabel
+hcloud server list --selector hcloud/node-group
 # Delete each orphaned server
 hcloud server delete <server-id>
 ```
@@ -528,10 +543,11 @@ The production deploy closes the bootstrap loop in this order:
    read-only `--check-only` pass happens before infrastructure creation.
 2. Before changing mutable `latest`, list every Kubernetes Node (including
    NotReady/autoscaled nodes). For each node whose **verified** ciphertext
-   revision is stale, apply the supported Talos `RegistryAuthConfig` in
-   no-reboot mode, workers before control planes; pull the exact live KSail
-   operator image through the Talos CRI; and only then record the verified
-   revision. A distinct desired revision in the committed Talos configuration
+   revision or verified image differs from the declared incoming KSail image,
+   apply the supported Talos `RegistryAuthConfig` in no-reboot mode, workers
+   before control planes; remove that exact target from the Talos CRI cache;
+   pull it again to force a registry round-trip; and only then record both proof
+   markers. A distinct desired revision in the committed Talos configuration
    refreshes future Cluster Autoscaler templates but never counts as proof.
 3. Patch `variables-base`; force-sync
    `seed-ghcr` into OpenBao; force-sync the tenant/Kyverno ExternalSecrets;
@@ -541,15 +557,24 @@ The production deploy closes the bootstrap loop in this order:
    `--allow-incomplete-fanout` mode stages `variables-base` and repairs root auth
    so the first reconcile can create the chain. Normal mode fails closed on any
    missing fan-out resource.
-4. Push and sign the artifact with `GHCR_TOKEN`, revalidate the newly-published
-   artifact with `--check-only`, and only then explicitly reconcile Flux. DR
-   runs the full bridge again after every Flux Kustomization is Ready, proving
-   that bootstrap mode completed the entire fan-out, and once more after an
-   OpenBao raft restore so a snapshot cannot rematerialise an older credential.
+4. Push the artifact to a run-unique staging reference. Resolve its digest,
+   cosign-sign it keyless, and attach its CycloneDX SBOM and SLSA provenance
+   before promoting that exact digest to `latest`. Fulcio mints the certificate
+   from the workflow's OIDC identity (`dr-rebuild.yaml@refs/heads/main`), and
+   `GHCR_TOKEN` only pushes the artifact and its evidence. That identity must
+   stay listed in `ksail.prod.yaml`'s `matchOIDCIdentity`, or a recovery
+   publishes an artifact a verifying cluster refuses. Any failure before
+   promotion leaves the prior `latest` digest unchanged. Revalidate the
+   promoted artifact with `--check-only`, and only then explicitly reconcile
+   Flux. DR runs the full bridge again after every Flux Kustomization is Ready,
+   proving that bootstrap mode completed the entire fan-out, and once more
+   after an OpenBao raft restore so a snapshot cannot rematerialise an older
+   credential.
 5. Re-run the bridge after `cluster update`; it repairs any node left stale by
    a partial lifecycle operation and re-verifies the root plus downstream
-   fan-out. Nodes already carrying the verified revision skip Talos API calls,
-   so an ordinary deploy does not depend on every Talos endpoint.
+   fan-out. Nodes carrying proof for both the current credential revision and
+   declared image skip Talos API calls, so an ordinary deploy does not depend
+   on every Talos endpoint.
 
 For a normal rotation, update the encrypted value through a PR and let the merge
 queue deploy it. If the encrypted file was pushed directly to `main`, manually

@@ -1,0 +1,45 @@
+# Trivy misconfiguration checks skipped on this repository, with the reason each one is skipped.
+#
+# The bar here is the same one .mega-linter.yml applies: a skip names a technical reason that
+# survives checking, and nothing is hidden merely because it is noisy. Anything that describes real
+# state stays enabled and gets fixed at the manifest instead — see #2787, which tracks driving
+# checkov and trivy to zero on k8s/ so both can leave DISABLE_ERRORS_LINTERS.
+
+misconfigurations:
+  # KSV-0039 "limit range usage" — 450 of trivy's 614 findings on this tree (73%), all LOW.
+  #
+  # The check is evaluated per FILE, but a LimitRange is a namespace-scoped object that this
+  # repository deliberately keeps in its own base (k8s/bases/infrastructure/limit-ranges/, plus the
+  # longhorn overlay). So the check asks every file whether it contains a LimitRange, and every file
+  # that is not one answers no. That includes objects which cannot carry a LimitRange at all — the
+  # firing set is 46 helm-release.yaml, 46 cilium-network-policy.yaml, 42 helm-repository.yaml,
+  # 23 pod-disruption-budget.yaml, 14 http-route.yaml, 13 external-secret.yaml, 8 network-policy.yaml,
+  # 6 flux-kustomization.yaml.
+  #
+  # It also fires on the LimitRange manifests themselves — limit-ranges/kube-system.yaml,
+  # limit-ranges/kyverno.yaml and controllers/longhorn/limit-range.yaml. A check reporting "limit
+  # range usage" against a LimitRange is reading file contents rather than namespace state, and no
+  # per-file edit can satisfy it.
+  #
+  # Skipping it is therefore not a threshold or a deferral: there is nothing to fix. It is also what
+  # makes the rest of the scan readable — the residual findings contain HIGH/CRITICAL RBAC breadth
+  # that was previously buried in a count of 614.
+  - id: KSV-0039
+    statement: >-
+      LimitRange is namespace-scoped but this check evaluates each file independently, including
+      resources that cannot carry a LimitRange and the LimitRange manifests themselves.
+
+  # KSV-0109 matches identifier text rather than secret material at both sites below. Keep the
+  # dispositions separate so each path carries the reason that was checked against its content.
+  - id: KSV-0109
+    paths:
+      - k8s/bases/apps/actual-budget/config-map.yaml
+    statement: >-
+      The ConfigMap embeds public JavaScript source that reads credentials from an ESO-mounted
+      Secret; Trivy matches the source identifiers containing secretKey, not credential values.
+  - id: KSV-0109
+    paths:
+      - k8s/clusters/prod/bootstrap/config-map.yaml
+    statement: >-
+      external_secrets_replicas is a public controller replica count; Trivy matches the word
+      secrets in the key name, not secret material.

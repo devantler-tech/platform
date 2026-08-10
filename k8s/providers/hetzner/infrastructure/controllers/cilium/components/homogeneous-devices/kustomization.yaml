@@ -1,0 +1,147 @@
+# Default-off staging component for platform#2029 / platform#2610.
+#
+# Widens Cilium's eBPF device selection from the private-NIC pin
+# (`devices: "enp7s0 eth1"`, enforce-wireguard-strict-mode.yaml) to BOTH NICs
+# on every node via wildcard patterns, so the BPF masquerade program that
+# ebpf-host-routing (#2609) stages can attach to the PUBLIC default-route
+# NICs — pod->internet egress leaves through them, and BPF masquerading only
+# processes interfaces carrying Cilium's eBPF programs. Without this, enabling
+# ebpf-host-routing would disable iptables masquerade while installing no BPF
+# masquerade on the egress NICs: pod traffic would leave with an unroutable
+# pod-CIDR source and external egress would break cluster-wide.
+#
+# WHY WILDCARDS (the homogeneous strategy, live-verified): upstream requires
+# manually listed bandwidth-manager device names to be consistent on every
+# managed node, and this fleet's NIC names are CLASS-heterogeneous — live
+# inventory 2026-07-18 (`talosctl get addresses` + `kubectl get nodes`, all
+# NINE nodes):
+#
+#   static nodes  (prod-control-plane-2/4/5, prod-worker-1/2/3):
+#     public enp1s0 (default route + public IP) / private enp7s0 (10.0.1.x)
+#   autoscale nodes (autoscale-cx33-*/cx43-* cattle):
+#     public eth0 (default route + public IP + IPv6) / private eth1 (10.0.1.x)
+#
+# Note this INVERTS the 2026-06-19 "workers enp7s0 / control-planes eth1"
+# premise recorded in enforce-wireguard-strict-mode.yaml: the control planes
+# have since been rebuilt onto enp-named machines (confirmed live: all three
+# CP agents report devices=[enp7s0]), and the split is now static-vs-autoscale.
+# Today's two-name pin still covers every node's PRIVATE NIC — but only by
+# UNION (static->enp7s0, autoscale->eth1), each node matching exactly one name.
+#
+# An explicit four-name list ("enp7s0 eth1 enp1s0 eth0") would leave every
+# node with two names that do not exist on it — exactly what upstream's
+# bandwidth-manager consistency guidance forbids. A wildcard pattern list is
+# IDENTICAL on every node and resolves per node to only the devices that
+# exist (upstream documents wildcards for exactly this heterogeneous-naming
+# case). "en+ eth+" matches all four current names, nothing else on these
+# hosts (bond0/dummy0 and Cilium's own cilium_*/lxc* interfaces don't match
+# or are auto-excluded), and also absorbs future autoscaler node-type naming
+# drift (ens*/eno* would still match en+) — retiring the standing WARNING in
+# the strict-mode patch about differently-named private NICs.
+#
+# PRIMARY-ADDRESS RISK — why this stays default-off and activation must
+# prove it per node: the private-only pin exists so each node's PRIMARY
+# address (VXLAN/WireGuard tunnel endpoint, cilium-health, routing — see
+# enforce-wireguard-strict-mode.yaml) stays the private 10.0.1.x that the
+# Talos ingress firewall admits on 4240/4250/8472. Re-admitting the public
+# NICs into the device set re-admits public addresses as primary candidates.
+# Upstream documents that multi-device direct-routing selection prefers the
+# device holding the Kubernetes InternalIP (private here, on every node), but
+# the node-address selection of the running 1.20.0-pre.4 is not documented
+# precisely enough to TRUST that the primary stays private — the 2026-06-19
+# incident showed device-set changes can flip it. So: activate one node at a
+# time and verify before proceeding (runbook below). Cilium node-control traffic
+# must continue to use the private path admitted by the Talos firewall.
+#
+# ROLLOUT STATE: the widened device set is live on all nine nodes, and the
+# temporary operator-stepping overrides this component used to carry
+# (`updateStrategy: OnDelete` plus the Helm `spec.upgrade.disableWait` handoff)
+# are gone. The DaemonSet is back on the chart's normal rolling update, so a
+# future Cilium template change rolls the fleet the ordinary way.
+#
+# The private-primary risk described above is a property of the widened device
+# set itself, not of the introduction, so it still applies: any NEW node — every
+# autoscaler-created one included — boots the widened set directly. Verify the
+# first such node like a stepped one (agent Ready; its log shows both NICs; the
+# node's advertised router/tunnel addresses stay 10.0.1.x per `kubectl get
+# ciliumnodes`; no cilium-health regression or auth-timeout storm).
+#
+# ROLLBACK: re-comment the component reference in ../../../kustomization.yaml —
+# the template reverts to the private-only pin and every node rolls back under
+# the restored rolling update.
+#
+# ebpf-host-routing (#2609) is unblocked by this activation and becomes
+# referenceable; bandwidth-manager-bbr follows its own soak (see those
+# components' guards).
+#
+# STEPPED-ROLLOUT RUNBOOK — the procedure for any FUTURE change to this
+# component's device set, and the steps
+# scripts/report-cilium-rollout-gate-suppression.sh cites when the gate's
+# 7-day warning or 14-day failure fires. It is live guidance, not a record of
+# the completed rollout: reintroducing `updateStrategy: OnDelete` plus
+# `spec.upgrade.disableWait` here is what re-arms the gate, and nothing else
+# does (the guard reads it as active only when this component is referenced AND
+# carries `type: OnDelete`).
+#   0. Confirm `cluster-autoscaler-hetzner-cluster-autoscaler` is at zero — the
+#      deploy records its replica count and scales it down before publishing —
+#      and that over-provisioning headroom is idle enough that no scale-up would
+#      have fired. The guard is fail-closed; never bypass a failed suspension.
+#   1. Reference the component with both overrides and declare
+#      `platform.devantler.tech/rollout-gate-activated: <YYYY-MM-DD>` beside it.
+#      Under OnDelete no agent restarts yet; the set is staged in the agent
+#      ConfigMap only. Watch for INVOLUNTARY canaries from here: any cilium pod
+#      that restarts for an unrelated reason boots the new set — verify it at
+#      once with step 2.
+#   2. Delete ONE node's cilium pod and verify its replacement before touching
+#      the next: agent Ready; its log shows the intended device set; the node's
+#      advertised router/tunnel addresses stay 10.0.1.x (`kubectl get
+#      ciliumnodes`) — a PUBLIC primary is a rollback, not a warning;
+#      cilium-health reachable; no new policy-verdict DROPs or auth-timeout
+#      storms.
+#   3. Repeat node by node, then soak. If any desired Cilium pod template value
+#      changes mid-rollout, compare every agent's `pod-template-generation`
+#      against the DaemonSet generation and re-step every stale node, including
+#      ones verified before the change. An older canary never approves a newer
+#      template.
+#   4. RELEASE: once every agent is Ready at the current DaemonSet generation,
+#      a follow-up PR removes the `updateStrategy` and `spec.upgrade.disableWait`
+#      overrides and the activation marker. The pre-publish guard independently
+#      re-checks that no agent is stale, so it refuses a premature release. With
+#      the fleet already on the current template, returning to RollingUpdate
+#      rolls nothing. A chart or other Helm-value change stages and soaks
+#      separately.
+#   5. That release restores the deploy: `ksail cluster update` runs again and
+#      the post-deploy guard restores the recorded autoscaler replica count.
+#      Verify the FIRST autoscaler-created node afterwards like a stepped one —
+#      it boots the new set directly.
+#
+# MERGE-ORDER NOTE (load-bearing): parent `patches:` are applied AFTER all
+# component patches — a devices value carried by
+# patches/enforce-wireguard-strict-mode.yaml could NEVER be overridden by this
+# component (render-verified on #2610's delivery PR: with this component
+# enabled against a patch-carried pin, the patch value still won). That is why
+# the live pin lives in ../private-nic-devices/ (a component), and why THIS
+# component must be listed AFTER it in the parent's `components:` — components
+# apply in list order, later wins (also render-verified). Do not move either
+# device selection back into a parent patch.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: cilium
+      namespace: kube-system
+    patch: |
+      - op: replace
+        path: /spec/values/devices
+        value: "en+ eth+"
+      # The wildcard device set includes each node's public NIC. Keep Cilium's
+      # kube-proxy-replacement NodePort listeners on private node addresses so
+      # tenant-created Services cannot bypass the Gateway exposure boundary.
+      - op: add
+        path: /spec/values/nodePort
+        value:
+          addresses:
+            - 10.0.0.0/16

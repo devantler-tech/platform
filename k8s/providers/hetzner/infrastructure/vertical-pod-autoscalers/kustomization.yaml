@@ -19,6 +19,8 @@
 #     cpu 50m/mem 64Mi, maxAllowed cpu 3/mem 6Gi.
 #   * `vpa-tier: daemonset` → tighter maxAllowed cpu 1/mem 1Gi, so a per-node pod
 #     still fits the smallest autoscale-cx23 worker.
+#   * kyverno-admission-controller → RequestsOnly with a 1Gi memory ceiling, so
+#     VPA right-sizes requests without replacing the authored 1Gi safety limit.
 #   * spire-server → updateMode Initial: it is a singleton StatefulSet on an RWO
 #     volume, so it is right-sized only at its next natural restart, never evicted.
 #
@@ -112,6 +114,41 @@ patches:
         path: /spec/resourcePolicy/containerPolicies/0/maxAllowed
         value:
           cpu: "1"
+  # kyverno admission + reports controllers: cap CPU below the hot-loop level.
+  # Their leader replicas hot-loop (aggregate-report-controller measured at
+  # ~23 no-op reconciles/s, 1.6-2M cumulative; leader steadily burning ~1 CPU
+  # while the standby idles), so an uncapped VPA faithfully sizes the whole
+  # deployment for the pathology: reports hit 1836m and admission 1168m
+  # requests, ~6.2 requested cores across the pairs — which alone tipped the
+  # fleet past the static workers and ratcheted FOUR autoscale nodes into
+  # existence (the 2026-07-16 snapshot-slot deadlock's other half; same class
+  # as the 2026-06-30 DaemonSet ratchet above). CPU is compressible: capping
+  # only throttles the degenerate loop, never correctness. Root-cause hunt for
+  # the loop itself is tracked on the platform issue referenced in the PR.
+  # The reports controller keeps the shared 6Gi memory ceiling. Admission is
+  # different: its authored 1Gi limit is the known-safe fail-closed boundary, so
+  # its patch also uses RequestsOnly and caps the managed request at that limit.
+  - target:
+      kind: VerticalPodAutoscaler
+      name: kyverno-reports-controller
+    patch: |
+      - op: replace
+        path: /spec/resourcePolicy/containerPolicies/0/maxAllowed
+        value:
+          cpu: 500m
+          memory: 6Gi
+  - target:
+      kind: VerticalPodAutoscaler
+      name: kyverno-admission-controller
+    patch: |
+      - op: replace
+        path: /spec/resourcePolicy/containerPolicies/0/maxAllowed
+        value:
+          cpu: 800m
+          memory: 1Gi
+      - op: replace
+        path: /spec/resourcePolicy/containerPolicies/0/controlledValues
+        value: RequestsOnly
   # spire-server: singleton StatefulSet on an RWO volume — never evict.
   - target:
       kind: VerticalPodAutoscaler

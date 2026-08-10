@@ -46,6 +46,15 @@ kind: CronJob
 metadata:
   name: umami-provision-tenants
   namespace: umami
+  annotations:
+    # UID 1001 is the umami image's own baked user, not a number picked here:
+    # the image config sets `User: "nextjs"`, and that image's /etc/passwd
+    # reads `nextjs:x:1001:65533`. The container reuses the umami image for its
+    # Node runtime and runs out of its /app WORKDIR, so the UID that owns that
+    # tree is the one to run as. Raising it above 10000 would break the match
+    # the image asks for, and this workload is only deployed to the Hetzner
+    # provider, so nothing in CI would catch it going wrong.
+    checkov.io/skip1: CKV_K8S_40=UID 1001 is the umami image's baked `nextjs` user, which owns its /app WORKDIR
 spec:
   schedule: "*/15 * * * *"
   # Never run two reconciles at once; a slow run (e.g. waiting on a down Umami)
@@ -163,16 +172,14 @@ spec:
                   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
                   const H = (t) => ({ 'content-type': 'application/json', ...(t ? { authorization: 'Bearer ' + t } : {}) });
                   const asArray = (j) => Array.isArray(j) ? j : (j && Array.isArray(j.data) ? j.data : []);
-                  // This cluster enforces Cilium mutual authentication
-                  // (CiliumClusterwideNetworkPolicy require-mutual-auth, mode:
-                  // required). The FIRST packet from this short-lived pod to umami is
-                  // dropped while the SPIRE handshake is established, so a one-shot
-                  // fetch intermittently throws `TypeError: fetch failed`. The
-                  // ensureAuth loop below already absorbs that for login, but
+                  // A short-lived pod can race endpoint readiness or transient CNI
+                  // convergence, so a one-shot fetch can intermittently throw
+                  // `TypeError: fetch failed`. The ensureAuth loop below already
+                  // absorbs that for login, but
                   // ensureTeam/ensureWebsite/ensureMember called fetch exactly once
-                  // each -- a single dropped packet failed the whole run (observed:
-                  // `fetch failed at async ensureTeam`). Retry only THROWN (network)
-                  // errors; an HTTP error RESPONSE is returned untouched so every
+                  // each -- a transient network error failed the whole run (observed:
+                  // `fetch failed at async ensureTeam`). Retry thrown fetch errors;
+                  // an HTTP error RESPONSE is returned untouched so every
                   // caller's existing !r.ok / status handling is preserved.
                   const fetchRetry = async (u, o) => {
                     for (let i = 0; ; i++) {
