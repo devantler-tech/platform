@@ -123,6 +123,28 @@ workflow_invocation() {
     return 1
   fi
 
+  # 🔴 THE SAME RULE AT LINE GRANULARITY, and it is not redundant. The matcher is
+  # line-oriented, so `ksail … && ksail …` on ONE physical line is a single
+  # record — the count above sees 1 and passes. `framework_argument`'s leading
+  # `.*` is then GREEDY and reads the LAST `--framework` on the line, so a line
+  # whose FIRST scan writes the uploaded SARIF and whose second writes a
+  # throwaway is judged on the throwaway's framework set.
+  #
+  # Measured on #3057: `--framework nsa,mitre,pss … && … --framework nsa,mitre`
+  # reads as `nsa,mitre` and compares equal to an `nsa,mitre` baseline, while the
+  # analysis that actually reaches Code Scanning covered three frameworks.
+  # Rejecting is right rather than reading the first match: which scan feeds the
+  # uploader is a shell-ordering question this guard deliberately does not parse.
+  # (Codex raised this on #3057.)
+  local scan_count
+  scan_count="$(printf '%s' "${scan_lines[0]#*:}" | grep -o 'ksail workload scan' | wc -l | tr -d '[:space:]')"
+  if [ "$scan_count" -gt 1 ]; then
+    printf '::error file=%s,line=%s::%d scan commands share one line; the guard cannot tell which produces the uploaded SARIF.\n' \
+      "$workflow" "${scan_lines[0]%%:*}" "$scan_count" >&2
+    printf '::error::Put each scan on its own line so the uploaded framework set is unambiguous. See #2823.\n' >&2
+    return 1
+  fi
+
   printf '%s\n' "${scan_lines[0]}"
 }
 

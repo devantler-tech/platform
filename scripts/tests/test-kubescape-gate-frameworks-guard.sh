@@ -210,6 +210,16 @@ run_two_invocations() {
   fail 'two scan invocations: expected REJECT — the union hides which set is uploaded'
 ok 'rejects a workflow carrying two scan invocations'
 
+# The line-granularity arm of the same rule, and NOT covered by the one above:
+# the matcher is line-oriented, so two scans chained on ONE line count as a
+# single invocation. `framework_argument`'s leading `.*` is greedy, so it reads
+# the LAST `--framework` — here the throwaway — while the FIRST scan is the one
+# writing the uploaded SARIF. Measured: the guard read `nsa,mitre` and compared
+# equal to an `nsa,mitre` baseline covering three fewer frameworks than the
+# analysis that actually reached Code Scanning. (Codex, #3057.)
+assert_rejected 'two scan commands sharing one line' \
+  'ksail workload scan --framework nsa,mitre,pss -o up.sarif && ksail workload scan --framework nsa,mitre -o throwaway.sarif'
+
 "$guard" >/dev/null || fail 'wiring: the guard does not pass against the real ci.yaml'
 ok 'the real ci.yaml satisfies the guard'
 
