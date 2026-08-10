@@ -17,30 +17,37 @@ metadata:
   name: pod-security-mutations
   annotations:
     # Cluster-wide, and KNOWN to be wider than its own rationale (#2824). The
-    # compensating mutation named below does not run everywhere: its
-    # add-container-security-context rule excludes twelve namespaces —
+    # compensating mutation named below excludes twelve namespaces —
     # kube-system, kube-public, kube-node-lease, flux-system, longhorn-system,
     # local-path-storage, kubescape, kubevirt, cdi, observability, velero,
-    # chaos-mesh — and its add-pod-security-context rule excludes three more,
-    # cert-manager, keda and opencost. In those namespaces this exception
-    # suppresses C-0013/C-0016/C-0055/C-0211 with nothing injecting them.
-    # Six of the twelve are separately excepted for C-0013/C-0016/C-0055 in
-    # infrastructure-privileged.yaml, and kubescape-privileged.yaml covers the
-    # node-agent DaemonSet and storage Deployment by name; C-0211 is exempted
-    # in no other CR, so it is uncovered wherever the mutation is absent.
-    # Narrowing it needs a scope the CSE designators cannot yet spell (an
-    # In-list would fail every newly-onboarded namespace), which is why this
+    # chaos-mesh — so in exactly those namespaces this exception suppresses
+    # C-0013/C-0016/C-0055/C-0211 with nothing injecting them. Six of the twelve
+    # are separately and deliberately excepted for C-0013/C-0016/C-0055 in
+    # infrastructure-privileged.yaml; C-0211 and the other six are not covered
+    # anywhere. Narrowing it needs a scope the CSE designators cannot yet spell
+    # (an In-list would fail every newly-onboarded namespace), which is why this
     # is declared rather than fixed here.
     #
-    # Measured surface (prod, 2026-08-10) — the residual risk is small and
-    # sized, which is what makes the declaration reviewable rather than open
-    # ended: kube-public, kube-node-lease, local-path-storage and chaos-mesh
-    # run no workloads at all. Of the 24 workloads in the remaining namespaces,
-    # 19 satisfy these controls in their own specs and 2 (the node-agent
-    # DaemonSet and storage Deployment) are excepted by name above. The
-    # remaining 3 — the kubescape, kubevuln and operator Deployments — genuinely
-    # fail, each lacking capabilities.drop: [ALL] and a container-level
-    # seccompProfile. Hardening those three is tracked in #3064.
+    # cert-manager, keda and opencost are NOT part of that set even though
+    # add-pod-security-context excludes them: add-imageuid-pod-security-context
+    # matches those three namespaces by name and supplies the pod-level fields.
+    # Read the mutation's match blocks, not only its exclusions.
+    #
+    # Measured surface for C-0013/C-0016/C-0055 (prod, 2026-08-10), which is
+    # what makes the declaration reviewable rather than open ended: of the
+    # twelve namespaces, kube-public, kube-node-lease, local-path-storage and
+    # chaos-mesh run no workloads at all. In the rest, the container-level
+    # fields these controls check are already set in-spec everywhere except the
+    # kubescape, kubevuln and operator Deployments, which lack
+    # capabilities.drop: [ALL] and a container-level seccompProfile. Hardening
+    # those three is tracked in #3064.
+    #
+    # C-0211 is deliberately NOT sized here. It has no other exception, its
+    # field set differs from the three above (fsGroupChangePolicy, runAsUser
+    # and runAsGroup are supplied by the mutation), and the name-scoped
+    # kubescape-privileged.yaml does not cover it — so node-agent and storage
+    # remain inside its residual population rather than excepted out of it.
+    # Sizing it needs its own per-workload pass; #3064 carries that.
     platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
