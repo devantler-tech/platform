@@ -158,6 +158,53 @@ ok 'fails closed when no scan invocation is found'
 # --- Wiring: the real workflow satisfies the guard, and CI actually calls it --
 [ -f "$workflow" ] || fail "wiring: ${workflow} not found"
 
+# A framework name carrying punctuation must survive parsing INTACT. With the
+# pre-fix `[a-z,]+` class, `cis-v1.23-t1.0.1` and `cis-v1.24-t1.0.0` both
+# truncated to `cis`, so these two workflows — scanning genuinely different
+# framework sets — compared EQUAL and the exact-set check reported them
+# identical. (Codex raised this on #3057.)
+assert_rejected 'framework sets differing only in a punctuated suffix' \
+  'ksail workload scan --framework nsa,mitre,cis-v1.23-t1.0.1 --compliance-threshold 95' \
+  'ksail workload scan --framework nsa,mitre,cis-v1.24-t1.0.0 --compliance-threshold 95'
+
+assert_accepted 'a punctuated framework name present identically in both' \
+  'ksail workload scan --framework nsa,mitre,cis-v1.23-t1.0.1 --compliance-threshold 95' \
+  'ksail workload scan --framework nsa,mitre,cis-v1.23-t1.0.1 --compliance-threshold 95'
+
+# A framework list the guard cannot read literally must FAIL CLOSED rather than
+# be silently truncated to whatever prefix happens to match.
+assert_rejected 'a variable framework list' \
+  'ksail workload scan --framework "$FRAMEWORKS" --compliance-threshold 95'
+
+# TWO scan invocations in one workflow must be REJECTED, not unioned: the union
+# loses which set produced the SARIF that actually reaches the uploader, so a
+# workflow that scans nsa,mitre,pss and then overwrites the same SARIF with an
+# nsa,mitre scan compared equal to an nsa,mitre,pss baseline. (Codex, #3057.)
+run_two_invocations() {
+  local tmp rc
+  tmp="$(mktemp -d)"
+  mkdir -p "${tmp}/scripts" "${tmp}/.github/workflows"
+  cp "$guard" "${tmp}/scripts/"
+  {
+    printf 'jobs:\n  validate:\n    steps:\n      - name: scan\n        run: |\n'
+    printf '          ksail workload scan --framework nsa,mitre,pss --compliance-threshold 95\n'
+    printf '          ksail workload scan --framework nsa,mitre --compliance-threshold 95\n'
+  } >"${tmp}/.github/workflows/ci.yaml"
+  {
+    printf 'jobs:\n  validate:\n    steps:\n      - name: scan\n        run: |\n'
+    printf '          ksail workload scan --framework nsa,mitre,pss --compliance-threshold 95\n'
+  } >"${tmp}/.github/workflows/validate-main.yaml"
+  set +e
+  (cd "$tmp" && ./scripts/guard-kubescape-gate-frameworks.sh >/dev/null 2>&1)
+  rc=$?
+  set -e
+  rm -rf "$tmp"
+  printf '%s' "$rc"
+}
+[ "$(run_two_invocations)" -ne 0 ] ||
+  fail 'two scan invocations: expected REJECT — the union hides which set is uploaded'
+ok 'rejects a workflow carrying two scan invocations'
+
 "$guard" >/dev/null || fail 'wiring: the guard does not pass against the real ci.yaml'
 ok 'the real ci.yaml satisfies the guard'
 
@@ -187,6 +234,26 @@ command -v yq >/dev/null ||
 # turns the whole pipeline non-zero. The assertion then reports "the guard is not
 # wired" on a repository where it IS wired: a false FAILURE that would be
 # "fixed" by deleting the assertion. Measured while fixing #3057.
+# The paired NEGATIVE arm for the assertions below: a workflow that only MENTIONS
+# the guard — in a step name and a YAML comment, with no step running it — must
+# not satisfy them. This is the decoy that kept the old raw-text grep green while
+# the real `run:` step was deleted, and validate-main.yaml carries exactly such a
+# comment today.
+decoy_workflow="$(mktemp -d)/mention-only.yaml"
+{
+  printf '# scripts/guard-kubescape-gate-frameworks.sh enforces the match.\n'
+  printf 'jobs:\n  validate:\n    steps:\n'
+  printf '      - name: scripts/guard-kubescape-gate-frameworks.sh\n'
+  printf '        run: echo unrelated\n'
+} >"$decoy_workflow"
+grep -qF 'scripts/guard-kubescape-gate-frameworks.sh' "$decoy_workflow" ||
+  fail 'decoy: the fixture must contain the mention it is testing'
+if grep -qF 'scripts/guard-kubescape-gate-frameworks.sh' <<<"$(workflow_run_values "$decoy_workflow")"; then
+  fail 'decoy: a comment/step-name mention satisfied the wiring check — deleting the real step would go unnoticed'
+fi
+rm -rf "$(dirname "$decoy_workflow")"
+ok 'a mention outside an executable step does NOT satisfy the wiring check'
+
 ci_run_values="$(workflow_run_values "$workflow")"
 main_run_values="$(workflow_run_values "${root_dir}/.github/workflows/validate-main.yaml")"
 
