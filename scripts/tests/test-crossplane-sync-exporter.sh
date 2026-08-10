@@ -132,24 +132,31 @@ grep -Fq \
 # `k8s/clusters/{local,prod}` are not usable here: they render the Flux
 # Kustomization wiring and no Coroot resource at all, so an assertion against
 # them holds whatever the component reference says.
-coroot_rendered="$(kubectl kustomize "${coroot_dir}")" ||
-  fail "the ${coroot_dir} surface must render"
-require_text \
-  "${coroot_rendered}" \
-  'crossplane-sync-exporter' \
-  'the coroot base must reference the exporter component (activation withdrawn?)'
-
 hetzner_rendered="$(kubectl kustomize "${hetzner_infrastructure}")" ||
   fail "the ${hetzner_infrastructure} surface must render"
 require_text \
   "${hetzner_rendered}" \
   'crossplane-sync-exporter' \
-  'the exporter must reach the provider layer prod deploys, not just the base'
+  'the exporter must reach the provider layer prod deploys'
 
-# Negative control. Coroot is opt-in on the local Docker provider, so the
-# exporter must not follow the base into a local cluster that never asked for
-# Coroot. Without this the positive assertions above would also pass if the
-# component had been referenced from somewhere far too broad.
+# Negative control, and the load-bearing one. The exporter reads
+# `repo.github.m.upbound.io/Repository` resources, which exist only where
+# Crossplane and the github-config app are installed — the Hetzner overlay. So
+# the SHARED Coroot base must not carry the activation: anyone who opts Coroot
+# in on another provider would otherwise inherit a permanently empty sensor plus
+# cluster-wide RBAC for CRDs that are not present.
+#
+# This surface is what makes the pair non-vacuous. The Docker infrastructure
+# layer is checked below as well, but it leaves Coroot itself commented out, so
+# on its own it would also pass with the component referenced from the base —
+# it cannot distinguish default-off from Coroot-absent.
+coroot_rendered="$(kubectl kustomize "${coroot_dir}")" ||
+  fail "the ${coroot_dir} surface must render"
+reject_text \
+  "${coroot_rendered}" \
+  'crossplane-sync-exporter' \
+  'the shared coroot base must keep the exporter default-off'
+
 docker_rendered="$(kubectl kustomize "${docker_infrastructure}")" ||
   fail "the ${docker_infrastructure} surface must render"
 reject_text \

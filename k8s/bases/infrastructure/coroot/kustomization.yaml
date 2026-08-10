@@ -4,16 +4,15 @@
 # ships the `coroot.com/v1` CRD — is installed first. See coroot.yaml for the
 # full rationale. The operator and its satellite resources (namespace, network
 # policy, HTTPRoute, heartbeat CronJob) stay in infrastructure/controllers.
+#
+# `components/crossplane-sync-exporter` is deliberately NOT referenced here. It
+# reads `repo.github.m.upbound.io/Repository` managed resources, and Crossplane
+# is installed by the Hetzner overlay only — so on the Docker provider (where
+# Coroot is opt-in) it would deploy a permanently empty sensor plus cluster-wide
+# RBAC for CRDs that do not exist. The activation lives in
+# k8s/providers/hetzner/infrastructure/kustomization.yaml, the same placement
+# the OpenCost usage-scraper component uses.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - coroot.yaml
-components:
-  # Exports each Crossplane managed resource's conditions as metrics, so a
-  # resource that stops reconciling is visible instead of silent. A managed
-  # resource can report Ready=True while Synced=False — measured on 3 of the 20
-  # Repository resources right now — and every health check keyed on Ready reads
-  # that fleet as healthy while no declared setting is reaching the provider.
-  #
-  # The metric is the prerequisite for alerting on it; delivery is #2987.
-  - components/crossplane-sync-exporter
