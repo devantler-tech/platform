@@ -259,11 +259,79 @@ func TestDeployActionConsumerStagingPrecedesPublishAndIsReassertedAfterUpdate(t 
 	requireNotContains(t, action[firstRefresh:push], "--check-only")
 	requireContains(t, action[postPushRefresh:reconcile], "run: ./scripts/refresh-flux-ghcr-auth.sh --check-only")
 	finalRefreshStep := action[finalRefresh:]
-	requireContains(t, finalRefreshStep, "always() &&")
+	requireContains(t, finalRefreshStep, "!cancelled() &&")
 	requireContains(t, finalRefreshStep, "steps.verify_flux_ghcr_auth_after_push.outcome == 'success'")
 	requireContains(t, finalRefreshStep, "steps.reconcile.outcome == 'success'")
 	if count := strings.Count(action, "scripts/refresh-flux-ghcr-auth.sh"); count != 3 {
 		t.Errorf("refresh helper references = %d, want 3", count)
+	}
+}
+
+// splitCompositeSteps returns one string per step of a composite action, each
+// beginning at its own "- name:" line.
+func splitCompositeSteps(document string) []string {
+	const marker = "\n    - name:"
+	parts := strings.Split(document, marker)
+	if len(parts) < 2 {
+		return nil
+	}
+	steps := make([]string, 0, len(parts)-1)
+	for _, part := range parts[1:] {
+		steps = append(steps, strings.TrimPrefix(marker, "\n")+part)
+	}
+	return steps
+}
+
+// stepDirectives drops comment lines, so a rationale that merely mentions a
+// condition is never mistaken for the condition itself.
+func stepDirectives(step string) string {
+	lines := strings.Split(step, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+// A step running the refresh helper without --check-only acquires the
+// `ghcr-auth-refresh` Lease, which by design has no automatic expiry takeover:
+// Talos machine-config writes expose no fencing token, so a non-empty holder
+// always requires explicit human recovery. `always()` also runs after the job
+// is cancelled, and a cancelled job is force-killed once the runner's
+// post-cancellation grace expires — the EXIT trap's release never lands, and
+// every later deploy then fails to acquire the Lease. A merge-queue eviction
+// cancels this job routinely, so no lease-acquiring step may remain reachable
+// after cancellation.
+func TestDeployStepsThatTakeTheSyncLeaseNeverRunAfterCancellation(t *testing.T) {
+	action := readRepositoryFile(t, ".github/actions/deploy-prod/action.yml")
+
+	steps := splitCompositeSteps(action)
+	if len(steps) == 0 {
+		t.Fatal("expected the deploy action to contain composite steps")
+	}
+
+	inspected := 0
+	for _, step := range steps {
+		if !strings.Contains(step, "scripts/refresh-flux-ghcr-auth.sh") {
+			continue
+		}
+		if strings.Contains(step, "--check-only") {
+			// Read-only: exits before acquire_sync_lease, so it holds nothing.
+			continue
+		}
+		inspected++
+		if strings.Contains(stepDirectives(step), "always()") {
+			t.Errorf(
+				"step acquires the GHCR sync Lease under always(); a cancelled job is killed before cleanup releases it, wedging every later deploy:\n%s",
+				step,
+			)
+		}
+	}
+	if inspected != 2 {
+		t.Fatalf("lease-acquiring deploy steps inspected = %d, want 2", inspected)
 	}
 }
 
