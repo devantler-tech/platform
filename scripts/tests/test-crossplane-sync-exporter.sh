@@ -66,6 +66,73 @@ reject_text() {
   fi
 }
 
+# Collapse each `rules[]` entry into one canonical signature line:
+#
+#   apiGroups=[g1,g2] resources=[r1] verbs=[v1,v2]
+#
+# Line-at-a-time assertions cannot express what an RBAC rule actually MEANS. A
+# group, a resource and a verb set only grant anything when they sit in the SAME
+# entry, and independent `require_line` checks pass just as happily when they are
+# split across two rules — which grants something quite different from what the
+# assertions appear to say. Signatures make the grouping the thing being
+# asserted, so a split rule fails.
+#
+# Values within a key keep their document order; every rule here is written in
+# the canonical order kustomize emits, so this stays an exact comparison rather
+# than a set comparison that could mask a duplicated or reordered verb.
+rule_signatures() {
+  awk '
+    function flush() {
+      if (started) {
+        printf "apiGroups=[%s] resources=[%s] verbs=[%s]\n", groups, resources, verbs
+      }
+      groups = ""; resources = ""; verbs = ""; key = ""
+    }
+    function append(current, value) {
+      return current == "" ? value : current "," value
+    }
+
+    /^rules:[[:space:]]*$/ { in_rules = 1; next }
+    # Any other column-0 key ends the rules block.
+    /^[^[:space:]-]/ { if (in_rules) { flush(); started = 0; in_rules = 0 } }
+    !in_rules { next }
+
+    /^-[[:space:]]/ {
+      flush()
+      started = 1
+      sub(/^-[[:space:]]*/, "")
+    }
+    /^[[:space:]]*[a-zA-Z]+:[[:space:]]*$/ {
+      key = $0
+      gsub(/[[:space:]]|:/, "", key)
+      next
+    }
+    /^[[:space:]]*-[[:space:]]/ {
+      value = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      if (key == "apiGroups") { groups = append(groups, value) }
+      else if (key == "resources") { resources = append(resources, value) }
+      else if (key == "verbs") { verbs = append(verbs, value) }
+    }
+    END { flush() }
+  '
+}
+
+# Assert one whole rule, by signature. `require_line` on the signature stream is
+# deliberate: it is the same exact-whole-line comparison used everywhere else in
+# this file, now applied to a unit that carries meaning.
+require_rule() {
+  local cluster_role="$1"
+  local signature="$2"
+  local description="$3"
+
+  require_line \
+    "$(rule_signatures <<<"${cluster_role}")" \
+    "${signature}" \
+    "${description}"
+}
+
 extract_resource() {
   local kind="$1"
   local name="$2"
@@ -282,14 +349,10 @@ require_text \
 cluster_role="$(
   extract_resource ClusterRole crossplane-sync-exporter <<<"${rendered}"
 )" || fail 'the component must render the exporter ClusterRole'
-require_line \
+require_rule \
   "${cluster_role}" \
-  '- repo.github.m.upbound.io' \
-  'the exporter must be limited to the managed-resource group it exports'
-require_line \
-  "${cluster_role}" \
-  '- repositories' \
-  'the exporter must be limited to the resource it exports'
+  'apiGroups=[repo.github.m.upbound.io] resources=[repositories] verbs=[get,list,watch]' \
+  'the exporter must hold exactly one read-only rule on the managed resource it exports'
 
 # The DISCOVERY half of the RBAC, and the reason this component shipped dead
 # (#3068). kube-state-metrics resolves a CustomResourceStateMetrics
@@ -309,14 +372,10 @@ require_line \
 # consistent with the scoping rationale on the rule above: managed-resource
 # access, where provider configuration actually lives, stays pinned to the
 # kinds listed there.
-require_line \
+require_rule \
   "${cluster_role}" \
-  '- apiextensions.k8s.io' \
-  'the exporter must be able to reach the CRD API its GVK discovery requires'
-require_line \
-  "${cluster_role}" \
-  '- customresourcedefinitions' \
-  'the exporter must be able to read the CRD definitions it resolves its GVK through'
+  'apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[get,list,watch]' \
+  'the exporter must hold exactly one read-only rule granting the CRD read its GVK discovery requires'
 
 # A metrics exporter able to read every custom resource could also read provider
 # configuration it has no need for.
