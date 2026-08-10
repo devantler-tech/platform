@@ -22,8 +22,14 @@ readonly workflow="${root_dir}/.github/workflows/ci.yaml"
 
 pass_count=0
 
-fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
-ok() { pass_count=$((pass_count + 1)); printf 'ok — %s\n' "$1"; }
+fail() {
+  printf 'FAIL: %s\n' "$1" >&2
+  exit 1
+}
+ok() {
+  pass_count=$((pass_count + 1))
+  printf 'ok — %s\n' "$1"
+}
 
 # Build a synthetic repo whose ci.yaml carries the given scan line, run the guard
 # copy against it, and echo its exit status.
@@ -35,9 +41,9 @@ run_against() {
   {
     printf 'jobs:\n  validate:\n    steps:\n      - name: scan\n        run: |\n'
     printf '          %s\n' "$scan_line"
-  } > "${tmp}/.github/workflows/ci.yaml"
+  } >"${tmp}/.github/workflows/ci.yaml"
   set +e
-  ( cd "$tmp" && ./scripts/guard-kubescape-gate-frameworks.sh >/dev/null 2>&1 )
+  (cd "$tmp" && ./scripts/guard-kubescape-gate-frameworks.sh >/dev/null 2>&1)
   local rc=$?
   set -e
   rm -rf "$tmp"
@@ -85,9 +91,9 @@ tmp_empty="$(mktemp -d)"
 mkdir -p "${tmp_empty}/scripts" "${tmp_empty}/.github/workflows"
 cp "$guard" "${tmp_empty}/scripts/"
 printf 'jobs:\n  validate:\n    steps:\n      - run: echo no scan here\n' \
-  > "${tmp_empty}/.github/workflows/ci.yaml"
+  >"${tmp_empty}/.github/workflows/ci.yaml"
 set +e
-( cd "$tmp_empty" && ./scripts/guard-kubescape-gate-frameworks.sh >/dev/null 2>&1 )
+(cd "$tmp_empty" && ./scripts/guard-kubescape-gate-frameworks.sh >/dev/null 2>&1)
 rc_empty=$?
 set -e
 rm -rf "$tmp_empty"
@@ -100,12 +106,12 @@ ok 'fails closed when no scan invocation is found'
 "$guard" >/dev/null || fail 'wiring: the guard does not pass against the real ci.yaml'
 ok 'the real ci.yaml satisfies the guard'
 
-grep -qF 'scripts/guard-kubescape-gate-frameworks.sh' "$workflow" \
-  || fail 'wiring: ci.yaml never invokes the guard — an uncalled guard protects nothing'
+grep -qF 'scripts/guard-kubescape-gate-frameworks.sh' "$workflow" ||
+  fail 'wiring: ci.yaml never invokes the guard — an uncalled guard protects nothing'
 ok 'ci.yaml invokes the guard'
 
-grep -qF 'scripts/tests/test-kubescape-gate-frameworks-guard.sh' "$workflow" \
-  || fail 'wiring: ci.yaml never runs THIS test — the guard could be widened with every check green'
+grep -qF 'scripts/tests/test-kubescape-gate-frameworks-guard.sh' "$workflow" ||
+  fail 'wiring: ci.yaml never runs THIS test — the guard could be widened with every check green'
 ok 'ci.yaml runs this test'
 
 printf '\nAll %d assertions passed.\n' "$pass_count"
