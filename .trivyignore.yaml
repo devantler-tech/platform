@@ -50,9 +50,21 @@ misconfigurations:
   #
   # So this is scoped to the infrastructure trees rather than skipped outright, and that boundary is
   # what keeps the control working: all 47 sit under an infrastructure path, while k8s/bases/apps/**
-  # and the tenant trees stay covered. A user application given `namespace: kube-system` is still
-  # reported — verified with a temporary app manifest, which fails this check with the entry below
-  # in place.
+  # and k8s/clusters/** stay covered. A user application given `namespace: kube-system` is still
+  # reported — verified with a paired control, two copies of one manifest: the copy under
+  # k8s/bases/apps/ FAILS this check with this entry in place, and the copy under
+  # k8s/bases/infrastructure/ is excepted. Same bytes, different path, so the boundary is what
+  # decides rather than the file contents.
+  #
+  # ⚠️ This exception does NOT decide anything about tenant workloads, and it would be wrong to read
+  # it as covering them. Tenants are generated from the KRO ResourceGraphDefinitions under
+  # k8s/bases/infrastructure/resource-graph-definitions/, which are inside the scoped path — but
+  # trivy reports ZERO misconfigurations on those two resource-graph-definition.yaml files with or
+  # without this entry, because it does not evaluate the resource templates nested inside an RGD.
+  # Their generated workloads are therefore outside this scanner's reach either way; that is a
+  # pre-existing coverage gap tracked in #3055, not something this scoping introduces. Every
+  # template in them targets `${tenantNamespace.metadata.name}` today — the only kube-system
+  # references are RBAC grants naming the shared Gateway, not workload placement.
   - id: KSV-0037
     paths:
       - k8s/bases/infrastructure/**
