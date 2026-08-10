@@ -33,7 +33,17 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
 
-readonly WORKFLOW='.github/workflows/ci.yaml'
+# BOTH workflows, and that is the point rather than thoroughness. They upload
+# under the SAME Code Scanning category, so validate-main.yaml's run is the
+# durable main-branch baseline that ci.yaml's PR alerts are diffed against. If
+# the two scan different frameworks, findings only the PR sees never persist as
+# a main-branch alert, and a direct push to main — which bypasses the merge
+# queue — goes ungated on whatever the baseline omits. Caught by Codex on #3057
+# after the first version of this guard checked ci.yaml alone.
+readonly WORKFLOWS=(
+  '.github/workflows/ci.yaml'
+  '.github/workflows/validate-main.yaml'
+)
 
 # Every framework the gate must evaluate. `mitre` is here because it is the only
 # framework that reaches C-0007, C-0015, C-0031, C-0037, C-0045, C-0048 and
@@ -43,9 +53,25 @@ readonly REQUIRED_FRAMEWORKS=(nsa mitre)
 main() {
   cd "$REPO_ROOT"
 
+  local rc=0 workflow
+  for workflow in "${WORKFLOWS[@]}"; do
+    check_workflow "$workflow" || rc=1
+  done
+
+  if [ "$rc" -ne 0 ]; then
+    exit 1
+  fi
+
+  printf 'Kubescape gate evaluates all %d required framework(s) in %d workflow(s).\n' \
+    "${#REQUIRED_FRAMEWORKS[@]}" "${#WORKFLOWS[@]}"
+}
+
+check_workflow() {
+  local WORKFLOW="$1"
+
   if [ ! -f "$WORKFLOW" ]; then
     printf '::error::%s not found; nothing was validated\n' "$WORKFLOW" >&2
-    exit 1
+    return 1
   fi
 
   # A floor, because an empty result from a filtered read is a claim about the
@@ -55,16 +81,28 @@ main() {
   # `mapfile` is bash 4+; macOS ships bash 3.2, so a contributor on a Mac would
   # get `command not found` (exit 127) while CI's Ubuntu bash passed. Read the
   # matches into the array the portable way instead.
+  #
+  # COMMENTS ARE EXCLUDED, and that is load-bearing rather than tidiness. This
+  # reads raw YAML, so without it a stale comment naming both frameworks would
+  # satisfy the guard while the real command ran `--framework "$SOMEVAR"` — the
+  # grep would never see the variable form, find only the comment, and exit 0
+  # on a repository scanning one framework. A decoy is covered by the test
+  # suite. (Codex raised this on #3057.)
   local -a scan_lines=()
-  local match
+  local match text
   while IFS= read -r match; do
-    [ -n "$match" ] && scan_lines+=("$match")
+    [ -n "$match" ] || continue
+    # Strip the `N:` prefix, then reject a line whose first non-blank char is #.
+    text="${match#*:}"
+    case "${text#"${text%%[![:space:]]*}"}" in '#'*) continue ;; esac
+    scan_lines+=("$match")
   done < <(grep -nE 'ksail workload scan[^|]*--framework[[:space:]]+[a-z,]+' "$WORKFLOW" || true)
 
   if [ "${#scan_lines[@]}" -eq 0 ]; then
-    printf '::error::no "ksail workload scan --framework ..." invocation found in %s.\n' "$WORKFLOW" >&2
-    printf '::error::The gate moved or was renamed. Point this guard at it rather than deleting the guard.\n' >&2
-    exit 1
+    printf '::error::no executable "ksail workload scan --framework ..." invocation found in %s.\n' "$WORKFLOW" >&2
+    printf '::error::The gate moved, was renamed, or the framework list became a variable this guard cannot read.\n' >&2
+    printf '::error::Point the guard at it rather than deleting the guard.\n' >&2
+    return 1
   fi
 
   local rc=0 line lineno frameworks fw
@@ -91,12 +129,7 @@ main() {
     done
   done
 
-  if [ "$rc" -ne 0 ]; then
-    exit 1
-  fi
-
-  printf 'Kubescape gate evaluates all %d required framework(s) across %d invocation(s).\n' \
-    "${#REQUIRED_FRAMEWORKS[@]}" "${#scan_lines[@]}"
+  return "$rc"
 }
 
 main "$@"

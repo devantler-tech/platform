@@ -33,8 +33,13 @@ ok() {
 
 # Build a synthetic repo whose ci.yaml carries the given scan line, run the guard
 # copy against it, and echo its exit status.
+readonly GOOD_SCAN='ksail workload scan --framework nsa,mitre --compliance-threshold 95'
+
+# $1 = the ci.yaml scan line under test.
+# $2 = optional validate-main.yaml scan line; defaults to a good one so a single
+#      failing arm is always attributable to the file it varied.
 run_against() {
-  local scan_line="$1" tmp
+  local scan_line="$1" main_line="${2:-$GOOD_SCAN}" tmp
   tmp="$(mktemp -d)"
   mkdir -p "${tmp}/scripts" "${tmp}/.github/workflows"
   cp "$guard" "${tmp}/scripts/"
@@ -42,6 +47,10 @@ run_against() {
     printf 'jobs:\n  validate:\n    steps:\n      - name: scan\n        run: |\n'
     printf '          %s\n' "$scan_line"
   } >"${tmp}/.github/workflows/ci.yaml"
+  {
+    printf 'jobs:\n  validate:\n    steps:\n      - name: scan\n        run: |\n'
+    printf '          %s\n' "$main_line"
+  } >"${tmp}/.github/workflows/validate-main.yaml"
   set +e
   (cd "$tmp" && ./scripts/guard-kubescape-gate-frameworks.sh >/dev/null 2>&1)
   local rc=$?
@@ -51,15 +60,15 @@ run_against() {
 }
 
 assert_accepted() {
-  local label="$1" line="$2" rc
-  rc="$(run_against "$line")"
+  local label="$1" line="$2" main="${3:-}" rc
+  rc="$(run_against "$line" "${main:-$GOOD_SCAN}")"
   [ "$rc" -eq 0 ] || fail "${label}: expected the guard to ACCEPT (exit 0), got ${rc}"
   ok "accepts ${label}"
 }
 
 assert_rejected() {
-  local label="$1" line="$2" rc
-  rc="$(run_against "$line")"
+  local label="$1" line="$2" main="${3:-}" rc
+  rc="$(run_against "$line" "${main:-$GOOD_SCAN}")"
   [ "$rc" -ne 0 ] || fail "${label}: expected the guard to REJECT (non-zero), got 0 — it would pass a coverage regression"
   ok "rejects ${label}"
 }
@@ -84,6 +93,26 @@ assert_rejected 'an unrelated framework replacing both' \
 assert_rejected 'a name that merely CONTAINS a required framework' \
   'ksail workload scan --framework nsalike,mitrelike --compliance-threshold 95'
 
+# --- RED: the DECOY — a comment must not satisfy the guard -------------------
+# Raised by Codex on #3057. Without comment-stripping the grep sees only the
+# comment (the real command's `"$FRAMEWORKS"` never matches `[a-z,]+`), so the
+# guard exits 0 while CI evaluates NSA alone. This is the guard's own fail-open.
+assert_rejected 'a stale COMMENT naming both frameworks over a variable invocation' \
+  '# ksail workload scan --framework nsa,mitre  <- stale comment'
+assert_rejected 'an indented comment decoy' \
+  '   # ksail workload scan --framework nsa,mitre'
+
+# --- The MAIN-BRANCH BASELINE must match, or alerts never persist ------------
+# Both workflows upload under one Code Scanning category, so a baseline scanning
+# fewer frameworks means PR-only findings never become durable main alerts — and
+# a direct push to main is ungated on the difference. Codex, #3057.
+assert_rejected 'a correct ci.yaml with an nsa-only MAIN baseline' \
+  "$GOOD_SCAN" \
+  'ksail workload scan --framework nsa --compliance-threshold 95'
+assert_accepted 'both workflows on nsa,mitre' \
+  "$GOOD_SCAN" \
+  'ksail workload scan --framework mitre,nsa --compliance-threshold 95'
+
 # --- RED: the guard must fail CLOSED, never pass vacuously -------------------
 # If the step is renamed or moved, the grep finds nothing. Exiting 0 there would
 # report a protected repository while checking absolutely nothing.
@@ -92,6 +121,8 @@ mkdir -p "${tmp_empty}/scripts" "${tmp_empty}/.github/workflows"
 cp "$guard" "${tmp_empty}/scripts/"
 printf 'jobs:\n  validate:\n    steps:\n      - run: echo no scan here\n' \
   >"${tmp_empty}/.github/workflows/ci.yaml"
+printf 'jobs:\n  validate:\n    steps:\n      - run: |\n          %s\n' "$GOOD_SCAN" \
+  >"${tmp_empty}/.github/workflows/validate-main.yaml"
 set +e
 (cd "$tmp_empty" && ./scripts/guard-kubescape-gate-frameworks.sh >/dev/null 2>&1)
 rc_empty=$?
@@ -109,6 +140,13 @@ ok 'the real ci.yaml satisfies the guard'
 grep -qF 'scripts/guard-kubescape-gate-frameworks.sh' "$workflow" ||
   fail 'wiring: ci.yaml never invokes the guard — an uncalled guard protects nothing'
 ok 'ci.yaml invokes the guard'
+
+# The guard reads validate-main.yaml, so the real file must satisfy it too — this
+# is what would have caught the nsa-only baseline before it shipped.
+grep -qE 'ksail workload scan .*--framework[[:space:]]+nsa,mitre' \
+  "${root_dir}/.github/workflows/validate-main.yaml" ||
+  fail 'wiring: validate-main.yaml does not scan nsa,mitre — the main baseline would not match the PR analysis'
+ok 'validate-main.yaml scans the same frameworks as the PR gate'
 
 grep -qF 'scripts/tests/test-kubescape-gate-frameworks-guard.sh' "$workflow" ||
   fail 'wiring: ci.yaml never runs THIS test — the guard could be widened with every check green'
