@@ -35,11 +35,12 @@ metadata:
     # Measured surface (prod, 2026-08-10) — the residual risk is small and
     # sized, which is what makes the declaration reviewable rather than open
     # ended: kube-public, kube-node-lease, local-path-storage and chaos-mesh
-    # run no workloads at all, and of the 24 workloads in the remaining
-    # namespaces 21 already satisfy these controls in their own specs. Only
-    # the kubescape, kubevuln and operator Deployments genuinely fail — each
-    # lacks capabilities.drop: [ALL] and a container-level seccompProfile.
-    # Hardening those three is tracked separately; see #2824.
+    # run no workloads at all. Of the 24 workloads in the remaining namespaces,
+    # 19 satisfy these controls in their own specs and 2 (the node-agent
+    # DaemonSet and storage Deployment) are excepted by name above. The
+    # remaining 3 — the kubescape, kubevuln and operator Deployments — genuinely
+    # fail, each lacking capabilities.drop: [ALL] and a container-level
+    # seccompProfile. Hardening those three is tracked in #3064.
     platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
