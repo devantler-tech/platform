@@ -270,32 +270,30 @@ const (
 // The fingerprint itself was read from the required job's own output on the
 // approved renderer, because the local toolchain is refused as unapproved.
 //
-// This value covers removing the `refs/tags/v.+` signer alternative from the
-// shared-publish-workflow cosign matchers (#3022). Measured against main
-// cd47606c by rendering all five roots from both trees: 515 documents on both
-// sides, membership IDENTICAL — set difference in BOTH directions over
-// apiVersion|kind|namespace|name returned zero, so nothing was added, removed
-// or renamed. Exactly SEVEN lines move in the whole production render, and
-// every one of them is a cosign subject matcher losing its tag alternative:
+// This value covers activating the Crossplane sync-state exporter (#2986) — the
+// first change to reference that component, so its three objects enter the
+// rendered surface for the first time. Measured by rendering the production
+// roots with and without the single `components:` reference: grant-bearing
+// documents go 67 -> 70, the set difference in the removal direction is EMPTY,
+// and the three additions are the component's own:
 //
-//	source.toolkit.fluxcd.io/v1  OCIRepository  {wedding-app, ascoachingogvaner,
-//	                                             doggy-countdown, github-config, aws}
-//	kro.run/v1alpha1             ResourceGraphDefinition  tenant.kro.run
-//	policies.kyverno.io/v1alpha1 ImageValidatingPolicy    verify-app-images
+//	ServiceAccount       observability/crossplane-sync-exporter
+//	ClusterRole          crossplane-sync-exporter
+//	ClusterRoleBinding   crossplane-sync-exporter
 //
-//	  @([0-9a-f]{40}|refs/tags/v.+)  ->  @[0-9a-f]{40}
+// Nothing else is added, removed or renamed, and no existing grant changes.
 //
-// It is strictly a tightening: every subject the new matcher accepts, the old
-// one already accepted. No grant-bearing object moved — those seven lines are
-// the ENTIRE delta across the surface, so every Role / ClusterRole /
-// RoleBinding / ClusterRoleBinding / ServiceAccount document is byte-identical,
-// as is every `aws`-bearing line. Nothing granted to the aws/aws service
-// account this validator exists to protect is touched.
+// The ClusterRole is get/list/watch on `repo.github.m.upbound.io/repositories`
+// and nothing else — one API group, one resource, read-only. That is narrower
+// than the alternative the issue originally specified (binding the aggregated
+// `crossplane-view`, which carries 49 rules), which is why the deviation was
+// taken; `scripts/tests/test-crossplane-sync-exporter.sh` pins the read-only
+// verb set and rejects wildcard access so it cannot widen unobserved.
 //
-// (The eighth narrowed subject lives in talos/cluster/verify-first-party-images
-// .yaml, which is Talos machine config rather than a Kubernetes manifest and so
-// is outside this rendered surface entirely.)
-const expectedRenderedSurfaceSHA = "4d54629149b43fc6aa43004353fc92e3f1f95e154bcb750bf6b2b70fb4848e49"
+// Nothing granted to the aws/aws service account this validator exists to
+// protect is touched: the additions are in `observability`, and the exporter
+// cannot read any AWS-bearing resource.
+const expectedRenderedSurfaceSHA = "927693205f5fdf2c53d5ef92d5bcb3fa777d4a84910d24fe4501153bf82cf904"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
