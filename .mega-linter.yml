@@ -83,7 +83,7 @@ DISABLE_ERRORS_LINTERS:
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (9) and trivy (163 in the local v0.72.0 reproduction): Kubernetes misconfiguration
+  # checkov (9) and trivy (110 in the local v0.73.0 reproduction): Kubernetes misconfiguration
   # in k8s/, which the section above explains is NOT covered elsewhere. Tracked by #2787.
   #
   # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of
@@ -92,6 +92,16 @@ DISABLE_ERRORS_LINTERS:
   # (HelmRepository, HTTPRoute, PodDisruptionBudget) and against the LimitRange manifests
   # themselves. See .trivyignore.yaml for the reason and #2988 for the measurement. The residual is
   # real and still includes HIGH/CRITICAL RBAC breadth.
+  #
+  # It then went 157 -> 110 when KSV-0037 ("user resources should not be placed in kube-system")
+  # was scoped to the infrastructure trees — 47 findings, every one a cluster component that
+  # belongs in kube-system by construction (CNI, DNS, CSI, cloud-controller-manager and their
+  # namespace-local VPAs, PDBs and Gateway material). The check stays live for application trees;
+  # see .trivyignore.yaml for the disposition and the paired control that demonstrates the boundary.
+  #
+  # ⚠️ That 157 is NOT 163 minus a fix. 163 was measured on trivy v0.72.0 and 157 on v0.73.0 with
+  # no manifest change in between, so those 6 are a scanner rule-set difference, not backlog
+  # movement — exactly the drift this block warns about below. Only the 47 are this slice's work.
   #
   # KSV-0109's two HIGH findings are path-scoped false positives (#2990): one ConfigMap embeds
   # JavaScript that reads an ESO-mounted Secret and the other exposes the public
@@ -174,8 +184,8 @@ DISABLE_ERRORS_LINTERS:
   # exact commands this job runs, so a slice can show the number moved without a CI round trip.
   #
   # ⚠️ Read trivy's number from that script, NOT from the MegaLinter summary. MegaLinter reports
-  # this trivy scan as "1 non blocking error" while the local v0.72.0 scan actually fails 163 checks
-  # across 73 targets; the 1 is an artifact of how MegaLinter counts trivy's output. checkov's
+  # this trivy scan as "1 non blocking error" while the local v0.73.0 scan actually fails 110 checks
+  # across 27 targets; the 1 is an artifact of how MegaLinter counts trivy's output. checkov's
   # number is a genuine sum of "Failed checks:" and needs no such caveat.
   #
   # ⚠️ Both numbers above DRIFT without anyone touching this file — they moved between the slice
