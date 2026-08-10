@@ -293,7 +293,48 @@ const (
 // Nothing granted to the aws/aws service account this validator exists to
 // protect is touched: the additions are in `observability`, and the exporter
 // cannot read any AWS-bearing resource.
-const expectedRenderedSurfaceSHA = "927693205f5fdf2c53d5ef92d5bcb3fa777d4a84910d24fe4501153bf82cf904"
+//
+// This value additionally covers granting that same exporter the CRD read its
+// discovery path requires (#3068). The component shipped unable to read
+// anything: kube-state-metrics resolves a CustomResourceStateMetrics
+// `groupVersionKind` through the CRD API before it can build a store for it, so
+// the repositories rule above is necessary but not sufficient, and without the
+// CRD read the reflector retry-loops on a forbidden list while the workload
+// reports itself Ready.
+//
+// Measured by rendering the production infrastructure root on the base commit
+// and on this change: the diff is EIGHT added lines and nothing else. No
+// document is removed, renamed, or otherwise altered, no resource enters or
+// leaves the surface, and the set difference in the removal direction is EMPTY.
+// The eight lines are one rule on the existing `crossplane-sync-exporter`
+// ClusterRole:
+//
+//	apiGroups: ["apiextensions.k8s.io"]
+//	resources: ["customresourcedefinitions"]
+//	verbs:     ["get", "list", "watch"]
+//
+// The grant reads CRD *definitions*, which carry schemas, not the managed
+// resources themselves — so the scoping rationale above is preserved intact:
+// managed-resource access, where provider configuration actually lives, stays
+// pinned to `repo.github.m.upbound.io/repositories`. It is read-only, and
+// `scripts/tests/test-crossplane-sync-exporter.sh` now pins this rule too, so
+// the discovery half can no longer go missing unobserved — which is exactly how
+// it went missing the first time, since that contract asserted the
+// managed-resource half alone.
+//
+// `resourceNames` cannot narrow it further: RBAC honours that field only for
+// get/update/delete/patch, never for list or watch, and the discovery path
+// lists.
+//
+// Nothing granted to the aws/aws service account is touched by this change
+// either. The rule is cluster-scoped because CRD definitions are, but it
+// confers no access to any AWS-bearing resource, identity, binding, policy
+// document or service account.
+//
+// The fingerprint was produced by two independent renderers that agree
+// exactly — the required CI job on the approved toolchain, and a local render —
+// which is what rules out a renderer-version artifact in the value.
+const expectedRenderedSurfaceSHA = "73b795b29997daff50837313bd74f2ee62e3cfacfef08bc80fe3cf1ca4fecc75"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
