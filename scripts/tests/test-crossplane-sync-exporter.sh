@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Contract for the default-off Crossplane sync exporter (#2986).
+# Contract for the Crossplane sync exporter (#2986).
 #
 # The failure this component exists to prevent is a silent one: a managed
 # resource reporting Ready=True while Synced=False, which every Ready-keyed
@@ -16,8 +16,8 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly coroot_dir="${root_dir}/k8s/bases/infrastructure/coroot"
 readonly exporter_component="${coroot_dir}/components/crossplane-sync-exporter"
-readonly local_cluster="${root_dir}/k8s/clusters/local"
-readonly prod_cluster="${root_dir}/k8s/clusters/prod"
+readonly hetzner_infrastructure="${root_dir}/k8s/providers/hetzner/infrastructure"
+readonly docker_infrastructure="${root_dir}/k8s/providers/docker/infrastructure"
 readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
 
 fail() {
@@ -125,20 +125,40 @@ grep -Fq \
   "${ci_workflow}" ||
   fail 'CI must execute the Crossplane sync exporter contract'
 
-# Default-off: the exporter must not appear anywhere it has not been explicitly
-# activated. A component is only reachable through a `components:` reference, so
-# an accidental reference is the way this ships before its activation change.
-for surface in "${coroot_dir}" "${local_cluster}" "${prod_cluster}"; do
-  surface_rendered="$(kubectl kustomize "${surface}")" ||
-    fail "the ${surface} surface must render"
-  reject_text \
-    "${surface_rendered}" \
-    'crossplane-sync-exporter' \
-    "the exporter must remain default-off until an activation change enables it (${surface})"
-done
+# Activated on the provider that runs Coroot, and only there.
+#
+# The surfaces below are the provider infrastructure layers, because that is
+# where a `components:` reference actually resolves into rendered resources.
+# `k8s/clusters/{local,prod}` are not usable here: they render the Flux
+# Kustomization wiring and no Coroot resource at all, so an assertion against
+# them holds whatever the component reference says.
+coroot_rendered="$(kubectl kustomize "${coroot_dir}")" ||
+  fail "the ${coroot_dir} surface must render"
+require_text \
+  "${coroot_rendered}" \
+  'crossplane-sync-exporter' \
+  'the coroot base must reference the exporter component (activation withdrawn?)'
+
+hetzner_rendered="$(kubectl kustomize "${hetzner_infrastructure}")" ||
+  fail "the ${hetzner_infrastructure} surface must render"
+require_text \
+  "${hetzner_rendered}" \
+  'crossplane-sync-exporter' \
+  'the exporter must reach the provider layer prod deploys, not just the base'
+
+# Negative control. Coroot is opt-in on the local Docker provider, so the
+# exporter must not follow the base into a local cluster that never asked for
+# Coroot. Without this the positive assertions above would also pass if the
+# component had been referenced from somewhere far too broad.
+docker_rendered="$(kubectl kustomize "${docker_infrastructure}")" ||
+  fail "the ${docker_infrastructure} surface must render"
+reject_text \
+  "${docker_rendered}" \
+  'crossplane-sync-exporter' \
+  'the exporter must stay out of the opt-in local provider layer'
 
 rendered="$(kubectl kustomize "${exporter_component}")" ||
-  fail 'the default-off Crossplane sync-exporter component must render'
+  fail 'the Crossplane sync-exporter component must render'
 
 config_map="$(
   extract_resource ConfigMap crossplane-sync-exporter <<<"${rendered}"
@@ -286,4 +306,4 @@ extract_resource \
   crossplane-sync-exporter <<<"${rendered}" >/dev/null ||
   fail 'the component must render the exporter ServiceAccount'
 
-printf 'PASS: the default-off Crossplane sync exporter keeps its least-privilege metric contract\n'
+printf 'PASS: the activated Crossplane sync exporter keeps its least-privilege metric contract\n'
