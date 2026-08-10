@@ -58,6 +58,14 @@ jobs:
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
+      # Dropping a framework from the Kubescape gate REMOVES findings, so the
+      # compliance score RISES and every check stays green — a coverage
+      # regression that looks like an improvement. That is what un-gated 59
+      # excepted controls for weeks (#2823). Unconditional, like the guard
+      # above: the property it protects is not confined to the k8s paths.
+      - name: 🔐 Validate the Kubescape gate's framework coverage
+        run: ./scripts/guard-kubescape-gate-frameworks.sh
+
       # .github/actionlint.yaml silences actionlint's "unexpected key" diagnostic
       # for concurrency.queue, which also removes its enum check. This restores it.
       - name: 🚦 Validate concurrency queue values
@@ -146,6 +154,9 @@ jobs:
               # or a widened allow-list would ship with every check still green.
               - 'scripts/guard-shared-publish-workflow-pin.sh'
               - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
+              # Both halves, for the same reason as the guard above.
+              - 'scripts/guard-kubescape-gate-frameworks.sh'
+              - 'scripts/tests/test-kubescape-gate-frameworks-guard.sh'
               - 'scripts/validate-eks-ci-role-policy/**'
               - 'tests/**'
               - 'scripts/validate-alert-coverage.sh'
@@ -454,6 +465,14 @@ jobs:
         # silence — plus the floor and the wiring that reaches it.
         run: bash scripts/tests/test-shared-publish-workflow-pin-guard.sh
 
+      - name: 🧪 Test the Kubescape framework-coverage guard
+        if: needs.changes.outputs.k8s == 'true'
+        # Pins the shapes the guard must reject — above all the pre-#3057
+        # `--framework nsa` gate, which is the exact prior configuration and
+        # would otherwise revert in silence — plus its fail-closed behaviour
+        # when the scan step moves, and the wiring that reaches it.
+        run: bash scripts/tests/test-kubescape-gate-frameworks-guard.sh
+
       - name: 📋 Validate Kubescape finding summary
         if: needs.changes.outputs.k8s == 'true'
         # The summary is what makes the CI log and the Security tab agree (#2846),
@@ -567,10 +586,23 @@ jobs:
           path: ~/.cache/ksail/kubeconform
           key: ${{ steps.kubeconform-cache.outputs.cache-primary-key }}
 
-      - name: 🔎 Scan manifests (Kubescape NSA) — hard gate
-        # Static NSA-CISA security scan, gated on the compliance score: the job
-        # FAILS if a change drops the posture below the threshold, so new
-        # findings must be fixed (or justified) before merge.
+      - name: 🔎 Scan manifests (Kubescape NSA + MITRE) — hard gate
+        # Static security scan, gated on the compliance score: the job FAILS if a
+        # change drops the posture below the threshold, so new findings must be
+        # fixed (or justified) before merge.
+        #
+        # TWO frameworks, because one does not cover the exception surface. The
+        # ClusterSecurityException CRs name 76 distinct controls; NSA-CISA
+        # evaluates 17 of them, so 59 excepted controls were outside the gate
+        # entirely — including every RBAC control the CRs exist to govern, whose
+        # findings were therefore neither gated nor reported. MITRE ATT&CK brings
+        # 7 of those under it (measured 2026-08-10): C-0007, C-0015, C-0031,
+        # C-0037, C-0045, C-0048, C-0053 — of which C-0053, C-0015 and C-0007
+        # carry real residual findings. 52 excepted controls remain in neither
+        # framework; #2823 tracks that residue.
+        #
+        # NB the two counts differ: MITRE adds 10 controls to the SCAN (nsa 20,
+        # mitre 17, union 30), but only 7 of them are ones we except.
         #
         # The scan consumes the platform's justified exceptions: the
         # ClusterSecurityException CRs (k8s/bases/infrastructure/
@@ -587,14 +619,16 @@ jobs:
         # pre-exception verdicts. Never read a posture number off those to judge
         # an exception's effect; use this scan's output (#2823).
         #
-        # The threshold is a regression FLOOR, not the live score. The
-        # Kubescape compliance score has historically been environment-
-        # dependent (Linux CI runner vs macOS) and shifts with the ksail
-        # render, so CI is the source of truth: the observed CI score with
-        # exceptions applied is 98.87% (2026-07-11, ksail 7.165.2 — matching
-        # the local value on that date), and the gate sits a few points under
-        # it to catch real regressions without flaking on run-to-run
-        # variance. (NB the floor may need re-baselining after a ksail
+        # The threshold is a regression FLOOR, not the live score, and it gates
+        # the COMBINED score across the frameworks listed above. The Kubescape
+        # compliance score has historically been environment-dependent (Linux CI
+        # runner vs macOS) and shifts with the ksail render, so CI is the source
+        # of truth: the observed CI score with exceptions applied is 98.87%
+        # (2026-07-11, ksail 7.165.2, NSA only). Locally on ksail 7.178.20
+        # (2026-08-10) NSA reads 99.28 and MITRE 96.03, combining to 97 — so the
+        # margin over this floor is thinner than it was under NSA alone. Re-baseline
+        # against a CI run, not a local one, and never lower the floor to
+        # accommodate a finding. (NB it may also need re-baselining after a ksail
         # version bump.)
         #
         # Known un-excepted residual: C-0012 on the local-dev MinIO Deployment
@@ -602,16 +636,27 @@ jobs:
         # an exception). Ratchet the floor up as genuine gaps close; never
         # lower it.
         #
-        # --format sarif -o writes the findings to a file IN ADDITION to the
-        # human-readable posture table, which still goes to this log unchanged
-        # (verified on both a passing and a failing scan) — so the SARIF is a
-        # pure addition, not a swap. The upload step below turns those findings
-        # into Code Scanning alerts. The threshold flag is untouched and remains
-        # the merge gate; this step's pass/fail behaviour does not change.
+        # --format sarif -o writes the findings to a file IN ADDITION to a
+        # human-readable posture table, and the upload step below turns those
+        # findings into Code Scanning alerts.
+        #
+        # 🔴 That table OMITS the `Overall compliance-score` line — measured on
+        # this repo's own CI run 2026-08-10 and reproduced locally: `--format
+        # json` prints it, `--format sarif` does not. So THIS LOG CANNOT TELL
+        # YOU THE SCORE, which is why the re-baselining note above cannot be
+        # followed from the log alone. #3058 tracks making it visible; until it
+        # lands, bisect the score by re-running with a raised
+        # `--compliance-threshold` and reading the exit code.
+        #
+        # The threshold itself is unaffected by the format and still gates:
+        # ablated 2026-08-10 at thresholds 95/99/100 under `--format sarif`,
+        # giving exit 0/1/1 against a combined score of 97. A silent-pass here
+        # would be the worst failure this step could have, so that ablation is
+        # the check to repeat if the flag or format ever changes.
         run: |
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
-          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
+          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
 
       - name: 🌉 Validate the Kubescape backlog bridge
         # The bridge derives themed, fingerprint-deduped backlog entries from
