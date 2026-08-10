@@ -510,9 +510,11 @@ jobs:
           ASSET="ksail_${KSAIL_VERSION}_linux_amd64.tar.gz"
           curl -fsSL "${BASE}/${ASSET}" -o /tmp/ksail.tar.gz
           # A version-pinned URL names WHICH asset to fetch, not WHAT BYTES to
-          # expect. This archive is `sudo install`ed and executed, and this job
-          # also runs on `merge_group` — the path that gates merges to `main` —
-          # so a replaced release asset would execute on a trusted path.
+          # expect. This archive is `sudo install`ed and executed on the runner,
+          # and this job runs on `pull_request` including FORK PRs, so a replaced
+          # release asset would execute here on every contributor's build.
+          # (This job is `pull_request`-only — the prod deploy paths install the
+          # same archive separately and are tracked in #3075.)
           #
           # Checked against the published list rather than a literal SHA pinned
           # here: Renovate bumps KSAIL_VERSION and cannot update an opaque digest
@@ -524,10 +526,12 @@ jobs:
           #
           # Kept byte-identical to the same block in validate-main.yaml.
           curl -fsSL "${BASE}/ksail_${KSAIL_VERSION}_checksums.txt" -o /tmp/ksail_checksums.txt
-          # `|| true` is load-bearing under `set -e -o pipefail`: grep exits 1
-          # when the asset is absent, which would abort the step before the
-          # explicit check below and fail with no explanation of what to do.
-          expected=$(grep -E "  ${ASSET}\$" /tmp/ksail_checksums.txt | cut -d' ' -f1 || true)
+          # Match the filename field EXACTLY. A regex match treats the dots in
+          # the asset name as metacharacters, so `ksail_7x178x20_…` would select
+          # a different line's digest and report a confusing mismatch instead of
+          # the actionable "no published checksum" below. awk also exits 0 with
+          # no match, so the empty-result check is the single fail-closed path.
+          expected=$(awk -v a="${ASSET}" '$2 == a {print $1}' /tmp/ksail_checksums.txt)
           # Fail closed on a MISSING entry too — otherwise a renamed asset
           # silently skips verification instead of failing.
           if [ -z "$expected" ]; then

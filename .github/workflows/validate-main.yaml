@@ -153,10 +153,12 @@ jobs:
           # compromised release. Provenance attestations would close that and
           # are tracked separately.
           curl -fsSL "${BASE}/ksail_${KSAIL_VERSION}_checksums.txt" -o /tmp/ksail_checksums.txt
-          # `|| true` is load-bearing under `set -e -o pipefail`: grep exits 1
-          # when the asset is absent, which would abort the step before the
-          # explicit check below and fail with no explanation of what to do.
-          expected=$(grep -E "  ${ASSET}\$" /tmp/ksail_checksums.txt | cut -d' ' -f1 || true)
+          # Match the filename field EXACTLY. A regex match treats the dots in
+          # the asset name as metacharacters, so `ksail_7x178x20_…` would select
+          # a different line's digest and report a confusing mismatch instead of
+          # the actionable "no published checksum" below. awk also exits 0 with
+          # no match, so the empty-result check is the single fail-closed path.
+          expected=$(awk -v a="${ASSET}" '$2 == a {print $1}' /tmp/ksail_checksums.txt)
           # Fail closed on a MISSING entry too — otherwise a renamed asset
           # silently skips verification instead of failing.
           if [ -z "$expected" ]; then
