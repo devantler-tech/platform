@@ -131,7 +131,8 @@ DISABLE_ERRORS_LINTERS:
   # what makes the UID the image's rather than the manifest's.
   #
   # For the `kubernetes` framework a `checkov.io/skipN` directive keys on the check id it NAMES,
-  # unlike the `secrets` framework's presence-keyed behaviour (#2892). Measured on this Job:
+  # unlike the `secrets` framework's presence-keyed behaviour (#2892). #2898 established that with
+  # a five-variant matrix; re-measured on this Job, which is what the disposition rests on:
   # naming CKV_K8S_40 moves it 10 -> 9 failed / 31 -> 32 skipped, while renaming the same
   # directive to an unrelated id leaves CKV_K8S_40 failing at 10 and instead skips a passing
   # check (1853 -> 1852 passed). A suppression here therefore cannot be an incidental parser
