@@ -270,11 +270,76 @@ const (
 // The fingerprint itself was read from the required job's own output on the
 // approved renderer, because the local toolchain is refused as unapproved.
 //
-// This value covers conditioning `kms:CreateGrant` on
+// This value covers activating the Crossplane sync-state exporter (#2986) — the
+// first change to reference that component, so its three objects enter the
+// rendered surface for the first time. Measured by rendering the production
+// roots with and without the single `components:` reference: grant-bearing
+// documents go 67 -> 70, the set difference in the removal direction is EMPTY,
+// and the three additions are the component's own:
+//
+//	ServiceAccount       observability/crossplane-sync-exporter
+//	ClusterRole          crossplane-sync-exporter
+//	ClusterRoleBinding   crossplane-sync-exporter
+//
+// Nothing else is added, removed or renamed, and no existing grant changes.
+//
+// The ClusterRole is get/list/watch on `repo.github.m.upbound.io/repositories`
+// and nothing else — one API group, one resource, read-only. That is narrower
+// than the alternative the issue originally specified (binding the aggregated
+// `crossplane-view`, which carries 49 rules), which is why the deviation was
+// taken; `scripts/tests/test-crossplane-sync-exporter.sh` pins the read-only
+// verb set and rejects wildcard access so it cannot widen unobserved.
+//
+// Nothing granted to the aws/aws service account this validator exists to
+// protect is touched: the additions are in `observability`, and the exporter
+// cannot read any AWS-bearing resource.
+//
+// This value additionally covers granting that same exporter the CRD read its
+// discovery path requires (#3068). The component shipped unable to read
+// anything: kube-state-metrics resolves a CustomResourceStateMetrics
+// `groupVersionKind` through the CRD API before it can build a store for it, so
+// the repositories rule above is necessary but not sufficient, and without the
+// CRD read the reflector retry-loops on a forbidden list while the workload
+// reports itself Ready.
+//
+// Measured by rendering the production infrastructure root on the base commit
+// and on this change: the diff is EIGHT added lines and nothing else. No
+// document is removed, renamed, or otherwise altered, no resource enters or
+// leaves the surface, and the set difference in the removal direction is EMPTY.
+// The eight lines are one rule on the existing `crossplane-sync-exporter`
+// ClusterRole:
+//
+//	apiGroups: ["apiextensions.k8s.io"]
+//	resources: ["customresourcedefinitions"]
+//	verbs:     ["get", "list", "watch"]
+//
+// The grant reads CRD *definitions*, which carry schemas, not the managed
+// resources themselves — so the scoping rationale above is preserved intact:
+// managed-resource access, where provider configuration actually lives, stays
+// pinned to `repo.github.m.upbound.io/repositories`. It is read-only, and
+// `scripts/tests/test-crossplane-sync-exporter.sh` now pins this rule too, so
+// the discovery half can no longer go missing unobserved — which is exactly how
+// it went missing the first time, since that contract asserted the
+// managed-resource half alone.
+//
+// `resourceNames` cannot narrow it further: RBAC honours that field only for
+// get/update/delete/patch, never for list or watch, and the discovery path
+// lists.
+//
+// Nothing granted to the aws/aws service account is touched by this change
+// either. The rule is cluster-scoped because CRD definitions are, but it
+// confers no access to any AWS-bearing resource, identity, binding, policy
+// document or service account.
+//
+// The fingerprint was produced by two independent renderers that agree
+// exactly — the required CI job on the approved toolchain, and a local render —
+// which is what rules out a renderer-version artifact in the value.
+//
+// This value additionally covers conditioning `kms:CreateGrant` on
 // `kms:GrantIsForAWSResource=true` in the eks-ci-smoke permissions boundary
-// (#2704). Measured against main by restoring main's copy of the one changed
-// manifest and re-rendering all five roots from both trees: 22933 -> 22943
-// lines, and the ENTIRE delta across the production surface is
+// (#2704). Measured by restoring main's copy of the one changed manifest and
+// re-rendering all five roots from both trees: 22933 -> 22943 lines, and the
+// ENTIRE delta across the production surface is
 //
 //	GONE   "kms:CreateGrant",   (leaving the unconditioned action list)
 //	NEW    "Sid": "KmsGrantsForAwsResourcesOnly",
@@ -286,18 +351,18 @@ const (
 // / ClusterRoleBinding / ServiceAccount document is byte-identical. It is
 // strictly a tightening: the action was previously allowed unconditionally and
 // is now allowed only for AWS-service-managed resources, so every grant the new
-// form permits the old one already permitted.
+// form permits the old one already permitted. Only ONE per-resource fingerprint
+// moves with it — the boundary Policy's own — which corroborates that the edit
+// did not leak into any other document.
 //
-// Only ONE per-resource fingerprint moves with it — the boundary Policy's own —
-// which is the corroborating evidence that the edit did not leak elsewhere.
-//
-// The kubectl pin above is load-bearing for THIS constant specifically, and that
-// is measured rather than assumed: rendering the same two trees on kubectl
-// v1.36.1 instead of the approved v1.36.2 reproduced the per-resource
-// fingerprint EXACTLY but produced a different aggregate surface fingerprint
-// (7b61080d… against this value). A locally-derived surface value is therefore
-// not merely unapproved, it is wrong — which is why it is read from the required
-// job's output, never from a developer's machine.
+// One trap worth recording, because it looks exactly like a renderer-version
+// artifact and is not: a `pull_request` CI job renders the PR's MERGE commit,
+// while a local `go test` on the branch renders the branch against whatever
+// base it was cut from. When main moves under a branch the two therefore
+// disagree on the AGGREGATE surface value while still agreeing on every
+// per-resource fingerprint, since the moved documents belong to main's change
+// rather than the branch's. Compare like with like before concluding the
+// toolchain is at fault.
 const expectedRenderedSurfaceSHA = "b0d5ddcebac623155b3109d3a7fc7f8b6088cb17ac75bf327d8d2f32743133f2"
 
 // authorizationOverlayPaths lists every independently reconciled production

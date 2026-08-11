@@ -7,6 +7,46 @@
 readonly GHCR_PULL_VERIFIED_REVISION_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-revision-v2"
 readonly GHCR_PULL_VERIFIED_IMAGE_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-image-v2"
 
+# Name the nodes that still hold a drain fence, so a refusal is actionable
+# without a live cluster query. A transaction killed before its EXIT trap
+# released the fence leaves the annotation behind and every later deploy then
+# refuses, which is correct but surfaces only as a bare
+# `jq: error (at …): residual GHCR bridge ownership`.
+#
+# This reports; it never releases. Releasing needs the pre-claim schedulability
+# the killed transaction did not record, so whether a node may be uncordoned is
+# a decision this function cannot make and must not imply.
+report_residual_bridge_ownership() {
+  local nodes_file="$1"
+  local held
+
+  held="$(jq -r \
+    --arg owner_annotation "platform.devantler.tech/ghcr-auth-drain-owner" \
+    --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" '
+    .items[]
+    | (.metadata.annotations[$owner_annotation] // "") as $owner
+    | (.metadata.annotations[$recovery_annotation] // "") as $recovery
+    | select($owner != "" or $recovery != "")
+    | "  node \(.metadata.name) (cordoned=\(.spec.unschedulable == true))"
+      + (if $owner == "" then ""
+         else "\n    \($owner_annotation) = \($owner)" end)
+      + (if $recovery == "" then ""
+         else "\n    \($recovery_annotation) = \($recovery)" end)
+  ' "${nodes_file}" 2>/dev/null)" || return 0
+  [[ -n "${held}" ]] || return 0
+
+  {
+    printf 'Residual GHCR bridge ownership is held on:\n'
+    printf '%s\n' "${held}"
+    printf 'A previous transaction was killed before releasing its drain fence.\n'
+    printf 'Node selection fails closed until the annotation(s) above are removed:\n'
+    printf '  kubectl --context <ctx> annotate node <node> <annotation>-\n'
+    printf 'A cordoned node is left cordoned on purpose: the killed transaction\n'
+    printf 'recorded no pre-claim schedulability, so confirm the node should be\n'
+    printf 'schedulable before uncordoning it.\n'
+  } >&2
+}
+
 # Select nodes that have not completed the v2 proof for the incoming credential
 # revision or the exact image used for the registry pull. Credential-stale nodes
 # require a reboot because containerd loads registry auth only at process start;
@@ -51,6 +91,7 @@ select_talos_node_targets() {
       | @tsv
     end
   ' "${nodes_file}" >"${unsorted_targets}"; then
+    report_residual_bridge_ownership "${nodes_file}"
     rm -f "${unsorted_targets}"
     return 1
   fi

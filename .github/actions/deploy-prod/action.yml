@@ -44,7 +44,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.178.20"
+        KSAIL_VERSION: "7.178.21"
       run: |
         curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
         tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -307,8 +307,17 @@ runs:
       # only after the publish, signing, attestation, post-publish auth check,
       # and Flux reconcile all succeeded. Never mutate auth as cleanup for a
       # failed delivery.
+      # Runs on failure but NOT on cancellation. This step takes the
+      # `ghcr-auth-refresh` Lease, which has no automatic expiry takeover
+      # because Talos writes cannot be fenced — a non-empty holder needs
+      # explicit human recovery. Under `always()` a cancelled job still
+      # entered here, then the runner force-killed it when the
+      # post-cancellation grace expired, so the release never landed and every
+      # later deploy failed to acquire the Lease. A merge-queue eviction
+      # cancels this job routinely. The next deploy's staging step performs
+      # this same reassertion with a full time budget.
       if: >-
-        always() &&
+        !cancelled() &&
         steps.verify_flux_ghcr_auth_after_push.outcome == 'success' &&
         steps.reconcile.outcome == 'success'
       shell: bash
