@@ -86,6 +86,14 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532
+            # fsGroup is what makes the mounted webhook readable at all. Secret
+            # volume files are owned by root:root unless fsGroup is set, so a
+            # non-root container reading a mode-0400 file gets EACCES and this
+            # CronJob fails before its first API call -- silently removing the
+            # only degraded-CNPG alert. Setting fsGroup makes kubelet chown the
+            # volume to root:65532, which the group-readable mode below then
+            # opens to this container and nothing else.
+            fsGroup: 65532
             seccompProfile:
               type: RuntimeDefault
           containers:
@@ -222,14 +230,17 @@ spec:
           volumes:
             - name: tmp
               emptyDir: {}
-            # 256 is 0400: readable only by the container's own user, rather
-            # than by anything else that lands in this pod. The Secret is the
+            # 288 is 0440: readable by root and by the pod's fsGroup (65532,
+            # set above), rather than by anything else that lands in this pod.
+            # It must carry the GROUP bit: kubelet owns secret-volume files
+            # root:fsGroup, never uid:fsGroup, so an owner-only 0400 is
+            # unreadable by the container's own non-root user. The Secret is the
             # one secret-cnpg-degraded-alert.yaml creates from the per-cluster
             # Flux substitution.
             #
-            # Written in DECIMAL deliberately. An unquoted `0400` is read as
-            # octal 256 by Kubernetes' own parser (sigs.k8s.io/yaml, which is
-            # YAML 1.1) and as decimal 400 — mode 0620 — by every YAML 1.2
+            # Written in DECIMAL deliberately. An unquoted `0440` is read as
+            # octal 288 by Kubernetes' own parser (sigs.k8s.io/yaml, which is
+            # YAML 1.1) and as decimal 440 — mode 0670 — by every YAML 1.2
             # reader, yq and kyaml included. The two disagree silently and
             # nothing validates the difference, so the literal that means the
             # same thing to both is the only safe one. `defaultMode: 420` on
@@ -237,4 +248,4 @@ spec:
             - name: webhook
               secret:
                 secretName: cnpg-degraded-alert-webhook
-                defaultMode: 256
+                defaultMode: 288

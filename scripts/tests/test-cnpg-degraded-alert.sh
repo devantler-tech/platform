@@ -94,12 +94,24 @@ grep -q 'readOnly: true' <<<"$(yq eval \
 pass "webhook mount is present and readOnly at ${webhook_mount_path}"
 
 # A mounted credential that every process in the pod can read is only half the
-# control. defaultMode pins it to the container's own user.
+# control. defaultMode narrows it to root and the pod's fsGroup.
+#
+# These two assertions are ONE invariant and must stay together: kubelet owns
+# secret-volume files root:fsGroup, never uid:fsGroup, so the mode has to carry
+# the GROUP bit and fsGroup has to name the container's group. Pinning the mode
+# alone is what let an owner-only 0400 ship against a non-root container with no
+# fsGroup -- a combination that reads as maximally strict and actually denies the
+# container its own credential, failing the CronJob before its first API call.
 default_mode="$(yq eval \
   "${pod_path}.volumes[] | select(.name == \"webhook\") | .secret.defaultMode" "${manifest}")"
-[ "${default_mode}" = "256" ] ||
-  fail "expected the webhook volume defaultMode 0400 (256 decimal), got: ${default_mode}"
-pass "webhook volume is mounted 0400"
+[ "${default_mode}" = "288" ] ||
+  fail "expected the webhook volume defaultMode 0440 (288 decimal), got: ${default_mode}"
+
+fs_group="$(yq eval "${pod_path}.securityContext.fsGroup" "${manifest}")"
+run_as_user="$(yq eval "${pod_path}.securityContext.runAsUser" "${manifest}")"
+[ "${fs_group}" = "${run_as_user}" ] ||
+  fail "fsGroup (${fs_group}) must match runAsUser (${run_as_user}), or the mounted webhook is unreadable"
+pass "webhook volume is mounted 0440 and readable by fsGroup ${fs_group}"
 
 # The relocation trap: the URL must not be handed to curl as an argument, or it
 # is simply exposed through /proc/<pid>/cmdline instead of /proc/self/environ.
