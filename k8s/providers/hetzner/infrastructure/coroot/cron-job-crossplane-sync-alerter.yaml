@@ -1,0 +1,195 @@
+# Turns the crossplane-sync-exporter's series into an actual notification.
+#
+# The exporter (bases/infrastructure/coroot/components/crossplane-sync-exporter)
+# publishes `crossplane_managed_resource_condition` into Coroot's bundled
+# Prometheus, but NOTHING consumes it: Coroot CE alerts on its own built-in
+# application SLOs and has no rule engine for an arbitrary series, and there is no
+# prometheus-operator, so a `PrometheusRule` would be reconciled by nobody. The
+# defect the exporter exists to surface — a managed resource reporting Ready=True
+# while Synced=False, so Crossplane has silently stopped reconciling it — is
+# therefore visible only to someone who goes looking at a graph.
+#
+# This CronJob is the missing consumer. It queries Prometheus and POSTs to
+# Alertmanager's v2 API, which already fans out to Slack through its catch-all
+# route (controllers/alertmanager/helm-release.yaml). Alertmanager owns grouping,
+# repeat_interval and resolution, so this job stays a pure sensor: it re-asserts
+# what is wrong right now and lets Alertmanager decide what to say about it.
+#
+# WHY A CRONJOB AND NOT A RULE: identical reasoning to
+# cron-job-alert-autosuppressor.yaml — the schedule IS the loop. Alertmanager
+# expires an alert at `endsAt`, so an alert re-asserted every 5m with a 15m
+# `endsAt` self-resolves ~15m after the underlying condition clears, and a job
+# that fails or is never scheduled degrades to "the alert resolves", never to a
+# stuck-firing alert nobody can clear.
+#
+# LIVENESS IS PART OF THE ALERT, NOT AN AFTERTHOUGHT. A dead exporter and a
+# healthy fleet both produce zero `Synced=False` samples, so silence alone is not
+# evidence of health. The exporter's own scrape config deliberately preserves
+# `up{job="crossplane-sync-exporter"}` for this, so the job alerts separately when
+# the sensor itself is down or absent, and refuses to interpret an empty result as
+# good news.
+#
+# COVERAGE IS PARTIAL AND SAYS SO. The exporter currently describes only the
+# Repository kind (CustomResourceStateMetrics takes no wildcard), so this alert
+# covers exactly the kinds the exporter lists. That limit is stated in the alert
+# annotation itself rather than left for a reader to infer from a quiet channel.
+#
+# PROD-ONLY: Alertmanager and its Slack webhook are wired only in the hetzner
+# overlay, so this lives here, not in the base.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crossplane-sync-alerter
+  namespace: observability
+spec:
+  # 5m: fast enough that a stuck resource surfaces well inside the 4h Slack
+  # repeat_interval, slow enough to stay far below Alertmanager's cost of
+  # re-notifying. Must stay comfortably under the 15m endsAt below.
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            app: crossplane-sync-alerter
+        spec:
+          restartPolicy: Never
+          # HTTP-only to two in-cluster Services; no Kubernetes API access.
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: alerter
+              # curl + jq, digest-pinned (same image as the autosuppressor).
+              # observability is exempt from disallow-latest-tag.
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -u
+                  PROM="http://coroot-prometheus.observability.svc.cluster.local:9090"
+                  AM="http://alertmanager.kubescape.svc.cluster.local:9093"
+                  RETRY="-sS --retry 5 --retry-delay 2 --retry-all-errors --retry-connrefused --max-time 30"
+
+                  # Alertmanager expires an alert at endsAt, so every alert this
+                  # job posts self-resolves unless a later run re-asserts it.
+                  # 15m = 3 missed runs; shorter would flap on one slow scrape.
+                  #
+                  # Formatted with jq's `todate`, NOT `date` arithmetic: the three
+                  # date implementations disagree on relative offsets (`-d '+15
+                  # minutes'` is GNU, `-v+15M` is BSD, and BusyBox -- what this
+                  # Alpine image actually ships -- accepts neither). Only `+%s` is
+                  # universal, so the offset is plain shell arithmetic and jq does
+                  # the RFC3339 formatting it is guaranteed to get right.
+                  ENDS=$(jq -nr --argjson t "$(date -u +%s)" '($t + 900) | todate')
+                  case "$ENDS" in
+                    ????-??-??T??:??:??Z) ;;
+                    *) echo "ERROR: could not compute endsAt (got '$ENDS')"; exit 1 ;;
+                  esac
+
+                  q() { curl $RETRY --get --data-urlencode "query=$1" "$PROM/api/v1/query"; }
+
+                  # ---- 1. Is the sensor alive? -------------------------------
+                  # `up` is exempt from the exporter's metric_relabel keep, so its
+                  # ABSENCE means no scrape has ever been delivered (component not
+                  # deployed, remote_write broken) and 0 means the scrape fails.
+                  # Both are sensor failures, and both must alert -- otherwise the
+                  # quiet that follows reads exactly like a healthy fleet.
+                  UP=$(q 'up{job="crossplane-sync-exporter"}')
+                  if [ "$(printf '%s' "$UP" | jq -r '.status')" != "success" ]; then
+                    echo "ERROR: Prometheus query failed"; exit 1
+                  fi
+                  up_n=$(printf '%s' "$UP" | jq -r '[.data.result[]] | length')
+                  up_ok=$(printf '%s' "$UP" | jq -r '[.data.result[] | select(.value[1] == "1")] | length')
+
+                  alerts='[]'
+                  add() { alerts=$(printf '%s' "$alerts" | jq -c --argjson a "$1" '. + [$a]'); }
+
+                  if [ "$up_n" -eq 0 ] || [ "$up_ok" -eq 0 ]; then
+                    reason=$([ "$up_n" -eq 0 ] && echo "no up series" || echo "scrape failing")
+                    add "$(jq -nc --arg e "$ENDS" --arg r "$reason" '{
+                      labels: {
+                        alertname: "CrossplaneSyncExporterDown",
+                        severity: "warning",
+                        namespace: "observability",
+                        job: "crossplane-sync-exporter"
+                      },
+                      annotations: {
+                        summary: "Crossplane sync exporter is not reporting (\($r))",
+                        description: "No usable crossplane_managed_resource_condition data, so a managed resource that has stopped reconciling would NOT alert. A broken exporter and a healthy fleet look identical from Slack, which is why this fires instead of staying quiet.",
+                        runbook: "Check the crossplane-sync-exporter deployment in the observability namespace and its remote_write to coroot-prometheus."
+                      },
+                      endsAt: $e
+                    }')"
+                    echo "sensor down: $reason"
+                  fi
+
+                  # ---- 2. Managed resources that stopped reconciling ---------
+                  # Synced=False is the signal; Ready is reported alongside it so
+                  # the notification carries the Ready=True/Synced=False pair that
+                  # makes this failure mode invisible in kubectl's usual columns.
+                  STUCK=$(q 'crossplane_managed_resource_condition{condition="Synced"} == 0')
+                  if [ "$(printf '%s' "$STUCK" | jq -r '.status')" != "success" ]; then
+                    echo "ERROR: Prometheus query for stuck resources failed"; exit 1
+                  fi
+
+                  n_stuck=$(printf '%s' "$STUCK" | jq -r '[.data.result[]] | length')
+                  i=0
+                  while [ "$i" -lt "$n_stuck" ]; do
+                    m=$(printf '%s' "$STUCK" | jq -c --argjson i "$i" '.data.result[$i].metric')
+                    name=$(printf '%s' "$m" | jq -r '.name // "unknown"')
+                    ns=$(printf '%s' "$m" | jq -r '.namespace // ""')
+                    why=$(printf '%s' "$m" | jq -r '.reason // "unknown"')
+                    add "$(jq -nc --arg e "$ENDS" --arg name "$name" --arg ns "$ns" --arg why "$why" '{
+                      labels: ({
+                        alertname: "CrossplaneManagedResourceNotSynced",
+                        severity: "warning",
+                        resource: $name,
+                        reason: $why
+                      } + (if $ns == "" then {} else {namespace: $ns} end)),
+                      annotations: {
+                        summary: "Crossplane is no longer reconciling \($name)",
+                        description: "The managed resource reports Synced=False (reason: \($why)). Crossplane has stopped applying its spec to the external system, so the resource can still report Ready=True while drifting from Git. Coverage note: the exporter describes only the managed kinds listed in its CustomResourceStateMetrics config, so other kinds are NOT watched by this alert.",
+                        runbook: "kubectl describe the resource and read its Synced condition message; a provider credential or API error is the usual cause."
+                      },
+                      endsAt: $e
+                    }')"
+                    echo "not synced: $name ($why)"
+                    i=$((i + 1))
+                  done
+
+                  # ---- 3. Post ------------------------------------------------
+                  n=$(printf '%s' "$alerts" | jq -r 'length')
+                  if [ "$n" -eq 0 ]; then
+                    echo "all watched managed resources are syncing; exporter healthy"
+                    exit 0
+                  fi
+                  curl $RETRY -X POST -H 'Content-Type: application/json' \
+                    -d "$alerts" "$AM/api/v2/alerts" >/dev/null \
+                    && echo "posted $n alert(s) to alertmanager"
