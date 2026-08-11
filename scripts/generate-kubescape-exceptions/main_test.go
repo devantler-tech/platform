@@ -147,13 +147,13 @@ spec:
 	}
 
 	tests := map[string]bool{
-		"":                    false,
-		"kube-system":         false,
-		"cilium-secrets":      false,
-		"edge.test":           false,
-		"edgeXtest":           true,
-		"kube-syste":          true,
-		"kube-system-extra":   true,
+		"":                     false,
+		"kube-system":          false,
+		"cilium-secrets":       false,
+		"edge.test":            false,
+		"edgeXtest":            true,
+		"kube-syste":           true,
+		"kube-system-extra":    true,
 		"new-tenant-namespace": true,
 	}
 
@@ -489,6 +489,18 @@ spec:
       matchExpressions: [{key: kubernetes.io/metadata.name, operator: Exists, values: [x]}]
 `,
 			want: "matchExpressions are supported",
+		},
+		"NotIn requires exclusions": {
+			body: `
+kind: ClusterSecurityException
+metadata: {name: empty-not-in}
+spec:
+  posture: [{controlID: C-0002, action: ignore}]
+  match:
+    namespaceSelector:
+      matchExpressions: [{key: kubernetes.io/metadata.name, operator: NotIn, values: []}]
+`,
+			want: "matchExpression has no values",
 		},
 		"empty posture": {
 			body: `
