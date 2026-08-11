@@ -270,32 +270,35 @@ const (
 // The fingerprint itself was read from the required job's own output on the
 // approved renderer, because the local toolchain is refused as unapproved.
 //
-// This value covers removing the `refs/tags/v.+` signer alternative from the
-// shared-publish-workflow cosign matchers (#3022). Measured against main
-// cd47606c by rendering all five roots from both trees: 515 documents on both
-// sides, membership IDENTICAL — set difference in BOTH directions over
-// apiVersion|kind|namespace|name returned zero, so nothing was added, removed
-// or renamed. Exactly SEVEN lines move in the whole production render, and
-// every one of them is a cosign subject matcher losing its tag alternative:
+// This value covers conditioning `kms:CreateGrant` on
+// `kms:GrantIsForAWSResource=true` in the eks-ci-smoke permissions boundary
+// (#2704). Measured against main by restoring main's copy of the one changed
+// manifest and re-rendering all five roots from both trees: 22933 -> 22943
+// lines, and the ENTIRE delta across the production surface is
 //
-//	source.toolkit.fluxcd.io/v1  OCIRepository  {wedding-app, ascoachingogvaner,
-//	                                             doggy-countdown, github-config, aws}
-//	kro.run/v1alpha1             ResourceGraphDefinition  tenant.kro.run
-//	policies.kyverno.io/v1alpha1 ImageValidatingPolicy    verify-app-images
+//	GONE   "kms:CreateGrant",   (leaving the unconditioned action list)
+//	NEW    "Sid": "KmsGrantsForAwsResourcesOnly",
+//	NEW    "Action": "kms:CreateGrant", "Resource": "*",
+//	NEW    "Condition": {"Bool": {"kms:GrantIsForAWSResource": "true"}}
 //
-//	  @([0-9a-f]{40}|refs/tags/v.+)  ->  @[0-9a-f]{40}
+// No `kind:` or `name:` line moves, so membership is identical — nothing was
+// added, removed or renamed — and every other Role / ClusterRole / RoleBinding
+// / ClusterRoleBinding / ServiceAccount document is byte-identical. It is
+// strictly a tightening: the action was previously allowed unconditionally and
+// is now allowed only for AWS-service-managed resources, so every grant the new
+// form permits the old one already permitted.
 //
-// It is strictly a tightening: every subject the new matcher accepts, the old
-// one already accepted. No grant-bearing object moved — those seven lines are
-// the ENTIRE delta across the surface, so every Role / ClusterRole /
-// RoleBinding / ClusterRoleBinding / ServiceAccount document is byte-identical,
-// as is every `aws`-bearing line. Nothing granted to the aws/aws service
-// account this validator exists to protect is touched.
+// Only ONE per-resource fingerprint moves with it — the boundary Policy's own —
+// which is the corroborating evidence that the edit did not leak elsewhere.
 //
-// (The eighth narrowed subject lives in talos/cluster/verify-first-party-images
-// .yaml, which is Talos machine config rather than a Kubernetes manifest and so
-// is outside this rendered surface entirely.)
-const expectedRenderedSurfaceSHA = "4d54629149b43fc6aa43004353fc92e3f1f95e154bcb750bf6b2b70fb4848e49"
+// The kubectl pin above is load-bearing for THIS constant specifically, and that
+// is measured rather than assumed: rendering the same two trees on kubectl
+// v1.36.1 instead of the approved v1.36.2 reproduced the per-resource
+// fingerprint EXACTLY but produced a different aggregate surface fingerprint
+// (7b61080d… against this value). A locally-derived surface value is therefore
+// not merely unapproved, it is wrong — which is why it is read from the required
+// job's output, never from a developer's machine.
+const expectedRenderedSurfaceSHA = "b0d5ddcebac623155b3109d3a7fc7f8b6088cb17ac75bf327d8d2f32743133f2"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -340,7 +343,7 @@ type resourceType struct {
 // source, controller, binding, and indirect authorization object.
 var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                                        "0967890d16316a8cfcb1cca8a52085c6989c42000fafbbd0ada6323d4e15c97c",
-	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:                       "66f79a06cd8f789f6a2dd66b263c3f4459447f96227f57996591d75b441b0104",
+	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:                       "6f14b5243c945d0d2230821733ea12096d6e92ab155a35482b20a6080c03c037",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:                         "ff4c3264c519b1b4a7ec9b5145412f39ea2ba7b6163d8dc50fb029b1460edcda",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:                  "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "crossview", name: "crossview-portforward"}:            "78992d9727763fdcf1bda05969fdc881e6d0e54cc72efc07555304b47d25bc3a",
