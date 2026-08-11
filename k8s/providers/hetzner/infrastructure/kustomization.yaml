@@ -53,6 +53,10 @@ resources:
   # Coroot has no declarative per-alert exemption. See the file header for the
   # exemption list + why each is by-design.
   - coroot/cron-job-alert-autosuppressor.yaml
+  # Prod-only: turns the crossplane-sync-exporter's series into a Slack
+  # notification via Alertmanager, which nothing else consumes. See the file
+  # header for why this is a CronJob rather than a PrometheusRule.
+  - coroot/cron-job-crossplane-sync-alerter.yaml
   # Prod-only: the CloudNativePG datastore + backup wiring that lets the Coroot
   # SERVER run HA (replicas: 2 — set in the coroot-patch below). The operator
   # only honours replicas > 1 when spec.postgres is set, so this Postgres is the
