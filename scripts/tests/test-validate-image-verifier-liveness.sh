@@ -759,4 +759,68 @@ rm -f "${fixtures}/probeerror/lserror_etc_cri_conf.d_cri.toml"
 run_script TALOS_NODES=probeerror >/dev/null 2>&1 ||
   fail 'case 21: the same node must pass once the probe error is gone'
 
+# ===========================================================================
+# Case 23 — two nodes publishing the SAME InternalIP must not pass.
+#
+# The flattening emits that address once per node, so both passes inspect the
+# SAME machine while the other node is never looked at — and since the machine
+# they both reach is healthy, the run reports a green fleet with a node it never
+# touched. Distinct from case 22: there the node contributes NO address, here it
+# contributes a duplicate one, so a "did every node yield an address?" check
+# passes and only a uniqueness check catches it.
+#
+# `scripts/refresh-flux-ghcr-auth.sh`'s `validate_talos_node_inventory` refuses
+# the same shape before it mutates anything; this mirrors that rule.
+# ===========================================================================
+cat >"${fake_bin}/kubectl" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' '{"items":[
+  {"metadata":{"name":"prod-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}},
+  {"metadata":{"name":"prod-worker-stale"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}}
+]}'
+exit 0
+FAKE
+chmod +x "${fake_bin}/kubectl"
+
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -ne 0 ]] ||
+  fail 'case 23: two nodes sharing one InternalIP MUST NOT yield exit 0 — one was never inspected'
+[[ "${status}" -eq 2 ]] ||
+  fail "case 23: a duplicate InternalIP must exit 2 (infrastructure), got ${status}"
+require_text "${output}" 'prod-worker-stale' 'case 23: names the nodes sharing an address'
+refute_text "${output}" 'can enforce image verification.' \
+  'case 23: reported a verdict for a fleet where one node was never inspected'
+
+# A node carrying TWO InternalIPs is the same ambiguity from the other side:
+# which one talosctl would reach is unspecified, so it is refused rather than
+# guessed.
+cat >"${fake_bin}/kubectl" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' '{"items":[
+  {"metadata":{"name":"prod-worker-dual"},"status":{"addresses":[{"type":"InternalIP","address":"good"},{"type":"InternalIP","address":"empty"}]}}
+]}'
+exit 0
+FAKE
+chmod +x "${fake_bin}/kubectl"
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -eq 2 ]] ||
+  fail "case 23: a node with two InternalIPs must exit 2 (infrastructure), got ${status}"
+require_text "${output}" 'prod-worker-dual' 'case 23: names the node carrying two addresses'
+
+# Control: distinct addresses across distinct nodes still pass, so the
+# uniqueness rule is not simply rejecting every multi-node fleet.
+cat >"${fake_bin}/kubectl" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' '{"items":[
+  {"metadata":{"name":"prod-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}},
+  {"metadata":{"name":"prod-worker-2"},"status":{"addresses":[{"type":"InternalIP","address":"onlysystem"}]}}
+]}'
+exit 0
+FAKE
+chmod +x "${fake_bin}/kubectl"
+run_script >/dev/null 2>&1 ||
+  fail 'case 23: a fleet of distinct nodes with distinct InternalIPs must still be accepted'
+
 printf 'PASS: all cases\n'

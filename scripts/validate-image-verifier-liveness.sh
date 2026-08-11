@@ -95,32 +95,48 @@ fail_infra() {
 # composite pins `--context admin@prod` for the same reason, because the
 # restored kubeconfig's current-context is not guaranteed to be prod.
 discover_nodes() {
-  local json without_ip
+  local json bad_nodes
   local -a context_args=()
   [[ -n "${KUBECTL_CONTEXT:-}" ]] && context_args=(--context "${KUBECTL_CONTEXT}")
   json="$("${kubectl_bin}" "${context_args[@]+"${context_args[@]}"}" get nodes -o json 2>/dev/null)" ||
     fail_infra 'could not list cluster nodes (kubectl get nodes failed)'
 
-  # Every node must yield an InternalIP, and a node that does not is refused
-  # rather than dropped. A `select(.type == "InternalIP")` over a node whose
-  # addresses hold only a Hostname or an ExternalIP matches nothing and SUCCEEDS
-  # — so that node silently leaves the fleet, and if the remaining ones are
-  # healthy the script prints a green verdict for a fleet it never enumerated.
-  # That is the same fail-open the script exists to detect, one layer earlier.
+  # Every node must map to EXACTLY ONE InternalIP, and those addresses must be
+  # unique across the fleet. Both halves are fail-opens the flattening hides:
   #
-  # Checked as its own pass so the offending node can be NAMED. Deriving it from
-  # a jq error instead would either lose the name or push kubectl's output into
+  #   * a node whose addresses hold only a Hostname or an ExternalIP matches
+  #     nothing and the select SUCCEEDS, so that node silently leaves the fleet;
+  #   * two nodes publishing the SAME InternalIP — a malformed or stale cloud
+  #     registration — emit that address twice, so both passes inspect the same
+  #     machine while the other node is never looked at.
+  #
+  # Either way the remaining nodes report OK and the run prints a green verdict
+  # for a fleet it never fully enumerated: the same fail-open this script exists
+  # to detect, one layer earlier. `scripts/refresh-flux-ghcr-auth.sh`'s
+  # `validate_talos_node_inventory` refuses the same two shapes before it mutates
+  # anything, for the same reason.
+  #
+  # Checked as its own pass so the offending nodes can be NAMED. Deriving it from
+  # a jq error instead would either lose the names or push kubectl's output into
   # an error message.
-  without_ip="$(printf '%s' "${json}" |
+  bad_nodes="$(printf '%s' "${json}" |
     jq -r '
-      .items[]
-      | select([(.status.addresses // [])[]
-                | select(.type == "InternalIP" and ((.address // "") | tostring) != "")] | length == 0)
-      | .metadata.name // "<unnamed node>"
+      [.items[] | {
+        name: (.metadata.name // "<unnamed node>"),
+        ips: [(.status.addresses // [])[]
+              | select(.type == "InternalIP" and ((.address // "") | tostring) != "")
+              | .address]
+      }] as $nodes
+      | ($nodes | map(select(.ips | length != 1))
+          | map("\(.name) (has \(.ips | length) InternalIP addresses, expected 1)")),
+        ($nodes | map(select(.ips | length == 1))
+          | group_by(.ips[0]) | map(select(length > 1))
+          | map("\(map(.name) | join(" and ")) share InternalIP \(.[0].ips[0])"))
+      | .[]
     ' 2>/dev/null)" ||
     fail_infra 'could not parse node addresses from kubectl output'
-  if [[ -n "${without_ip}" ]]; then
-    fail_infra "no InternalIP address for node(s): $(printf '%s' "${without_ip}" | tr '\n' ' ') — refusing to report a fleet that was only partly enumerated"
+  if [[ -n "${bad_nodes}" ]]; then
+    fail_infra "unusable node inventory — refusing to report a fleet that was only partly enumerated: $(printf '%s' "${bad_nodes}" | tr '\n' ';' | sed 's/;$//')"
   fi
 
   printf '%s' "${json}" |
