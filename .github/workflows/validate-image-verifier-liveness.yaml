@@ -9,36 +9,38 @@ name: Validate Image Verifier Liveness
 # Nothing in CI could see it: the rules were present, the node config matched the
 # repository, and every check was green.
 #
-# This runs on a cadence rather than on a PR because the condition it watches is
-# not introduced by a diff. It drifts with the node image, the Talos version, and
-# the schematic — none of which this repository's PR events observe. A
-# path-filtered PR check would have caught none of #2856.
+# The fleet check is DORMANT: it runs only on demand (`workflow_dispatch`), and
+# #3101 turns on its daily cadence as part of installing the verifier.
 #
-# EXPECTED TO FAIL until #3101 installs the verifier. That is the point: the
-# signal should be red while the control is inert, not silent.
+# The verifier is absent fleet-wide today, so the check reports RED on every
+# node. That verdict is correct and is tracked on #3101 — it is not news any
+# individual run needs to act on. Publishing it daily on `main` would spend the
+# repository's CI-red channel, which means "something broke, fix it now", on a
+# known open issue that the tracker already states. Landing the checker dormant
+# keeps the capability reviewable and runnable on demand without burning that
+# signal, and activation becomes one reversible line in #3101.
+#
+# The checker's OWN tests need no cluster and no secrets, so they gate every PR
+# that touches the checker. That split is the point: a regression in a checker
+# whose job is noticing a silent condition would itself be silent.
 
 on:
-  schedule:
-    - cron: "30 6 * * *" # daily, offset from the midnight policy sync
-  workflow_dispatch:
-  push:
-    branches: [main]
+  pull_request:
     paths:
       - scripts/validate-image-verifier-liveness.sh
       - scripts/tests/test-validate-image-verifier-liveness.sh
       - .github/workflows/validate-image-verifier-liveness.yaml
+  workflow_dispatch:
 
 permissions: {}
 
 concurrency:
-  # Read-only against prod, so it does not share the deploy lock — but two
-  # copies of it racing each other buys nothing.
-  group: validate-image-verifier-liveness
+  group: validate-image-verifier-liveness-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  validate-image-verifier-liveness:
-    name: 🔏 Validate Image Verifier Liveness
+  test:
+    name: 🧪 Test Image Verifier Liveness Checker
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -49,11 +51,28 @@ jobs:
           persist-credentials: false
 
       - name: 🧪 Test the checker itself
-        # The checker's whole value is noticing a silent condition, so a
-        # regression in it is silent too. Its own tests need no cluster and no
-        # secrets, so they run first and fail fast.
         shell: bash
         run: ./scripts/tests/test-validate-image-verifier-liveness.sh
+
+  validate-image-verifier-liveness:
+    name: 🔏 Validate Image Verifier Liveness
+    needs: test
+    # A pull request has no business reading prod, and fork PRs cannot hold the
+    # cluster secrets. Removing this condition is what activation means.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    concurrency:
+      # Read-only against prod, so it does not share the deploy lock — but two
+      # copies of it racing each other buys nothing.
+      group: validate-image-verifier-liveness-fleet
+      cancel-in-progress: true
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
 
       - name: ⚙️ Setup talosctl
         shell: bash
