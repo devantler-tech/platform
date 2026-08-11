@@ -66,7 +66,6 @@ pod_path='.spec.jobTemplate.spec.template.spec'
 
 env_block="$(yq eval "${container_path}.env" "${manifest}")"
 script_body="$(yq eval "${container_path}.command[2]" "${manifest}")"
-volume_mounts="$(yq eval "${container_path}.volumeMounts" "${manifest}")"
 volumes="$(yq eval "${pod_path}.volumes" "${manifest}")"
 
 [ -n "${script_body}" ] && [ "${script_body}" != "null" ] ||
@@ -220,6 +219,7 @@ run_scenario() {
     # This reproduces only where mktemp returns a path under /tmp — Linux CI,
     # not macOS, where it returns /var/folders/… — so it passes locally and
     # fails in CI.
+    # shellcheck disable=SC2016  # `$SA_OVERRIDE` is emitted INTO the patched script; the shell here must not expand it.
     printf '%s\n' "${script_body}" |
       sed -e 's#^\( *\)SA=/var/run/secrets/kubernetes.io/serviceaccount$#\1SA="$SA_OVERRIDE"#' \
         -e 's#/tmp/#'"${dir}"'/tmp/#g' \
@@ -229,6 +229,7 @@ run_scenario() {
   # Prove the redirection actually applied. Without this the sed could silently
   # match nothing and every scenario would exercise real in-cluster paths,
   # failing identically for the wrong reason.
+  # shellcheck disable=SC2016  # matching the LITERAL `$SA_OVERRIDE` the sed above wrote into the file.
   grep -q 'SA="\$SA_OVERRIDE"' "${patched}" ||
     fail "serviceaccount path redirection did not apply; the script's SA line changed shape"
   grep -q "${dir}/webhook/url" "${patched}" ||
@@ -253,7 +254,7 @@ deliveries() {
 
 # A cluster degraded well past any grace period.
 old_stamp="$(date -u -r 0 +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d @0 +%Y-%m-%dT%H:%M:%SZ)"
-readonly degraded_body="$(
+degraded_body="$(
   jq -n --arg ts "${old_stamp}" '{
     items: [{
       metadata: { namespace: "umami", name: "umami-db" },
@@ -265,7 +266,8 @@ readonly degraded_body="$(
     }]
   }'
 )"
-readonly healthy_body="$(
+readonly degraded_body
+healthy_body="$(
   jq -n --arg ts "${old_stamp}" '{
     items: [{
       metadata: { namespace: "umami", name: "umami-db" },
@@ -277,6 +279,7 @@ readonly healthy_body="$(
     }]
   }'
 )"
+readonly healthy_body
 
 # Scenario 1 — degraded cluster, real webhook: exactly one delivery, and the URL
 # reaches curl through its stdin config rather than its argv.
