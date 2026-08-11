@@ -67,15 +67,22 @@ jobs:
       - name: ⚙️ Setup talosctl
         shell: bash
         env:
-          TALOS_VERSION: "1.13.6"
+          # Keep in step with spec.cluster.talos.version in ksail.prod.yaml, the
+          # same pin the deploy composite, CI and the DR workflow carry. A client
+          # older than the cluster can start failing before it inspects a single
+          # node, which would read as a fleet-wide fault rather than a stale pin.
+          # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
+          TALOS_VERSION: "1.13.7"
           # SHA-256 of talosctl-linux-amd64 for the TALOS_VERSION above, from
           # that release's sha256sum.txt. UPDATE BOTH TOGETHER — a version bump
           # that leaves this stale fails the step, which is the intended
           # direction: this job installs a binary with sudo and then points it
           # at production with restored cluster credentials, so an unverified
           # download is a privileged one. The version alone pins the URL, not
-          # the bytes it serves.
-          TALOSCTL_SHA256: "540c5e7cb0d3fa3a9b2e1c717ced212727b73bcaf0cf9cf9ba2472ec381041d4"
+          # the bytes it serves. That includes a Renovate bump of the line above:
+          # it cannot know the new digest, so the step fails loudly until a human
+          # updates this value rather than installing unverified bytes.
+          TALOSCTL_SHA256: "97d08e5584e56114659f131e95e227910d1f3b427d26360dca2af3ed821b71f8"
         run: |
           set -euo pipefail
           curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
