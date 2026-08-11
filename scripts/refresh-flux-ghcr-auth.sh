@@ -3232,7 +3232,7 @@ report_flux_policy_handoff_blockers() {
       --namespace "${dependency_namespace}" \
       get "${FLUX_KUSTOMIZATION_RESOURCE}" \
       "${dependency_name}" \
-      -o json >"${flux_policy_blocker_state_file}" 2>/dev/null; then
+      -o json </dev/null >"${flux_policy_blocker_state_file}" 2>/dev/null; then
       flux_policy_report_conditions \
         "${flux_policy_blocker_state_file}" \
         "kustomization/${dependency_name} (dependency)"
