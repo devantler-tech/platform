@@ -128,11 +128,31 @@ spec:
                   up_n=$(printf '%s' "$UP" | jq -r '[.data.result[]] | length')
                   up_ok=$(printf '%s' "$UP" | jq -r '[.data.result[] | select(.value[1] == "1")] | length')
 
+                  # A SCRAPEABLE exporter is not a working one. An RBAC denial, a
+                  # removed/renamed GVK, or a collector misconfiguration all leave
+                  # the HTTP endpoint healthy -- `up` stays 1 -- while the custom
+                  # resource collector emits no condition series at all. The stuck
+                  # query below then matches nothing and this job reports "all
+                  # watched managed resources are syncing": the exact silence the
+                  # alert exists to break, now with a green sensor in front of it.
+                  # So zero condition series is a sensor failure in its own right.
+                  COV=$(q 'count(crossplane_managed_resource_condition{condition="Synced"})')
+                  if [ "$(printf '%s' "$COV" | jq -r '.status')" != "success" ]; then
+                    echo "ERROR: Prometheus query for exporter coverage failed"; exit 1
+                  fi
+                  cov_n=$(printf '%s' "$COV" | jq -r '[.data.result[]] | length')
+
                   alerts='[]'
                   add() { alerts=$(printf '%s' "$alerts" | jq -c --argjson a "$1" '. + [$a]'); }
 
-                  if [ "$up_n" -eq 0 ] || [ "$up_ok" -eq 0 ]; then
-                    reason=$([ "$up_n" -eq 0 ] && echo "no up series" || echo "scrape failing")
+                  if [ "$up_n" -eq 0 ] || [ "$up_ok" -eq 0 ] || [ "$cov_n" -eq 0 ]; then
+                    if [ "$up_n" -eq 0 ]; then
+                      reason="no up series"
+                    elif [ "$up_ok" -eq 0 ]; then
+                      reason="scrape failing"
+                    else
+                      reason="scrape healthy but no condition series"
+                    fi
                     add "$(jq -nc --arg e "$ENDS" --arg r "$reason" '{
                       labels: {
                         alertname: "CrossplaneSyncExporterDown",
@@ -169,10 +189,14 @@ spec:
                   #      so min==0 means "at least one sample was 0" and matches a
                   #      recovered [0,1] series, while max==0 means "no sample was
                   #      ever 1", which is the property wanted.
-                  #   3. `count_over_time(...[3m] offset 12m) > 0` -- a sample
-                  #      existed 12-15m ago, so the window is COMPLETE. Without it
+                  #   3. `count_over_time(...[3m] offset 15m) > 0` -- a sample
+                  #      existed 15-18m ago, so the window is COMPLETE. Without it
                   #      a resource first observed 30s ago satisfies the history
-                  #      clause trivially and fires immediately.
+                  #      clause trivially and fires immediately. The offset must be
+                  #      15m, not 12m: at `offset 12m` the sub-window is 12-15m ago,
+                  #      so a series whose FIRST sample landed 12m ago qualifies and
+                  #      the alert fires after ~12m while its own text claims 15m of
+                  #      continuous failure. The offset anchors the claim.
                   #
                   # History is aggregated `by (name, namespace)` and joined `on
                   # (name, namespace)` because `reason` is part of the series
@@ -184,7 +208,7 @@ spec:
                   # samples and one missed scrape cannot suppress the alert.
                   # Worst-case detection latency is 15m of grace plus up to one
                   # 5m cron period; the failure this watches for persisted 22 days.
-                  STUCK=$(q 'crossplane_managed_resource_condition{condition="Synced"} == 0 and on (name, namespace) (max by (name, namespace) (max_over_time(crossplane_managed_resource_condition{condition="Synced"}[15m])) == 0) and on (name, namespace) (count by (name, namespace) (count_over_time(crossplane_managed_resource_condition{condition="Synced"}[3m] offset 12m)) > 0)')
+                  STUCK=$(q 'crossplane_managed_resource_condition{condition="Synced"} == 0 and on (name, namespace) (max by (name, namespace) (max_over_time(crossplane_managed_resource_condition{condition="Synced"}[15m])) == 0) and on (name, namespace) (count by (name, namespace) (count_over_time(crossplane_managed_resource_condition{condition="Synced"}[3m] offset 15m)) > 0)')
                   if [ "$(printf '%s' "$STUCK" | jq -r '.status')" != "success" ]; then
                     echo "ERROR: Prometheus query for stuck resources failed"; exit 1
                   fi
