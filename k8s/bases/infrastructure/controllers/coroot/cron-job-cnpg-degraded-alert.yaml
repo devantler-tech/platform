@@ -114,8 +114,22 @@ spec:
                   # (checkov CKV_K8S_35). An env value sits in
                   # /proc/self/environ for the pod's whole life and is
                   # inherited by every process the script starts; the file is
-                  # mounted 0400 and read once, here.
+                  # mounted 0440 (root:fsGroup, group-readable by this
+                  # container's own user) and read once, here.
                   WEBHOOK_URL=$(cat /etc/cnpg-degraded-alert/url)
+
+                  # The value becomes a curl CONFIG directive below, where a
+                  # newline starts a SECOND directive -- so an LF in the Secret
+                  # would let the config say `output = ...` or anything else
+                  # curl accepts. A valid URL cannot contain a control
+                  # character, so rejecting them costs nothing and turns a
+                  # malformed Secret into a loud failure instead of a silently
+                  # reconfigured request. Checked with `tr -d`, which needs no
+                  # locale or regex assumptions.
+                  if [ "$(printf '%s' "$WEBHOOK_URL" | tr -d '[:cntrl:]')" != "$WEBHOOK_URL" ]; then
+                    echo "ERROR: webhook URL contains control characters" >&2
+                    exit 1
+                  fi
 
                   # A non-2xx or unparseable response must NOT be reported as
                   # "no degraded clusters" — that is the silent-zero failure
@@ -133,7 +147,11 @@ spec:
                     echo "ERROR: kube API returned HTTP $code listing CNPG clusters" >&2
                     exit 1
                   fi
-                  if ! jq -e 'has("items")' /tmp/body >/dev/null; then
+                  # `has("items")` is satisfied by {"items":{}}, which then
+                  # counts zero clusters and reports a malformed API response as
+                  # a healthy one -- the silent zero this guard exists to stop.
+                  # Require the ARRAY, not merely the key.
+                  if ! jq -e '(.items | type) == "array"' /tmp/body >/dev/null; then
                     echo "ERROR: unexpected response shape from kube API" >&2
                     exit 1
                   fi
@@ -193,8 +211,10 @@ spec:
                   # syntax at all, so there is nothing here to get wrong; a
                   # quoted value would need backslash and double-quote escaped
                   # and would drag in a `sed` the rest of this script does not
-                  # use. URLs cannot contain a raw newline, and curl trims
-                  # surrounding whitespace, so this is total for the input.
+                  # use. curl trims surrounding whitespace, and the
+                  # control-character guard above has already rejected the one
+                  # input that could end this line early -- the guard is what
+                  # makes that total, not the shape of a well-formed URL.
                   printf 'url = %s\n' "$WEBHOOK_URL" |
                     curl -sf --max-time 15 \
                       --retry 3 --retry-delay 2 --retry-all-errors --retry-connrefused \

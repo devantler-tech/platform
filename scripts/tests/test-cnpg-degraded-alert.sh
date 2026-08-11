@@ -351,6 +351,38 @@ grep -q 'unexpected response shape' "${dir}/stderr.log" ||
   fail "scenario 'bad_shape': the shape guard did not report"
 pass "an unexpected API response shape fails the Job"
 
+# Scenario 5b — SILENT-ZERO, third shape. `has("items")` is satisfied by a
+# non-array `items`, which then counts zero clusters and reports a malformed
+# response as a healthy one. The guard must require the ARRAY, not the key.
+dir="$(setup_scenario items_not_array 200 '{"items":{}}' "${REAL_WEBHOOK}")"
+if run_scenario "${dir}"; then
+  fail "scenario 'items_not_array': a non-array items was reported as success"
+fi
+[ "$(deliveries "${dir}")" = "0" ] ||
+  fail "scenario 'items_not_array': delivered an alert on a malformed response"
+grep -q 'unexpected response shape' "${dir}/stderr.log" ||
+  fail "scenario 'items_not_array': the shape guard did not report"
+pass "an items value that is not an array fails the Job"
+
+# Scenario 5c — CURL CONFIG INJECTION. The URL is handed to curl as a config
+# directive, where a newline begins a SECOND directive. A Secret carrying an LF
+# could therefore append arbitrary curl configuration (`output = ...` and the
+# rest) to a request this script believes it fully controls. The value must be
+# rejected before the config is built, and nothing may be delivered.
+injected="${REAL_WEBHOOK}
+output = ${work_root}/injected-output"
+dir="$(setup_scenario url_control_chars 200 '{"items":[]}' "${injected}")"
+if run_scenario "${dir}"; then
+  fail "scenario 'url_control_chars': an LF in the webhook URL was accepted"
+fi
+[ "$(deliveries "${dir}")" = "0" ] ||
+  fail "scenario 'url_control_chars': delivered despite a malformed webhook URL"
+[ ! -e "${work_root}/injected-output" ] ||
+  fail "scenario 'url_control_chars': the injected curl directive took effect"
+grep -q 'control characters' "${dir}/stderr.log" ||
+  fail "scenario 'url_control_chars': the control-character guard did not report"
+pass "a webhook URL carrying a control character fails before any delivery"
+
 # Scenario 6 — a CRD-less cluster is a supported state, not a failure.
 dir="$(setup_scenario no_crd 404 '{}' "${REAL_WEBHOOK}")"
 run_scenario "${dir}" || fail "scenario 'no_crd': a 404 should exit 0"
