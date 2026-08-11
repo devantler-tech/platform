@@ -630,7 +630,7 @@ fi
 refute_text "${output}" 'can enforce image verification.' 'case 18: reported a fleet it only partly enumerated'
 
 # ===========================================================================
-# Case 19 — a discovered node with NO InternalIP must not be silently dropped.
+# Case 22 — a discovered node with NO InternalIP must not be silently dropped.
 #
 # Distinct from case 18, and the distinction is the whole point: there the node
 # has no `status.addresses` at all, so jq ERRORS and discovery already fails
@@ -654,12 +654,12 @@ chmod +x "${fake_bin}/kubectl"
 status=0
 output="$(run_script 2>&1)" || status=$?
 [[ "${status}" -ne 0 ]] ||
-  fail 'case 19: a node with no InternalIP MUST NOT yield exit 0 — it was never checked'
+  fail 'case 22: a node with no InternalIP MUST NOT yield exit 0 — it was never checked'
 [[ "${status}" -eq 2 ]] ||
-  fail "case 19: a node with no InternalIP must exit 2 (infrastructure), got ${status}"
-require_text "${output}" 'prod-worker-2' 'case 19: names the node that has no InternalIP'
+  fail "case 22: a node with no InternalIP must exit 2 (infrastructure), got ${status}"
+require_text "${output}" 'prod-worker-2' 'case 22: names the node that has no InternalIP'
 refute_text "${output}" 'can enforce image verification.' \
-  'case 19: reported a verdict for a fleet that was only partly enumerated'
+  'case 22: reported a verdict for a fleet that was only partly enumerated'
 
 # The healthy-fleet control: without it, a discover_nodes that rejected EVERY
 # node would pass every assertion above.
@@ -672,7 +672,7 @@ exit 0
 FAKE
 chmod +x "${fake_bin}/kubectl"
 run_script >/dev/null 2>&1 ||
-  fail 'case 19: a fleet whose nodes all have an InternalIP must still be accepted'
+  fail 'case 22: a fleet whose nodes all have an InternalIP must still be accepted'
 
 # ===========================================================================
 # Case 20 — an explicitly EMPTY node list is a usage error, not a fallback.

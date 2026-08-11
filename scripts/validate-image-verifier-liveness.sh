@@ -120,7 +120,7 @@ discover_nodes() {
     ' 2>/dev/null)" ||
     fail_infra 'could not parse node addresses from kubectl output'
   if [[ -n "${without_ip}" ]]; then
-    fail_infra "no InternalIP address for node(s): $(printf '%s' "${without_ip}" | tr '\n' ' ')— refusing to report a fleet that was only partly enumerated"
+    fail_infra "no InternalIP address for node(s): $(printf '%s' "${without_ip}" | tr '\n' ' ') — refusing to report a fleet that was only partly enumerated"
   fi
 
   printf '%s' "${json}" |
