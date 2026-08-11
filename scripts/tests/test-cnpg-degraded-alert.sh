@@ -125,7 +125,15 @@ pass "webhook URL is never passed to curl in argv"
 # and a stubbed curl, so what is asserted is what the container would really do.
 # ---------------------------------------------------------------------------
 
-work_root="$(mktemp -d)"
+# Anchored under /tmp deliberately, rather than a bare `mktemp -d`.
+#
+# The patched script below rewrites `/tmp/` to point inside this sandbox, so the
+# sandbox's OWN path has to be able to collide with that rule — otherwise the
+# collision, and the guard that detects it, are both inert. A bare `mktemp -d`
+# returns /var/folders/… on macOS and /tmp/… on Linux, so the ordering bug this
+# guards against passed every local run and failed only in CI. Anchoring here
+# makes the local run reproduce the CI condition.
+work_root="$(mktemp -d /tmp/tmp.XXXXXXXXXX)"
 trap 'rm -rf "${work_root}"' EXIT
 
 # Build one scenario sandbox: a fake serviceaccount dir, a webhook file, a
@@ -200,10 +208,22 @@ run_scenario() {
     # is byte-identical to what the container runs.
     printf 'SA_OVERRIDE=%q\n' "${dir}/sa"
     printf 'WEBHOOK_OVERRIDE=%q\n' "${dir}/webhook/url"
+    # ORDER IS LOAD-BEARING: the `/tmp/` rewrite must run FIRST.
+    #
+    # `${dir}` is itself under `/tmp/` (mktemp -d), so running it last would
+    # re-match the sandbox path the webhook rule had just introduced and double
+    # it: `/etc/cnpg-degraded-alert/url` -> `${dir}/webhook/url` -> then the
+    # leading `/tmp/` of THAT becomes `${dir}/tmp/`, yielding
+    # `${dir}/tmp/${dir#/}/webhook/url`. Reversing the order leaves the webhook
+    # rule's output untouched because `/tmp/` has already been rewritten.
+    #
+    # This reproduces only where mktemp returns a path under /tmp — Linux CI,
+    # not macOS, where it returns /var/folders/… — so it passes locally and
+    # fails in CI.
     printf '%s\n' "${script_body}" |
       sed -e 's#^\( *\)SA=/var/run/secrets/kubernetes.io/serviceaccount$#\1SA="$SA_OVERRIDE"#' \
-        -e 's#/etc/cnpg-degraded-alert/url#'"${dir}"'/webhook/url#g' \
-        -e 's#/tmp/#'"${dir}"'/tmp/#g'
+        -e 's#/tmp/#'"${dir}"'/tmp/#g' \
+        -e 's#/etc/cnpg-degraded-alert/url#'"${dir}"'/webhook/url#g'
   } >"${patched}"
 
   # Prove the redirection actually applied. Without this the sed could silently
@@ -213,6 +233,12 @@ run_scenario() {
     fail "serviceaccount path redirection did not apply; the script's SA line changed shape"
   grep -q "${dir}/webhook/url" "${patched}" ||
     fail "webhook path redirection did not apply; the script no longer reads /etc/cnpg-degraded-alert/url"
+  # The check above is a SUBSTRING match, so the doubled path `${dir}/tmp/${dir#/}/webhook/url`
+  # satisfies it — that is exactly how the ordering bug reached CI. Assert the
+  # sandbox root appears at most once per line to catch any future rule that
+  # rewrites another rule's output.
+  ! grep -q -- "${dir}.*${dir}" "${patched}" ||
+    fail "a redirection rewrote another rule's output; the sandbox path is doubled in the patched script"
 
   (
     cd "${dir}"
