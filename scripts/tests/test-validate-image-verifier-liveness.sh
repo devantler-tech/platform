@@ -368,4 +368,51 @@ grep -Fq -- '--context admin@prod' "${fixtures}/kubectl-args" ||
 run_script >/dev/null 2>&1 || true
 refute_text "$(cat "${fixtures}/kubectl-args")" '--context' 'case 11: passed an empty --context when KUBECTL_CONTEXT was unset'
 
+# ===========================================================================
+# Case 12 — a bin_dir holding ONLY a SUBDIRECTORY must FAIL. A directory's mode
+# string ('drwxr-xr-x') contains an 'x', so a check that counts any entry with
+# an 'x' reports this node as enforcing. containerd executes files in bin_dir
+# and does not descend, so such a node permits every pull — a fail-open in the
+# dangerous direction, and the exact class #2856 was.
+# ===========================================================================
+write_node dironly
+verifier_config /opt/containerd/image-verifier/bin >"${fixtures}/dironly/files/_etc_cri_conf.d_cri.toml"
+write_dir dironly /opt/containerd/image-verifier/bin <<EOF
+${listing_header}
+10.0.1.4   drwxr-xr-x   0     0     37        Aug  4 14:58:45   system_u:object_r:containerd_plugin_t:s0   .
+10.0.1.4   drwxr-xr-x   0     0     37        Aug  4 14:58:45   system_u:object_r:containerd_plugin_t:s0   plugins
+EOF
+
+if output="$(run_script TALOS_NODES=dironly 2>&1)"; then
+  fail 'case 12: a bin_dir holding only a subdirectory MUST fail — directories are not verifier binaries'
+fi
+require_text "${output}" 'holds no executable' 'case 12: names the condition that failed'
+
+# ...while an executable SYMLINK in bin_dir still counts: a verifier installed
+# via a symlink into bin_dir is executed exactly like a regular file.
+write_node symlink
+verifier_config /opt/containerd/image-verifier/bin >"${fixtures}/symlink/files/_etc_cri_conf.d_cri.toml"
+write_dir symlink /opt/containerd/image-verifier/bin <<EOF
+${listing_header}
+10.0.1.4   lrwxrwxrwx   0     0     31        Aug  4 14:58:45   system_u:object_r:containerd_plugin_t:s0   cosign-verifier
+EOF
+
+output="$(run_script TALOS_NODES=symlink 2>&1)" ||
+  fail 'case 12: an executable symlink in bin_dir must count as a verifier'
+require_text "${output}" 'holds 1 executable' 'case 12: counted the symlinked verifier'
+
+# ===========================================================================
+# Case 13 — an empty entry in the node list is a USAGE error (exit 2), not a
+# node to skip. Skipping it would check fewer nodes than asked for and still
+# exit 0: a clean report on a fleet the check never looked at.
+# ===========================================================================
+if output="$(run_script TALOS_NODES=good,,good 2>&1)"; then
+  fail 'case 13: an interior empty node entry must not succeed'
+fi
+status=0
+run_script TALOS_NODES=good,,good >/dev/null 2>&1 || status=$?
+[[ "${status}" -eq 2 ]] ||
+  fail "case 13: an empty node entry must exit 2 (usage), got ${status}"
+require_text "${output}" 'empty entry' 'case 13: names the malformed list'
+
 printf 'PASS: all cases\n'

@@ -121,10 +121,18 @@ extract_bin_dir() {
 # Counts executable entries, skipping the directory's own '.' entry. MODE is
 # always column 2; NAME is always last. The LABEL column is empty for some files
 # on this cluster, so positional parsing from the left past column 2 is unsafe.
+#
+# The MODE's first character is the entry TYPE, and it must be checked: a
+# directory's mode ('drwxr-xr-x') carries an 'x' too, so counting any entry with
+# an 'x' would let a bin_dir holding nothing but a subdirectory report as
+# enforcing. containerd executes FILES in bin_dir and does not descend into
+# subdirectories, so such a node permits every pull while this check calls it
+# healthy — the precise fail-open this script exists to detect. Regular files
+# ('-') and symlinks ('l') count; everything else does not.
 count_executables() {
   local node="$1" dir="$2"
   "${talosctl_bin}" -n "${node}" ls -l "${dir}" 2>/dev/null |
-    awk 'NR > 1 && $NF != "." && $2 ~ /x/ { n++ } END { print n + 0 }'
+    awk 'NR > 1 && $NF != "." && substr($2, 1, 1) ~ /^[-l]$/ && $2 ~ /x/ { n++ } END { print n + 0 }'
 }
 
 directory_exists() {
@@ -138,6 +146,17 @@ directory_exists() {
 nodes=()
 if [[ -n "${nodes_arg}" ]]; then
   IFS=',' read -r -a nodes <<<"${nodes_arg}"
+  # An empty element means the caller's list was malformed ('a,,b', a trailing
+  # comma, a shell variable that expanded to nothing). Skipping it silently
+  # would check FEWER nodes than were asked for and still exit 0 — a checker
+  # reporting a clean fleet it never looked at, which is the same silence this
+  # script exists to break. Refuse the list instead.
+  for node in "${nodes[@]}"; do
+    [[ -n "${node}" ]] || {
+      printf 'ERROR: --nodes/TALOS_NODES contains an empty entry: %s\n' "${nodes_arg}" >&2
+      usage
+    }
+  done
 else
   while IFS= read -r discovered; do
     [[ -n "${discovered}" ]] || continue
