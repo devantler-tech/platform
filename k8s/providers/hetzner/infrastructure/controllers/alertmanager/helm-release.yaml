@@ -112,7 +112,12 @@ spec:
               # into the webhook URL); set here only for clarity in the UI.
               channel: "#platform-alerts"
               send_resolved: true
-              title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }} on {{ .CommonLabels.host }}'
+              # `host` is guarded because it is a node-agent label, not a
+              # universal one: the crossplane-sync-alerter posts cluster-scoped
+              # alerts with no host, which would otherwise render a dangling
+              # "on " in the Slack title. A no-op for the node-agent alerts,
+              # which always carry it.
+              title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}{{ with .CommonLabels.host }} on {{ . }}{{ end }}'
               # Render every annotation the node-agent attaches (keys vary by
               # rule), one per line, for each grouped alert.
               text: |-
