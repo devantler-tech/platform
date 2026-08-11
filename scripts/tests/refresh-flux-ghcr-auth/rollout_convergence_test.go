@@ -739,6 +739,73 @@ func TestFluxChildReconciliationBlocksBeforePolicyHandoffAcquisition(t *testing.
 	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
 }
 
+func TestHandoffQuiesceTimeoutNamesTheBlockingCondition(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_RECONCILING":         "true",
+		"FAKE_FLUX_POLICY_RECONCILING_REASON":  "ProgressingWithRetry",
+		"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": "Running health checks for revision latest@sha256:fixture",
+		"FAKE_FLUX_POLICY_CHILD_UNHEALTHY":     "timeout waiting for: [Cluster/observability/coroot-db status: 'InProgress']",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output, "did not quiesce before the image-verification policy handoff")
+	requireContains(t, output, "ProgressingWithRetry")
+	requireContains(t, output, "Cluster/observability/coroot-db")
+}
+
+func TestHandoffQuiesceTimeoutNamesTheUnreadyDependency(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_RECONCILING":                 "true",
+		"FAKE_FLUX_POLICY_CHILD_DEPENDENCY_NOT_READY":  "infrastructure-controllers",
+		"FAKE_FLUX_POLICY_DEPENDENCY_BLOCKING_MESSAGE": "Running health checks for revision latest@sha256:fixture with a timeout of 25m0s",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output, "did not quiesce before the image-verification policy handoff")
+	requireContains(t, output, "infrastructure-controllers")
+	requireContains(t, output, "with a timeout of 25m0s")
+}
+
+func TestHandoffQuiesceDiagnosticCannotChangeTheOutcome(t *testing.T) {
+	t.Parallel()
+	blocked := newFixture(t)
+	blockedResult := blocked.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_RECONCILING": "true",
+	})
+	broken := newFixture(t)
+	brokenResult := broken.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_POLICY_RECONCILING":                "true",
+		"FAKE_FLUX_POLICY_CHILD_DEPENDENCY_NOT_READY": "infrastructure-controllers",
+		"FAKE_FLUX_POLICY_DEPENDENCY_READ_FAILS":      "true",
+	})
+	requireFailureResult(t, brokenResult)
+	requireContains(
+		t,
+		brokenResult.stdout+brokenResult.stderr,
+		"did not quiesce before the image-verification policy handoff",
+	)
+	// Prove the dependency read was actually attempted and swallowed, so this
+	// stays an ablation of the diagnostic rather than of the code path.
+	requireContains(
+		t,
+		brokenResult.stdout+brokenResult.stderr,
+		"Could not read dependency flux-system/infrastructure-controllers",
+	)
+	if brokenResult.exitCode != blockedResult.exitCode {
+		t.Fatalf(
+			"an unreadable dependency changed the handoff failure exit status: got %d, want %d",
+			brokenResult.exitCode,
+			blockedResult.exitCode,
+		)
+	}
+	requireLine(t, readLines(broken.operationLog), "flux-policy-parent-resume:flux-system")
+	requireNoLine(t, readLines(broken.operationLog), "flux-policy-pause:infrastructure")
+}
+
 func TestFluxChildQuiescesBeforePolicyHandoffAcquisition(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

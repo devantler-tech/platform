@@ -135,6 +135,15 @@ func fakeKubectlGetFluxPolicyKustomization(args []string, namespace string) int 
 	if name == "flux-system" {
 		return fakeKubectlGetFluxPolicyParent(args, namespace)
 	}
+	if namespace == "flux-system" &&
+		name == os.Getenv("FAKE_FLUX_POLICY_CHILD_DEPENDENCY_NOT_READY") &&
+		name != "" {
+		if os.Getenv("FAKE_FLUX_POLICY_DEPENDENCY_READ_FAILS") == "true" {
+			return commandFailure(1, "Error from server (NotFound): kustomizations.kustomize.toolkit.fluxcd.io %q not found", name)
+		}
+		fmt.Println(encodeJSON(fakeFluxPolicyDependencyObject(name)))
+		return 0
+	}
 	if namespace != "flux-system" ||
 		name != "infrastructure" ||
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
@@ -142,6 +151,37 @@ func fakeKubectlGetFluxPolicyKustomization(args []string, namespace string) int 
 	}
 	fmt.Println(encodeJSON(fakeFluxPolicyChildObject()))
 	return 0
+}
+
+// fakeFluxPolicyDependencyObject models a Kustomization the handoff owner
+// depends on, still reconciling with the message that names the real blocker.
+func fakeFluxPolicyDependencyObject(name string) map[string]any {
+	return map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": "flux-system",
+			"uid":       name + "-kustomization-uid",
+		},
+		"spec": map[string]any{"suspend": false},
+		"status": map[string]any{
+			"conditions": []any{
+				map[string]any{
+					"type":    "Reconciling",
+					"status":  "True",
+					"reason":  "ProgressingWithRetry",
+					"message": os.Getenv("FAKE_FLUX_POLICY_DEPENDENCY_BLOCKING_MESSAGE"),
+				},
+				map[string]any{
+					"type":    "Ready",
+					"status":  "False",
+					"reason":  "HealthCheckFailed",
+					"message": os.Getenv("FAKE_FLUX_POLICY_DEPENDENCY_BLOCKING_MESSAGE"),
+				},
+			},
+		},
+	}
 }
 
 func fakeFluxPolicyChildObject() map[string]any {
@@ -173,13 +213,30 @@ func fakeFluxPolicyChildObject() map[string]any {
 	if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_NO_ANNOTATIONS") != "true" || owner != "" {
 		metadata["annotations"] = annotations
 	}
-	conditions := []any{
-		map[string]any{
-			"type":   "Ready",
-			"status": "True",
-			"reason": "ReconciliationSucceeded",
-		},
+	readyCondition := map[string]any{
+		"type":   "Ready",
+		"status": "True",
+		"reason": "ReconciliationSucceeded",
 	}
+	spec := map[string]any{"suspend": suspended}
+	if unhealthy := os.Getenv("FAKE_FLUX_POLICY_CHILD_UNHEALTHY"); unhealthy != "" {
+		readyCondition = map[string]any{
+			"type":    "Ready",
+			"status":  "False",
+			"reason":  "HealthCheckFailed",
+			"message": unhealthy,
+		}
+	}
+	if dependency := os.Getenv("FAKE_FLUX_POLICY_CHILD_DEPENDENCY_NOT_READY"); dependency != "" {
+		readyCondition = map[string]any{
+			"type":    "Ready",
+			"status":  "False",
+			"reason":  "DependencyNotReady",
+			"message": fmt.Sprintf("dependency 'flux-system/%s' is not ready", dependency),
+		}
+		spec["dependsOn"] = []any{map[string]any{"name": dependency}}
+	}
+	conditions := []any{readyCondition}
 	reconciling := os.Getenv("FAKE_FLUX_POLICY_RECONCILING") == "true"
 	if suspended && os.Getenv("FAKE_FLUX_POLICY_RECONCILING_AFTER_PAUSE") == "true" {
 		reconciling = true
@@ -201,19 +258,21 @@ func fakeFluxPolicyChildObject() map[string]any {
 		}
 	}
 	if reconciling {
-		conditions = append(conditions, map[string]any{
+		reconcilingCondition := map[string]any{
 			"type":   "Reconciling",
 			"status": "True",
-			"reason": "Progressing",
-		})
+			"reason": defaultString(os.Getenv("FAKE_FLUX_POLICY_RECONCILING_REASON"), "Progressing"),
+		}
+		if message := os.Getenv("FAKE_FLUX_POLICY_RECONCILING_MESSAGE"); message != "" {
+			reconcilingCondition["message"] = message
+		}
+		conditions = append(conditions, reconcilingCondition)
 	}
 	return map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   metadata,
-		"spec": map[string]any{
-			"suspend": suspended,
-		},
+		"spec":       spec,
 		"status": map[string]any{
 			"observedGeneration": 13,
 			"conditions":         conditions,

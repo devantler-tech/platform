@@ -215,6 +215,8 @@ flux_policy_parent_state_file="${work_dir}/flux-policy-parent-state.json"
 flux_policy_parent_patch_file="${work_dir}/flux-policy-parent-patch.json"
 flux_policy_parent_result_file="${work_dir}/flux-policy-parent-result.txt"
 flux_policy_fences_state_file="${work_dir}/flux-policy-fences-state.json"
+flux_policy_blocker_names_file="${work_dir}/flux-policy-blocker-names.txt"
+flux_policy_blocker_state_file="${work_dir}/flux-policy-blocker-state.json"
 flux_controller_deployment_state_file="${work_dir}/flux-controller-deployment-state.json"
 flux_controller_restart_patch_file="${work_dir}/flux-controller-restart-patch.json"
 flux_controller_result_file="${work_dir}/flux-controller-result.txt"
@@ -3174,6 +3176,73 @@ flux_policy_handoff_is_quiescent() {
   ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 
+# Print the conditions that explain a Kustomization's reconciliation state.
+# Diagnostic output only: an unreadable or unparseable state file prints
+# nothing and still succeeds.
+flux_policy_report_conditions() {
+  local state_file="$1" label="$2"
+
+  [[ -s "${state_file}" ]] || return 0
+  jq -r --arg label "${label}" '
+    [.status.conditions[]?
+      | select(.type == "Reconciling" or .type == "Ready" or .type == "Healthy")
+      | "\($label): \(.type)=\(.status) \(.reason // "-"): "
+        + ((.message // "-") | gsub("\\s+"; " "))]
+    | if length == 0 then ["\($label): reported no status conditions"] else . end
+    | .[]
+  ' "${state_file}" 2>/dev/null || true
+}
+
+# Explain a failed quiesce wait. The blocking condition is already in the state
+# file that wait just read, and when the owner is held up by a dependency the
+# cause is one read further out. Without this the failure names image
+# verification while the real blocker is an unrelated workload, which is what
+# makes the merge-queue eviction it causes read as "some PR failed CI".
+#
+# Strictly best-effort: this runs on the production credential path, so a
+# diagnostic must never change the outcome it is describing.
+report_flux_policy_handoff_blockers() {
+  local dependency dependency_name dependency_namespace
+
+  flux_policy_report_conditions \
+    "${flux_policy_handoff_state_file}" \
+    "kustomization/${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}"
+
+  # Read the dependencies the owner itself declares rather than parsing them
+  # out of a controller-authored message.
+  jq -r '
+    if any(.status.conditions[]?;
+      .type == "Ready" and .reason == "DependencyNotReady")
+    then
+      .metadata.namespace as $namespace
+      | .spec.dependsOn[]?
+      | "\(.namespace // $namespace)/\(.name)"
+    else empty end
+  ' "${flux_policy_handoff_state_file}" \
+    2>/dev/null >"${flux_policy_blocker_names_file}" || return 0
+
+  while IFS= read -r dependency; do
+    dependency_namespace="${dependency%%/*}"
+    dependency_name="${dependency##*/}"
+    [[ -n "${dependency_namespace}" && -n "${dependency_name}" &&
+      "${dependency}" == "${dependency_namespace}/${dependency_name}" ]] ||
+      continue
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace "${dependency_namespace}" \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${dependency_name}" \
+      -o json </dev/null >"${flux_policy_blocker_state_file}" 2>/dev/null; then
+      flux_policy_report_conditions \
+        "${flux_policy_blocker_state_file}" \
+        "kustomization/${dependency_name} (dependency)"
+    else
+      echo "Could not read dependency ${dependency} while explaining the image-verification policy handoff quiesce timeout."
+    fi
+  done <"${flux_policy_blocker_names_file}"
+  return 0
+}
+
 read_flux_policy_fences() {
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
@@ -3417,6 +3486,7 @@ pause_flux_policy_handoff() {
     fi
     if ((attempt == SYNC_ATTEMPTS)); then
       echo "::error::The Flux image-verification policy owner did not quiesce before the image-verification policy handoff."
+      report_flux_policy_handoff_blockers || true
       return 1
     fi
     sleep "${SYNC_INTERVAL}"
