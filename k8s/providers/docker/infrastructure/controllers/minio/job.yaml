@@ -18,7 +18,7 @@ metadata:
     # in this pinned release can be exercised here -- a mistake would surface
     # only when someone next opted into the local backup test-bed. Tracked with
     # the rest of the group on #3018. Scoped to this resource and this check.
-    checkov.io/skip1: CKV_K8S_35=deferred to #3018 -- `mc alias import` is the file-based route, but adopting it restructures this Job's wait loop and no environment here can exercise the result
+    checkov.io/skip1: "CKV_K8S_35=deferred to #3018 -- `mc alias import` is the file-based route, but adopting it restructures this Job's wait loop and no environment here can exercise the result"
 spec:
   backoffLimit: 20
   ttlSecondsAfterFinished: 3600
