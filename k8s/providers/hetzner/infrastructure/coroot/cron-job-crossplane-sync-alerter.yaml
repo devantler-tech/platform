@@ -159,19 +159,32 @@ spec:
                   # sample is an ordinary reconciliation error, not a stuck
                   # resource -- firing on it pages on every provider API blip.
                   # `endsAt` cannot help: it expires an alert, it does not delay
-                  # one. So the query itself carries the gate, in two parts:
-                  #   min_over_time(...[15m]) == 0  -- NO sample in the window was
-                  #     1, i.e. the resource never synced across the whole window;
-                  #   count_over_time(...[3m] offset 12m) > 0  -- a sample existed
-                  #     12-15m ago, so the window is COMPLETE. Without this a
-                  #     resource first observed 30s ago satisfies min_over_time
-                  #     trivially and fires immediately, which is the same defect
-                  #     one layer down.
+                  # one. So the query itself carries the gate, in three parts:
+                  #
+                  #   1. `... == 0` -- the CURRENT sample is 0. Without this the
+                  #      history clauses alone can fire on a series whose newest
+                  #      sample is 1, i.e. one that has already recovered.
+                  #   2. `max_over_time(...[15m]) == 0` -- EVERY sample in the
+                  #      window was 0. It must be max, not min: the metric is 0/1,
+                  #      so min==0 means "at least one sample was 0" and matches a
+                  #      recovered [0,1] series, while max==0 means "no sample was
+                  #      ever 1", which is the property wanted.
+                  #   3. `count_over_time(...[3m] offset 12m) > 0` -- a sample
+                  #      existed 12-15m ago, so the window is COMPLETE. Without it
+                  #      a resource first observed 30s ago satisfies the history
+                  #      clause trivially and fires immediately.
+                  #
+                  # History is aggregated `by (name, namespace)` and joined `on
+                  # (name, namespace)` because `reason` is part of the series
+                  # identity: a resource that changes reason leaves an obsolete
+                  # all-zero series behind, which would keep satisfying the window
+                  # on its own labels long after the live series recovered.
+                  #
                   # Scrape interval is 1m, so the offset sub-window spans ~3
                   # samples and one missed scrape cannot suppress the alert.
                   # Worst-case detection latency is 15m of grace plus up to one
                   # 5m cron period; the failure this watches for persisted 22 days.
-                  STUCK=$(q 'min_over_time(crossplane_managed_resource_condition{condition="Synced"}[15m]) == 0 and count_over_time(crossplane_managed_resource_condition{condition="Synced"}[3m] offset 12m) > 0')
+                  STUCK=$(q 'crossplane_managed_resource_condition{condition="Synced"} == 0 and on (name, namespace) (max by (name, namespace) (max_over_time(crossplane_managed_resource_condition{condition="Synced"}[15m])) == 0) and on (name, namespace) (count by (name, namespace) (count_over_time(crossplane_managed_resource_condition{condition="Synced"}[3m] offset 12m)) > 0)')
                   if [ "$(printf '%s' "$STUCK" | jq -r '.status')" != "success" ]; then
                     echo "ERROR: Prometheus query for stuck resources failed"; exit 1
                   fi
