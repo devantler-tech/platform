@@ -1,0 +1,95 @@
+name: Validate Image Verifier Liveness
+
+# Assert that node-level image verification can enforce AT ALL.
+#
+# The ImageVerificationConfig rules in talos/cluster/verify-first-party-images.yaml
+# were correct, active, and evaluating NOTHING for weeks, because containerd's
+# image-verifier plugin had no bin_dir and no verifier binary — a state
+# containerd documents as permitting every pull (devantler-tech/platform#2856).
+# Nothing in CI could see it: the rules were present, the node config matched the
+# repository, and every check was green.
+#
+# This runs on a cadence rather than on a PR because the condition it watches is
+# not introduced by a diff. It drifts with the node image, the Talos version, and
+# the schematic — none of which this repository's PR events observe. A
+# path-filtered PR check would have caught none of #2856.
+#
+# EXPECTED TO FAIL until #3101 installs the verifier. That is the point: the
+# signal should be red while the control is inert, not silent.
+
+on:
+  schedule:
+    - cron: "30 6 * * *" # daily, offset from the midnight policy sync
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - scripts/validate-image-verifier-liveness.sh
+      - scripts/tests/test-validate-image-verifier-liveness.sh
+      - .github/workflows/validate-image-verifier-liveness.yaml
+
+permissions: {}
+
+concurrency:
+  # Read-only against prod, so it does not share the deploy lock — but two
+  # copies of it racing each other buys nothing.
+  group: validate-image-verifier-liveness
+  cancel-in-progress: true
+
+jobs:
+  validate-image-verifier-liveness:
+    name: 🔏 Validate Image Verifier Liveness
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: 🧪 Test the checker itself
+        # The checker's whole value is noticing a silent condition, so a
+        # regression in it is silent too. Its own tests need no cluster and no
+        # secrets, so they run first and fail fast.
+        shell: bash
+        run: ./scripts/tests/test-validate-image-verifier-liveness.sh
+
+      - name: ⚙️ Setup talosctl
+        shell: bash
+        env:
+          TALOS_VERSION: "1.13.6"
+        run: |
+          curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
+          sudo install /tmp/talosctl /usr/local/bin/talosctl
+          talosctl version --client
+
+      - name: 🔑 Restore kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          umask 077
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🔑 Restore talosconfig
+        shell: bash
+        env:
+          TALOS_CONFIG: ${{ secrets.TALOS_CONFIG }}
+        run: |
+          mkdir -p ~/.talos
+          umask 077
+          printf '%s' "${TALOS_CONFIG}" > ~/.talos/config
+          chmod 600 ~/.talos/config
+
+      - name: 🔏 Assert every node can enforce image verification
+        shell: bash
+        env:
+          # Pinned for the same reason the deploy composite pins it: the
+          # restored kubeconfig's current-context is not guaranteed to be prod,
+          # and a check that silently read another cluster would report a
+          # healthy fleet that is not the one being gated.
+          KUBECTL_CONTEXT: admin@prod
+        run: ./scripts/validate-image-verifier-liveness.sh
