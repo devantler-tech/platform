@@ -54,11 +54,24 @@ readonly talosctl_bin="${TALOSCTL:-talosctl}"
 readonly kubectl_bin="${KUBECTL:-kubectl}"
 
 nodes_arg="${TALOS_NODES:-}"
+
+# Whether an explicit fleet was REQUESTED is tracked separately from whether the
+# list is non-empty. `--nodes "$TALOS_NODES"` with the variable unset expands to
+# an empty string: the option WAS supplied and named nothing. Falling back to
+# cluster discovery there checks a different fleet than the caller asked for and
+# still exits 0 — and explicit addresses are usually explicit precisely because
+# the current kube context is not that fleet.
+#
+# `${VAR+set}` distinguishes set-but-empty from unset, so an exported
+# `TALOS_NODES=` is caught too; that is how CI passes the list.
+nodes_requested=0
+[[ -n "${TALOS_NODES+set}" ]] && nodes_requested=1
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
     --nodes)
       [[ "$#" -ge 2 ]] || usage
       nodes_arg="$2"
+      nodes_requested=1
       shift 2
       ;;
     -h | --help) usage ;;
@@ -82,13 +95,41 @@ fail_infra() {
 # composite pins `--context admin@prod` for the same reason, because the
 # restored kubeconfig's current-context is not guaranteed to be prod.
 discover_nodes() {
-  local json
+  local json without_ip
   local -a context_args=()
   [[ -n "${KUBECTL_CONTEXT:-}" ]] && context_args=(--context "${KUBECTL_CONTEXT}")
   json="$("${kubectl_bin}" "${context_args[@]+"${context_args[@]}"}" get nodes -o json 2>/dev/null)" ||
     fail_infra 'could not list cluster nodes (kubectl get nodes failed)'
+
+  # Every node must yield an InternalIP, and a node that does not is refused
+  # rather than dropped. A `select(.type == "InternalIP")` over a node whose
+  # addresses hold only a Hostname or an ExternalIP matches nothing and SUCCEEDS
+  # — so that node silently leaves the fleet, and if the remaining ones are
+  # healthy the script prints a green verdict for a fleet it never enumerated.
+  # That is the same fail-open the script exists to detect, one layer earlier.
+  #
+  # Checked as its own pass so the offending node can be NAMED. Deriving it from
+  # a jq error instead would either lose the name or push kubectl's output into
+  # an error message.
+  without_ip="$(printf '%s' "${json}" |
+    jq -r '
+      .items[]
+      | select([(.status.addresses // [])[]
+                | select(.type == "InternalIP" and ((.address // "") | tostring) != "")] | length == 0)
+      | .metadata.name // "<unnamed node>"
+    ' 2>/dev/null)" ||
+    fail_infra 'could not parse node addresses from kubectl output'
+  if [[ -n "${without_ip}" ]]; then
+    fail_infra "no InternalIP address for node(s): $(printf '%s' "${without_ip}" | tr '\n' ' ')— refusing to report a fleet that was only partly enumerated"
+  fi
+
   printf '%s' "${json}" |
-    jq -r '.items[].status.addresses[] | select(.type == "InternalIP") | .address' 2>/dev/null ||
+    jq -r '
+      .items[]
+      | (.status.addresses // [])[]
+      | select(.type == "InternalIP" and ((.address // "") | tostring) != "")
+      | .address
+    ' 2>/dev/null ||
     fail_infra 'could not parse node addresses from kubectl output'
 }
 
@@ -103,8 +144,29 @@ discover_nodes() {
 # declared a verifier the fleet would pass while nothing had been checked: the
 # same fail-open shape this script exists to detect, reintroduced in the
 # detector.
-path_exists() {
-  "${talosctl_bin}" -n "$1" ls "$2" >/dev/null 2>&1
+# Three-state probe: 'present', 'absent', or 'error'.
+#
+# A failed `ls` is ambiguous — the path may not be there, or the node may have
+# hiccuped — and only the first of those is a verdict. Collapsing both into
+# "this node does not ship that config" lets a transient fault silently drop one
+# containerd from the check; if the OTHER one is wired up, `configs_present`
+# stays nonzero and the node passes with half its image paths never inspected.
+#
+# Only a CONFIRMED not-found counts as absent, and the discriminator has to be
+# the stderr text because talosctl exits 1 for both. `ls` on a path emits only
+# that path's name and never file contents, so matching its stderr cannot expose
+# the registry credentials that `/etc/cri/conf.d/cri.toml` carries.
+path_probe() {
+  local node="$1" path="$2" err status=0
+  err="$("${talosctl_bin}" -n "${node}" ls "${path}" 2>&1 >/dev/null)" || status=$?
+  if [[ "${status}" -eq 0 ]]; then
+    printf 'present\n'
+    return 0
+  fi
+  case "${err}" in
+    *'no such file or directory'* | *'NotFound'* | *'not found'*) printf 'absent\n' ;;
+    *) printf 'error\n' ;;
+  esac
 }
 
 node_reachable() {
@@ -191,6 +253,11 @@ directory_exists() {
 # on bash 3.2 (macOS) as well as CI's bash 5. A check nobody can run locally is
 # a check nobody verifies before shipping.
 nodes=()
+if [[ "${nodes_requested}" -eq 1 && -z "${nodes_arg}" ]]; then
+  printf 'ERROR: --nodes/TALOS_NODES was supplied but names no node — refusing to fall back to cluster discovery, which would check a different fleet than was asked for\n' >&2
+  usage
+fi
+
 if [[ -n "${nodes_arg}" ]]; then
   # A malformed list ('a,,b', a leading or trailing comma, a shell variable that
   # expanded to nothing) is refused rather than quietly shortened: checking FEWER
@@ -281,11 +348,27 @@ for node in "${nodes[@]}"; do
   configs_present=0
   node_failures=0
   for config_file in "${config_files[@]}"; do
-    if ! path_exists "${node}" "${config_file}"; then
-      node_reachable "${node}" ||
-        fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
-      continue
-    fi
+    case "$(path_probe "${node}" "${config_file}")" in
+      present) ;;
+      absent)
+        # A confirmed not-found normally proves the node answered — but the same
+        # phrase can come from a client-side fault (a missing talosconfig, say),
+        # which would otherwise read as "this node does not ship that config".
+        # The reachability probe is what tells those two apart.
+        node_reachable "${node}" ||
+          fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
+        continue
+        ;;
+      *)
+        # Both "the node is gone" and "the node answered but this one probe
+        # failed" arrive here, and they deserve different diagnoses: the first
+        # is a fleet-wide fault, the second is specific to one containerd.
+        # Neither is a verdict, so both stop the run either way.
+        node_reachable "${node}" ||
+          fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
+        fail_infra "could not determine whether ${config_file} exists on ${node} (talosctl ls failed for a reason other than the file being absent) — refusing to report a node whose containerd was never inspected"
+        ;;
+    esac
     configs_present=$((configs_present + 1))
     check_config "${node}" "${config_file}" || node_failures=$((node_failures + 1))
   done

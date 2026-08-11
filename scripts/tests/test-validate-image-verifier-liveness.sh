@@ -103,6 +103,14 @@ while [[ "$#" -gt 0 ]]; do
         printf 'error connecting to %s\n' "${node}" >&2
         exit 1
       fi
+      # A path that fails for a reason OTHER than being absent: the real client
+      # emits an RPC error here, not an lstat one. Kept distinct from the
+      # no-fixture case below so a transient fault can be told apart from a
+      # config the node genuinely does not ship.
+      if [[ -f "${FIXTURES}/${node}/lserror${path//\//_}" ]]; then
+        printf 'rpc error: code = Unavailable desc = connection error\n' >&2
+        exit 1
+      fi
       # `ls /` is the reachability probe: the node answered, so it succeeds.
       [[ "${path}" == '/' ]] && exit 0
       if [[ -f "${listing}" ]]; then
@@ -620,5 +628,135 @@ fi
 [[ "${status}" -eq 2 ]] ||
   fail "case 18: partial discovery must exit 2 (infrastructure), got ${status}"
 refute_text "${output}" 'can enforce image verification.' 'case 18: reported a fleet it only partly enumerated'
+
+# ===========================================================================
+# Case 19 — a discovered node with NO InternalIP must not be silently dropped.
+#
+# Distinct from case 18, and the distinction is the whole point: there the node
+# has no `status.addresses` at all, so jq ERRORS and discovery already fails
+# closed. Here the array is present and perfectly valid — it just holds only a
+# Hostname and an ExternalIP. jq's `select(.type == "InternalIP")` matches
+# nothing, emits nothing, and SUCCEEDS. The node vanishes from the fleet while
+# every other node reports OK, so the script prints a confident green verdict
+# for a fleet it never fully enumerated: the same fail-open shape the script
+# exists to detect, arriving through enumeration rather than the verdict.
+# ===========================================================================
+cat >"${fake_bin}/kubectl" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' '{"items":[
+  {"metadata":{"name":"prod-worker-1"},"status":{"addresses":[{"type":"InternalIP","address":"good"}]}},
+  {"metadata":{"name":"prod-worker-2"},"status":{"addresses":[{"type":"Hostname","address":"prod-worker-2"},{"type":"ExternalIP","address":"203.0.113.7"}]}}
+]}'
+exit 0
+FAKE
+chmod +x "${fake_bin}/kubectl"
+
+status=0
+output="$(run_script 2>&1)" || status=$?
+[[ "${status}" -ne 0 ]] ||
+  fail 'case 19: a node with no InternalIP MUST NOT yield exit 0 — it was never checked'
+[[ "${status}" -eq 2 ]] ||
+  fail "case 19: a node with no InternalIP must exit 2 (infrastructure), got ${status}"
+require_text "${output}" 'prod-worker-2' 'case 19: names the node that has no InternalIP'
+refute_text "${output}" 'can enforce image verification.' \
+  'case 19: reported a verdict for a fleet that was only partly enumerated'
+
+# The healthy-fleet control: without it, a discover_nodes that rejected EVERY
+# node would pass every assertion above.
+cat >"${fake_bin}/kubectl" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' '{"items":[
+  {"metadata":{"name":"prod-worker-1"},"status":{"addresses":[{"type":"Hostname","address":"prod-worker-1"},{"type":"InternalIP","address":"good"}]}}
+]}'
+exit 0
+FAKE
+chmod +x "${fake_bin}/kubectl"
+run_script >/dev/null 2>&1 ||
+  fail 'case 19: a fleet whose nodes all have an InternalIP must still be accepted'
+
+# ===========================================================================
+# Case 20 — an explicitly EMPTY node list is a usage error, not a fallback.
+#
+# `--nodes "$TALOS_NODES"` with the variable unset expands to an empty string.
+# Treating that as "no list was given" silently switches to cluster discovery,
+# so the check reports a green verdict for a DIFFERENT fleet than the caller
+# asked for — and the explicit addresses are usually explicit precisely because
+# the current kube context is not the fleet in question.
+#
+# Discovery is wired to a healthy node here on purpose: if the fallback fires,
+# the script exits 0 and the assertion below is what catches it.
+# ===========================================================================
+run_script_with_args() {
+  env PATH="${fake_bin}:${PATH}" FIXTURES="${fixtures}" \
+    TALOSCTL="${fake_bin}/talosctl" KUBECTL="${fake_bin}/kubectl" \
+    bash "${script}" "$@"
+}
+
+status=0
+output="$(run_script_with_args --nodes '' 2>&1)" || status=$?
+[[ "${status}" -ne 0 ]] ||
+  fail 'case 20: --nodes "" must not silently fall back to cluster discovery'
+[[ "${status}" -eq 2 ]] ||
+  fail "case 20: --nodes '' must exit 2 (usage), got ${status}"
+refute_text "${output}" 'can enforce image verification.' \
+  'case 20: reported a verdict for a fleet the caller never asked for'
+
+# Same for the environment form, which is how CI passes the list.
+status=0
+output="$(run_script TALOS_NODES= 2>&1)" || status=$?
+[[ "${status}" -eq 2 ]] ||
+  fail "case 20: TALOS_NODES set-but-empty must exit 2 (usage), got ${status}"
+
+# Controls: an explicit non-empty list still works, and a genuinely UNSET
+# TALOS_NODES must still reach discovery — otherwise the guard above would be
+# rejecting the discovery path outright and case 7 would be the only thing
+# keeping it honest.
+run_script_with_args --nodes good >/dev/null 2>&1 ||
+  fail 'case 20: an explicit non-empty --nodes must still be accepted'
+run_script >/dev/null 2>&1 ||
+  fail 'case 20: an unset TALOS_NODES must still fall through to discovery'
+
+# ===========================================================================
+# Case 21 — a config probe that fails for a reason OTHER than "absent" is an
+# infrastructure error, never a config to skip.
+#
+# `talosctl ls <config>` failing is ambiguous: the file may not be there, or the
+# node may have hiccuped. Only the first is a verdict. Treating both as "this
+# node does not ship that config" means a transient fault silently removes one
+# containerd from the check — and if the OTHER containerd is wired up,
+# `configs_present` stays nonzero and the node passes while one of its two image
+# paths was never inspected.
+#
+# The system containerd here is deliberately HEALTHY: that is what makes the
+# skip invisible without this case.
+# ===========================================================================
+write_node probeerror
+verifier_config /opt/containerd/image-verifier/bin >"${fixtures}/probeerror/files/_etc_containerd_config.toml"
+verifier_config /opt/containerd/image-verifier/bin >"${fixtures}/probeerror/files/_etc_cri_conf.d_cri.toml"
+write_dir probeerror /opt/containerd/image-verifier/bin <<EOF
+${listing_header}
+10.0.1.9   -rwxr-xr-x   0     0     8123456   Aug  4 14:58:45   system_u:object_r:containerd_plugin_t:s0   cosign-verifier
+EOF
+# The CRI config probe fails with an RPC error rather than an lstat one. The
+# node itself still answers `ls /`, so a reachability probe cannot catch this.
+printf 'PROBE_ERROR\n' >"${fixtures}/probeerror/lserror_etc_cri_conf.d_cri.toml"
+
+status=0
+output="$(run_script TALOS_NODES=probeerror 2>&1)" || status=$?
+[[ "${status}" -ne 0 ]] ||
+  fail 'case 21: a config probe error MUST NOT be skipped into a green verdict'
+[[ "${status}" -eq 2 ]] ||
+  fail "case 21: a config probe error must exit 2 (infrastructure), got ${status}"
+require_text "${output}" '/etc/cri/conf.d/cri.toml' 'case 21: names the config it could not probe'
+refute_text "${output}" 'can enforce image verification.' \
+  'case 21: reported a verdict for a node whose containerd was never inspected'
+refute_text "${output}" "${canary}" 'case 21: probe error must not carry config contents'
+
+# Control: with the probe error removed the same node passes, so the assertions
+# above are pinning the probe failure and not some unrelated defect in the
+# fixture.
+rm -f "${fixtures}/probeerror/lserror_etc_cri_conf.d_cri.toml"
+run_script TALOS_NODES=probeerror >/dev/null 2>&1 ||
+  fail 'case 21: the same node must pass once the probe error is gone'
 
 printf 'PASS: all cases\n'
