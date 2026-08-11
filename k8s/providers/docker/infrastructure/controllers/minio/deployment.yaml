@@ -16,6 +16,15 @@ metadata:
   namespace: minio
   labels:
     app.kubernetes.io/name: minio
+  annotations:
+    # MinIO's root credential is environment-only by design: the documented
+    # interface is MINIO_ROOT_USER / MINIO_ROOT_PASSWORD and the server exposes
+    # no file-based equivalent, so there is nothing to point at a mounted
+    # Secret. The *_FILE spelling that circulates for other images is
+    # undocumented for the MinIO server and reported not to initialise it, so
+    # adopting it here would trade a scanner finding for a test-bed that
+    # silently fails to start. Scoped to this resource and this check only.
+    checkov.io/skip1: CKV_K8S_35=MinIO's documented root-credential interface is environment-only; the server offers no file-based equivalent to mount
 spec:
   replicas: 1
   strategy:

@@ -6,6 +6,18 @@ kind: Job
 metadata:
   name: minio-create-bucket
   namespace: minio
+  annotations:
+    # `mc` accepts credentials as command-line arguments or environment
+    # variables; it has no documented file-based credential input. Reading a
+    # mounted file in the shell and passing the value to `mc alias set` would
+    # move the credential from the environment to the process argv, which is no
+    # less readable -- so it would satisfy the scanner without improving
+    # anything. Hand-writing mc's own config.json is the only file-based route
+    # and depends on an internal format this repository cannot verify: platform
+    # CI is static validation with no full-cluster system test, so a broken
+    # bucket-creation Job would surface only when someone next ran the local
+    # backup test-bed. Scoped to this resource and this check only.
+    checkov.io/skip1: CKV_K8S_35=the mc client has no documented file-based credential input, and the alternatives move the value to argv rather than out of process state
 spec:
   backoffLimit: 20
   ttlSecondsAfterFinished: 3600
