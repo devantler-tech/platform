@@ -92,30 +92,68 @@ discover_nodes() {
     fail_infra 'could not parse node addresses from kubectl output'
 }
 
-# Emits the configured bin_dir, or nothing when no config declares one.
-# The config file is piped directly into sed: its contents never land anywhere
-# this script could print them. See the SECURITY note above.
-extract_bin_dir() {
-  local node="$1" file value
-  for file in "${config_files[@]}"; do
-    # INTENT: a config file that does not exist on this node image is skipped so
-    # the next one still gets its turn. The `|| true` states that explicitly
-    # rather than relying on how `set -e` and `pipefail` interact with a failing
-    # first stage inside a command substitution — behaviour subtle enough that
-    # two isolated probes of it disagreed, so it is not something this script
-    # should depend on either way. The missing-config case in the test pins the
-    # behaviour itself.
-    value="$(
-      { "${talosctl_bin}" -n "${node}" read "${file}" 2>/dev/null || true; } |
-        sed -n "s/^[[:space:]]*bin_dir[[:space:]]*=[[:space:]]*['\"]\([^'\"]*\)['\"].*/\1/p" |
-        head -n 1
-    )"
-    if [[ -n "${value}" ]]; then
-      printf '%s' "${value}"
-      return 0
-    fi
-  done
-  return 0
+# `ls` reports a path's EXISTENCE without emitting its contents, so its exit
+# status is safe to branch on; `read` emits the whole config, so a failed read
+# must never be the thing that tells "absent" apart from "unreachable".
+#
+# That distinction is load-bearing. Inferring absence from a failed read means a
+# node the runner cannot reach — expired talosconfig, network partition, API
+# down — looks exactly like a node that simply does not ship that config file.
+# Such a node would be skipped silently, and if any OTHER containerd config
+# declared a verifier the fleet would pass while nothing had been checked: the
+# same fail-open shape this script exists to detect, reintroduced in the
+# detector.
+path_exists() {
+  "${talosctl_bin}" -n "$1" ls "$2" >/dev/null 2>&1
+}
+
+node_reachable() {
+  "${talosctl_bin}" -n "$1" ls / >/dev/null 2>&1
+}
+
+# Emits the bin_dir declared by ONE config file's image-verifier plugin, or
+# nothing when that file declares none.
+#
+# Scoped to the `io.containerd.image-verifier.v1.bindir` table on purpose.
+# `bin_dir` is a generic key name, and an unscoped match accepts one from an
+# unrelated plugin's table — reporting a node as enforcing on the strength of a
+# setting containerd never consults for image verification.
+#
+# The config is piped straight into awk and only the extracted value is ever
+# printed. `/etc/cri/conf.d/cri.toml` carries registry credentials and this
+# script's output goes to CI logs, so the file must never be captured — not into
+# a variable, not into a temp file, not into an error message. See the SECURITY
+# note at the top.
+#
+# awk rather than sed because the table scoping needs state across lines, and
+# because awk consumes all input: a `sed ... | head -n 1` pipeline closes the
+# pipe early, and under `pipefail` the resulting SIGPIPE is indistinguishable
+# from a genuine read failure.
+extract_bin_dir_from() {
+  local node="$1" file="$2"
+  "${talosctl_bin}" -n "${node}" read "${file}" 2>/dev/null | awk '
+    BEGIN { SQ = sprintf("%c", 39); DQ = sprintf("%c", 34); want = 0; found = 0 }
+    found { next }
+    /^[ \t]*\[/ {
+      header = $0
+      gsub(/[ \t]/, "", header)
+      gsub(SQ, "", header)
+      gsub(DQ, "", header)
+      want = (header == "[plugins.io.containerd.image-verifier.v1.bindir]")
+      next
+    }
+    want && match($0, /^[ \t]*bin_dir[ \t]*=/) {
+      value = substr($0, RSTART + RLENGTH)
+      sub(/^[ \t]*/, "", value)
+      quote = substr(value, 1, 1)
+      if (quote != SQ && quote != DQ) next
+      value = substr(value, 2)
+      end = index(value, quote)
+      if (end == 0) next
+      print substr(value, 1, end - 1)
+      found = 1
+    }
+  '
 }
 
 # Counts executable entries, skipping the directory's own '.' entry. MODE is
@@ -166,35 +204,70 @@ fi
 
 [[ "${#nodes[@]}" -gt 0 ]] || fail_infra 'no nodes to check'
 
-failures=0
-for node in "${nodes[@]}"; do
-  [[ -n "${node}" ]] || continue
+# Verdict for ONE containerd instance on one node. Returns 0 when that instance
+# can enforce, 1 when it cannot.
+check_config() {
+  local node="$1" file="$2" bin_dir status=0 executables
 
-  bin_dir="$(extract_bin_dir "${node}")"
+  bin_dir="$(extract_bin_dir_from "${node}" "${file}")" || status=$?
+  # The file's existence was proven before this call, so a read failure here is
+  # an infrastructure fault, never a verdict. Reporting it as "cannot enforce"
+  # would be a misdiagnosis; swallowing it would be a fail-open.
+  [[ "${status}" -eq 0 ]] ||
+    fail_infra "could not read ${file} on ${node} (the file exists but talosctl read failed)"
 
   if [[ -z "${bin_dir}" ]]; then
-    printf 'FAIL %s: no bin_dir configured in %s — the image-verifier plugin has no directory to run, so containerd permits every pull\n' \
-      "${node}" "${config_files[*]}"
-    failures=$((failures + 1))
-    continue
+    printf 'FAIL %s [%s]: no bin_dir in the io.containerd.image-verifier.v1.bindir table — the plugin has no directory to run, so containerd permits every pull\n' \
+      "${node}" "${file}"
+    return 1
   fi
 
   if ! directory_exists "${node}" "${bin_dir}"; then
-    printf 'FAIL %s: bin_dir %s is configured but does not exist — containerd permits every pull\n' \
-      "${node}" "${bin_dir}"
-    failures=$((failures + 1))
-    continue
+    printf 'FAIL %s [%s]: bin_dir %s is configured but does not exist — containerd permits every pull\n' \
+      "${node}" "${file}" "${bin_dir}"
+    return 1
   fi
 
   executables="$(count_executables "${node}" "${bin_dir}")"
   if [[ "${executables}" -eq 0 ]]; then
-    printf 'FAIL %s: bin_dir %s holds no executable — containerd permits every pull\n' \
-      "${node}" "${bin_dir}"
-    failures=$((failures + 1))
-    continue
+    printf 'FAIL %s [%s]: bin_dir %s holds no executable — containerd permits every pull\n' \
+      "${node}" "${file}" "${bin_dir}"
+    return 1
   fi
 
-  printf 'OK   %s: bin_dir %s holds %s executable(s)\n' "${node}" "${bin_dir}" "${executables}"
+  printf 'OK   %s [%s]: bin_dir %s holds %s executable(s)\n' \
+    "${node}" "${file}" "${bin_dir}" "${executables}"
+  return 0
+}
+
+failures=0
+for node in "${nodes[@]}"; do
+  [[ -n "${node}" ]] || continue
+
+  # Every containerd instance present on the node is evaluated INDEPENDENTLY.
+  # Accepting the first config that declares a bin_dir would let a wired-up CRI
+  # containerd mask an unprotected system containerd (or the reverse) — and the
+  # two pull different images: CRI pulls workload images, the system instance
+  # pulls Talos' own. A verifier on one leaves the other open, which is the
+  # whole point of checking both.
+  configs_present=0
+  node_failures=0
+  for config_file in "${config_files[@]}"; do
+    if ! path_exists "${node}" "${config_file}"; then
+      node_reachable "${node}" ||
+        fail_infra "cannot reach node ${node} (talosctl ls / failed) — refusing to report a fleet that was not checked"
+      continue
+    fi
+    configs_present=$((configs_present + 1))
+    check_config "${node}" "${config_file}" || node_failures=$((node_failures + 1))
+  done
+
+  # No containerd configuration at all is not a clean node — it means this check
+  # looked at nothing and would otherwise pass the node by default.
+  [[ "${configs_present}" -gt 0 ]] ||
+    fail_infra "no containerd configuration found on ${node} (looked in ${config_files[*]})"
+
+  [[ "${node_failures}" -eq 0 ]] || failures=$((failures + 1))
 done
 
 if [[ "${failures}" -gt 0 ]]; then

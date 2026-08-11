@@ -78,8 +78,18 @@ jobs:
         shell: bash
         env:
           TALOS_VERSION: "1.13.6"
+          # SHA-256 of talosctl-linux-amd64 for the TALOS_VERSION above, from
+          # that release's sha256sum.txt. UPDATE BOTH TOGETHER — a version bump
+          # that leaves this stale fails the step, which is the intended
+          # direction: this job installs a binary with sudo and then points it
+          # at production with restored cluster credentials, so an unverified
+          # download is a privileged one. The version alone pins the URL, not
+          # the bytes it serves.
+          TALOSCTL_SHA256: "540c5e7cb0d3fa3a9b2e1c717ced212727b73bcaf0cf9cf9ba2472ec381041d4"
         run: |
+          set -euo pipefail
           curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
+          echo "${TALOSCTL_SHA256}  /tmp/talosctl" | sha256sum --check --strict -
           sudo install /tmp/talosctl /usr/local/bin/talosctl
           talosctl version --client
 
