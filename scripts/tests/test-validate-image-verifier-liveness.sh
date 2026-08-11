@@ -126,8 +126,13 @@ run_script() {
     "$@" bash "${script}"
 }
 
-# --- The credential that must never appear in output. -----------------------
-readonly canary='ghp_TESTCANARYVALUEmustNeverBePrinted0001'
+# --- The credential value that must never appear in output. -----------------
+# Deliberately NOT shaped like a real token. The property under test is "no
+# config content reaches stdout", which any distinctive sentinel proves — while
+# a realistic `ghp_`-shaped literal is itself a finding for the secret scanners
+# this repository gates on (betterleaks/secretlint/trufflehog report 0 on this
+# tree, and a test fixture is not a good reason to spend that).
+readonly canary='CANARY-registry-auth-value-must-never-be-printed'
 
 verifier_config() {
   local bin_dir="$1"
