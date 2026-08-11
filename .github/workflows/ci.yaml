@@ -141,6 +141,7 @@ jobs:
               - 'scripts/wait-for-platform-flux-revision.sh'
               - 'scripts/tests/test-opencost-usage-scraper.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
+              - 'scripts/tests/test-cnpg-degraded-alert.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
               - 'scripts/dr-rebuild-supersession-guard.sh'
@@ -438,6 +439,15 @@ jobs:
         # reads exactly like a fleet with nothing wrong. Schema validation cannot
         # see any of it, so render the component contract instead.
         run: bash scripts/tests/test-crossplane-sync-exporter.sh
+
+      - name: 🩺 Validate the CNPG degraded-cluster alert
+        if: needs.changes.outputs.k8s == 'true'
+        # This CronJob is the only signal for a database degraded without
+        # crashlooping, and a broken check prints the same "none degraded" line
+        # as a healthy fleet. Run its real script against a stubbed API and
+        # delivery so both silent-zero guards and the credential's handling are
+        # pinned by behaviour rather than by schema.
+        run: bash scripts/tests/test-cnpg-degraded-alert.sh
 
       - name: 🧭 Validate the DR rebuild supersession gate
         if: needs.changes.outputs.k8s == 'true'
