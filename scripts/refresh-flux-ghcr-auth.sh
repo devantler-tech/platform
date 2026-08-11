@@ -239,6 +239,7 @@ variables_secret_cas_patch_file="${work_dir}/variables-secret-cas-patch.json"
 sync_lease_holder=""
 sync_lease_acquired=false
 sync_lease_heartbeat_pid=""
+sync_lease_renewal_failure=""
 flux_policy_handoff_acquired=false
 flux_policy_handoff_owner=""
 flux_policy_handoff_uid=""
@@ -2819,21 +2820,30 @@ renew_sync_lease() {
   local lease_file="${work_dir}/sync-lease-renew-${invocation_id}.json"
   local patch_file_local="${work_dir}/sync-lease-renew-patch-${invocation_id}.json"
   local result_file="${work_dir}/sync-lease-renew-result-${invocation_id}.txt"
-  local resource_version now
+  local resource_version now observed_holder
 
+  sync_lease_renewal_failure=""
   [[ "${sync_lease_acquired}" == "true" && -n "${sync_lease_holder}" ]] || return 1
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     get lease "${SYNC_LEASE_NAME}" \
-    -o json >"${lease_file}"; then
+    -o json >"${lease_file}" 2>"${result_file}"; then
+    sync_lease_renewal_failure="api-unreachable"
     return 1
   fi
-  resource_version="$(jq -er \
-    --arg holder "${sync_lease_holder}" '
-    select(.spec.holderIdentity == $holder)
-    | .metadata.resourceVersion
-  ' "${lease_file}")" || return 1
+  observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || {
+    sync_lease_renewal_failure="invalid-lease-state"
+    return 1
+  }
+  if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
+    sync_lease_renewal_failure="held-by-another"
+    return 1
+  fi
+  resource_version="$(jq -er '.metadata.resourceVersion' "${lease_file}")" || {
+    sync_lease_renewal_failure="invalid-lease-state"
+    return 1
+  }
   now="$(kubernetes_microtime_now)"
   jq -n \
     --arg resource_version "${resource_version}" \
@@ -2864,17 +2874,31 @@ renew_sync_lease() {
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     get lease "${SYNC_LEASE_NAME}" \
-    -o json >"${lease_file}"; then
+    -o json >"${lease_file}" 2>"${result_file}"; then
+    sync_lease_renewal_failure="api-unreachable"
     return 1
   fi
-  jq -e \
+  observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || {
+    sync_lease_renewal_failure="invalid-lease-state"
+    return 1
+  }
+  if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
+    sync_lease_renewal_failure="held-by-another"
+    return 1
+  fi
+  if jq -e \
     --arg holder "${sync_lease_holder}" \
     --argjson now_epoch "$(date -u +%s)" '
     .spec.holderIdentity == $holder
     and (((.spec.renewTime // .spec.acquireTime)
       | sub("\\.[0-9]+Z$"; "Z")
       | fromdateiso8601) + .spec.leaseDurationSeconds > $now_epoch)
-  ' "${lease_file}" >/dev/null
+  ' "${lease_file}" >/dev/null; then
+    return 0
+  fi
+
+  sync_lease_renewal_failure="not-live"
+  return 1
 }
 
 sync_lease_heartbeat_loop() {
@@ -2884,17 +2908,61 @@ sync_lease_heartbeat_loop() {
       sleep 1
     done
     if ! renew_sync_lease; then
-      : >"${sync_lease_lost_file}"
+      printf '%s\n' "${sync_lease_renewal_failure:-unknown}" >"${sync_lease_lost_file}"
       return 1
     fi
   done
 }
 
+wait_for_sync_lease_api_recovery() {
+  local attempt
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get --raw=/readyz \
+      --request-timeout=30s \
+      >"${sync_lease_result_file}" 2>&1; then
+      return 0
+    fi
+    if ((attempt < SYNC_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
+  done
+
+  echo "::error::The Kubernetes API remained unreachable while verifying the GHCR synchronization Lease; no further cluster mutation is safe."
+  emit_safe_operation_output "api-ready" "${sync_lease_result_file}"
+  return 1
+}
+
 assert_sync_lease_held() {
-  if [[ -e "${sync_lease_lost_file}" ]] || ! renew_sync_lease; then
-    echo "::error::The GHCR synchronization lease was lost; refusing further cluster mutation."
-    return 1
+  local failure_reason=""
+  if [[ -e "${sync_lease_lost_file}" ]]; then
+    failure_reason="$(head -n 1 "${sync_lease_lost_file}")"
+  elif renew_sync_lease; then
+    return 0
+  else
+    failure_reason="${sync_lease_renewal_failure:-unknown}"
   fi
+
+  case "${failure_reason}" in
+    api-unreachable)
+      echo "::warning::The Kubernetes API was unreachable while verifying the GHCR synchronization Lease; waiting for API recovery before re-proving the same holder."
+      wait_for_sync_lease_api_recovery || return 1
+      recover_sync_lease_heartbeat_after_transport_interruption
+      ;;
+    held-by-another)
+      echo "::error::The GHCR synchronization Lease is now held by another transaction; refusing further cluster mutation."
+      return 1
+      ;;
+    not-live)
+      echo "::error::The GHCR synchronization Lease is no longer live for this transaction; refusing further cluster mutation."
+      return 1
+      ;;
+    *)
+      echo "::error::The GHCR synchronization Lease state could not be proved (${failure_reason}); refusing further cluster mutation."
+      return 1
+      ;;
+  esac
 }
 
 recover_sync_lease_heartbeat_after_transport_interruption() {
@@ -2908,14 +2976,18 @@ recover_sync_lease_heartbeat_after_transport_interruption() {
     sync_lease_heartbeat_pid=""
   fi
   if ! renew_sync_lease; then
-    echo "::error::The Kubernetes API recovered, but this transaction could not re-prove and renew its synchronization Lease holder."
+    if [[ "${sync_lease_renewal_failure}" == "held-by-another" ]]; then
+      echo "::error::The Kubernetes API recovered, but this transaction could not re-prove and renew its synchronization Lease holder because the Lease is now held by another transaction."
+    else
+      echo "::error::The Kubernetes API recovered, but this transaction could not re-prove and renew its synchronization Lease holder (${sync_lease_renewal_failure:-unknown})."
+    fi
     return 1
   fi
 
   rm -f "${sync_lease_lost_file}"
   sync_lease_heartbeat_loop &
   sync_lease_heartbeat_pid=$!
-  echo "::warning::Re-proved the same GHCR synchronization Lease holder and restarted its heartbeat after API recovery."
+  echo "::warning::Re-proved the same GHCR synchronization Lease holder after API recovery and restarted its heartbeat."
 }
 
 release_sync_lease() {

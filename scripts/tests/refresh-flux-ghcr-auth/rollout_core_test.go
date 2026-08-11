@@ -466,6 +466,34 @@ func TestTransientDrainAPITransportFailureRetriesUnderTheSameClaim(t *testing.T)
 	requireLine(t, operations, "root-patch")
 }
 
+func TestTransientAPIFailureWhileAssertingLeaseWaitsAndReprovesHolder(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_TRANSIENT_SYNC_LEASE_API_FAIL_AFTER_FIRST_CLAIM": "true",
+		"FLUX_GHCR_SYNC_LEASE_HEARTBEAT_SECONDS":               "60",
+	})
+	requireSuccessResult(t, result)
+	if !pathExists(filepath.Join(f.syncStateDir, "sync-lease-api-unreachable-after-first-claim")) {
+		t.Fatal("fixture did not interrupt the synchronization Lease lookup after the node claim")
+	}
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"Kubernetes API was unreachable while verifying the GHCR synchronization Lease",
+	)
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"Re-proved the same GHCR synchronization Lease holder after API recovery",
+	)
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+}
+
 func TestTransientAPITransportFailureDuringPostRebootReadyWaitRetries(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
