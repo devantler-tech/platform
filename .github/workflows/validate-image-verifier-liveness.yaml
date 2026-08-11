@@ -21,15 +21,13 @@ name: Validate Image Verifier Liveness
 # signal, and activation becomes one reversible line in #3101.
 #
 # The checker's OWN tests need no cluster and no secrets, so they gate every PR
-# that touches the checker. That split is the point: a regression in a checker
-# whose job is noticing a silent condition would itself be silent.
+# that touches the checker. They live in ci.yaml's `validate` job, which
+# `CI - Required Checks` depends on, so they actually block a merge — a test
+# that only reports is advisory, and a regression in a checker whose job is
+# noticing a silent condition would itself be silent. This workflow therefore
+# carries only the on-demand fleet check.
 
 on:
-  pull_request:
-    paths:
-      - scripts/validate-image-verifier-liveness.sh
-      - scripts/tests/test-validate-image-verifier-liveness.sh
-      - .github/workflows/validate-image-verifier-liveness.yaml
   workflow_dispatch:
 
 permissions: {}
@@ -39,28 +37,20 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: 🧪 Test Image Verifier Liveness Checker
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read # checkout repository
-    steps:
-      - name: 📑 Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          persist-credentials: false
-
-      - name: 🧪 Test the checker itself
-        shell: bash
-        run: ./scripts/tests/test-validate-image-verifier-liveness.sh
-
   validate-image-verifier-liveness:
     name: 🔏 Validate Image Verifier Liveness
-    needs: test
-    # A pull request has no business reading prod, and fork PRs cannot hold the
-    # cluster secrets. Removing this condition is what activation means.
-    if: github.event_name == 'workflow_dispatch'
+    # Dormancy is now the TRIGGER SET, not a job condition: `workflow_dispatch`
+    # is the only event, so there is no PR or schedule path to guard against.
+    # Adding the daily `schedule:` is what activation means (#3101).
     runs-on: ubuntu-latest
+    # KUBE_CONFIG and TALOS_CONFIG are `prod` ENVIRONMENT secrets, not repository
+    # secrets — every other consumer (ci.yaml's deploy jobs, cd.yaml, dr-rebuild)
+    # declares this for the same reason. Without it GitHub resolves both to the
+    # empty string, the restore steps write empty configs, and the check cannot
+    # reach a single node. It would fail as an infrastructure error rather than
+    # passing falsely, but a control that can never run is the same class of
+    # problem as the one this whole PR exists to detect.
+    environment: prod
     permissions:
       contents: read # checkout repository
     concurrency:

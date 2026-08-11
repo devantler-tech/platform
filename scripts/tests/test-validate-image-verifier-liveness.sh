@@ -93,11 +93,25 @@ while [[ "$#" -gt 0 ]]; do
       # An unreachable node fails everything, exactly as the real client does
       # when it cannot talk to the API.
       [[ -d "${FIXTURES}/${node}" ]] || { printf 'error connecting to %s\n' "${node}" >&2; exit 1; }
-      # `ls /` is the reachability probe: the node answered, so it succeeds.
-      [[ "${path}" == '/' ]] && exit 0
       listing="${FIXTURES}/${node}/dirs/${path//\//_}"
       content="${FIXTURES}/${node}/files/${path//\//_}"
+      # The node drops out mid-check: its config files still probe and read, but
+      # every OTHER `ls` now fails — including the `/` reachability probe. That
+      # ordering is the point: the check gets past the config and only then finds
+      # the node gone, which is the path a start-of-run probe cannot cover.
+      if [[ -f "${FIXTURES}/${node}/lsfail_all" && ! -f "${content}" ]]; then
+        printf 'error connecting to %s\n' "${node}" >&2
+        exit 1
+      fi
+      # `ls /` is the reachability probe: the node answered, so it succeeds.
+      [[ "${path}" == '/' ]] && exit 0
       if [[ -f "${listing}" ]]; then
+        # A node that answers the short-form existence probe and then fails the
+        # long-form listing: the directory was there, the node stopped talking.
+        if [[ "${long}" -eq 1 && -f "${FIXTURES}/${node}/lsfail" ]]; then
+          printf 'error connecting to %s\n' "${node}" >&2
+          exit 1
+        fi
         [[ "${long}" -eq 1 ]] && cat "${listing}"
         exit 0
       fi
@@ -412,7 +426,7 @@ run_script >/dev/null 2>&1 || true
 refute_text "$(cat "${fixtures}/kubectl-args")" '--context' 'case 11: passed an empty --context when KUBECTL_CONTEXT was unset'
 
 # ===========================================================================
-# Case 12 — a bin_dir holding ONLY a SUBDIRECTORY must FAIL. A directory's mode
+# Case 16 — a bin_dir holding ONLY a SUBDIRECTORY must FAIL. A directory's mode
 # string ('drwxr-xr-x') contains an 'x', so a check that counts any entry with
 # an 'x' reports this node as enforcing. containerd executes files in bin_dir
 # and does not descend, so such a node permits every pull — a fail-open in the
@@ -427,9 +441,9 @@ ${listing_header}
 EOF
 
 if output="$(run_script TALOS_NODES=dironly 2>&1)"; then
-  fail 'case 12: a bin_dir holding only a subdirectory MUST fail — directories are not verifier binaries'
+  fail 'case 16: a bin_dir holding only a subdirectory MUST fail — directories are not verifier binaries'
 fi
-require_text "${output}" 'holds no executable' 'case 12: names the condition that failed'
+require_text "${output}" 'holds no executable' 'case 16: names the condition that failed'
 
 # ...while an executable SYMLINK in bin_dir still counts: a verifier installed
 # via a symlink into bin_dir is executed exactly like a regular file.
@@ -441,22 +455,35 @@ ${listing_header}
 EOF
 
 output="$(run_script TALOS_NODES=symlink 2>&1)" ||
-  fail 'case 12: an executable symlink in bin_dir must count as a verifier'
-require_text "${output}" 'holds 1 executable' 'case 12: counted the symlinked verifier'
+  fail 'case 16: an executable symlink in bin_dir must count as a verifier'
+require_text "${output}" 'holds 1 executable' 'case 16: counted the symlinked verifier'
 
 # ===========================================================================
 # Case 13 — an empty entry in the node list is a USAGE error (exit 2), not a
 # node to skip. Skipping it would check fewer nodes than asked for and still
 # exit 0: a clean report on a fleet the check never looked at.
 # ===========================================================================
-if output="$(run_script TALOS_NODES=good,,good 2>&1)"; then
-  fail 'case 13: an interior empty node entry must not succeed'
-fi
-status=0
-run_script TALOS_NODES=good,,good >/dev/null 2>&1 || status=$?
-[[ "${status}" -eq 2 ]] ||
-  fail "case 13: an empty node entry must exit 2 (usage), got ${status}"
-require_text "${output}" 'empty entry' 'case 13: names the malformed list'
+# A trailing comma is the case a post-split scan structurally cannot catch:
+# `read -a` discards the trailing empty field, so 'good,' splits to exactly one
+# element and looks perfectly well-formed. Leading and doubled commas are here
+# for the same reason — the check is on the raw string, so all three share a
+# code path and all three are pinned.
+for malformed in 'good,,good' 'good,' ',good' 'good,,'; do
+  status=0
+  output="$(run_script "TALOS_NODES=${malformed}" 2>&1)" || status=$?
+  [[ "${status}" -ne 0 ]] ||
+    fail "case 13: malformed node list '${malformed}' must not succeed"
+  [[ "${status}" -eq 2 ]] ||
+    fail "case 13: malformed node list '${malformed}' must exit 2 (usage), got ${status}"
+  require_text "${output}" 'empty entry' "case 13: names the malformed list for '${malformed}'"
+  refute_text "${output}" 'can enforce image verification.' \
+    "case 13: reported a verdict for the malformed list '${malformed}'"
+done
+
+# The well-formed list must still work — otherwise the guard above could be
+# rejecting everything and every assertion here would still pass.
+run_script TALOS_NODES=good,good >/dev/null 2>&1 ||
+  fail 'case 13: a well-formed comma-separated list must still be accepted'
 
 # ===========================================================================
 # Case 14 — a bin_dir belonging to a DIFFERENT plugin must not count.
@@ -509,5 +536,89 @@ if [[ "${status}" -ne 2 ]]; then
 fi
 require_text "${output}" 'cannot reach node unreachable' 'case 15: names the unreachable node'
 refute_text "${output}" 'can enforce image verification.' 'case 15: reported a verdict for a node it never checked'
+
+# ===========================================================================
+# Case 17 — a node that stops answering AFTER its config was read is an
+# infrastructure error, not a verdict.
+#
+# `talosctl ls -l` on a bin_dir already proven to exist can still fail. awk over
+# empty input prints 0 quite happily, so discarding that status turns an
+# unreachable node into a confident "holds no executable" FAIL — the checker
+# blaming the cluster for a runner-side fault, at exit code 1 where a human
+# reads "the fleet is unprotected" rather than "the check did not run".
+# ===========================================================================
+write_node vanishing
+verifier_config /opt/containerd/image-verifier/bin >"${fixtures}/vanishing/files/_etc_cri_conf.d_cri.toml"
+# `ls <dir>` succeeds (the existence probe) because a listing fixture exists,
+# but it is EMPTY, so `ls -l` on it produces no rows...
+write_dir vanishing /opt/containerd/image-verifier/bin </dev/null
+# ...and this makes the long-form listing fail outright, which is the real
+# shape: the directory was there a moment ago and the node is now unresponsive.
+printf 'FAIL_LS_LONG\n' >"${fixtures}/vanishing/lsfail"
+
+status=0
+output="$(run_script TALOS_NODES=vanishing 2>&1)" || status=$?
+if [[ "${status}" -eq 1 ]]; then
+  fail 'case 17: a failed listing on an existing bin_dir must not be reported as "holds no executable"'
+fi
+[[ "${status}" -eq 2 ]] ||
+  fail "case 17: a failed listing must exit 2 (infrastructure), got ${status}"
+require_text "${output}" 'could not list' 'case 17: names the listing failure'
+refute_text "${output}" 'can enforce image verification.' 'case 17: reported a verdict it could not reach'
+
+# ===========================================================================
+# Case 19 — a node that drops out between the config read and the bin_dir probe
+# is an infrastructure error, not "the directory does not exist".
+#
+# `directory_exists` sees the same failed `ls` either way. Reporting the
+# unreachable case as a verdict blames the cluster for a runner-side fault, and
+# a start-of-run reachability probe cannot cover it — the node was answering
+# when the run began.
+# ===========================================================================
+write_node dropout
+verifier_config /opt/containerd/image-verifier/bin >"${fixtures}/dropout/files/_etc_cri_conf.d_cri.toml"
+printf 'DROPPED\n' >"${fixtures}/dropout/lsfail_all"
+
+status=0
+output="$(run_script TALOS_NODES=dropout 2>&1)" || status=$?
+if [[ "${status}" -eq 1 ]]; then
+  fail 'case 19: an unreachable node must not be reported as "bin_dir does not exist"'
+fi
+[[ "${status}" -eq 2 ]] ||
+  fail "case 19: a mid-check dropout must exit 2 (infrastructure), got ${status}"
+require_text "${output}" 'cannot reach node dropout' 'case 19: names the unreachable node'
+refute_text "${output}" 'does not exist' 'case 19: blamed the cluster for a runner-side fault'
+
+# ===========================================================================
+# Case 18 — PARTIAL node discovery must abort, never pass on the prefix.
+#
+# kubectl can return a valid node followed by one whose addresses are missing,
+# so jq emits an address and THEN fails. Run through a process substitution,
+# `fail_infra` exits only that subshell: the loop keeps the addresses already
+# emitted, and if those happen to be healthy the script exits 0 having silently
+# dropped the rest of the fleet. That is the fail-open this whole script exists
+# to detect, arriving through the enumeration rather than the verdict.
+# ===========================================================================
+# kubectl SUCCEEDS here — that is the whole point. The failure has to come from
+# jq, midway through valid output: the first node yields an address, the second
+# has no `status.addresses` at all, so jq errors on it AFTER writing "good" to
+# stdout. A fake that simply exits non-zero would abort discovery at the kubectl
+# step and never exercise the partial-output path (it did, and the ablation
+# caught it).
+cat >"${fake_bin}/kubectl" <<'FAKE'
+#!/usr/bin/env bash
+printf '%s\n' '{"items":[{"status":{"addresses":[{"type":"InternalIP","address":"good"}]}},{"status":{}}]}'
+exit 0
+FAKE
+chmod +x "${fake_bin}/kubectl"
+
+status=0
+output="$(run_script 2>&1)" || status=$?
+if [[ "${status}" -eq 0 ]]; then
+  fail 'case 18: partial node discovery MUST NOT exit 0 — the rest of the fleet was never enumerated'
+fi
+[[ "${status}" -eq 2 ]] ||
+  fail "case 18: partial discovery must exit 2 (infrastructure), got ${status}"
+refute_text "${output}" 'can enforce image verification.' 'case 18: reported a fleet it only partly enumerated'
 
 printf 'PASS: all cases\n'

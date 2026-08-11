@@ -167,9 +167,18 @@ extract_bin_dir_from() {
 # subdirectories, so such a node permits every pull while this check calls it
 # healthy — the precise fail-open this script exists to detect. Regular files
 # ('-') and symlinks ('l') count; everything else does not.
+#
+# The listing's exit status is preserved, not discarded. The caller only reaches
+# this after the directory was proven to exist, so a failure here means the node
+# stopped answering mid-check — which must be an infrastructure error, never the
+# "holds no executable" verdict. `awk` on empty input prints 0 quite happily, so
+# swallowing the status turns an unreachable node into a confident FAIL line.
 count_executables() {
-  local node="$1" dir="$2"
-  "${talosctl_bin}" -n "${node}" ls -l "${dir}" 2>/dev/null |
+  local node="$1" dir="$2" listing status=0
+  listing="$("${talosctl_bin}" -n "${node}" ls -l "${dir}" 2>/dev/null)" || status=$?
+  [[ "${status}" -eq 0 ]] ||
+    fail_infra "could not list ${dir} on ${node} (the directory exists but talosctl ls failed)"
+  printf '%s\n' "${listing}" |
     awk 'NR > 1 && $NF != "." && substr($2, 1, 1) ~ /^[-l]$/ && $2 ~ /x/ { n++ } END { print n + 0 }'
 }
 
@@ -183,23 +192,33 @@ directory_exists() {
 # a check nobody verifies before shipping.
 nodes=()
 if [[ -n "${nodes_arg}" ]]; then
+  # A malformed list ('a,,b', a leading or trailing comma, a shell variable that
+  # expanded to nothing) is refused rather than quietly shortened: checking FEWER
+  # nodes than were asked for and still exiting 0 is a checker reporting a clean
+  # fleet it never looked at — the same silence this script exists to break.
+  #
+  # Validate the RAW STRING, before splitting. `read -a` discards a trailing
+  # empty field, so 'worker-1,' splits to exactly one element and a
+  # post-split scan for empty entries cannot see the malformation at all.
+  if [[ "${nodes_arg}" == ,* || "${nodes_arg}" == *, || "${nodes_arg}" == *,,* ]]; then
+    printf 'ERROR: --nodes/TALOS_NODES has an empty entry (leading, trailing or doubled comma): %s\n' \
+      "${nodes_arg}" >&2
+    usage
+  fi
   IFS=',' read -r -a nodes <<<"${nodes_arg}"
-  # An empty element means the caller's list was malformed ('a,,b', a trailing
-  # comma, a shell variable that expanded to nothing). Skipping it silently
-  # would check FEWER nodes than were asked for and still exit 0 — a checker
-  # reporting a clean fleet it never looked at, which is the same silence this
-  # script exists to break. Refuse the list instead.
-  for node in "${nodes[@]}"; do
-    [[ -n "${node}" ]] || {
-      printf 'ERROR: --nodes/TALOS_NODES contains an empty entry: %s\n' "${nodes_arg}" >&2
-      usage
-    }
-  done
 else
+  # Discovery runs in a command substitution so its exit status reaches this
+  # shell. A process substitution would NOT: `fail_infra` inside it exits only
+  # that subshell, the loop keeps whatever partial output jq already emitted,
+  # and if those nodes happen to be healthy the script exits 0 having silently
+  # dropped the rest of the fleet. jq emitting a valid address and then failing
+  # on a malformed one is exactly that case.
+  discovered_nodes="$(discover_nodes)" ||
+    fail_infra 'node discovery failed — refusing to report a fleet that was only partly enumerated'
   while IFS= read -r discovered; do
     [[ -n "${discovered}" ]] || continue
     nodes+=("${discovered}")
-  done < <(discover_nodes)
+  done <<<"${discovered_nodes}"
 fi
 
 [[ "${#nodes[@]}" -gt 0 ]] || fail_infra 'no nodes to check'
@@ -207,7 +226,7 @@ fi
 # Verdict for ONE containerd instance on one node. Returns 0 when that instance
 # can enforce, 1 when it cannot.
 check_config() {
-  local node="$1" file="$2" bin_dir status=0 executables
+  local node="$1" file="$2" bin_dir status=0 executables exec_status=0
 
   bin_dir="$(extract_bin_dir_from "${node}" "${file}")" || status=$?
   # The file's existence was proven before this call, so a read failure here is
@@ -223,12 +242,23 @@ check_config() {
   fi
 
   if ! directory_exists "${node}" "${bin_dir}"; then
+    # "The directory is not there" and "the node stopped answering" are the same
+    # failed `ls` from here. Only the first is a verdict; reporting the second as
+    # one would blame the cluster for a runner-side fault.
+    node_reachable "${node}" ||
+      fail_infra "cannot reach node ${node} while checking ${bin_dir} (talosctl ls / failed)"
     printf 'FAIL %s [%s]: bin_dir %s is configured but does not exist — containerd permits every pull\n' \
       "${node}" "${file}" "${bin_dir}"
     return 1
   fi
 
-  executables="$(count_executables "${node}" "${bin_dir}")"
+  # `fail_infra` inside count_executables would exit only the command
+  # substitution, so its status is carried out explicitly — the same subshell
+  # trap that made partial node discovery pass silently.
+  executables="$(count_executables "${node}" "${bin_dir}")" || exec_status=$?
+  [[ "${exec_status}" -eq 0 ]] ||
+    fail_infra "could not list ${bin_dir} on ${node} (the directory exists but talosctl ls failed)"
+
   if [[ "${executables}" -eq 0 ]]; then
     printf 'FAIL %s [%s]: bin_dir %s holds no executable — containerd permits every pull\n' \
       "${node}" "${file}" "${bin_dir}"
@@ -242,8 +272,6 @@ check_config() {
 
 failures=0
 for node in "${nodes[@]}"; do
-  [[ -n "${node}" ]] || continue
-
   # Every containerd instance present on the node is evaluated INDEPENDENTLY.
   # Accepting the first config that declares a bin_dir would let a wired-up CRI
   # containerd mask an unprotected system containerd (or the reverse) — and the
