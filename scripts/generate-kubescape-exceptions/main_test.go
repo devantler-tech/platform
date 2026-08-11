@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -110,6 +111,56 @@ spec:
 	got := policies[0].Resources[0].Attributes["namespace"]
 	if got != "^(kube-system|cilium-secrets)$" {
 		t.Errorf("namespace = %q, want ^(kube-system|cilium-secrets)$", got)
+	}
+}
+
+// TestGenerateNamespaceSelectorNotIn verifies a complementary selector keeps
+// newly introduced namespaces covered while rejecting only the declared
+// exclusions. It exercises the generated designator rather than its source
+// spelling because Kubescape consumes the regex behavior.
+func TestGenerateNamespaceSelectorNotIn(t *testing.T) {
+	dir := writeCSE(t, `
+kind: ClusterSecurityException
+metadata:
+  name: mutation-enabled-namespaces
+spec:
+  posture:
+    - controlID: C-0013
+      action: ignore
+  match:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: [kube-system, cilium-secrets, edge.test]
+`)
+
+	policies, err := generate(dir)
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+
+	pattern := policies[0].Resources[0].Attributes["namespace"]
+	matcher, err := regexp.Compile(pattern)
+	if err != nil {
+		t.Fatalf("compile generated namespace pattern %q: %v", pattern, err)
+	}
+
+	tests := map[string]bool{
+		"":                    false,
+		"kube-system":         false,
+		"cilium-secrets":      false,
+		"edge.test":           false,
+		"edgeXtest":           true,
+		"kube-syste":          true,
+		"kube-system-extra":   true,
+		"new-tenant-namespace": true,
+	}
+
+	for namespace, want := range tests {
+		if got := matcher.MatchString(namespace); got != want {
+			t.Errorf("namespace %q matched = %t, want %t (pattern %q)", namespace, got, want, pattern)
+		}
 	}
 }
 
@@ -435,7 +486,7 @@ spec:
   posture: [{controlID: C-0002, action: ignore}]
   match:
     namespaceSelector:
-      matchExpressions: [{key: kubernetes.io/metadata.name, operator: NotIn, values: [x]}]
+      matchExpressions: [{key: kubernetes.io/metadata.name, operator: Exists, values: [x]}]
 `,
 			want: "matchExpressions are supported",
 		},
