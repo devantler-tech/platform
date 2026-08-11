@@ -204,11 +204,32 @@ spec:
                   # all-zero series behind, which would keep satisfying the window
                   # on its own labels long after the live series recovered.
                   #
+                  #   4. `sum by (...) (count_over_time(...[15m])) >= 12` -- the window is
+                  #      COVERED, not merely bounded. `max_over_time` ignores
+                  #      absent samples rather than treating them as non-zero,
+                  #      so clauses 1-3 are all satisfied by one false sample at
+                  #      the start of the window, a long data gap, and one false
+                  #      sample now -- during which the resource may have
+                  #      recovered, or been deleted and recreated, entirely
+                  #      unobserved. The alert would then claim 15 minutes of
+                  #      continuous failure it never actually saw.
+                  #
                   # Scrape interval is 1m, so the offset sub-window spans ~3
-                  # samples and one missed scrape cannot suppress the alert.
+                  # samples and one missed scrape cannot suppress the alert, and
+                  # a full 15m window holds ~15 samples. The coverage floor of 12
+                  # is that budget minus 3, so up to three missed scrapes are
+                  # still tolerated while a multi-minute blind spot is not.
+                  #
+                  # It must aggregate with `sum by`, NOT the `count by` the other
+                  # clauses use. `count_over_time` yields one value PER SERIES, so
+                  # `count by` would count the group's SERIES (1, or 2 during a
+                  # reason change) rather than its samples -- `1 >= 12` is false
+                  # for every resource, which silently disables this alert
+                  # entirely. Measured against prod: `count by` matched 0 of 20
+                  # resources, `sum by` 20 of 20 at exactly 15 samples each.
                   # Worst-case detection latency is 15m of grace plus up to one
                   # 5m cron period; the failure this watches for persisted 22 days.
-                  STUCK=$(q 'crossplane_managed_resource_condition{condition="Synced"} == 0 and on (name, namespace) (max by (name, namespace) (max_over_time(crossplane_managed_resource_condition{condition="Synced"}[15m])) == 0) and on (name, namespace) (count by (name, namespace) (count_over_time(crossplane_managed_resource_condition{condition="Synced"}[3m] offset 15m)) > 0)')
+                  STUCK=$(q 'crossplane_managed_resource_condition{condition="Synced"} == 0 and on (name, namespace) (max by (name, namespace) (max_over_time(crossplane_managed_resource_condition{condition="Synced"}[15m])) == 0) and on (name, namespace) (count by (name, namespace) (count_over_time(crossplane_managed_resource_condition{condition="Synced"}[3m] offset 15m)) > 0) and on (name, namespace) (sum by (name, namespace) (count_over_time(crossplane_managed_resource_condition{condition="Synced"}[15m])) >= 12)')
                   if [ "$(printf '%s' "$STUCK" | jq -r '.status')" != "success" ]; then
                     echo "ERROR: Prometheus query for stuck resources failed"; exit 1
                   fi
@@ -220,14 +241,29 @@ spec:
                     name=$(printf '%s' "$m" | jq -r '.name // "unknown"')
                     ns=$(printf '%s' "$m" | jq -r '.namespace // ""')
                     why=$(printf '%s' "$m" | jq -r '.reason // "unknown"')
+                    # `reason` is deliberately NOT a label. Alertmanager keys the
+                    # identity of an alert on its label set, so a resource that
+                    # stays unsynced while Crossplane changes the reason would fire
+                    # a SECOND alert under a new fingerprint while the first stayed
+                    # active until its endsAt -- one broken resource, repeated Slack
+                    # notifications. The history query already joins on
+                    # (name, namespace) without reason for the same underlying
+                    # cause, so keeping it out of the identity makes the two agree.
+                    # The current reason still reaches the reader as an annotation,
+                    # which updates in place instead of forking.
+                    #
+                    # NOTE: this comment lives OUT here rather than inside the jq
+                    # program below. That program is a single-quoted shell string,
+                    # so an apostrophe in a comment inside it closes the quote and
+                    # breaks the whole script.
                     add "$(jq -nc --arg e "$ENDS" --arg name "$name" --arg ns "$ns" --arg why "$why" '{
                       labels: ({
                         alertname: "CrossplaneManagedResourceNotSynced",
                         severity: "warning",
-                        resource: $name,
-                        reason: $why
+                        resource: $name
                       } + (if $ns == "" then {} else {namespace: $ns} end)),
                       annotations: {
+                        reason: $why,
                         summary: "Crossplane is no longer reconciling \($name)",
                         description: "The managed resource has reported Synced=False continuously for at least 15 minutes (reason: \($why)), so this is not a transient retry. Crossplane has stopped applying its spec to the external system, so the resource can still report Ready=True while drifting from Git. Coverage note: the exporter describes only the managed kinds listed in its CustomResourceStateMetrics config, so other kinds are NOT watched by this alert.",
                         runbook: "kubectl describe the resource and read its Synced condition message; a provider credential or API error is the usual cause."
