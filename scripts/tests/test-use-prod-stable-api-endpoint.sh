@@ -74,9 +74,7 @@ contexts:
 current-context: admin@prod
 users:
   - name: admin@prod
-    user:
-      client-certificate-data: Zml4dHVyZS1jZXJ0
-      client-key-data: Zml4dHVyZS1rZXk=
+    user: {}
 EOF
 }
 
