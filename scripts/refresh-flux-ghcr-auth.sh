@@ -33,7 +33,7 @@ while (($# > 0)); do
       allow_incomplete_fanout=true
       shift
       ;;
-    --record-runtime-proof|--reuse-runtime-proof)
+    --record-runtime-proof | --reuse-runtime-proof)
       if (($# < 2)) || [[ -z "$2" ]]; then
         usage
         exit 64
