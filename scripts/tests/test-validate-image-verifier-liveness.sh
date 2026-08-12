@@ -820,7 +820,12 @@ printf '%s\n' '{"items":[
 exit 0
 FAKE
 chmod +x "${fake_bin}/kubectl"
-run_script >/dev/null 2>&1 ||
+# Assert a verdict line for EACH address, not just exit 0: a regression that
+# silently drops one discovered node from the fleet still exits 0, so an
+# exit-status-only control would keep passing while enumeration shrank.
+output="$(run_script 2>&1)" ||
   fail 'case 23: a fleet of distinct nodes with distinct InternalIPs must still be accepted'
+require_text "${output}" 'good' 'case 23: control reports the first discovered node'
+require_text "${output}" 'onlysystem' 'case 23: control reports the second discovered node'
 
 printf 'PASS: all cases\n'
