@@ -244,15 +244,16 @@ func fakeTalosctl(args []string) int {
 		}
 		nodeName := fakeNodeName(node)
 		reusableProofUID := os.Getenv("FLUX_GHCR_REUSABLE_PROOF_UID")
-		if reusableProofUID != "" {
+		switch {
+		case reusableProofUID != "":
 			if nodeName == "" || reusableProofUID != nodeName+"-uid" {
 				return commandFailure(93, "reusable proof UID does not bind the target Node")
 			}
-		} else if markerExists("talos-auth-" + node) {
+		case markerExists("talos-auth-" + node):
 			if !markerExists("talos-reboot-" + node) {
 				return commandFailure(93, "revision preceded reboot")
 			}
-		} else if os.Getenv("FAKE_TALOS_NODES_CURRENT") != "true" {
+		case os.Getenv("FAKE_TALOS_NODES_CURRENT") != "true":
 			return commandFailure(93, "image-only proof lacks current credential")
 		}
 		if reusableProofUID == "" &&
