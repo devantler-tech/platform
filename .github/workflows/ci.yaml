@@ -102,6 +102,11 @@ jobs:
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
               - 'scripts/tests/test-kyverno-admission-vpa.sh'
               - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
+              # The image-verifier liveness checker and its test are one
+              # contract: the checker's whole value is failing loudly, so a
+              # change to either must re-run both.
+              - 'scripts/validate-image-verifier-liveness.sh'
+              - 'scripts/tests/test-validate-image-verifier-liveness.sh'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/kubescape-backlog-bridge/**'
               # The updater and its annotation helper are one fail-closed
@@ -405,6 +410,17 @@ jobs:
         # regress the Hetzner WireGuard settings. Bash plus the kubectl bundled
         # on the GitHub-hosted runner; no cluster or secrets required.
         run: bash scripts/tests/test-cilium-bandwidth-manager-component.sh
+
+      - name: 🔏 Validate image-verifier liveness checker
+        if: needs.changes.outputs.k8s == 'true'
+        # The checker asserts that containerd's image-verifier can enforce AT
+        # ALL (#2856). It runs here, inside the required job, rather than in its
+        # own workflow: a check that gates nothing is advisory, and this one
+        # guards a control whose failure mode is silence. Fakes talosctl and
+        # kubectl from fixtures — no cluster, no secrets.
+        run: |
+          shellcheck scripts/validate-image-verifier-liveness.sh scripts/tests/test-validate-image-verifier-liveness.sh
+          bash scripts/tests/test-validate-image-verifier-liveness.sh
 
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'
