@@ -327,6 +327,20 @@ data:
           {
             "designatorType": "Attributes",
             "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^cdi-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ClusterRoleBinding$",
+              "name": "^kubevirt-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
               "kind": "^RoleBinding$",
               "name": "^ascoachingogvaner$"
             }
@@ -371,6 +385,20 @@ data:
             "attributes": {
               "kind": "^RoleBinding$",
               "name": "^wedding-app$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^cdi-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^kubevirt-operator-rolebinding$"
             }
           }
         ],
