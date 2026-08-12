@@ -125,6 +125,10 @@ func TestRuntimeProofCannotBeReusedForReplacementNode(t *testing.T) {
 	operations := readLines(f.operationLog)
 	requireLine(t, operations, "node-drain:prod-worker-1")
 	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	// A replacement worker must not invalidate the control plane's matching proof.
+	requireNoLine(t, operations, "node-drain:prod-control-plane-1")
+	requireNoLine(t, operations, "talos-reboot:10.0.0.1")
+	requireNoLine(t, operations, "talos-pull:10.0.0.1:"+ksailTargetImage)
 }
 
 func TestStaleRuntimeProofFallsBackToFullVerification(t *testing.T) {

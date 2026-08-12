@@ -282,8 +282,27 @@ if declare -F stage_fanout_before_talos >/dev/null; then
   else
     fail "verified tenant fanout brackets the Talos rollout"
   fi
+
+  record_runtime_proof() {
+    printf 'record-failed:%s:%s\n' "$1" "$2" >>"${operation_log}"
+    return 1
+  }
+  : >"${operation_log}"
+  talos_sync_call_count=0
+  if stage_fanout_before_talos \
+    "${DESIRED_REVISION}" \
+    "${DESIRED_IMAGE}" \
+    "${work_dir}/talos-stage-result.txt" \
+    wedding-app ascoachingogvaner kyverno; then
+    fail "a failed runtime-proof record blocks the root cutover"
+  elif grep -Fxq -- root-patch "${operation_log}"; then
+    fail "a failed runtime-proof record blocks the root cutover"
+  else
+    pass "a failed runtime-proof record blocks the root cutover"
+  fi
 else
   fail "verified tenant fanout brackets the Talos rollout"
+  fail "a failed runtime-proof record blocks the root cutover"
 fi
 
 control_plane_inventory="${work_dir}/control-planes.json"

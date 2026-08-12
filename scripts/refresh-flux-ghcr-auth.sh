@@ -2439,6 +2439,7 @@ process_talos_node_target() {
   if [[ "${node_mode}" == "proof-only" ]]; then
     reusable_proof_uid="${node_uid}"
   fi
+  # Test hook consumed by fake talosctl to verify Node binding; Talos ignores it.
   if ! FLUX_GHCR_REUSABLE_PROOF_UID="${reusable_proof_uid}" \
     talosctl \
     --nodes "${node_ip}" \
