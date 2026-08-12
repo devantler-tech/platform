@@ -89,6 +89,18 @@ runs:
         printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
         chmod 600 ~/.kube/config
 
+    - name: 🔗 Select stable prod API endpoint
+      # KUBE_CONFIG can outlive the control-plane node whose public IP was the
+      # endpoint when the secret was minted. `cluster update` deliberately
+      # rolls those nodes, so retaining that address makes this deploy sever
+      # its own API connection even while the other control planes are Ready.
+      # Resolve the KSail-owned floating IP live, fail closed on missing or
+      # foreign ownership labels, and switch admin@prod before any API call.
+      shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ./scripts/use-prod-stable-api-endpoint.sh
+
     - name: 🔑 Restore talosconfig
       # ksail cluster update talks to the Talos API to sync machine config.
       # Without the talosconfig it uses stale/derived certs and fails with
