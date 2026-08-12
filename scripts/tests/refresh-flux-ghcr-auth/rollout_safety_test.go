@@ -229,6 +229,16 @@ func TestLeaseLossAfterNodeClaimStopsBeforeTalosMutation(t *testing.T) {
 	requireNoLine(t, operations, "talos-auth:10.0.0.2")
 	requireNoLine(t, operations, "node-drain:prod-worker-1")
 	requireNoLine(t, operations, "root-patch")
+	requireContains(
+		t,
+		result.stdout+result.stderr,
+		"GHCR synchronization Lease is now held by another transaction",
+	)
+	requireNotContains(
+		t,
+		result.stdout+result.stderr,
+		"Kubernetes API was unreachable while verifying",
+	)
 	if pathExists(filepath.Join(f.syncStateDir, "cordon-owner-prod-worker-1")) ||
 		pathExists(filepath.Join(f.syncStateDir, "cordoned-prod-worker-1")) {
 		t.Fatal("Lease loss before Talos mutation left a newly-owned cordon behind")

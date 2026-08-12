@@ -13,6 +13,10 @@ metadata:
     # cluster DNS by watching Services, Endpoints and Pods through the API
     # server. Without the token CoreDNS cannot resolve any in-cluster name.
     checkov.io/skip1: CKV_K8S_38=CoreDNS resolves cluster DNS by watching Services/Endpoints via the API server
+    # CoreDNS must serve cluster DNS on port 53. The pinned non-root image's
+    # binary carries the file capability, so the container needs only this one
+    # capability in its bounding set and drops every other capability below.
+    checkov.io/skip2: CKV_K8S_25=CoreDNS requires only NET_BIND_SERVICE in its bounding set to serve DNS on port 53
 spec:
   progressDeadlineSeconds: 600
   replicas: 2

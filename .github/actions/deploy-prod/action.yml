@@ -44,7 +44,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.178.20"
+        KSAIL_VERSION: "7.178.21"
       run: |
         curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
         tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -88,6 +88,18 @@ runs:
         umask 077
         printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
         chmod 600 ~/.kube/config
+
+    - name: 🔗 Select stable prod API endpoint
+      # KUBE_CONFIG can outlive the control-plane node whose public IP was the
+      # endpoint when the secret was minted. `cluster update` deliberately
+      # rolls those nodes, so retaining that address makes this deploy sever
+      # its own API connection even while the other control planes are Ready.
+      # Resolve the KSail-owned floating IP live, fail closed on missing or
+      # foreign ownership labels, and switch admin@prod before any API call.
+      shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ./scripts/use-prod-stable-api-endpoint.sh
 
     - name: 🔑 Restore talosconfig
       # ksail cluster update talks to the Talos API to sync machine config.

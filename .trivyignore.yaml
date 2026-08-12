@@ -88,3 +88,21 @@ misconfigurations:
     statement: >-
       external_secrets_replicas is a public controller replica count; Trivy matches the word
       secrets in the key name, not secret material.
+
+  # CoreDNS must bind UDP/TCP port 53 while running as the pinned image's non-root 65532 identity.
+  # The binary carries the required file capability, so the container adds only
+  # NET_BIND_SERVICE to its bounding set after dropping every other capability. These dispositions
+  # are path-scoped so the controls continue to report any other workload that adds a capability
+  # or binds a privileged port.
+  - id: KSV-0022
+    paths:
+      - k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml
+    statement: >-
+      CoreDNS requires only NET_BIND_SERVICE in its bounding set to serve cluster DNS on port 53;
+      the container drops every other capability and runs as non-root UID/GID 65532.
+  - id: KSV-0117
+    paths:
+      - k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml
+    statement: >-
+      Port 53 is the required DNS service port; the pinned CoreDNS binary carries the file
+      capability needed to bind it while the container runs as non-root UID/GID 65532.

@@ -215,6 +215,8 @@ flux_policy_parent_state_file="${work_dir}/flux-policy-parent-state.json"
 flux_policy_parent_patch_file="${work_dir}/flux-policy-parent-patch.json"
 flux_policy_parent_result_file="${work_dir}/flux-policy-parent-result.txt"
 flux_policy_fences_state_file="${work_dir}/flux-policy-fences-state.json"
+flux_policy_blocker_names_file="${work_dir}/flux-policy-blocker-names.txt"
+flux_policy_blocker_state_file="${work_dir}/flux-policy-blocker-state.json"
 flux_controller_deployment_state_file="${work_dir}/flux-controller-deployment-state.json"
 flux_controller_restart_patch_file="${work_dir}/flux-controller-restart-patch.json"
 flux_controller_result_file="${work_dir}/flux-controller-result.txt"
@@ -237,6 +239,7 @@ variables_secret_cas_patch_file="${work_dir}/variables-secret-cas-patch.json"
 sync_lease_holder=""
 sync_lease_acquired=false
 sync_lease_heartbeat_pid=""
+sync_lease_renewal_failure=""
 flux_policy_handoff_acquired=false
 flux_policy_handoff_owner=""
 flux_policy_handoff_uid=""
@@ -2817,21 +2820,30 @@ renew_sync_lease() {
   local lease_file="${work_dir}/sync-lease-renew-${invocation_id}.json"
   local patch_file_local="${work_dir}/sync-lease-renew-patch-${invocation_id}.json"
   local result_file="${work_dir}/sync-lease-renew-result-${invocation_id}.txt"
-  local resource_version now
+  local resource_version now observed_holder
 
+  sync_lease_renewal_failure=""
   [[ "${sync_lease_acquired}" == "true" && -n "${sync_lease_holder}" ]] || return 1
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     get lease "${SYNC_LEASE_NAME}" \
-    -o json >"${lease_file}"; then
+    -o json >"${lease_file}" 2>"${result_file}"; then
+    sync_lease_renewal_failure="api-unreachable"
     return 1
   fi
-  resource_version="$(jq -er \
-    --arg holder "${sync_lease_holder}" '
-    select(.spec.holderIdentity == $holder)
-    | .metadata.resourceVersion
-  ' "${lease_file}")" || return 1
+  observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || {
+    sync_lease_renewal_failure="invalid-lease-state"
+    return 1
+  }
+  if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
+    sync_lease_renewal_failure="held-by-another"
+    return 1
+  fi
+  resource_version="$(jq -er '.metadata.resourceVersion' "${lease_file}")" || {
+    sync_lease_renewal_failure="invalid-lease-state"
+    return 1
+  }
   now="$(kubernetes_microtime_now)"
   jq -n \
     --arg resource_version "${resource_version}" \
@@ -2862,17 +2874,31 @@ renew_sync_lease() {
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     get lease "${SYNC_LEASE_NAME}" \
-    -o json >"${lease_file}"; then
+    -o json >"${lease_file}" 2>"${result_file}"; then
+    sync_lease_renewal_failure="api-unreachable"
     return 1
   fi
-  jq -e \
+  observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || {
+    sync_lease_renewal_failure="invalid-lease-state"
+    return 1
+  }
+  if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
+    sync_lease_renewal_failure="held-by-another"
+    return 1
+  fi
+  if jq -e \
     --arg holder "${sync_lease_holder}" \
     --argjson now_epoch "$(date -u +%s)" '
     .spec.holderIdentity == $holder
     and (((.spec.renewTime // .spec.acquireTime)
       | sub("\\.[0-9]+Z$"; "Z")
       | fromdateiso8601) + .spec.leaseDurationSeconds > $now_epoch)
-  ' "${lease_file}" >/dev/null
+  ' "${lease_file}" >/dev/null; then
+    return 0
+  fi
+
+  sync_lease_renewal_failure="not-live"
+  return 1
 }
 
 sync_lease_heartbeat_loop() {
@@ -2882,17 +2908,61 @@ sync_lease_heartbeat_loop() {
       sleep 1
     done
     if ! renew_sync_lease; then
-      : >"${sync_lease_lost_file}"
+      printf '%s\n' "${sync_lease_renewal_failure:-unknown}" >"${sync_lease_lost_file}"
       return 1
     fi
   done
 }
 
+wait_for_sync_lease_api_recovery() {
+  local attempt
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get --raw=/readyz \
+      --request-timeout=30s \
+      >"${sync_lease_result_file}" 2>&1; then
+      return 0
+    fi
+    if ((attempt < SYNC_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
+  done
+
+  echo "::error::The Kubernetes API remained unreachable while verifying the GHCR synchronization Lease; no further cluster mutation is safe."
+  emit_safe_operation_output "api-ready" "${sync_lease_result_file}"
+  return 1
+}
+
 assert_sync_lease_held() {
-  if [[ -e "${sync_lease_lost_file}" ]] || ! renew_sync_lease; then
-    echo "::error::The GHCR synchronization lease was lost; refusing further cluster mutation."
-    return 1
+  local failure_reason=""
+  if [[ -e "${sync_lease_lost_file}" ]]; then
+    failure_reason="$(head -n 1 "${sync_lease_lost_file}")"
+  elif renew_sync_lease; then
+    return 0
+  else
+    failure_reason="${sync_lease_renewal_failure:-unknown}"
   fi
+
+  case "${failure_reason}" in
+    api-unreachable)
+      echo "::warning::The Kubernetes API was unreachable while verifying the GHCR synchronization Lease; waiting for API recovery before re-proving the same holder."
+      wait_for_sync_lease_api_recovery || return 1
+      recover_sync_lease_heartbeat_after_transport_interruption
+      ;;
+    held-by-another)
+      echo "::error::The GHCR synchronization Lease is now held by another transaction; refusing further cluster mutation."
+      return 1
+      ;;
+    not-live)
+      echo "::error::The GHCR synchronization Lease is no longer live for this transaction; refusing further cluster mutation."
+      return 1
+      ;;
+    *)
+      echo "::error::The GHCR synchronization Lease state could not be proved (${failure_reason}); refusing further cluster mutation."
+      return 1
+      ;;
+  esac
 }
 
 recover_sync_lease_heartbeat_after_transport_interruption() {
@@ -2906,14 +2976,18 @@ recover_sync_lease_heartbeat_after_transport_interruption() {
     sync_lease_heartbeat_pid=""
   fi
   if ! renew_sync_lease; then
-    echo "::error::The Kubernetes API recovered, but this transaction could not re-prove and renew its synchronization Lease holder."
+    if [[ "${sync_lease_renewal_failure}" == "held-by-another" ]]; then
+      echo "::error::The Kubernetes API recovered, but this transaction could not re-prove and renew its synchronization Lease holder because the Lease is now held by another transaction."
+    else
+      echo "::error::The Kubernetes API recovered, but this transaction could not re-prove and renew its synchronization Lease holder (${sync_lease_renewal_failure:-unknown})."
+    fi
     return 1
   fi
 
   rm -f "${sync_lease_lost_file}"
   sync_lease_heartbeat_loop &
   sync_lease_heartbeat_pid=$!
-  echo "::warning::Re-proved the same GHCR synchronization Lease holder and restarted its heartbeat after API recovery."
+  echo "::warning::Re-proved the same GHCR synchronization Lease holder after API recovery and restarted its heartbeat."
 }
 
 release_sync_lease() {
@@ -3174,6 +3248,73 @@ flux_policy_handoff_is_quiescent() {
   ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 
+# Print the conditions that explain a Kustomization's reconciliation state.
+# Diagnostic output only: an unreadable or unparseable state file prints
+# nothing and still succeeds.
+flux_policy_report_conditions() {
+  local state_file="$1" label="$2"
+
+  [[ -s "${state_file}" ]] || return 0
+  jq -r --arg label "${label}" '
+    [.status.conditions[]?
+      | select(.type == "Reconciling" or .type == "Ready" or .type == "Healthy")
+      | "\($label): \(.type)=\(.status) \(.reason // "-"): "
+        + ((.message // "-") | gsub("\\s+"; " "))]
+    | if length == 0 then ["\($label): reported no status conditions"] else . end
+    | .[]
+  ' "${state_file}" 2>/dev/null || true
+}
+
+# Explain a failed quiesce wait. The blocking condition is already in the state
+# file that wait just read, and when the owner is held up by a dependency the
+# cause is one read further out. Without this the failure names image
+# verification while the real blocker is an unrelated workload, which is what
+# makes the merge-queue eviction it causes read as "some PR failed CI".
+#
+# Strictly best-effort: this runs on the production credential path, so a
+# diagnostic must never change the outcome it is describing.
+report_flux_policy_handoff_blockers() {
+  local dependency dependency_name dependency_namespace
+
+  flux_policy_report_conditions \
+    "${flux_policy_handoff_state_file}" \
+    "kustomization/${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}"
+
+  # Read the dependencies the owner itself declares rather than parsing them
+  # out of a controller-authored message.
+  jq -r '
+    if any(.status.conditions[]?;
+      .type == "Ready" and .reason == "DependencyNotReady")
+    then
+      .metadata.namespace as $namespace
+      | .spec.dependsOn[]?
+      | "\(.namespace // $namespace)/\(.name)"
+    else empty end
+  ' "${flux_policy_handoff_state_file}" \
+    2>/dev/null >"${flux_policy_blocker_names_file}" || return 0
+
+  while IFS= read -r dependency; do
+    dependency_namespace="${dependency%%/*}"
+    dependency_name="${dependency##*/}"
+    [[ -n "${dependency_namespace}" && -n "${dependency_name}" &&
+      "${dependency}" == "${dependency_namespace}/${dependency_name}" ]] ||
+      continue
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace "${dependency_namespace}" \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${dependency_name}" \
+      -o json </dev/null >"${flux_policy_blocker_state_file}" 2>/dev/null; then
+      flux_policy_report_conditions \
+        "${flux_policy_blocker_state_file}" \
+        "kustomization/${dependency_name} (dependency)"
+    else
+      echo "Could not read dependency ${dependency} while explaining the image-verification policy handoff quiesce timeout."
+    fi
+  done <"${flux_policy_blocker_names_file}"
+  return 0
+}
+
 read_flux_policy_fences() {
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
@@ -3417,6 +3558,7 @@ pause_flux_policy_handoff() {
     fi
     if ((attempt == SYNC_ATTEMPTS)); then
       echo "::error::The Flux image-verification policy owner did not quiesce before the image-verification policy handoff."
+      report_flux_policy_handoff_blockers || true
       return 1
     fi
     sleep "${SYNC_INTERVAL}"

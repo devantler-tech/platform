@@ -132,7 +132,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.178.20"
+          KSAIL_VERSION: "7.178.21"
         run: |
           set -euo pipefail
           BASE="https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}"
@@ -153,10 +153,12 @@ jobs:
           # compromised release. Provenance attestations would close that and
           # are tracked separately.
           curl -fsSL "${BASE}/ksail_${KSAIL_VERSION}_checksums.txt" -o /tmp/ksail_checksums.txt
-          # `|| true` is load-bearing under `set -e -o pipefail`: grep exits 1
-          # when the asset is absent, which would abort the step before the
-          # explicit check below and fail with no explanation of what to do.
-          expected=$(grep -E "  ${ASSET}\$" /tmp/ksail_checksums.txt | cut -d' ' -f1 || true)
+          # Match the filename field EXACTLY. A regex match treats the dots in
+          # the asset name as metacharacters, so `ksail_7x178x20_…` would select
+          # a different line's digest and report a confusing mismatch instead of
+          # the actionable "no published checksum" below. awk also exits 0 with
+          # no match, so the empty-result check is the single fail-closed path.
+          expected=$(awk -v a="${ASSET}" '$2 == a {print $1}' /tmp/ksail_checksums.txt)
           # Fail closed on a MISSING entry too — otherwise a renamed asset
           # silently skips verification instead of failing.
           if [ -z "$expected" ]; then
@@ -172,15 +174,32 @@ jobs:
           sudo install /tmp/ksail /usr/local/bin/ksail
           ksail --version
 
-      - name: 🔎 Scan manifests (Kubescape NSA)
+      # The guard runs HERE too, not only in ci.yaml. A direct push to main
+      # bypasses the merge queue, so without this a push that reduced the scan
+      # below would execute that reduced scan with nothing checking it — the
+      # exact gap this workflow exists to close, reopened one level up.
+      # (Codex raised this on #3057.)
+      - name: 🔐 Validate the Kubescape gate's framework coverage
+        run: ./scripts/guard-kubescape-gate-frameworks.sh
+
+      - name: 🔎 Scan manifests (Kubescape NSA + MITRE)
         # Same invocation and same justified exceptions as ci.yaml's gate, so
         # the two analyses are comparable. The threshold is kept: main can only
         # receive gated content, so a failure here means posture moved without
         # a PR — which this workflow exists to report.
+        #
+        # 🔴 THE FRAMEWORK LIST MUST MATCH ci.yaml'S EXACTLY, and the reason is
+        # not tidiness. Both analyses upload under the same `kubescape-nsa`
+        # Code Scanning category, so this run is the DURABLE BASELINE that PR
+        # alerts are diffed against. If this scanned fewer frameworks, every
+        # finding only the PR sees would fail to persist as a main-branch alert
+        # — and a direct push to main (which bypasses the merge queue) would go
+        # completely ungated on the missing framework.
+        # scripts/guard-kubescape-gate-frameworks.sh enforces the match.
         run: |
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
-          ksail workload scan --framework nsa --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
+          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
 
       - name: 🧭 Make the SARIF paths repo-root-relative
         # Kubescape reports paths relative to the directory it scanned; Code
