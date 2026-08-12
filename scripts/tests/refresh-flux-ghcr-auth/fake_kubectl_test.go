@@ -1026,8 +1026,9 @@ func fakeKubectlGetNodes() int {
 	revision := os.Getenv("EXPECTED_GHCR_REVISION")
 	image := os.Getenv("EXPECTED_KSAIL_TARGET_IMAGE")
 	verifiedImage := defaultString(os.Getenv("FAKE_TALOS_VERIFIED_IMAGE"), image)
+	workerUID := defaultString(os.Getenv("FAKE_WORKER_UID"), "prod-worker-1-uid")
 	nodes := []any{
-		fakeInventoryNode("prod-worker-1", "prod-worker-1-uid", "10.0.0.2", "198.51.100.2", false, revision, "", "", true),
+		fakeInventoryNode("prod-worker-1", workerUID, "10.0.0.2", "198.51.100.2", false, revision, "", "", true),
 		fakeInventoryNode("prod-control-plane-1", "prod-control-plane-1-uid", "10.0.0.1", "198.51.100.1", true, revision, "", "", true),
 		fakeInventoryNode("prod-control-plane-2", "prod-control-plane-2-uid", "10.0.0.3", "198.51.100.3", true, revision, revision, image, false),
 		fakeInventoryNode("prod-control-plane-3", "prod-control-plane-3-uid", "10.0.0.4", "198.51.100.4", true, revision, revision, image, false),
@@ -1261,7 +1262,7 @@ func fakeKubectlGetNode(args []string) int {
 		}
 	}
 
-	nodeUID := nodeName + "-uid"
+	nodeUID := fakeExpectedNodeUID(nodeName)
 	nodeIP, controlPlane := fakeNodeAddress(nodeName)
 	if nodeName == os.Getenv("FAKE_NODE_REPLACED_BEFORE_PROCESS_NODE") {
 		nodeUID = nodeName + "-replacement-uid"
@@ -1416,6 +1417,13 @@ func fakeNodeName(nodeAddress string) string {
 	return ""
 }
 
+func fakeExpectedNodeUID(nodeName string) string {
+	if nodeName == "prod-worker-1" && os.Getenv("FAKE_WORKER_UID") != "" {
+		return os.Getenv("FAKE_WORKER_UID")
+	}
+	return nodeName + "-uid"
+}
+
 func fakeKubectlDrain(args []string) int {
 	nodeName := argumentAfter(args, "drain")
 	if nodeName == "" || !containsArg(args, "--ignore-daemonsets") ||
@@ -1522,7 +1530,7 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 			expectedOwner == "" || expectedOwner != markerContent("cordon-owner-"+nodeName) ||
 			expectedRecovery == "" || expectedRecovery != markerContent("cordon-recovery-"+nodeName) ||
 			updatedRecovery == "" ||
-			!hasPatchOperation(patch, "test", "/metadata/uid", nodeName+"-uid") ||
+			!hasPatchOperation(patch, "test", "/metadata/uid", fakeExpectedNodeUID(nodeName)) ||
 			!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) {
 			return commandFailure(56, "invalid bootstrap recovery phase update")
 		}
@@ -1568,7 +1576,8 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 			patch[0].Path != "/metadata/resourceVersion" || fmt.Sprint(patch[0].Value) != currentResourceVersion {
 			return commandFailure(56, "invalid atomic cordon claim")
 		}
-		if !hasPatchOperation(patch, "test", "/metadata/uid", nodeName+"-uid") {
+		expectedNodeUID := fakeExpectedNodeUID(nodeName)
+		if !hasPatchOperation(patch, "test", "/metadata/uid", expectedNodeUID) {
 			return commandFailure(56, "atomic cordon claim omitted node UID")
 		}
 		setMarkerContent("cordon-owner-"+nodeName, owner)
@@ -1611,9 +1620,10 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 	if nodeName == os.Getenv("FAKE_UNCORDON_FAIL_NODE") || markerContent("cordon-owner-"+nodeName) != expectedOwner {
 		return commandFailure(56, "cordon ownership changed; refusing to uncordon")
 	}
+	expectedNodeUID := fakeExpectedNodeUID(nodeName)
 	if len(patch) == 0 || patch[0].Operation != "test" ||
 		patch[0].Path != "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner" ||
-		!hasPatchOperation(patch, "test", "/metadata/uid", nodeName+"-uid") ||
+		!hasPatchOperation(patch, "test", "/metadata/uid", expectedNodeUID) ||
 		!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
 		!hasPatchPath(patch, "remove", "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner") {
 		return commandFailure(56, "invalid atomic cordon release")

@@ -1,6 +1,7 @@
 package refreshfluxghcrauth
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -48,6 +49,38 @@ func TestFakeTalosImageOperationsRequireCRINamespace(t *testing.T) {
 				t.Fatalf("fake Talos %s accepted an image operation without --namespace cri", operation)
 			}
 		})
+	}
+}
+
+func TestFakeRecoveryPhaseHonorsReplacementWorkerUID(t *testing.T) {
+	workspace := t.TempDir()
+	patchPath := filepath.Join(workspace, "recovery.json")
+	const currentRecovery = `{"phase":"active"}`
+	const updatedRecovery = `{"phase":"retain"}`
+	t.Setenv("FAKE_SYNC_STATE_DIR", workspace)
+	t.Setenv("FAKE_WORKER_UID", "replacement-worker-uid")
+	t.Setenv("OPERATION_LOG", filepath.Join(workspace, "operations.log"))
+	setMarkerContent("cordon-owner-prod-worker-1", "fixture-owner")
+	setMarkerContent("cordon-recovery-prod-worker-1", currentRecovery)
+	patch := []jsonPatchOperation{
+		{Operation: "test", Path: "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner", Value: "fixture-owner"},
+		{Operation: "test", Path: "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-recovery", Value: currentRecovery},
+		{Operation: "replace", Path: "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-recovery", Value: updatedRecovery},
+		{Operation: "test", Path: "/metadata/uid", Value: "replacement-worker-uid"},
+		{Operation: "test", Path: "/metadata/resourceVersion", Value: "10"},
+	}
+	contents, err := json.Marshal(patch)
+	if err != nil {
+		t.Fatalf("marshal recovery patch: %v", err)
+	}
+	if err := os.WriteFile(patchPath, contents, 0o600); err != nil {
+		t.Fatalf("write recovery patch: %v", err)
+	}
+
+	exitCode := fakeKubectlPatchNode([]string{"patch", "node", "prod-worker-1"}, patchPath)
+
+	if exitCode != 0 {
+		t.Fatal("fake kubectl rejected a recovery phase bound to the replacement worker UID")
 	}
 }
 

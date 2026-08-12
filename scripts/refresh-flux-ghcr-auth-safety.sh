@@ -48,16 +48,19 @@ report_residual_bridge_ownership() {
 }
 
 # Select nodes that have not completed the v2 proof for the incoming credential
-# revision or the exact image used for the registry pull. Credential-stale nodes
-# require a reboot because containerd loads registry auth only at process start;
-# image-only drift needs an uncached pull proof but must not reboot a node whose
-# current credential revision is already proven. Legacy unversioned annotations
-# deliberately select reboot mode once after this contract lands.
+# revision or exact image. A same-job proof may classify a marker-only loss as
+# proof-only when it binds the same revision, image, node name, and immutable
+# Node UID. This is the narrow handoff needed after `ksail cluster update`
+# re-renders machine annotations; it never excuses a changed node or credential.
+# Other credential-stale nodes require a reboot because containerd loads
+# registry auth only at process start. Image-only drift still performs a fresh
+# uncached pull proof.
 select_talos_node_targets() {
   local nodes_file="$1"
   local desired_revision="$2"
   local operator_image="$3"
   local targets_file="$4"
+  local reusable_proof_file="${5:-/dev/null}"
   local unsorted_targets="${targets_file}.unsorted"
 
   if ! jq -r \
@@ -66,7 +69,10 @@ select_talos_node_targets() {
     --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
     --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" \
     --arg owner_annotation "platform.devantler.tech/ghcr-auth-drain-owner" \
-    --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" '
+    --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" \
+    --slurpfile reusable_proof "${reusable_proof_file}" '
+    ($reusable_proof[0].nodes // []) as $proved_nodes
+    |
     if any(.items[];
       ((.metadata.annotations[$owner_annotation] // "") != "")
       or ((.metadata.annotations[$recovery_annotation] // "") != ""))
@@ -75,6 +81,11 @@ select_talos_node_targets() {
       .items[]
       | (.metadata.annotations[$revision_annotation] // "") as $verified_revision
       | (.metadata.annotations[$image_annotation] // "") as $verified_image
+      | .metadata.name as $node_name
+      | (.metadata.uid // "") as $node_uid
+      | ($proved_nodes | any(
+          .name == $node_name and .uid == $node_uid
+        )) as $can_restore_proof
       | select($verified_revision != $revision or $verified_image != $image)
       | (.metadata.labels // {}) as $labels
       | [
@@ -84,9 +95,10 @@ select_talos_node_targets() {
           .metadata.name,
           ([.status.addresses[]
             | select(.type == "InternalIP") | .address][0]),
-          (if $verified_revision != $revision
-            then "reboot" else "image-only" end),
-          (.metadata.uid // "")
+          (if $can_restore_proof then "proof-only"
+           elif $verified_revision != $revision then "reboot"
+           else "image-only" end),
+          $node_uid
         ]
       | @tsv
     end
@@ -311,6 +323,10 @@ stage_fanout_before_talos() {
       return "${rc}"
     }
     if grep -Fxq -- clean "${talos_sync_result}"; then
+      record_runtime_proof "${desired_revision}" "${operator_image}" || {
+        rc=$?
+        return "${rc}"
+      }
       patch_root_secret || {
         rc=$?
         return "${rc}"

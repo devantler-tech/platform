@@ -242,17 +242,24 @@ func fakeTalosctl(args []string) int {
 			}
 			return 0
 		}
-		if markerExists("talos-auth-" + node) {
+		nodeName := fakeNodeName(node)
+		reusableProofUID := os.Getenv("FLUX_GHCR_REUSABLE_PROOF_UID")
+		switch {
+		case reusableProofUID != "":
+			if nodeName == "" || reusableProofUID != nodeName+"-uid" {
+				return commandFailure(93, "reusable proof UID does not bind the target Node")
+			}
+		case markerExists("talos-auth-" + node):
 			if !markerExists("talos-reboot-" + node) {
 				return commandFailure(93, "revision preceded reboot")
 			}
-		} else if os.Getenv("FAKE_TALOS_NODES_CURRENT") != "true" {
+		case os.Getenv("FAKE_TALOS_NODES_CURRENT") != "true":
 			return commandFailure(93, "image-only proof lacks current credential")
 		}
-		if !markerExists("talos-remove-"+node) || !markerExists("talos-pull-"+node) {
+		if reusableProofUID == "" &&
+			(!markerExists("talos-remove-"+node) || !markerExists("talos-pull-"+node)) {
 			return commandFailure(93, "revision preceded registry pull proof")
 		}
-		nodeName := fakeNodeName(node)
 		if nodeName == "" || !markerExists("cordoned-"+nodeName) ||
 			markerContent("cordon-owner-"+nodeName) == "" {
 			return commandFailure(93, "Talos revision mutation lacked an owned Kubernetes cordon")
