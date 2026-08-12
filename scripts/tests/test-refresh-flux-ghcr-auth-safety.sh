@@ -244,6 +244,9 @@ sync_talos_registry_auth() {
 patch_root_secret() {
   printf '%s\n' root-patch >>"${operation_log}"
 }
+record_runtime_proof() {
+  printf 'record:%s:%s\n' "$1" "$2" >>"${operation_log}"
+}
 
 if declare -F stage_fanout_before_talos >/dev/null; then
   : >"${operation_log}"
@@ -272,6 +275,7 @@ if declare -F stage_fanout_before_talos >/dev/null; then
     force:externalsecret/kyverno/ghcr-auth \
     verify:kyverno/ghcr-auth \
     "talos:${DESIRED_REVISION}:${DESIRED_IMAGE}" \
+    "record:${DESIRED_REVISION}:${DESIRED_IMAGE}" \
     root-patch)"
   if [[ "$(<"${operation_log}")" == "${expected_operations}" ]]; then
     pass "verified tenant fanout brackets the Talos rollout"
@@ -321,7 +325,7 @@ jq -n '
 ' >"${control_plane_inventory}"
 
 kubectl() {
-  cp "${control_plane_inventory}" /dev/stdout
+  command cat "${control_plane_inventory}"
 }
 
 talosctl() {

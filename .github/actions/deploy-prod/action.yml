@@ -171,9 +171,14 @@ runs:
       # the declared incoming image on every stale Talos node, then stage and
       # verify the Kubernetes fan-out BEFORE publishing latest. Every pull
       # consumer has one known-readable credential before the mutable tag can
-      # be observed.
+      # be observed. The non-secret exact-node proof survives only in this job
+      # so the post-update pass can distinguish annotation loss from real
+      # credential, image, or node drift.
       shell: bash
-      run: ./scripts/refresh-flux-ghcr-auth.sh
+      run: >-
+        ./scripts/refresh-flux-ghcr-auth.sh
+        --record-runtime-proof
+        "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 
     # Publish the GitOps manifests (stage → sign → attest → promote → reconcile) BEFORE
     # syncing Talos machine config (the "🔄 Update cluster" step runs LAST).
@@ -328,9 +333,16 @@ runs:
       # later deploy failed to acquire the Lease. A merge-queue eviction
       # cancels this job routinely. The next deploy's staging step performs
       # this same reassertion with a full time budget.
+      # `ksail cluster update` re-renders Talos node annotations. Reuse only
+      # the same job's credential+image+Node-UID proof to restore those markers
+      # without another uncached pull or rolling reboot. Any mismatch falls
+      # back to the full safety path.
       if: >-
         !cancelled() &&
         steps.verify_flux_ghcr_auth_after_push.outcome == 'success' &&
         steps.reconcile.outcome == 'success'
       shell: bash
-      run: ./scripts/refresh-flux-ghcr-auth.sh
+      run: >-
+        ./scripts/refresh-flux-ghcr-auth.sh
+        --reuse-runtime-proof
+        "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"

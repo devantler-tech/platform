@@ -18,20 +18,58 @@ require_flux_ghcr_yaml_tool
 
 check_only=false
 allow_incomplete_fanout=false
-if (($# > 1)); then
-  echo "Usage: $0 [--check-only|--allow-incomplete-fanout]" >&2
-  exit 64
-fi
-if (($# == 1)); then
+record_runtime_proof_path=""
+reuse_runtime_proof_path=""
+usage() {
+  echo "Usage: $0 [--check-only|--allow-incomplete-fanout|--record-runtime-proof PATH|--reuse-runtime-proof PATH]" >&2
+}
+while (($# > 0)); do
   case "$1" in
-    --check-only) check_only=true ;;
-    --allow-incomplete-fanout) allow_incomplete_fanout=true ;;
+    --check-only)
+      check_only=true
+      shift
+      ;;
+    --allow-incomplete-fanout)
+      allow_incomplete_fanout=true
+      shift
+      ;;
+    --record-runtime-proof|--reuse-runtime-proof)
+      if (($# < 2)) || [[ -z "$2" ]]; then
+        usage
+        exit 64
+      fi
+      if [[ "$1" == "--record-runtime-proof" ]]; then
+        record_runtime_proof_path="$2"
+      else
+        reuse_runtime_proof_path="$2"
+      fi
+      shift 2
+      ;;
     *)
-      echo "Usage: $0 [--check-only|--allow-incomplete-fanout]" >&2
+      usage
       exit 64
       ;;
   esac
+done
+if [[ "${check_only}" == "true" ||
+  "${allow_incomplete_fanout}" == "true" ]] &&
+  [[ -n "${record_runtime_proof_path}${reuse_runtime_proof_path}" ]]; then
+  usage
+  exit 64
 fi
+if [[ -n "${record_runtime_proof_path}" &&
+  -n "${reuse_runtime_proof_path}" ]]; then
+  usage
+  exit 64
+fi
+for runtime_proof_path in \
+  "${record_runtime_proof_path}" "${reuse_runtime_proof_path}"; do
+  [[ -n "${runtime_proof_path}" ]] || continue
+  if [[ "${runtime_proof_path}" != /* ]]; then
+    echo "::error::Runtime proof paths must be absolute runner-local paths."
+    exit 64
+  fi
+done
 
 readonly SECRET_FILE="${FLUX_GHCR_SECRET_FILE:-k8s/bases/bootstrap/secret.enc.yaml}"
 readonly KUBE_CONTEXT="${KUBE_CONTEXT:-admin@prod}"
@@ -204,6 +242,8 @@ runtime_proved_targets_file="${work_dir}/runtime-proved-targets.txt"
 runtime_probe_manifest_file="${work_dir}/runtime-probe-pod.json"
 runtime_probe_state_file="${work_dir}/runtime-probe-state.json"
 runtime_probe_result_file="${work_dir}/runtime-probe-result.txt"
+normalized_runtime_proof_file="${work_dir}/reusable-runtime-proof.json"
+runtime_proof_nodes_file="${work_dir}/runtime-proof-nodes.json"
 image_verification_policy_patch_file="${work_dir}/image-verification-policy-patch.json"
 image_verification_policy_result_file="${work_dir}/image-verification-policy-result.txt"
 image_verification_mutating_webhooks_file="${work_dir}/image-verification-mutating-webhooks.json"
@@ -1967,10 +2007,13 @@ process_talos_node_target() {
   local probe_image recovery_record=""
   local drain_attempt=1 api_attempt api_ready
   local ready_attempt
+  local reusable_proof_uid=""
 
   assert_sync_lease_held || return 1
 
-  if [[ "${node_mode}" != "reboot" && "${node_mode}" != "image-only" ]]; then
+  if [[ "${node_mode}" != "reboot" &&
+    "${node_mode}" != "image-only" &&
+    "${node_mode}" != "proof-only" ]]; then
     echo "::error::Unknown Talos GHCR synchronization mode '${node_mode}' for ${node_name}."
     return 1
   fi
@@ -2322,63 +2365,65 @@ process_talos_node_target() {
       "${reboot_result_file}" "${node_ip}" "${node_role}" || return 1
   fi
 
-  # A reboot/readiness wait or even a short image-only cordon can outlive a
-  # replacement, uncordon, taint, or owner change. Rebind identity and the
-  # scheduling guard at the final Talos edge before touching the image cache.
-  revalidate_node_scheduling_guard \
-    "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-    "${initial_node_uid}" "${initial_node_taints}" \
-    "${talos_result_file}" "${node_ip}" "${node_role}" \
-    "image verification" || return 1
+  if [[ "${node_mode}" != "proof-only" ]]; then
+    # A reboot/readiness wait or even a short image-only cordon can outlive a
+    # replacement, uncordon, taint, or owner change. Rebind identity and the
+    # scheduling guard at the final Talos edge before touching the image cache.
+    revalidate_node_scheduling_guard \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${talos_result_file}" "${node_ip}" "${node_role}" \
+      "image verification" || return 1
 
-  # A cached image can make a pull look healthy without proving that the
-  # node's runtime can authenticate to GHCR. Remove the incoming exact target
-  # first so the following pull must complete a registry round-trip.
-  if ! talosctl \
-    --nodes "${node_ip}" \
-    image remove "${operator_image}" \
-    --namespace cri \
-    >"${talos_result_file}" 2>&1; then
-    if ! talos_image_remove_reports_absent \
-      "${talos_result_file}" "${operator_image}"; then
-      echo "::error::Talos node ${node_name} could not remove the cached incoming KSail image before GHCR verification; it remains cordoned because registry access is unproved."
+    # A cached image can make a pull look healthy without proving that the
+    # node's runtime can authenticate to GHCR. Remove the incoming exact target
+    # first so the following pull must complete a registry round-trip.
+    if ! talosctl \
+      --nodes "${node_ip}" \
+      image remove "${operator_image}" \
+      --namespace cri \
+      >"${talos_result_file}" 2>&1; then
+      if ! talos_image_remove_reports_absent \
+        "${talos_result_file}" "${operator_image}"; then
+        echo "::error::Talos node ${node_name} could not remove the cached incoming KSail image before GHCR verification; it remains cordoned because registry access is unproved."
+        return 1
+      fi
+    fi
+
+    revalidate_node_scheduling_guard \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${talos_result_file}" "${node_ip}" "${node_role}" \
+      "image pull" || return 1
+
+    # Credential validity against GHCR (see the caveat above: this is not, on
+    # its own, proof that containerd is using it — the reboot is).
+    if ! talosctl \
+      --nodes "${node_ip}" \
+      image pull "${operator_image}" \
+      --namespace cri \
+      >"${talos_result_file}" 2>&1; then
+      echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image after its auth refresh; it remains cordoned because registry access is unproved."
       return 1
     fi
-  fi
 
-  revalidate_node_scheduling_guard \
-    "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-    "${initial_node_uid}" "${initial_node_taints}" \
-    "${talos_result_file}" "${node_ip}" "${node_role}" \
-    "image pull" || return 1
+    revalidate_node_scheduling_guard \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${talos_result_file}" "${node_ip}" "${node_role}" \
+      "runtime pull proof" || return 1
 
-  # Credential validity against GHCR (see the caveat above: this is not, on
-  # its own, proof that containerd is using it — the reboot is).
-  if ! talosctl \
-    --nodes "${node_ip}" \
-    image pull "${operator_image}" \
-    --namespace cri \
-    >"${talos_result_file}" 2>&1; then
-    echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image after its auth refresh; it remains cordoned because registry access is unproved."
-    return 1
-  fi
-
-  revalidate_node_scheduling_guard \
-    "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-    "${initial_node_uid}" "${initial_node_taints}" \
-    "${talos_result_file}" "${node_ip}" "${node_role}" \
-    "runtime pull proof" || return 1
-
-  # Talos' image API authenticates from machine config, not through the
-  # kubelet's running CRI client. Before this freshly rebooted node can
-  # receive workloads, prove both private images through kubelet/containerd
-  # while the bridge-owned cordon is still in place.
-  if [[ "${node_mode}" == "reboot" ]]; then
-    for probe_image in "${RUNTIME_CREDENTIAL_PROBE_IMAGES[@]}"; do
-      probe_node_runtime_pull "${node_name}" "${probe_image}" || return 1
-    done
-    if ! grep -Fqx -- "${node_uid}" "${runtime_proved_targets_file}"; then
-      printf '%s\n' "${node_uid}" >>"${runtime_proved_targets_file}"
+    # Talos' image API authenticates from machine config, not through the
+    # kubelet's running CRI client. Before this freshly rebooted node can
+    # receive workloads, prove both private images through kubelet/containerd
+    # while the bridge-owned cordon is still in place.
+    if [[ "${node_mode}" == "reboot" ]]; then
+      for probe_image in "${RUNTIME_CREDENTIAL_PROBE_IMAGES[@]}"; do
+        probe_node_runtime_pull "${node_name}" "${probe_image}" || return 1
+      done
+      if ! grep -Fqx -- "${node_uid}" "${runtime_proved_targets_file}"; then
+        printf '%s\n' "${node_uid}" >>"${runtime_proved_targets_file}"
+      fi
     fi
   fi
 
@@ -2391,7 +2436,11 @@ process_talos_node_target() {
   # Record the proof only after the real runtime checks, while the selected
   # machine remains protected by the owned cordon. Releasing ownership first
   # would let a concurrent credential revision race this marker write.
-  if ! talosctl \
+  if [[ "${node_mode}" == "proof-only" ]]; then
+    reusable_proof_uid="${node_uid}"
+  fi
+  if ! FLUX_GHCR_REUSABLE_PROOF_UID="${reusable_proof_uid}" \
+    talosctl \
     --nodes "${node_ip}" \
     patch machineconfig \
     --mode=no-reboot \
@@ -2503,7 +2552,8 @@ sync_talos_registry_auth() {
       "${talos_nodes_file}" \
       "${desired_revision}" \
       "${operator_image}" \
-      "${talos_node_targets}"; then
+      "${talos_node_targets}" \
+      "${normalized_runtime_proof_file}"; then
       echo "::error::Could not select Talos nodes requiring GHCR synchronization."
       return 1
     fi
@@ -2625,6 +2675,101 @@ sync_talos_registry_auth() {
   return 1
 }
 
+# Normalize a runner-local proof from the successful pre-update stage. The
+# document contains no credential: it binds only the encrypted-source digest,
+# declared image, and immutable Kubernetes Node identities. A missing, stale,
+# malformed, or symlinked document is ignored, which safely falls back to the
+# existing uncached-pull/reboot path.
+prepare_reusable_runtime_proof() {
+  local desired_revision="$1"
+  local operator_image="$2"
+
+  jq -n \
+    --arg revision "${desired_revision}" \
+    --arg image "${operator_image}" '
+      {version: 1, credentialRevision: $revision, image: $image, nodes: []}
+    ' >"${normalized_runtime_proof_file}"
+
+  [[ -n "${reuse_runtime_proof_path}" ]] || return 0
+  if [[ ! -f "${reuse_runtime_proof_path}" ||
+    -L "${reuse_runtime_proof_path}" ]] ||
+    ! jq -e \
+      --arg revision "${desired_revision}" \
+      --arg image "${operator_image}" '
+        .version == 1
+        and .credentialRevision == $revision
+        and .image == $image
+        and (.nodes | type == "array" and length > 0)
+        and all(.nodes[];
+          (.name | type == "string" and length > 0)
+          and (.uid | type == "string" and length > 0))
+        and ((.nodes | map(.name) | unique | length) == (.nodes | length))
+        and ((.nodes | map(.uid) | unique | length) == (.nodes | length))
+      ' "${reuse_runtime_proof_path}" >/dev/null 2>&1; then
+    echo "::warning::The pre-update GHCR runtime proof is absent, stale, or malformed; using full per-node verification."
+    return 0
+  fi
+
+  jq -cS . "${reuse_runtime_proof_path}" \
+    >"${normalized_runtime_proof_file}"
+}
+
+# Export an exact-node proof only after the normal transaction has converged.
+# The subsequent reassert can restore a machine annotation erased by KSail,
+# but only for the same credential, image, name, and Kubernetes Node UID.
+record_runtime_proof() {
+  local desired_revision="$1"
+  local operator_image="$2"
+  local proof_parent
+
+  [[ -n "${record_runtime_proof_path}" ]] || return 0
+  proof_parent="$(dirname -- "${record_runtime_proof_path}")"
+  if [[ ! -d "${proof_parent}" ||
+    -e "${record_runtime_proof_path}" ||
+    -L "${record_runtime_proof_path}" ]]; then
+    echo "::error::Refusing to overwrite or create the runtime proof outside an existing runner-local directory."
+    return 1
+  fi
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get nodes \
+    -o json >"${runtime_proof_nodes_file}"; then
+    echo "::error::Could not capture the converged Node identities for the post-update GHCR reassert."
+    return 1
+  fi
+  if ! validate_talos_node_inventory "${runtime_proof_nodes_file}"; then
+    echo "::error::Could not record runtime proof from an invalid Talos node inventory."
+    return 1
+  fi
+  if ! jq -e \
+    --arg revision "${desired_revision}" \
+    --arg image "${operator_image}" \
+    --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
+    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" '
+      all(.items[];
+        .metadata.annotations[$revision_annotation] == $revision
+        and .metadata.annotations[$image_annotation] == $image)
+    ' "${runtime_proof_nodes_file}" >/dev/null; then
+    echo "::error::Refusing to record a post-update handoff before every exact Node has current runtime proof."
+    return 1
+  fi
+  if ! jq -cS \
+    --arg revision "${desired_revision}" \
+    --arg image "${operator_image}" '
+      {
+        version: 1,
+        credentialRevision: $revision,
+        image: $image,
+        nodes: [.items[] | {name: .metadata.name, uid: .metadata.uid}]
+          | sort_by(.name)
+      }
+    ' "${runtime_proof_nodes_file}" >"${record_runtime_proof_path}"; then
+    rm -f "${record_runtime_proof_path}"
+    return 1
+  fi
+  chmod 600 "${record_runtime_proof_path}"
+}
+
 # KSail embeds SOPS, so the deploy uses the same pinned toolchain as workload
 # reconciliation. Decrypt only the Docker config scalar and never emit it to
 # stdout or place its plaintext/base64 representation in an argument.
@@ -2685,6 +2830,7 @@ jq -n \
   }
 ' >"${talos_revision_patch_file}"
 chmod 600 "${talos_auth_patch_file}" "${talos_revision_patch_file}"
+prepare_reusable_runtime_proof "${pull_revision}" "${KSAIL_OPERATOR_IMAGE}"
 
 # Merge only Secret data fields so ownership metadata survives. The sensitive
 # payload stays in pipes/temp files and never appears in argv or logs.

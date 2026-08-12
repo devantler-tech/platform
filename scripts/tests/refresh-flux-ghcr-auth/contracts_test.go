@@ -255,13 +255,16 @@ func TestDeployActionConsumerStagingPrecedesPublishAndIsReassertedAfterUpdate(t 
 	requireBefore(t, postPushRefresh, reconcile, "post-publish refresh before reconcile")
 	requireBefore(t, reconcile, clusterUpdate, "reconcile before cluster update")
 	requireBefore(t, clusterUpdate, finalRefresh, "cluster update before final refresh")
-	requireContains(t, action[firstRefresh:push], "run: ./scripts/refresh-flux-ghcr-auth.sh\n")
+	requireContains(t, action[firstRefresh:push], "--record-runtime-proof")
+	requireContains(t, action[firstRefresh:push], "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json")
 	requireNotContains(t, action[firstRefresh:push], "--check-only")
 	requireContains(t, action[postPushRefresh:reconcile], "run: ./scripts/refresh-flux-ghcr-auth.sh --check-only")
 	finalRefreshStep := action[finalRefresh:]
 	requireContains(t, finalRefreshStep, "!cancelled() &&")
 	requireContains(t, finalRefreshStep, "steps.verify_flux_ghcr_auth_after_push.outcome == 'success'")
 	requireContains(t, finalRefreshStep, "steps.reconcile.outcome == 'success'")
+	requireContains(t, finalRefreshStep, "--reuse-runtime-proof")
+	requireContains(t, finalRefreshStep, "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json")
 	if count := strings.Count(action, "scripts/refresh-flux-ghcr-auth.sh"); count != 3 {
 		t.Errorf("refresh helper references = %d, want 3", count)
 	}

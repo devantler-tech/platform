@@ -190,7 +190,7 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 6. `scripts/run-ksail-prod-with-pull-auth.sh workload push` packages manifests and pushes them with the separate Actions write token.
 7. `scripts/refresh-flux-ghcr-auth.sh --check-only` revalidates the newly-published artifact without mutating the cluster.
 8. `scripts/run-ksail-prod-with-pull-auth.sh workload reconcile` triggers Flux with Git/SOPS pull auth. Both normal delivery and DR then require `infrastructure-controllers` to apply the exact newly-published digest and report `Ready`.
-9. After `cluster update`, the full bridge reasserts every pull path in case a partial update or older managed state was applied. DR applies the same Cilium rollout guard around publish and convergence, and also runs the bridge after an OpenBao raft restore because the snapshot may contain an older GHCR value.
+9. After `cluster update`, the full bridge reasserts every pull path in case a partial update or older managed state was applied. The normal deploy passes a non-secret, same-job handoff that binds the staged credential revision and image to each Kubernetes Node UID. If KSail only erased the Talos proof annotation, the reassert restores that marker without repeating the uncached pull or rolling reboot; a changed credential, image, or Node UID still takes the full proof path. DR applies the same Cilium rollout guard around publish and convergence, and also runs the bridge after an OpenBao raft restore because the snapshot may contain an older GHCR value.
 
 **Key differences from local:**
 
