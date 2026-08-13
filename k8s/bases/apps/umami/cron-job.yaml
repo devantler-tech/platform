@@ -328,5 +328,9 @@ spec:
           volumes:
             # Writable scratch for the Node runtime, so the container's own root
             # filesystem can stay immutable (readOnlyRootFilesystem above).
+            # sizeLimit matches the umami Deployment's own /tmp (helm-release.yaml):
+            # an unbounded emptyDir draws on the node's ephemeral storage, and this
+            # pod holds no eviction-limiting ephemeral-storage request of its own.
             - name: tmp
-              emptyDir: {}
+              emptyDir:
+                sizeLimit: 128Mi
