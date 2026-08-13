@@ -555,7 +555,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.178.21"
+          KSAIL_VERSION: "7.178.22"
         run: |
           set -euo pipefail
           BASE="https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}"
