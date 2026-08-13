@@ -100,10 +100,19 @@ spec:
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
-                readOnlyRootFilesystem: false
+                readOnlyRootFilesystem: true
                 capabilities:
                   drop:
                     - ALL
+              # The script is `node -e` over HTTP only — it uses no filesystem API
+              # at all — so /tmp is the sole writable path it could need, and the
+              # Node runtime gets it from an emptyDir rather than a writable root.
+              # The umami Deployment already runs this same image read-only with
+              # exactly this mount; it additionally mounts /app/.next/cache, which
+              # is the Next.js server's build cache and has no meaning here.
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
               resources:
                 requests:
                   cpu: 25m
@@ -316,3 +325,12 @@ spec:
                     }
                     console.log('umami tenant provisioning complete');
                   })().catch((e) => { console.error(String((e && e.stack) || e)); process.exit(1); });
+          volumes:
+            # Writable scratch for the Node runtime, so the container's own root
+            # filesystem can stay immutable (readOnlyRootFilesystem above).
+            # sizeLimit matches the umami Deployment's own /tmp (helm-release.yaml):
+            # an unbounded emptyDir draws on the node's ephemeral storage, and this
+            # pod holds no eviction-limiting ephemeral-storage request of its own.
+            - name: tmp
+              emptyDir:
+                sizeLimit: 128Mi
