@@ -135,6 +135,15 @@ func fakeKubectlGetFluxPolicyKustomization(args []string, namespace string) int 
 	if name == "flux-system" {
 		return fakeKubectlGetFluxPolicyParent(args, namespace)
 	}
+	if namespace == "flux-system" &&
+		name == os.Getenv("FAKE_FLUX_POLICY_CHILD_DEPENDENCY_NOT_READY") &&
+		name != "" {
+		if os.Getenv("FAKE_FLUX_POLICY_DEPENDENCY_READ_FAILS") == "true" {
+			return commandFailure(1, "Error from server (NotFound): kustomizations.kustomize.toolkit.fluxcd.io %q not found", name)
+		}
+		fmt.Println(encodeJSON(fakeFluxPolicyDependencyObject(name)))
+		return 0
+	}
 	if namespace != "flux-system" ||
 		name != "infrastructure" ||
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
@@ -142,6 +151,37 @@ func fakeKubectlGetFluxPolicyKustomization(args []string, namespace string) int 
 	}
 	fmt.Println(encodeJSON(fakeFluxPolicyChildObject()))
 	return 0
+}
+
+// fakeFluxPolicyDependencyObject models a Kustomization the handoff owner
+// depends on, still reconciling with the message that names the real blocker.
+func fakeFluxPolicyDependencyObject(name string) map[string]any {
+	return map[string]any{
+		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
+		"kind":       "Kustomization",
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": "flux-system",
+			"uid":       name + "-kustomization-uid",
+		},
+		"spec": map[string]any{"suspend": false},
+		"status": map[string]any{
+			"conditions": []any{
+				map[string]any{
+					"type":    "Reconciling",
+					"status":  "True",
+					"reason":  "ProgressingWithRetry",
+					"message": os.Getenv("FAKE_FLUX_POLICY_DEPENDENCY_BLOCKING_MESSAGE"),
+				},
+				map[string]any{
+					"type":    "Ready",
+					"status":  "False",
+					"reason":  "HealthCheckFailed",
+					"message": os.Getenv("FAKE_FLUX_POLICY_DEPENDENCY_BLOCKING_MESSAGE"),
+				},
+			},
+		},
+	}
 }
 
 func fakeFluxPolicyChildObject() map[string]any {
@@ -173,13 +213,30 @@ func fakeFluxPolicyChildObject() map[string]any {
 	if os.Getenv("FAKE_FLUX_POLICY_HANDOFF_NO_ANNOTATIONS") != "true" || owner != "" {
 		metadata["annotations"] = annotations
 	}
-	conditions := []any{
-		map[string]any{
-			"type":   "Ready",
-			"status": "True",
-			"reason": "ReconciliationSucceeded",
-		},
+	readyCondition := map[string]any{
+		"type":   "Ready",
+		"status": "True",
+		"reason": "ReconciliationSucceeded",
 	}
+	spec := map[string]any{"suspend": suspended}
+	if unhealthy := os.Getenv("FAKE_FLUX_POLICY_CHILD_UNHEALTHY"); unhealthy != "" {
+		readyCondition = map[string]any{
+			"type":    "Ready",
+			"status":  "False",
+			"reason":  "HealthCheckFailed",
+			"message": unhealthy,
+		}
+	}
+	if dependency := os.Getenv("FAKE_FLUX_POLICY_CHILD_DEPENDENCY_NOT_READY"); dependency != "" {
+		readyCondition = map[string]any{
+			"type":    "Ready",
+			"status":  "False",
+			"reason":  "DependencyNotReady",
+			"message": fmt.Sprintf("dependency 'flux-system/%s' is not ready", dependency),
+		}
+		spec["dependsOn"] = []any{map[string]any{"name": dependency}}
+	}
+	conditions := []any{readyCondition}
 	reconciling := os.Getenv("FAKE_FLUX_POLICY_RECONCILING") == "true"
 	if suspended && os.Getenv("FAKE_FLUX_POLICY_RECONCILING_AFTER_PAUSE") == "true" {
 		reconciling = true
@@ -201,19 +258,21 @@ func fakeFluxPolicyChildObject() map[string]any {
 		}
 	}
 	if reconciling {
-		conditions = append(conditions, map[string]any{
+		reconcilingCondition := map[string]any{
 			"type":   "Reconciling",
 			"status": "True",
-			"reason": "Progressing",
-		})
+			"reason": defaultString(os.Getenv("FAKE_FLUX_POLICY_RECONCILING_REASON"), "Progressing"),
+		}
+		if message := os.Getenv("FAKE_FLUX_POLICY_RECONCILING_MESSAGE"); message != "" {
+			reconcilingCondition["message"] = message
+		}
+		conditions = append(conditions, reconcilingCondition)
 	}
 	return map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   metadata,
-		"spec": map[string]any{
-			"suspend": suspended,
-		},
+		"spec":       spec,
 		"status": map[string]any{
 			"observedGeneration": 13,
 			"conditions":         conditions,
@@ -795,6 +854,15 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid synchronization lease lookup")
 	}
+	if os.Getenv("FAKE_TRANSIENT_SYNC_LEASE_API_FAIL_AFTER_FIRST_CLAIM") == "true" &&
+		markerExists("cordon-owner-prod-worker-1") &&
+		!markerExists("sync-lease-api-unreachable-after-first-claim") {
+		touchMarker("sync-lease-api-unreachable-after-first-claim")
+		return commandFailure(
+			54,
+			"The connection to the server api.example.test:6443 was refused: connect: connection refused",
+		)
+	}
 	if os.Getenv("FAKE_INTERRUPT_SYNC_LEASE_HEARTBEAT_DURING_DRAIN") == "true" &&
 		markerExists("transient-drain-attempt-prod-worker-1") &&
 		!markerExists("sync-lease-heartbeat-interrupted") &&
@@ -950,6 +1018,20 @@ func fakeKubectlGetNodes() int {
 	if os.Getenv("FAKE_NODE_DISCOVERY_FAIL") == "true" {
 		return commandFailure(46, "node discovery failed")
 	}
+	// Seed a fence left behind by a transaction that was killed before this run
+	// existed -- the #3070 state. Seeded once, guarded by its own marker, so a
+	// reclaim that clears it is not silently re-created on the next inventory
+	// read and the test can tell "reclaimed" from "never seeded".
+	if leaked := os.Getenv("FAKE_LEAKED_FENCE_NODE"); leaked != "" &&
+		!markerExists("leaked-fence-seeded-"+leaked) {
+		touchMarker("leaked-fence-seeded-" + leaked)
+		setMarkerContent("cordon-owner-"+leaked, "dead-transaction-owner")
+		setMarkerContent(
+			"cordon-phase-"+leaked,
+			defaultString(os.Getenv("FAKE_LEAKED_FENCE_PHASE"), "claimed"),
+		)
+		touchMarker("cordoned-" + leaked)
+	}
 	if custom := os.Getenv("FAKE_NODE_JSON"); custom != "" {
 		fmt.Println(custom)
 		return 0
@@ -958,8 +1040,9 @@ func fakeKubectlGetNodes() int {
 	revision := os.Getenv("EXPECTED_GHCR_REVISION")
 	image := os.Getenv("EXPECTED_KSAIL_TARGET_IMAGE")
 	verifiedImage := defaultString(os.Getenv("FAKE_TALOS_VERIFIED_IMAGE"), image)
+	workerUID := defaultString(os.Getenv("FAKE_WORKER_UID"), "prod-worker-1-uid")
 	nodes := []any{
-		fakeInventoryNode("prod-worker-1", "prod-worker-1-uid", "10.0.0.2", "198.51.100.2", false, revision, "", "", true),
+		fakeInventoryNode("prod-worker-1", workerUID, "10.0.0.2", "198.51.100.2", false, revision, "", "", true),
 		fakeInventoryNode("prod-control-plane-1", "prod-control-plane-1-uid", "10.0.0.1", "198.51.100.1", true, revision, "", "", true),
 		fakeInventoryNode("prod-control-plane-2", "prod-control-plane-2-uid", "10.0.0.3", "198.51.100.3", true, revision, revision, image, false),
 		fakeInventoryNode("prod-control-plane-3", "prod-control-plane-3-uid", "10.0.0.4", "198.51.100.4", true, revision, revision, image, false),
@@ -1083,6 +1166,9 @@ func fakeInventoryNode(
 	if owner := markerContent("cordon-owner-" + name); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-owner"] = owner
 	}
+	if phase := markerContent("cordon-phase-" + name); phase != "" {
+		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = phase
+	}
 	if recovery := markerContent("cordon-recovery-" + name); recovery != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
 	}
@@ -1193,7 +1279,7 @@ func fakeKubectlGetNode(args []string) int {
 		}
 	}
 
-	nodeUID := nodeName + "-uid"
+	nodeUID := fakeExpectedNodeUID(nodeName)
 	nodeIP, controlPlane := fakeNodeAddress(nodeName)
 	if nodeName == os.Getenv("FAKE_NODE_REPLACED_BEFORE_PROCESS_NODE") {
 		nodeUID = nodeName + "-replacement-uid"
@@ -1218,6 +1304,9 @@ func fakeKubectlGetNode(args []string) int {
 	annotations := map[string]any{}
 	if owner := markerContent("cordon-owner-" + nodeName); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-owner"] = owner
+	}
+	if phase := markerContent("cordon-phase-" + nodeName); phase != "" {
+		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = phase
 	}
 	if recovery := markerContent("cordon-recovery-" + nodeName); recovery != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
@@ -1348,6 +1437,13 @@ func fakeNodeName(nodeAddress string) string {
 	return ""
 }
 
+func fakeExpectedNodeUID(nodeName string) string {
+	if nodeName == "prod-worker-1" && os.Getenv("FAKE_WORKER_UID") != "" {
+		return os.Getenv("FAKE_WORKER_UID")
+	}
+	return nodeName + "-uid"
+}
+
 func fakeKubectlDrain(args []string) int {
 	nodeName := argumentAfter(args, "drain")
 	if nodeName == "" || !containsArg(args, "--ignore-daemonsets") ||
@@ -1429,6 +1525,32 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 	}
 	currentResourceVersion := defaultString(markerContent("resource-version-"+nodeName), "10")
 	isClaim := hasPatchOperation(patch, "add", "/spec/unschedulable", true)
+	isFencePhase := hasPatchPath(
+		patch,
+		"add",
+		"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+	) && !hasPatchOperation(patch, "add", "/spec/unschedulable", true)
+	if isFencePhase {
+		expectedOwner := patchValueString(
+			patch,
+			"test",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner",
+		)
+		if nodeName == os.Getenv("FAKE_FENCE_PHASE_FAIL_NODE") ||
+			expectedOwner == "" || expectedOwner != markerContent("cordon-owner-"+nodeName) ||
+			!hasPatchOperation(patch, "test", "/metadata/uid", fakeExpectedNodeUID(nodeName)) {
+			return commandFailure(57, "invalid fence phase update")
+		}
+		setMarkerContent("cordon-phase-"+nodeName, patchValueString(
+			patch,
+			"add",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+		))
+		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+		appendEnvFile("OPERATION_LOG", "node-fence-phase:"+nodeName+"\n")
+		fmt.Printf("node/%s patched\n", nodeName)
+		return 0
+	}
 	isRecoveryPhase := hasPatchPath(
 		patch,
 		"replace",
@@ -1454,7 +1576,7 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 			expectedOwner == "" || expectedOwner != markerContent("cordon-owner-"+nodeName) ||
 			expectedRecovery == "" || expectedRecovery != markerContent("cordon-recovery-"+nodeName) ||
 			updatedRecovery == "" ||
-			!hasPatchOperation(patch, "test", "/metadata/uid", nodeName+"-uid") ||
+			!hasPatchOperation(patch, "test", "/metadata/uid", fakeExpectedNodeUID(nodeName)) ||
 			!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) {
 			return commandFailure(56, "invalid bootstrap recovery phase update")
 		}
@@ -1469,6 +1591,53 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		setMarkerContent("cordon-recovery-"+nodeName, updatedRecovery)
 		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
 		appendEnvFile("OPERATION_LOG", "recovery-phase:"+nodeName+":"+phase+"\n")
+		return 0
+	}
+	// Reclaiming a leaked fence is the only patch that REMOVES the phase
+	// annotation -- a claim adds it, a release leaves it alone -- so that is the
+	// discriminator. Without this branch the reclaim falls through to the
+	// release path, whose first test is the owner rather than the uid, and every
+	// reclaim would fail exit 56 with no coverage of the mutation at all.
+	isReclaim := hasPatchPath(
+		patch,
+		"remove",
+		"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+	)
+	if isReclaim {
+		if nodeName == os.Getenv("FAKE_RECLAIM_FAIL_NODE") {
+			return commandFailure(56, "fence changed while being reclaimed")
+		}
+		expectedOwner := patchValueString(
+			patch,
+			"test",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner",
+		)
+		// CAS on identity, the exact owner value, AND the "claimed" phase: a
+		// reclaim must never clear a fence that changed hands, sits on a
+		// replaced node reusing the name, or already reached Talos mutation.
+		if expectedOwner == "" ||
+			expectedOwner != markerContent("cordon-owner-"+nodeName) ||
+			!hasPatchOperation(patch, "test", "/metadata/uid", fakeExpectedNodeUID(nodeName)) ||
+			!hasPatchOperation(
+				patch,
+				"test",
+				"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+				"claimed",
+			) ||
+			!hasPatchPath(
+				patch,
+				"remove",
+				"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner",
+			) {
+			return commandFailure(56, "invalid orphaned fence reclaim")
+		}
+		removeMarker("cordon-owner-" + nodeName)
+		removeMarker("cordon-phase-" + nodeName)
+		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+		// The cordon marker is deliberately left in place: reclaim releases
+		// ownership without uncordoning, because the pre-claim schedulability
+		// was never recorded.
+		appendEnvFile("OPERATION_LOG", "node-reclaim-fence:"+nodeName+"\n")
 		return 0
 	}
 	if isClaim {
@@ -1500,10 +1669,18 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 			patch[0].Path != "/metadata/resourceVersion" || fmt.Sprint(patch[0].Value) != currentResourceVersion {
 			return commandFailure(56, "invalid atomic cordon claim")
 		}
-		if !hasPatchOperation(patch, "test", "/metadata/uid", nodeName+"-uid") {
+		expectedNodeUID := fakeExpectedNodeUID(nodeName)
+		if !hasPatchOperation(patch, "test", "/metadata/uid", expectedNodeUID) {
 			return commandFailure(56, "atomic cordon claim omitted node UID")
 		}
 		setMarkerContent("cordon-owner-"+nodeName, owner)
+		if phase := patchValueString(
+			patch,
+			"add",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+		); phase != "" {
+			setMarkerContent("cordon-phase-"+nodeName, phase)
+		}
 		if recovery := patchValueString(
 			patch,
 			"add",
@@ -1543,9 +1720,10 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 	if nodeName == os.Getenv("FAKE_UNCORDON_FAIL_NODE") || markerContent("cordon-owner-"+nodeName) != expectedOwner {
 		return commandFailure(56, "cordon ownership changed; refusing to uncordon")
 	}
+	expectedNodeUID := fakeExpectedNodeUID(nodeName)
 	if len(patch) == 0 || patch[0].Operation != "test" ||
 		patch[0].Path != "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner" ||
-		!hasPatchOperation(patch, "test", "/metadata/uid", nodeName+"-uid") ||
+		!hasPatchOperation(patch, "test", "/metadata/uid", expectedNodeUID) ||
 		!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
 		!hasPatchPath(patch, "remove", "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner") {
 		return commandFailure(56, "invalid atomic cordon release")

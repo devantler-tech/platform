@@ -1,0 +1,40 @@
+# Opt headlamp into the label-gated user-namespace rules (#1807, #2843).
+#
+# Headlamp carries this label for a different reason than the other five
+# namespaces, and the difference is the whole point of the change.
+#
+# Elsewhere the label drives the `add-user-namespaces` MUTATE rule, which
+# injects hostUsers: false through a +(hostUsers) conditional anchor. That
+# anchor cannot reach headlamp: its chart renders `hostUsers` from a
+# values.yaml default of true, so the field is authored rather than absent.
+# The value is set instead by the exact-target HelmRelease values patch in
+# ../../kustomization.yaml, and that patch remains what actually hardens the
+# workload. The mutate rule is a no-op here either way.
+#
+# What the label adds is the ENFORCE RATCHET — the `disallow-host-users`
+# validate rule in validate-host-restrictions.yaml, which is scoped by this
+# same label. Without it headlamp was the one user-namespaced workload whose
+# isolation rested on a single line of kustomize config: drop that values
+# patch in a chart bump, a bad conflict resolution or an overshooting revert,
+# and the chart default of true returns, admission accepts it, no policy
+# report is produced, and the namespace does not look wrong because it was
+# never labelled. With the label, that same regression is rejected at
+# admission instead.
+#
+# Safe to apply now: the pilot (#2651) is verified and closed, the running pod
+# already sets hostUsers: false explicitly and so passes =(hostUsers): false
+# unchanged, headlamp is the only workload in the namespace, and it holds no
+# CNPG pods, so the rules' cnpg.io/cluster exclude is moot here. Its Longhorn
+# PVC round trip — the plugin sidecar writes, the main container reads — is the
+# property the disposable userns-longhorn-smoke Job proved on this cluster
+# (#2619).
+#
+# Hetzner-only, like the others: this label lives in the Hetzner overlay so the
+# nested local Docker provider stays default-off.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: headlamp
+  labels:
+    pod-security.devantler.tech/user-namespaces: enabled

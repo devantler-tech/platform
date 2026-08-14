@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Contract for the default-off Crossplane sync exporter (#2986).
+# Contract for the Crossplane sync exporter (#2986).
 #
 # The failure this component exists to prevent is a silent one: a managed
 # resource reporting Ready=True while Synced=False, which every Ready-keyed
@@ -16,8 +16,8 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly coroot_dir="${root_dir}/k8s/bases/infrastructure/coroot"
 readonly exporter_component="${coroot_dir}/components/crossplane-sync-exporter"
-readonly local_cluster="${root_dir}/k8s/clusters/local"
-readonly prod_cluster="${root_dir}/k8s/clusters/prod"
+readonly hetzner_infrastructure="${root_dir}/k8s/providers/hetzner/infrastructure"
+readonly docker_infrastructure="${root_dir}/k8s/providers/docker/infrastructure"
 readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
 
 fail() {
@@ -64,6 +64,125 @@ reject_text() {
   if grep -Fq -- "$needle" <<<"${haystack}"; then
     fail "${description}"
   fi
+}
+
+# Collapse each `rules[]` entry into one canonical signature line:
+#
+#   apiGroups=[g1,g2] resources=[r1] verbs=[v1,v2]
+#
+# Line-at-a-time assertions cannot express what an RBAC rule actually MEANS. A
+# group, a resource and a verb set only grant anything when they sit in the SAME
+# entry, and independent `require_line` checks pass just as happily when they are
+# split across two rules — which grants something quite different from what the
+# assertions appear to say. Signatures make the grouping the thing being
+# asserted, so a split rule fails.
+#
+# Values within a key keep their document order; every rule here is written in
+# the canonical order kustomize emits, so this stays an exact comparison rather
+# than a set comparison that could mask a duplicated or reordered verb.
+rule_signatures() {
+  awk '
+    function flush() {
+      if (started) {
+        printf "apiGroups=[%s] resources=[%s] verbs=[%s]\n", groups, resources, verbs
+      }
+      groups = ""; resources = ""; verbs = ""; key = ""
+    }
+    function append(current, value) {
+      return current == "" ? value : current "," value
+    }
+
+    /^rules:[[:space:]]*$/ { in_rules = 1; next }
+    # Any other column-0 key ends the rules block.
+    /^[^[:space:]-]/ { if (in_rules) { flush(); started = 0; in_rules = 0 } }
+    !in_rules { next }
+
+    /^-[[:space:]]/ {
+      flush()
+      started = 1
+      sub(/^-[[:space:]]*/, "")
+    }
+    /^[[:space:]]*[a-zA-Z]+:[[:space:]]*$/ {
+      key = $0
+      gsub(/[[:space:]]|:/, "", key)
+      next
+    }
+    /^[[:space:]]*-[[:space:]]/ {
+      value = $0
+      sub(/^[[:space:]]*-[[:space:]]*/, "", value)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      if (key == "apiGroups") { groups = append(groups, value) }
+      else if (key == "resources") { resources = append(resources, value) }
+      else if (key == "verbs") { verbs = append(verbs, value) }
+    }
+    END { flush() }
+  '
+}
+
+# Assert one whole rule, by signature, and assert there is EXACTLY one of it.
+#
+# Counting rather than matching is what makes the "exactly one ... rule" wording
+# on the assertions below true. A presence check answers "at least one", so a
+# role carrying the same grant twice satisfies it, and `reject_unexpected_rules`
+# cannot catch that either: a duplicate is by definition a member of the allowed
+# set. The pair would then enforce "at least one of each, and no other KIND of
+# rule" while claiming to enforce "exactly one of each".
+#
+# The duplicate grants no additional Kubernetes permission — RBAC is a union, so
+# two identical rules authorise exactly what one does. It is asserted anyway
+# because a role that accumulated a duplicate is a role someone edited without
+# noticing what was already there, and that is the edit most likely to widen the
+# next grant by mistake.
+#
+# The comparison stays the exact trimmed-whole-line one used everywhere else in
+# this file, now applied to a unit that carries meaning.
+require_rule() {
+  local cluster_role="$1"
+  local signature="$2"
+  local description="$3"
+  local line matches=0
+
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [ "${line}" = "${signature}" ] && matches=$((matches + 1))
+  done <<<"$(rule_signatures <<<"${cluster_role}")"
+
+  [ "${matches}" -eq 1 ] ||
+    fail "${description} (found ${matches} matching rules, expected exactly 1)"
+}
+
+# The closed half of the contract: every rule present must be one of the rules
+# named here.
+#
+# `require_rule` only proves a signature is PRESENT, which is a one-directional
+# claim. A third entry granting get/list/watch on some unrelated resource — core
+# `configmaps`, say — satisfies both required-rule assertions, carries no
+# wildcard, and uses no mutating verb, so it passes every other check in this
+# file while quietly widening what the exporter can read.
+#
+# Least privilege is a statement about the WHOLE role, not about the rules
+# someone remembered to assert, so the allowed set has to be closed. This closes
+# it in one direction only — no rule outside the allowed set — which is why
+# `require_rule` counts rather than merely matching: a duplicate of an allowed
+# rule is a member of the allowed set, so nothing here would reject it.
+reject_unexpected_rules() {
+  local cluster_role="$1"
+  shift
+
+  local actual expected_signature matched
+  while IFS= read -r actual; do
+    [ -z "${actual}" ] && continue
+    matched=0
+    for expected_signature in "$@"; do
+      if [ "${actual}" = "${expected_signature}" ]; then
+        matched=1
+        break
+      fi
+    done
+    [ "${matched}" -eq 1 ] ||
+      fail "the exporter must hold no RBAC rule beyond the two it needs (found: ${actual})"
+  done <<<"$(rule_signatures <<<"${cluster_role}")"
 }
 
 extract_resource() {
@@ -125,20 +244,47 @@ grep -Fq \
   "${ci_workflow}" ||
   fail 'CI must execute the Crossplane sync exporter contract'
 
-# Default-off: the exporter must not appear anywhere it has not been explicitly
-# activated. A component is only reachable through a `components:` reference, so
-# an accidental reference is the way this ships before its activation change.
-for surface in "${coroot_dir}" "${local_cluster}" "${prod_cluster}"; do
-  surface_rendered="$(kubectl kustomize "${surface}")" ||
-    fail "the ${surface} surface must render"
-  reject_text \
-    "${surface_rendered}" \
-    'crossplane-sync-exporter' \
-    "the exporter must remain default-off until an activation change enables it (${surface})"
-done
+# Activated on the provider that runs Coroot, and only there.
+#
+# The surfaces below are the provider infrastructure layers, because that is
+# where a `components:` reference actually resolves into rendered resources.
+# `k8s/clusters/{local,prod}` are not usable here: they render the Flux
+# Kustomization wiring and no Coroot resource at all, so an assertion against
+# them holds whatever the component reference says.
+hetzner_rendered="$(kubectl kustomize "${hetzner_infrastructure}")" ||
+  fail "the ${hetzner_infrastructure} surface must render"
+require_text \
+  "${hetzner_rendered}" \
+  'crossplane-sync-exporter' \
+  'the exporter must reach the provider layer prod deploys'
+
+# Negative control, and the load-bearing one. The exporter reads
+# `repo.github.m.upbound.io/Repository` resources, which exist only where
+# Crossplane and the github-config app are installed — the Hetzner overlay. So
+# the SHARED Coroot base must not carry the activation: anyone who opts Coroot
+# in on another provider would otherwise inherit a permanently empty sensor plus
+# cluster-wide RBAC for CRDs that are not present.
+#
+# This surface is what makes the pair non-vacuous. The Docker infrastructure
+# layer is checked below as well, but it leaves Coroot itself commented out, so
+# on its own it would also pass with the component referenced from the base —
+# it cannot distinguish default-off from Coroot-absent.
+coroot_rendered="$(kubectl kustomize "${coroot_dir}")" ||
+  fail "the ${coroot_dir} surface must render"
+reject_text \
+  "${coroot_rendered}" \
+  'crossplane-sync-exporter' \
+  'the shared coroot base must keep the exporter default-off'
+
+docker_rendered="$(kubectl kustomize "${docker_infrastructure}")" ||
+  fail "the ${docker_infrastructure} surface must render"
+reject_text \
+  "${docker_rendered}" \
+  'crossplane-sync-exporter' \
+  'the exporter must stay out of the opt-in local provider layer'
 
 rendered="$(kubectl kustomize "${exporter_component}")" ||
-  fail 'the default-off Crossplane sync-exporter component must render'
+  fail 'the Crossplane sync-exporter component must render'
 
 config_map="$(
   extract_resource ConfigMap crossplane-sync-exporter <<<"${rendered}"
@@ -255,14 +401,39 @@ require_text \
 cluster_role="$(
   extract_resource ClusterRole crossplane-sync-exporter <<<"${rendered}"
 )" || fail 'the component must render the exporter ClusterRole'
-require_line \
+require_rule \
   "${cluster_role}" \
-  '- repo.github.m.upbound.io' \
-  'the exporter must be limited to the managed-resource group it exports'
-require_line \
+  'apiGroups=[repo.github.m.upbound.io] resources=[repositories] verbs=[get,list,watch]' \
+  'the exporter must hold exactly one read-only rule on the managed resource it exports'
+
+# The DISCOVERY half of the RBAC, and the reason this component shipped dead
+# (#3068). kube-state-metrics resolves a CustomResourceStateMetrics
+# `groupVersionKind` through the CRD API before it can build a store for it, so
+# the managed-resource grant above is necessary but NOT sufficient: without this
+# rule the reflector retry-loops on a forbidden list and the exporter emits zero
+# condition series while reporting itself 1/1 Ready.
+#
+# That is the same silent-sensor shape the rest of this contract guards, one
+# level down — an absent series is indistinguishable from a healthy fleet — and
+# nothing else in the pipeline catches it, because every assertion above passes
+# on a manifest whose exporter cannot read a single resource.
+#
+# `resourceNames` cannot narrow this: Kubernetes RBAC only honours it for
+# get/update/delete/patch, never for list or watch, and the discovery path
+# lists. Reading CRD *definitions* is schema access, which is what keeps this
+# consistent with the scoping rationale on the rule above: managed-resource
+# access, where provider configuration actually lives, stays pinned to the
+# kinds listed there.
+require_rule \
   "${cluster_role}" \
-  '- repositories' \
-  'the exporter must be limited to the resource it exports'
+  'apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[get,list,watch]' \
+  'the exporter must hold exactly one read-only rule granting the CRD read its GVK discovery requires'
+
+# Closes the set: the two rules above are the ONLY rules this role may carry.
+reject_unexpected_rules \
+  "${cluster_role}" \
+  'apiGroups=[repo.github.m.upbound.io] resources=[repositories] verbs=[get,list,watch]' \
+  'apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[get,list,watch]'
 
 # A metrics exporter able to read every custom resource could also read provider
 # configuration it has no need for.
@@ -286,4 +457,4 @@ extract_resource \
   crossplane-sync-exporter <<<"${rendered}" >/dev/null ||
   fail 'the component must render the exporter ServiceAccount'
 
-printf 'PASS: the default-off Crossplane sync exporter keeps its least-privilege metric contract\n'
+printf 'PASS: the activated Crossplane sync exporter keeps its least-privilege metric contract\n'

@@ -36,20 +36,18 @@ runs:
   using: composite
   steps:
     - name: ⚙️ Setup KSail
-      # Install the KSail CLI from the release tarball via curl. We use curl
-      # rather than brew/setup-ksail-cli because the v7.20.0 release shipped
-      # only desktop artifacts (linux CLI missing, 404 on the tarball).
-      # v7.25.0 ships complete linux artifacts again and carries the
-      # cluster-update fixes; renovate keeps this pin current.
+      # Install the KSail CLI from the release tarball and verify the
+      # downloaded asset against GitHub's published release checksum before
+      # running it with production credentials. We still use the tarball rather
+      # than brew/setup-ksail-cli because v7.20.0 shipped only desktop artifacts
+      # (linux CLI missing, 404 on the tarball); Renovate keeps this pin current.
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.178.20"
+        KSAIL_VERSION: "7.178.25"
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
-        curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
-        tar -xzf /tmp/ksail.tar.gz -C /tmp
-        sudo install /tmp/ksail /usr/local/bin/ksail
-        ksail --version
+        .github/scripts/setup-ksail.sh
 
     - name: ⚙️ Setup talosctl
       # refresh-flux-ghcr-auth.sh uses the host API for a secret-safe,
@@ -88,6 +86,18 @@ runs:
         umask 077
         printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
         chmod 600 ~/.kube/config
+
+    - name: 🔗 Select stable prod API endpoint
+      # KUBE_CONFIG can outlive the control-plane node whose public IP was the
+      # endpoint when the secret was minted. `cluster update` deliberately
+      # rolls those nodes, so retaining that address makes this deploy sever
+      # its own API connection even while the other control planes are Ready.
+      # Resolve the KSail-owned floating IP live, fail closed on missing or
+      # foreign ownership labels, and switch admin@prod before any API call.
+      shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ./scripts/use-prod-stable-api-endpoint.sh
 
     - name: 🔑 Restore talosconfig
       # ksail cluster update talks to the Talos API to sync machine config.
@@ -159,9 +169,14 @@ runs:
       # the declared incoming image on every stale Talos node, then stage and
       # verify the Kubernetes fan-out BEFORE publishing latest. Every pull
       # consumer has one known-readable credential before the mutable tag can
-      # be observed.
+      # be observed. The non-secret exact-node proof survives only in this job
+      # so the post-update pass can distinguish annotation loss from real
+      # credential, image, or node drift.
       shell: bash
-      run: ./scripts/refresh-flux-ghcr-auth.sh
+      run: >-
+        ./scripts/refresh-flux-ghcr-auth.sh
+        --record-runtime-proof
+        "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 
     # Publish the GitOps manifests (stage → sign → attest → promote → reconcile) BEFORE
     # syncing Talos machine config (the "🔄 Update cluster" step runs LAST).
@@ -307,9 +322,25 @@ runs:
       # only after the publish, signing, attestation, post-publish auth check,
       # and Flux reconcile all succeeded. Never mutate auth as cleanup for a
       # failed delivery.
+      # Runs on failure but NOT on cancellation. This step takes the
+      # `ghcr-auth-refresh` Lease, which has no automatic expiry takeover
+      # because Talos writes cannot be fenced — a non-empty holder needs
+      # explicit human recovery. Under `always()` a cancelled job still
+      # entered here, then the runner force-killed it when the
+      # post-cancellation grace expired, so the release never landed and every
+      # later deploy failed to acquire the Lease. A merge-queue eviction
+      # cancels this job routinely. The next deploy's staging step performs
+      # this same reassertion with a full time budget.
+      # `ksail cluster update` re-renders Talos node annotations. Reuse only
+      # the same job's credential+image+Node-UID proof to restore those markers
+      # without another uncached pull or rolling reboot. Any mismatch falls
+      # back to the full safety path.
       if: >-
-        always() &&
+        !cancelled() &&
         steps.verify_flux_ghcr_auth_after_push.outcome == 'success' &&
         steps.reconcile.outcome == 'success'
       shell: bash
-      run: ./scripts/refresh-flux-ghcr-auth.sh
+      run: >-
+        ./scripts/refresh-flux-ghcr-auth.sh
+        --reuse-runtime-proof
+        "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"

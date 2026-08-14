@@ -18,20 +18,58 @@ require_flux_ghcr_yaml_tool
 
 check_only=false
 allow_incomplete_fanout=false
-if (($# > 1)); then
-  echo "Usage: $0 [--check-only|--allow-incomplete-fanout]" >&2
-  exit 64
-fi
-if (($# == 1)); then
+record_runtime_proof_path=""
+reuse_runtime_proof_path=""
+usage() {
+  echo "Usage: $0 [--check-only|--allow-incomplete-fanout|--record-runtime-proof PATH|--reuse-runtime-proof PATH]" >&2
+}
+while (($# > 0)); do
   case "$1" in
-    --check-only) check_only=true ;;
-    --allow-incomplete-fanout) allow_incomplete_fanout=true ;;
+    --check-only)
+      check_only=true
+      shift
+      ;;
+    --allow-incomplete-fanout)
+      allow_incomplete_fanout=true
+      shift
+      ;;
+    --record-runtime-proof | --reuse-runtime-proof)
+      if (($# < 2)) || [[ -z "$2" ]]; then
+        usage
+        exit 64
+      fi
+      if [[ "$1" == "--record-runtime-proof" ]]; then
+        record_runtime_proof_path="$2"
+      else
+        reuse_runtime_proof_path="$2"
+      fi
+      shift 2
+      ;;
     *)
-      echo "Usage: $0 [--check-only|--allow-incomplete-fanout]" >&2
+      usage
       exit 64
       ;;
   esac
+done
+if [[ "${check_only}" == "true" ||
+  "${allow_incomplete_fanout}" == "true" ]] &&
+  [[ -n "${record_runtime_proof_path}${reuse_runtime_proof_path}" ]]; then
+  usage
+  exit 64
 fi
+if [[ -n "${record_runtime_proof_path}" &&
+  -n "${reuse_runtime_proof_path}" ]]; then
+  usage
+  exit 64
+fi
+for runtime_proof_path in \
+  "${record_runtime_proof_path}" "${reuse_runtime_proof_path}"; do
+  [[ -n "${runtime_proof_path}" ]] || continue
+  if [[ "${runtime_proof_path}" != /* ]]; then
+    echo "::error::Runtime proof paths must be absolute runner-local paths."
+    exit 64
+  fi
+done
 
 readonly SECRET_FILE="${FLUX_GHCR_SECRET_FILE:-k8s/bases/bootstrap/secret.enc.yaml}"
 readonly KUBE_CONTEXT="${KUBE_CONTEXT:-admin@prod}"
@@ -69,6 +107,16 @@ readonly CORDON_OWNER_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-owner"
 readonly CORDON_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner"
 readonly CORDON_RECOVERY_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-recovery"
 readonly CORDON_RECOVERY_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-recovery"
+# Records how far a fence got, so a LEAKED fence is self-describing (#3070).
+# Written "claimed" in the claim patch itself, then advanced to "mutating"
+# BEFORE the first Talos mutation. That ordering is what makes the marker
+# trustworthy in both kill directions: killed before the advance lands, the
+# fence still reads "claimed" and nothing was mutated; killed after it lands but
+# before the mutation runs, it reads "mutating" and we refuse — conservative,
+# never the reverse. There is no window in which Talos is mutated under a fence
+# still reading "claimed".
+readonly CORDON_PHASE_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-phase"
+readonly CORDON_PHASE_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase"
 KSAIL_OPERATOR_VERSION="$(yq -er '.spec.chart.spec.version' \
   k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml)"
 readonly KSAIL_OPERATOR_VERSION
@@ -204,6 +252,8 @@ runtime_proved_targets_file="${work_dir}/runtime-proved-targets.txt"
 runtime_probe_manifest_file="${work_dir}/runtime-probe-pod.json"
 runtime_probe_state_file="${work_dir}/runtime-probe-state.json"
 runtime_probe_result_file="${work_dir}/runtime-probe-result.txt"
+normalized_runtime_proof_file="${work_dir}/reusable-runtime-proof.json"
+runtime_proof_nodes_file="${work_dir}/runtime-proof-nodes.json"
 image_verification_policy_patch_file="${work_dir}/image-verification-policy-patch.json"
 image_verification_policy_result_file="${work_dir}/image-verification-policy-result.txt"
 image_verification_mutating_webhooks_file="${work_dir}/image-verification-mutating-webhooks.json"
@@ -215,6 +265,8 @@ flux_policy_parent_state_file="${work_dir}/flux-policy-parent-state.json"
 flux_policy_parent_patch_file="${work_dir}/flux-policy-parent-patch.json"
 flux_policy_parent_result_file="${work_dir}/flux-policy-parent-result.txt"
 flux_policy_fences_state_file="${work_dir}/flux-policy-fences-state.json"
+flux_policy_blocker_names_file="${work_dir}/flux-policy-blocker-names.txt"
+flux_policy_blocker_state_file="${work_dir}/flux-policy-blocker-state.json"
 flux_controller_deployment_state_file="${work_dir}/flux-controller-deployment-state.json"
 flux_controller_restart_patch_file="${work_dir}/flux-controller-restart-patch.json"
 flux_controller_result_file="${work_dir}/flux-controller-result.txt"
@@ -237,6 +289,7 @@ variables_secret_cas_patch_file="${work_dir}/variables-secret-cas-patch.json"
 sync_lease_holder=""
 sync_lease_acquired=false
 sync_lease_heartbeat_pid=""
+sync_lease_renewal_failure=""
 flux_policy_handoff_acquired=false
 flux_policy_handoff_owner=""
 flux_policy_handoff_uid=""
@@ -995,6 +1048,7 @@ build_and_apply_cordon_claim() {
       --arg owner "${owner_token}" \
       --arg recovery_path "${CORDON_RECOVERY_JSON_PATH}" \
       --arg recovery "${recovery_record}" \
+      --arg phase_path "${CORDON_PHASE_JSON_PATH}" \
       --arg uid "${node_uid}" \
       --arg resource_version "${resource_version}" '
       [
@@ -1004,7 +1058,8 @@ build_and_apply_cordon_claim() {
           value: $resource_version
         },
         {op: "test", path: "/metadata/uid", value: $uid},
-        {op: "add", path: $owner_path, value: $owner}
+        {op: "add", path: $owner_path, value: $owner},
+        {op: "add", path: $phase_path, value: "claimed"}
       ]
       + (if $recovery == "" then [] else
           [{op: "add", path: $recovery_path, value: $recovery}]
@@ -1019,6 +1074,7 @@ build_and_apply_cordon_claim() {
       --arg owner "${owner_token}" \
       --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
       --arg recovery "${recovery_record}" \
+      --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" \
       --arg uid "${node_uid}" \
       --arg resource_version "${resource_version}" '
       [
@@ -1031,7 +1087,8 @@ build_and_apply_cordon_claim() {
         {
           op: "add",
           path: "/metadata/annotations",
-          value: ({($owner_annotation): $owner}
+          value: ({($owner_annotation): $owner,
+                   ($phase_annotation): "claimed"}
             + (if $recovery == "" then {} else
                 {($recovery_annotation): $recovery}
               end))
@@ -1964,10 +2021,13 @@ process_talos_node_target() {
   local probe_image recovery_record=""
   local drain_attempt=1 api_attempt api_ready
   local ready_attempt
+  local reusable_proof_uid=""
 
   assert_sync_lease_held || return 1
 
-  if [[ "${node_mode}" != "reboot" && "${node_mode}" != "image-only" ]]; then
+  if [[ "${node_mode}" != "reboot" &&
+    "${node_mode}" != "image-only" &&
+    "${node_mode}" != "proof-only" ]]; then
     echo "::error::Unknown Talos GHCR synchronization mode '${node_mode}' for ${node_name}."
     return 1
   fi
@@ -2132,6 +2192,20 @@ process_talos_node_target() {
     "${initial_node_uid}" "${initial_node_taints}" \
     "${talos_result_file}" "${node_ip}" "${node_role}" \
     "credential patch"; then
+    restore_node_schedulability_if_needed \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${drain_result_file}" "${recovery_record}" || true
+    return 1
+  fi
+
+  # Past this point Talos is mutated, so a fence leaked from here on must NOT be
+  # reclaimed automatically: the Lease proves no owner is alive, never that the
+  # node reached a known state. Advance the marker first and fail closed if it
+  # cannot be advanced -- an un-advanced marker would make a mutated node look
+  # reclaimable, which is the one direction that is never safe.
+  if ! mark_node_fence_mutating \
+    "${node_name}" "${cordon_owner_token}" "${initial_node_uid}"; then
     restore_node_schedulability_if_needed \
       "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
       "${initial_node_uid}" "${initial_node_taints}" \
@@ -2319,63 +2393,65 @@ process_talos_node_target() {
       "${reboot_result_file}" "${node_ip}" "${node_role}" || return 1
   fi
 
-  # A reboot/readiness wait or even a short image-only cordon can outlive a
-  # replacement, uncordon, taint, or owner change. Rebind identity and the
-  # scheduling guard at the final Talos edge before touching the image cache.
-  revalidate_node_scheduling_guard \
-    "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-    "${initial_node_uid}" "${initial_node_taints}" \
-    "${talos_result_file}" "${node_ip}" "${node_role}" \
-    "image verification" || return 1
+  if [[ "${node_mode}" != "proof-only" ]]; then
+    # A reboot/readiness wait or even a short image-only cordon can outlive a
+    # replacement, uncordon, taint, or owner change. Rebind identity and the
+    # scheduling guard at the final Talos edge before touching the image cache.
+    revalidate_node_scheduling_guard \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${talos_result_file}" "${node_ip}" "${node_role}" \
+      "image verification" || return 1
 
-  # A cached image can make a pull look healthy without proving that the
-  # node's runtime can authenticate to GHCR. Remove the incoming exact target
-  # first so the following pull must complete a registry round-trip.
-  if ! talosctl \
-    --nodes "${node_ip}" \
-    image remove "${operator_image}" \
-    --namespace cri \
-    >"${talos_result_file}" 2>&1; then
-    if ! talos_image_remove_reports_absent \
-      "${talos_result_file}" "${operator_image}"; then
-      echo "::error::Talos node ${node_name} could not remove the cached incoming KSail image before GHCR verification; it remains cordoned because registry access is unproved."
+    # A cached image can make a pull look healthy without proving that the
+    # node's runtime can authenticate to GHCR. Remove the incoming exact target
+    # first so the following pull must complete a registry round-trip.
+    if ! talosctl \
+      --nodes "${node_ip}" \
+      image remove "${operator_image}" \
+      --namespace cri \
+      >"${talos_result_file}" 2>&1; then
+      if ! talos_image_remove_reports_absent \
+        "${talos_result_file}" "${operator_image}"; then
+        echo "::error::Talos node ${node_name} could not remove the cached incoming KSail image before GHCR verification; it remains cordoned because registry access is unproved."
+        return 1
+      fi
+    fi
+
+    revalidate_node_scheduling_guard \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${talos_result_file}" "${node_ip}" "${node_role}" \
+      "image pull" || return 1
+
+    # Credential validity against GHCR (see the caveat above: this is not, on
+    # its own, proof that containerd is using it — the reboot is).
+    if ! talosctl \
+      --nodes "${node_ip}" \
+      image pull "${operator_image}" \
+      --namespace cri \
+      >"${talos_result_file}" 2>&1; then
+      echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image after its auth refresh; it remains cordoned because registry access is unproved."
       return 1
     fi
-  fi
 
-  revalidate_node_scheduling_guard \
-    "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-    "${initial_node_uid}" "${initial_node_taints}" \
-    "${talos_result_file}" "${node_ip}" "${node_role}" \
-    "image pull" || return 1
+    revalidate_node_scheduling_guard \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${talos_result_file}" "${node_ip}" "${node_role}" \
+      "runtime pull proof" || return 1
 
-  # Credential validity against GHCR (see the caveat above: this is not, on
-  # its own, proof that containerd is using it — the reboot is).
-  if ! talosctl \
-    --nodes "${node_ip}" \
-    image pull "${operator_image}" \
-    --namespace cri \
-    >"${talos_result_file}" 2>&1; then
-    echo "::error::Talos node ${node_name} could not pull the exact incoming KSail image after its auth refresh; it remains cordoned because registry access is unproved."
-    return 1
-  fi
-
-  revalidate_node_scheduling_guard \
-    "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
-    "${initial_node_uid}" "${initial_node_taints}" \
-    "${talos_result_file}" "${node_ip}" "${node_role}" \
-    "runtime pull proof" || return 1
-
-  # Talos' image API authenticates from machine config, not through the
-  # kubelet's running CRI client. Before this freshly rebooted node can
-  # receive workloads, prove both private images through kubelet/containerd
-  # while the bridge-owned cordon is still in place.
-  if [[ "${node_mode}" == "reboot" ]]; then
-    for probe_image in "${RUNTIME_CREDENTIAL_PROBE_IMAGES[@]}"; do
-      probe_node_runtime_pull "${node_name}" "${probe_image}" || return 1
-    done
-    if ! grep -Fqx -- "${node_uid}" "${runtime_proved_targets_file}"; then
-      printf '%s\n' "${node_uid}" >>"${runtime_proved_targets_file}"
+    # Talos' image API authenticates from machine config, not through the
+    # kubelet's running CRI client. Before this freshly rebooted node can
+    # receive workloads, prove both private images through kubelet/containerd
+    # while the bridge-owned cordon is still in place.
+    if [[ "${node_mode}" == "reboot" ]]; then
+      for probe_image in "${RUNTIME_CREDENTIAL_PROBE_IMAGES[@]}"; do
+        probe_node_runtime_pull "${node_name}" "${probe_image}" || return 1
+      done
+      if ! grep -Fqx -- "${node_uid}" "${runtime_proved_targets_file}"; then
+        printf '%s\n' "${node_uid}" >>"${runtime_proved_targets_file}"
+      fi
     fi
   fi
 
@@ -2388,7 +2464,12 @@ process_talos_node_target() {
   # Record the proof only after the real runtime checks, while the selected
   # machine remains protected by the owned cordon. Releasing ownership first
   # would let a concurrent credential revision race this marker write.
-  if ! talosctl \
+  if [[ "${node_mode}" == "proof-only" ]]; then
+    reusable_proof_uid="${node_uid}"
+  fi
+  # Test hook consumed by fake talosctl to verify Node binding; Talos ignores it.
+  if ! FLUX_GHCR_REUSABLE_PROOF_UID="${reusable_proof_uid}" \
+    talosctl \
     --nodes "${node_ip}" \
     patch machineconfig \
     --mode=no-reboot \
@@ -2496,11 +2577,54 @@ sync_talos_registry_auth() {
       echo "::error::Every Talos node must expose a non-empty unique UID and exactly one non-empty unique InternalIP before GHCR auth can be synchronized."
       return 1
     fi
+    # Reclaim leaked fences from the FIRST inventory this loop reads, rather
+    # than reading nodes of its own straight after acquiring the Lease. The
+    # liveness proof is a property of the ACQUISITION — the Lease was free, so
+    # no transaction was alive — and nothing has run between that acquisition
+    # and this first read, so acting on that proof here is equally sound.
+    # Reading nodes earlier would move a node-discovery failure ahead of the
+    # credential fan-out, which is deliberately staged first so a discovery
+    # failure cannot leave the fan-out half-applied.
+    #
+    # Later attempts are deliberately EXCLUDED. This loop re-reads the node
+    # inventory every iteration, so a later read reflects fences this very
+    # transaction has since claimed — and a fence sitting at "claimed" is
+    # exactly what the selector matches. Reclaiming from a later inventory
+    # would therefore let the transaction clear its OWN live fence, report it
+    # as leaked, and leave the node cordoned. Today no such fence survives an
+    # iteration (a per-node failure returns immediately, and every success
+    # releases), but that is an unstated invariant of another function rather
+    # than a property of this proof, so it is not what safety should rest on.
+    if ((convergence_attempt == 1)); then
+      reclaimed_fence_count=0
+      if ! reclaim_orphaned_node_fences "${talos_nodes_file}"; then
+        return 1
+      fi
+      # A reclaim mutates the very nodes this snapshot describes, so the file
+      # still carries the owner annotations that were just removed -- and
+      # selection fails closed on exactly those. Re-read before selecting, or
+      # the reclaim "succeeds" and the deploy then refuses on its own cleanup.
+      if ((reclaimed_fence_count > 0)); then
+        if ! kubectl \
+          --context "${KUBE_CONTEXT}" \
+          get nodes \
+          -o json \
+          >"${talos_nodes_file}"; then
+          echo "::error::Could not re-list Talos nodes after reclaiming leaked drain fences."
+          return 1
+        fi
+        if ! validate_talos_node_inventory "${talos_nodes_file}"; then
+          echo "::error::Every Talos node must expose a non-empty unique UID and exactly one non-empty unique InternalIP before GHCR auth can be synchronized."
+          return 1
+        fi
+      fi
+    fi
     if ! select_talos_node_targets \
       "${talos_nodes_file}" \
       "${desired_revision}" \
       "${operator_image}" \
-      "${talos_node_targets}"; then
+      "${talos_node_targets}" \
+      "${normalized_runtime_proof_file}"; then
       echo "::error::Could not select Talos nodes requiring GHCR synchronization."
       return 1
     fi
@@ -2622,6 +2746,101 @@ sync_talos_registry_auth() {
   return 1
 }
 
+# Normalize a runner-local proof from the successful pre-update stage. The
+# document contains no credential: it binds only the encrypted-source digest,
+# declared image, and immutable Kubernetes Node identities. A missing, stale,
+# malformed, or symlinked document is ignored, which safely falls back to the
+# existing uncached-pull/reboot path.
+prepare_reusable_runtime_proof() {
+  local desired_revision="$1"
+  local operator_image="$2"
+
+  jq -n \
+    --arg revision "${desired_revision}" \
+    --arg image "${operator_image}" '
+      {version: 1, credentialRevision: $revision, image: $image, nodes: []}
+    ' >"${normalized_runtime_proof_file}"
+
+  [[ -n "${reuse_runtime_proof_path}" ]] || return 0
+  if [[ ! -f "${reuse_runtime_proof_path}" ||
+    -L "${reuse_runtime_proof_path}" ]] ||
+    ! jq -e \
+      --arg revision "${desired_revision}" \
+      --arg image "${operator_image}" '
+        .version == 1
+        and .credentialRevision == $revision
+        and .image == $image
+        and (.nodes | type == "array" and length > 0)
+        and all(.nodes[];
+          (.name | type == "string" and length > 0)
+          and (.uid | type == "string" and length > 0))
+        and ((.nodes | map(.name) | unique | length) == (.nodes | length))
+        and ((.nodes | map(.uid) | unique | length) == (.nodes | length))
+      ' "${reuse_runtime_proof_path}" >/dev/null 2>&1; then
+    echo "::warning::The pre-update GHCR runtime proof is absent, stale, or malformed; using full per-node verification."
+    return 0
+  fi
+
+  jq -cS . "${reuse_runtime_proof_path}" \
+    >"${normalized_runtime_proof_file}"
+}
+
+# Export an exact-node proof only after the normal transaction has converged.
+# The subsequent reassert can restore a machine annotation erased by KSail,
+# but only for the same credential, image, name, and Kubernetes Node UID.
+record_runtime_proof() {
+  local desired_revision="$1"
+  local operator_image="$2"
+  local proof_parent
+
+  [[ -n "${record_runtime_proof_path}" ]] || return 0
+  proof_parent="$(dirname -- "${record_runtime_proof_path}")"
+  if [[ ! -d "${proof_parent}" ||
+    -e "${record_runtime_proof_path}" ||
+    -L "${record_runtime_proof_path}" ]]; then
+    echo "::error::Refusing to overwrite or create the runtime proof outside an existing runner-local directory."
+    return 1
+  fi
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    get nodes \
+    -o json >"${runtime_proof_nodes_file}"; then
+    echo "::error::Could not capture the converged Node identities for the post-update GHCR reassert."
+    return 1
+  fi
+  if ! validate_talos_node_inventory "${runtime_proof_nodes_file}"; then
+    echo "::error::Could not record runtime proof from an invalid Talos node inventory."
+    return 1
+  fi
+  if ! jq -e \
+    --arg revision "${desired_revision}" \
+    --arg image "${operator_image}" \
+    --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
+    --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" '
+      all(.items[];
+        .metadata.annotations[$revision_annotation] == $revision
+        and .metadata.annotations[$image_annotation] == $image)
+    ' "${runtime_proof_nodes_file}" >/dev/null; then
+    echo "::error::Refusing to record a post-update handoff before every exact Node has current runtime proof."
+    return 1
+  fi
+  if ! jq -cS \
+    --arg revision "${desired_revision}" \
+    --arg image "${operator_image}" '
+      {
+        version: 1,
+        credentialRevision: $revision,
+        image: $image,
+        nodes: [.items[] | {name: .metadata.name, uid: .metadata.uid}]
+          | sort_by(.name)
+      }
+    ' "${runtime_proof_nodes_file}" >"${record_runtime_proof_path}"; then
+    rm -f "${record_runtime_proof_path}"
+    return 1
+  fi
+  chmod 600 "${record_runtime_proof_path}"
+}
+
 # KSail embeds SOPS, so the deploy uses the same pinned toolchain as workload
 # reconciliation. Decrypt only the Docker config scalar and never emit it to
 # stdout or place its plaintext/base64 representation in an argument.
@@ -2682,6 +2901,7 @@ jq -n \
   }
 ' >"${talos_revision_patch_file}"
 chmod 600 "${talos_auth_patch_file}" "${talos_revision_patch_file}"
+prepare_reusable_runtime_proof "${pull_revision}" "${KSAIL_OPERATOR_IMAGE}"
 
 # Merge only Secret data fields so ownership metadata survives. The sensitive
 # payload stays in pipes/temp files and never appears in argv or logs.
@@ -2817,21 +3037,30 @@ renew_sync_lease() {
   local lease_file="${work_dir}/sync-lease-renew-${invocation_id}.json"
   local patch_file_local="${work_dir}/sync-lease-renew-patch-${invocation_id}.json"
   local result_file="${work_dir}/sync-lease-renew-result-${invocation_id}.txt"
-  local resource_version now
+  local resource_version now observed_holder
 
+  sync_lease_renewal_failure=""
   [[ "${sync_lease_acquired}" == "true" && -n "${sync_lease_holder}" ]] || return 1
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     get lease "${SYNC_LEASE_NAME}" \
-    -o json >"${lease_file}"; then
+    -o json >"${lease_file}" 2>"${result_file}"; then
+    sync_lease_renewal_failure="api-unreachable"
     return 1
   fi
-  resource_version="$(jq -er \
-    --arg holder "${sync_lease_holder}" '
-    select(.spec.holderIdentity == $holder)
-    | .metadata.resourceVersion
-  ' "${lease_file}")" || return 1
+  observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || {
+    sync_lease_renewal_failure="invalid-lease-state"
+    return 1
+  }
+  if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
+    sync_lease_renewal_failure="held-by-another"
+    return 1
+  fi
+  resource_version="$(jq -er '.metadata.resourceVersion' "${lease_file}")" || {
+    sync_lease_renewal_failure="invalid-lease-state"
+    return 1
+  }
   now="$(kubernetes_microtime_now)"
   jq -n \
     --arg resource_version "${resource_version}" \
@@ -2862,17 +3091,145 @@ renew_sync_lease() {
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     get lease "${SYNC_LEASE_NAME}" \
-    -o json >"${lease_file}"; then
+    -o json >"${lease_file}" 2>"${result_file}"; then
+    sync_lease_renewal_failure="api-unreachable"
     return 1
   fi
-  jq -e \
+  observed_holder="$(jq -er '.spec.holderIdentity // ""' "${lease_file}")" || {
+    sync_lease_renewal_failure="invalid-lease-state"
+    return 1
+  }
+  if [[ "${observed_holder}" != "${sync_lease_holder}" ]]; then
+    sync_lease_renewal_failure="held-by-another"
+    return 1
+  fi
+  if jq -e \
     --arg holder "${sync_lease_holder}" \
     --argjson now_epoch "$(date -u +%s)" '
     .spec.holderIdentity == $holder
     and (((.spec.renewTime // .spec.acquireTime)
       | sub("\\.[0-9]+Z$"; "Z")
       | fromdateiso8601) + .spec.leaseDurationSeconds > $now_epoch)
-  ' "${lease_file}" >/dev/null
+  ' "${lease_file}" >/dev/null; then
+    return 0
+  fi
+
+  sync_lease_renewal_failure="not-live"
+  return 1
+}
+
+# Advance this transaction's own fence from "claimed" to "mutating", immediately
+# before the first Talos mutation on that node.
+#
+# The CAS tests pin both the node uid and our own owner value, so this can never
+# advance a fence that changed hands and never resurrects one on a replaced node
+# reusing the same name. Failing to advance is fatal for that node: an
+# un-advanced marker would leave a mutated node looking reclaimable, which is
+# the one direction that is never safe.
+mark_node_fence_mutating() {
+  local node_name="$1" owner_token="$2" node_uid="$3"
+  local patch_file_local="${work_dir}/fence-phase-patch.json"
+  local result_file="${work_dir}/fence-phase-result.txt"
+
+  # CAS on uid + our own owner value so this can never advance a fence that
+  # changed hands, and never resurrect one on a replaced node of the same name.
+  jq -n \
+    --arg uid "${node_uid}" \
+    --arg owner_path "${CORDON_OWNER_JSON_PATH}" \
+    --arg owner "${owner_token}" \
+    --arg phase_path "${CORDON_PHASE_JSON_PATH}" '
+    [
+      {op: "test", path: "/metadata/uid", value: $uid},
+      {op: "test", path: $owner_path, value: $owner},
+      {op: "add", path: $phase_path, value: "mutating"}
+    ]
+  ' >"${patch_file_local}"
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    patch node "${node_name}" \
+    --type=json \
+    --patch-file="${patch_file_local}" \
+    >"${result_file}" 2>&1; then
+    echo "::error::Could not mark node ${node_name} as entering Talos mutation; refusing to mutate it."
+    emit_safe_operation_output "fence-phase" "${result_file}"
+    return 1
+  fi
+}
+
+# Reclaim drain fences that were ALREADY leaked when this transaction acquired
+# the synchronization Lease.
+#
+# The liveness proof is the Lease itself. sync_lease_is_available refuses any
+# non-empty holderIdentity, so acquiring it proves that at that instant no
+# bridge transaction was running — and a node fence is only ever held by a
+# running transaction, which asserts the Lease at every mutation point. A fence
+# already present at acquisition therefore has no owner alive to protect, and
+# reclaiming it cannot race a live drain. That needs no run id and no timestamp,
+# so it also recovers fences leaked by earlier versions of this script (#3070).
+#
+# It does NOT weaken the refusal against a live holder: a live holder holds the
+# Lease, so this transaction would never have acquired it and would never reach
+# here. A fence that appears AFTER acquisition is not reclaimed either — the
+# caller runs this against the FIRST convergence inventory only, so a fence this
+# transaction itself creates later is never in the snapshot being reclaimed.
+#
+# Deliberately narrow, in two ways:
+#   * A fence carrying a recovery journal is left alone. The journal records an
+#     interrupted bootstrap whose phase decides what is safe to do, bootstrap
+#     recovery owns that state, and clearing it would destroy the only durable
+#     record of an in-flight Talos mutation.
+#   * The node is left CORDONED, loudly. Without a journal the pre-claim
+#     schedulability was never recorded, so uncordoning could re-admit a node an
+#     operator had deliberately drained. Losing capacity is recoverable by hand;
+#     silently re-admitting a drained node is not.
+reclaim_orphaned_node_fences() {
+  local nodes_file="$1"
+  local patch_file_local="${work_dir}/reclaim-fence-patch.json"
+  local result_file="${work_dir}/reclaim-fence-result.txt"
+  local name uid owner cordoned reclaimed=0
+
+  while IFS=$'\t' read -r name uid owner cordoned; do
+    [[ -n "${name}" ]] || continue
+    # CAS on identity AND the exact owner value: a node replaced under the same
+    # name, or a fence that changed hands since the read, must not be cleared.
+    jq -n \
+      --arg uid "${uid}" \
+      --arg owner_path "${CORDON_OWNER_JSON_PATH}" \
+      --arg owner "${owner}" \
+      --arg phase_path "${CORDON_PHASE_JSON_PATH}" '
+      [
+        {op: "test", path: "/metadata/uid", value: $uid},
+        {op: "test", path: $owner_path, value: $owner},
+        {op: "test", path: $phase_path, value: "claimed"},
+        {op: "remove", path: $owner_path},
+        {op: "remove", path: $phase_path}
+      ]
+    ' >"${patch_file_local}"
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      patch node "${name}" \
+      --type=json \
+      --patch-file="${patch_file_local}" \
+      >"${result_file}" 2>&1; then
+      echo "::error::Could not reclaim the leaked GHCR drain fence on node ${name}; it changed while being reclaimed."
+      return 1
+    fi
+    reclaimed=$((reclaimed + 1))
+    printf '::warning::Reclaimed a leaked GHCR drain fence on node %s (owner %s). The synchronization Lease was free when this transaction acquired it, so no owner was alive to protect it.\n' \
+      "${name}" "${owner}"
+    if [[ "${cordoned}" == "true" ]]; then
+      printf '::warning::Node %s is left CORDONED on purpose: the killed transaction recorded no pre-claim schedulability, so this cannot tell whether it was already drained. Confirm it should be schedulable, then: kubectl --context %s uncordon %s\n' \
+        "${name}" "${KUBE_CONTEXT}" "${name}"
+    fi
+    # The selection lives in the safety library so the decision — what counts as
+    # provably orphaned — is unit-testable against real leaked-fence JSON,
+    # separately from the mutation it authorises.
+  done < <(select_orphaned_node_fences "${nodes_file}" /dev/stdout)
+
+  # Published so the caller knows the inventory it holds is now stale: the
+  # reclaim removed annotations that are still present in its snapshot.
+  reclaimed_fence_count="${reclaimed}"
+  ((reclaimed == 0)) || assert_sync_lease_held || return 1
 }
 
 # Report what the Lease looked like at the moment a renewal was refused.
@@ -2893,6 +3250,7 @@ report_sync_lease_state() {
 
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
+    --request-timeout=30s \
     --namespace flux-system \
     get lease "${SYNC_LEASE_NAME}" \
     -o json >"${probe}" 2>/dev/null; then
@@ -2925,26 +3283,66 @@ sync_lease_heartbeat_loop() {
       sleep 1
     done
     if ! renew_sync_lease; then
+      printf '%s\n' "${sync_lease_renewal_failure:-unknown}" >"${sync_lease_lost_file}"
       report_sync_lease_state 'heartbeat renewal failed'
-      : >"${sync_lease_lost_file}"
       return 1
     fi
   done
 }
 
+wait_for_sync_lease_api_recovery() {
+  local attempt
+  for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get --raw=/readyz \
+      --request-timeout=30s \
+      >"${sync_lease_result_file}" 2>&1; then
+      return 0
+    fi
+    if ((attempt < SYNC_ATTEMPTS)); then
+      sleep "${SYNC_INTERVAL}"
+    fi
+  done
+
+  echo "::error::The Kubernetes API remained unreachable while verifying the GHCR synchronization Lease; no further cluster mutation is safe."
+  emit_safe_operation_output "api-ready" "${sync_lease_result_file}"
+  return 1
+}
+
 assert_sync_lease_held() {
-  # Distinguish the two refusal paths as well: a latched heartbeat failure
-  # happened earlier and elsewhere, so its state has already been reported,
-  # while a foreground failure is happening right now.
+  # Distinguish the two refusal paths: a latched heartbeat failure happened
+  # earlier and elsewhere, so its state has already been reported, while a
+  # foreground failure is happening right now.
+  local failure_reason=""
   if [[ -e "${sync_lease_lost_file}" ]]; then
-    echo "::error::The GHCR synchronization lease was lost; refusing further cluster mutation. (The heartbeat recorded the loss earlier — see its sync-lease diagnostic above.)"
-    return 1
-  fi
-  if ! renew_sync_lease; then
+    failure_reason="$(head -n 1 "${sync_lease_lost_file}")"
+  elif renew_sync_lease; then
+    return 0
+  else
+    failure_reason="${sync_lease_renewal_failure:-unknown}"
     report_sync_lease_state 'foreground guard renewal failed'
-    echo "::error::The GHCR synchronization lease was lost; refusing further cluster mutation."
-    return 1
   fi
+
+  case "${failure_reason}" in
+    api-unreachable)
+      echo "::warning::The Kubernetes API was unreachable while verifying the GHCR synchronization Lease; waiting for API recovery before re-proving the same holder."
+      wait_for_sync_lease_api_recovery || return 1
+      recover_sync_lease_heartbeat_after_transport_interruption
+      ;;
+    held-by-another)
+      echo "::error::The GHCR synchronization Lease is now held by another transaction; refusing further cluster mutation."
+      return 1
+      ;;
+    not-live)
+      echo "::error::The GHCR synchronization Lease is no longer live for this transaction; refusing further cluster mutation."
+      return 1
+      ;;
+    *)
+      echo "::error::The GHCR synchronization Lease state could not be proved (${failure_reason}); refusing further cluster mutation."
+      return 1
+      ;;
+  esac
 }
 
 recover_sync_lease_heartbeat_after_transport_interruption() {
@@ -2958,14 +3356,18 @@ recover_sync_lease_heartbeat_after_transport_interruption() {
     sync_lease_heartbeat_pid=""
   fi
   if ! renew_sync_lease; then
-    echo "::error::The Kubernetes API recovered, but this transaction could not re-prove and renew its synchronization Lease holder."
+    if [[ "${sync_lease_renewal_failure}" == "held-by-another" ]]; then
+      echo "::error::The Kubernetes API recovered, but this transaction could not re-prove and renew its synchronization Lease holder because the Lease is now held by another transaction."
+    else
+      echo "::error::The Kubernetes API recovered, but this transaction could not re-prove and renew its synchronization Lease holder (${sync_lease_renewal_failure:-unknown})."
+    fi
     return 1
   fi
 
   rm -f "${sync_lease_lost_file}"
   sync_lease_heartbeat_loop &
   sync_lease_heartbeat_pid=$!
-  echo "::warning::Re-proved the same GHCR synchronization Lease holder and restarted its heartbeat after API recovery."
+  echo "::warning::Re-proved the same GHCR synchronization Lease holder after API recovery and restarted its heartbeat."
 }
 
 release_sync_lease() {
@@ -3226,6 +3628,73 @@ flux_policy_handoff_is_quiescent() {
   ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 
+# Print the conditions that explain a Kustomization's reconciliation state.
+# Diagnostic output only: an unreadable or unparseable state file prints
+# nothing and still succeeds.
+flux_policy_report_conditions() {
+  local state_file="$1" label="$2"
+
+  [[ -s "${state_file}" ]] || return 0
+  jq -r --arg label "${label}" '
+    [.status.conditions[]?
+      | select(.type == "Reconciling" or .type == "Ready" or .type == "Healthy")
+      | "\($label): \(.type)=\(.status) \(.reason // "-"): "
+        + ((.message // "-") | gsub("\\s+"; " "))]
+    | if length == 0 then ["\($label): reported no status conditions"] else . end
+    | .[]
+  ' "${state_file}" 2>/dev/null || true
+}
+
+# Explain a failed quiesce wait. The blocking condition is already in the state
+# file that wait just read, and when the owner is held up by a dependency the
+# cause is one read further out. Without this the failure names image
+# verification while the real blocker is an unrelated workload, which is what
+# makes the merge-queue eviction it causes read as "some PR failed CI".
+#
+# Strictly best-effort: this runs on the production credential path, so a
+# diagnostic must never change the outcome it is describing.
+report_flux_policy_handoff_blockers() {
+  local dependency dependency_name dependency_namespace
+
+  flux_policy_report_conditions \
+    "${flux_policy_handoff_state_file}" \
+    "kustomization/${IMAGE_VERIFICATION_FLUX_KUSTOMIZATION}"
+
+  # Read the dependencies the owner itself declares rather than parsing them
+  # out of a controller-authored message.
+  jq -r '
+    if any(.status.conditions[]?;
+      .type == "Ready" and .reason == "DependencyNotReady")
+    then
+      .metadata.namespace as $namespace
+      | .spec.dependsOn[]?
+      | "\(.namespace // $namespace)/\(.name)"
+    else empty end
+  ' "${flux_policy_handoff_state_file}" \
+    2>/dev/null >"${flux_policy_blocker_names_file}" || return 0
+
+  while IFS= read -r dependency; do
+    dependency_namespace="${dependency%%/*}"
+    dependency_name="${dependency##*/}"
+    [[ -n "${dependency_namespace}" && -n "${dependency_name}" &&
+      "${dependency}" == "${dependency_namespace}/${dependency_name}" ]] ||
+      continue
+    if kubectl \
+      --context "${KUBE_CONTEXT}" \
+      --namespace "${dependency_namespace}" \
+      get "${FLUX_KUSTOMIZATION_RESOURCE}" \
+      "${dependency_name}" \
+      -o json </dev/null >"${flux_policy_blocker_state_file}" 2>/dev/null; then
+      flux_policy_report_conditions \
+        "${flux_policy_blocker_state_file}" \
+        "kustomization/${dependency_name} (dependency)"
+    else
+      echo "Could not read dependency ${dependency} while explaining the image-verification policy handoff quiesce timeout."
+    fi
+  done <"${flux_policy_blocker_names_file}"
+  return 0
+}
+
 read_flux_policy_fences() {
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
@@ -3469,6 +3938,7 @@ pause_flux_policy_handoff() {
     fi
     if ((attempt == SYNC_ATTEMPTS)); then
       echo "::error::The Flux image-verification policy owner did not quiesce before the image-verification policy handoff."
+      report_flux_policy_handoff_blockers || true
       return 1
     fi
     sleep "${SYNC_INTERVAL}"

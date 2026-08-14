@@ -140,7 +140,7 @@ spec:
     # queue both (v1.36.3 and Talos v1.13.7) behind it — releasing the gate
     # with both pins forward would roll one fleet-wide upgrade carrying both.
     # Restore v1.36.3 in a follow-up once the OS upgrade has settled.
-    kubernetesVersion: v1.36.2
+    kubernetesVersion: v1.36.3
     talos:
       # Pin Talos to match the ISO so 'ksail cluster update' doesn't attempt
       # an unwanted in-place upgrade to ksail's default version.

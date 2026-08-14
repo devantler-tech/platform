@@ -7,17 +7,60 @@
 readonly GHCR_PULL_VERIFIED_REVISION_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-revision-v2"
 readonly GHCR_PULL_VERIFIED_IMAGE_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-image-v2"
 
+# Name the nodes that still hold a drain fence, so a refusal is actionable
+# without a live cluster query. A transaction killed before its EXIT trap
+# released the fence leaves the annotation behind and every later deploy then
+# refuses, which is correct but surfaces only as a bare
+# `jq: error (at …): residual GHCR bridge ownership`.
+#
+# This reports; it never releases. Releasing needs the pre-claim schedulability
+# the killed transaction did not record, so whether a node may be uncordoned is
+# a decision this function cannot make and must not imply.
+report_residual_bridge_ownership() {
+  local nodes_file="$1"
+  local held
+
+  held="$(jq -r \
+    --arg owner_annotation "platform.devantler.tech/ghcr-auth-drain-owner" \
+    --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" '
+    .items[]
+    | (.metadata.annotations[$owner_annotation] // "") as $owner
+    | (.metadata.annotations[$recovery_annotation] // "") as $recovery
+    | select($owner != "" or $recovery != "")
+    | "  node \(.metadata.name) (cordoned=\(.spec.unschedulable == true))"
+      + (if $owner == "" then ""
+         else "\n    \($owner_annotation) = \($owner)" end)
+      + (if $recovery == "" then ""
+         else "\n    \($recovery_annotation) = \($recovery)" end)
+  ' "${nodes_file}" 2>/dev/null)" || return 0
+  [[ -n "${held}" ]] || return 0
+
+  {
+    printf 'Residual GHCR bridge ownership is held on:\n'
+    printf '%s\n' "${held}"
+    printf 'A previous transaction was killed before releasing its drain fence.\n'
+    printf 'Node selection fails closed until the annotation(s) above are removed:\n'
+    printf '  kubectl --context <ctx> annotate node <node> <annotation>-\n'
+    printf 'A cordoned node is left cordoned on purpose: the killed transaction\n'
+    printf 'recorded no pre-claim schedulability, so confirm the node should be\n'
+    printf 'schedulable before uncordoning it.\n'
+  } >&2
+}
+
 # Select nodes that have not completed the v2 proof for the incoming credential
-# revision or the exact image used for the registry pull. Credential-stale nodes
-# require a reboot because containerd loads registry auth only at process start;
-# image-only drift needs an uncached pull proof but must not reboot a node whose
-# current credential revision is already proven. Legacy unversioned annotations
-# deliberately select reboot mode once after this contract lands.
+# revision or exact image. A same-job proof may classify a marker-only loss as
+# proof-only when it binds the same revision, image, node name, and immutable
+# Node UID. This is the narrow handoff needed after `ksail cluster update`
+# re-renders machine annotations; it never excuses a changed node or credential.
+# Other credential-stale nodes require a reboot because containerd loads
+# registry auth only at process start. Image-only drift still performs a fresh
+# uncached pull proof.
 select_talos_node_targets() {
   local nodes_file="$1"
   local desired_revision="$2"
   local operator_image="$3"
   local targets_file="$4"
+  local reusable_proof_file="${5:-/dev/null}"
   local unsorted_targets="${targets_file}.unsorted"
 
   if ! jq -r \
@@ -26,7 +69,10 @@ select_talos_node_targets() {
     --arg revision_annotation "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION}" \
     --arg image_annotation "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION}" \
     --arg owner_annotation "platform.devantler.tech/ghcr-auth-drain-owner" \
-    --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" '
+    --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" \
+    --slurpfile reusable_proof "${reusable_proof_file}" '
+    ($reusable_proof[0].nodes // []) as $proved_nodes
+    |
     if any(.items[];
       ((.metadata.annotations[$owner_annotation] // "") != "")
       or ((.metadata.annotations[$recovery_annotation] // "") != ""))
@@ -35,6 +81,11 @@ select_talos_node_targets() {
       .items[]
       | (.metadata.annotations[$revision_annotation] // "") as $verified_revision
       | (.metadata.annotations[$image_annotation] // "") as $verified_image
+      | .metadata.name as $node_name
+      | (.metadata.uid // "") as $node_uid
+      | ($proved_nodes | any(
+          .name == $node_name and .uid == $node_uid
+        )) as $can_restore_proof
       | select($verified_revision != $revision or $verified_image != $image)
       | (.metadata.labels // {}) as $labels
       | [
@@ -44,13 +95,15 @@ select_talos_node_targets() {
           .metadata.name,
           ([.status.addresses[]
             | select(.type == "InternalIP") | .address][0]),
-          (if $verified_revision != $revision
-            then "reboot" else "image-only" end),
-          (.metadata.uid // "")
+          (if $can_restore_proof then "proof-only"
+           elif $verified_revision != $revision then "reboot"
+           else "image-only" end),
+          $node_uid
         ]
       | @tsv
     end
   ' "${nodes_file}" >"${unsorted_targets}"; then
+    report_residual_bridge_ownership "${nodes_file}"
     rm -f "${unsorted_targets}"
     return 1
   fi
@@ -270,6 +323,10 @@ stage_fanout_before_talos() {
       return "${rc}"
     }
     if grep -Fxq -- clean "${talos_sync_result}"; then
+      record_runtime_proof "${desired_revision}" "${operator_image}" || {
+        rc=$?
+        return "${rc}"
+      }
       patch_root_secret || {
         rc=$?
         return "${rc}"
@@ -432,4 +489,42 @@ other_control_planes_safe_to_reboot() {
       return 1
     fi
   done <"${peer_file}"
+}
+
+# Select drain fences that are provably orphaned, for reclaim by the caller.
+#
+# The caller supplies this only after acquiring the synchronization Lease, and
+# acquisition refuses any non-empty holderIdentity — so at that instant no
+# bridge transaction was running, and a fence is only ever held by a running
+# transaction. Every fence present at that moment is therefore ownerless, which
+# is the liveness proof that makes reclaim safe without a run id or a timestamp.
+#
+# A fence carrying a recovery journal is deliberately EXCLUDED: the journal
+# records an interrupted bootstrap whose phase decides what is safe, bootstrap
+# recovery owns it, and clearing it would destroy the only durable record of an
+# in-flight Talos mutation.
+select_orphaned_node_fences() {
+  local nodes_file="$1"
+  local targets_file="$2"
+
+  jq -r \
+    --arg owner_annotation "platform.devantler.tech/ghcr-auth-drain-owner" \
+    --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" \
+    --arg phase_annotation "platform.devantler.tech/ghcr-auth-drain-phase" '
+    .items[]
+    | (.metadata.annotations // {}) as $annotations
+    | select((($annotations[$owner_annotation]) // "") != "")
+    | select((($annotations[$recovery_annotation]) // "") == "")
+    # Only a fence that never reached Talos mutation is provably safe to clear.
+    # A missing phase is a PRE-#3070 fence of unknown depth, so it fails closed
+    # here exactly like "mutating" does -- absence is never read as innocence.
+    | select((($annotations[$phase_annotation]) // "") == "claimed")
+    | [
+        .metadata.name,
+        (.metadata.uid // ""),
+        $annotations[$owner_annotation],
+        ((.spec.unschedulable // false) | tostring)
+      ]
+    | @tsv
+  ' "${nodes_file}" >"${targets_file}"
 }

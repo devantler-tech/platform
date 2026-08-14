@@ -250,16 +250,19 @@ spec:
             provider: cosign
             matchOIDCIdentity:
               # Keyless-signed by the shared publish-app workflow this tenant's
-              # cd.yaml calls. The ref part accepts only a 40-hex commit SHA or a
-              # release tag, so an artifact signed from a floating ref (e.g. @main)
-              # does not verify. Consumers pin the workflow by SHA, so only the SHA
-              # branch is exercised today; the tag branch is kept so a tag-pinned
-              # caller also verifies. cosign's keyless attestation verification
+              # cd.yaml calls. The ref part accepts only a 40-hex commit SHA, so
+              # an artifact signed from any other ref — a floating @main, or a
+              # release tag — does not verify. Every caller of the shared publish
+              # workflows pins them by commit across its whole history, which is
+              # what makes the commit form sufficient on its own (#3022). A new
+              # tenant generated from this template inherits that requirement, so
+              # its cd.yaml must pin by commit too — the template's own default
+              # already does. cosign's keyless attestation verification
               # rejects MULTIPLE identity entries outright ("unsupported: multiple
               # identities are not supported at this time"), so any future
               # alternation must stay inside one subject regex.
               - issuer: '^https://token\.actions\.githubusercontent\.com$'
-                subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@([0-9a-f]{40}|refs/tags/v.+)$'
+                subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$'
     # --- Flux Kustomization (one of two variants by `sops`) ---------------
     # The impersonating Kustomization that reconciles the tenant's own artifact
     # under its namespaced SA (bound to the `tenant-edit` role). Two variants because the SOPS `decryption`
@@ -287,6 +290,17 @@ spec:
           prune: true
           wait: true
           force: true
+          # A tenant that ships a CNPG database (wedding-app does) would
+          # otherwise fail this Kustomization for the whole of any rolling
+          # update — CNPG rolls every instance on an operator, barman-cloud
+          # sidecar, or PostgreSQL image change, all routine Renovate bumps —
+          # and a tenant health-check failure evicts every PR from the merge
+          # queue. Same "the database is SERVING" gate as the cluster-level
+          # `apps`/`infrastructure` Kustomizations; see the rationale there.
+          healthCheckExprs:
+            - apiVersion: postgresql.cnpg.io/v1
+              kind: Cluster
+              current: has(status.readyInstances) && status.readyInstances >= 1 && has(status.currentPrimary) && status.currentPrimary != ''
           serviceAccountName: ${serviceAccount.metadata.name}
           sourceRef:
             kind: OCIRepository
@@ -313,6 +327,17 @@ spec:
           prune: true
           wait: true
           force: true
+          # A tenant that ships a CNPG database (wedding-app does) would
+          # otherwise fail this Kustomization for the whole of any rolling
+          # update — CNPG rolls every instance on an operator, barman-cloud
+          # sidecar, or PostgreSQL image change, all routine Renovate bumps —
+          # and a tenant health-check failure evicts every PR from the merge
+          # queue. Same "the database is SERVING" gate as the cluster-level
+          # `apps`/`infrastructure` Kustomizations; see the rationale there.
+          healthCheckExprs:
+            - apiVersion: postgresql.cnpg.io/v1
+              kind: Cluster
+              current: has(status.readyInstances) && status.readyInstances >= 1 && has(status.currentPrimary) && status.currentPrimary != ''
           serviceAccountName: ${serviceAccount.metadata.name}
           sourceRef:
             kind: OCIRepository
