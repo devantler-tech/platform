@@ -13,3 +13,9 @@ resources:
   - http-route.yaml
   - cilium-network-policy.yaml
   - cron-job.yaml
+  # Degraded-CNPG-cluster alert (one resource per file, per the naming convention):
+  - service-account-cnpg-degraded-alert.yaml
+  - secret-cnpg-degraded-alert.yaml
+  - cluster-role-cnpg-degraded-alert.yaml
+  - cluster-role-binding-cnpg-degraded-alert.yaml
+  - cron-job-cnpg-degraded-alert.yaml

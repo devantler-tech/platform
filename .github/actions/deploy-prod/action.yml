@@ -1,9 +1,10 @@
 name: Deploy to Production
 description: >-
   Deploy the platform's GitOps manifests to the production Talos + Hetzner
-  cluster with KSail: push the OCI artifact to GHCR, cosign-sign it, attest an
-  SBOM + SLSA provenance, trigger Flux reconciliation, and finally sync Talos
-  machine config. Shared by the merge-queue deploy (ci.yaml) and the manual
+  cluster with KSail: stage the OCI artifact in GHCR, cosign-sign it, attest an
+  SBOM + SLSA provenance, promote that evidenced digest to latest, trigger Flux
+  reconciliation, and finally sync Talos machine config. Shared by the
+  merge-queue deploy (ci.yaml) and the manual
   deploy (cd.yaml) so the two paths can never drift. The repository must
   already be checked out. Composite actions cannot read `secrets`, so every
   secret is passed in as an input.
@@ -43,7 +44,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.176.1"
+        KSAIL_VERSION: "7.178.23"
       run: |
         curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
         tar -xzf /tmp/ksail.tar.gz -C /tmp
@@ -57,7 +58,7 @@ runs:
       env:
         # Keep in step with spec.cluster.talos.version in ksail.prod.yaml.
         # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-        TALOS_VERSION: "1.13.6"
+        TALOS_VERSION: "1.13.7"
       run: |
         curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
         sudo install /tmp/talosctl /usr/local/bin/talosctl
@@ -87,6 +88,18 @@ runs:
         umask 077
         printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
         chmod 600 ~/.kube/config
+
+    - name: 🔗 Select stable prod API endpoint
+      # KUBE_CONFIG can outlive the control-plane node whose public IP was the
+      # endpoint when the secret was minted. `cluster update` deliberately
+      # rolls those nodes, so retaining that address makes this deploy sever
+      # its own API connection even while the other control planes are Ready.
+      # Resolve the KSail-owned floating IP live, fail closed on missing or
+      # foreign ownership labels, and switch admin@prod before any API call.
+      shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ./scripts/use-prod-stable-api-endpoint.sh
 
     - name: 🔑 Restore talosconfig
       # ksail cluster update talks to the Talos API to sync machine config.
@@ -139,173 +152,47 @@ runs:
         echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig (last kubectl error: ${last_err}). KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
         exit 1
 
+    - name: 🛡️ Suspend autoscaling for gated Cilium rollout
+      id: cilium_rollout_gate
+      # The widened device component deliberately uses OnDelete so the Cilium
+      # agents can be stepped one node at a time. OnDelete does not protect a
+      # newly autoscaled node: it would boot the widened device set immediately.
+      # Suspend before the mutable artifact is published, because Flux may
+      # observe the new tag before the explicit reconcile step. The script
+      # records the pre-existing replica count so only this gate can restore it.
+      shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
+
     - name: 🔑 Stage Flux and consumer GHCR pull credential
       id: stage_flux_ghcr_auth
       # Validate all seven packages, synchronize and prove an uncached pull of
       # the declared incoming image on every stale Talos node, then stage and
       # verify the Kubernetes fan-out BEFORE publishing latest. Every pull
       # consumer has one known-readable credential before the mutable tag can
-      # be observed.
+      # be observed. The non-secret exact-node proof survives only in this job
+      # so the post-update pass can distinguish annotation loss from real
+      # credential, image, or node drift.
       shell: bash
-      run: ./scripts/refresh-flux-ghcr-auth.sh
+      run: >-
+        ./scripts/refresh-flux-ghcr-auth.sh
+        --record-runtime-proof
+        "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 
-    # Publish the GitOps manifests (push → sign → attest → reconcile) BEFORE
+    # Publish the GitOps manifests (stage → sign → attest → promote → reconcile) BEFORE
     # syncing Talos machine config (the "🔄 Update cluster" step runs LAST).
     # Manifest delivery never touches the nodes, so it must not be gated on
     # every control-plane node being reachable: when one node's Talos API was
     # down, `ksail cluster update` ran first, hard-failed the job, and froze
     # ALL app/config delivery to an otherwise-healthy cluster (the apiserver
     # and Flux were fine on the two surviving control-plane nodes).
-    - name: 📦 Push manifests to GHCR
-      shell: bash
-      env:
-        GITHUB_ACTOR: ${{ github.actor }}
-        GHCR_TOKEN: ${{ inputs.ghcr-token }}
-        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
-      run: ./scripts/run-ksail-prod-with-pull-auth.sh workload push
-
-    - name: ⚙️ Install cosign
-      # sigstore/cosign-installer is the official installer action — it
-      # downloads cosign for the requested release and verifies its own
-      # Sigstore signature against Fulcio + Rekor (keyless), so there is
-      # no per-version SHA256 to track in this repo. Bump cosign by
-      # editing COSIGN_VERSION below; Renovate proposes the bump via the
-      # custom regex manager in .github/renovate.json.
-      env:
-        # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
-        COSIGN_VERSION: "3.1.1"
-      uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+    - name: 📦 Publish evidenced manifests to GHCR
+      id: publish_platform_manifest
+      uses: ./.github/actions/deploy-prod/publish-platform-manifests
       with:
-        cosign-release: 'v${{ env.COSIGN_VERSION }}'
-
-    - name: 🔐 Configure GHCR auth (cosign + buildx + syft)
-      # Pre-create ~/.docker/config.json instead of `cosign login` /
-      # `docker login` so neither emits the "credentials stored
-      # unencrypted in '/home/runner/.docker/config.json'" warning every
-      # run. The on-disk format is byte-identical to what those CLI
-      # commands would have written (base64 of "actor:token") -- the
-      # warning is cosmetic noise on an ephemeral runner that's destroyed
-      # after the job. Writing the auth here once also lets cosign, docker
-      # buildx imagetools, and syft (via anchore/sbom-action) all resolve
-      # GHCR credentials through the standard OCI keychain, which reads
-      # this same file.
-      shell: bash
-      env:
-        GITHUB_ACTOR: ${{ github.actor }}
-        GHCR_TOKEN: ${{ inputs.ghcr-token }}
-      run: |
-        set -euo pipefail
-        umask 077
-        mkdir -p ~/.docker
-        # Build the auth blob in a command substitution so it never
-        # reaches stdout.
-        AUTH=$(printf '%s:%s' "${GITHUB_ACTOR}" "${GHCR_TOKEN}" | base64 -w0)
-        # Register the derived value as a workflow mask so any future
-        # accidental log output (e.g. from a `set -x` added during
-        # debugging) is redacted -- GitHub's automatic secret masking
-        # only matches the raw GHCR_TOKEN literal, not the base64 of
-        # "actor:token" derived from it.
-        echo "::add-mask::${AUTH}"
-        # jq is preinstalled on ubuntu-latest; --arg avoids any shell
-        # quoting issue if the token ever contains a JSON-special char.
-        jq -n --arg auth "${AUTH}" \
-          '{auths: {"ghcr.io": {auth: $auth}}}' \
-          > ~/.docker/config.json
-        chmod 600 ~/.docker/config.json
-
-    - name: 🖋️ Sign OCI manifest with cosign (keyless)
-      # Signs the platform OCI artifact published by `ksail workload push`
-      # using Sigstore keyless signing: Fulcio mints a short-lived cert
-      # bound to this run's GitHub Actions OIDC identity and Rekor records
-      # the signature in its append-only transparency log. There is no
-      # private key on disk. The identity is the CALLING workflow, not this
-      # action — `…/.github/workflows/ci.yaml@…` for merge-queue deploys and
-      # `…/.github/workflows/cd.yaml@…` for manual deploys — so a Flux-side
-      # verifier's matchOIDCIdentity must allow BOTH (policy is a follow-up).
-      id: cosign-sign
-      shell: bash
-      env:
-        # COSIGN_EXPERIMENTAL was retired in cosign 2.x; keyless is now
-        # the default when --key is omitted. GHCR credentials come from
-        # ~/.docker/config.json populated by the "Configure GHCR auth"
-        # step above; cosign reads them through the OCI keychain.
-        COSIGN_YES: "true"
-      run: |
-        set -euo pipefail
-        REF_TAG="ghcr.io/devantler-tech/platform/manifests:latest"
-        # Resolve the tag → digest BEFORE signing so that (a) cosign signs
-        # exactly the bytes we resolved -- no tag→digest TOCTOU if a
-        # concurrent deploy mutates the tag between this resolve and the
-        # sign call, (b) cosign stops warning about tag-based references
-        # and we stay forward-compatible with the cosign roadmap that
-        # removes tag-based signing entirely, and (c) cosign skips its
-        # own internal tag→digest lookup -- one fewer registry round-trip.
-        # docker buildx imagetools is preinstalled on ubuntu-latest; the
-        # cosign-native equivalent (`cosign manifest digest`) was removed
-        # in cosign v3.0.
-        DIGEST=$(docker buildx imagetools inspect "${REF_TAG}" --format '{{.Manifest.Digest}}')
-        REF="ghcr.io/devantler-tech/platform/manifests@${DIGEST}"
-        cosign sign --yes --recursive "${REF}"
-        echo "digest=${DIGEST}" >> "${GITHUB_OUTPUT}"
-
-    - name: 📋 Generate SBOM (CycloneDX)
-      # anchore/sbom-action is the official installer wrapper for syft —
-      # it manages syft's binary integrity itself, so no per-version
-      # SHA256 to track here either. Bump syft by editing SYFT_VERSION
-      # below; Renovate proposes the bump via the custom regex manager.
-      # Output is CycloneDX JSON, a format actions/attest accepts via sbom-path.
-      # `upload-artifact: false` matches today's behaviour (no workflow
-      # artifact); the SBOM is attested to the registry in the next step.
-      env:
-        # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-        SYFT_VERSION: "1.46.0"
-      uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-      with:
-        image: ghcr.io/devantler-tech/platform/manifests@${{ steps.cosign-sign.outputs.digest }}
-        format: cyclonedx-json
-        output-file: sbom.cdx.json
-        syft-version: 'v${{ env.SYFT_VERSION }}'
-        upload-artifact: false
-
-    - name: 🪪 Attest SBOM (Sigstore via cosign keyless)
-      # Records the SBOM as a Sigstore in-toto attestation against the
-      # OCI manifest's digest. The attestation is uploaded to GHCR and
-      # its index recorded in Rekor. actions/attest-sbom v4 is now just a
-      # deprecated wrapper around actions/attest, so call attest directly
-      # and let its sbom-path input auto-select the SBOM predicate type.
-      #
-      # create-storage-record: false opts out of GitHub's artifact-metadata
-      # storage record — a GHCR "linked artifacts" discoverability index, not a
-      # supply-chain control. It cannot succeed here: the manifest is pushed by
-      # oras/ksail + cosign, not a GitHub-native artifact flow, so the
-      # artifact-metadata service has no registered artifact to attach to and
-      # warns "no artifacts found" on every deploy. #1787 mis-read this as a
-      # missing artifact-metadata:write grant; the grant shipped (v1.34.5) and
-      # the warning persisted, because per actions/attest-build-provenance#781
-      # the permission is necessary-but-not-sufficient. The cosign signature,
-      # SBOM attestation, SLSA provenance, and Rekor entry are all unaffected.
-      uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
-      with:
-        subject-digest: ${{ steps.cosign-sign.outputs.digest }}
-        subject-name: ghcr.io/devantler-tech/platform/manifests
-        sbom-path: sbom.cdx.json
-        push-to-registry: true
-        create-storage-record: false
-
-    - name: 🪪 Attest build provenance (SLSA L3)
-      # Generates a SLSA provenance v1.0 statement and attests it against
-      # the same digest. Provenance captures the workflow file,
-      # invocation parameters, GitHub runner, source repo + SHA, etc.
-      # Combined with the cosign signature above and the SBOM
-      # attestation, this completes the supply-chain transparency
-      # bundle for the platform OCI artifact.
-      # create-storage-record: false for the same reason as the SBOM step above.
-      uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
-      with:
-        subject-digest: ${{ steps.cosign-sign.outputs.digest }}
-        subject-name: ghcr.io/devantler-tech/platform/manifests
-        push-to-registry: true
-        create-storage-record: false
+        ghcr-token: ${{ inputs.ghcr-token }}
+        hcloud-token: ${{ inputs.hcloud-token }}
 
     - name: 🔎 Verify Flux GHCR pull credential after publish
       id: verify_flux_ghcr_auth_after_push
@@ -333,14 +220,53 @@ runs:
       # larger --tail values). Failure-path-only: it cannot affect a green deploy.
       uses: devantler-tech/actions/diagnose-flux@e182f2207fb386ef827f48b3cc9b7deac873046a # v7.1.0
 
+    - name: ⏳ Wait for the newly published Flux revision
+      id: wait_flux_revision
+      # Pin the mutable latest tag to the digest resolved immediately after
+      # publish. A successful reconcile command only proves that Flux accepted
+      # the request; autoscaling and Talos mutation stay blocked until the
+      # infrastructure controller layer has applied this exact artifact and
+      # reports Ready. The temporary Cilium component disables Helm's pod wait
+      # while OnDelete controls replacement, so this proof still completes
+      # without weakening Flux dependency convergence.
+      shell: bash
+      env:
+        PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
+      run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
+
+    - name: 🛡️ Restore autoscaling once the released revision is Ready
+      id: cilium_rollout_gate_release
+      # `ksail cluster update` waits for the cluster-autoscaler Deployment to be
+      # ready, and KSail treats zero replicas as never-ready — so a deploy that
+      # releases the gate would hang on the suspension the gate itself owns and
+      # fail at its own config sync. Restore between the exact-revision proof and
+      # cluster update: the safe artifact is deployed by now, which is what the
+      # gate requires before autoscaling may resume, and the autoscaler is ready
+      # before the step that waits on it. A still-active gate stays suspended.
+      if: >-
+        !cancelled() &&
+        steps.wait_flux_revision.outcome == 'success'
+      shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
+      run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-revision-ready
+
     - name: 🔄 Update cluster (Talos machine config)
+      id: cluster_update
       # Runs LAST, after manifest delivery, so an unreachable control-plane
       # node cannot block GitOps delivery (see the Push step's comment). Talos
       # config sync still runs on every deploy and a genuine node-reachability
       # problem still fails the deploy (red) — it just no longer takes the
-      # app/config pipeline down with it. Automatically skipped if an earlier
-      # delivery step already failed (no point syncing nodes for a broken
-      # release).
+      # app/config pipeline down with it. The temporary homogeneous-device
+      # rollout gate also skips this step: KSail owns Cluster Autoscaler and
+      # could reconcile it back to one replica during the command, opening a
+      # scale-up race before the first Cilium canary is verified. A reviewed
+      # rollout-completion or rollback artifact removes the gate; because Flux
+      # exact-revision wait happens first, that safe artifact is live before
+      # cluster update runs again.
+      if: >-
+        steps.cilium_rollout_gate.outputs.active != 'true' &&
+        steps.wait_flux_revision.outcome == 'success'
       shell: bash
       env:
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
@@ -350,6 +276,46 @@ runs:
         WG_SERVER_PRIVATE_KEY: ${{ inputs.wg-server-private-key }}
       run: ./scripts/run-ksail-prod-with-pull-auth.sh cluster update
 
+    - name: 📣 Report suppressed machine-config sync
+      # The step above is the pipeline's ONLY Talos machine-config sync, and the
+      # rollout gate skips it. A skipped step inside a green deploy reads as
+      # ordinary conditional behaviour, so the suppression went unnoticed for
+      # over a week and misdirected the diagnosis of two unrelated issues
+      # (#2951). The elapsed count belongs in the report, not in this comment,
+      # where it would be stale the day after it was written.
+      # Surface it in the job summary, and warn once it outruns the rollout's
+      # intended window. always(), so an earlier failure cannot hide it.
+      if: >-
+        always() && steps.cilium_rollout_gate.outputs.active == 'true'
+      shell: bash
+      env:
+        # Take the gate state from the gate itself — re-deriving it here would
+        # let the two drift apart silently, which is the original defect.
+        CILIUM_ROLLOUT_GATE_ACTIVE: ${{ steps.cilium_rollout_gate.outputs.active }}
+      run: ./scripts/report-cilium-rollout-gate-suppression.sh
+
+    - name: 🛡️ Reassert or release the Cilium rollout gate
+      # Reassert the suspension after delivery while OnDelete is active.
+      # A later, reviewed rollout-completion or rollback artifact removes the
+      # gate; only after that artifact has reconciled does this phase restore
+      # the replica count recorded by the pre-publish phase. `always()` also
+      # preserves that fail-closed state when the safe, re-enabled cluster
+      # update fails after reconciliation.
+      if: >-
+        always() &&
+        steps.reconcile.outcome == 'success' &&
+        (
+          steps.cilium_rollout_gate.outputs.active == 'true' ||
+          steps.wait_flux_revision.outcome == 'success'
+        )
+      shell: bash
+      env:
+        # The guard always reasserts suspension for an active rollout, including
+        # failure cleanup, but may approve the rendered candidate only after
+        # Flux proves this exact published revision Ready.
+        CILIUM_ROLLOUT_REVISION_READY: ${{ steps.wait_flux_revision.outcome == 'success' }}
+      run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
+
     - name: 🔑 Reassert Flux and consumer GHCR pull credential
       id: reassert_flux_ghcr_auth
       # cluster update is already wrapped with Git/SOPS auth, but reassert the
@@ -358,9 +324,25 @@ runs:
       # only after the publish, signing, attestation, post-publish auth check,
       # and Flux reconcile all succeeded. Never mutate auth as cleanup for a
       # failed delivery.
+      # Runs on failure but NOT on cancellation. This step takes the
+      # `ghcr-auth-refresh` Lease, which has no automatic expiry takeover
+      # because Talos writes cannot be fenced — a non-empty holder needs
+      # explicit human recovery. Under `always()` a cancelled job still
+      # entered here, then the runner force-killed it when the
+      # post-cancellation grace expired, so the release never landed and every
+      # later deploy failed to acquire the Lease. A merge-queue eviction
+      # cancels this job routinely. The next deploy's staging step performs
+      # this same reassertion with a full time budget.
+      # `ksail cluster update` re-renders Talos node annotations. Reuse only
+      # the same job's credential+image+Node-UID proof to restore those markers
+      # without another uncached pull or rolling reboot. Any mismatch falls
+      # back to the full safety path.
       if: >-
-        always() &&
+        !cancelled() &&
         steps.verify_flux_ghcr_auth_after_push.outcome == 'success' &&
         steps.reconcile.outcome == 'success'
       shell: bash
-      run: ./scripts/refresh-flux-ghcr-auth.sh
+      run: >-
+        ./scripts/refresh-flux-ghcr-auth.sh
+        --reuse-runtime-proof
+        "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
