@@ -19,8 +19,8 @@ spec:
     # Kube API for policy enforcement
     - toEntities:
         - kube-apiserver
-    # Image signature verification (verify-ksail-images.yaml + verify-app-images.yaml
-    # ImageValidatingPolicies): cosign signature manifests live on ghcr.io
+    # Image signature verification (verify-app-images.yaml
+    # ImageValidatingPolicy): cosign signature manifests live on ghcr.io
     # with blobs served from the GitHub CDN, and the Sigstore TUF trust root
     # refreshes from its CDN. Rekor inclusion proofs verify offline via the
     # bundled SET; the log stays reachable as a fallback. github.com is

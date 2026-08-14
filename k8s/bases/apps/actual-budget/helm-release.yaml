@@ -11,7 +11,7 @@ spec:
   chart:
     spec:
       chart: actualbudget
-      version: 1.9.1
+      version: 1.9.2
       sourceRef:
         kind: HelmRepository
         name: actual-budget
@@ -229,4 +229,4 @@ spec:
         tokenExpiration: "openid-provider"
         existingSecret:
           name: actual-budget-oidc
-          clientSecretKey: client-secret
+          clientSecretKey: client-secret  # checkov:skip=CKV_SECRET_6:names a key inside an existing Secret; the value lives in OpenBao
