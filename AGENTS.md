@@ -448,6 +448,18 @@ enqueuePullRequest(input:{pullRequestId:"<id>"}) →
 own names (`🏗️ Build`, `🧪 Test`, …), so grepping check-run names for the workflow title reports zero
 on a head that is perfectly satisfied. Ask which workflows ran instead:
 
+**Did it fire at all?** — the diagnostic question, and the one that separates "this head predates the
+requirement" from "the workflow ran and went red". `0` here is the defect this section is about:
+
+```sh
+gh api "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100" \
+  --jq '[.workflow_runs[]
+         | select(.path == ".github/workflows/validate-go-project.yaml")] | length'
+```
+
+**Is the requirement satisfied?** — the question that decides whether it can enqueue. Only a completed
+successful run counts:
+
 ```sh
 gh api "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100" \
   --jq '[.workflow_runs[]
@@ -456,11 +468,11 @@ gh api "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100"
                   and .conclusion == "success")] | length'
 ```
 
-⚠️ **Both the `completed` and `success` conjuncts matter, and they answer different questions.** A run
-that is queued, in progress, cancelled or **failed** still appears in `workflow_runs`, so a bare
-path-only count answers "did it fire at all" — useful while diagnosing, and **not** the same as "is the
-requirement satisfied". Only a completed successful run satisfies it, so a `>= 1` from the loose query
-will happily report a red or still-running head as ready to enqueue.
+⚠️ **Do not use the first query to answer the second.** A run that is queued, in progress, cancelled or
+**failed** still appears in `workflow_runs`, so a `>= 1` from the path-only form will report a red or
+still-running head as ready to enqueue. Reading them the other way round is just as misleading: a `0`
+from the strict form does not distinguish a head that never fired the workflow from one whose run
+failed, which are opposite problems with opposite fixes — refresh the head, or fix the build.
 
 **The fix is to move the head** — `PUT /repos/{owner}/{repo}/pulls/{n}/update-branch` (a merge of
 `main`, never a force-push) makes the workflow fire. Verify the effect with the query above; the
