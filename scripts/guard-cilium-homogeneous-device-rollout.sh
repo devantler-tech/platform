@@ -335,9 +335,21 @@ restore_autoscaler_if_owned() {
   # so a zero-padded value can arrive. require_replica_count accepts "00", which
   # would slip past the zero refusal below and scale the Deployment to zero
   # anyway; and a padded "08" would reach wait_for_replicas, which compares it
-  # against the API's canonical "8" and blocks until it times out. 10# forces
-  # base ten, so a leading zero is never read as octal.
-  previous_replicas=$((10#${previous_replicas}))
+  # against the API's canonical "8" and blocks until it times out.
+  #
+  # Strip the zeros TEXTUALLY rather than with $(( )). Shell arithmetic is signed
+  # 64-bit and wraps SILENTLY, so an all-digit repair value beyond that range —
+  # 18446744073709551617, say — would normalise to 1 here, and the release would
+  # then happily scale to one replica and delete both ownership annotations
+  # instead of refusing and preserving recovery state.
+  previous_replicas="${previous_replicas#"${previous_replicas%%[!0]*}"}"
+  [[ -n "${previous_replicas}" ]] || previous_replicas=0
+
+  # Range-check what survived. spec.replicas is an int32, so anything longer than
+  # its 10 digits is out of range by inspection; the length test short-circuits
+  # the numeric one, which would itself overflow on a longer value.
+  [[ "${#previous_replicas}" -le 10 && "${previous_replicas}" -le 2147483647 ]] ||
+    fail "the rollout gate owns a remembered autoscaler count outside the Kubernetes replica range (spec.replicas is an int32): ${previous_replicas}. Record the intended count and scale to match, then retry: kubectl --context admin@prod -n ${namespace} annotate deployment ${deployment} ${previous_replicas_annotation}=<count> --overwrite && kubectl --context admin@prod -n ${namespace} scale deployment ${deployment} --replicas=<count>."
 
   # A remembered count of ZERO cannot be "restored". Honouring it leaves the
   # Deployment at zero — which `ksail cluster update` waits on and KSail treats

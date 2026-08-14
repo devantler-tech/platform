@@ -469,6 +469,24 @@ fi
 [[ "$(<"${state_dir}/replicas")" == '0' ]] ||
   fail "a refused zero-padded release must not scale the Deployment; got: $(<"${state_dir}/replicas")"
 
+# An all-digit value past the shell's signed 64-bit range must be REFUSED, not
+# silently wrapped. 18446744073709551617 is 2^64+1, which $(( )) folds to 1 — so
+# normalising with arithmetic would "restore" one replica and delete both
+# ownership annotations, which is the same destruction the zero refusal prevents,
+# reached by a different route. spec.replicas is an int32, so this is out of
+# range on its face.
+printf '18446744073709551617\n' >"${state_dir}/previous-replicas"
+printf '0\n' >"${state_dir}/replicas"
+if overflow_output="$(run_guard --after-revision-ready true 2>&1)"; then
+  fail 'releasing a gate that owns an out-of-range remembered count must fail loudly'
+fi
+[[ "${overflow_output}" == *'outside the Kubernetes replica range'* ]] ||
+  fail "the out-of-range refusal must name the conflict; got: ${overflow_output}"
+[[ "$(<"${state_dir}/previous-replicas")" == '18446744073709551617' ]] ||
+  fail 'a refused out-of-range release must preserve the ownership marker for a retry'
+[[ "$(<"${state_dir}/replicas")" == '0' ]] ||
+  fail "a refused out-of-range release must not scale the Deployment; got: $(<"${state_dir}/replicas")"
+
 : >"${state_dir}/previous-replicas"
 
 printf '0\n' >"${state_dir}/replicas"
