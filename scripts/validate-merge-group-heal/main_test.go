@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
 
   heal-prod-on-failure:
-    needs: [changes, deploy-prod]
+    needs: [changes, deploy-prod, validate-publication-contract]
     concurrency:
       group: prod-deploy
       cancel-in-progress: false
@@ -63,7 +63,7 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 		},
 		{
 			name:        "missing deploy dependencies",
-			old:         "    needs: [changes, deploy-prod]",
+			old:         "    needs: [changes, deploy-prod, validate-publication-contract]",
 			replacement: "    needs: [changes]",
 			wantError:   "missing deploy dependencies",
 		},

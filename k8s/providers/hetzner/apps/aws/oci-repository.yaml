@@ -21,11 +21,14 @@ spec:
   verify:
     provider: cosign
     matchOIDCIdentity:
-      # Keyless-signed by the shared publish-manifests reusable workflow that
-      # aws's cd.yaml calls. Signing runs INSIDE that reusable workflow, so the
-      # cosign OIDC subject is the reusable workflow's path, NOT aws's own
-      # cd.yaml. Unlike the older tenants there is no reusable-workflows
-      # alternation here: the aws repo was scaffolded after the actions#425
-      # repoint, so every artifact it has ever published is actions-signed.
+      # Keyless-signed by the shared publish-manifests workflow that aws's
+      # cd.yaml calls. Signing runs INSIDE that workflow, so the cosign OIDC
+      # subject is that workflow's path, NOT aws's own cd.yaml.
+      #
+      # The ref part accepts only a 40-hex commit SHA, so an artifact signed
+      # from any other ref — a floating @main, or a release tag — does not
+      # verify. Every caller of the shared publish workflows pins them by
+      # commit across its whole history, which is what makes the commit form
+      # sufficient on its own (#3022).
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@.+$'
+        subject: '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@[0-9a-f]{40}$'

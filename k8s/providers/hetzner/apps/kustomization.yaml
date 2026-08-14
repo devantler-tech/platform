@@ -70,24 +70,32 @@ patches:
   # add-security-context Kyverno rule. Local/CI and stateful workloads stay
   # out; in mixed namespaces (umami, backstage) the rule itself excludes the
   # CNPG database pods via their cnpg.io/cluster label.
-  # Headlamp is a separately gated stateful pilot (#2650): its chart explicitly
-  # renders hostUsers: true, so the namespace-label Kyverno rule cannot override
-  # that authored value. Keep this exact-target values patch default-off until
-  # the concurrent node-auth rollout has settled and Headlamp/Longhorn are
-  # healthy. Activation uncomments the whole block; recovery re-comments/reverts
-  # it and never deletes the plugins PVC.
-  # - target:
-  #     group: helm.toolkit.fluxcd.io
-  #     version: v2
-  #     kind: HelmRelease
-  #     name: headlamp
-  #     namespace: headlamp
-  #   patch: |-
-  #     - op: add
-  #       path: /spec/values/hostUsers
-  #       value: false
+  # Headlamp takes an exact-target values patch instead of a namespace label
+  # (#2651). Its chart renders `hostUsers: {{ .Values.hostUsers }}` from a
+  # values.yaml default of true, so the value is authored rather than absent and
+  # the add-security-context rule's +(hostUsers) conditional anchor — which only
+  # fills in a MISSING value — cannot reach it. Setting the chart value is what
+  # actually changes the rendered Deployment.
+  # Headlamp is the first Longhorn-backed workload here: its plugin sidecar
+  # writes to the `headlamp` PVC and the main container reads those files. That
+  # cross-container round trip under a user namespace is the property the
+  # disposable userns-longhorn-smoke Job proved on this cluster (#2619).
+  # Recovery re-comments this block and never deletes the plugins PVC.
+  - target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: headlamp
+      namespace: headlamp
+    patch: |-
+      - op: add
+        path: /spec/values/hostUsers
+        value: false
   - path: whoami/patches/enable-user-namespaces.yaml
   - path: homepage/patches/enable-user-namespaces.yaml
   - path: umami/patches/enable-user-namespaces.yaml
   - path: backstage/patches/enable-user-namespaces.yaml
   - path: crossview/patches/enable-user-namespaces.yaml
+  # Headlamp's label is the enforce ratchet only — the values patch above is
+  # what sets hostUsers, and the mutate rule cannot reach an authored value.
+  - path: headlamp/patches/enable-user-namespaces.yaml

@@ -1,3 +1,17 @@
+// Command validate-merge-group-heal checks that the prod-healing job in a
+// workflow can still do its job.
+//
+// The heal job restores main after a merge-group deploy fails, and it needs
+// four things to be true to work at all: it must fire on a failed or cancelled
+// merge-group deploy that actually touched k8s and on nothing else; it must
+// hold the shared prod-deploy lock; that lock must not be preemptible, or the
+// heal is cancelled by the next deploy midway through; and it must check out
+// main, or it restores the wrong revision.
+//
+// Each is one line of workflow YAML, and none of them fails loudly when it is
+// wrong — the damage shows up later, during an incident, when the heal either
+// does not run or restores the wrong thing. Pinning all four here turns that
+// into a CI failure on the pull request that breaks one.
 package main
 
 import (
@@ -24,7 +38,15 @@ func validateWorkflowContract(workflow string) error {
 		line        string
 		description string
 	}{
-		{line: "    needs: [changes, deploy-prod]", description: "deploy dependencies"},
+		// validate-publication-contract is required by the DR signing contract:
+		// every ci.yaml job that reaches production must WAIT for the publication
+		// gate, and this job re-deploys main's artifact. Pinned as an exact line
+		// here so the two contracts cannot drift into asserting different
+		// dependency sets over the same job.
+		{
+			line:        "    needs: [changes, deploy-prod, validate-publication-contract]",
+			description: "deploy dependencies",
+		},
 		{line: "      group: prod-deploy", description: "shared production lock"},
 		{line: "      cancel-in-progress: false", description: "non-preempting production lock"},
 		{line: "          ref: main", description: "current-main checkout"},
