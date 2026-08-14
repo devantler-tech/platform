@@ -16,6 +16,20 @@ spec:
   prune: true
   wait: true
   force: true
+  # This Kustomization applies wedding-db (a CNPG `Cluster`) from the tenant's
+  # own artifact, so `wait: true` health-checks it. kstatus marks a CNPG Cluster
+  # NotReady for the whole of any rolling update, and CNPG rolls every instance
+  # whenever the operator, the barman-cloud sidecar, or the PostgreSQL image
+  # changes — routine Renovate bumps. That failed this Kustomization and evicted
+  # the merge group on 2026-06-19, and again during the plugin v0.13.0 -> v0.14.0
+  # rollout. Gate on "the database is SERVING" instead, matching the
+  # cluster-level `apps`/`infrastructure` Kustomizations; see the rationale
+  # there. A cluster with no ready instance matches no `current` expression,
+  # stays InProgress, and still fails.
+  healthCheckExprs:
+    - apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      current: has(status.readyInstances) && status.readyInstances >= 1 && has(status.currentPrimary) && status.currentPrimary != ''
   serviceAccountName: wedding-app
   sourceRef:
     kind: OCIRepository
