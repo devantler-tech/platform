@@ -1,0 +1,19 @@
+rules:
+  # A warning is intentional here: the shell harness requires this marker in
+  # KSail's output, proving that the rendered chart still contains the target
+  # Deployment before the safety assertion below is allowed to pass.
+  - name: observe-kyverno-admission-deployment
+    expression: >-
+      object.kind != 'Deployment' ||
+      object.metadata.name != 'kyverno-admission-controller'
+    message: rendered Kyverno admission Deployment found
+    severity: warning
+  - name: enforce-kyverno-admission-memory-limit
+    expression: >-
+      object.kind != 'Deployment' ||
+      object.metadata.name != 'kyverno-admission-controller' ||
+      object.spec.template.spec.containers.exists(container,
+        container.name == 'kyverno' &&
+        container.resources.limits.memory == '1Gi')
+    message: Kyverno admission container memory limit must remain 1Gi
+    severity: error
