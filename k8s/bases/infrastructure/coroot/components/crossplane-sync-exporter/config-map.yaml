@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: crossplane-sync-exporter
+  namespace: observability
+data:
+  # kube-state-metrics has no built-in knowledge of Crossplane managed
+  # resources, so their conditions are described here as custom resource state.
+  #
+  # Every condition is exported, not just Synced. That is deliberate: the defect
+  # this exporter exists to surface is a resource reporting Ready=True while
+  # Synced=False, and an alert can only express that pair if both series exist.
+  #
+  # groupVersionKind is exact — CustomResourceStateMetrics accepts no wildcard
+  # and no `categories: managed` selector — so each managed-resource kind must be
+  # listed. This component starts with Repository alone, which is the kind that
+  # carries the observed failure and therefore both a positive and a negative
+  # fixture. Extending the list to the remaining managed kinds is tracked
+  # separately; until then the exporter's coverage is explicitly partial.
+  custom-resource-state.yaml: |
+    kind: CustomResourceStateMetrics
+    spec:
+      resources:
+        - groupVersionKind:
+            group: repo.github.m.upbound.io
+            version: v1alpha1
+            kind: Repository
+          metricNamePrefix: crossplane
+          labelsFromPath:
+            name: [metadata, name]
+            namespace: [metadata, namespace]
+          metrics:
+            - name: managed_resource_condition
+              help: "Crossplane managed resource condition status (1 = True, 0 = False)."
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition: [type]
+                    reason: [reason]
+                  valueFrom: [status]
+
+  # The agent scrapes its own pod over loopback, so kube-state-metrics needs no
+  # Service and no ingress. Remote-write is the only ingest path Coroot's bundled
+  # Prometheus exposes (spec.prometheus carries no scrape configuration and there
+  # is no prometheus-operator), which is the same reason the opencost
+  # usage-scraper is shaped this way.
+  prometheus.yml: |
+    global:
+      scrape_interval: 1m
+      scrape_timeout: 10s
+
+    remote_write:
+      - url: http://coroot-prometheus.observability.svc.cluster.local:9090/api/v1/write
+
+    scrape_configs:
+      - job_name: crossplane-sync-exporter
+        static_configs:
+          - targets:
+              - 127.0.0.1:8080
+        metric_relabel_configs:
+          # Ship only the condition series. kube-state-metrics also emits its own
+          # build and self-telemetry metrics, which Coroot already has.
+          #
+          # This `keep` does NOT drop `up`: metric relabeling excludes
+          # automatically generated timeseries, so `up{job="crossplane-sync-exporter"}`
+          # is still delivered. That matters more here than it looks — without it,
+          # "no condition series" would be ambiguous between a healthy fleet and a
+          # dead exporter, which is the same silent-sensor failure this component
+          # exists to surface. An alert on the condition series should gate on `up`
+          # for exactly that reason. Do not add `up` to this regex: it is already
+          # exempt, and listing it would imply the others are too.
+          - source_labels:
+              - __name__
+            regex: crossplane_managed_resource_condition
+            action: keep

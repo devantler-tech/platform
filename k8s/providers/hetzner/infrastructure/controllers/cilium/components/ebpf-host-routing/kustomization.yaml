@@ -29,8 +29,8 @@
 #     cilium status --verbose) before any production enable.
 #   - Private-NIC device pinning: NOT touched here — and it is a HARD
 #     ACTIVATION BLOCKER, not just a naming concern. The always-on
-#     ../private-nic-devices/ component pins the private NICs (required so
-#     the node's primary address stays private for the mutual-auth path),
+#     ../private-nic-devices/ component pins the private NICs (keeping Cilium's
+#     node-control paths on the admitted private network),
 #     while the default route — and therefore pod->internet egress — leaves
 #     via the PUBLIC NICs (static nodes enp1s0 / autoscale nodes eth0). BPF
 #     masquerading only processes interfaces carrying Cilium's eBPF

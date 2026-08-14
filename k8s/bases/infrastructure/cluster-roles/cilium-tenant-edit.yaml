@@ -6,11 +6,9 @@
 # carrying tenant-specific network rules in each registration dir.
 #
 # The platform keeps the security FLOOR regardless: the `add-default-deny`
-# Kyverno policy still generates the deny-all + allow-dns CiliumNetworkPolicies
-# in every namespace, and (in prod) the cluster-wide `require-mutual-auth`
-# CiliumClusterwideNetworkPolicy still applies — neither of which a namespaced
-# tenant policy can override. Tenants only layer ALLOWs on top, scoped to their
-# own namespace.
+# Kyverno policy still generates deny-all + allow-dns CiliumNetworkPolicies in
+# every namespace. Tenants only layer ALLOWs on top, scoped to their own
+# namespace; they cannot manage cluster-wide policy resources.
 #
 # Grants only the NAMESPACED `ciliumnetworkpolicies` — never the cluster-scoped
 # `ciliumclusterwidenetworkpolicies`, which remain platform territory.
