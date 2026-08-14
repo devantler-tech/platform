@@ -1524,7 +1524,7 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		)
 		if nodeName == os.Getenv("FAKE_FENCE_PHASE_FAIL_NODE") ||
 			expectedOwner == "" || expectedOwner != markerContent("cordon-owner-"+nodeName) ||
-			!hasPatchOperation(patch, "test", "/metadata/uid", nodeName+"-uid") {
+			!hasPatchOperation(patch, "test", "/metadata/uid", fakeExpectedNodeUID(nodeName)) {
 			return commandFailure(57, "invalid fence phase update")
 		}
 		setMarkerContent("cordon-phase-"+nodeName, patchValueString(
