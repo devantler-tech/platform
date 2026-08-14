@@ -70,46 +70,57 @@ cat >"${fake_bin}/ksail" <<'FAKE_KSAIL'
 exit 0
 FAKE_KSAIL
 
-cat >"${fake_bin}/sha256sum" <<'FAKE_SHA256SUM'
-#!/usr/bin/env bash
-exit 0
-FAKE_SHA256SUM
-
 chmod +x \
   "${fake_bin}/curl" \
   "${fake_bin}/sudo" \
-  "${fake_bin}/ksail" \
-  "${fake_bin}/sha256sum"
+  "${fake_bin}/ksail"
 
-set +e
-output=$(
-  cd "${repo_root}" &&
-    PATH="${fake_bin}:${PATH}" \
-      RUNNER_TEMP="${runner_temp}" \
-      KSAIL_VERSION='7.178.25' \
-      TEST_FIXTURE_DIR="${fixture_dir}" \
-      TEST_INSTALL_MARKER="${test_root}/installed" \
-      .github/scripts/setup-ksail.sh 2>&1
-)
-status=$?
-set -e
+run_installer() {
+  if output=$(
+    cd "${repo_root}" &&
+      PATH="${fake_bin}:${PATH}" \
+        RUNNER_TEMP="${runner_temp}" \
+        KSAIL_VERSION='7.178.25' \
+        TEST_FIXTURE_DIR="${fixture_dir}" \
+        TEST_INSTALL_MARKER="${test_root}/installed" \
+        .github/scripts/setup-ksail.sh 2>&1
+  ); then
+    status=0
+  else
+    status=$?
+  fi
+}
 
-if [ "${status}" -eq 0 ]; then
-  printf 'expected setup-ksail.sh to reject a checksum list without the exact asset name\n' >&2
-  exit 1
-fi
+assert_rejected_before_install() {
+  expected_output=$1
 
-if [ -e "${test_root}/installed" ]; then
-  printf 'setup-ksail.sh attempted installation before exact-name verification\n' >&2
-  exit 1
-fi
-
-case "${output}" in
-  *'no published checksum for ksail_7.178.25_linux_amd64.tar.gz'*) ;;
-  *)
-    printf 'unexpected failure output: %s\n' "${output}" >&2
+  if [ "${status}" -eq 0 ]; then
+    printf 'expected setup-ksail.sh to reject invalid release evidence\n' >&2
     exit 1
-    ;;
-esac
+  fi
 
-printf 'setup-ksail exact checksum-name test passed\n'
+  if [ -e "${test_root}/installed" ]; then
+    printf 'setup-ksail.sh attempted installation before release verification\n' >&2
+    exit 1
+  fi
+
+  case "${output}" in
+    *"${expected_output}"*) ;;
+    *)
+      printf 'unexpected failure output: %s\n' "${output}" >&2
+      exit 1
+      ;;
+  esac
+}
+
+run_installer
+assert_rejected_before_install 'no published checksum for ksail_7.178.25_linux_amd64.tar.gz'
+
+printf '%s  ksail_7.178.25_linux_amd64.tar.gz\n' "${digest}" >"${fixture_dir}/checksums.txt"
+printf '{"assets":[{"name":"ksail_7.178.25_linux_amd64.tar.gz","digest":"sha256:%064d"}]}\n' \
+  0 >"${fixture_dir}/release.json"
+
+run_installer
+assert_rejected_before_install 'release metadata digest mismatch for ksail_7.178.25_linux_amd64.tar.gz'
+
+printf 'setup-ksail dual-source verification tests passed\n'
