@@ -327,6 +327,18 @@ restore_autoscaler_if_owned() {
     return
   fi
 
+  require_replica_count "${previous_replicas}" 'remembered autoscaler replica count'
+
+  # Normalise before anything compares this value. get_current_replicas only ever
+  # records the API's canonical form, but the annotation is operator-writable —
+  # the remediation below hands an operator an `annotate ... =<count>` command —
+  # so a zero-padded value can arrive. require_replica_count accepts "00", which
+  # would slip past the zero refusal below and scale the Deployment to zero
+  # anyway; and a padded "08" would reach wait_for_replicas, which compares it
+  # against the API's canonical "8" and blocks until it times out. 10# forces
+  # base ten, so a leading zero is never read as octal.
+  previous_replicas=$((10#${previous_replicas}))
+
   # A remembered count of ZERO cannot be "restored". Honouring it leaves the
   # Deployment at zero — which `ksail cluster update` waits on and KSail treats
   # as never-ready — and the restore below would then DELETE the ownership
@@ -347,7 +359,6 @@ restore_autoscaler_if_owned() {
     fail "the rollout gate owns a remembered autoscaler count of 0, so releasing it cannot satisfy the readiness check that ksail cluster update performs (KSail treats a zero-replica Deployment as never-ready). Record the intended count and scale to match, then retry: kubectl --context admin@prod -n ${namespace} annotate deployment ${deployment} ${previous_replicas_annotation}=<count> --overwrite && kubectl --context admin@prod -n ${namespace} scale deployment ${deployment} --replicas=<count>. Scaling alone is not enough — the remembered value is what this check reads."
   fi
 
-  require_replica_count "${previous_replicas}" 'remembered autoscaler replica count'
   kubectl_prod -n "${namespace}" scale deployment "${deployment}" \
     --replicas="${previous_replicas}"
   wait_for_replicas "${previous_replicas}"

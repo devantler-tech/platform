@@ -413,8 +413,23 @@ fi
 # itself pins admin@prod, so the commands it hands out must too, or the retry
 # silently edits an identically named Deployment in another cluster and the
 # production annotation stays at 0.
-[[ "${zero_count_output}" == *'--context admin@prod'* ]] ||
-  fail "the zero-count remediation must pin the prod context; got: ${zero_count_output}"
+#
+# Assert each command SEPARATELY. The refusal emits an `annotate` and a `scale`,
+# so a single substring test over the combined output passes while either one of
+# them is missing the flag — the other's flag satisfies it. Bound each match at
+# `&` and `.` so it cannot run across the `&&` into its sibling command.
+zero_count_annotate="$(
+  printf '%s\n' "${zero_count_output}" |
+    grep -o 'kubectl[^&.]*annotate deployment[^&.]*' || true
+)"
+zero_count_scale="$(
+  printf '%s\n' "${zero_count_output}" |
+    grep -o 'kubectl[^&.]*scale deployment[^&.]*' || true
+)"
+[[ "${zero_count_annotate}" == *'--context admin@prod'* ]] ||
+  fail "the zero-count remediation's annotate command must pin the prod context; got: ${zero_count_annotate:-<no annotate command emitted>}"
+[[ "${zero_count_scale}" == *'--context admin@prod'* ]] ||
+  fail "the zero-count remediation's scale command must pin the prod context; got: ${zero_count_scale:-<no scale command emitted>}"
 
 # The refusal has to cover EVERY release path, not just this phase. The normal
 # deploy's always() post-deploy reassert invokes --after-deploy, and the DR
@@ -430,6 +445,30 @@ fi
   fail "the post-deploy zero-count refusal must name the conflict; got: ${zero_count_after_deploy}"
 [[ "$(<"${state_dir}/previous-replicas")" == '0' ]] ||
   fail 'a refused post-deploy zero-count release must preserve the ownership marker'
+
+# A ZERO-PADDED zero is the same conflict wearing a different spelling, and the
+# annotation is operator-writable: the refusal above hands an operator an
+# `annotate ... =<count>` command, so "00" is a plausible thing to arrive here.
+# require_replica_count accepts it (^[0-9]+$), so a refusal that tests only the
+# canonical "0" lets it through and does exactly the damage the refusal exists to
+# prevent — scale the Deployment to zero, then DELETE the ownership annotation a
+# retry needs. Assert the marker survives AND that nothing was scaled.
+printf '00\n' >"${state_dir}/previous-replicas"
+printf '0\n' >"${state_dir}/replicas"
+if zero_padded_output="$(run_guard --after-revision-ready true 2>&1)"; then
+  fail 'releasing a gate that owns a zero-padded remembered count must fail loudly'
+fi
+[[ "${zero_padded_output}" == *'remembered autoscaler count of 0'* ]] ||
+  fail "the zero-padded refusal must name the conflict; got: ${zero_padded_output}"
+[[ "$(<"${state_dir}/previous-replicas")" == '00' ]] ||
+  fail 'a refused zero-padded release must preserve the ownership marker for a retry'
+# The fake kubectl echoes back whatever it was scaled to, so a padded value that
+# slipped through would leave "00" here rather than the "0" nothing-happened
+# state. In prod the API canonicalises instead, and wait_for_replicas would then
+# compare "00" against "0" and block until it times out.
+[[ "$(<"${state_dir}/replicas")" == '0' ]] ||
+  fail "a refused zero-padded release must not scale the Deployment; got: $(<"${state_dir}/replicas")"
+
 : >"${state_dir}/previous-replicas"
 
 printf '0\n' >"${state_dir}/replicas"
