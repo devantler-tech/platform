@@ -408,6 +408,28 @@ fi
   fail "the zero-count refusal must name the annotation that records the count; got: ${zero_count_output}"
 [[ "$(<"${state_dir}/previous-replicas")" == '0' ]] ||
   fail 'a refused zero-count release must preserve the ownership marker for a retry'
+# The remediation runs against prod, but an operator pastes it from whatever
+# context their workstation currently has. Every mutation the guard performs
+# itself pins admin@prod, so the commands it hands out must too, or the retry
+# silently edits an identically named Deployment in another cluster and the
+# production annotation stays at 0.
+[[ "${zero_count_output}" == *'--context admin@prod'* ]] ||
+  fail "the zero-count remediation must pin the prod context; got: ${zero_count_output}"
+
+# The refusal has to cover EVERY release path, not just this phase. The normal
+# deploy's always() post-deploy reassert invokes --after-deploy, and the DR
+# workflow releases exclusively through it, so a refusal that guards only
+# --after-revision-ready is undone moments later: restore_autoscaler_if_owned
+# scales to the remembered zero and then DELETES the annotation, destroying the
+# very marker this refusal just preserved.
+printf '0\n' >"${state_dir}/replicas"
+if zero_count_after_deploy="$(run_guard --after-deploy true 2>&1)"; then
+  fail 'the post-deploy release path must also refuse a remembered zero replica count'
+fi
+[[ "${zero_count_after_deploy}" == *'remembered autoscaler count of 0'* ]] ||
+  fail "the post-deploy zero-count refusal must name the conflict; got: ${zero_count_after_deploy}"
+[[ "$(<"${state_dir}/previous-replicas")" == '0' ]] ||
+  fail 'a refused post-deploy zero-count release must preserve the ownership marker'
 : >"${state_dir}/previous-replicas"
 
 printf '0\n' >"${state_dir}/replicas"

@@ -327,6 +327,26 @@ restore_autoscaler_if_owned() {
     return
   fi
 
+  # A remembered count of ZERO cannot be "restored". Honouring it leaves the
+  # Deployment at zero — which `ksail cluster update` waits on and KSail treats
+  # as never-ready — and the restore below would then DELETE the ownership
+  # annotation, destroying the state a retry needs.
+  #
+  # The refusal lives HERE, inside the release itself, rather than in one phase:
+  # the normal deploy's always() post-deploy reassert and the DR workflow both
+  # release exclusively through this function, so a refusal guarding only
+  # --after-revision-ready would be undone moments later by --after-deploy.
+  #
+  # The remediation must change the REMEMBERED value, not just the running
+  # replica count: get_previous_replicas reads the annotation, so scaling the
+  # Deployment alone leaves the same 0 recorded and the next attempt fails here
+  # again. Both commands pin admin@prod — every mutation this guard performs
+  # does, and an operator pastes these from whatever context they happen to be
+  # on.
+  if [[ "${previous_replicas}" == "0" ]]; then
+    fail "the rollout gate owns a remembered autoscaler count of 0, so releasing it cannot satisfy the readiness check that ksail cluster update performs (KSail treats a zero-replica Deployment as never-ready). Record the intended count and scale to match, then retry: kubectl --context admin@prod -n ${namespace} annotate deployment ${deployment} ${previous_replicas_annotation}=<count> --overwrite && kubectl --context admin@prod -n ${namespace} scale deployment ${deployment} --replicas=<count>. Scaling alone is not enough — the remembered value is what this check reads."
+  fi
+
   require_replica_count "${previous_replicas}" 'remembered autoscaler replica count'
   kubectl_prod -n "${namespace}" scale deployment "${deployment}" \
     --replicas="${previous_replicas}"
@@ -418,20 +438,8 @@ elif [[ "${phase}" == '--after-revision-ready' ]]; then
   # late for that wait, and restoring in --before-publish would do it before the
   # safe artifact is deployed, which the gate deliberately forbids.
   #
-  # A remembered count of ZERO is a different situation and must not be
-  # "restored": the autoscaler was already scaled down before the gate claimed
-  # it, so honouring that intent leaves the Deployment at zero — which is
-  # exactly what cluster update cannot wait on. Restoring it would also clear
-  # the ownership marker and destroy the state a retry needs. Fail here, with
-  # the conflict named, rather than hand cluster update a hang.
-  remembered_replicas="$(get_previous_replicas)"
-  if [[ "${remembered_replicas}" == "0" ]]; then
-    # The remediation must change the REMEMBERED value, not just the running
-    # replica count: get_previous_replicas reads the annotation, so scaling the
-    # Deployment alone leaves the same 0 recorded and the next attempt fails
-    # here again.
-    fail "the rollout gate owns a remembered autoscaler count of 0, so releasing it cannot satisfy the readiness check that ksail cluster update performs (KSail treats a zero-replica Deployment as never-ready). Record the intended count and scale to match, then retry: kubectl -n ${namespace} annotate deployment ${deployment} ${previous_replicas_annotation}=<count> --overwrite && kubectl -n ${namespace} scale deployment ${deployment} --replicas=<count>. Scaling alone is not enough — the remembered value is what this check reads."
-  fi
+  # A remembered count of ZERO is refused inside restore_autoscaler_if_owned,
+  # so it covers this phase and every other release path alike.
   restore_autoscaler_if_owned
 elif [[ "${phase}" == '--after-deploy' ]]; then
   restore_autoscaler_if_owned
