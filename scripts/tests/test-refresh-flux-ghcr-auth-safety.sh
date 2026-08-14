@@ -222,7 +222,6 @@ else
   fail "an unfenced node is not reported as holding a fence"
 fi
 
-
 # Reclaiming a leaked drain fence (#3070). The JSON below is the shape observed
 # in prod on 2026-08-10: an owner annotation, no recovery journal, node left
 # cordoned by the killed transaction.
