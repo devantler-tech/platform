@@ -7,6 +7,12 @@ apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
   name: cilium-network-policies
+  annotations:
+    # Cluster-wide on purpose: Cilium is the CNI for the whole cluster, so
+    # every namespace is segmented by CiliumNetworkPolicy rather than by the
+    # NetworkPolicy objects these controls look for. Scoping this would only
+    # make the controls fail somewhere Cilium is still the enforcement point.
+    platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
     Platform uses CiliumNetworkPolicies for all network segmentation.

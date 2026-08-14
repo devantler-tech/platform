@@ -35,6 +35,13 @@ metadata:
     app.kubernetes.io/name: overprovisioning
     app.kubernetes.io/component: cluster-buffer
     app.kubernetes.io/part-of: platform
+  annotations:
+    # The buffer chunks are VIRTUAL: the capacity-buffer controller injects pods of this shape
+    # into the autoscaler's in-memory scheduling simulation and never creates them, so the
+    # overprovisioning namespace holds zero pods (verified against prod). A probe on a pod that
+    # is never instantiated can never execute, and the pause image serves nothing to probe.
+    checkov.io/skip1: CKV_K8S_8=virtual scheduling placeholder, never instantiated; see the note above
+    checkov.io/skip2: CKV_K8S_9=virtual scheduling placeholder, never instantiated; see the note above
 template:
   metadata:
     labels:

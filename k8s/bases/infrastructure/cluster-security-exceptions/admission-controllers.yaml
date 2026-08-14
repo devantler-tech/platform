@@ -6,6 +6,12 @@ apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
   name: admission-controllers
+  annotations:
+    # Cluster-wide on purpose: the webhook configurations these controls scan
+    # are installed by upstream charts across every controller namespace, and
+    # the platform sets none of them, so there is no narrower scope that is
+    # also complete.
+    platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
     Admission webhook timeouts are configured by upstream Helm charts

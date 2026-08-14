@@ -32,11 +32,12 @@ spec:
     #   vestigial under offline mode, kept harmless — its failure mode is a
     #   skipped version check, not an outage).
     #   NOTE: report.armo.cloud (ARMO posture-report ingestion) is deliberately
-    #   NOT allowed — the operator runs OFFLINE (capabilities.kubescapeOffline:
-    #   enable, see helm-release.yaml), so config-scan results persist to the
-    #   in-cluster storage component instead of being POSTed to ARMO. There is
-    #   no ARMO account, so the submit only ever 400'd "missing account id" and
-    #   aborted the scan; offline mode removes that dependency entirely.
+    #   NOT allowed. The scheduled scan runs local-only via scanV1.keepLocal
+    #   (see kubescapeScheduler.requestBody in helm-release.yaml), so config-scan
+    #   results persist to the in-cluster storage component instead of being
+    #   POSTed to ARMO. There is no ARMO account, so the submit only ever 400'd
+    #   "missing account id" and aborted the scan. Omitting the host here is the
+    #   second, independent guard on that path — keep it out of this list.
     # - github.com + CDNs             — regolibrary / controls artifacts
     # If scan components log download failures, extend this list with the
     # missing host (failure mode is stale scan data, not an outage).
