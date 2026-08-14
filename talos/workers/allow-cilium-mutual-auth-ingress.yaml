@@ -1,8 +1,7 @@
 # Cilium SPIRE mutual authentication (authentication.mutual.spire.enabled in
 # the cilium HelmRelease). cilium-agents perform the agent-to-agent mTLS
-# handshake on TCP 4250 (the mesh-auth listener) for every pod-to-pod flow
-# the hetzner require-mutual-auth CiliumClusterwideNetworkPolicy marks
-# `authentication.mode: required`. The source is the peer node's
+# handshake on TCP 4250 (the mesh-auth listener) for flows that a narrow Cilium
+# policy marks `authentication.mode: required`. The source is the peer node's
 # host-network cilium-agent, so the traffic arrives from the node CIDR.
 # NetworkDefaultActionConfig: block drops inbound 4250 unless allowed here;
 # without this rule the cross-node handshake times out
