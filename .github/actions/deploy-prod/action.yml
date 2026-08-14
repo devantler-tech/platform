@@ -45,6 +45,7 @@ runs:
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
         KSAIL_VERSION: "7.178.25"
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
 
