@@ -1,0 +1,69 @@
+---
+# GENERATED FILE — DO NOT EDIT BY HAND.
+#
+# Regenerate with, from the repository root:
+#   go run ./scripts/generate-kubescape-exceptions \
+#     -format headlamp-configmap \
+#     -o k8s/bases/infrastructure/controllers/kubescape/config-map-headlamp-exceptions.yaml
+#
+# CI regenerates this file and fails on any difference, so a hand edit is
+# reverted by the next run rather than silently kept. Change the
+# ClusterSecurityException CRs in k8s/bases/infrastructure/cluster-security-exceptions/
+# instead — they are the single source of truth — or the template at
+# scripts/generate-kubescape-exceptions/headlamp-configmap.yaml.tmpl for this
+# prose.
+#
+# WHY THIS FILE EXISTS: the pinned plugin (headlamp_kubescape v0.11.2) has its OWN
+# exception mechanism — ConfigMaps labelled `kubescape.io/custom-object: exceptions` —
+# and does NOT read the kubescape.io ClusterSecurityException/SecurityException CRDs.
+# (The CRD-native "Security Exceptions" view exists only on the plugin's unreleased
+# main branch.) Without this ConfigMap the plugin's Exceptions page shows
+# "No data to be shown" and its compliance view recomputes scores client-side
+# with zero exceptions, so every control the CRs except still renders as failing.
+#
+# This file is a presentation-layer FALLBACK for the Headlamp dashboard ONLY.
+# DELETE it (plus the manual step below, and the -format headlamp-configmap mode)
+# once the scanner is confirmed marking excepted controls in prod, OR once the
+# plugin is bumped to a release that reads the CRDs natively — whichever lands
+# first. As of 2026-07-28 neither holds: the deployed scanner is v4.0.10, which
+# should write status=passed/subStatus=w-exceptions into the stored
+# workloadconfigurationscansummaries, but a sweep of all ~2200 summaries found no
+# object carrying that subStatus (platform#2586, platform#2823).
+#
+# WHAT IS MIRRORED: every ClusterSecurityException CR, except those annotated
+# `platform.devantler.tech/headlamp-mirror: exclude`. That marker is for
+# host-scanner exceptions (CIS file permissions/ownership, kubelet and API-server
+# flags) whose controls never attach to a workload, so they cannot be expressed as
+# a workload exception — and whose cluster-wide designator would otherwise except
+# those controls for every workload in the cluster. The exclusion is declared on
+# the CR because there is no structural way to infer it: nine legitimately-mirrored
+# policies also render a bare wildcard.
+#
+# Matching semantics (apply-exceptions.ts): a control is excepted for a workload
+# when a policy's posturePolicies regex matches the controlID AND a resources
+# regex matches the workload's kind/name/namespace. Values are JS RegExp, anchored
+# by the generator for exactness. A CR with no `spec.match` renders as
+# `kind: ".*"`, which matches every workload.
+#
+# IMPORTANT (interim manual step, needed ONLY until a scan marks the summaries):
+# the v0.11.2 plugin applies ONE selected group at a time and recomputes scores
+# client-side, so a viewer must pick the "platform-exceptions" group from the
+# Compliance page's exceptions selector for these to take effect. Once the scanner
+# writes the exception status this is no longer required (the plugin renders the
+# summary status directly).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: headlamp-exceptions
+  namespace: kubescape
+  labels:
+    kubescape.io/custom-object: exceptions
+    app.kubernetes.io/name: platform-exceptions
+    app.kubernetes.io/managed-by: headlamp
+data:
+  name: platform-exceptions
+  description: >-
+    Mirror of the platform ClusterSecurityException CRs for the Headlamp Kubescape
+    plugin (v0.11.2 reads ConfigMaps, not CRDs).
+  exceptionPolicies: |
+{{ .Policies }}

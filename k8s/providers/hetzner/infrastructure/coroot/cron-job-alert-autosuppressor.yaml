@@ -24,8 +24,8 @@
 #      APIs (kubernetes-sigs/custom-metrics-apiserver#146, SIG-confirmed correct).
 #      SAFETY: matched on the alert's Sample log line containing BOTH distinctive
 #      substrings, so the SEPARATE `horizontal.go "failed to compute"` pattern on
-#      the same app (the Cilium mutual-auth symptom, cilium/cilium#46767, a real
-#      issue) and any genuinely new kube-controller-manager error are never
+#      the same app (`horizontal.go "failed to compute"`) and any genuinely new
+#      kube-controller-manager error are never
 #      touched (they are a different pattern / fingerprint and still alert).
 #
 #   2. tofu-empty-aaaa - tofu-controller "DNS NXDOMAIN errors". This cluster is
@@ -116,10 +116,8 @@ spec:
                 - |
                   set -u
                   BASE="http://coroot-coroot.observability.svc.cluster.local:8080"
-                  # Cilium mutual-auth drops the FIRST packet of this short-lived
-                  # pod's connection to coroot while the SPIRE handshake completes
-                  # (same race custom-cloud-pricing documents), so retry transient
-                  # connection/setup errors.
+                  # This short-lived pod can race endpoint readiness or transient
+                  # CNI convergence, so retry connection/setup errors.
                   RETRY="-sS --retry 5 --retry-delay 2 --retry-all-errors --retry-connrefused --max-time 30"
 
                   # Resolve the operator-created 'platform' project id (a random
@@ -132,7 +130,7 @@ spec:
 
                   # Exemption 1 - kube-controller-manager KEDA-GC reflector pattern.
                   # Match the Sample line on BOTH substrings so the separate
-                  # horizontal.go pattern (cilium/cilium#46767) and any new kcm
+                  # horizontal.go pattern and any new kcm
                   # error are never suppressed.
                   for id in $(printf '%s' "$ALERTS" | jq -r '.data.alerts[]
                       | select(.suppressed==false and .resolved_at==null and .rule_id=="new-log-patterns"

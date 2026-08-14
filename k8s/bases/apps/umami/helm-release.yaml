@@ -11,7 +11,7 @@ spec:
   chart:
     spec:
       chart: umami
-      version: 2.2.0
+      version: 2.3.0
       sourceRef:
         kind: HelmRepository
         name: umami
@@ -115,7 +115,7 @@ spec:
         port: "5432"
         name: umami
         username: umami
-        existingSecret: umami-db-rotated
+        existingSecret: umami-db-rotated  # checkov:skip=CKV_SECRET_6:names an existing Secret; the value lives in OpenBao
         existingSecretPasswordKey: password
     service:
       # Service port 80 -> container port 3000 (named `http`).

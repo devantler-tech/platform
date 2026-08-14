@@ -15,10 +15,10 @@ resources:
   # node-agent (kubescape/patches/ below) and routing to Slack. See its
   # helm-release.yaml header. Prod-only (runtimeDetection is off on docker/local).
   - alertmanager/
-  # Prod-only: layers a cluster-wide mutual-auth (SPIRE mTLS) policy on top of
-  # the base Cilium controller listed above. SPIRE is enabled only on Hetzner,
-  # so the policy lives here, not in the base — see cilium/ for the rationale.
-  - cilium/
+  # Cilium is supplied by the base controller aggregate. Authentication must
+  # be scoped inside each workload's narrow allow rule: an empty
+  # fromEndpoints selector is itself a broad allow, even when paired with
+  # authentication.mode: required.
   - coredns/
   # Prod-only: Crossplane core for declarative GitHub management — external
   # reconcilers must run on exactly one always-on cluster. The provider
@@ -67,21 +67,21 @@ components:
   - ../../../../bases/components/helmrelease-drift-detection
   - ../../../../bases/components/helmrelease-flux-defaults
   # ALWAYS-ON: the live private-NIC Cilium device pin (moved out of the
-  # strict-mode patch so the staged homogeneous-devices/ successor below can
+  # strict-mode patch so the homogeneous-devices/ successor below can
   # override it — parent `patches:` apply after component patches, so a value
   # they carry is un-overridable by any component; see the component header).
-  # Keep referenced until homogeneous-devices/ is activated AND soaked.
+  # Keep referenced during the operator-stepped activation and soak; the
+  # later homogeneous component wins because it is listed after this one.
   - cilium/components/private-nic-devices/
-  # Default-off homogeneous device selection (#2610): widens the device set to
+  # ACTIVE homogeneous device selection (#2610): widens the device set to
   # the public default-route NICs via wildcards ("en+ eth+") so
   # ebpf-host-routing's BPF masquerade can attach where pod egress actually
-  # leaves. MUST stay listed AFTER private-nic-devices/ when enabled (later
-  # component wins). The component also sets updateStrategy OnDelete, so
-  # enabling it stages config without rolling any agent — the operator steps
-  # the roll pod-by-pod per the component's runbook (verify each node keeps a
-  # private primary address before the next). Rollback = re-comment (stepped
-  # nodes roll back automatically under the restored RollingUpdate).
-  # - cilium/components/homogeneous-devices/
+  # leaves. MUST stay listed AFTER private-nic-devices/ (later component wins).
+  # The widened set is live on every node and the DaemonSet is back on the
+  # chart's normal rolling update, so the deploy performs its `ksail cluster
+  # update` Talos machine-config sync again. Rollback = re-comment (every node
+  # rolls back under the rolling update).
+  - cilium/components/homogeneous-devices/
   # Default-off Cilium bandwidth-manager + host-only BBR staging component
   # (#2607). It is not activation-ready: #2609 must prove pod-BBR datapath
   # prerequisites and #2610's homogeneous-devices/ must be activated first.
@@ -103,8 +103,9 @@ patches:
   - path: openbao/patches/store-data-on-hcloud.yaml
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
-  # Prod-only: move the SPIRE server datastore off Longhorn onto hcloud-csi to
-  # break the SPIRE <-> Longhorn <-> mTLS circular deadlock — see file.
+  # Dormant prod-only SPIRE storage values. Authentication/SPIRE stay disabled
+  # until a narrow policy consumer lands; if re-enabled, keep the datastore off
+  # Longhorn to avoid the SPIRE <-> Longhorn <-> mTLS cycle — see file.
   - path: cilium/patches/store-spire-data-on-hcloud.yaml
   # Prod-only: switch Velero to a MIXED backup model — CSI volume snapshots +
   # data movement for Longhorn-backed PVCs (→ R2), file-system (Kopia) backup
