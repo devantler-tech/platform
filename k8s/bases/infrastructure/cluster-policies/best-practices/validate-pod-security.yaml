@@ -10,6 +10,12 @@
 # intentionally set it to false (homepage, opencost UI, actual-budget)
 # and PSS restricted does not require it. It is enforced via HelmRelease
 # values where possible and the mutation policy adds it as a default.
+#
+# Exclusions are namespace-scoped only. Local-path-provisioner helper pods run
+# in the provisioner's own namespace — `local-path-storage` under kind, or
+# `kube-system` under k3s — and both are already excluded below, so they need
+# no name-based entry. A name-only exclusion would be spoofable by any pod that
+# adopts the same name in any namespace.
 
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
