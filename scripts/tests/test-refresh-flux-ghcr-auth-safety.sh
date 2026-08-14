@@ -146,6 +146,9 @@ fi
 # Reclaiming a leaked drain fence (#3070). The JSON below is the shape observed
 # in prod on 2026-08-10: an owner annotation, no recovery journal, node left
 # cordoned by the killed transaction.
+# The owner tokens are synthetic stand-ins: the fence logic compares them for
+# equality only and never parses them, and the assertions below key on node name
+# and on the phase/recovery annotations rather than on the owner value.
 orphan_nodes="${work_dir}/orphan-nodes.json"
 orphan_targets="${work_dir}/orphan-targets.tsv"
 
@@ -153,18 +156,18 @@ if declare -F select_orphaned_node_fences >/dev/null; then
   jq -n '
     {items: [
       {metadata: {name: "prod-control-plane-2", uid: "uid-leaked",
-        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "4384f07cc5a864b0-2430-6444",
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "fake-lease-holder-2430-6444",
                       "platform.devantler.tech/ghcr-auth-drain-phase": "claimed"}},
        spec: {unschedulable: true}},
       {metadata: {name: "prod-worker-3", uid: "uid-mutating",
-        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "4384f07cc5a864b0-7-7",
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "fake-lease-holder-7-7",
                       "platform.devantler.tech/ghcr-auth-drain-phase": "mutating"}},
        spec: {unschedulable: true}},
       {metadata: {name: "prod-worker-4", uid: "uid-phaseless",
-        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "4384f07cc5a864b0-8-8"}},
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "fake-lease-holder-8-8"}},
        spec: {unschedulable: true}},
       {metadata: {name: "prod-worker-1", uid: "uid-journalled",
-        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "4384f07cc5a864b0-9-9",
+        annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "fake-lease-holder-9-9",
                       "platform.devantler.tech/ghcr-auth-drain-recovery": "{\"phase\":\"active\"}",
                       "platform.devantler.tech/ghcr-auth-drain-phase": "claimed"}},
        spec: {unschedulable: true}},
