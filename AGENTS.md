@@ -426,6 +426,43 @@ These conventions guide the autonomous **Daily AI Assistant** — and any agenti
 
 **Merge queue — `main` IS gated by a GitHub merge queue** (`Require merge queue` ruleset). Merge mechanics differ from non-queue repos: `gh pr merge --auto` *enqueues* (don't pass `--squash` — the queue sets the strategy), and `autoMergeRequest` stays `null` even while a PR is queued, so a queued PR can look un-queued in JSON. A queued PR runs the **`merge_group`** event of `ci.yaml`, whose `deploy-prod` job **deploys to the real prod cluster** — so a `merge_group` failure **evicts the PR from the queue**. **Root-cause a stall/kick-out before re-queuing** (per the monorepo contract *Merge policy → Merge-queue repos*): a PR that "was queued" but didn't merge has usually failed its `merge_group` run — pull it (`gh run list --event merge_group --json headBranch,conclusion` → `pr-<n>` → `gh run view --log-failed`) and diagnose. The `deploy-prod` step's inline tenant provisioning can still expose a real platform fault during the gating verify; when that happens, re-queuing just re-hits it — advance the root-cause fix rather than looping the PR. Only a genuine one-off transient (runner OOM, network) warrants a clean re-queue.
 
+🔴 **`BLOCKED` on a fully green head means an UNSATISFIED REQUIRED WORKFLOW — and nothing on the PR
+says so.** `main`'s ruleset requires the org-injected workflow **`✅ Validate Go Project`**
+(`.github/workflows/validate-go-project.yaml`, supplied from `devantler-tech/actions`). The
+requirement is evaluated against a run of that workflow **for the current head**, and a workflow
+cannot fire retroactively — so a PR whose head predates the requirement can never be enqueued, no
+matter what is done to it.
+
+Every visible signal says such a PR is fine: all check runs `success`/`skipped` including the
+required `CI - Required Checks`, **0** approvals needed, `mergeStateStatus: BLOCKED` with nothing on
+the head explaining it, and **`gh pr merge` exits 0, prints nothing, and does not queue it** (on this
+repo it silently arms auto-merge instead). The only surface that names the cause is the enqueue
+mutation:
+
+```
+enqueuePullRequest(input:{pullRequestId:"<id>"}) →
+  UNPROCESSABLE: Pull request Required workflow '✅ Validate Go Project' is not satisfied
+```
+
+**Diagnose by RUN, never by check-run name.** The workflow's *jobs* appear as check runs under their
+own names (`🏗️ Build`, `🧪 Test`, …), so grepping check-run names for the workflow title reports zero
+on a head that is perfectly satisfied. Ask which workflows ran instead:
+
+```sh
+gh api "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100" \
+  --jq '[.workflow_runs[]|select(.path==".github/workflows/validate-go-project.yaml")]|length'
+```
+
+**The fix is to move the head** — `PUT /repos/{owner}/{repo}/pulls/{n}/update-branch` (a merge of
+`main`, never a force-push) makes the workflow fire. Verify the effect with the query above; the
+API's `202 Updating pull request branch` only means the update was accepted. A conflicting
+(`mergeable_state: dirty`) PR cannot be updated this way and needs its conflict resolved first.
+
+**Never judge an enqueue by `gh pr merge`'s exit code.** Read the rejection reason from the
+`enqueuePullRequest` mutation, and assert the effect with GraphQL `isInMergeQueue` +
+`mergeQueueEntry{state,position}` — `autoMergeRequest` stays `null` either way, so silence is not
+failure and exit 0 is not success.
+
 **Safe cancellation:** once a merge-group `deploy-prod` job enters the shared deploy composite, it
 may already have pushed the speculative ref to the mutable `latest` tag. Use only a normal workflow
 cancellation; the `always()` heal job treats the cancelled deploy as unsuccessful and restores the
