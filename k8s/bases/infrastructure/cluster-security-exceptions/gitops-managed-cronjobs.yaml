@@ -16,6 +16,8 @@
 #   * longhorn-system/longhorn-stale-node-cleanup — prunes stale Longhorn node objects for gone
 #                                                   autoscaled nodes (platform)
 #   * observability/cluster-heartbeat             — external-uptime heartbeat ping (platform)
+#   * observability/cnpg-degraded-alert           — alerts on a CNPG cluster degraded past its
+#                                                   grace period (platform)
 #   * observability/coroot-alert-autosuppressor   — re-asserts by-design Coroot alert suppressions (platform)
 #   * observability/coroot-custom-cloud-pricing   — applies Hetzner per-unit pricing to Coroot (platform)
 #   * openbao/vault-snapshot                      — OpenBao raft-snapshot backup (platform)
@@ -42,8 +44,9 @@ spec:
     All CronJobs on this cluster are GitOps-managed platform components delivered
     by Flux after PR review (the review is the approval): Cilium Hubble cert
     rotation, the Kubescape scan schedulers, Longhorn stale-node cleanup, the
-    observability heartbeat / Coroot alert-autosuppressor / Coroot cloud-pricing
-    jobs, the OpenBao raft-snapshot backup, and Umami tenant provisioning.
+    observability heartbeat / CNPG degraded-cluster alert / Coroot
+    alert-autosuppressor / Coroot cloud-pricing jobs, the OpenBao raft-snapshot
+    backup, and Umami tenant provisioning.
     Namespace-scoped to the infrastructure namespaces that run these, so a CronJob
     in any unexpected namespace still surfaces for review.
   posture:

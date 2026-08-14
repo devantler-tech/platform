@@ -9,14 +9,24 @@
 # verbs over the namespaced provider-upjet-github managed-resource API groups,
 # and only within the github-config namespace. Because the managed resources are
 # namespaced (Crossplane v2 `*.github.m.upbound.io`), a plain Role + RoleBinding
-# suffices — no ClusterRole/ClusterRoleBinding, no cluster RBAC. Widen apiGroups
-# here only as new GitHub MR groups are activated in the
-# ManagedResourceActivationPolicy.
+# suffices — no ClusterRole/ClusterRoleBinding, no cluster RBAC.
+#
+# Each managed-resource rule names its resources explicitly rather than `*`, so
+# the Role grants exactly the kinds the ManagedResourceActivationPolicy turns
+# into CRDs and nothing else. That parity is the invariant: extend BOTH this
+# file and
+# k8s/providers/hetzner/infrastructure/crossplane/managed-resource-activation-policy.yaml
+# when a new GitHub MR kind comes under management.
+# scripts/tests/test-github-config-role-activation-parity.sh fails the build
+# naming the missing kind if the two ever disagree, so the omission surfaces in
+# CI instead of as a runtime apply failure inside the tenant's Flux
+# Kustomization.
 #
 # The .github artifact the SA applies also contains the namespaced ProviderConfig
 # (github.m.upbound.io) and the GitHub App credential ExternalSecret
 # (external-secrets.io), so the SA needs verbs on those two groups too — still
-# confined to this namespace.
+# confined to this namespace. Neither is a managed resource, so neither
+# participates in the activation-policy parity check above.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -27,12 +37,65 @@ metadata:
 rules:
   - apiGroups:
       - repo.github.m.upbound.io
+    resources:
+      - repositories
+      - defaultbranches
+      - branchprotections
+      - repositoryrulesets
+      - issuelabels
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
       - team.github.m.upbound.io
+    resources:
+      - teams
+      - teammemberships
+      - teamrepositories
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
       - actions.github.m.upbound.io
+    resources:
+      - repositorypermissions
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  - apiGroups:
       - enterprise.github.m.upbound.io
+    resources:
+      - organizationrulesets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  # The tenant applies the namespaced ProviderConfig that binds its managed
+  # resources to the GitHub App credential. ProviderConfigUsage is written by
+  # the provider controller, never by this ServiceAccount, so it stays out.
+  - apiGroups:
       - github.m.upbound.io
     resources:
-      - "*"
+      - providerconfigs
     verbs:
       - get
       - list

@@ -6,6 +6,19 @@ kind: Job
 metadata:
   name: minio-create-bucket
   namespace: minio
+  annotations:
+    # A file-based route does exist -- `mc alias import <alias>` reads an alias
+    # definition as JSON on stdin -- so this is deferred, not refused, and the
+    # reason is verification rather than absence. Adopting it restructures this
+    # script's control flow: `alias import` never contacts the server, so the
+    # `until mc alias set ...` loop that currently waits for MinIO to come up
+    # has to move onto the bucket creation instead. Platform CI is static
+    # validation with no full-cluster system test, and maintenance must not run
+    # a cluster, so neither that restructure nor `alias import`'s availability
+    # in this pinned release can be exercised here -- a mistake would surface
+    # only when someone next opted into the local backup test-bed. Tracked with
+    # the rest of the group on #3018. Scoped to this resource and this check.
+    checkov.io/skip1: "CKV_K8S_35=deferred to #3018 -- `mc alias import` is the file-based route, but adopting it restructures this Job's wait loop and no environment here can exercise the result"
 spec:
   backoffLimit: 20
   ttlSecondsAfterFinished: 3600
@@ -15,10 +28,17 @@ spec:
       # The bucket-creation Job runs the mc client only; it never calls the
       # Kubernetes API, so it needs no ServiceAccount token (kubescape C-0034).
       automountServiceAccountToken: false
+      # UID 65532 rather than a low one (checkov CKV_K8S_40). Nothing here
+      # constrains the UID: the mc image declares no `User` at all, so it would
+      # run as root unedited, and its /etc/passwd has no entry for the UID this
+      # ran under before — the client is already running unmapped and does not
+      # care. Its only volume is a `mc-config` emptyDir carrying no `fsGroup`,
+      # so no UID owns it, and `MC_CONFIG_DIR` points mc's state there rather
+      # than at a home directory that would have to exist.
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
+        runAsUser: 65532
+        runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
