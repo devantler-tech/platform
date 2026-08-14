@@ -1,0 +1,15 @@
+# Default-off component for platform#2689.
+#
+# OpenCost's Prometheus query source currently has kube-state metrics but no
+# container CPU or memory usage series. This bounded Prometheus agent supplies
+# only those missing cAdvisor series. Keep the component unreferenced until a
+# separate activation change can deploy, observe, and roll it back independently.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - service-account.yaml
+  - cluster-role.yaml
+  - cluster-role-binding.yaml
+  - config-map.yaml
+  - deployment.yaml
+  - cilium-network-policy.yaml

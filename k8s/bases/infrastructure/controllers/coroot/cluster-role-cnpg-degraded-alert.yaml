@@ -1,0 +1,18 @@
+# What the cnpg-degraded-alert CronJob may read.
+#
+# Read-only, and ONLY the CNPG Cluster CR. The check has to see clusters in every
+# namespace that runs one (umami, wedding-app, backstage, observability), so it is
+# cluster-scoped by necessity — but it is list-only on a single resource type,
+# which is the least privilege that satisfies that.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cnpg-degraded-alert
+rules:
+  - apiGroups:
+      - postgresql.cnpg.io
+    resources:
+      - clusters
+    verbs:
+      - list

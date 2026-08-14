@@ -105,7 +105,7 @@ spec:
     # generated one. The chart only consults it; it never writes to it.
     credentials:
       useSecret: true
-      existingSecret: velero-r2-credentials
+      existingSecret: velero-r2-credentials  # checkov:skip=CKV_SECRET_6:names an existing Secret; the value lives in OpenBao
 
     # Cloudflare R2 backup target. Bucket + endpoint come from the shared
     # variables-base ConfigMap; prefix is reused per consumer (PR #3).

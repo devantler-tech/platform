@@ -50,69 +50,78 @@
 # the node-address selection of the running 1.20.0-pre.4 is not documented
 # precisely enough to TRUST that the primary stays private — the 2026-06-19
 # incident showed device-set changes can flip it. So: activate one node at a
-# time and verify before proceeding (runbook below). Note the SPIRE
-# mutual-auth dial itself is intermittently public-IP-bound REGARDLESS of
-# this selection (upstream cilium/cilium#46767, random node-IP pick); that
-# pre-existing defect is tracked separately and is NOT widened by this
-# component as long as the primary/routing address stays private.
+# time and verify before proceeding (runbook below). Cilium node-control traffic
+# must continue to use the private path admitted by the Talos firewall.
 #
-# ROLLOUT GATE (why this component ALSO sets updateStrategy OnDelete): the
-# base HelmRelease's `rollOutCiliumPods: true` would start an automatic
-# DaemonSet rollout the moment this component is referenced, proceeding to
-# the next node as soon as each updated agent reports Ready — no pause point
-# exists, so the per-node verification below would be unexecutable and a bad
-# primary-address selection could reach the fleet before detection. OnDelete
-# makes the roll operator-stepped: the new config only reaches a node when
-# that node's cilium pod is deleted. The override lives HERE so it applies
-# exactly while the widened device set is being introduced, and its removal
-# (after the fleet is verified) is a strategy-only change that rolls nothing.
+# ROLLOUT STATE: the widened device set is live on all nine nodes, and the
+# temporary operator-stepping overrides this component used to carry
+# (`updateStrategy: OnDelete` plus the Helm `spec.upgrade.disableWait` handoff)
+# are gone. The DaemonSet is back on the chart's normal rolling update, so a
+# future Cilium template change rolls the fleet the ordinary way.
 #
-# GATE LIMITS (what OnDelete does NOT stop): a pod that restarts for any
-# OTHER reason during the window (crash, eviction, node reboot) is recreated
-# from the NEW template immediately, and so is the agent on any NODE the
-# cluster autoscaler adds mid-window — OnDelete gates template-driven
-# replacement only. The runbook therefore suspends autoscaler node creation
-# for the window and treats any incidental restart as an involuntary canary
-# to verify at once.
+# The private-primary risk described above is a property of the widened device
+# set itself, not of the introduction, so it still applies: any NEW node — every
+# autoscaler-created one included — boots the widened set directly. Verify the
+# first such node like a stepped one (agent Ready; its log shows both NICs; the
+# node's advertised router/tunnel addresses stay 10.0.1.x per `kubectl get
+# ciliumnodes`; no cilium-health regression or auth-timeout storm).
 #
-# ACTIVATION RUNBOOK (separate PR referencing this component; low-traffic
-# window):
-#   0. Suspend autoscaler node creation for the window:
-#      `kubectl -n kube-system scale deploy
-#      cluster-autoscaler-hetzner-cluster-autoscaler --replicas=0`. The
-#      autoscaler is ksail-provisioned (ksail.prod.yaml `autoscaler.node`),
-#      not Flux-managed, so the scale-down holds until step 5 restores
-#      `--replicas=1`. Confirm the over-provisioning CapacityBuffer headroom
-#      is idle enough that no scale-up would have fired.
-#   1. Reference this component in ../../../kustomization.yaml `components:`.
-#      Under OnDelete, NO agent restarts yet — the new device set is staged
-#      in the agent ConfigMap only. Watch for INVOLUNTARY canaries from here
-#      on: any cilium pod that restarts for unrelated reasons now boots the
-#      widened set — run step 2's verification on it immediately.
-#   2. Delete ONE node's cilium pod (`kubectl -n kube-system delete pod
-#      <cilium-x>`) and verify its replacement before touching the next:
-#      agent Ready; its log shows the widened device set (e.g.
-#      devices=[enp1s0 enp7s0]) and NO public primary (the node's advertised
-#      router/tunnel addresses stay 10.0.1.x — check the agent's
-#      node-address/NodeAddress log lines and `kubectl get ciliumnodes`);
-#      cilium-health reachability intact; no new policy-verdict DROPs or
-#      auth-timeout storms in Hubble/agent logs (a `dial <public-ip>:4250`
-#      RATE INCREASE beyond the known #46767 background is a regression).
-#   3. Repeat node by node across all nine; soak.
-#   4. After the soak, a follow-up PR removes the `updateStrategy` override
-#      from this component — restoring RollingUpdate is a strategy-only
-#      change (the pod template is already current), so it rolls nothing.
-#   5. Restore the autoscaler (`--replicas=1`) and verify the FIRST
-#      autoscaler-created node after resume like a stepped node (its agent
-#      boots the widened set directly).
-#   6. Only then does ebpf-host-routing (#2609) become referenceable;
-#      bandwidth-manager-bbr activation follows its own soak (see those
-#      components' guards).
-#   ROLLBACK (any point): re-comment the component reference — the template
-#   reverts to the private-only pin and RollingUpdate resumes, so every
-#   already-stepped node rolls BACK automatically. Un-stepped nodes keep the
-#   old config UNLESS their pod restarted during the window (the involuntary
-#   canaries above) — those roll back with the stepped ones.
+# ROLLBACK: re-comment the component reference in ../../../kustomization.yaml —
+# the template reverts to the private-only pin and every node rolls back under
+# the restored rolling update.
+#
+# ebpf-host-routing (#2609) is unblocked by this activation and becomes
+# referenceable; bandwidth-manager-bbr follows its own soak (see those
+# components' guards).
+#
+# STEPPED-ROLLOUT RUNBOOK — the procedure for any FUTURE change to this
+# component's device set, and the steps
+# scripts/report-cilium-rollout-gate-suppression.sh cites when the gate's
+# 7-day warning or 14-day failure fires. It is live guidance, not a record of
+# the completed rollout: reintroducing `updateStrategy: OnDelete` plus
+# `spec.upgrade.disableWait` here is what re-arms the gate, and nothing else
+# does (the guard reads it as active only when this component is referenced AND
+# carries `type: OnDelete`).
+#   0. Confirm `cluster-autoscaler-hetzner-cluster-autoscaler` is at zero — the
+#      deploy records its replica count and scales it down before publishing —
+#      and that over-provisioning headroom is idle enough that no scale-up would
+#      have fired. The guard is fail-closed; never bypass a failed suspension.
+#   1. Reference the component with both overrides and declare
+#      `platform.devantler.tech/rollout-gate-activated: <YYYY-MM-DD>` beside it.
+#      Under OnDelete no agent restarts yet; the set is staged in the agent
+#      ConfigMap only. Watch for INVOLUNTARY canaries from here: any cilium pod
+#      that restarts for an unrelated reason boots the new set — verify it at
+#      once with step 2.
+#   2. Delete ONE node's cilium pod and verify its replacement before touching
+#      the next: agent Ready; its log shows the intended device set; the node's
+#      advertised router/tunnel addresses stay 10.0.1.x (`kubectl get
+#      ciliumnodes`) — a PUBLIC primary is a rollback, not a warning;
+#      cilium-health reachable; no new policy-verdict DROPs or auth-timeout
+#      storms.
+#   3. Repeat node by node, then soak. If any desired Cilium pod template value
+#      changes mid-rollout, compare every agent's `pod-template-generation`
+#      against the DaemonSet generation and re-step every stale node, including
+#      ones verified before the change. An older canary never approves a newer
+#      template.
+#   4. RELEASE: once every agent is Ready at the current DaemonSet generation,
+#      a follow-up PR removes the `updateStrategy` and `spec.upgrade.disableWait`
+#      overrides and the activation marker. The pre-publish guard independently
+#      re-checks that no agent is stale, so it refuses a premature release. With
+#      the fleet already on the current template, returning to RollingUpdate
+#      rolls nothing. A chart or other Helm-value change stages and soaks
+#      separately.
+#   5. That release restores the deploy: `ksail cluster update` runs again. The
+#      autoscaler suspension is restored by the guard's --after-revision-ready
+#      phase — after Flux proves the released revision Ready and BEFORE cluster
+#      update — not by the post-deploy phase. That ordering is load-bearing:
+#      cluster update waits for the cluster-autoscaler Deployment, and KSail
+#      treats a zero-replica Deployment as never-ready, so a release that
+#      restored afterwards would hang on the suspension it owns (observed in
+#      prod 2026-08-09). The post-deploy phase remains the failure-path net.
+#      Verify the FIRST autoscaler-created node afterwards like a stepped one —
+#      it boots the new set directly, and its machine template is refreshed by
+#      the same cluster update, so a node created in the short window before
+#      that step warrants the same check.
 #
 # MERGE-ORDER NOTE (load-bearing): parent `patches:` are applied AFTER all
 # component patches — a devices value carried by
@@ -133,16 +142,14 @@ patches:
       name: cilium
       namespace: kube-system
     patch: |
-      apiVersion: helm.toolkit.fluxcd.io/v2
-      kind: HelmRelease
-      metadata:
-        name: cilium
-        namespace: kube-system
-      spec:
-        values:
-          devices: "en+ eth+"
-          # Operator-stepped rollout gate — see ROLLOUT GATE above. Removed
-          # by a follow-up PR once all nodes are verified (strategy-only
-          # change; rolls nothing).
-          updateStrategy:
-            type: OnDelete
+      - op: replace
+        path: /spec/values/devices
+        value: "en+ eth+"
+      # The wildcard device set includes each node's public NIC. Keep Cilium's
+      # kube-proxy-replacement NodePort listeners on private node addresses so
+      # tenant-created Services cannot bypass the Gateway exposure boundary.
+      - op: add
+        path: /spec/values/nodePort
+        value:
+          addresses:
+            - 10.0.0.0/16
