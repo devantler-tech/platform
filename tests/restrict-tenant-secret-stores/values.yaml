@@ -1,0 +1,11 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+namespaceSelector:
+  - name: tenant-ns
+    labels:
+      app.kubernetes.io/managed-by: ksail
+  - name: platform-ns
+    labels: {}

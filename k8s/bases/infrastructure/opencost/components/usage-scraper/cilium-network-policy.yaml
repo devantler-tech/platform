@@ -1,0 +1,20 @@
+# Additive egress for the default-off usage-scraper component. The base
+# allow-opencost policy already grants API discovery, Prometheus remote-write,
+# and DNS. This rule adds only direct authenticated kubelet HTTPS access.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-opencost-usage-scraper
+  namespace: opencost
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: opencost-usage-scraper
+  egress:
+    - toEntities:
+        - host
+        - remote-node
+      toPorts:
+        - ports:
+            - port: "10250"
+              protocol: TCP

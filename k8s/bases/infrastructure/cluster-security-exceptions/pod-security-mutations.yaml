@@ -15,6 +15,46 @@ apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
   name: pod-security-mutations
+  annotations:
+    # Cluster-wide, and KNOWN to be wider than its own rationale (#2824). The
+    # compensating mutation named below excludes twelve namespaces —
+    # kube-system, kube-public, kube-node-lease, flux-system, longhorn-system,
+    # local-path-storage, kubescape, kubevirt, cdi, observability, velero,
+    # chaos-mesh — so in exactly those namespaces this exception suppresses
+    # C-0013/C-0016/C-0055/C-0211 with nothing injecting them. Six of the twelve
+    # are separately and deliberately excepted for C-0013/C-0016/C-0055 in
+    # infrastructure-privileged.yaml; C-0211 and the other six are not covered
+    # anywhere. Narrowing it needs a scope the CSE designators cannot yet spell
+    # (an In-list would fail every newly-onboarded namespace), which is why this
+    # is declared rather than fixed here.
+    #
+    # cert-manager, keda and opencost are NOT part of that set even though
+    # add-pod-security-context excludes them: add-imageuid-pod-security-context
+    # matches those three namespaces by name and supplies the pod-level fields.
+    # Read the mutation's match blocks, not only its exclusions.
+    #
+    # Measured surface for C-0013/C-0016/C-0055 (prod, 2026-08-10), which is
+    # what makes the declaration reviewable rather than open ended: half of the
+    # twelve namespaces run no workloads at all. kube-public and kube-node-lease
+    # exist but are empty; local-path-storage, kubevirt, cdi and chaos-mesh have
+    # no namespace in prod, the VM stack and chaos tooling being opt-in. Six run
+    # workloads, and four of those — kube-system, longhorn-system, observability
+    # and velero — are the excepted set above, leaving flux-system and kubescape
+    # as the genuinely uncovered pair. In those two, the container-level fields
+    # these controls check are set in-spec everywhere except the kubescape,
+    # kubevuln and operator Deployments, which lack capabilities.drop: [ALL] and
+    # a container-level seccompProfile. Hardening those three is tracked in
+    # #3064; the four excepted namespaces were not measured, being out of scope.
+    # These counts are a prod-only snapshot: the local overlay opts in to a
+    # different set, so re-measure rather than assuming they still hold.
+    #
+    # C-0211 is deliberately NOT sized here. It has no other exception, its
+    # field set differs from the three above (fsGroupChangePolicy, runAsUser
+    # and runAsGroup are supplied by the mutation), and the name-scoped
+    # kubescape-privileged.yaml does not cover it — so node-agent and storage
+    # remain inside its residual population rather than excepted out of it.
+    # Sizing it needs its own per-workload pass; #3064 carries that.
+    platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
     Kyverno mutate policy "add-security-context" injects these controls
