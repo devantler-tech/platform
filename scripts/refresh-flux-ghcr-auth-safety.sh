@@ -490,3 +490,41 @@ other_control_planes_safe_to_reboot() {
     fi
   done <"${peer_file}"
 }
+
+# Select drain fences that are provably orphaned, for reclaim by the caller.
+#
+# The caller supplies this only after acquiring the synchronization Lease, and
+# acquisition refuses any non-empty holderIdentity — so at that instant no
+# bridge transaction was running, and a fence is only ever held by a running
+# transaction. Every fence present at that moment is therefore ownerless, which
+# is the liveness proof that makes reclaim safe without a run id or a timestamp.
+#
+# A fence carrying a recovery journal is deliberately EXCLUDED: the journal
+# records an interrupted bootstrap whose phase decides what is safe, bootstrap
+# recovery owns it, and clearing it would destroy the only durable record of an
+# in-flight Talos mutation.
+select_orphaned_node_fences() {
+  local nodes_file="$1"
+  local targets_file="$2"
+
+  jq -r \
+    --arg owner_annotation "platform.devantler.tech/ghcr-auth-drain-owner" \
+    --arg recovery_annotation "platform.devantler.tech/ghcr-auth-drain-recovery" \
+    --arg phase_annotation "platform.devantler.tech/ghcr-auth-drain-phase" '
+    .items[]
+    | (.metadata.annotations // {}) as $annotations
+    | select((($annotations[$owner_annotation]) // "") != "")
+    | select((($annotations[$recovery_annotation]) // "") == "")
+    # Only a fence that never reached Talos mutation is provably safe to clear.
+    # A missing phase is a PRE-#3070 fence of unknown depth, so it fails closed
+    # here exactly like "mutating" does -- absence is never read as innocence.
+    | select((($annotations[$phase_annotation]) // "") == "claimed")
+    | [
+        .metadata.name,
+        (.metadata.uid // ""),
+        $annotations[$owner_annotation],
+        ((.spec.unschedulable // false) | tostring)
+      ]
+    | @tsv
+  ' "${nodes_file}" >"${targets_file}"
+}

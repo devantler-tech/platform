@@ -107,6 +107,16 @@ readonly CORDON_OWNER_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-owner"
 readonly CORDON_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner"
 readonly CORDON_RECOVERY_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-recovery"
 readonly CORDON_RECOVERY_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-recovery"
+# Records how far a fence got, so a LEAKED fence is self-describing (#3070).
+# Written "claimed" in the claim patch itself, then advanced to "mutating"
+# BEFORE the first Talos mutation. That ordering is what makes the marker
+# trustworthy in both kill directions: killed before the advance lands, the
+# fence still reads "claimed" and nothing was mutated; killed after it lands but
+# before the mutation runs, it reads "mutating" and we refuse — conservative,
+# never the reverse. There is no window in which Talos is mutated under a fence
+# still reading "claimed".
+readonly CORDON_PHASE_ANNOTATION="platform.devantler.tech/ghcr-auth-drain-phase"
+readonly CORDON_PHASE_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase"
 KSAIL_OPERATOR_VERSION="$(yq -er '.spec.chart.spec.version' \
   k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml)"
 readonly KSAIL_OPERATOR_VERSION
@@ -1038,6 +1048,7 @@ build_and_apply_cordon_claim() {
       --arg owner "${owner_token}" \
       --arg recovery_path "${CORDON_RECOVERY_JSON_PATH}" \
       --arg recovery "${recovery_record}" \
+      --arg phase_path "${CORDON_PHASE_JSON_PATH}" \
       --arg uid "${node_uid}" \
       --arg resource_version "${resource_version}" '
       [
@@ -1047,7 +1058,8 @@ build_and_apply_cordon_claim() {
           value: $resource_version
         },
         {op: "test", path: "/metadata/uid", value: $uid},
-        {op: "add", path: $owner_path, value: $owner}
+        {op: "add", path: $owner_path, value: $owner},
+        {op: "add", path: $phase_path, value: "claimed"}
       ]
       + (if $recovery == "" then [] else
           [{op: "add", path: $recovery_path, value: $recovery}]
@@ -1062,6 +1074,7 @@ build_and_apply_cordon_claim() {
       --arg owner "${owner_token}" \
       --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
       --arg recovery "${recovery_record}" \
+      --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" \
       --arg uid "${node_uid}" \
       --arg resource_version "${resource_version}" '
       [
@@ -1074,7 +1087,8 @@ build_and_apply_cordon_claim() {
         {
           op: "add",
           path: "/metadata/annotations",
-          value: ({($owner_annotation): $owner}
+          value: ({($owner_annotation): $owner,
+                   ($phase_annotation): "claimed"}
             + (if $recovery == "" then {} else
                 {($recovery_annotation): $recovery}
               end))
@@ -2185,6 +2199,20 @@ process_talos_node_target() {
     return 1
   fi
 
+  # Past this point Talos is mutated, so a fence leaked from here on must NOT be
+  # reclaimed automatically: the Lease proves no owner is alive, never that the
+  # node reached a known state. Advance the marker first and fail closed if it
+  # cannot be advanced -- an un-advanced marker would make a mutated node look
+  # reclaimable, which is the one direction that is never safe.
+  if ! mark_node_fence_mutating \
+    "${node_name}" "${cordon_owner_token}" "${initial_node_uid}"; then
+    restore_node_schedulability_if_needed \
+      "${node_name}" "${was_cordoned}" "${cordon_owner_token}" \
+      "${initial_node_uid}" "${initial_node_taints}" \
+      "${drain_result_file}" "${recovery_record}" || true
+    return 1
+  fi
+
   if [[ "${node_mode}" == "reboot" ]]; then
     if ! talosctl \
       --nodes "${node_ip}" \
@@ -2548,6 +2576,48 @@ sync_talos_registry_auth() {
     if ! validate_talos_node_inventory "${talos_nodes_file}"; then
       echo "::error::Every Talos node must expose a non-empty unique UID and exactly one non-empty unique InternalIP before GHCR auth can be synchronized."
       return 1
+    fi
+    # Reclaim leaked fences from the FIRST inventory this loop reads, rather
+    # than reading nodes of its own straight after acquiring the Lease. The
+    # liveness proof is a property of the ACQUISITION — the Lease was free, so
+    # no transaction was alive — and nothing has run between that acquisition
+    # and this first read, so acting on that proof here is equally sound.
+    # Reading nodes earlier would move a node-discovery failure ahead of the
+    # credential fan-out, which is deliberately staged first so a discovery
+    # failure cannot leave the fan-out half-applied.
+    #
+    # Later attempts are deliberately EXCLUDED. This loop re-reads the node
+    # inventory every iteration, so a later read reflects fences this very
+    # transaction has since claimed — and a fence sitting at "claimed" is
+    # exactly what the selector matches. Reclaiming from a later inventory
+    # would therefore let the transaction clear its OWN live fence, report it
+    # as leaked, and leave the node cordoned. Today no such fence survives an
+    # iteration (a per-node failure returns immediately, and every success
+    # releases), but that is an unstated invariant of another function rather
+    # than a property of this proof, so it is not what safety should rest on.
+    if ((convergence_attempt == 1)); then
+      reclaimed_fence_count=0
+      if ! reclaim_orphaned_node_fences "${talos_nodes_file}"; then
+        return 1
+      fi
+      # A reclaim mutates the very nodes this snapshot describes, so the file
+      # still carries the owner annotations that were just removed -- and
+      # selection fails closed on exactly those. Re-read before selecting, or
+      # the reclaim "succeeds" and the deploy then refuses on its own cleanup.
+      if ((reclaimed_fence_count > 0)); then
+        if ! kubectl \
+          --context "${KUBE_CONTEXT}" \
+          get nodes \
+          -o json \
+          >"${talos_nodes_file}"; then
+          echo "::error::Could not re-list Talos nodes after reclaiming leaked drain fences."
+          return 1
+        fi
+        if ! validate_talos_node_inventory "${talos_nodes_file}"; then
+          echo "::error::Every Talos node must expose a non-empty unique UID and exactly one non-empty unique InternalIP before GHCR auth can be synchronized."
+          return 1
+        fi
+      fi
     fi
     if ! select_talos_node_targets \
       "${talos_nodes_file}" \
@@ -3046,6 +3116,120 @@ renew_sync_lease() {
 
   sync_lease_renewal_failure="not-live"
   return 1
+}
+
+# Advance this transaction's own fence from "claimed" to "mutating", immediately
+# before the first Talos mutation on that node.
+#
+# The CAS tests pin both the node uid and our own owner value, so this can never
+# advance a fence that changed hands and never resurrects one on a replaced node
+# reusing the same name. Failing to advance is fatal for that node: an
+# un-advanced marker would leave a mutated node looking reclaimable, which is
+# the one direction that is never safe.
+mark_node_fence_mutating() {
+  local node_name="$1" owner_token="$2" node_uid="$3"
+  local patch_file_local="${work_dir}/fence-phase-patch.json"
+  local result_file="${work_dir}/fence-phase-result.txt"
+
+  # CAS on uid + our own owner value so this can never advance a fence that
+  # changed hands, and never resurrect one on a replaced node of the same name.
+  jq -n \
+    --arg uid "${node_uid}" \
+    --arg owner_path "${CORDON_OWNER_JSON_PATH}" \
+    --arg owner "${owner_token}" \
+    --arg phase_path "${CORDON_PHASE_JSON_PATH}" '
+    [
+      {op: "test", path: "/metadata/uid", value: $uid},
+      {op: "test", path: $owner_path, value: $owner},
+      {op: "add", path: $phase_path, value: "mutating"}
+    ]
+  ' >"${patch_file_local}"
+  if ! kubectl \
+    --context "${KUBE_CONTEXT}" \
+    patch node "${node_name}" \
+    --type=json \
+    --patch-file="${patch_file_local}" \
+    >"${result_file}" 2>&1; then
+    echo "::error::Could not mark node ${node_name} as entering Talos mutation; refusing to mutate it."
+    emit_safe_operation_output "fence-phase" "${result_file}"
+    return 1
+  fi
+}
+
+# Reclaim drain fences that were ALREADY leaked when this transaction acquired
+# the synchronization Lease.
+#
+# The liveness proof is the Lease itself. sync_lease_is_available refuses any
+# non-empty holderIdentity, so acquiring it proves that at that instant no
+# bridge transaction was running — and a node fence is only ever held by a
+# running transaction, which asserts the Lease at every mutation point. A fence
+# already present at acquisition therefore has no owner alive to protect, and
+# reclaiming it cannot race a live drain. That needs no run id and no timestamp,
+# so it also recovers fences leaked by earlier versions of this script (#3070).
+#
+# It does NOT weaken the refusal against a live holder: a live holder holds the
+# Lease, so this transaction would never have acquired it and would never reach
+# here. A fence that appears AFTER acquisition is not reclaimed either — the
+# caller runs this against the FIRST convergence inventory only, so a fence this
+# transaction itself creates later is never in the snapshot being reclaimed.
+#
+# Deliberately narrow, in two ways:
+#   * A fence carrying a recovery journal is left alone. The journal records an
+#     interrupted bootstrap whose phase decides what is safe to do, bootstrap
+#     recovery owns that state, and clearing it would destroy the only durable
+#     record of an in-flight Talos mutation.
+#   * The node is left CORDONED, loudly. Without a journal the pre-claim
+#     schedulability was never recorded, so uncordoning could re-admit a node an
+#     operator had deliberately drained. Losing capacity is recoverable by hand;
+#     silently re-admitting a drained node is not.
+reclaim_orphaned_node_fences() {
+  local nodes_file="$1"
+  local patch_file_local="${work_dir}/reclaim-fence-patch.json"
+  local result_file="${work_dir}/reclaim-fence-result.txt"
+  local name uid owner cordoned reclaimed=0
+
+  while IFS=$'\t' read -r name uid owner cordoned; do
+    [[ -n "${name}" ]] || continue
+    # CAS on identity AND the exact owner value: a node replaced under the same
+    # name, or a fence that changed hands since the read, must not be cleared.
+    jq -n \
+      --arg uid "${uid}" \
+      --arg owner_path "${CORDON_OWNER_JSON_PATH}" \
+      --arg owner "${owner}" \
+      --arg phase_path "${CORDON_PHASE_JSON_PATH}" '
+      [
+        {op: "test", path: "/metadata/uid", value: $uid},
+        {op: "test", path: $owner_path, value: $owner},
+        {op: "test", path: $phase_path, value: "claimed"},
+        {op: "remove", path: $owner_path},
+        {op: "remove", path: $phase_path}
+      ]
+    ' >"${patch_file_local}"
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      patch node "${name}" \
+      --type=json \
+      --patch-file="${patch_file_local}" \
+      >"${result_file}" 2>&1; then
+      echo "::error::Could not reclaim the leaked GHCR drain fence on node ${name}; it changed while being reclaimed."
+      return 1
+    fi
+    reclaimed=$((reclaimed + 1))
+    printf '::warning::Reclaimed a leaked GHCR drain fence on node %s (owner %s). The synchronization Lease was free when this transaction acquired it, so no owner was alive to protect it.\n' \
+      "${name}" "${owner}"
+    if [[ "${cordoned}" == "true" ]]; then
+      printf '::warning::Node %s is left CORDONED on purpose: the killed transaction recorded no pre-claim schedulability, so this cannot tell whether it was already drained. Confirm it should be schedulable, then: kubectl --context %s uncordon %s\n' \
+        "${name}" "${KUBE_CONTEXT}" "${name}"
+    fi
+    # The selection lives in the safety library so the decision — what counts as
+    # provably orphaned — is unit-testable against real leaked-fence JSON,
+    # separately from the mutation it authorises.
+  done < <(select_orphaned_node_fences "${nodes_file}" /dev/stdout)
+
+  # Published so the caller knows the inventory it holds is now stale: the
+  # reclaim removed annotations that are still present in its snapshot.
+  reclaimed_fence_count="${reclaimed}"
+  ((reclaimed == 0)) || assert_sync_lease_held || return 1
 }
 
 sync_lease_heartbeat_loop() {

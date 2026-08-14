@@ -154,6 +154,7 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		"fanout:externalsecret/ascoachingogvaner/ghcr-auth",
 		"fanout:externalsecret/kyverno/ghcr-auth",
 		"node-claim-cordon:prod-worker-1",
+		"node-fence-phase:prod-worker-1",
 		"talos-auth:10.0.0.2",
 		"node-drain:prod-worker-1",
 		"talos-reboot:10.0.0.2",
@@ -163,6 +164,7 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		"talos-revision:10.0.0.2",
 		"node-uncordon:prod-worker-1",
 		"node-claim-cordon:prod-control-plane-1",
+		"node-fence-phase:prod-control-plane-1",
 		"talos-auth:10.0.0.1",
 		"node-drain:prod-control-plane-1",
 		"talos-reboot:10.0.0.1",
@@ -314,8 +316,11 @@ func TestSchedulableNodeIsUncordonedAfterTheAuthReboot(t *testing.T) {
 	if claim >= drain || drain >= pull || pull >= revision || revision >= uncordon {
 		t.Errorf("unsafe worker ordering: claim=%d drain=%d pull=%d uncordon=%d revision=%d", claim, drain, pull, uncordon, revision)
 	}
-	if actual := mustRead(filepath.Join(f.syncStateDir, "resource-version-prod-worker-1")); actual != "12" {
-		t.Errorf("resource version = %q, want 12", actual)
+	// 13, not 12: advancing the fence phase to "mutating" before the first Talos
+	// mutation is one additional node write per node. That write is the marker a
+	// leaked fence is judged by (#3070), so the extra revision is the point of it.
+	if actual := mustRead(filepath.Join(f.syncStateDir, "resource-version-prod-worker-1")); actual != "13" {
+		t.Errorf("resource version = %q, want 13", actual)
 	}
 }
 

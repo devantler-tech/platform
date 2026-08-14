@@ -1018,6 +1018,20 @@ func fakeKubectlGetNodes() int {
 	if os.Getenv("FAKE_NODE_DISCOVERY_FAIL") == "true" {
 		return commandFailure(46, "node discovery failed")
 	}
+	// Seed a fence left behind by a transaction that was killed before this run
+	// existed -- the #3070 state. Seeded once, guarded by its own marker, so a
+	// reclaim that clears it is not silently re-created on the next inventory
+	// read and the test can tell "reclaimed" from "never seeded".
+	if leaked := os.Getenv("FAKE_LEAKED_FENCE_NODE"); leaked != "" &&
+		!markerExists("leaked-fence-seeded-"+leaked) {
+		touchMarker("leaked-fence-seeded-" + leaked)
+		setMarkerContent("cordon-owner-"+leaked, "dead-transaction-owner")
+		setMarkerContent(
+			"cordon-phase-"+leaked,
+			defaultString(os.Getenv("FAKE_LEAKED_FENCE_PHASE"), "claimed"),
+		)
+		touchMarker("cordoned-" + leaked)
+	}
 	if custom := os.Getenv("FAKE_NODE_JSON"); custom != "" {
 		fmt.Println(custom)
 		return 0
@@ -1151,6 +1165,9 @@ func fakeInventoryNode(
 	}
 	if owner := markerContent("cordon-owner-" + name); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-owner"] = owner
+	}
+	if phase := markerContent("cordon-phase-" + name); phase != "" {
+		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = phase
 	}
 	if recovery := markerContent("cordon-recovery-" + name); recovery != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
@@ -1287,6 +1304,9 @@ func fakeKubectlGetNode(args []string) int {
 	annotations := map[string]any{}
 	if owner := markerContent("cordon-owner-" + nodeName); owner != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-owner"] = owner
+	}
+	if phase := markerContent("cordon-phase-" + nodeName); phase != "" {
+		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = phase
 	}
 	if recovery := markerContent("cordon-recovery-" + nodeName); recovery != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
@@ -1505,6 +1525,32 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 	}
 	currentResourceVersion := defaultString(markerContent("resource-version-"+nodeName), "10")
 	isClaim := hasPatchOperation(patch, "add", "/spec/unschedulable", true)
+	isFencePhase := hasPatchPath(
+		patch,
+		"add",
+		"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+	) && !hasPatchOperation(patch, "add", "/spec/unschedulable", true)
+	if isFencePhase {
+		expectedOwner := patchValueString(
+			patch,
+			"test",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner",
+		)
+		if nodeName == os.Getenv("FAKE_FENCE_PHASE_FAIL_NODE") ||
+			expectedOwner == "" || expectedOwner != markerContent("cordon-owner-"+nodeName) ||
+			!hasPatchOperation(patch, "test", "/metadata/uid", fakeExpectedNodeUID(nodeName)) {
+			return commandFailure(57, "invalid fence phase update")
+		}
+		setMarkerContent("cordon-phase-"+nodeName, patchValueString(
+			patch,
+			"add",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+		))
+		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+		appendEnvFile("OPERATION_LOG", "node-fence-phase:"+nodeName+"\n")
+		fmt.Printf("node/%s patched\n", nodeName)
+		return 0
+	}
 	isRecoveryPhase := hasPatchPath(
 		patch,
 		"replace",
@@ -1547,6 +1593,53 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		appendEnvFile("OPERATION_LOG", "recovery-phase:"+nodeName+":"+phase+"\n")
 		return 0
 	}
+	// Reclaiming a leaked fence is the only patch that REMOVES the phase
+	// annotation -- a claim adds it, a release leaves it alone -- so that is the
+	// discriminator. Without this branch the reclaim falls through to the
+	// release path, whose first test is the owner rather than the uid, and every
+	// reclaim would fail exit 56 with no coverage of the mutation at all.
+	isReclaim := hasPatchPath(
+		patch,
+		"remove",
+		"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+	)
+	if isReclaim {
+		if nodeName == os.Getenv("FAKE_RECLAIM_FAIL_NODE") {
+			return commandFailure(56, "fence changed while being reclaimed")
+		}
+		expectedOwner := patchValueString(
+			patch,
+			"test",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner",
+		)
+		// CAS on identity, the exact owner value, AND the "claimed" phase: a
+		// reclaim must never clear a fence that changed hands, sits on a
+		// replaced node reusing the name, or already reached Talos mutation.
+		if expectedOwner == "" ||
+			expectedOwner != markerContent("cordon-owner-"+nodeName) ||
+			!hasPatchOperation(patch, "test", "/metadata/uid", fakeExpectedNodeUID(nodeName)) ||
+			!hasPatchOperation(
+				patch,
+				"test",
+				"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+				"claimed",
+			) ||
+			!hasPatchPath(
+				patch,
+				"remove",
+				"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner",
+			) {
+			return commandFailure(56, "invalid orphaned fence reclaim")
+		}
+		removeMarker("cordon-owner-" + nodeName)
+		removeMarker("cordon-phase-" + nodeName)
+		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+		// The cordon marker is deliberately left in place: reclaim releases
+		// ownership without uncordoning, because the pre-claim schedulability
+		// was never recorded.
+		appendEnvFile("OPERATION_LOG", "node-reclaim-fence:"+nodeName+"\n")
+		return 0
+	}
 	if isClaim {
 		if nodeName == os.Getenv("FAKE_CORDON_BEFORE_CLAIM_NODE") {
 			touchMarker("cordoned-" + nodeName)
@@ -1581,6 +1674,13 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 			return commandFailure(56, "atomic cordon claim omitted node UID")
 		}
 		setMarkerContent("cordon-owner-"+nodeName, owner)
+		if phase := patchValueString(
+			patch,
+			"add",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+		); phase != "" {
+			setMarkerContent("cordon-phase-"+nodeName, phase)
+		}
 		if recovery := patchValueString(
 			patch,
 			"add",
