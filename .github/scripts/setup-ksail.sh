@@ -7,42 +7,24 @@ if [ -z "${KSAIL_VERSION:-}" ]; then
 fi
 
 asset_name="ksail_${KSAIL_VERSION}_linux_amd64.tar.gz"
-release_url="https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/${asset_name}"
-api_url="https://api.github.com/repos/devantler-tech/ksail/releases/tags/v${KSAIL_VERSION}"
+release_base="https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}"
 tarball="${RUNNER_TEMP:-/tmp}/${asset_name}"
-release_json="${RUNNER_TEMP:-/tmp}/ksail-release-${KSAIL_VERSION}.json"
+checksums="${RUNNER_TEMP:-/tmp}/ksail_${KSAIL_VERSION}_checksums.txt"
 
-curl_headers=(-H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
-if [ -n "${GITHUB_TOKEN:-}" ]; then
-  curl_headers+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+curl -fsSL "${release_base}/${asset_name}" -o "${tarball}"
+curl -fsSL "${release_base}/ksail_${KSAIL_VERSION}_checksums.txt" -o "${checksums}"
+
+expected_digest=$(awk -v asset="${asset_name}" '$2 == asset {print $1}' "${checksums}")
+if [ -z "${expected_digest}" ]; then
+  echo "::error::no published checksum for ${asset_name} — refusing to install unverified"
+  exit 1
 fi
 
-curl -fsSL "${release_url}" -o "${tarball}"
-curl -fsSL "${curl_headers[@]}" "${api_url}" -o "${release_json}"
-
-expected_digest=$(python3 - "${release_json}" "${asset_name}" <<'PY'
-import json
-import sys
-
-release_path, asset_name = sys.argv[1:3]
-with open(release_path, encoding="utf-8") as release_file:
-    release = json.load(release_file)
-
-for asset in release.get("assets", []):
-    if asset.get("name") == asset_name:
-        digest = asset.get("digest", "")
-        if not digest.startswith("sha256:"):
-            print(f"asset {asset_name} has no sha256 digest in GitHub release metadata", file=sys.stderr)
-            sys.exit(1)
-        print(digest.removeprefix("sha256:"))
-        sys.exit(0)
-
-print(f"asset {asset_name} was not found in release metadata", file=sys.stderr)
-sys.exit(1)
-PY
-)
-
-printf '%s  %s\n' "${expected_digest}" "${tarball}" | sha256sum --check --status
+actual_digest=$(sha256sum "${tarball}" | cut -d' ' -f1)
+if [ "${expected_digest}" != "${actual_digest}" ]; then
+  echo "::error::checksum mismatch for ${asset_name}: expected ${expected_digest}, got ${actual_digest}"
+  exit 1
+fi
 
 tar -xzf "${tarball}" -C "${RUNNER_TEMP:-/tmp}" ksail
 sudo install "${RUNNER_TEMP:-/tmp}/ksail" /usr/local/bin/ksail

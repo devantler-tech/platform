@@ -1,0 +1,15 @@
+# Grants the cnpg-degraded-alert ServiceAccount its list-only view of CNPG
+# Clusters. See cluster-role-cnpg-degraded-alert.yaml for the scope rationale.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cnpg-degraded-alert
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cnpg-degraded-alert
+subjects:
+  - kind: ServiceAccount
+    name: cnpg-degraded-alert
+    namespace: observability

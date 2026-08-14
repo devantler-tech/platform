@@ -1,0 +1,18 @@
+---
+# The Kyverno CLI does not read namespace labels from the Namespace objects in
+# resources.yaml — a rule matched by namespaceSelector is reported "Excluded"
+# for every resource unless the namespace labels are declared here. Without
+# this file the whole fixture passes vacuously, including the fail cases.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+namespaceSelector:
+  # A ksail-generated tenant namespace — in scope.
+  - name: tenant-ns
+    labels:
+      app.kubernetes.io/managed-by: ksail
+  # A platform/infra namespace — out of scope, so a ClusterIssuer ref here is
+  # legitimate (this is where the real gateway-certificate lives).
+  - name: kube-system
+    labels: {}
