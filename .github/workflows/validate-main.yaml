@@ -1,0 +1,293 @@
+name: Validate Main
+
+# ci.yaml runs the authorization gate on `pull_request` and `merge_group` only,
+# and cd.yaml runs it on a manual dispatch. A DIRECT PUSH to main fires none of
+# those, so main could carry a broken authorization surface with every one of
+# its own checks green — which is exactly what happened in f89efff4: the break
+# stayed invisible on main for two days and surfaced only as an unexplained red
+# on unrelated PRs, because a PR's CI builds the merge result and so inherits
+# main's state.
+#
+# This workflow closes that hole: the same gate, on the push itself, so a
+# regression is reported where it is introduced.
+#
+# Deliberately NOT path-filtered. The gate reads the whole rendered
+# authorization surface, which a change anywhere in the overlays (or in the
+# validator itself) can move; a paths filter here would recreate a narrower
+# version of the same blind spot.
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  # Every push to main is its own subject and its gate result is its own record,
+  # so each run gets its own group and none of them can suppress another.
+  #
+  # Disabling cancellation is not enough on a shared key: a concurrency group
+  # holds one running plus one pending run, and a third push cancels the pending
+  # one. With a shared `github.ref` key the second push's gate would still be
+  # evicted while queued, leaving main green on a check that never finished —
+  # reopening the exact hole described above, from the other side.
+  group: validate-main-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  validate-eks-authorization:
+    name: 🔐 Validate EKS Authorization
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ⚙️ Install pinned kubectl renderer
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: 🔐 Validate EKS authorization surface
+        run: |
+          go test ./scripts/validate-eks-ci-role-policy
+          go run ./scripts/validate-eks-ci-role-policy .
+
+  # The cosign subjects that trust the SHARED actions publish workflows must pin a
+  # fixed revision, or a compromised branch build could be verified as first-party.
+  # ci.yaml gates that on `pull_request` and `merge_group`; this is the same gate on
+  # the push itself, for exactly the reason in this workflow's header — a direct push
+  # to main fires neither of those, so a widened matcher would sit on main unreported
+  # and be deployed by the manual CD route (#2818).
+  #
+  # Its own job, not a second step in the one above: a validator job that runs other
+  # command steps can be subverted by one of them (BASH_ENV / a fake tool on $PATH),
+  # which is the property scripts/validate-dr-signing enforces on cd.yaml's contract
+  # job. Same shape here, so neither validator's job grows a tampering surface.
+  validate-shared-publish-pin:
+    name: 🔐 Validate Shared Publish Workflow Pins
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: 🔐 Validate shared publish workflows are pinned
+        run: ./scripts/guard-shared-publish-workflow-pin.sh
+
+  kubescape-baseline:
+    name: 🛡️ Publish Kubescape Baseline
+    runs-on: ubuntu-latest
+    # ci.yaml scans and uploads on `pull_request` only, so every Kubescape
+    # analysis lands on an ephemeral `refs/pull/<n>/merge` ref. Code Scanning
+    # tracks alerts per (tool, category, ref): with no analysis for the default
+    # branch there is nothing for those findings to dedupe against and nothing
+    # to close, so the deployed tree has no durable posture baseline. Measured
+    # on 2026-07-28 — six kubescape analyses, all on PR refs, and ZERO
+    # default-branch kubescape alerts.
+    #
+    # This job publishes that baseline from main itself. It is the same scan
+    # ci.yaml runs, so a finding fixed on a PR closes here on merge, and a
+    # finding introduced by a direct push is reported where it is introduced.
+    permissions:
+      contents: read # checkout repository
+      security-events: write # publish the Kubescape SARIF to Code Scanning
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ⚙️ Setup KSail
+        # Kept at the version ci.yaml pins, so the baseline is produced by the
+        # same renderer as the PR-ref analyses it is the baseline for. Renovate
+        # updates both together (group 'ksail').
+        shell: bash
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.178.25"
+        run: |
+          set -euo pipefail
+          BASE="https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}"
+          ASSET="ksail_${KSAIL_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL "${BASE}/${ASSET}" -o /tmp/ksail.tar.gz
+          # A version-pinned URL is not an integrity check: this archive is
+          # `sudo install`ed and executed on a trusted `main` workflow, so a
+          # replaced release asset would run here. Verify against the release's
+          # published checksums before extracting.
+          #
+          # Checked against the published list rather than a literal SHA pinned
+          # in this file: Renovate bumps KSAIL_VERSION and cannot update an
+          # opaque digest beside it, so a pinned SHA would break every bump
+          # until a human hand-edited it — a control people end up removing.
+          # This costs nothing per bump. Its LIMIT, stated plainly: the archive
+          # and the checksum list come from the same origin, so this detects a
+          # corrupted, truncated or individually-substituted asset, not a fully
+          # compromised release. Provenance attestations would close that and
+          # are tracked separately.
+          curl -fsSL "${BASE}/ksail_${KSAIL_VERSION}_checksums.txt" -o /tmp/ksail_checksums.txt
+          # Match the filename field EXACTLY. A regex match treats the dots in
+          # the asset name as metacharacters, so `ksail_7x178x20_…` would select
+          # a different line's digest and report a confusing mismatch instead of
+          # the actionable "no published checksum" below. awk also exits 0 with
+          # no match, so the empty-result check is the single fail-closed path.
+          expected=$(awk -v a="${ASSET}" '$2 == a {print $1}' /tmp/ksail_checksums.txt)
+          # Fail closed on a MISSING entry too — otherwise a renamed asset
+          # silently skips verification instead of failing.
+          if [ -z "$expected" ]; then
+            echo "::error::no published checksum for ${ASSET} — refusing to install unverified"
+            exit 1
+          fi
+          actual=$(sha256sum /tmp/ksail.tar.gz | cut -d' ' -f1)
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::checksum mismatch for ${ASSET}: expected ${expected}, got ${actual}"
+            exit 1
+          fi
+          tar -xzf /tmp/ksail.tar.gz -C /tmp
+          sudo install /tmp/ksail /usr/local/bin/ksail
+          ksail --version
+
+      # The guard runs HERE too, not only in ci.yaml. A direct push to main
+      # bypasses the merge queue, so without this a push that reduced the scan
+      # below would execute that reduced scan with nothing checking it — the
+      # exact gap this workflow exists to close, reopened one level up.
+      # (Codex raised this on #3057.)
+      - name: 🔐 Validate the Kubescape gate's framework coverage
+        run: ./scripts/guard-kubescape-gate-frameworks.sh
+
+      - name: 🔎 Scan manifests (Kubescape NSA + MITRE)
+        # Same invocation and same justified exceptions as ci.yaml's gate, so
+        # the two analyses are comparable. The threshold is kept: main can only
+        # receive gated content, so a failure here means posture moved without
+        # a PR — which this workflow exists to report.
+        #
+        # 🔴 THE FRAMEWORK LIST MUST MATCH ci.yaml'S EXACTLY, and the reason is
+        # not tidiness. Both analyses upload under the same `kubescape-nsa`
+        # Code Scanning category, so this run is the DURABLE BASELINE that PR
+        # alerts are diffed against. If this scanned fewer frameworks, every
+        # finding only the PR sees would fail to persist as a main-branch alert
+        # — and a direct push to main (which bypasses the merge queue) would go
+        # completely ungated on the missing framework.
+        # scripts/guard-kubescape-gate-frameworks.sh enforces the match.
+        run: |
+          go test ./scripts/generate-kubescape-exceptions
+          go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
+          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
+
+      - name: 🧭 Make the SARIF paths repo-root-relative
+        # Kubescape reports paths relative to the directory it scanned; Code
+        # Scanning resolves them against the repo root. Uploading them unchanged
+        # creates alerts pointing at files that do not exist.
+        id: normalize-sarif
+        if: "!cancelled()"
+        run: |
+          if [ ! -f "${RUNNER_TEMP}/kubescape.sarif" ]; then
+            echo "::notice::No SARIF written — the scan failed before producing one. Leaving its error as the visible failure."
+            echo "sarif=absent" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+          # Same split as ci.yaml: the normalizer drops empty-uri results because
+          # Code Scanning cannot anchor them, so the upload reads the normalized
+          # file and the summary below reads this untouched copy.
+          cp "${RUNNER_TEMP}/kubescape.sarif" "${RUNNER_TEMP}/kubescape.raw.sarif"
+          # Emitted before the normalizer: an unresolvable path aborts the step,
+          # so the summary would otherwise be skipped exactly when a path-shape
+          # change made the findings most worth reading.
+          echo "raw=ready" >> "${GITHUB_OUTPUT}"
+          bash scripts/normalize-sarif-paths.sh "${RUNNER_TEMP}/kubescape.sarif" k8s .
+          echo "sarif=ready" >> "${GITHUB_OUTPUT}"
+
+      - name: 🛡️ Upload Kubescape findings to Code Scanning
+        # `!cancelled()` rather than `success()`: the findings are wanted most
+        # when the scan's threshold FAILED, and ksail writes the SARIF before
+        # applying it. Gated on the normalize OUTPUT so a normalizer failure
+        # cannot fall through to publishing dead paths. No fork check is needed
+        # — this runs on a push to main, which is never a fork.
+        if: >-
+          !cancelled() &&
+          steps.normalize-sarif.outputs.sarif == 'ready'
+        uses: github/codeql-action/upload-sarif@e4fba868fa4b1b91e1fdab776edc8cfbe6e9fb81 # v4.37.3
+        with:
+          sarif_file: ${{ runner.temp }}/kubescape.sarif
+          # MUST match ci.yaml's category: Code Scanning dedupes and closes per
+          # (tool, category, ref), so a different category here would create a
+          # parallel alert set instead of a baseline the PR findings resolve
+          # against.
+          category: kubescape-nsa
+
+      - name: 📋 Summarize Kubescape findings
+        # This job exists because ci.yaml scans on `pull_request` only, so a
+        # posture change that arrived without a PR is invisible until this run
+        # publishes it. That argument applies to the LOG as much as to the alert
+        # set: without this step the push-to-main log can still read as a clean
+        # scan while the same run uploads findings — the exact contradiction
+        # #2846 is about, on the one path nobody opens a PR to look at.
+        #
+        # Reads the pre-normalization copy for the same reason ci.yaml does.
+        # Informational only: this job's gate is the compliance threshold on the
+        # scan step, and a summary that cannot be built says nothing about
+        # posture, so it annotates rather than failing the baseline.
+        continue-on-error: true
+        if: >-
+          !cancelled() &&
+          steps.normalize-sarif.outputs.raw == 'ready'
+        run: |
+          shellcheck scripts/summarize-sarif-findings.sh
+          bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.raw.sarif"
+
+  validate-scanner-versions:
+    name: 🔢 Validate Scanner Versions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+      actions: read # read the mega-linter job log to learn the live versions
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: 🔢 Compare recorded scanner versions against the live MegaLinter run
+        # scripts/megalinter-scan-counts.sh reproduces CI's checkov and trivy
+        # counts, and #2787 reads those counts as backlog movement. Its
+        # equivalence holds only at the versions it records — and nothing in
+        # THIS repository selects them: the MegaLinter action is pinned in
+        # devantler-tech/actions, so the constants here go stale with no signal
+        # when that pin moves. A rule-set change then looks exactly like someone
+        # fixing findings.
+        #
+        # On main rather than on PRs for two reasons: reading Actions logs needs
+        # a token a fork PR does not have, and version drift is slow-moving, so
+        # per-PR is the wrong cadence. The offline parsing contract IS gated on
+        # PRs, in ci.yaml.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/check-megalinter-version-drift.sh

@@ -1,0 +1,108 @@
+# Trivy misconfiguration checks skipped on this repository, with the reason each one is skipped.
+#
+# The bar here is the same one .mega-linter.yml applies: a skip names a technical reason that
+# survives checking, and nothing is hidden merely because it is noisy. Anything that describes real
+# state stays enabled and gets fixed at the manifest instead — see #2787, which tracks driving
+# checkov and trivy to zero on k8s/ so both can leave DISABLE_ERRORS_LINTERS.
+
+misconfigurations:
+  # KSV-0039 "limit range usage" — 450 of trivy's 614 findings on this tree (73%), all LOW.
+  #
+  # The check is evaluated per FILE, but a LimitRange is a namespace-scoped object that this
+  # repository deliberately keeps in its own base (k8s/bases/infrastructure/limit-ranges/, plus the
+  # longhorn overlay). So the check asks every file whether it contains a LimitRange, and every file
+  # that is not one answers no. That includes objects which cannot carry a LimitRange at all — the
+  # firing set is 46 helm-release.yaml, 46 cilium-network-policy.yaml, 42 helm-repository.yaml,
+  # 23 pod-disruption-budget.yaml, 14 http-route.yaml, 13 external-secret.yaml, 8 network-policy.yaml,
+  # 6 flux-kustomization.yaml.
+  #
+  # It also fires on the LimitRange manifests themselves — limit-ranges/kube-system.yaml,
+  # limit-ranges/kyverno.yaml and controllers/longhorn/limit-range.yaml. A check reporting "limit
+  # range usage" against a LimitRange is reading file contents rather than namespace state, and no
+  # per-file edit can satisfy it.
+  #
+  # Skipping it is therefore not a threshold or a deferral: there is nothing to fix. It is also what
+  # makes the rest of the scan readable — the residual findings contain HIGH/CRITICAL RBAC breadth
+  # that was previously buried in a count of 614.
+  - id: KSV-0039
+    statement: >-
+      LimitRange is namespace-scoped but this check evaluates each file independently, including
+      resources that cannot carry a LimitRange and the LimitRange manifests themselves.
+
+  # KSV-0037 "user resources should not be placed in kube-system namespace" — 47 of trivy's 157
+  # findings on this tree (30%), all MEDIUM.
+  #
+  # The control protects a real property: kube-system carries elevated trust, so an APPLICATION
+  # does not belong there. Every one of the 47 is instead a cluster component that belongs in
+  # kube-system by construction, and the firing set says so — 17 VerticalPodAutoscaler,
+  # 12 HelmRelease, 5 PodDisruptionBudget, 5 HelmRepository, 2 HTTPRoute, 2 Gateway, 1 LimitRange,
+  # 1 Deployment, 1 CiliumNetworkPolicy, 1 Certificate. Their subjects are the CNI (cilium,
+  # cilium-operator, cilium-envoy, hubble-relay, hubble-ui), DNS (coredns), the Hetzner CSI and
+  # cloud-controller-manager, metrics-server, snapshot-controller, cluster-autoscaler, descheduler,
+  # spire and tetragon.
+  #
+  # Most of the set is not merely conventional but structurally forced: a VerticalPodAutoscaler's
+  # targetRef and a PodDisruptionBudget's selector are both namespace-local, so an autoscaler or
+  # budget for a kube-system workload cannot itself live anywhere else. The LimitRange IS the
+  # kube-system namespace's own default limit range, and the Certificate is the TLS material for the
+  # Gateway in the same namespace. The single Deployment is CoreDNS — the canonical kube-system
+  # component.
+  #
+  # So this is scoped to the infrastructure trees rather than skipped outright, and that boundary is
+  # what keeps the control working: all 47 sit under an infrastructure path, while k8s/bases/apps/**
+  # and k8s/clusters/** stay covered. A user application given `namespace: kube-system` is still
+  # reported — verified with a paired control, two copies of one manifest: the copy under
+  # k8s/bases/apps/ FAILS this check with this entry in place, and the copy under
+  # k8s/bases/infrastructure/ is excepted. Same bytes, different path, so the boundary is what
+  # decides rather than the file contents.
+  #
+  # ⚠️ This exception does NOT decide anything about tenant workloads, and it would be wrong to read
+  # it as covering them. Tenants are generated from the KRO ResourceGraphDefinitions under
+  # k8s/bases/infrastructure/resource-graph-definitions/, which are inside the scoped path — but
+  # trivy reports ZERO misconfigurations on those two resource-graph-definition.yaml files with or
+  # without this entry, because it does not evaluate the resource templates nested inside an RGD.
+  # Their generated workloads are therefore outside this scanner's reach either way; that is a
+  # pre-existing coverage gap tracked in #3055, not something this scoping introduces. Every
+  # template in them targets `${tenantNamespace.metadata.name}` today — the only kube-system
+  # references are RBAC grants naming the shared Gateway, not workload placement.
+  - id: KSV-0037
+    paths:
+      - k8s/bases/infrastructure/**
+      - k8s/providers/*/infrastructure/**
+    statement: >-
+      These are cluster infrastructure components that belong in kube-system by construction — CNI,
+      DNS, CSI, cloud-controller-manager and their namespace-local VerticalPodAutoscalers,
+      PodDisruptionBudgets and Gateway material. Application trees remain covered by this check.
+
+  # KSV-0109 matches identifier text rather than secret material at both sites below. Keep the
+  # dispositions separate so each path carries the reason that was checked against its content.
+  - id: KSV-0109
+    paths:
+      - k8s/bases/apps/actual-budget/config-map.yaml
+    statement: >-
+      The ConfigMap embeds public JavaScript source that reads credentials from an ESO-mounted
+      Secret; Trivy matches the source identifiers containing secretKey, not credential values.
+  - id: KSV-0109
+    paths:
+      - k8s/clusters/prod/bootstrap/config-map.yaml
+    statement: >-
+      external_secrets_replicas is a public controller replica count; Trivy matches the word
+      secrets in the key name, not secret material.
+
+  # CoreDNS must bind UDP/TCP port 53 while running as the pinned image's non-root 65532 identity.
+  # The binary carries the required file capability, so the container adds only
+  # NET_BIND_SERVICE to its bounding set after dropping every other capability. These dispositions
+  # are path-scoped so the controls continue to report any other workload that adds a capability
+  # or binds a privileged port.
+  - id: KSV-0022
+    paths:
+      - k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml
+    statement: >-
+      CoreDNS requires only NET_BIND_SERVICE in its bounding set to serve cluster DNS on port 53;
+      the container drops every other capability and runs as non-root UID/GID 65532.
+  - id: KSV-0117
+    paths:
+      - k8s/providers/docker/infrastructure/controllers/coredns/deployment.yaml
+    statement: >-
+      Port 53 is the required DNS service port; the pinned CoreDNS binary carries the file
+      capability needed to bind it while the container runs as non-root UID/GID 65532.
