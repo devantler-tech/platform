@@ -1,33 +1,26 @@
 ---
-# Prod-only: put the SPIRE server datastore on Hetzner Cloud block storage
-# (hcloud-csi) instead of Longhorn, to break a circular dependency that wedges
-# the whole cluster.
+# Dormant prod-only SPIRE storage values. Cilium authentication and SPIRE are
+# disabled in the base while no required-authentication policy consumes them,
+# so this patch does not currently install a server or create a volume. If a
+# narrow policy consumer re-enables SPIRE, these values put its datastore on
+# Hetzner Cloud block storage (hcloud-csi) instead of Longhorn, breaking a
+# circular dependency that can wedge the whole cluster.
 #
-# spire-server issues the SVIDs that satisfy the require-mutual-auth policy, so
-# it sits IN the pod-to-pod mTLS data path. By default its single-replica
-# StatefulSet binds a ReadWriteOnce PVC to the cluster-default StorageClass
-# (longhorn). Longhorn's OWN control plane is pod-to-pod traffic
-# (longhorn-csi-plugin -> longhorn-backend:9500 -> instance-managers), so it is
-# itself behind the mTLS gate. That creates a deadlock:
+# Keep the SPIRE datastore independent from the cluster-default Longhorn
+# StorageClass. Longhorn's own control plane is pod-to-pod traffic
+# (longhorn-csi-plugin -> longhorn-backend:9500 -> instance-managers), so using
+# hcloud-csi avoids coupling SPIRE recovery to Longhorn recovery during node
+# rolls or storage incidents.
 #
-#   SPIRE down -> Longhorn control plane black-holed (no SVIDs) -> cannot
-#   attach spire-server's PVC -> spire-server cannot start -> no SVIDs -> loop.
-#
-# GitOps cannot self-heal out of it either, because helm-controller ->
-# source-controller is on the same black-holed path. This took prod fully down
-# during the Talos 1.12.4 -> 1.13.3 node roll on 2026-06-06 (every Flux
-# Kustomization + ~30 HelmReleases stuck on "context deadline exceeded" reaching
-# source-controller; devantler-tech/platform).
-#
-# hcloud-csi removes the dependency: a Hetzner Cloud Volume is attached/detached
-# via the Hetzner API by the hcloud CSI controller (talks to its sidecars over a
-# unix socket and to the Hetzner API over the internet — never pod-to-pod), so
-# it attaches even while SPIRE is down. A single cloud block device also
-# survives node death and re-attaches to the replacement node, so unlike a
-# Longhorn volume whose replicas all sat on the workers that rolled together, it
-# is not faulted by a node roll. mTLS stays fully enforced everywhere and
-# WireGuard still encrypts every byte on the wire — this changes only WHERE
-# spire-server keeps its SQLite datastore.
+# hcloud-csi asks the Hetzner API to attach/detach a persistent cloud volume
+# without depending on Longhorn's pod-to-pod control plane. Recovery after a
+# node dies still depends on the hcloud-csi controller and Hetzner API being
+# available, the replacement node satisfying volume topology/compliance, and a
+# successful detach/attach. With the current single-replica SPIRE StatefulSet,
+# the volume serves one spire-server attachment at a time; verify detach,
+# reattachment, and datastore recovery during node-loss testing. WireGuard still
+# encrypts pod-to-pod traffic on the wire — this changes only WHERE spire-server
+# keeps its SQLite datastore.
 #
 # size: 10Gi is the Hetzner Cloud Volume minimum (the SPIRE datastore needs
 # ~1Gi; the chart default 1Gi is rejected by csi.hetzner.cloud). The `hcloud`
@@ -38,13 +31,11 @@
 # StatefulSet is rendered) and the `hcloud` StorageClass does not exist locally,
 # so this override lives in the hetzner patch, not the base.
 #
-# OPERATIONAL NOTE (StatefulSet volumeClaimTemplate is immutable): changing the
-# datastore StorageClass/size cannot be applied in place — the first cilium
-# reconcile after this lands will fail the Helm upgrade until the live
-# spire-server StatefulSet is recreated. Delete it once so Flux recreates it on
-# hcloud-csi: `kubectl -n kube-system delete statefulset spire-server` (the
-# SQLite datastore re-bootstraps — cilium-operator re-syncs entries from
-# CiliumIdentities and the cilium-agent auth cache rides the brief restart).
+# OPERATIONAL NOTE (StatefulSet volumeClaimTemplate is immutable): if SPIRE is
+# re-enabled while an old spire-server StatefulSet still exists with another
+# StorageClass/size, the Helm upgrade cannot change it in place. Verify its PVC
+# state before activation and recreate the StatefulSet deliberately so Flux can
+# apply hcloud-csi; do not assume the dormant values migrated any existing PVC.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:

@@ -1,0 +1,25 @@
+# actionlint configuration.
+#
+# `concurrency.queue` is a real, documented GitHub Actions key — SchemaStore's
+# github-workflow.json lists it with `enum: [single, max]`, and both the
+# workflow-level and job-level concurrency definitions reference the same
+# schema, so it is valid in either position. actionlint simply does not know it
+# yet: its parser hard-codes the accepted keys as exactly "group" and
+# "cancel-in-progress", and its latest release (v1.7.12, 2026-03-30) predates
+# the key. So it reports every use as a syntax error.
+#
+# This ignore is anchored to that one message rather than to a path or a rule,
+# which keeps it as narrow as possible: any OTHER unexpected key in the same
+# concurrency section is still reported, and every other actionlint check is
+# untouched.
+#
+# It does NOT validate the value. `scripts/validate-concurrency-queue` supplies
+# the missing enum check, so `queue: maxx` fails CI on the pull request that
+# introduces it rather than at run time on a production deploy.
+#
+# REMOVE THIS once actionlint ships support for the key; tracked per-repo on the
+# rollout epic devantler-tech/monorepo#2453.
+paths:
+  .github/workflows/**:
+    ignore:
+      - 'unexpected key "queue" for "concurrency" section'
