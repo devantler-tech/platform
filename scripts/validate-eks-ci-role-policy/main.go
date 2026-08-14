@@ -363,7 +363,7 @@ const (
 // per-resource fingerprint, since the moved documents belong to main's change
 // rather than the branch's. Compare like with like before concluding the
 // toolchain is at fault.
-const expectedRenderedSurfaceSHA = "b0d5ddcebac623155b3109d3a7fc7f8b6088cb17ac75bf327d8d2f32743133f2"
+const expectedRenderedSurfaceSHA = "26e28178117fa9dc0f7d66c8bd526b1b5f000beeedac9f327207b8a674c56755"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -417,16 +417,16 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "opencost-usage-scraper"}:                            "4b28e1da280a7940a1cb4d538bc31ede1b5d272c17189a81afeae48acbb8b7a0",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "e23c61eb872c6aafaceed74e400479d034ee636735880d6b4a6de338cd0c32a9",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "072e4478cdad39c0a7d9f5119cad63d4c56a9fc96ba88d657fef97f6b91bae31",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "1a2ecb3104630c44466d846159ee68ff6a98888887c02ecd0278782793dead4a",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "a0b12b336d39709cb2f491662a3c8dd98269485b6a33935101e0bf9f03ec8925",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "7f674a1762f298330c7c9e4d9d4e8bf46108b10727e02a25ca5096d7913cc0a7",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "312d84288f510b4a38d985385487a52cb2dc1c634bbcbab8dc5e438689891189",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "d1bc403b6458bd22cf967bd570e24718341cbd584f58e7f0069aaffe1e187945",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "9d9b62d3221442d6355d16a34d31c198619fb3b3728df960fd67222a531ece7b",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "8e9f72b0f4f982d050aff0b97d246c68b538cbc397cdd45d031c95cfae981e7c",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "47c63f6a762caeacf257ddd32cbbeb3f3568eeea0e258ec006621579114731ff",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "6cca0d2d0e7874bf3f0c82f4e04f151d6c172eeae7929a8dbacbf37ed9793a6c",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "8af27d4845565c57b9ebc618f186669f18ada89e070cf4e6514924717a2532f8",
 }
 
 // fingerprint returns the SHA-256 identity used for byte-exact source checks.

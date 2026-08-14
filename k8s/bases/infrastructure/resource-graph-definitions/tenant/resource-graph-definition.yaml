@@ -290,6 +290,17 @@ spec:
           prune: true
           wait: true
           force: true
+          # A tenant that ships a CNPG database (wedding-app does) would
+          # otherwise fail this Kustomization for the whole of any rolling
+          # update — CNPG rolls every instance on an operator, barman-cloud
+          # sidecar, or PostgreSQL image change, all routine Renovate bumps —
+          # and a tenant health-check failure evicts every PR from the merge
+          # queue. Same "the database is SERVING" gate as the cluster-level
+          # `apps`/`infrastructure` Kustomizations; see the rationale there.
+          healthCheckExprs:
+            - apiVersion: postgresql.cnpg.io/v1
+              kind: Cluster
+              current: has(status.readyInstances) && status.readyInstances >= 1 && has(status.currentPrimary) && status.currentPrimary != ''
           serviceAccountName: ${serviceAccount.metadata.name}
           sourceRef:
             kind: OCIRepository
@@ -316,6 +327,17 @@ spec:
           prune: true
           wait: true
           force: true
+          # A tenant that ships a CNPG database (wedding-app does) would
+          # otherwise fail this Kustomization for the whole of any rolling
+          # update — CNPG rolls every instance on an operator, barman-cloud
+          # sidecar, or PostgreSQL image change, all routine Renovate bumps —
+          # and a tenant health-check failure evicts every PR from the merge
+          # queue. Same "the database is SERVING" gate as the cluster-level
+          # `apps`/`infrastructure` Kustomizations; see the rationale there.
+          healthCheckExprs:
+            - apiVersion: postgresql.cnpg.io/v1
+              kind: Cluster
+              current: has(status.readyInstances) && status.readyInstances >= 1 && has(status.currentPrimary) && status.currentPrimary != ''
           serviceAccountName: ${serviceAccount.metadata.name}
           sourceRef:
             kind: OCIRepository
