@@ -439,7 +439,7 @@ the head explaining it, and **`gh pr merge` exits 0, prints nothing, and does no
 repo it silently arms auto-merge instead). The only surface that names the cause is the enqueue
 mutation:
 
-```
+```text
 enqueuePullRequest(input:{pullRequestId:"<id>"}) →
   UNPROCESSABLE: Pull request Required workflow '✅ Validate Go Project' is not satisfied
 ```
@@ -450,8 +450,17 @@ on a head that is perfectly satisfied. Ask which workflows ran instead:
 
 ```sh
 gh api "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100" \
-  --jq '[.workflow_runs[]|select(.path==".github/workflows/validate-go-project.yaml")]|length'
+  --jq '[.workflow_runs[]
+         | select(.path == ".github/workflows/validate-go-project.yaml"
+                  and .status == "completed"
+                  and .conclusion == "success")] | length'
 ```
+
+⚠️ **Both the `completed` and `success` conjuncts matter, and they answer different questions.** A run
+that is queued, in progress, cancelled or **failed** still appears in `workflow_runs`, so a bare
+path-only count answers "did it fire at all" — useful while diagnosing, and **not** the same as "is the
+requirement satisfied". Only a completed successful run satisfies it, so a `>= 1` from the loose query
+will happily report a red or still-running head as ready to enqueue.
 
 **The fix is to move the head** — `PUT /repos/{owner}/{repo}/pulls/{n}/update-branch` (a merge of
 `main`, never a force-push) makes the workflow fire. Verify the effect with the query above; the
