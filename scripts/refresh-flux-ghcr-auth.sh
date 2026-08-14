@@ -2577,16 +2577,47 @@ sync_talos_registry_auth() {
       echo "::error::Every Talos node must expose a non-empty unique UID and exactly one non-empty unique InternalIP before GHCR auth can be synchronized."
       return 1
     fi
-    # Reclaim leaked fences from the inventory this loop already read, rather
+    # Reclaim leaked fences from the FIRST inventory this loop reads, rather
     # than reading nodes of its own straight after acquiring the Lease. The
     # liveness proof is a property of the ACQUISITION — the Lease was free, so
-    # no transaction was alive — and holding it since means none has started,
-    # so acting on that proof here is equally sound. Reading nodes earlier
-    # would move a node-discovery failure ahead of the credential fan-out,
-    # which is deliberately staged first so a discovery failure cannot leave
-    # the fan-out half-applied.
-    if ! reclaim_orphaned_node_fences "${talos_nodes_file}"; then
-      return 1
+    # no transaction was alive — and nothing has run between that acquisition
+    # and this first read, so acting on that proof here is equally sound.
+    # Reading nodes earlier would move a node-discovery failure ahead of the
+    # credential fan-out, which is deliberately staged first so a discovery
+    # failure cannot leave the fan-out half-applied.
+    #
+    # Later attempts are deliberately EXCLUDED. This loop re-reads the node
+    # inventory every iteration, so a later read reflects fences this very
+    # transaction has since claimed — and a fence sitting at "claimed" is
+    # exactly what the selector matches. Reclaiming from a later inventory
+    # would therefore let the transaction clear its OWN live fence, report it
+    # as leaked, and leave the node cordoned. Today no such fence survives an
+    # iteration (a per-node failure returns immediately, and every success
+    # releases), but that is an unstated invariant of another function rather
+    # than a property of this proof, so it is not what safety should rest on.
+    if ((convergence_attempt == 1)); then
+      reclaimed_fence_count=0
+      if ! reclaim_orphaned_node_fences "${talos_nodes_file}"; then
+        return 1
+      fi
+      # A reclaim mutates the very nodes this snapshot describes, so the file
+      # still carries the owner annotations that were just removed -- and
+      # selection fails closed on exactly those. Re-read before selecting, or
+      # the reclaim "succeeds" and the deploy then refuses on its own cleanup.
+      if ((reclaimed_fence_count > 0)); then
+        if ! kubectl \
+          --context "${KUBE_CONTEXT}" \
+          get nodes \
+          -o json \
+          >"${talos_nodes_file}"; then
+          echo "::error::Could not re-list Talos nodes after reclaiming leaked drain fences."
+          return 1
+        fi
+        if ! validate_talos_node_inventory "${talos_nodes_file}"; then
+          echo "::error::Every Talos node must expose a non-empty unique UID and exactly one non-empty unique InternalIP before GHCR auth can be synchronized."
+          return 1
+        fi
+      fi
     fi
     if ! select_talos_node_targets \
       "${talos_nodes_file}" \
@@ -3087,31 +3118,14 @@ renew_sync_lease() {
   return 1
 }
 
-# Reclaim drain fences that were ALREADY leaked when this transaction acquired
-# the synchronization Lease.
+# Advance this transaction's own fence from "claimed" to "mutating", immediately
+# before the first Talos mutation on that node.
 #
-# The liveness proof is the Lease itself. sync_lease_is_available refuses any
-# non-empty holderIdentity, so acquiring it proves that at that instant no
-# bridge transaction was running — and a node fence is only ever held by a
-# running transaction, which asserts the Lease at every mutation point. A fence
-# already present at acquisition therefore has no owner alive to protect, and
-# reclaiming it cannot race a live drain. That needs no run id and no timestamp,
-# so it also recovers fences leaked by earlier versions of this script (#3070).
-#
-# It does NOT weaken the refusal against a live holder: a live holder holds the
-# Lease, so this transaction would never have acquired it and would never reach
-# here. A fence that appears AFTER acquisition is not reclaimed either — it is
-# not in the snapshot, and the selector still fails closed on it.
-#
-# Deliberately narrow, in two ways:
-#   * A fence carrying a recovery journal is left alone. The journal records an
-#     interrupted bootstrap whose phase decides what is safe to do, bootstrap
-#     recovery owns that state, and clearing it would destroy the only durable
-#     record of an in-flight Talos mutation.
-#   * The node is left CORDONED, loudly. Without a journal the pre-claim
-#     schedulability was never recorded, so uncordoning could re-admit a node an
-#     operator had deliberately drained. Losing capacity is recoverable by hand;
-#     silently re-admitting a drained node is not.
+# The CAS tests pin both the node uid and our own owner value, so this can never
+# advance a fence that changed hands and never resurrects one on a replaced node
+# reusing the same name. Failing to advance is fatal for that node: an
+# un-advanced marker would leave a mutated node looking reclaimable, which is
+# the one direction that is never safe.
 mark_node_fence_mutating() {
   local node_name="$1" owner_token="$2" node_uid="$3"
   local patch_file_local="${work_dir}/fence-phase-patch.json"
@@ -3142,6 +3156,32 @@ mark_node_fence_mutating() {
   fi
 }
 
+# Reclaim drain fences that were ALREADY leaked when this transaction acquired
+# the synchronization Lease.
+#
+# The liveness proof is the Lease itself. sync_lease_is_available refuses any
+# non-empty holderIdentity, so acquiring it proves that at that instant no
+# bridge transaction was running — and a node fence is only ever held by a
+# running transaction, which asserts the Lease at every mutation point. A fence
+# already present at acquisition therefore has no owner alive to protect, and
+# reclaiming it cannot race a live drain. That needs no run id and no timestamp,
+# so it also recovers fences leaked by earlier versions of this script (#3070).
+#
+# It does NOT weaken the refusal against a live holder: a live holder holds the
+# Lease, so this transaction would never have acquired it and would never reach
+# here. A fence that appears AFTER acquisition is not reclaimed either — the
+# caller runs this against the FIRST convergence inventory only, so a fence this
+# transaction itself creates later is never in the snapshot being reclaimed.
+#
+# Deliberately narrow, in two ways:
+#   * A fence carrying a recovery journal is left alone. The journal records an
+#     interrupted bootstrap whose phase decides what is safe to do, bootstrap
+#     recovery owns that state, and clearing it would destroy the only durable
+#     record of an in-flight Talos mutation.
+#   * The node is left CORDONED, loudly. Without a journal the pre-claim
+#     schedulability was never recorded, so uncordoning could re-admit a node an
+#     operator had deliberately drained. Losing capacity is recoverable by hand;
+#     silently re-admitting a drained node is not.
 reclaim_orphaned_node_fences() {
   local nodes_file="$1"
   local patch_file_local="${work_dir}/reclaim-fence-patch.json"
@@ -3186,6 +3226,9 @@ reclaim_orphaned_node_fences() {
     # separately from the mutation it authorises.
   done < <(select_orphaned_node_fences "${nodes_file}" /dev/stdout)
 
+  # Published so the caller knows the inventory it holds is now stale: the
+  # reclaim removed annotations that are still present in its snapshot.
+  reclaimed_fence_count="${reclaimed}"
   ((reclaimed == 0)) || assert_sync_lease_held || return 1
 }
 

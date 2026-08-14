@@ -264,7 +264,7 @@ if declare -F select_orphaned_node_fences >/dev/null; then
 
   # Negative control: the journalled node must NOT be reclaimed, because its
   # phase decides what is safe and bootstrap recovery owns that state.
-  if ! grep -q "prod-worker-1" "${orphan_targets}"; then
+  if ! cut -f1 "${orphan_targets}" | grep -qxF "prod-worker-1"; then
     pass "a fence carrying a recovery journal is never reclaimed"
   else
     fail "a fence carrying a recovery journal is never reclaimed"
@@ -273,7 +273,7 @@ if declare -F select_orphaned_node_fences >/dev/null; then
   # Negative control: a fence that reached Talos mutation is NEVER reclaimed.
   # The Lease proves no owner is alive; it never proves the node reached a known
   # state, and that distinction is the whole reason the phase marker exists.
-  if ! grep -q "prod-worker-3" "${orphan_targets}"; then
+  if ! cut -f1 "${orphan_targets}" | grep -qxF "prod-worker-3"; then
     pass "a fence that reached Talos mutation is never reclaimed"
   else
     fail "a fence that reached Talos mutation is never reclaimed"
@@ -281,14 +281,14 @@ if declare -F select_orphaned_node_fences >/dev/null; then
 
   # Negative control: a PRE-#3070 fence carries no phase at all. Absence is
   # unknown depth, so it must fail closed exactly like "mutating".
-  if ! grep -q "prod-worker-4" "${orphan_targets}"; then
+  if ! cut -f1 "${orphan_targets}" | grep -qxF "prod-worker-4"; then
     pass "a fence with no phase marker is never reclaimed"
   else
     fail "a fence with no phase marker is never reclaimed"
   fi
 
   # Negative control: an unfenced node is never touched.
-  if ! grep -q "prod-worker-2" "${orphan_targets}"; then
+  if ! cut -f1 "${orphan_targets}" | grep -qxF "prod-worker-2"; then
     pass "an unfenced node is never reclaimed"
   else
     fail "an unfenced node is never reclaimed"

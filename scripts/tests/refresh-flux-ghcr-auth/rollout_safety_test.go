@@ -749,7 +749,44 @@ func TestFencePhaseAdvancesBeforeTalosMutation(t *testing.T) {
 	}
 }
 
-// A node whose phase marker cannot be advanced must not be mutated at all.
+// A fence left behind by a transaction that died before this run began is
+// reclaimed end-to-end: the Lease was free at acquisition, so no owner is alive
+// to protect it. This exercises the actual patch, not just the jq selection.
+func TestOrphanedFenceIsReclaimed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_LEAKED_FENCE_NODE": "prod-control-plane-2",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	// lineIndex fails when absent, which is the assertion.
+	lineIndex(t, operations, "node-reclaim-fence:prod-control-plane-2")
+}
+
+// The same fence at "mutating" is NEVER reclaimed. The Lease proves no owner is
+// alive; it never proves the node reached a known state, which is the whole
+// reason the phase marker exists.
+func TestMutatingFenceIsNeverReclaimed(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_LEAKED_FENCE_NODE":  "prod-control-plane-2",
+		"FAKE_LEAKED_FENCE_PHASE": "mutating",
+	})
+	for _, operation := range readLines(f.operationLog) {
+		if operation == "node-reclaim-fence:prod-control-plane-2" {
+			t.Fatal("a fence that reached Talos mutation was reclaimed")
+		}
+	}
+	_ = result
+}
+
+// A node whose phase marker cannot be advanced must not be mutated at all --
+// and must not be left fenced either. The refusal path releases the fence with
+// `|| true`, so a regression that silently failed to release would still block
+// every later deploy: exactly the #3070 failure mode. Not mutating Talos is
+// therefore only half of what this has to prove.
 func TestFencePhaseFailureBlocksTalosMutation(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -759,5 +796,16 @@ func TestFencePhaseFailureBlocksTalosMutation(t *testing.T) {
 	requireFailureResult(t, result)
 	if pathExists(f.talosLog) {
 		t.Fatal("Talos was mutated although the fence phase could not be advanced")
+	}
+	operations := readLines(f.operationLog)
+	// lineIndex fails the test when the entry is absent, which is the assertion:
+	// the fence this transaction claimed was handed back before giving up.
+	claim := lineIndex(t, operations, "node-claim-cordon:prod-worker-1")
+	release := lineIndex(t, operations, "node-uncordon:prod-worker-1")
+	if release <= claim {
+		t.Fatalf(
+			"fence was not released after the phase advance failed: claim=%d release=%d",
+			claim, release,
+		)
 	}
 }

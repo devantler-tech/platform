@@ -1018,6 +1018,20 @@ func fakeKubectlGetNodes() int {
 	if os.Getenv("FAKE_NODE_DISCOVERY_FAIL") == "true" {
 		return commandFailure(46, "node discovery failed")
 	}
+	// Seed a fence left behind by a transaction that was killed before this run
+	// existed -- the #3070 state. Seeded once, guarded by its own marker, so a
+	// reclaim that clears it is not silently re-created on the next inventory
+	// read and the test can tell "reclaimed" from "never seeded".
+	if leaked := os.Getenv("FAKE_LEAKED_FENCE_NODE"); leaked != "" &&
+		!markerExists("leaked-fence-seeded-"+leaked) {
+		touchMarker("leaked-fence-seeded-" + leaked)
+		setMarkerContent("cordon-owner-"+leaked, "dead-transaction-owner")
+		setMarkerContent(
+			"cordon-phase-"+leaked,
+			defaultString(os.Getenv("FAKE_LEAKED_FENCE_PHASE"), "claimed"),
+		)
+		touchMarker("cordoned-" + leaked)
+	}
 	if custom := os.Getenv("FAKE_NODE_JSON"); custom != "" {
 		fmt.Println(custom)
 		return 0
@@ -1577,6 +1591,53 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		setMarkerContent("cordon-recovery-"+nodeName, updatedRecovery)
 		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
 		appendEnvFile("OPERATION_LOG", "recovery-phase:"+nodeName+":"+phase+"\n")
+		return 0
+	}
+	// Reclaiming a leaked fence is the only patch that REMOVES the phase
+	// annotation -- a claim adds it, a release leaves it alone -- so that is the
+	// discriminator. Without this branch the reclaim falls through to the
+	// release path, whose first test is the owner rather than the uid, and every
+	// reclaim would fail exit 56 with no coverage of the mutation at all.
+	isReclaim := hasPatchPath(
+		patch,
+		"remove",
+		"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+	)
+	if isReclaim {
+		if nodeName == os.Getenv("FAKE_RECLAIM_FAIL_NODE") {
+			return commandFailure(56, "fence changed while being reclaimed")
+		}
+		expectedOwner := patchValueString(
+			patch,
+			"test",
+			"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner",
+		)
+		// CAS on identity, the exact owner value, AND the "claimed" phase: a
+		// reclaim must never clear a fence that changed hands, sits on a
+		// replaced node reusing the name, or already reached Talos mutation.
+		if expectedOwner == "" ||
+			expectedOwner != markerContent("cordon-owner-"+nodeName) ||
+			!hasPatchOperation(patch, "test", "/metadata/uid", fakeExpectedNodeUID(nodeName)) ||
+			!hasPatchOperation(
+				patch,
+				"test",
+				"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
+				"claimed",
+			) ||
+			!hasPatchPath(
+				patch,
+				"remove",
+				"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner",
+			) {
+			return commandFailure(56, "invalid orphaned fence reclaim")
+		}
+		removeMarker("cordon-owner-" + nodeName)
+		removeMarker("cordon-phase-" + nodeName)
+		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+		// The cordon marker is deliberately left in place: reclaim releases
+		// ownership without uncordoning, because the pre-claim schedulability
+		// was never recorded.
+		appendEnvFile("OPERATION_LOG", "node-reclaim-fence:"+nodeName+"\n")
 		return 0
 	}
 	if isClaim {
