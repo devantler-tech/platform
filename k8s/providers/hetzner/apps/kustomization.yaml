@@ -92,3 +92,6 @@ patches:
   - path: umami/patches/enable-user-namespaces.yaml
   - path: backstage/patches/enable-user-namespaces.yaml
   - path: crossview/patches/enable-user-namespaces.yaml
+  # Headlamp's label is the enforce ratchet only — the values patch above is
+  # what sets hostUsers, and the mutate rule cannot reach an authored value.
+  - path: headlamp/patches/enable-user-namespaces.yaml

@@ -83,7 +83,7 @@ DISABLE_ERRORS_LINTERS:
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (9) and trivy (110 in the local v0.73.0 reproduction): Kubernetes misconfiguration
+  # checkov (8) and trivy (108 in the local v0.73.0 reproduction): Kubernetes misconfiguration
   # in k8s/, which the section above explains is NOT covered elsewhere. Tracked by #2787.
   #
   # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of
@@ -107,7 +107,7 @@ DISABLE_ERRORS_LINTERS:
   # JavaScript that reads an ESO-mounted Secret and the other exposes the public
   # `external_secrets_replicas` count. Trivy matched those identifier strings, not credential data.
   #
-  # checkov's 9 are all `kubernetes` framework, and 2 of them are CKV_K8S_40, at exactly these
+  # checkov's 8 are all `kubernetes` framework, and 2 of them are CKV_K8S_40, at exactly these
   # sites: the two vault-backup jobs.
   # Re-derive that list from the scan rather than adjusting a number here — every figure in this
   # block is a measurement, and the running arithmetic that used to track it went stale twice.
@@ -184,7 +184,7 @@ DISABLE_ERRORS_LINTERS:
   # exact commands this job runs, so a slice can show the number moved without a CI round trip.
   #
   # ⚠️ Read trivy's number from that script, NOT from the MegaLinter summary. MegaLinter reports
-  # this trivy scan as "1 non blocking error" while the local v0.73.0 scan actually fails 110 checks
+  # this trivy scan as "1 non blocking error" while the local v0.73.0 scan actually fails 108 checks
   # across 27 targets; the 1 is an artifact of how MegaLinter counts trivy's output. checkov's
   # number is a genuine sum of "Failed checks:" and needs no such caveat.
   #

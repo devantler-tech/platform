@@ -12,9 +12,9 @@
 //
 // Fail-closed by design: any CR shape this converter does not recognise (an
 // unknown spec.match key, a posture action other than `ignore`, a
-// namespaceSelector that isn't the `kubernetes.io/metadata.name In [...]`
-// expression) aborts with a non-zero exit instead of silently dropping or
-// widening an exception.
+// namespaceSelector that isn't a `kubernetes.io/metadata.name In [...]` or
+// `NotIn [...]` expression) aborts with a non-zero exit instead of silently
+// dropping or widening an exception.
 //
 // Usage, from the repository root:
 //
@@ -193,6 +193,82 @@ func asMapSlice(raw any, path, name, field string) ([]map[string]any, error) {
 	return entries, nil
 }
 
+type namespacePrefix struct {
+	terminal bool
+	children map[rune]*namespacePrefix
+}
+
+// escapeRegexClassRune uses the small character-class escape vocabulary shared
+// by both Go/OPA's RE2 implementation and JavaScript RegExp. The latter matters
+// because the generated Headlamp fallback evaluates the same designators in the
+// browser; RE2-only hex-brace escapes would make its entire exception group
+// unparsable.
+func escapeRegexClassRune(r rune) string {
+	switch r {
+	case '\\', '-', ']', '^':
+		return "\\" + string(r)
+	default:
+		return string(r)
+	}
+}
+
+// namespaceNotInPattern renders the complement of a finite set without regex
+// lookarounds. Kubescape and OPA use RE2, which deliberately does not support
+// negative lookahead, so a direct `^(?!excluded$).+$` cannot be consumed by the
+// actual exception engines. The prefix tree instead emits one alternative for
+// every first point at which a non-empty namespace differs from an exclusion,
+// plus extensions of an excluded name.
+func namespaceNotInPattern(values []string) string {
+	root := &namespacePrefix{children: map[rune]*namespacePrefix{}}
+
+	for _, value := range values {
+		node := root
+		for _, r := range value {
+			child := node.children[r]
+			if child == nil {
+				child = &namespacePrefix{children: map[rune]*namespacePrefix{}}
+				node.children[r] = child
+			}
+			node = child
+		}
+		node.terminal = true
+	}
+
+	var alternatives []string
+	var walk func(*namespacePrefix, string)
+	walk = func(node *namespacePrefix, prefix string) {
+		if prefix != "" && !node.terminal {
+			alternatives = append(alternatives, regexp.QuoteMeta(prefix))
+		}
+
+		if len(node.children) == 0 {
+			alternatives = append(alternatives, regexp.QuoteMeta(prefix)+".+")
+			return
+		}
+
+		children := make([]rune, 0, len(node.children))
+		for r := range node.children {
+			children = append(children, r)
+		}
+		sort.Slice(children, func(i, j int) bool { return children[i] < children[j] })
+
+		var excludedNext strings.Builder
+		for _, r := range children {
+			excludedNext.WriteString(escapeRegexClassRune(r))
+		}
+		alternatives = append(alternatives,
+			regexp.QuoteMeta(prefix)+"[^"+excludedNext.String()+"].*")
+
+		for _, r := range children {
+			walk(node.children[r], prefix+string(r))
+		}
+	}
+
+	walk(root, "")
+
+	return "^(" + strings.Join(alternatives, "|") + ")$"
+}
+
 // convertNamespaceSelector maps a namespaceSelector to one namespace-regex designator.
 func convertNamespaceSelector(selector map[string]any, path, name string) ([]designator, error) {
 	if unknown := unknownKeys(selector, "matchExpressions"); len(unknown) > 0 {
@@ -209,8 +285,11 @@ func convertNamespaceSelector(selector map[string]any, path, name string) ([]des
 	}
 
 	expr := expressions[0]
-	if expr["key"] != namespaceNameKey || expr["operator"] != "In" {
-		return nil, cseErrorf(path, name, "only `%s In [...]` matchExpressions are supported", namespaceNameKey)
+	operator, operatorOK := expr["operator"].(string)
+	if expr["key"] != namespaceNameKey || !operatorOK || (operator != "In" && operator != "NotIn") {
+		return nil, cseErrorf(path, name,
+			"only `%s In [...]` or `%s NotIn [...]` matchExpressions are supported",
+			namespaceNameKey, namespaceNameKey)
 	}
 
 	rawValues, ok := expr["values"].([]any)
@@ -218,6 +297,7 @@ func convertNamespaceSelector(selector map[string]any, path, name string) ([]des
 		return nil, cseErrorf(path, name, "namespaceSelector matchExpression has no values")
 	}
 
+	values := make([]string, 0, len(rawValues))
 	quoted := make([]string, 0, len(rawValues))
 
 	for _, rawValue := range rawValues {
@@ -226,10 +306,14 @@ func convertNamespaceSelector(selector map[string]any, path, name string) ([]des
 			return nil, cseErrorf(path, name, "namespaceSelector values must be strings, got %v", rawValue)
 		}
 
+		values = append(values, value)
 		quoted = append(quoted, regexp.QuoteMeta(value))
 	}
 
 	pattern := "^(" + strings.Join(quoted, "|") + ")$"
+	if operator == "NotIn" {
+		pattern = namespaceNotInPattern(values)
+	}
 
 	return []designator{{
 		DesignatorType: designatorTypeAttr,

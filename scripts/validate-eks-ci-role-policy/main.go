@@ -42,10 +42,10 @@ const (
 	expectedKubectlVersion   = "v1.36.2"
 	expectedKustomizeVersion = "v5.8.1"
 	expectedRoleManifestSHA  = "96a77d18160c450340e65b0953f44016a01a08429416f7a82142c3f90a61ca07"
-	expectedBoundarySHA      = "b96bfd8c96baa2e09f32a1cc05f76473ecc021fed554a2880ce8e3dd399902c7"
+	expectedBoundarySHA      = "6e79792b08aa023900734d31c45d6abe1765991ad16b63e84598cc8d7d5b05af"
 	expectedTrustPolicySHA   = "85d5d45343f9eac5fdc35717c85c88c5b0f8fde9eddffb169c3a223617fd0a5e"
 	expectedInlinePolicySHA  = "60e3086a6d3dac0092ffe8264c04ebae783c0d38f19a3cf073ed8991085a4df8"
-	expectedBoundaryJSONSHA  = "e617004bce71a65f92934c4f7575d7559a290afe7a17363ce12db8ad7b519610"
+	expectedBoundaryJSONSHA  = "2c9bc1ce56efeb6fa30d885d5f9dff8d5d8129a07d9393ccdeb376605cbc5ad8"
 )
 
 // expectedRenderedSurfaceSHA is the aggregate fingerprint of the whole selected
@@ -293,7 +293,77 @@ const (
 // Nothing granted to the aws/aws service account this validator exists to
 // protect is touched: the additions are in `observability`, and the exporter
 // cannot read any AWS-bearing resource.
-const expectedRenderedSurfaceSHA = "927693205f5fdf2c53d5ef92d5bcb3fa777d4a84910d24fe4501153bf82cf904"
+//
+// This value additionally covers granting that same exporter the CRD read its
+// discovery path requires (#3068). The component shipped unable to read
+// anything: kube-state-metrics resolves a CustomResourceStateMetrics
+// `groupVersionKind` through the CRD API before it can build a store for it, so
+// the repositories rule above is necessary but not sufficient, and without the
+// CRD read the reflector retry-loops on a forbidden list while the workload
+// reports itself Ready.
+//
+// Measured by rendering the production infrastructure root on the base commit
+// and on this change: the diff is EIGHT added lines and nothing else. No
+// document is removed, renamed, or otherwise altered, no resource enters or
+// leaves the surface, and the set difference in the removal direction is EMPTY.
+// The eight lines are one rule on the existing `crossplane-sync-exporter`
+// ClusterRole:
+//
+//	apiGroups: ["apiextensions.k8s.io"]
+//	resources: ["customresourcedefinitions"]
+//	verbs:     ["get", "list", "watch"]
+//
+// The grant reads CRD *definitions*, which carry schemas, not the managed
+// resources themselves — so the scoping rationale above is preserved intact:
+// managed-resource access, where provider configuration actually lives, stays
+// pinned to `repo.github.m.upbound.io/repositories`. It is read-only, and
+// `scripts/tests/test-crossplane-sync-exporter.sh` now pins this rule too, so
+// the discovery half can no longer go missing unobserved — which is exactly how
+// it went missing the first time, since that contract asserted the
+// managed-resource half alone.
+//
+// `resourceNames` cannot narrow it further: RBAC honours that field only for
+// get/update/delete/patch, never for list or watch, and the discovery path
+// lists.
+//
+// Nothing granted to the aws/aws service account is touched by this change
+// either. The rule is cluster-scoped because CRD definitions are, but it
+// confers no access to any AWS-bearing resource, identity, binding, policy
+// document or service account.
+//
+// The fingerprint was produced by two independent renderers that agree
+// exactly — the required CI job on the approved toolchain, and a local render —
+// which is what rules out a renderer-version artifact in the value.
+//
+// This value additionally covers conditioning `kms:CreateGrant` on
+// `kms:GrantIsForAWSResource=true` in the eks-ci-smoke permissions boundary
+// (#2704). Measured by restoring main's copy of the one changed manifest and
+// re-rendering all five roots from both trees: 22933 -> 22943 lines, and the
+// ENTIRE delta across the production surface is
+//
+//	GONE   "kms:CreateGrant",   (leaving the unconditioned action list)
+//	NEW    "Sid": "KmsGrantsForAwsResourcesOnly",
+//	NEW    "Action": "kms:CreateGrant", "Resource": "*",
+//	NEW    "Condition": {"Bool": {"kms:GrantIsForAWSResource": "true"}}
+//
+// No `kind:` or `name:` line moves, so membership is identical — nothing was
+// added, removed or renamed — and every other Role / ClusterRole / RoleBinding
+// / ClusterRoleBinding / ServiceAccount document is byte-identical. It is
+// strictly a tightening: the action was previously allowed unconditionally and
+// is now allowed only for AWS-service-managed resources, so every grant the new
+// form permits the old one already permitted. Only ONE per-resource fingerprint
+// moves with it — the boundary Policy's own — which corroborates that the edit
+// did not leak into any other document.
+//
+// One trap worth recording, because it looks exactly like a renderer-version
+// artifact and is not: a `pull_request` CI job renders the PR's MERGE commit,
+// while a local `go test` on the branch renders the branch against whatever
+// base it was cut from. When main moves under a branch the two therefore
+// disagree on the AGGREGATE surface value while still agreeing on every
+// per-resource fingerprint, since the moved documents belong to main's change
+// rather than the branch's. Compare like with like before concluding the
+// toolchain is at fault.
+const expectedRenderedSurfaceSHA = "26e28178117fa9dc0f7d66c8bd526b1b5f000beeedac9f327207b8a674c56755"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -338,7 +408,7 @@ type resourceType struct {
 // source, controller, binding, and indirect authorization object.
 var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                                        "0967890d16316a8cfcb1cca8a52085c6989c42000fafbbd0ada6323d4e15c97c",
-	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:                       "66f79a06cd8f789f6a2dd66b263c3f4459447f96227f57996591d75b441b0104",
+	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:                       "6f14b5243c945d0d2230821733ea12096d6e92ab155a35482b20a6080c03c037",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:                         "ff4c3264c519b1b4a7ec9b5145412f39ea2ba7b6163d8dc50fb029b1460edcda",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:                  "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "crossview", name: "crossview-portforward"}:            "78992d9727763fdcf1bda05969fdc881e6d0e54cc72efc07555304b47d25bc3a",
@@ -347,16 +417,16 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "opencost-usage-scraper"}:                            "4b28e1da280a7940a1cb4d538bc31ede1b5d272c17189a81afeae48acbb8b7a0",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "e23c61eb872c6aafaceed74e400479d034ee636735880d6b4a6de338cd0c32a9",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "072e4478cdad39c0a7d9f5119cad63d4c56a9fc96ba88d657fef97f6b91bae31",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "1a2ecb3104630c44466d846159ee68ff6a98888887c02ecd0278782793dead4a",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "a0b12b336d39709cb2f491662a3c8dd98269485b6a33935101e0bf9f03ec8925",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "7f674a1762f298330c7c9e4d9d4e8bf46108b10727e02a25ca5096d7913cc0a7",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "312d84288f510b4a38d985385487a52cb2dc1c634bbcbab8dc5e438689891189",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "d1bc403b6458bd22cf967bd570e24718341cbd584f58e7f0069aaffe1e187945",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "9d9b62d3221442d6355d16a34d31c198619fb3b3728df960fd67222a531ece7b",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "8e9f72b0f4f982d050aff0b97d246c68b538cbc397cdd45d031c95cfae981e7c",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "47c63f6a762caeacf257ddd32cbbeb3f3568eeea0e258ec006621579114731ff",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "6cca0d2d0e7874bf3f0c82f4e04f151d6c172eeae7929a8dbacbf37ed9793a6c",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "8af27d4845565c57b9ebc618f186669f18ada89e070cf4e6514924717a2532f8",
 }
 
 // fingerprint returns the SHA-256 identity used for byte-exact source checks.

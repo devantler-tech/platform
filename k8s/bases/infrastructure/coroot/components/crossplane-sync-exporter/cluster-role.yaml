@@ -15,3 +15,22 @@ rules:
       - get
       - list
       - watch
+  # kube-state-metrics resolves the configured `groupVersionKind` through the
+  # CRD API before it can build a store for it, so the rule above is necessary
+  # but not sufficient: without this one the reflector retry-loops on a
+  # forbidden list and the exporter emits nothing while reporting itself ready.
+  #
+  # This reads CRD *definitions* — schemas — not the managed resources
+  # themselves, so it does not widen the access the comment above scopes:
+  # provider configuration lives in managed-resource specs, which stay pinned to
+  # the kinds listed in the first rule. `resourceNames` cannot narrow this
+  # further, because RBAC honours it only for get/update/delete/patch and the
+  # discovery path lists.
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
+    verbs:
+      - get
+      - list
+      - watch

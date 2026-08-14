@@ -136,10 +136,90 @@ if declare -F select_talos_node_targets >/dev/null; then
   else
     fail "a changed image with current credentials selects image-only mode"
   fi
+
+  # A transaction killed before its EXIT trap released the drain fence leaves an
+  # owner annotation behind, and selection then refuses every later deploy. The
+  # refusal must name which node holds the fence: without it the only signal is
+  # a bare `jq: error (at …): residual GHCR bridge ownership`, and identifying
+  # the node costs a live cluster query while the delivery lane is down.
+  residual_nodes="${work_dir}/residual-nodes.json"
+  residual_targets="${work_dir}/residual-targets.tsv"
+  residual_stderr="${work_dir}/residual-stderr.log"
+  jq -n \
+    --arg revision "${DESIRED_REVISION}" \
+    --arg image "${DESIRED_IMAGE}" \
+    --arg revision_key "${GHCR_PULL_VERIFIED_REVISION_ANNOTATION:-}" \
+    --arg image_key "${GHCR_PULL_VERIFIED_IMAGE_ANNOTATION:-}" '
+    {
+      items: [
+        {
+          metadata: {
+            name: "prod-control-plane-2",
+            uid: "control-plane-2-uid",
+            labels: {"node-role.kubernetes.io/control-plane": ""},
+            annotations: {
+              ($revision_key): $revision,
+              ($image_key): $image,
+              "platform.devantler.tech/ghcr-auth-drain-owner":
+                "revision-prefix-4242-1337"
+            }
+          },
+          spec: {unschedulable: true},
+          status: {addresses: [
+            {type: "InternalIP", address: "10.0.0.2"}
+          ]}
+        },
+        {
+          metadata: {
+            name: "prod-worker-1",
+            uid: "worker-1-uid",
+            labels: {},
+            annotations: {
+              ($revision_key): $revision,
+              ($image_key): $image
+            }
+          },
+          status: {addresses: [
+            {type: "InternalIP", address: "10.0.0.4"}
+          ]}
+        }
+      ]
+    }
+  ' >"${residual_nodes}"
+
+  if select_talos_node_targets \
+    "${residual_nodes}" \
+    "${DESIRED_REVISION}" \
+    "${DESIRED_IMAGE}" \
+    "${residual_targets}" 2>"${residual_stderr}"; then
+    fail "residual bridge ownership still refuses node selection"
+  else
+    pass "residual bridge ownership still refuses node selection"
+  fi
+
+  if grep -Fq -- "prod-control-plane-2" "${residual_stderr}" &&
+    grep -Fq -- "platform.devantler.tech/ghcr-auth-drain-owner" \
+      "${residual_stderr}" &&
+    grep -Fq -- "revision-prefix-4242-1337" "${residual_stderr}"; then
+    pass "the residual-ownership refusal names the node, annotation and holder"
+  else
+    fail "the residual-ownership refusal names the node, annotation and holder"
+  fi
+
+  # A node that holds no fence must never be reported as holding one, or the
+  # operator clears the wrong node's annotation on a live cluster.
+  if grep -Fq -- "prod-worker-1" "${residual_stderr}"; then
+    fail "an unfenced node is not reported as holding a fence"
+  else
+    pass "an unfenced node is not reported as holding a fence"
+  fi
 else
   fail "legacy verification markers select reboot mode"
   fail "v2 post-reboot markers suppress an already-proved reboot"
   fail "a changed image with current credentials selects image-only mode"
+  fail "residual bridge ownership still refuses node selection"
+  fail "the residual-ownership refusal names the node, annotation and holder"
+  fail "an unfenced node is not reported as holding a fence"
 fi
 
 
@@ -253,6 +333,9 @@ sync_talos_registry_auth() {
 patch_root_secret() {
   printf '%s\n' root-patch >>"${operation_log}"
 }
+record_runtime_proof() {
+  printf 'record:%s:%s\n' "$1" "$2" >>"${operation_log}"
+}
 
 if declare -F stage_fanout_before_talos >/dev/null; then
   : >"${operation_log}"
@@ -281,14 +364,34 @@ if declare -F stage_fanout_before_talos >/dev/null; then
     force:externalsecret/kyverno/ghcr-auth \
     verify:kyverno/ghcr-auth \
     "talos:${DESIRED_REVISION}:${DESIRED_IMAGE}" \
+    "record:${DESIRED_REVISION}:${DESIRED_IMAGE}" \
     root-patch)"
   if [[ "$(<"${operation_log}")" == "${expected_operations}" ]]; then
     pass "verified tenant fanout brackets the Talos rollout"
   else
     fail "verified tenant fanout brackets the Talos rollout"
   fi
+
+  record_runtime_proof() {
+    printf 'record-failed:%s:%s\n' "$1" "$2" >>"${operation_log}"
+    return 1
+  }
+  : >"${operation_log}"
+  talos_sync_call_count=0
+  if stage_fanout_before_talos \
+    "${DESIRED_REVISION}" \
+    "${DESIRED_IMAGE}" \
+    "${work_dir}/talos-stage-result.txt" \
+    wedding-app ascoachingogvaner kyverno; then
+    fail "a failed runtime-proof record blocks the root cutover"
+  elif grep -Fxq -- root-patch "${operation_log}"; then
+    fail "a failed runtime-proof record blocks the root cutover"
+  else
+    pass "a failed runtime-proof record blocks the root cutover"
+  fi
 else
   fail "verified tenant fanout brackets the Talos rollout"
+  fail "a failed runtime-proof record blocks the root cutover"
 fi
 
 control_plane_inventory="${work_dir}/control-planes.json"
@@ -330,7 +433,7 @@ jq -n '
 ' >"${control_plane_inventory}"
 
 kubectl() {
-  cp "${control_plane_inventory}" /dev/stdout
+  command cat "${control_plane_inventory}"
 }
 
 talosctl() {

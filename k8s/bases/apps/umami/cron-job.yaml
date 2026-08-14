@@ -100,10 +100,32 @@ spec:
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
-                readOnlyRootFilesystem: false
+                readOnlyRootFilesystem: true
                 capabilities:
                   drop:
                     - ALL
+              # The script is `node -e` over HTTP only — it uses no filesystem API
+              # at all — so /tmp is the sole writable path it could need, and the
+              # Node runtime gets it from an emptyDir rather than a writable root.
+              # The umami Deployment already runs this same image read-only with
+              # exactly this mount; it additionally mounts /app/.next/cache, which
+              # is the Next.js server's build cache and has no meaning here.
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+                # Both credentials arrive as files rather than environment
+                # variables: an environment variable is readable by anything that
+                # can read the process environment and is routinely copied into
+                # crash dumps, child processes and diagnostic output, while a
+                # mounted file is not. Each Secret gets its own directory named
+                # after it, so the path itself says which Secret a value came
+                # from.
+                - name: umami-admin
+                  mountPath: /secrets/umami-admin
+                  readOnly: true
+                - name: umami-ascoachingogvaner
+                  mountPath: /secrets/umami-ascoachingogvaner
+                  readOnly: true
               resources:
                 requests:
                   cpu: 25m
@@ -116,25 +138,6 @@ spec:
               env:
                 - name: UMAMI_BASE
                   value: http://umami-umami.umami.svc.cluster.local
-                - name: ADMIN_PASSWORD
-                  valueFrom:
-                    secretKeyRef:
-                      name: umami-admin
-                      key: password
-                # One-time BOOTSTRAP password for the AS - Coaching, vaner og ro customer's
-                # read-only login, OpenBao-generated (apps/umami/ascoachingogvaner) and
-                # referenced by the member's `passwordEnv` in TENANTS below. Used only
-                # at account creation; the customer changes it on first login and owns
-                # it thereafter, so this value then sits inert (never re-applied).
-                - name: ASCOACHINGOGVANER_PASSWORD
-                  valueFrom:
-                    secretKeyRef:
-                      name: umami-ascoachingogvaner
-                      key: password
-                      # Bootstrap only: read solely when first creating the user.
-                      # optional so the Job still starts (and re-runs cleanly) if the
-                      # bootstrap Secret is removed once the customer owns their password.
-                      optional: true
                 # Declarative source of truth: one team per tenant, its websites, and
                 # any extra member logins. The website UUIDs are the values hard-pinned
                 # in each site's tracking script — adding a site = add an entry here +
@@ -158,7 +161,7 @@ spec:
                           { "id": "5e76b00b-67e5-4aef-b4df-17fca43e9a33", "name": "AS - Coaching, vaner og ro", "domain": "ascoachingogvaner.dk" }
                         ],
                         "members": [
-                          { "username": "ascoachingogvaner", "passwordEnv": "ASCOACHINGOGVANER_PASSWORD", "accountRole": "view-only", "teamRole": "team-view-only" }
+                          { "username": "ascoachingogvaner", "passwordFile": "umami-ascoachingogvaner/password", "accountRole": "view-only", "teamRole": "team-view-only" }
                         ]
                       }
                     ]
@@ -166,8 +169,21 @@ spec:
                 - node
                 - -e
                 - |
+                  const fs = require('fs');
                   const base = process.env.UMAMI_BASE;
-                  const newPw = process.env.ADMIN_PASSWORD;
+                  // Credentials are mounted files (see volumeMounts). A path is
+                  // resolved under SECRETS_DIR and may not escape it, so a
+                  // TENANTS entry can only ever name a mounted credential.
+                  // Returns null when the file is absent, which is the readable
+                  // form of an `optional: true` Secret that has been removed.
+                  const SECRETS_DIR = '/secrets';
+                  const readSecretFile = (rel) => {
+                    if (!rel || rel.startsWith('/') || rel.split('/').includes('..')) throw new Error('invalid secret file path: ' + rel);
+                    try { return fs.readFileSync(SECRETS_DIR + '/' + rel, 'utf8'); }
+                    catch (e) { if (e.code === 'ENOENT') return null; throw e; }
+                  };
+                  const newPw = readSecretFile('umami-admin/password');
+                  if (!newPw) throw new Error('admin password file ' + SECRETS_DIR + '/umami-admin/password is missing or empty; the umami-admin Secret is required');
                   const tenants = JSON.parse(process.env.TENANTS);
                   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
                   const H = (t) => ({ 'content-type': 'application/json', ...(t ? { authorization: 'Bearer ' + t } : {}) });
@@ -270,15 +286,15 @@ spec:
                   async function ensureMember(token, teamId, m) {
                     // Resolve the member, creating it only if missing. The bootstrap
                     // password is read ONLY on the create path — once the user exists
-                    // (and owns its own password after first login), m.passwordEnv is
+                    // (and owns its own password after first login), m.passwordFile is
                     // never touched, so the bootstrap Secret can be removed after
                     // onboarding without breaking re-runs.
                     let userId = await findUserId(token, m.username);
                     if (userId) {
                       console.log('user exists:', m.username);
                     } else {
-                      const password = process.env[m.passwordEnv];
-                      if (!password) throw new Error('cannot create member ' + m.username + ': bootstrap password env ' + m.passwordEnv + ' is empty');
+                      const password = readSecretFile(m.passwordFile);
+                      if (!password) throw new Error('cannot create member ' + m.username + ': bootstrap password file ' + SECRETS_DIR + '/' + m.passwordFile + ' is missing or empty');
                       const c = await fetchRetry(base + '/api/users', { method: 'POST', headers: H(token), body: JSON.stringify({ username: m.username, password, role: m.accountRole || 'user' }) });
                       if (c.ok) {
                         userId = (await c.json()).id;
@@ -316,3 +332,43 @@ spec:
                     }
                     console.log('umami tenant provisioning complete');
                   })().catch((e) => { console.error(String((e && e.stack) || e)); process.exit(1); });
+          volumes:
+            # Writable scratch for the Node runtime, so the container's own root
+            # filesystem can stay immutable (readOnlyRootFilesystem above).
+            # sizeLimit matches the umami Deployment's own /tmp (helm-release.yaml):
+            # an unbounded emptyDir draws on the node's ephemeral storage, and this
+            # pod holds no eviction-limiting ephemeral-storage request of its own.
+            - name: tmp
+              emptyDir:
+                sizeLimit: 128Mi
+            # 288 is 0440: readable by root and by the pod's fsGroup (1001, set
+            # above), rather than by anything else that lands in this pod. It
+            # must carry the GROUP bit: kubelet owns secret-volume files
+            # root:fsGroup, never uid:fsGroup, so an owner-only 0400 is
+            # unreadable by the container's own non-root user.
+            #
+            # Written in DECIMAL deliberately. An unquoted `0440` is read as
+            # octal 288 by Kubernetes' own parser (sigs.k8s.io/yaml, which is
+            # YAML 1.1) and as decimal 440 — mode 0670 — by every YAML 1.2
+            # reader, yq and kyaml included. The two disagree silently and
+            # nothing validates the difference, so the literal that means the
+            # same thing to both is the only safe one. Same convention as
+            # cron-job-cnpg-degraded-alert.yaml and the coredns Deployment.
+            - name: umami-admin
+              secret:
+                secretName: umami-admin
+                defaultMode: 288
+            # One-time BOOTSTRAP password for the AS - Coaching, vaner og ro
+            # customer's read-only login, OpenBao-generated
+            # (apps/umami/ascoachingogvaner) and referenced by the member's
+            # `passwordFile` in TENANTS above. Read solely when first creating
+            # the user; the customer changes it on first login and owns it
+            # thereafter, so this value then sits inert (never re-applied).
+            # optional so the Job still starts (and re-runs cleanly) if the
+            # bootstrap Secret is removed once the customer owns their password —
+            # the mount is then simply empty and readSecretFile returns null.
+            - name: umami-ascoachingogvaner
+              secret:
+                secretName: umami-ascoachingogvaner
+                optional: true
+                defaultMode: 288
