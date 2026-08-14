@@ -80,22 +80,10 @@ spec:
       # rebuilds, and detaches again.
       offlineReplicaRebuilding: true
       # Engine->replica gRPC timeout. Raised from the 8s chart default to the
-      # 30s maximum because this cluster enforces Cilium SPIRE mutual
-      # authentication (the require-mutual-auth CiliumClusterwideNetworkPolicy,
-      # mode: required) on all intra-cluster traffic. When an engine<->replica
-      # auth-cache entry is cold -- after a cilium/spire-agent roll wipes every
-      # node's cache, or once an idle entry expires -- Cilium drops the first
-      # packet(s) while the SPIRE handshake completes, and the TCP
-      # retransmit-during-handshake delay intermittently exceeds the 8s default.
-      # The engine then declares an otherwise-healthy replica `in error` ->
-      # Faulted -> rebuild -> recover (~40-80s), so longhorn-manager spams
-      # Faulted / FailedRebuilding / FailedSnapshotPurge events (and matching
-      # log errors) every hour even though every volume is healthy at every
-      # point-in-time check. 30s absorbs the handshake latency WITHOUT weakening
-      # mutual auth (WireGuard still encrypts the wire and the SPIRE identity
-      # gate is unchanged) -- the long-lived-data-plane equivalent of the in-run
-      # curl retries the coroot-pricing / umami-provision CronJobs already use
-      # for the same first-packet-drop race. Longhorn caps this setting at 30s.
+      # 30s maximum after live prod saw otherwise-healthy replicas declared
+      # `in error` during transient node/CNI churn, causing Faulted -> rebuild
+      # -> recover loops and noisy Longhorn events. Longhorn caps this setting
+      # at 30s.
       engineReplicaTimeout: "30"
 
     persistence:
@@ -129,3 +117,82 @@ spec:
 
     longhornUI:
       replicas: ${longhorn_ui_replicas:=1}
+  postRenderers:
+    # Pin longhorn-ui's non-root identity in its own spec.
+    #
+    # This is DEFENCE IN DEPTH, not a posture-score change — do not re-justify it
+    # as one. C-0013/C-0016/C-0055 are already suppressed for this workload by the
+    # cluster-wide `pod-security-mutations` ClusterSecurityException, so the
+    # Kubescape gate reads identically with and without this patch (measured: both
+    # trees "All controls passed"). What it buys is a real runtime guarantee: today
+    # the container runs non-root only because the image bakes USER nginx
+    # (live: uid=499(nginx) gid=486(nginx), no securityContext at all). Nothing
+    # enforces that — `longhorn-system` is excluded from the `add-security-context`
+    # Kyverno mutation, so no admission control supplies it either. Pinning the
+    # identity here FORCES it: because runAsUser is set explicitly, an image that
+    # ever ships a root default is launched as uid 499 regardless of its own USER,
+    # rather than silently running as root. Note the mechanism — this is an
+    # override, NOT a kubelet rejection. runAsNonRoot only refuses a container
+    # whose effective user resolves to root, which with an explicit non-zero
+    # runAsUser it never does; the refusal path is the backstop that fires if this
+    # uid is ever removed or set to 0. So when diagnosing a future chart rollout,
+    # the expected failure signal is the container starting as 499 and failing in
+    # its own start-up, not an admission-time or kubelet refusal.
+    #
+    # The chart cannot express this: deployment-ui.yaml renders no securityContext
+    # and exposes no `longhornUI.securityContext` value, so a postRenderer is the
+    # only route — the same reason origin-ca-issuer patches its resources here.
+    #
+    # runAsUser is load-bearing and must stay NUMERIC: the image's baked user is
+    # the name `nginx`, and the kubelet cannot verify a non-numeric user against
+    # runAsNonRoot, so it would refuse the container without an explicit uid.
+    #
+    # KNOWN LIMIT: if a chart bump ever renames the Deployment, this patch stops
+    # applying, and kustomize does not error on a non-matching target — verified:
+    # rendering this exact patch against the live Deployment with the target name
+    # changed exits 0 and emits the object completely unpatched. The uid is
+    # chart-version-coupled for the same reason — revisit both on a major bump.
+    #
+    # It does NOT go unnoticed, though. This HelmRelease is a member of the pinned
+    # EKS authorization surface (document 217 of the rendered membership), so any
+    # chart bump moves the aggregate fingerprint and reds that gate, forcing a
+    # re-approval — which is exactly the checkpoint where this patch gets
+    # re-verified. The gate is the backstop; this comment is the instruction.
+    #
+    # The three writable paths (/var/cache/nginx, /var/config/nginx, /var/run) are
+    # chart-provided emptyDirs and world-writable, so no fsGroup is needed, and
+    # nginx listens on 8000, so dropping ALL capabilities costs no bind privilege.
+    # readOnlyRootFilesystem is deliberately NOT set: the ui entrypoint renders its
+    # nginx config at start-up, so that is a separate (C-0017) question with real
+    # breakage risk rather than something to bundle into a non-root change.
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: longhorn-ui
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: longhorn-ui
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      runAsNonRoot: true
+                      runAsUser: 499
+                      runAsGroup: 486
+                      seccompProfile:
+                        type: RuntimeDefault
+                    containers:
+                      - name: longhorn-ui
+                        securityContext:
+                          runAsNonRoot: true
+                          runAsUser: 499
+                          runAsGroup: 486
+                          allowPrivilegeEscalation: false
+                          capabilities:
+                            drop:
+                              - ALL
+                          seccompProfile:
+                            type: RuntimeDefault

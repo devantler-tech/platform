@@ -197,8 +197,7 @@ spec:
           # Background: the #notifications channel was carrying ~250+ [warning]
           # alerts per window with effectively zero incidents — dominated by
           # transient "Kubernetes events" (Unhealthy / Longhorn Faulted during node
-          # rolls / VPA ResizeError) and "Network connectivity" flaps (the Cilium +
-          # SPIRE mutual-auth first-packet race documented on the coroot CronJobs)
+          # rolls / VPA ResizeError) and transient "Network connectivity" flaps
           # that fire and resolve on their own. That volume is alert fatigue: it
           # buries the actionable :fire: incidents and desensitizes responders.
           # The built-in alerts stay fully visible in the Coroot UI for
