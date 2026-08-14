@@ -25,11 +25,28 @@ spec:
       restartPolicy: Never
       automountServiceAccountToken: false
       enableServiceLinks: false
+      # UID 65532 rather than a low one (checkov CKV_K8S_40, which passes from
+      # 10000 up). The busybox image declares no `User`, so it would run as root
+      # unedited, and it carries no /etc/passwd entry for the UID this runs
+      # under — the identity is unmapped either way and nothing in the image
+      # looks it up.
+      #
+      # The UID is not what this Job measures. Both containers assert on
+      # /proc/self/uid_map, which describes the pod's user namespace and reads
+      # identically for every process in it whatever UID that process has, so
+      # the `uid_host_start > 0` acceptance condition is untouched. `id -u`/
+      # `id -g` reach the sentinel only as text, and the round-trip assertions
+      # grep for the `init-user=`/`main-user=` keys, never their values.
+      #
+      # What makes /smoke writable is `fsGroup` == `runAsGroup`, not the UID:
+      # the kubelet chowns the Longhorn volume to that GID. The three move
+      # together for that reason — raising one alone would be the change that
+      # breaks this.
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
@@ -62,8 +79,8 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
+            runAsUser: 65532
+            runAsGroup: 65532
             capabilities:
               drop:
                 - ALL
@@ -119,8 +136,8 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
+            runAsUser: 65532
+            runAsGroup: 65532
             capabilities:
               drop:
                 - ALL

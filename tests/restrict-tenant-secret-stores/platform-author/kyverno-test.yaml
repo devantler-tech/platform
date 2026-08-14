@@ -1,0 +1,21 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-secret-stores-platform-author
+policies:
+  - >-
+    ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-secret-stores.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  # The apps-layer controller must retain the paved road for placing trusted,
+  # platform-owned SecretStores in a managed tenant namespace.
+  - policy: restrict-tenant-secret-stores
+    rule: secretstore-no-shared-vault-role
+    resources:
+      - tenant-ns/platform-applied-secret-store
+    kind: SecretStore
+    result: skip

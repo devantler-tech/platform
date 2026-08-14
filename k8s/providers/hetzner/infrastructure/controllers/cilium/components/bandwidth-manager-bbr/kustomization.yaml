@@ -18,7 +18,7 @@
 # bandwidth-manager device name on every managed node; wildcards are the
 # upstream-documented answer. Do not activate this component until #2610's
 # ../homogeneous-devices/ wildcard selection has been ACTIVATED and soaked
-# (it preserves the private-NIC WireGuard and mutual-auth path — see its
+# (it preserves the private-NIC WireGuard and node-control path — see its
 # runbook).
 #
 # SAFETY: this component is staged, not activation-ready. Keep it unreferenced

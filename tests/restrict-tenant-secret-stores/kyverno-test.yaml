@@ -1,0 +1,36 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-secret-stores
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-secret-stores.yaml
+resources:
+  - resources.yaml
+# The policy uses a namespaceSelector, so the CLI needs the namespace labels
+# declared explicitly or every case is reported as Excluded.
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  - policy: restrict-tenant-secret-stores
+    rule: secretstore-no-shared-vault-role
+    resources:
+      - tenant-ns/shared-controller-role
+      - tenant-ns/implicit-controller-service-account
+      - tenant-ns/cross-namespace-service-account
+    kind: SecretStore
+    result: fail
+  - policy: restrict-tenant-secret-stores
+    rule: secretstore-no-shared-vault-role
+    resources:
+      - tenant-ns/tenant-role-implicit-namespace
+      - tenant-ns/tenant-role-explicit-namespace
+    kind: SecretStore
+    result: pass
+  - policy: restrict-tenant-secret-stores
+    rule: secretstore-no-shared-vault-role
+    resources:
+      - platform-ns/platform-secret-store
+    kind: SecretStore
+    result: skip
