@@ -47,12 +47,18 @@ spec:
         - ports:
             - port: "443"
               protocol: TCP
+          # Every toFQDNs name above must appear here: Cilium rejects a TLS
+          # handshake whose SNI is absent from this list, so an omission
+          # silently denies that destination instead of merely leaving it
+          # unpinned.
           serverNames:
             - "ghcr.io"
             - "pkg-containers.githubusercontent.com"
             - "api.github.com"
             - "xpkg.upbound.io"
             - "d3qrbvrml4iuq4.cloudfront.net"
+            - "sts.eu-central-1.amazonaws.com"
+            - "iam.amazonaws.com"
     # DNS resolution. rules.dns activates Cilium's L7 DNS proxy so the
     # toFQDNs rule above can be enforced; the visibility list is restricted
     # to the names these pods actually need to resolve, closing off DNS
