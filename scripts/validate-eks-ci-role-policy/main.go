@@ -366,16 +366,17 @@ const (
 //
 // Measured against main 2f92d8ef before approving this value: the complete
 // rendered authorization diff changes exactly one object, ClusterRole
-// `cilium-tenant-edit`. Surface membership is unchanged. Its built-in
-// `aggregate-to-edit` label is removed, so ordinary `edit` bindings no longer
-// inherit Cilium policy access, and its `update`, `patch`, and `delete` verbs
-// are removed. The remaining get/list/watch/create grant was already present;
-// every request permitted by the new role was permitted by the old role.
-// Therefore this is strictly an authorization narrowing, while platform#3150
-// separately tracks admission constraints for permissive tenant-created
-// policies. The committed-tree validation reported no per-resource mismatch;
-// only this aggregate fingerprint moved.
-const expectedRenderedSurfaceSHA = "6a854be18346bd0224e2fcd0953a967c48805a677850ddd9ba965d62d9aa6fd8"
+// `cilium-tenant-edit`. Surface membership is unchanged. The only rendered
+// change removes its built-in `aggregate-to-edit` label, so ordinary `edit`
+// bindings no longer inherit Cilium policy access. The tenant-specific
+// aggregation label and all rule verbs remain byte-identical to main: Flux can
+// still server-side apply and prune tenant policies through `tenant-edit`.
+// This strictly narrows which aggregate role inherits the grant without
+// breaking that workflow. Platform#3150 separately tracks admission constraints
+// for permissive or platform-owned tenant policy mutations. The committed-tree
+// validation reported no per-resource mismatch; only this aggregate fingerprint
+// moved.
+const expectedRenderedSurfaceSHA = "96d53d99da43a9bd4e8aa23bd3dac622c4eef391b6cf0ad80f42b00643e199e3"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

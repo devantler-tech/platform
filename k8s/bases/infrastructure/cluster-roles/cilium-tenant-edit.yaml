@@ -1,15 +1,13 @@
 # Aggregate ClusterRole that extends the scoped `tenant-edit` ClusterRole with
-# limited Cilium network-policy verbs, so a self-service tenant can create
-# additive CiliumNetworkPolicy allow-lists in its namespace without receiving
-# write access to platform-maintained policies.
+# Cilium network-policy reconciliation verbs, so a self-service tenant can own
+# the allow-lists in its deployment artifact.
 #
-# The `add-default-deny` Kyverno policy generates deny-all + allow-dns
-# CiliumNetworkPolicies in every namespace. This role protects those existing
-# objects from tenant update, patch, or delete, but Cilium combines matching
-# allow rules: a tenant-created permissive policy can still widen traffic until
-# admission constraints land (platform#3150). `create` remains here solely for
-# self-service additive allow-lists. Tenants cannot manage cluster-wide policy
-# resources.
+# Flux impersonates the tenant ServiceAccount and uses server-side apply plus
+# pruning, so PATCH and DELETE are required for this self-service workflow.
+# These verbs also let a tenant change any namespaced CiliumNetworkPolicy, and
+# Cilium combines matching allow rules; neither the generated default-deny
+# object nor the additive policy set is an immutable security boundary until
+# admission constraints land (platform#3150).
 #
 # This role is intentionally NOT aggregated into the built-in `edit` role.
 # Grants only the NAMESPACED `ciliumnetworkpolicies` — never the cluster-scoped
@@ -30,3 +28,6 @@ rules:
       - list
       - watch
       - create
+      - update
+      - patch
+      - delete
