@@ -61,8 +61,12 @@ spec:
     # To re-verify:
     #   go run ./scripts/generate-kubescape-exceptions -o /tmp/base.json
     #   jq '[.[] | select(.name != "controller-rbac")]' /tmp/base.json >/tmp/b.json
-    #   ksail workload scan --framework nsa,mitre --exceptions <arm> \
-    #     --compliance-threshold 0 --format sarif -o <out>.sarif
+    #   ksail workload scan --framework nsa,mitre --exceptions /tmp/base.json \
+    #     --compliance-threshold 0 --format sarif -o /tmp/arm-with.sarif
+    #   ksail workload scan --framework nsa,mitre --exceptions /tmp/b.json \
+    #     --compliance-threshold 0 --format sarif -o /tmp/arm-without.sarif
+    #   # then compare per control:
+    #   jq -r '[.runs[].results[].ruleId] | group_by(.)[] | "\(length)\t\(.[0])"' /tmp/arm-*.sarif
     #
     # Read the effect off THIS scan only. The kubescape-operator's stored scan
     # resources apply no exceptions at all — their appliedIgnoreRules is empty —
