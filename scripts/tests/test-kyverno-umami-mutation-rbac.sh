@@ -6,6 +6,8 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly kyverno_dir="${root_dir}/k8s/bases/infrastructure/controllers/kyverno"
 readonly umami_dir="${root_dir}/k8s/bases/apps/umami"
+readonly hetzner_apps_dir="${root_dir}/k8s/providers/hetzner/apps"
+readonly hetzner_controllers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
 readonly grant_name="kyverno:background-controller:mutate-umami-primary"
 
 fail() {
@@ -109,5 +111,21 @@ kubectl kustomize "${umami_dir}" >"${umami_rendered_file}" ||
 if extract_resource Namespace umami <"${umami_rendered_file}" >/dev/null; then
   fail 'the Umami app layer must not co-own the namespace created before the Kyverno policy'
 fi
+
+hetzner_apps_rendered_file="$(mktemp)"
+hetzner_controllers_rendered_file="$(mktemp)"
+trap 'rm -f "${rendered_file}" "${umami_rendered_file}" "${hetzner_apps_rendered_file}" "${hetzner_controllers_rendered_file}"' EXIT
+kubectl kustomize "${hetzner_apps_dir}" >"${hetzner_apps_rendered_file}" ||
+  fail 'the Hetzner apps overlay must render without patching the moved Umami namespace'
+kubectl kustomize "${hetzner_controllers_dir}" >"${hetzner_controllers_rendered_file}" ||
+  fail 'the Hetzner infrastructure-controllers overlay must render'
+
+if extract_resource Namespace umami <"${hetzner_apps_rendered_file}" >/dev/null; then
+  fail 'the Hetzner apps layer must not co-own the Umami namespace'
+fi
+hetzner_umami_namespace="$(extract_resource Namespace umami <"${hetzner_controllers_rendered_file}")" ||
+  fail 'the Hetzner infrastructure-controllers layer must render the Umami namespace'
+[[ "$(yq -r '.metadata.labels."pod-security.devantler.tech/user-namespaces"' <<<"${hetzner_umami_namespace}")" == 'enabled' ]] ||
+  fail 'the Hetzner infrastructure-controllers layer must preserve Umami user-namespace opt-in'
 
 echo 'Kyverno can mutate only the Umami primary in the umami namespace.'

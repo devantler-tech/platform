@@ -89,7 +89,6 @@ patches:
         value: false
   - path: whoami/patches/enable-user-namespaces.yaml
   - path: homepage/patches/enable-user-namespaces.yaml
-  - path: umami/patches/enable-user-namespaces.yaml
   - path: backstage/patches/enable-user-namespaces.yaml
   - path: crossview/patches/enable-user-namespaces.yaml
   # Headlamp's label is the enforce ratchet only — the values patch above is

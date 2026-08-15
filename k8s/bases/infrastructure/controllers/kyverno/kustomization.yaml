@@ -8,7 +8,7 @@ resources:
   - cilium-network-policy.yaml
   # Umami's namespace and narrow background-controller grant must exist before
   # the dependent infrastructure layer admits its mutateExisting policy.
-  - umami-namespace.yaml
+  - namespace-umami.yaml
   - role.yaml
   - role-binding.yaml
   - cluster-role-reports-controller-read-keda.yaml
