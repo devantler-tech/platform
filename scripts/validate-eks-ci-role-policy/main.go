@@ -425,10 +425,13 @@ const (
 // rule's complete exception set to flux-system/flux-system and unifi/unifi.
 // No identity, binding, resource kind, or remaining verb moved.
 //
-// Re-measured after merging exact main 025fd5a6 into the Umami repair. The
-// validator reported no unapproved per-resource fingerprint; only the aggregate
-// moved to the combined surface recorded below.
-const expectedRenderedSurfaceSHA = "bc55b7016b05510a795962fbe0b094cc03700508d801f0419112bb9fcaa5c031"
+// Re-measured after adding the exact-name bootstrap Job health expression to
+// the apps Kustomization. The rendered apps Kustomization fingerprint moved to
+// ad3d1c5103b9f611927fdb587365f914e103d20e43b846e7e551e4fff28f9969:
+// it treats only umami-provision-tenants-bootstrap as best effort while retaining
+// the standard Complete/Failed health semantics for every other Job. No identity,
+// binding, RBAC resource, or resource authority moved; only the aggregate changed.
+const expectedRenderedSurfaceSHA = "0b5090c73782e5206a8488261fe0ee1d1c846e76836192666d9f984b9f1bc94f"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -585,7 +588,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "072e4478cdad39c0a7d9f5119cad63d4c56a9fc96ba88d657fef97f6b91bae31",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "a0b12b336d39709cb2f491662a3c8dd98269485b6a33935101e0bf9f03ec8925",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "ad3d1c5103b9f611927fdb587365f914e103d20e43b846e7e551e4fff28f9969",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "7f674a1762f298330c7c9e4d9d4e8bf46108b10727e02a25ca5096d7913cc0a7",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "d1bc403b6458bd22cf967bd570e24718341cbd584f58e7f0069aaffe1e187945",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "9d9b62d3221442d6355d16a34d31c198619fb3b3728df960fd67222a531ece7b",
