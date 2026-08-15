@@ -50,7 +50,7 @@ The recommended path mirrors how every other first-party app on this platform is
 built — as a **tenant repo** (see [TENANTS.md](TENANTS.md)):
 
 1. **Scaffold an own Backstage app** (`npx @backstage/create-app`) in a new
-   `devantler-tech/backstage` repo created from `gitops-tenant-template`; add the
+   `devantler-tech/backstage` repo created from `platform-tenant-template`; add the
    OIDC, Kubernetes and GitHub-discovery plugins to `packages/backend`.
 2. **Build + publish** the image (and signed manifests) via the standard
    `publish-app.yaml` pipeline — pin the digest, never `latest`.

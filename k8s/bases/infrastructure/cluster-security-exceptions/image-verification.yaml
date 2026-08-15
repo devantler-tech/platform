@@ -11,6 +11,12 @@ apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
   name: image-verification
+  annotations:
+    # Cluster-wide on purpose: C-0237 scans every workload image reference, and
+    # unsigned third-party chart images are spread across every namespace. The
+    # narrower posture is tracked as first-party pull enforcement (#2856), not
+    # as a scope on this exception.
+    platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
     First-party images (ghcr.io/devantler-tech/*) are cosign-signed and

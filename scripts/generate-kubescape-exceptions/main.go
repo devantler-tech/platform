@@ -12,9 +12,9 @@
 //
 // Fail-closed by design: any CR shape this converter does not recognise (an
 // unknown spec.match key, a posture action other than `ignore`, a
-// namespaceSelector that isn't the `kubernetes.io/metadata.name In [...]`
-// expression) aborts with a non-zero exit instead of silently dropping or
-// widening an exception.
+// namespaceSelector that isn't a `kubernetes.io/metadata.name In [...]` or
+// `NotIn [...]` expression) aborts with a non-zero exit instead of silently
+// dropping or widening an exception.
 //
 // Usage, from the repository root:
 //
@@ -22,6 +22,8 @@
 package main
 
 import (
+	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -32,6 +34,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"text/template"
 
 	"gopkg.in/yaml.v3"
 )
@@ -41,6 +44,42 @@ const (
 	namespaceNameKey   = "kubernetes.io/metadata.name"
 	exceptionKind      = "ClusterSecurityException"
 	designatorTypeAttr = "Attributes"
+
+	// mirrorAnnotation marks whether an exception belongs in the Headlamp
+	// mirror ConfigMap. The Headlamp Kubescape plugin only evaluates workload
+	// posture scans, so a host-scanner exception (CIS file permissions, kubelet
+	// flags) has no workload to attach to. There is no structural way to tell
+	// those apart — a CR with no `spec.match` is cluster-wide for the offline CI
+	// scan and meaningless for the plugin, and nine legitimately-mirrored
+	// policies also render a bare wildcard — so the distinction is an editorial
+	// judgement that has to be declared on the CR.
+	mirrorAnnotation = "platform.devantler.tech/headlamp-mirror"
+	// mirrorExclude is the only accepted mirrorAnnotation value. Any other value
+	// fails closed rather than being read as "include": a typo'd marker must not
+	// silently push a host-scanner exception into the mirror, where its
+	// cluster-wide designator would except that control for every workload.
+	mirrorExclude = "exclude"
+
+	// clusterWideAnnotation declares that an exception is MEANT to suppress its
+	// controls for every workload in the cluster. An omitted `spec.match` is
+	// what produces that scope, so without this marker the widest exception the
+	// repository can express is also the one written by typing the least, and a
+	// forgotten scope is indistinguishable from a deliberate one. Suppression is
+	// silent — an excepted workload that genuinely violates a control reads
+	// exactly like a compliant one — so the scope has to be stated, not inferred
+	// from an absence.
+	clusterWideAnnotation = "platform.devantler.tech/cluster-wide"
+	// clusterWideDeclared is the only accepted clusterWideAnnotation value. As
+	// with mirrorExclude, any other value fails closed rather than being read as
+	// a declaration: a typo must not grant cluster-wide suppression.
+	clusterWideDeclared = "declared"
+
+	formatKubescape = "kubescape"
+	formatConfigMap = "headlamp-configmap"
+
+	// mirrorConfigMapPath is the generated mirror, repo-root-relative. The drift
+	// test regenerates it and names it in the failure message it prints.
+	mirrorConfigMapPath = "k8s/bases/infrastructure/controllers/kubescape/config-map-headlamp-exceptions.yaml"
 )
 
 // designator identifies the Kubernetes resources covered by an exception.
@@ -63,6 +102,11 @@ type policy struct {
 	Resources       []designator    `json:"resources"`
 	PosturePolicies []posturePolicy `json:"posturePolicies"`
 	Reason          string          `json:"reason,omitempty"`
+
+	// mirrorExcluded records the CR's mirrorAnnotation decision. It is never
+	// serialised: the offline CI scan consumes every exception, and Kubescape's
+	// schema has no such field, so emitting it would change the scan input.
+	mirrorExcluded bool
 }
 
 // cseErrorf builds the fail-closed error naming the offending CR.
@@ -149,6 +193,82 @@ func asMapSlice(raw any, path, name, field string) ([]map[string]any, error) {
 	return entries, nil
 }
 
+type namespacePrefix struct {
+	terminal bool
+	children map[rune]*namespacePrefix
+}
+
+// escapeRegexClassRune uses the small character-class escape vocabulary shared
+// by both Go/OPA's RE2 implementation and JavaScript RegExp. The latter matters
+// because the generated Headlamp fallback evaluates the same designators in the
+// browser; RE2-only hex-brace escapes would make its entire exception group
+// unparsable.
+func escapeRegexClassRune(r rune) string {
+	switch r {
+	case '\\', '-', ']', '^':
+		return "\\" + string(r)
+	default:
+		return string(r)
+	}
+}
+
+// namespaceNotInPattern renders the complement of a finite set without regex
+// lookarounds. Kubescape and OPA use RE2, which deliberately does not support
+// negative lookahead, so a direct `^(?!excluded$).+$` cannot be consumed by the
+// actual exception engines. The prefix tree instead emits one alternative for
+// every first point at which a non-empty namespace differs from an exclusion,
+// plus extensions of an excluded name.
+func namespaceNotInPattern(values []string) string {
+	root := &namespacePrefix{children: map[rune]*namespacePrefix{}}
+
+	for _, value := range values {
+		node := root
+		for _, r := range value {
+			child := node.children[r]
+			if child == nil {
+				child = &namespacePrefix{children: map[rune]*namespacePrefix{}}
+				node.children[r] = child
+			}
+			node = child
+		}
+		node.terminal = true
+	}
+
+	var alternatives []string
+	var walk func(*namespacePrefix, string)
+	walk = func(node *namespacePrefix, prefix string) {
+		if prefix != "" && !node.terminal {
+			alternatives = append(alternatives, regexp.QuoteMeta(prefix))
+		}
+
+		if len(node.children) == 0 {
+			alternatives = append(alternatives, regexp.QuoteMeta(prefix)+".+")
+			return
+		}
+
+		children := make([]rune, 0, len(node.children))
+		for r := range node.children {
+			children = append(children, r)
+		}
+		sort.Slice(children, func(i, j int) bool { return children[i] < children[j] })
+
+		var excludedNext strings.Builder
+		for _, r := range children {
+			excludedNext.WriteString(escapeRegexClassRune(r))
+		}
+		alternatives = append(alternatives,
+			regexp.QuoteMeta(prefix)+"[^"+excludedNext.String()+"].*")
+
+		for _, r := range children {
+			walk(node.children[r], prefix+string(r))
+		}
+	}
+
+	walk(root, "")
+
+	return "^(" + strings.Join(alternatives, "|") + ")$"
+}
+
 // convertNamespaceSelector maps a namespaceSelector to one namespace-regex designator.
 func convertNamespaceSelector(selector map[string]any, path, name string) ([]designator, error) {
 	if unknown := unknownKeys(selector, "matchExpressions"); len(unknown) > 0 {
@@ -165,8 +285,11 @@ func convertNamespaceSelector(selector map[string]any, path, name string) ([]des
 	}
 
 	expr := expressions[0]
-	if expr["key"] != namespaceNameKey || expr["operator"] != "In" {
-		return nil, cseErrorf(path, name, "only `%s In [...]` matchExpressions are supported", namespaceNameKey)
+	operator, operatorOK := expr["operator"].(string)
+	if expr["key"] != namespaceNameKey || !operatorOK || (operator != "In" && operator != "NotIn") {
+		return nil, cseErrorf(path, name,
+			"only `%s In [...]` or `%s NotIn [...]` matchExpressions are supported",
+			namespaceNameKey, namespaceNameKey)
 	}
 
 	rawValues, ok := expr["values"].([]any)
@@ -174,6 +297,7 @@ func convertNamespaceSelector(selector map[string]any, path, name string) ([]des
 		return nil, cseErrorf(path, name, "namespaceSelector matchExpression has no values")
 	}
 
+	values := make([]string, 0, len(rawValues))
 	quoted := make([]string, 0, len(rawValues))
 
 	for _, rawValue := range rawValues {
@@ -182,10 +306,14 @@ func convertNamespaceSelector(selector map[string]any, path, name string) ([]des
 			return nil, cseErrorf(path, name, "namespaceSelector values must be strings, got %v", rawValue)
 		}
 
+		values = append(values, value)
 		quoted = append(quoted, regexp.QuoteMeta(value))
 	}
 
 	pattern := "^(" + strings.Join(quoted, "|") + ")$"
+	if operator == "NotIn" {
+		pattern = namespaceNotInPattern(values)
+	}
 
 	return []designator{{
 		DesignatorType: designatorTypeAttr,
@@ -293,6 +421,81 @@ func resolveMatch(match map[string]any, path, name string) ([]designator, error)
 	}}, nil
 }
 
+// resolveMirrorExclusion reads the CR's Headlamp-mirror marker.
+//
+// Absent annotation => mirrored, which is the safe default: the mirror is a
+// presentation fallback, and showing an exception the CRs do grant is a display
+// choice, whereas dropping one makes the dashboard report an excepted workload
+// as failing. Any value other than mirrorExclude fails closed.
+func resolveMirrorExclusion(metadata map[string]any, path, name string) (bool, error) {
+	rawAnnotations, present := metadata["annotations"]
+	if !present || rawAnnotations == nil {
+		return false, nil
+	}
+
+	// Present but not a mapping must fail closed rather than read as "no
+	// marker": silently ignoring a malformed annotations block would drop the
+	// exclusion and mirror a host exception, whose cluster-wide designator then
+	// excepts that control for every workload — the exact widening this marker
+	// exists to prevent.
+	annotations, ok := rawAnnotations.(map[string]any)
+	if !ok {
+		return false, cseErrorf(path, name, "metadata.annotations must be a mapping, got %v", rawAnnotations)
+	}
+
+	raw, ok := annotations[mirrorAnnotation]
+	if !ok {
+		return false, nil
+	}
+
+	value, ok := raw.(string)
+	if !ok {
+		return false, cseErrorf(path, name, "%s must be a string, got %v", mirrorAnnotation, raw)
+	}
+
+	if value != mirrorExclude {
+		return false, cseErrorf(path, name, "unsupported %s value %q (only %q is recognised)", mirrorAnnotation, value, mirrorExclude)
+	}
+
+	return true, nil
+}
+
+// resolveClusterWideDeclaration reads the CR's cluster-wide scope marker.
+//
+// Absent annotation => not declared, which is the safe default: an exception
+// that forgot to scope itself then fails closed at conversion instead of
+// silently excepting its controls for every workload in the cluster.
+func resolveClusterWideDeclaration(metadata map[string]any, path, name string) (bool, error) {
+	rawAnnotations, present := metadata["annotations"]
+	if !present || rawAnnotations == nil {
+		return false, nil
+	}
+
+	// Same fail-closed reasoning as resolveMirrorExclusion: a malformed
+	// annotations block must not be read as "no marker", because here that
+	// reading is the permissive one.
+	annotations, ok := rawAnnotations.(map[string]any)
+	if !ok {
+		return false, cseErrorf(path, name, "metadata.annotations must be a mapping, got %v", rawAnnotations)
+	}
+
+	raw, ok := annotations[clusterWideAnnotation]
+	if !ok {
+		return false, nil
+	}
+
+	value, ok := raw.(string)
+	if !ok {
+		return false, cseErrorf(path, name, "%s must be a string, got %v", clusterWideAnnotation, raw)
+	}
+
+	if value != clusterWideDeclared {
+		return false, cseErrorf(path, name, "unsupported %s value %q (only %q is recognised)", clusterWideAnnotation, value, clusterWideDeclared)
+	}
+
+	return true, nil
+}
+
 // convertDocument converts one ClusterSecurityException document; nil for other kinds.
 func convertDocument(doc any, path string) (*policy, error) {
 	document, ok := doc.(map[string]any)
@@ -305,6 +508,11 @@ func convertDocument(doc any, path string) (*policy, error) {
 	name, _ := metadata["name"].(string)
 	if name == "" {
 		return nil, cseErrorf(path, "<unnamed>", "missing metadata.name")
+	}
+
+	mirrorExcluded, err := resolveMirrorExclusion(metadata, path, name)
+	if err != nil {
+		return nil, err
 	}
 
 	spec, _ := document["spec"].(map[string]any)
@@ -364,6 +572,22 @@ func convertDocument(doc any, path string) (*policy, error) {
 		match = parsed
 	}
 
+	clusterWide, err := resolveClusterWideDeclaration(metadata, path, name)
+	if err != nil {
+		return nil, err
+	}
+
+	switch {
+	case len(match) == 0 && !clusterWide:
+		return nil, cseErrorf(path, name,
+			"no spec.match, which excepts these controls for EVERY workload; scope it, or declare the scope with the %s: %s annotation",
+			clusterWideAnnotation, clusterWideDeclared)
+	case len(match) > 0 && clusterWide:
+		return nil, cseErrorf(path, name,
+			"declares %s: %s but also sets spec.match; the marker would claim a scope the exception does not have",
+			clusterWideAnnotation, clusterWideDeclared)
+	}
+
 	resources, err := resolveMatch(match, path, name)
 	if err != nil {
 		return nil, err
@@ -375,6 +599,7 @@ func convertDocument(doc any, path string) (*policy, error) {
 		Actions:         []string{"alertOnly"},
 		Resources:       resources,
 		PosturePolicies: policies,
+		mirrorExcluded:  mirrorExcluded,
 	}
 
 	if reason, ok := spec["reason"].(string); ok && strings.TrimSpace(reason) != "" {
@@ -491,10 +716,81 @@ func render(policies []policy) ([]byte, error) {
 	return append(encoded, '\n'), nil
 }
 
-// main converts the configured exception directory and writes Kubescape JSON.
+//go:embed headlamp-configmap.yaml.tmpl
+var headlampConfigMapTemplate string
+
+// mirrored returns the policies the Headlamp plugin should see.
+func mirrored(policies []policy) []policy {
+	kept := make([]policy, 0, len(policies))
+
+	for _, candidate := range policies {
+		if candidate.mirrorExcluded {
+			continue
+		}
+
+		kept = append(kept, candidate)
+	}
+
+	return kept
+}
+
+// renderHeadlampConfigMap renders the mirror ConfigMap for the Headlamp plugin.
+//
+// The whole file is generated rather than the JSON block alone: the mirror and
+// the generator express the same exception set in different-but-equivalent forms
+// (the hand-written mirror alternation-collapsed resource lists, and wrote an
+// unscoped CR as `namespace: ".*"` where the generator emits `kind: ".*"`), so a
+// drift gate comparing the two by value would fire on day one. Letting the
+// generator own the file makes the comparison a byte diff.
+func renderHeadlampConfigMap(policies []policy) ([]byte, error) {
+	kept := mirrored(policies)
+	if len(kept) == 0 {
+		return nil, errors.New("every exception is annotated " + mirrorAnnotation + ": " + mirrorExclude +
+			", which would leave the Headlamp plugin with no exceptions at all")
+	}
+
+	encoded, err := json.MarshalIndent(kept, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal mirror policies: %w", err)
+	}
+
+	// The JSON sits under `exceptionPolicies: |`, so every line — including the
+	// blank ones a marshaller never emits but a future one might — carries the
+	// block's four-space indent.
+	var indented strings.Builder
+
+	for _, line := range strings.Split(string(encoded), "\n") {
+		if line == "" {
+			indented.WriteString("\n")
+
+			continue
+		}
+
+		indented.WriteString("    " + line + "\n")
+	}
+
+	parsed, err := template.New("headlamp-configmap").Parse(headlampConfigMapTemplate)
+	if err != nil {
+		return nil, fmt.Errorf("parse ConfigMap template: %w", err)
+	}
+
+	var out bytes.Buffer
+	if err := parsed.Execute(&out, struct{ Policies string }{
+		Policies: strings.TrimRight(indented.String(), "\n"),
+	}); err != nil {
+		return nil, fmt.Errorf("render ConfigMap template: %w", err)
+	}
+
+	return out.Bytes(), nil
+}
+
+// main converts the configured exception directory and writes the chosen format.
 func main() {
 	output := flag.String("o", "", "output file (stdout if omitted)")
 	flag.StringVar(output, "output", "", "output file (stdout if omitted)")
+	format := flag.String("format", formatKubescape,
+		"output format: "+formatKubescape+" (Kubescape exceptions JSON for the offline scan) or "+
+			formatConfigMap+" (the Headlamp mirror ConfigMap)")
 	flag.Parse()
 
 	directory := defaultDir
@@ -508,7 +804,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	rendered, err := render(policies)
+	var rendered []byte
+
+	switch *format {
+	case formatKubescape:
+		rendered, err = render(policies)
+	case formatConfigMap:
+		rendered, err = renderHeadlampConfigMap(policies)
+	default:
+		err = fmt.Errorf("unknown -format %q (want %s or %s)", *format, formatKubescape, formatConfigMap)
+	}
+
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -525,5 +831,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "wrote %d exception policies to %s\n", len(policies), *output)
+	written := len(policies)
+	if *format == formatConfigMap {
+		written = len(mirrored(policies))
+	}
+
+	fmt.Fprintf(os.Stderr, "wrote %d exception policies to %s\n", written, *output)
 }

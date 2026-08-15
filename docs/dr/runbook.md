@@ -167,10 +167,10 @@ Flux reconciliation.
 > # 1. Set credentials locally
 > export HCLOUD_TOKEN=<hetzner-cloud-api-token>
 > export WG_SERVER_PRIVATE_KEY=<wireguard-server-private-key>
-> export GHCR_TOKEN=<ghcr-pat-with-packages-read-write>
+> export GHCR_TOKEN=<ghcr-pat-with-packages-read>
 > export GITHUB_ACTOR=devantler
 > export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt  # points at the env's Age key
-> talosctl version --client  # must be installed; use the prod-pinned v1.13.5
+> talosctl version --client  # must be installed; use the prod-pinned v1.13.7
 >
 > # 2. Prove the Git/SOPS pull credential can read every private package before
 > #    creating infrastructure or publishing a mutable latest tag
@@ -179,10 +179,12 @@ Flux reconciliation.
 > # 3. Boot a fresh cluster (ksail handles Talos boot, CCM, CSI, kubeconfig)
 > ./scripts/run-ksail-prod-with-pull-auth.sh cluster create
 >
-> # 4. Bootstrap Flux from this repo
+> # 4. Bootstrap Flux from the most recently evidenced latest artifact. The
+> #    Actions-unavailable fallback cannot mint the workflow OIDC evidence, so
+> #    it deliberately leaves latest untouched instead of publishing weaker
+> #    bytes. Use the one-button workflow for a new publication transaction.
 > ./scripts/refresh-flux-ghcr-auth.sh --allow-incomplete-fanout
 > ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
-> ./scripts/run-ksail-prod-with-pull-auth.sh workload push
 > export DOCKER_CONFIG="$(mktemp -d)"
 > trap 'rm -rf "${DOCKER_CONFIG}"' EXIT
 > printf '%s' "${GHCR_TOKEN}" |
@@ -202,7 +204,8 @@ Flux reconciliation.
 >     --for=condition=Ready --timeout=20m
 > done
 > ./scripts/refresh-flux-ghcr-auth.sh  # prove completed fan-out + every stale node
-> ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
+> CILIUM_ROLLOUT_REVISION_READY=true \
+>   ./scripts/guard-cilium-homogeneous-device-rollout.sh --after-deploy
 >
 > # 6. ONLY if the OpenBao raft-snapshot recovery was impossible (no snapshot
 > #     in R2 — the vault came up fresh): re-feed the user-fed secrets that
@@ -554,11 +557,19 @@ The production deploy closes the bootstrap loop in this order:
    `--allow-incomplete-fanout` mode stages `variables-base` and repairs root auth
    so the first reconcile can create the chain. Normal mode fails closed on any
    missing fan-out resource.
-4. Push and sign the artifact with `GHCR_TOKEN`, revalidate the newly-published
-   artifact with `--check-only`, and only then explicitly reconcile Flux. DR
-   runs the full bridge again after every Flux Kustomization is Ready, proving
-   that bootstrap mode completed the entire fan-out, and once more after an
-   OpenBao raft restore so a snapshot cannot rematerialise an older credential.
+4. Push the artifact to a run-unique staging reference. Resolve its digest,
+   cosign-sign it keyless, and attach its CycloneDX SBOM and SLSA provenance
+   before promoting that exact digest to `latest`. Fulcio mints the certificate
+   from the workflow's OIDC identity (`dr-rebuild.yaml@refs/heads/main`), and
+   `GHCR_TOKEN` only pushes the artifact and its evidence. That identity must
+   stay listed in `ksail.prod.yaml`'s `matchOIDCIdentity`, or a recovery
+   publishes an artifact a verifying cluster refuses. Any failure before
+   promotion leaves the prior `latest` digest unchanged. Revalidate the
+   promoted artifact with `--check-only`, and only then explicitly reconcile
+   Flux. DR runs the full bridge again after every Flux Kustomization is Ready,
+   proving that bootstrap mode completed the entire fan-out, and once more
+   after an OpenBao raft restore so a snapshot cannot rematerialise an older
+   credential.
 5. Re-run the bridge after `cluster update`; it repairs any node left stale by
    a partial lifecycle operation and re-verifies the root plus downstream
    fan-out. Nodes carrying proof for both the current credential revision and

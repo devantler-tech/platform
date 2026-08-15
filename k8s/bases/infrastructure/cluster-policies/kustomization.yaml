@@ -13,13 +13,13 @@ resources:
   - best-practices/disallow-latest-tag.yaml
   - best-practices/propagate-reloader-to-flagger-primary.yaml
   - best-practices/restrict-doggy-countdown-hostnames.yaml
+  - best-practices/restrict-tenant-issuer-refs.yaml
   - best-practices/restrict-tenant-secret-stores.yaml
   - best-practices/validate-host-restrictions.yaml
   - best-practices/validate-pdb-drain-safe.yaml
   - best-practices/validate-pod-security.yaml
   - best-practices/validate-replica-ceiling.yaml
   - best-practices/validate-replica-floor.yaml
-  - best-practices/verify-ksail-images.yaml
   - best-practices/verify-app-images.yaml
   - flux/enforce-flux-best-practices.yaml
   - flux/helm-release-enable-tests.yaml

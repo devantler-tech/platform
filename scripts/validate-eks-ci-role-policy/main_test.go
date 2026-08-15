@@ -821,6 +821,76 @@ func TestValidateAuthorizationAcceptsCommittedPolicy(t *testing.T) {
 	}
 }
 
+// TestAuthorizationSurfaceEntryNormalizesOnlyPinnedHelmChartVersions keeps
+// routine dependency pins out of the authorization approval fingerprint while
+// preserving every field that can configure, redirect, or float the chart.
+func TestAuthorizationSurfaceEntryNormalizesOnlyPinnedHelmChartVersions(t *testing.T) {
+	const manifest = `apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: controller
+  namespace: controllers
+spec:
+  chart:
+    spec:
+      chart: controller
+      version: 1.2.3
+      sourceRef:
+        kind: HelmRepository
+        name: controller
+  values:
+    rbac:
+      clusterAdmin: false
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+            patch: safe
+`
+
+	entry := func(contents string) string {
+		t.Helper()
+		documents, err := decodeDocuments([]byte(contents))
+		if err != nil || len(documents) != 1 {
+			t.Fatalf("decode HelmRelease: documents=%d error=%v", len(documents), err)
+		}
+		identity := identityOf(documents[0])
+		actual, err := authorizationSurfaceEntry(identity, documents[0])
+		if err != nil {
+			t.Fatalf("authorizationSurfaceEntry() error = %v", err)
+		}
+		return actual
+	}
+
+	baseline := entry(manifest)
+	if actual := entry(strings.Replace(manifest, "version: 1.2.3", "version: v2.0.0-rc.1", 1)); actual != baseline {
+		t.Fatal("exact Helm chart version update moved the authorization surface")
+	}
+
+	mutations := []struct {
+		name string
+		old  string
+		new  string
+	}{
+		{name: "floating version range", old: "version: 1.2.3", new: "version: '>=1.2.3'"},
+		{name: "wildcard version", old: "version: 1.2.3", new: "version: '1.2.x'"},
+		{name: "substituted version", old: "version: 1.2.3", new: "version: ${chart_version}"},
+		{name: "missing version pin", old: "      version: 1.2.3\n", new: ""},
+		{name: "chart identity", old: "chart: controller", new: "chart: controller-shadow"},
+		{name: "source identity", old: "name: controller\n  values:", new: "name: untrusted\n  values:"},
+		{name: "authorization values", old: "clusterAdmin: false", new: "clusterAdmin: true"},
+		{name: "post renderer", old: "patch: safe", new: "patch: unsafe"},
+	}
+	for _, tt := range mutations {
+		t.Run(tt.name, func(t *testing.T) {
+			if actual := entry(strings.Replace(manifest, tt.old, tt.new, 1)); actual == baseline {
+				t.Fatal("non-version HelmRelease mutation did not move the authorization surface")
+			}
+		})
+	}
+}
+
 // TestValidateAuthorizationRejectsSourceAndRenderedMutations covers fail-closed edits.
 func TestValidateAuthorizationRejectsSourceAndRenderedMutations(t *testing.T) {
 	role, boundary, rendered := repositoryInputs(t)
@@ -1096,6 +1166,9 @@ func TestWorkflowRunsValidatorForAuthorizationChanges(t *testing.T) {
 		"KUBECTL_VERSION: \"v1.36.2\"",
 		"go test ./scripts/validate-eks-ci-role-policy",
 		"go run ./scripts/validate-eks-ci-role-policy .",
+		"ksail workload validate",
+		"ksail --config ksail.prod.yaml workload validate",
+		"ksail workload scan --framework nsa",
 	} {
 		if !strings.Contains(contract, required) {
 			t.Errorf("CI workflow is missing %q", required)
@@ -1120,12 +1193,35 @@ func TestManualDeployIsGatedByTheValidator(t *testing.T) {
 		"validate-eks-authorization:",
 		"go test ./scripts/validate-eks-ci-role-policy",
 		"go run ./scripts/validate-eks-ci-role-policy .",
-		"needs: [validate-eks-authorization]",
 	} {
 		if !strings.Contains(contract, required) {
 			t.Errorf("CD workflow is missing %q — the manual deploy path bypasses the "+
 				"EKS authorization gate that the merge-queue path cannot skip", required)
 		}
+	}
+
+	// The dependency is PARSED, not grepped — the same reason the sibling
+	// assertion on ci.yaml parses it. A literal `needs: [validate-eks-authorization]`
+	// proves a RENDERING rather than the property: it passes on the same text
+	// sitting in a comment, and it FAILS the moment a second legitimate gate
+	// joins the list. That combination is the worst of both — it obstructs
+	// correct work while still not proving what it claims. Membership is
+	// stronger and stable under a growing gate list.
+	documents, err := decodeDocuments(workflow)
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("decode CD workflow: documents=%d error=%v", len(documents), err)
+	}
+	jobs, err := nestedMap(documents[0], "jobs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deploy, ok := jobs["deploy-prod"].(map[string]any)
+	if !ok {
+		t.Fatal("CD workflow is missing the deploy-prod job")
+	}
+	if !stringListIncludes(deploy["needs"], "validate-eks-authorization") {
+		t.Error("CD deploy-prod must need validate-eks-authorization — the manual deploy " +
+			"path bypasses the EKS authorization gate that the merge-queue path cannot skip")
 	}
 }
 

@@ -77,14 +77,132 @@ DISABLE_LINTERS:
   # because APPLY_FIXES is forced on, it committed that. A formatter that damages the document
   # it formats is worse than no formatter; markdownlint still governs table syntax.
   - MARKDOWN_MARKDOWN_TABLE_FORMATTER
+  # golangci-lint ALREADY runs as its own job in the org's validate-go-project workflow, on the Go
+  # version this repository declares, and that job is what gates the pull request. The copy inside
+  # MegaLinter runs in the MegaLinter container instead, which ships its own older Go and sets
+  # GOTOOLCHAIN=local, so it cannot honour the `go` directive and fails to load the packages at all:
+  #   go.mod requires go >= 1.26.6 (running go 1.26.3; GOTOOLCHAIN=local)
+  # That is a container-version failure, not a finding — it reports nothing about this code, and it
+  # recurs on every bump that outruns the image. No lint coverage is lost by removing it: the
+  # dedicated `🧹 Lint - golangci-lint` check runs the same linter with the correct toolchain and
+  # must stay green. ksail disables it for the same reason.
+  - GO_GOLANGCI_LINT
 
 DISABLE_ERRORS_LINTERS:
   # Every linter here keeps RUNNING and REPORTING every finding on every pull request. It simply
   # does not fail the build while a tracked backlog is worked off. Nothing is thresholded, no
   # path is hidden, and each entry names the issue that removes it.
   #
-  # checkov (286) and trivy (1): Kubernetes misconfiguration in k8s/, which the section above
-  # explains is NOT covered elsewhere. Tracked by #2787.
+  # checkov (8) and trivy (108 in the local v0.73.0 reproduction): Kubernetes misconfiguration
+  # in k8s/, which the section above explains is NOT covered elsewhere. Tracked by #2787.
+  #
+  # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of
+  # those
+  # 614 were that one LOW check, evaluated per-file against objects that cannot carry a LimitRange
+  # (HelmRepository, HTTPRoute, PodDisruptionBudget) and against the LimitRange manifests
+  # themselves. See .trivyignore.yaml for the reason and #2988 for the measurement. The residual is
+  # real and still includes HIGH/CRITICAL RBAC breadth.
+  #
+  # It then went 157 -> 110 when KSV-0037 ("user resources should not be placed in kube-system")
+  # was scoped to the infrastructure trees — 47 findings, every one a cluster component that
+  # belongs in kube-system by construction (CNI, DNS, CSI, cloud-controller-manager and their
+  # namespace-local VPAs, PDBs and Gateway material). The check stays live for application trees;
+  # see .trivyignore.yaml for the disposition and the paired control that demonstrates the boundary.
+  #
+  # ⚠️ That 157 is NOT 163 minus a fix. 163 was measured on trivy v0.72.0 and 157 on v0.73.0 with
+  # no manifest change in between, so those 6 are a scanner rule-set difference, not backlog
+  # movement — exactly the drift this block warns about below. Only the 47 are this slice's work.
+  #
+  # KSV-0109's two HIGH findings are path-scoped false positives (#2990): one ConfigMap embeds
+  # JavaScript that reads an ESO-mounted Secret and the other exposes the public
+  # `external_secrets_replicas` count. Trivy matched those identifier strings, not credential data.
+  #
+  # checkov's 8 are all `kubernetes` framework, and 2 of them are CKV_K8S_40, at exactly these
+  # sites: the two vault-backup jobs.
+  # Re-derive that list from the scan rather than adjusting a number here — every figure in this
+  # block is a measurement, and the running arithmetic that used to track it went stale twice.
+  #
+  # The two vault-backup jobs carry no suppression: their scoped skip claimed to share the
+  # vault-snapshots PVC with the OpenBao StatefulSet, and the live StatefulSet mounts
+  # `config`/`unseal-keys`/`tmp`/`home` plus claim templates `data`/`audit`, never that PVC at all,
+  # so there is no shared ownership to preserve. They are two of the three `vault-snapshots`
+  # writers — the third is the dr-rebuild workflow's helper pod, which this check does not reach
+  # because it is not a committed Kubernetes manifest — and all three
+  # share one RWO PVC at `100:1000`, so they move together. That touches the DR restore path, so
+  # #2904 holds their remediation and the risk-acceptance question.
+  #
+  # The user-namespace probes are resolved rather than excepted, because the UID was never the
+  # measurement subject: `/proc/self/uid_map` describes the pod's namespace and reads identically
+  # for every process in it regardless of UID, and `fsGroup` supplies volume access as a GID
+  # independent of `runAsUser`. `userns-longhorn-smoke` therefore states 65532 and passes the
+  # check outright; #2959 removed the Headlamp mapping probe.
+  #
+  # The vault-config Job carries a scoped `checkov.io/skip2` because its UID is image-baked: the
+  # openbao image carries `openbao:x:100:1000::/home/openbao` in its own /etc/passwd — read from
+  # the pinned digest's layers, not the tag — which is exactly the `runAsUser: 100` /
+  # `runAsGroup: 1000` the Job sets. That is the same demonstrated image-baked disposition umami's
+  # 1001 carries (#2901). Whether the two remaining vault-backup writers are the same class is open
+  # in #2904 and is not settled here — #2898 named an image-baked class covering them, but on a
+  # shared-PVC reason that issue itself refuted, so their membership needs its own evidence.
+  #
+  # `checkov.io/skipN` is RESOURCE-scoped, so the Job sets `runAsUser` per container instead of
+  # once on the pod: its `minio/mc` and `alpine/k8s` containers carry no uid-100 line in their own
+  # /etc/passwd (checked on that same layer surface, not inferred from the unset `config.User`),
+  # so an inherited pod-level 100 would have been an unjustified low-UID execution that this
+  # suppression then hid. They run the pod's high 65532 default; only the two openbao containers
+  # take 100, which is exactly what the disposition accounts for.
+  #
+  # An image's `config.User` is NOT the evidence for that claim and answers a different question:
+  # all three of these images leave `config.User` unset, so reading it alone says only that no
+  # image defaults its own user, never that no baked identity exists. The /etc/passwd entry is
+  # what makes the UID the image's rather than the manifest's.
+  #
+  # For the `kubernetes` framework a `checkov.io/skipN` directive keys on the check id it NAMES,
+  # unlike the `secrets` framework's presence-keyed behaviour (#2892). #2898 established that with
+  # a five-variant matrix; re-measured on this Job, which is what the disposition rests on:
+  # naming CKV_K8S_40 moves it 10 -> 9 failed / 31 -> 32 skipped, while renaming the same
+  # directive to an unrelated id leaves CKV_K8S_40 failing at 10 and instead skips a passing
+  # check (1853 -> 1852 passed). A suppression here therefore cannot be an incidental parser
+  # perturbation.
+  #
+  # CoreDNS is resolved rather than excepted: its image already runs
+  # as the distroless nonroot identity (65532), so the manifest states that UID rather than
+  # inheriting it — which also cleared CKV_K8S_23. Binding :53 needs no ambient capability, because
+  # the capability is a file capability on the binary and NET_BIND_SERVICE is in the bounding set;
+  # the prod cluster's own CoreDNS demonstrates it, serving :53 as a ready kube-dns endpoint under
+  # exactly that identity and capability set. #2901 dispositioned three of the original 11 and
+  # #2899 removed the two vendored operator findings. #2901 checked each image rather than
+  # reasoning about it: the MinIO
+  # server and its bucket-creation Job declare no `User` at all and carry no /etc/passwd entry for
+  # the UID they ran under, so both were raised to 65532; the umami CronJob's 1001 turned out to BE
+  # its image's baked `nextjs` user (`nextjs:x:1001:65533`), so it carries a scoped skip instead —
+  # the one demonstrated constraint of the three. That asymmetry is the point: the image decides.
+  #
+  # #2899 removed 16 findings from the two vendored CDI/KubeVirt release bundles without disabling
+  # a check or path globally. The bundles carry resource-scoped annotations, and
+  # scripts/update-vendored-operators.sh re-applies them and refuses any new finding before replacing
+  # the committed files, so a vendor bump cannot silently restore the backlog.
+  #
+  # CKV_K8S_40 is NOT disabled: a new workload running
+  # below UID 10000 with no stated reason is still flagged. The `secrets`
+  # framework is at 0: its 31 CKV_SECRET_6 findings were ExternalSecret/PushSecret key NAMES and
+  # OpenBao paths rather than secret material, and each site now carries a scoped skip naming the
+  # control and the reason (#2892). CKV_SECRET_6 is NOT disabled — a real base64 secret committed
+  # into one of those same directories is still flagged.
+  #
+  # Reproduce both counts before pushing with `scripts/megalinter-scan-counts.sh` — it runs the
+  # exact commands this job runs, so a slice can show the number moved without a CI round trip.
+  #
+  # ⚠️ Read trivy's number from that script, NOT from the MegaLinter summary. MegaLinter reports
+  # this trivy scan as "1 non blocking error" while the local v0.73.0 scan actually fails 108 checks
+  # across 27 targets; the 1 is an artifact of how MegaLinter counts trivy's output. checkov's
+  # number is a genuine sum of "Failed checks:" and needs no such caveat.
+  #
+  # ⚠️ Both numbers above DRIFT without anyone touching this file — they moved between the slice
+  # that recorded them and the next one (checkov's kubernetes framework 42 → 37, trivy 620 → 624)
+  # because merged work and scanner rule-set changes both move them. Re-run the script and correct
+  # these figures as part of any slice, rather than reading a stale figure as the current state.
+  # #2853 tracks making that drift detectable rather than something a slice has to notice.
   - REPOSITORY_CHECKOV
   - REPOSITORY_TRIVY
   # jscpd (17): all in test files — scripts/validate-eks-ci-role-policy/main_test.go (#2777) and
@@ -156,6 +274,10 @@ REPOSITORY_CHECKOV_ARGUMENTS:
   - --skip-path
   - tests/
 REPOSITORY_TRIVY_ARGUMENTS:
+  # The YAML ignore format is not auto-loaded. It carries path-scoped dispositions; omitting this
+  # argument would silently reactivate them while leaving the file looking authoritative.
+  - --ignorefile
+  - .trivyignore.yaml
   - --skip-dirs
   - tests
 

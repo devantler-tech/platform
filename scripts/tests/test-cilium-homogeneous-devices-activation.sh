@@ -53,22 +53,11 @@ extract_cilium_release() {
   '
 }
 
-extract_top_level_update_strategy() {
-  awk '
-    /^    updateStrategy:[[:space:]]*$/ {
-      found = 1
-      print
-      next
-    }
-    found && /^    [^[:space:]]/ { exit }
-    found { print }
-    END { exit !found }
-  '
-}
+extract_top_level_block() {
+  local key="$1"
 
-extract_top_level_encryption() {
-  awk '
-    /^    encryption:[[:space:]]*$/ {
+  awk -v key="${key}" '
+    $0 ~ "^    " key ":[[:space:]]*$" {
       found = 1
       print
       next
@@ -192,12 +181,12 @@ read -r private_line homogeneous_line < <(
 
 production_release="$(kubectl kustomize "${controllers_dir}" | extract_cilium_release)" ||
   fail 'the production controllers render has no Cilium HelmRelease'
-production_update_strategy="$(extract_top_level_update_strategy <<<"${production_release}")" ||
-  fail 'the production Cilium HelmRelease has no top-level update strategy'
-production_encryption="$(extract_top_level_encryption <<<"${production_release}")" ||
+production_encryption="$(extract_top_level_block encryption <<<"${production_release}")" ||
   fail 'the production Cilium HelmRelease has no top-level encryption settings'
+production_node_port="$(extract_top_level_block nodePort <<<"${production_release}")" ||
+  fail 'the production Cilium HelmRelease has no top-level NodePort settings'
 production_upgrade="$(extract_upgrade <<<"${production_release}")" ||
-  fail 'the production Cilium HelmRelease has no temporary upgrade handoff'
+  fail 'the production Cilium HelmRelease has no upgrade block'
 
 require_pattern \
   "${production_release}" \
@@ -207,18 +196,22 @@ reject_pattern \
   "${production_release}" \
   "${private_devices_pattern}" \
   'the active production render must not retain the private-only device pin'
-require_text \
-  "${production_update_strategy}" \
-  'rollingUpdate: null' \
-  'the activation must clear the chart default rollingUpdate map'
-require_text \
-  "${production_update_strategy}" \
-  'type: OnDelete' \
-  'the activation must clear rollingUpdate while staging an operator-stepped OnDelete rollout'
-require_pattern \
+readonly expected_node_port=$'    nodePort:\n      addresses:\n      - 10.0.0.0/16'
+[[ "${production_node_port}" == "${expected_node_port}" ]] ||
+  fail 'the public-NIC device set must expose NodePort on only the private node CIDR'
+# The stepped rollout is COMPLETE: every agent runs the widened device set, so
+# the two temporary overrides that made the roll operator-stepped are gone and
+# the DaemonSet is back on the chart's normal rolling update. Pin their ABSENCE
+# rather than deleting these assertions — a silently reintroduced gate would
+# suppress the pipeline's only Talos machine-config sync again, which is the
+# failure that took prod deploys down for fourteen days.
+if extract_top_level_block updateStrategy <<<"${production_release}" >/dev/null 2>&1; then
+  fail 'the released rollout must not pin a top-level update strategy; the chart default applies'
+fi
+reject_pattern \
   "${production_upgrade}" \
-  '^[[:space:]]*disableWait:[[:space:]]*true[[:space:]]*$' \
-  'the operator-stepped rollout must not block Flux dependency convergence'
+  '^[[:space:]]*disableWait:' \
+  'the released rollout must not retain the temporary Helm disableWait handoff'
 require_pattern \
   "${production_upgrade}" \
   '^[[:space:]]*retries:[[:space:]]*-1[[:space:]]*$' \
@@ -240,4 +233,4 @@ require_text \
   'type: wireguard' \
   'the activation must preserve WireGuard encryption'
 
-printf 'PASS: production activates homogeneous Cilium devices behind an OnDelete rollout gate\n'
+printf 'PASS: production runs homogeneous Cilium devices with the rollout gate released\n'

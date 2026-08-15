@@ -27,12 +27,6 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: policy-reporter
-    # Hetzner-only: the Longhorn UI HTTPRoute (longhorn-system) backends to the
-    # oauth2-proxy Service for SSO. Inert on local/CI where longhorn-system has
-    # no HTTPRoute.
-    - group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      namespace: longhorn-system
   to:
     - group: ""
       kind: Service
