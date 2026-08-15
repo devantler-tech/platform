@@ -31,21 +31,44 @@ spec:
       action: ignore
     - controlID: C-0035
       action: ignore
-    # NOTE: RBAC-object controls are NOT suppressible here. Kubescape anchors
-    # their findings on the RBAC Role/ClusterRole/binding object, not on a
-    # namespaced workload, so a namespaceSelector match never applies (proven:
-    # the namespaced velero-server Role kept failing C-0187 despite `velero`
-    # being listed below; and 19 of C-0007's 26 findings terminate on
-    # cluster-scoped ClusterRoleBindings whose namespace is empty). They are
-    # handled by explicit kind+name `match.resources` CRs:
+    # NOTE: four RBAC-object controls are handled by explicit kind+name
+    # `match.resources` CRs rather than by this CR's namespaceSelector, because
+    # Kubescape anchors their findings on the Role/ClusterRole/binding object
+    # and a cluster-scoped binding carries no namespace to select on:
     #   - C-0187 (wildcard RBAC, CIS-5.1.3) -> wildcard-rbac.yaml
     #   - C-0015 (list Kubernetes secrets)  -> secret-reader-rbac.yaml
     #   - C-0007 (delete-capable roles)     -> delete-rbac.yaml
     #   - C-0002 (exec into container)      -> exec-into-container-rbac.yaml
-    # The other RBAC controls kept here (C-0053, C-0037, C-0031, C-0063,
-    # C-0035, C-0188) share this limitation; migrate them the same way if they
-    # surface failing objects. Headlamp is fixed at the root (SA scoped to
-    # read-only cluster-reader); Flux and Velero are exempted by-design in
+    #
+    # The six controls listed in THIS CR do not all share that limitation, and
+    # three of them are load-bearing on the gating scan. Measured 2026-08-15 by
+    # running the CI scan twice, identical but for this one policy (ksail
+    # 7.178.20, `--framework nsa,mitre`):
+    #
+    #   C-0053   10 findings with this CR, 23 without  -> suppresses 13
+    #   C-0037    0 findings with this CR,  3 without  -> suppresses 3
+    #   C-0031    0 findings with this CR,  1 without  -> suppresses 1
+    #   C-0063 / C-0035 / C-0188:  0 findings in BOTH arms -> no observable
+    #     effect either way on this surface. That makes them unproven here, not
+    #     proven inert; decide them on evidence before removing them.
+    #
+    # So do NOT migrate these six to kind+name CRs on the assumption that a
+    # namespaceSelector cannot reach them: dropping this CR adds 17 findings to
+    # the posture gate. C-0053's residual 10 are all tenant-namespace
+    # ServiceAccounts, none of them in the selector below, so they are correctly
+    # left flagged rather than evidence that this CR is incomplete.
+    #
+    # To re-verify:
+    #   go run ./scripts/generate-kubescape-exceptions -o /tmp/base.json
+    #   jq '[.[] | select(.name != "controller-rbac")]' /tmp/base.json >/tmp/b.json
+    #   ksail workload scan --framework nsa,mitre --exceptions <arm> \
+    #     --compliance-threshold 0 --format sarif -o <out>.sarif
+    #
+    # Read the effect off THIS scan only. The kubescape-operator's stored scan
+    # resources apply no exceptions at all — their appliedIgnoreRules is empty —
+    # so a count taken there says nothing about whether an exception works
+    # (#2823). Headlamp is fixed at the root (SA scoped to read-only
+    # cluster-reader); Flux and Velero are exempted by-design in
     # wildcard-rbac.yaml.
     - controlID: C-0188
       action: ignore
