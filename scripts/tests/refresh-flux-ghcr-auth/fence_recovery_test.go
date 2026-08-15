@@ -386,10 +386,14 @@ func TestFenceReportRefusesJournalsItCannotValidate(t *testing.T) {
 	requireContains(t, report, `and .owner == $owner`)
 	requireContains(t, report, `and .uid == $uid`)
 
-	// Only the two phases the release path treats as releasable. `active` and
-	// `retain` are refused earlier with their own guidance; anything else must
-	// not reach a printed command at all.
-	requireContains(t, report, `and (.phase == "rollback-safe" or .phase == "release-ready")`)
+	// `rollback-safe` is now the ONLY releasable phase. `active`, `retain` and
+	// `release-ready` are each refused earlier with their own guidance — the
+	// last because adjudicating it needs the current credential revision, which
+	// this mode deliberately never loads — so anything else must not reach a
+	// printed command at all. Narrowed from the earlier two-phase disjunction;
+	// see TestFenceReportRoutesReleaseReadyJournalsThroughTheBridge.
+	requireContains(t, report, `and .phase == "rollback-safe"`)
+	requireNotContains(t, report, `or .phase == "release-ready")`)
 
 	// Fail-closed: the refusal path prints a diagnostic and `continue`s, so no
 	// release command is emitted for a journal that did not validate.
@@ -580,5 +584,147 @@ func TestInterruptedFenceReportDoesNotCallAnUndefinedCleanupHelper(t *testing.T)
 	if strings.Contains(combined, "Bootstrap quarantine cleanup was incomplete") {
 		t.Errorf("interrupted fence report claimed quarantine state it never created; output = %q",
 			combined)
+	}
+}
+
+// select_orphaned_node_fences clears a leaked fence ONLY at drain phase
+// "claimed": "mutating" means a Talos write was already in flight, and a
+// MISSING phase is a pre-#3070 fence of unknown depth, so absence is never read
+// as innocence. The report reached the same nodes through owner and recovery
+// annotations alone and never read the phase, so it printed the identical
+// release for "mutating" as for "claimed". Executing it strips the owner, the
+// next report reads clean, and the following bridge claims a node whose Talos
+// write never completed.
+func TestFenceReportRefusesNodesWhoseDrainPhaseIsNotClaimed(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+
+	// The phase has to reach the loop at all before it can be refused.
+	requireContains(t, report, "CORDON_PHASE_ANNOTATION")
+	requireContains(t, report, "drain_phase")
+	// Only "claimed" is releasable, exactly as the reclaim path decides.
+	requireContains(t, report, `"${drain_phase}" != "claimed"`)
+	requireContains(t, report, "NOT releasable: the drain phase is")
+
+	// The reference predicate really is claimed-only, and fails closed on a
+	// missing phase. If that ever changes this test should be revisited.
+	safety := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth-safety.sh")
+	requireContains(t, safety, `select((($annotations[$phase_annotation]) // "") == "claimed")`)
+}
+
+// reconcile_bootstrap_recovery_journals groups journals by OWNER and blocks
+// every node in a batch whose phases are mixed or which holds any active/retain
+// member — an all-or-nothing quarantine. The report checked each node alone, so
+// a release-ready node whose sibling under the same owner is still retain
+// earned a printed release the reconciler would refuse, and an operator
+// following the runbook stepped around the batch guard one node at a time.
+func TestFenceReportPreservesOwnerWideBootstrapQuarantine(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+
+	// The blocked-owner set is computed across ALL journals, not per node.
+	requireContains(t, report, "group_by(.owner)")
+	requireContains(t, report, "(map(.phase) | unique | length) > 1")
+	requireContains(t, report, "blocked_owners")
+	requireContains(t, report, "NOT releasable: another node under bootstrap owner")
+
+	// The refusal must precede the release print, or it refuses nothing.
+	blocked := requireIndex(t, report, "blocked_owners")
+	release := requireIndex(t, report, "fence_node_release_command")
+	requireBefore(t, blocked, release, "owner-wide quarantine checked before the release print")
+
+	// The reconciler's own grouping is the contract being mirrored.
+	requireContains(t, script, `or .[0].phase == "retain"`)
+}
+
+// The reconciler admits a release-ready journal only when its recorded
+// desiredRevision EQUALS the current one: the runtime proof and Talos marker
+// cover the revision they were taken against, and a newer credential needs a
+// full proof the bridge performs. --fences deliberately never loads the
+// credential, so it cannot compute that equality — which makes printing a
+// release for release-ready a judgement it has no evidence for. Route it to the
+// bridge instead; a well-formed hash is not a current hash.
+func TestFenceReportRoutesReleaseReadyJournalsThroughTheBridge(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+
+	requireContains(t, report, "release-ready)")
+	requireContains(t, report, "NOT releasable by annotation removal: this report cannot")
+	// Only rollback-safe survives to the release print.
+	requireContains(t, report, `.phase == "rollback-safe"`)
+	requireNotContains(t, stepDirectives(report),
+		`(.phase == "rollback-safe" or .phase == "release-ready")`)
+
+	// The reconciler's revision equality is the check this cannot perform.
+	requireContains(t, script, `"${recorded_revision}" != "${desired_revision}"`)
+}
+
+// restore_node_schedulability_if_needed gates every uncordon on
+// node_scheduling_state_is_safe_to_reboot, which requires the CURRENT
+// normalized taints and cordon state to still match the journal's captured
+// intent. The report checked only that initialTaints was an array: the
+// resourceVersion CAS catches a change after this read, but drift that already
+// happened before it is invisible, so the printed patch could uncordon a node
+// into a taint set nobody captured.
+func TestFenceReportRechecksSchedulingStateBeforeRelease(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+
+	requireContains(t, report, "scheduling_intent")
+	requireContains(t, report, "NOT releasable: the node scheduling state no longer matches")
+	// The SAME normalization the reference predicate uses — a different one
+	// would disagree with it on exactly the taints it exists to ignore.
+	requireContains(t, report, `.key == "node.kubernetes.io/unschedulable"`)
+	requireContains(t, report, `sort_by([.key, .effect, (.value // ""), (.timeAdded // "")])`)
+
+	safety := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth-safety.sh")
+	requireContains(t, safety, "node_scheduling_state_is_safe_to_reboot()")
+}
+
+// The usage string presents these as ALTERNATIVE modes, and the report block
+// runs first and exits 0. Supplying --fences alongside an operational mode
+// therefore printed a report and reported success while the credential or proof
+// work it was configured to do never ran — an automation step that looks like it
+// passed and silently did nothing.
+func TestFencesRejectsCombinationWithOperationalModes(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []string{
+		"--check-only",
+		"--allow-incomplete-fanout",
+		"--record-runtime-proof",
+		"--reuse-runtime-proof",
+	} {
+		t.Run(mode, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+
+			other := []string{mode}
+			if strings.HasSuffix(mode, "-runtime-proof") {
+				// An ABSOLUTE path, or the script exits 64 on its own
+				// path validation and this test passes without ever
+				// reaching the combination it exists to reject.
+				other = append(other, filepath.Join(t.TempDir(), "proof.json"))
+			}
+
+			result := f.runHelper(validConfig(), append([]string{"--fences"}, other...), nil)
+
+			if strings.Contains(result.stderr, "must be absolute runner-local paths") {
+				t.Fatalf("--fences %v exited on path validation, not the combination; stderr = %q",
+					other, result.stderr)
+			}
+			if result.exitCode != 64 {
+				t.Errorf("--fences %v exit = %d, want 64; stdout = %q stderr = %q",
+					other, result.exitCode, result.stdout, result.stderr)
+			}
+			if strings.Contains(result.stdout, "GHCR deploy fences") {
+				t.Errorf("--fences %v printed the report instead of rejecting the combination; stdout = %q",
+					other, result.stdout)
+			}
+		})
 	}
 }

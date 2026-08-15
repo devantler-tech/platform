@@ -62,6 +62,17 @@ if [[ "${check_only}" == "true" ||
   usage
   exit 64
 fi
+# --fences is an ALTERNATIVE mode, as the usage string says. It reports and
+# exits before any credential or proof work runs, so accepting it alongside an
+# operational mode makes that step exit 0 having silently skipped the operation
+# it was configured to perform — an automation failure that looks like a pass.
+if [[ "${report_fences}" == "true" ]] &&
+  { [[ "${check_only}" == "true" ]] ||
+    [[ "${allow_incomplete_fanout}" == "true" ]] ||
+    [[ -n "${record_runtime_proof_path}${reuse_runtime_proof_path}" ]]; }; then
+  usage
+  exit 64
+fi
 if [[ -n "${record_runtime_proof_path}" &&
   -n "${reuse_runtime_proof_path}" ]]; then
   usage
@@ -392,8 +403,10 @@ fence_report_lease() {
 
 report_fences_now() {
   local state="${work_dir}/fence-report.json"
+  local blocked_owners="${work_dir}/fence-report-blocked-owners.txt"
   local held=0
   local holder name uid suspend phase resource_version uncordon deleting
+  local drain_phase scheduling_intent
 
   printf '== GHCR deploy fences on context %s ==\n\n' "${KUBE_CONTEXT}"
 
@@ -438,6 +451,33 @@ report_fences_now() {
     echo "::error::Could not read nodes."
     return 1
   fi
+  # reconcile_bootstrap_recovery_journals quarantines an interrupted bootstrap
+  # by OWNER, not by node: it groups every journal by owner and blocks the whole
+  # batch when the phases are mixed or any member is active/retain. A per-node
+  # check therefore prints a release for the release-ready member of a batch
+  # whose sibling is still retain, and an operator following the runbook steps
+  # around the all-or-nothing guard one node at a time. Compute the same set
+  # here so the report refuses every node belonging to a blocked owner.
+  if ! jq -r \
+    --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" '
+    [
+      .items[]
+      | select((.metadata.annotations[$recovery_annotation] // "") != "")
+      | ((.metadata.annotations[$recovery_annotation] | fromjson?) // empty)
+    ]
+    | map(select((.owner | type) == "string" and (.phase | type) == "string"))
+    | sort_by(.owner)
+    | group_by(.owner)[]
+    | select(
+        (map(.phase) | unique | length) > 1
+        or .[0].phase == "active"
+        or .[0].phase == "retain"
+      )
+    | .[0].owner
+  ' "${state}" >"${blocked_owners}"; then
+    echo "::error::Could not group durable GHCR bootstrap recovery journals by owner."
+    return 1
+  fi
   # The OWNER annotation is the fence; the recovery journal is optional context.
   # The ordinary per-node path claims cordon ownership with an empty recovery
   # record, so a node killed there carries an owner and no journal — keying this
@@ -451,14 +491,30 @@ report_fences_now() {
   # `resource_version` the deletionTimestamp, so the CAS patch tested values that
   # were never read from that node. \u001f is not IFS whitespace, so empty fields
   # are preserved.
-  while IFS=$'\037' read -r name owner recovery unschedulable uid resource_version deleting; do
+  while IFS=$'\037' read -r name owner recovery unschedulable uid resource_version deleting drain_phase scheduling_intent; do
     [[ -n "${name}" ]] || continue
     held=$((held + 1))
     printf 'HELD  Node %s (drain quarantine)\n' "${name}"
     printf '    cordon owner: %s\n' "${owner:-<none>}"
     printf '    recovery record: %s\n' "${recovery:-<none — claimed without a journal>}"
+    printf '    drain phase: %s\n' "${drain_phase:-<none>}"
     printf '    unschedulable: %s\n' "${unschedulable}"
     [[ -n "${owner}" ]] && fence_report_liveness "${owner}"
+    # The no-journal case is the ordinary per-node claim, and reclaim_orphaned_
+    # node_fences clears it ONLY at phase "claimed": "mutating" means a Talos
+    # write was already in flight, and a MISSING phase is a pre-#3070 fence of
+    # unknown depth. select_orphaned_node_fences fails closed on both, so the
+    # report has to as well — otherwise releasing here strips the owner, the
+    # next report reads clean, and the following bridge claims a node whose
+    # Talos write never completed.
+    if [[ -z "${recovery}" && "${drain_phase}" != "claimed" ]]; then
+      printf '    NOT releasable: the drain phase is %s, not claimed. Only a fence\n' \
+        "${drain_phase:-absent}"
+      printf '    that never reached a Talos mutation is provably safe to clear, and\n'
+      printf '    an absent phase is never read as innocence. Run the bridge so\n'
+      printf '    reclaim adjudicates it.\n\n'
+      continue
+    fi
     # A journal in `active` or `retain` is NOT releasable by annotation removal:
     # `active` may hold an interrupted pre-reboot mutation and `retain` has
     # crossed the reboot edge without a release-ready runtime proof, which is
@@ -481,7 +537,46 @@ report_fences_now() {
         printf '    hand-clear the journal, it is the only durable record of that state.\n\n'
         continue
         ;;
+      release-ready)
+        # reconcile_bootstrap_recovery_journals admits this phase ONLY when the
+        # journal's recorded desiredRevision equals the current one: the runtime
+        # proof and Talos marker cover the revision they were taken against, and
+        # a newer credential needs the full proof the bridge performs. This mode
+        # deliberately never loads the credential — that is what lets it answer
+        # while a deploy is refusing to start — so it cannot compute that
+        # equality at all. A well-formed hash is not a current hash, so route it
+        # to the bridge rather than emit a release it has no evidence for.
+        printf '    NOT releasable by annotation removal: this report cannot prove the\n'
+        printf '    journal covers the CURRENT credential revision. It never loads the\n'
+        printf '    credential, and a release-ready journal from an older revision needs\n'
+        printf '    a full proof. Run the bridge so bootstrap recovery adjudicates it.\n\n'
+        continue
+        ;;
     esac
+    # An interrupted bootstrap is quarantined per OWNER, all-or-nothing. Refuse
+    # every node in a blocked batch, or the runbook walks around that guard one
+    # node at a time.
+    if [[ -n "${owner}" ]] && grep -Fqx -- "${owner}" "${blocked_owners}"; then
+      printf '    NOT releasable: another node under bootstrap owner %s is still\n' "${owner}"
+      printf '    active, retained, or in a different phase, and that quarantine is\n'
+      printf '    all-or-nothing. Run the bridge so bootstrap recovery releases the\n'
+      printf '    whole batch together.\n\n'
+      continue
+    fi
+    # restore_node_schedulability_if_needed gates every uncordon on
+    # node_scheduling_state_is_safe_to_reboot, which requires the node's CURRENT
+    # normalized taints and cordon state to still match the journal's captured
+    # intent. The resourceVersion CAS below only rejects a change made after
+    # this read; drift that already happened is invisible to it, so a patch
+    # could otherwise uncordon a node into a taint set nobody captured.
+    if [[ -n "${recovery}" && "${scheduling_intent}" != "true" ]]; then
+      printf '    NOT releasable: the node scheduling state no longer matches the\n'
+      printf '    intent its journal captured (%s), so the release the bridge would\n' \
+        "${scheduling_intent}"
+      printf '    perform is not the one printed here. Run the bridge so bootstrap\n'
+      printf '    recovery re-adjudicates it.\n\n'
+      continue
+    fi
     # CAS protects against a CONCURRENT change; it says nothing about whether
     # the state recorded here is safe to restore. reconcile_bootstrap_recovery_journals
     # and restore_node_schedulability_if_needed both refuse a journal whose
@@ -506,7 +601,7 @@ report_fences_now() {
         and (.desiredRevision | type == "string" and test("^[0-9a-f]{64}$"))
         and (.wasCordoned == 0 or .wasCordoned == 1)
         and (.initialTaints | type == "array")
-        and (.phase == "rollback-safe" or .phase == "release-ready")
+        and .phase == "rollback-safe"
       ' >/dev/null 2>&1; then
       printf '    NOT releasable: the recovery journal is malformed, records no\n'
       printf '    releasable phase, or belongs to another owner or node.\n'
@@ -576,12 +671,26 @@ report_fences_now() {
     printf '\n'
   done < <(jq -r \
     --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
-    --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" '
+    --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
+    --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" '
+    # The SAME normalization node_scheduling_state_is_safe_to_reboot applies,
+    # and the same one that captured initialTaints. A different one would
+    # disagree with the reference predicate on exactly the taint it exists to
+    # ignore, so the report would refuse releases the bridge would perform.
+    def scheduling_taints:
+      map(select((
+        .key == "node.kubernetes.io/unschedulable"
+        and .effect == "NoSchedule"
+        and (.value // "") == ""
+      ) | not))
+      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]);
     .items[]
+    | . as $node
     | (.metadata.annotations // {}) as $a
     | ($a[$owner_annotation] // "") as $owner
     | ($a[$recovery_annotation] // "") as $recovery
     | select($owner != "" or $recovery != "")
+    | ($recovery | fromjson?) as $record
     | [
         .metadata.name,
         $owner,
@@ -589,7 +698,20 @@ report_fences_now() {
         ((.spec.unschedulable // false) | tostring),
         .metadata.uid,
         .metadata.resourceVersion,
-        (.metadata.deletionTimestamp // "")
+        (.metadata.deletionTimestamp // ""),
+        ($a[$phase_annotation] // ""),
+        # Precomputed here because the loop receives fields, not the node. The
+        # resourceVersion CAS only rejects a change made AFTER this read; drift
+        # that already happened is invisible to it, so compare the captured
+        # scheduling intent against what is on the node right now.
+        (if $record == null or ($record.initialTaints | type) != "array"
+         then "unknown"
+         elif ((($node.spec.unschedulable // false) == true)
+           and ((($node.spec.taints // []) | scheduling_taints)
+             == ($record.initialTaints | scheduling_taints)))
+         then "true"
+         else "false"
+         end)
       ]
     | map(tostring | gsub("[\u001f\n\r]"; " "))
     | join("\u001f")

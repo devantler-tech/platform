@@ -638,7 +638,11 @@ a deploy is refusing to start:
 ```
 
 It prints each held fence, its holder, liveness evidence, and the exact
-CAS-guarded release command.
+CAS-guarded release command. `--fences` is an alternative mode and cannot be
+combined with `--check-only`, `--allow-incomplete-fanout`, or either
+`--*-runtime-proof` flag; it reports and exits, so accepting the combination
+would let an automation step pass having skipped the work it was configured to
+do.
 
 **2. Prove the holder is dead — never skip this.** A live deploy holds these
 fences legitimately.
@@ -661,6 +665,19 @@ fences legitimately.
 **3. Release.** Run the command the report printed for each dead fence. Each is
 CAS-guarded on the holder and the resource's current state, so it fails safely if
 anything changed since the report.
+
+A node fence may print `NOT releasable` and no command. That is a refusal, not a
+gap to work around by hand: the report only emits a release where it can prove
+the release is the same one the bridge would perform. It withholds one when the
+drain phase is anything but `claimed` (a Talos write may already be in flight,
+and an absent phase is never read as innocence), when another node under the
+same bootstrap owner is still quarantined (that quarantine is all-or-nothing),
+when the journal is `release-ready` (proving it covers the current credential
+revision needs the credential, which this mode deliberately never loads), or
+when the node's scheduling state has drifted from the intent its journal
+captured. In each case run the bridge — a normal `CD` dispatch — and let
+bootstrap recovery adjudicate the node. Never hand-clear a recovery journal: it
+is the only durable record of that state.
 
 **4. Confirm.** Re-run `--fences`; it should report no fence held. Then dispatch
 `CD` on `main`.
