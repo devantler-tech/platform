@@ -75,10 +75,10 @@ yq eval -e '
   (.spec.match.resources | length) == 2 and
   .spec.match.resources[0].apiGroup == "batch" and
   .spec.match.resources[0].kind == "CronJob" and
-  .spec.match.resources[0].name == "umami-provision-tenants" and
+  .spec.match.resources[0].name == "^umami-provision-tenants$" and
   .spec.match.resources[1].apiGroup == "batch" and
   .spec.match.resources[1].kind == "Job" and
-  .spec.match.resources[1].name == "umami-provision-tenants-bootstrap"
+  .spec.match.resources[1].name == "^umami-provision-tenants-bootstrap$"
 ' "${token_exception}" >/dev/null ||
   fail 'the token exception must cover only the two Umami provisioning workloads'
 grep -Fxq '  - umami-provisioning-service-account-token.yaml' "${exception_dir}/kustomization.yaml" ||
@@ -124,6 +124,19 @@ grep -Fq 'setInterval' <<<"${provisioner_script}" ||
   fail 'Lease renewal must continue throughout provisioning'
 grep -Fq 'clearInterval' <<<"${provisioner_script}" ||
   fail 'Lease renewal must stop before release'
+grep -Fq 'const leaseRenewalSafetyMarginMilliseconds = 15000;' <<<"${provisioner_script}" ||
+  fail 'renewal retries must stop safely before the held Lease can expire'
+grep -Fq 'lost.leaseOwnershipLost = true;' <<<"${provisioner_script}" ||
+  fail 'Lease ownership loss must remain distinguishable from transient API failures'
+grep -Fq 'let renewalWatchdog = setTimeout' <<<"${provisioner_script}" ||
+  fail 'a transient renewal failure needs an independent Lease-expiry watchdog'
+grep -Fq 'clearTimeout(renewalWatchdog);' <<<"${provisioner_script}" ||
+  fail 'successful renewal and shutdown must clear the prior expiry watchdog'
+grep -Fq 'if (e && e.leaseOwnershipLost) process.exit(provisioningFailureExitCode);' \
+  <<<"${provisioner_script}" ||
+  fail 'lost Lease ownership must stop provisioning immediately'
+grep -Fq 'provisioning Lease renewal will retry:' <<<"${provisioner_script}" ||
+  fail 'transient renewal failures must stay observable while later heartbeats retry'
 grep -Fq 'req.setTimeout(10000' <<<"${provisioner_script}" ||
   fail 'a hung Lease API request must fail before the Lease can expire'
 grep -Fq 'waiting for Umami provisioning Lease holder:' <<<"${provisioner_script}" ||
@@ -170,6 +183,10 @@ fi
 grep -Fq 'best-effort bootstrap failed; the scheduled reconciler will retry' \
   <<<"${provisioner_script}" ||
   fail 'a failed immediate bootstrap must explain the scheduled recovery path'
+grep -Fq 'provisioning Lease release failed:' <<<"${provisioner_script}" ||
+  fail 'Lease release failure must be logged without replacing the provisioning result'
+grep -Fq 'try { await releaseProvisioningLease(); }' <<<"${provisioner_script}" ||
+  fail 'best-effort Lease release must preserve the original provisioning error'
 
 job_health_count="$(yq eval '[.spec.healthCheckExprs[] | select(.apiVersion == "batch/v1" and .kind == "Job")] | length' "${apps_flux_kustomization}")"
 [[ "${job_health_count}" == 0 ]] ||

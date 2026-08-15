@@ -229,6 +229,7 @@ spec:
                   const leaseHolder = process.env.HOSTNAME;
                   const leaseDurationSeconds = 60;
                   const leaseRenewIntervalMilliseconds = 20000;
+                  const leaseRenewalSafetyMarginMilliseconds = 15000;
                   const leasePrerequisiteWaitMilliseconds = 60000;
                   const legacyProvisionerDrainSeconds = 480;
                   // coordination.k8s.io Lease fields use Kubernetes MicroTime,
@@ -351,7 +352,11 @@ spec:
                     const read = await leaseRequest('GET');
                     if (read.status !== 200) throw new Error('read provisioning Lease for renewal failed: HTTP ' + read.status);
                     const current = read.body.spec || {};
-                    if (current.holderIdentity !== leaseHolder) throw new Error('lost provisioning Lease ownership');
+                    if (current.holderIdentity !== leaseHolder) {
+                      const lost = new Error('lost provisioning Lease ownership');
+                      lost.leaseOwnershipLost = true;
+                      throw lost;
+                    }
                     const next = {
                       ...current,
                       leaseDurationSeconds,
@@ -362,17 +367,32 @@ spec:
                   }
                   function startProvisioningLeaseRenewal() {
                     let renewal = Promise.resolve();
+                    let renewalStopped = false;
+                    const renewalWatchdogMilliseconds = leaseDurationSeconds * 1000 - leaseRenewalSafetyMarginMilliseconds;
+                    const exitBeforeLeaseExpiry = () => {
+                      console.error('provisioning Lease could not be renewed before its safety deadline');
+                      process.exit(provisioningFailureExitCode);
+                    };
+                    let renewalWatchdog = setTimeout(exitBeforeLeaseExpiry, renewalWatchdogMilliseconds);
+                    const resetRenewalWatchdog = () => {
+                      clearTimeout(renewalWatchdog);
+                      if (!renewalStopped) renewalWatchdog = setTimeout(exitBeforeLeaseExpiry, renewalWatchdogMilliseconds);
+                    };
                     const timer = setInterval(() => {
                       renewal = renewal
                         .then(() => renewProvisioningLease())
+                        .then(() => resetRenewalWatchdog())
                         .catch((e) => {
-                          console.error('provisioning Lease renewal failed:', String((e && e.stack) || e));
-                          process.exit(provisioningFailureExitCode);
+                          if (e && e.leaseOwnershipLost) process.exit(provisioningFailureExitCode);
+                          console.error('provisioning Lease renewal will retry:', String((e && e.stack) || e));
                         });
                     }, leaseRenewIntervalMilliseconds);
                     return async () => {
                       clearInterval(timer);
+                      renewalStopped = true;
+                      clearTimeout(renewalWatchdog);
                       await renewal;
+                      clearTimeout(renewalWatchdog);
                     };
                   }
                   async function releaseProvisioningLease() {
@@ -515,7 +535,11 @@ spec:
                       console.log('umami tenant provisioning complete');
                     } finally {
                       await stopProvisioningLeaseRenewal();
-                      await releaseProvisioningLease();
+                      // Release is an optimization; expiry is the correctness
+                      // fallback. Keep a release failure from replacing the real
+                      // provisioning result that the outer catch must report.
+                      try { await releaseProvisioningLease(); }
+                      catch (e) { console.error('provisioning Lease release failed:', String((e && e.stack) || e)); }
                     }
                   })().catch((e) => {
                     console.error(String((e && e.stack) || e));
