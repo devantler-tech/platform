@@ -82,6 +82,13 @@ grep -Fxq '  - umami-provisioning-service-account-token.yaml' "${exception_dir}/
   fail 'the workload-scoped token exception must be rendered by the Platform'
 jq -e '.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true' <<<"${job_json}" >/dev/null ||
   fail 'bootstrap provisioning must keep the container root filesystem immutable'
+jq -e '
+  .spec.template.spec.containers[0].securityContext |
+  .allowPrivilegeEscalation == false and
+  .runAsNonRoot == true and
+  .capabilities.drop == ["ALL"]
+' <<<"${job_json}" >/dev/null ||
+  fail 'bootstrap provisioning must satisfy the enforced container security policy'
 
 jq -e '.metadata.annotations["kustomize.toolkit.fluxcd.io/ssa"] == "IfNotPresent"' <<<"${lease_json}" >/dev/null ||
   fail 'Flux must create the Lease once without overwriting live lock state'
