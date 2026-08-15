@@ -533,6 +533,8 @@ to have failed at the moment it worked. Re-read until the head actually moves, b
 
 ```sh
 inspected=<the head you pinned the update to>
+# Captured BEFORE the update, because it is what the new head must be proved to contain.
+base_tip="$(gh api repos/devantler-tech/platform/commits/main --jq .sha)"
 new_head=""
 probe=""
 for _ in $(seq 1 30); do
@@ -547,6 +549,13 @@ for _ in $(seq 1 30); do
   fi
   sleep 2
 done
+# A MOVED head is not a LANDED update — prove the base is actually in it.
+if [ -n "${new_head}" ]; then
+  behind="$(gh api \
+    "repos/devantler-tech/platform/compare/${base_tip}...${new_head}" \
+    --jq .behind_by)" || behind=""
+  [ "${behind}" = "0" ] || new_head=""   # someone else's push: re-pin and restart
+fi
 ```
 
 **Three outcomes, and they are not interchangeable** — collapsing them is how a working fix gets
@@ -554,9 +563,21 @@ reported as a failure, and a failed read gets reported as a fix:
 
 | result | what happened | what to do |
 | --- | --- | --- |
-| `new_head` non-empty | the update landed | run **both** workflow-run queries against `new_head` |
+| `new_head` non-empty | the update landed **and the base is provably in it** | run **both** workflow-run queries against `new_head` |
+| head moved but `behind_by` non-zero | someone else's push moved it, not your update | **fail closed**: re-pin to that head and restart the diagnosis |
 | loop exhausted, head unchanged | there was no base to merge | the case documented immediately below; no amount of polling resolves it |
 | `probe` empty | the read failed, so the update's outcome is unknown | conclude nothing — re-read once before acting on either branch |
+
+🔴 **A CHANGED head is not evidence your update landed — check what is IN it.**
+`expected_head_sha` guards the request-time head only; it is not a lock, so nothing stops a bot or
+a sibling lane pushing between the `202` and the completion. That push satisfies
+`probe != inspected` on its own, so a head-moved test reports a landed update while the base was
+never merged — and the workflow queries then run against a commit that is still behind, producing
+exactly the misleading `0` this section exists to prevent. This is not hypothetical: **this
+repository's own megalinter bot pushes fix-up commits to PR branches**, which is precisely such a
+push. Comparing `behind_by` against the base tip captured *before* the request is what
+distinguishes the two, and the honest answer when it is non-zero is to start again from the
+newly-pinned head.
 
 Never run the workflow-run queries against the head you moved away from: that commit's answer is
 frozen and keeps reporting the same `0`. An unattended run that exhausts the bound records the PR as
