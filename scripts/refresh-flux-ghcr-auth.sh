@@ -404,6 +404,7 @@ fence_report_lease() {
 report_fences_now() {
   local state="${work_dir}/fence-report.json"
   local blocked_owners="${work_dir}/fence-report-blocked-owners.txt"
+  local fence_report_nodes="${work_dir}/fence-report-nodes.rs"
   local held=0
   local holder name uid suspend phase resource_version uncordon deleting
   local drain_phase scheduling_intent
@@ -552,6 +553,66 @@ report_fences_now() {
   # `resource_version` the deletionTimestamp, so the CAS patch tested values that
   # were never read from that node. \u001f is not IFS whitespace, so empty fields
   # are preserved.
+  # Materialized rather than piped through `< <(...)`: a process substitution's
+  # exit status is invisible to the `while`, so a jq abort mid-stream (a corrupted
+  # journal whose initialTaints holds a non-object aborts `scheduling_taints` on
+  # `.key`) would truncate the feed, silently omit that node and every node after
+  # it, and let this function go on to print "No fence is held" — the worst
+  # possible answer from a tool whose whole job is finding held fences.
+  if ! jq -r \
+    --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
+    --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
+    --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" '
+    # The SAME normalization node_scheduling_state_is_safe_to_reboot applies,
+    # and the same one that captured initialTaints. A different one would
+    # disagree with the reference predicate on exactly the taint it exists to
+    # ignore, so the report would refuse releases the bridge would perform.
+    def scheduling_taints:
+      map(select((
+        .key == "node.kubernetes.io/unschedulable"
+        and .effect == "NoSchedule"
+        and (.value // "") == ""
+      ) | not))
+      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]);
+    .items[]
+    | . as $node
+    | (.metadata.annotations // {}) as $a
+    | ($a[$owner_annotation] // "") as $owner
+    | ($a[$recovery_annotation] // "") as $recovery
+    | select($owner != "" or $recovery != "")
+    # `try/catch null`, never `fromjson?`: the latter yields EMPTY on a malformed
+    # journal, and `empty as $record` drops the whole node from this feed — so a
+    # node carrying an unparseable journal would disappear from the report and
+    # read as no fence held at all, the worst possible failure for this tool.
+    | ($recovery | try fromjson catch null) as $record
+    | [
+        .metadata.name,
+        $owner,
+        $recovery,
+        ((.spec.unschedulable // false) | tostring),
+        .metadata.uid,
+        .metadata.resourceVersion,
+        (.metadata.deletionTimestamp // ""),
+        ($a[$phase_annotation] // ""),
+        # Precomputed here because the loop receives fields, not the node. The
+        # resourceVersion CAS only rejects a change made AFTER this read; drift
+        # that already happened is invisible to it, so compare the captured
+        # scheduling intent against what is on the node right now.
+        (if $record == null or ($record.initialTaints | type) != "array"
+         then "unknown"
+         elif ((($node.spec.unschedulable // false) == true)
+           and ((($node.spec.taints // []) | scheduling_taints)
+             == ($record.initialTaints | scheduling_taints)))
+         then "true"
+         else "false"
+         end)
+      ]
+    | map(tostring | gsub("[\u001f\n\r]"; " "))
+    | join("\u001f")
+  ' "${state}" >"${fence_report_nodes}"; then
+    echo "::error::Could not enumerate node fences for the report; refusing to report fence state from a truncated feed. A corrupted recovery journal is the likely cause. Run './scripts/refresh-flux-ghcr-auth.sh --fences' after repairing it, and see docs/dr/runbook.md → 'Recover an orphaned GHCR deploy fence'."
+    return 1
+  fi
   while IFS=$'\037' read -r name owner recovery unschedulable uid resource_version deleting drain_phase scheduling_intent; do
     [[ -n "${name}" ]] || continue
     held=$((held + 1))
@@ -740,57 +801,7 @@ report_fences_now() {
         "${name}" "${uid}" "${resource_version}" \
         "${owner}" "${recovery}" "${uncordon}")"
     printf '\n'
-  done < <(jq -r \
-    --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
-    --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
-    --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" '
-    # The SAME normalization node_scheduling_state_is_safe_to_reboot applies,
-    # and the same one that captured initialTaints. A different one would
-    # disagree with the reference predicate on exactly the taint it exists to
-    # ignore, so the report would refuse releases the bridge would perform.
-    def scheduling_taints:
-      map(select((
-        .key == "node.kubernetes.io/unschedulable"
-        and .effect == "NoSchedule"
-        and (.value // "") == ""
-      ) | not))
-      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]);
-    .items[]
-    | . as $node
-    | (.metadata.annotations // {}) as $a
-    | ($a[$owner_annotation] // "") as $owner
-    | ($a[$recovery_annotation] // "") as $recovery
-    | select($owner != "" or $recovery != "")
-    # `try/catch null`, never `fromjson?`: the latter yields EMPTY on a malformed
-    # journal, and `empty as $record` drops the whole node from this feed — so a
-    # node carrying an unparseable journal would disappear from the report and
-    # read as no fence held at all, the worst possible failure for this tool.
-    | ($recovery | try fromjson catch null) as $record
-    | [
-        .metadata.name,
-        $owner,
-        $recovery,
-        ((.spec.unschedulable // false) | tostring),
-        .metadata.uid,
-        .metadata.resourceVersion,
-        (.metadata.deletionTimestamp // ""),
-        ($a[$phase_annotation] // ""),
-        # Precomputed here because the loop receives fields, not the node. The
-        # resourceVersion CAS only rejects a change made AFTER this read; drift
-        # that already happened is invisible to it, so compare the captured
-        # scheduling intent against what is on the node right now.
-        (if $record == null or ($record.initialTaints | type) != "array"
-         then "unknown"
-         elif ((($node.spec.unschedulable // false) == true)
-           and ((($node.spec.taints // []) | scheduling_taints)
-             == ($record.initialTaints | scheduling_taints)))
-         then "true"
-         else "false"
-         end)
-      ]
-    | map(tostring | gsub("[\u001f\n\r]"; " "))
-    | join("\u001f")
-  ' "${state}")
+  done <"${fence_report_nodes}"
 
   fence_report_lease "${state}" || return 1
 
@@ -855,7 +866,7 @@ fence_lease_release_command() {
     {op: "replace", path: "/spec/leaseDurationSeconds", value: 1}
   ]')"
   printf "kubectl --context %s -n flux-system patch lease %s --type=json -p %s" \
-    "${KUBE_CONTEXT}" "${SYNC_LEASE_NAME}" "$(fence_shell_quote "${patch}")"
+    "$(fence_shell_quote "${KUBE_CONTEXT}")" "${SYNC_LEASE_NAME}" "$(fence_shell_quote "${patch}")"
 }
 
 # One CAS-guarded patch, mirroring restore_node_schedulability_if_needed's own
@@ -904,7 +915,7 @@ fence_node_release_command() {
         [{op: "remove", path: $owner_path}] end)
   ')"
   printf "kubectl --context %s patch node %s --type=json -p %s" \
-    "${KUBE_CONTEXT}" "${name}" "$(fence_shell_quote "${patch}")"
+    "$(fence_shell_quote "${KUBE_CONTEXT}")" "${name}" "$(fence_shell_quote "${patch}")"
 }
 
 fence_kustomization_release_command() {
@@ -947,7 +958,7 @@ fence_kustomization_release_command() {
     ]')"
   fi
   printf "kubectl --context %s -n flux-system patch %s %s --type=json -p %s" \
-    "${KUBE_CONTEXT}" "${FLUX_KUSTOMIZATION_RESOURCE}" "${name}" "$(fence_shell_quote "${patch}")"
+    "$(fence_shell_quote "${KUBE_CONTEXT}")" "${FLUX_KUSTOMIZATION_RESOURCE}" "${name}" "$(fence_shell_quote "${patch}")"
 }
 
 # Read-only, and deliberately before any credential work: an operator reaches
@@ -4110,7 +4121,10 @@ pause_flux_policy_parent() {
     --arg annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" '
     ((.metadata.annotations // {})[$annotation] // "") != ""
   ' "${flux_policy_parent_state_file}" >/dev/null; then
-    echo "::error::Another transaction already owns the parent Flux policy handoff; refusing cluster mutation."
+    # A killed transaction leaves this annotation behind, so this branch — not the
+    # malformed/suspended one below — is what an orphaned parent fence actually hits.
+    # It needs the same pointer the child-handoff refusal already carries.
+    echo "::error::Another transaction already owns the parent Flux policy handoff; refusing cluster mutation. Run './scripts/refresh-flux-ghcr-auth.sh --fences' to list every held fence with its liveness evidence and exact release command, and see docs/dr/runbook.md → 'Recover an orphaned GHCR deploy fence'."
     return 1
   fi
   if ! jq -e '
