@@ -310,3 +310,43 @@ func TestFenceReportSweepsCordonOwnerNotOnlyTheRecoveryJournal(t *testing.T) {
 	// if that ever stops being true this test should be revisited, not deleted.
 	requireContains(t, script, `      "" "${was_cordoned}" "${initial_node_taints}" || return 1`)
 }
+
+// The runbook tells an operator each printed release command is CAS-guarded,
+// and the Lease and Kustomization commands are. The node path was not: it
+// printed a bare `uncordon` plus one `annotate … -` per annotation. Minutes can
+// pass between the report and the paste, and a new transaction can claim the
+// node in that window — at which point those commands strip ITS fence and
+// uncordon a node it is actively draining, with no error. Test ops close it:
+// the API rejects the whole patch when the UID, resourceVersion, owner, or
+// journal moved, so losing that race fails loudly instead of silently.
+func TestFenceReportNodeReleaseIsCASGuarded(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+	command := functionBody(t, script, "fence_node_release_command")
+
+	// The report delegates to the guarded builder and emits no bare mutation of
+	// its own. Comments are stripped first: the rationale above the call names
+	// the very anti-pattern these assertions forbid.
+	requireContains(t, report, "fence_node_release_command")
+	directives := stepDirectives(report)
+	for _, unguarded := range []string{
+		"kubectl --context %s uncordon %s",
+		"annotate node %s %s-",
+	} {
+		requireNotContains(t, directives, unguarded)
+	}
+
+	// Every piece of state the report showed the operator is tested before any
+	// mutation runs, and it is ONE patch — three separately guarded commands
+	// still could not be atomic with each other.
+	for _, guard := range []string{
+		`{op: "test", path: "/metadata/uid", value: $uid}`,
+		`{op: "test", path: "/metadata/resourceVersion", value: $resource_version}`,
+		`{op: "test", path: $owner_path, value: $owner}`,
+		`{op: "test", path: $recovery_path, value: $recovery}`,
+	} {
+		requireContains(t, command, guard)
+	}
+	requireContains(t, command, "patch node %s --type=json")
+}

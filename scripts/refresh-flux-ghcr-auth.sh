@@ -392,7 +392,7 @@ fence_report_lease() {
 report_fences_now() {
   local state="${work_dir}/fence-report.json"
   local held=0
-  local holder name uid suspend phase
+  local holder name uid suspend phase resource_version uncordon
 
   printf '== GHCR deploy fences on context %s ==\n\n' "${KUBE_CONTEXT}"
 
@@ -442,7 +442,7 @@ report_fences_now() {
   # record, so a node killed there carries an owner and no journal — keying this
   # on the journal alone would report "no fence held" while that node stays
   # cordoned and the next run refuses its existing owner.
-  while IFS=$'\t' read -r name owner recovery unschedulable; do
+  while IFS=$'\t' read -r name owner recovery unschedulable uid resource_version; do
     [[ -n "${name}" ]] || continue
     held=$((held + 1))
     printf 'HELD  Node %s (drain quarantine)\n' "${name}"
@@ -473,13 +473,14 @@ report_fences_now() {
         continue
         ;;
     esac
-    printf '    release: restore the node, then drop the fence annotation(s):\n'
+    printf '    release (ONE CAS-guarded patch — fails safely if anything changed):\n'
     # Only uncordon a node this transaction is RECORDED to have cordoned. The
     # journal keeps the pre-claim state precisely because a node can already be
     # cordoned for maintenance or ill health, and an unconditional uncordon
     # would make it schedulable again — reversing an intent this script never
     # owned. Without a journal that state is unknown, so say so and let the
     # operator decide rather than emitting a command that might be wrong.
+    uncordon=false
     if [[ "${unschedulable}" == "true" ]]; then
       # The journal serializes wasCordoned as NUMERIC 0/1 — it is validated as
       # `== 0 or == 1` — so match those, not the booleans this once compared
@@ -491,21 +492,23 @@ report_fences_now() {
                then (.wasCordoned | tostring) else "unknown" end' 2>/dev/null ||
         printf 'unknown')" in
         0)
-          printf '      kubectl --context %s uncordon %s\n' "${KUBE_CONTEXT}" "${name}"
+          uncordon=true
           ;;
         1)
-          printf '      # node was ALREADY cordoned before this transaction — leave it cordoned.\n'
+          printf '      # node was ALREADY cordoned before this transaction — the patch below\n'
+          printf '      # drops the fence and LEAVES it cordoned.\n'
           ;;
         *)
-          printf '      # pre-claim schedulability is UNRECORDED — confirm the node should be\n'
-          printf '      # schedulable before uncordoning it; this fence cannot tell you.\n'
+          printf '      # pre-claim schedulability is UNRECORDED — the patch below does NOT\n'
+          printf '      # uncordon. Confirm the node should be schedulable before doing so\n'
+          printf '      # yourself; this fence cannot tell you.\n'
           ;;
       esac
     fi
-    [[ -n "${owner}" ]] && printf '      kubectl --context %s annotate node %s %s-\n' \
-      "${KUBE_CONTEXT}" "${name}" "${CORDON_OWNER_ANNOTATION}"
-    [[ -n "${recovery}" ]] && printf '      kubectl --context %s annotate node %s %s-\n' \
-      "${KUBE_CONTEXT}" "${name}" "${CORDON_RECOVERY_ANNOTATION}"
+    printf '      %s\n' \
+      "$(fence_node_release_command \
+        "${name}" "${uid}" "${resource_version}" \
+        "${owner}" "${recovery}" "${uncordon}")"
     printf '\n'
   done < <(jq -r \
     --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
@@ -515,7 +518,14 @@ report_fences_now() {
     | ($a[$owner_annotation] // "") as $owner
     | ($a[$recovery_annotation] // "") as $recovery
     | select($owner != "" or $recovery != "")
-    | [.metadata.name, $owner, $recovery, ((.spec.unschedulable // false) | tostring)]
+    | [
+        .metadata.name,
+        $owner,
+        $recovery,
+        ((.spec.unschedulable // false) | tostring),
+        .metadata.uid,
+        .metadata.resourceVersion
+      ]
     | @tsv
   ' "${state}")
 
@@ -556,6 +566,55 @@ fence_lease_release_command() {
   ]')"
   printf "kubectl --context %s -n flux-system patch lease %s --type=json -p '%s'" \
     "${KUBE_CONTEXT}" "${SYNC_LEASE_NAME}" "${patch}"
+}
+
+# One CAS-guarded patch, mirroring restore_node_schedulability_if_needed's own
+# release patch. The node path previously printed a bare `uncordon` plus one
+# `annotate … -` per annotation: three unguarded commands, each racing whatever
+# the report observed. Between reading the report and pasting them an operator
+# can lose the race — a new transaction claims the node, and the stale commands
+# then strip ITS fence and uncordon a node it is actively draining. Test ops
+# make that impossible: the API rejects the whole patch if the UID,
+# resourceVersion, owner, or journal moved, so a lost race fails loudly instead
+# of silently releasing someone else's fence. Emitting it as a single patch is
+# what makes it atomic — three commands cannot be, however each is guarded.
+fence_node_release_command() {
+  local name="$1"
+  local uid="$2"
+  local resource_version="$3"
+  local owner="$4"
+  local recovery="$5"
+  local uncordon="$6"
+  local patch
+
+  # `test` on the annotation paths only when the annotation is actually present:
+  # a test against a missing path fails, which would make the patch unusable for
+  # a node fenced without a journal — the ordinary per-node claim.
+  patch="$(jq -nc \
+    --arg uid "${uid}" \
+    --arg resource_version "${resource_version}" \
+    --arg owner_path "${CORDON_OWNER_JSON_PATH}" \
+    --arg owner "${owner}" \
+    --arg recovery_path "${CORDON_RECOVERY_JSON_PATH}" \
+    --arg recovery "${recovery}" \
+    --argjson uncordon "${uncordon}" '
+    [
+      {op: "test", path: "/metadata/uid", value: $uid},
+      {op: "test", path: "/metadata/resourceVersion", value: $resource_version}
+    ]
+    + (if $owner == "" then [] else
+        [{op: "test", path: $owner_path, value: $owner}] end)
+    + (if $recovery == "" then [] else
+        [{op: "test", path: $recovery_path, value: $recovery}] end)
+    + (if $uncordon then
+        [{op: "add", path: "/spec/unschedulable", value: false}] else [] end)
+    + (if $recovery == "" then [] else
+        [{op: "remove", path: $recovery_path}] end)
+    + (if $owner == "" then [] else
+        [{op: "remove", path: $owner_path}] end)
+  ')"
+  printf "kubectl --context %s patch node %s --type=json -p '%s'" \
+    "${KUBE_CONTEXT}" "${name}" "${patch}"
 }
 
 fence_kustomization_release_command() {
