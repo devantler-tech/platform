@@ -1,15 +1,15 @@
-# Aggregate ClusterRole that extends the built-in 'edit' ClusterRole with
-# Cilium network-policy verbs, so a self-service tenant whose ServiceAccount is
-# bound to 'edit' can manage its own CiliumNetworkPolicy resources in its
-# namespace — owning the allow-lists its app needs (Gateway ingress, DB/DNS and
-# external egress) from its own deploy artifact, instead of the platform
-# carrying tenant-specific network rules in each registration dir.
+# Aggregate ClusterRole that extends the scoped `tenant-edit` ClusterRole with
+# Cilium network-policy reconciliation verbs, so a self-service tenant can own
+# the allow-lists in its deployment artifact.
 #
-# The platform keeps the security FLOOR regardless: the `add-default-deny`
-# Kyverno policy still generates deny-all + allow-dns CiliumNetworkPolicies in
-# every namespace. Tenants only layer ALLOWs on top, scoped to their own
-# namespace; they cannot manage cluster-wide policy resources.
+# Flux impersonates the tenant ServiceAccount and uses server-side apply plus
+# pruning, so PATCH and DELETE are required for this self-service workflow.
+# These verbs also let a tenant change any namespaced CiliumNetworkPolicy, and
+# Cilium combines matching allow rules; neither the generated default-deny
+# object nor the additive policy set is an immutable security boundary until
+# admission constraints land (platform#3150).
 #
+# This role is intentionally NOT aggregated into the built-in `edit` role.
 # Grants only the NAMESPACED `ciliumnetworkpolicies` — never the cluster-scoped
 # `ciliumclusterwidenetworkpolicies`, which remain platform territory.
 ---
@@ -18,7 +18,6 @@ kind: ClusterRole
 metadata:
   name: cilium-tenant-edit
   labels:
-    rbac.authorization.k8s.io/aggregate-to-edit: "true"
     devantler.tech/aggregate-to-tenant-edit: "true"
 rules:
   - apiGroups: ["cilium.io"]
