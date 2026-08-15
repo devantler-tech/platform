@@ -426,8 +426,14 @@ These conventions guide the autonomous **Daily AI Assistant** — and any agenti
 
 **Merge queue — `main` IS gated by a GitHub merge queue** (`Require merge queue` ruleset). Merge mechanics differ from non-queue repos: `gh pr merge --auto` *enqueues* (don't pass `--squash` — the queue sets the strategy), and `autoMergeRequest` stays `null` even while a PR is queued, so a queued PR can look un-queued in JSON. A queued PR runs the **`merge_group`** event of `ci.yaml`, whose `deploy-prod` job **deploys to the real prod cluster** — so a `merge_group` failure **evicts the PR from the queue**. **Root-cause a stall/kick-out before re-queuing** (per the monorepo contract *Merge policy → Merge-queue repos*): a PR that "was queued" but didn't merge has usually failed its `merge_group` run — pull it (`gh run list --event merge_group --json headBranch,conclusion` → `pr-<n>` → `gh run view --log-failed`) and diagnose. The `deploy-prod` step's inline tenant provisioning can still expose a real platform fault during the gating verify; when that happens, re-queuing just re-hits it — advance the root-cause fix rather than looping the PR. Only a genuine one-off transient (runner OOM, network) warrants a clean re-queue.
 
-🔴 **`BLOCKED` on a fully green head means an UNSATISFIED REQUIRED WORKFLOW — and nothing on the PR
-says so.** `main`'s ruleset requires the org-injected workflow **`✅ Validate Go Project`**
+🔴 **`BLOCKED` on a fully green head can mean an UNSATISFIED REQUIRED WORKFLOW — and nothing on the
+PR says so.** ⚠️ **Rule out the ordinary blockers first**, or you will move the head without touching
+the actual cause: `BLOCKED` on a green head is also what an unresolved review conversation, a missing
+required approval, or any other non-check branch rule looks like. The hygiene pentad already requires
+green checks **and** zero unresolved threads, so check those before reaching for this procedure —
+what follows is for a head that is green *and* thread-clean *and* still `BLOCKED`.
+
+`main`'s ruleset requires the org-injected workflow **`✅ Validate Go Project`**
 (`.github/workflows/validate-go-project.yaml`, supplied from `devantler-tech/actions`). The
 requirement is evaluated against a run of that workflow **for the current head**, and a workflow
 cannot fire retroactively — so a PR whose head predates the requirement can never be enqueued, no
@@ -440,9 +446,18 @@ repo it silently arms auto-merge instead). The only surface that names the cause
 mutation:
 
 ```text
-enqueuePullRequest(input:{pullRequestId:"<id>"}) →
+enqueuePullRequest(input:{pullRequestId:"<id>", expectedHeadOid:"<head>"}) →
   UNPROCESSABLE: Pull request Required workflow '✅ Validate Go Project' is not satisfied
 ```
+
+🔴 **`enqueuePullRequest` is a WRITE, not a probe — it only *reads* like a diagnostic when it
+fails.** If the diagnosis is wrong, or the PR became eligible between your inspection and the call,
+it **succeeds**: the PR enters the merge queue and starts the `merge_group` run whose `deploy-prod`
+job **deploys to the real prod cluster**. So call it only when you actually intend and are
+authorised to enqueue that PR, and always pass **`expectedHeadOid`** pinned to the head you
+inspected, so a head that moved under you is refused instead of silently queueing a revision nobody
+assessed. To *diagnose* without that risk, use the read-only run queries below and treat the
+mutation as the confirmation step.
 
 **Diagnose by RUN, never by check-run name.** The workflow's *jobs* appear as check runs under their
 own names (`🏗️ Build`, `🧪 Test`, …), so grepping check-run names for the workflow title reports zero
@@ -474,15 +489,38 @@ still-running head as ready to enqueue. Reading them the other way round is just
 from the strict form does not distinguish a head that never fired the workflow from one whose run
 failed, which are opposite problems with opposite fixes — refresh the head, or fix the build.
 
+⚠️ **Both queries key on `.path`, which does not prove PROVENANCE.** A PR that itself adds or edits
+`.github/workflows/validate-go-project.yaml` produces runs carrying that exact path from the PR's own
+copy — so the count comes back positive while the org-injected required workflow is still
+unsatisfied, and the PR stays un-enqueueable for the very reason the query just said was fine. On any
+PR that touches that file, confirm the file is **absent from the PR's own tree** before trusting
+either count (the same provenance collision `scripts/check-megalinter-version-drift.sh` documents and
+checks for), and otherwise fail closed and read the rejection reason from the mutation instead.
+
 **The fix is to move the head** — `PUT /repos/{owner}/{repo}/pulls/{n}/update-branch` (a merge of
 `main`, never a force-push) makes the workflow fire. Verify the effect with the query above; the
 API's `202 Updating pull request branch` only means the update was accepted. A conflicting
 (`mergeable_state: dirty`) PR cannot be updated this way and needs its conflict resolved first.
 
+⚠️ **`update-branch` only works when there is base to merge.** It updates the branch *with the latest
+changes of the base*, so a head that already contains the current tip of `main` — the case when the
+ruleset was enabled with no `main` commit after it — has nothing to merge, and the call cannot move
+the head or fire the workflow. It is not an unconditional fix. When that happens, create a new head
+event some other way: push an empty commit
+(`git commit --allow-empty -m "chore: refresh head for required workflow"`) on the PR branch, which
+is the cheapest thing that makes the workflow fire. Never force-push a branch to achieve this.
+
 **Never judge an enqueue by `gh pr merge`'s exit code.** Read the rejection reason from the
 `enqueuePullRequest` mutation, and assert the effect with GraphQL `isInMergeQueue` +
-`mergeQueueEntry{state,position}` — `autoMergeRequest` stays `null` either way, so silence is not
-failure and exit 0 is not success.
+`mergeQueueEntry{state,position}` — silence is not failure and exit 0 is not success.
+
+⚠️ **`autoMergeRequest` answers a DIFFERENT question, so do not read it as the queue state.** It
+stays `null` while a PR is genuinely **queued** (which is why `isInMergeQueue` is the queue test) —
+but it is **populated** once auto-merge has been *armed*, which is exactly what `gh pr merge` does
+silently on this repo when the PR cannot enqueue yet. So a non-null `autoMergeRequest` is not
+evidence the PR is queued; it is evidence it is **armed and waiting**, and will enter the queue on
+its own once the head refreshes and the requirement is satisfied. Read `isInMergeQueue` for "is it
+in the queue" and `autoMergeRequest` for "did something already arm it".
 
 **Safe cancellation:** once a merge-group `deploy-prod` job enters the shared deploy composite, it
 may already have pushed the speculative ref to the mutable `latest` tag. Use only a normal workflow
