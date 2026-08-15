@@ -389,7 +389,7 @@ const (
 // changes, including the Umami Namespace, whose identical rendered form merely
 // moves between two already-scanned ownership layers. The validator reported
 // no per-resource mismatch; only this aggregate fingerprint moved.
-const expectedRenderedSurfaceSHA = "83763a582a9daac9d8555695165489dd86613504099717bfd95b340e396c5f14"
+const expectedRenderedSurfaceSHA = "583636a5ff8f617512c84d8bb583f8906b08a34f645bf5f997d8e756ef809121"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
