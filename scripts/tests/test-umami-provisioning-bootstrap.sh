@@ -59,6 +59,8 @@ cmp -s "${cron_spec_file}" "${job_spec_file}" ||
   fail 'bootstrap Job must use the CronJob controller template verbatim'
 jq -e '.spec.activeDeadlineSeconds >= 1500' <<<"${job_json}" >/dev/null ||
   fail 'bootstrap Job deadline must cover legacy drain, a contending worker, its own login retries, and recovery margin'
+yq eval -e '.spec.timeout == "30m"' "${apps_flux_kustomization}" >/dev/null ||
+  fail 'apps reconciliation timeout must outlive the bootstrap Job deadline'
 
 jq -e '.spec | has("ttlSecondsAfterFinished") | not' <<<"${job_json}" >/dev/null ||
   fail 'bootstrap Job must remain completed so Flux cannot recreate it after TTL cleanup'

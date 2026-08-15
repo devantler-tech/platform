@@ -6,7 +6,11 @@ metadata:
   namespace: flux-system
 spec:
   interval: 60m
-  timeout: 20m
+  # The retained Umami bootstrap Job has a 25m outer deadline so its first
+  # Lease-aware rollout can drain legacy work and survive one contending run.
+  # Keep Flux's health wait above that bound so a successful recovery cannot be
+  # reported as a reconciliation timeout.
+  timeout: 30m
   retryInterval: 2m
   path: providers/__PROVIDER__/apps
   sourceRef:
