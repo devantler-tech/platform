@@ -87,6 +87,11 @@ spec:
     # UPDATE would block the provider's own reconciliation. Tenant-authored
     # UPDATE of this annotation is therefore still open and needs the provider
     # ServiceAccount excluded to close; tracked separately.
+    # The CREATE scope is expressed as a match operation rather than a
+    # {{ request.operation }} precondition on purpose: this policy sets
+    # background: true, and a background scan has no AdmissionReview to read
+    # request.* from. Matching on operations keeps the rule background-safe and
+    # simply does not select during a background scan.
     - name: teams-block-foreign-external-name-adoption
       match:
         any:
@@ -95,11 +100,8 @@ spec:
                 - team.github.m.upbound.io/*/Team
               namespaces:
                 - github-config
-      preconditions:
-        all:
-          - key: "{{ request.operation || 'BACKGROUND' }}"
-            operator: Equals
-            value: CREATE
+              operations:
+                - CREATE
       validate:
         message: GitHub Team resources must not set crossplane.io/external-name to a different team at creation; omit it or set it to metadata.name.
         deny:
