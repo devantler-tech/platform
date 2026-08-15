@@ -389,7 +389,33 @@ const (
 // changes, including the Umami Namespace, whose identical rendered form merely
 // moves between two already-scanned ownership layers. The validator reported
 // no per-resource mismatch; only this aggregate fingerprint moved.
-const expectedRenderedSurfaceSHA = "83763a582a9daac9d8555695165489dd86613504099717bfd95b340e396c5f14"
+//
+// Measured against main 57ca1dbe before approving this value: the branch's only
+// source change moves Headlamp's plugin directory off a PersistentVolumeClaim
+// back to the chart's default emptyDir — it deletes the PVC, its kustomization
+// entry, and the post-render patch that repointed the `plugins-dir` volume. No
+// identity, binding, policy document or service account is touched, and
+// `cluster-role-binding.yaml` in that same component folder is untouched.
+//
+// The aggregate nonetheless moves because a HelmRelease joins the selected
+// surface (a chart's controller can materialise RBAC), so editing its values or
+// post-renderers moves its own per-resource fingerprint. That is the
+// over-breadth #2768 tracks, not an authorization change.
+//
+// Verified across all five rendered roots against main: authorization
+// membership is identical at 71 documents — no `kind:`/`name:` line added,
+// removed or renamed — and the concatenated Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding / ServiceAccount text is byte-identical at 36303 bytes on
+// both sides, with a dropped-line negative control confirming the comparison
+// discriminates.
+//
+// The renderer was validated against the trap recorded above rather than
+// assumed: on this branch's pre-merge head the local render reproduced the
+// required CI job's fingerprint exactly (6e186a84…), which is what rules out a
+// renderer-version artifact. This value is the post-merge render, so it is
+// compared like with like — approving the pre-merge value would have gone stale
+// the moment CI re-rendered the merge commit against a main that had moved.
+const expectedRenderedSurfaceSHA = "c9ae723582d79096750ab3a4b9e6f8aaa10e45c24c5a45989d0320538a203135"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
