@@ -339,6 +339,63 @@ func TestValidateUnifiPruneExemption(t *testing.T) {
 	}
 }
 
+// TestUnifiPruneExemptionIsHetznerScoped keeps the production-only safety
+// exception out of the shared infrastructure base while proving that the
+// Hetzner render still carries the exact admission shape the app needs.
+func TestUnifiPruneExemptionIsHetznerScoped(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	basePath := filepath.Join(
+		repoRoot,
+		"k8s/bases/infrastructure/cluster-policies/flux/enforce-flux-best-practices.yaml",
+	)
+	baseContents, err := os.ReadFile(basePath) //nolint:gosec // Explicit repository path.
+	if err != nil {
+		t.Fatalf("read shared Flux policy: %v", err)
+	}
+	baseDocuments, err := decodeDocuments(baseContents)
+	if err != nil {
+		t.Fatalf("decode shared Flux policy: %v", err)
+	}
+	if got, want := len(baseDocuments), 1; got != want {
+		t.Fatalf("shared Flux policy documents = %d, want %d", got, want)
+	}
+	if err := validateUnifiPruneExemption(baseDocuments[0], identityOf(baseDocuments[0])); err == nil {
+		t.Fatal("shared Flux policy unexpectedly exempts unifi/unifi")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), rendererCommandTimeout)
+	defer cancel()
+	rendered, err := commandOutput(
+		ctx,
+		"kubectl",
+		"kustomize",
+		filepath.Join(repoRoot, infrastructureOverlayPath),
+	)
+	if err != nil {
+		t.Fatalf("render Hetzner infrastructure: %v", err)
+	}
+	renderedDocuments, err := decodeDocuments(rendered)
+	if err != nil {
+		t.Fatalf("decode Hetzner infrastructure: %v", err)
+	}
+	found := false
+	for _, document := range renderedDocuments {
+		identity := identityOf(document)
+		if identity.apiVersion != "kyverno.io/v1" ||
+			identity.kind != "ClusterPolicy" ||
+			identity.name != "enforce-flux-best-practices" {
+			continue
+		}
+		found = true
+		if err := validateUnifiPruneExemption(document, identity); err != nil {
+			t.Fatalf("validate rendered Hetzner exception: %v", err)
+		}
+	}
+	if !found {
+		t.Fatal("Hetzner infrastructure render omitted enforce-flux-best-practices")
+	}
+}
+
 // TestValidateRenderedRejectsIndirectAuthorizationResources covers controllers.
 func TestValidateRenderedRejectsIndirectAuthorizationResources(t *testing.T) {
 	tests := []struct {

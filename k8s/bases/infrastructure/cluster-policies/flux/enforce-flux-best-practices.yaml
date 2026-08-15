@@ -45,18 +45,6 @@ spec:
                 - flux-system
               names:
                 - flux-system
-          # The UniFi reconciler applies Crossplane Managed Resources whose
-          # default deletion policy cascades to live network objects. It keeps
-          # every other reliability field, but deliberately disables pruning;
-          # its ServiceAccount also lacks delete authority and its external
-          # source is pinned to an immutable commit by the EKS authorization
-          # validator. Keep this exception exact so no other Kustomization can
-          # bypass the portfolio-wide garbage-collection default.
-          - resources:
-              namespaces:
-                - unifi
-              names:
-                - unifi
       validate:
         message: >-
           Flux Kustomization must set the recommended reliability fields:
