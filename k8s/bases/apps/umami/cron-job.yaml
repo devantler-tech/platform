@@ -188,6 +188,12 @@ spec:
                   const base = process.env.UMAMI_BASE;
                   const bestEffortBootstrap = process.env.UMAMI_PROVISION_JOB_NAME === 'umami-provision-tenants-bootstrap';
                   const provisioningFailureExitCode = bestEffortBootstrap ? 0 : 1;
+                  // Keep all initialization, Lease coordination, Umami retries,
+                  // and response-body reads inside the Job's 25-minute backstop.
+                  // The remaining five minutes let the workload-specific catch
+                  // and best-effort Lease release finish before Kubernetes can
+                  // mark the retained bootstrap Job DeadlineExceeded.
+                  const umamiProvisioningDeadline = Date.now() + 1200000;
                   (async () => {
                   // Credentials are mounted files (see volumeMounts). A path is
                   // resolved under SECRETS_DIR and may not escape it, so a
@@ -214,10 +220,20 @@ spec:
                   // each -- a transient network error failed the whole run (observed:
                   // `fetch failed at async ensureTeam`). Retry thrown fetch errors;
                   // an HTTP error RESPONSE is returned untouched so every
-                  // caller's existing !r.ok / status handling is preserved.
+                  // caller's existing !r.ok / status handling is preserved. A
+                  // per-attempt AbortSignal also bounds response-body reads;
+                  // every attempt shares the earlier provisioning deadline so
+                  // retries cannot consume the Job controller's recovery margin.
+                  const umamiRequestTimeoutMilliseconds = 10000;
                   const fetchRetry = async (u, o) => {
                     for (let i = 0; ; i++) {
-                      try { return await globalThis.fetch(u, o); }
+                      const remainingRequestMilliseconds = umamiProvisioningDeadline - Date.now();
+                      if (remainingRequestMilliseconds <= 0) throw new Error('Umami provisioning deadline exceeded');
+                      const requestOptions = {
+                        ...(o || {}),
+                        signal: AbortSignal.timeout(Math.min(umamiRequestTimeoutMilliseconds, remainingRequestMilliseconds)),
+                      };
+                      try { return await globalThis.fetch(u, requestOptions); }
                       catch (e) { if (i >= 4) throw e; await sleep(500 * (i + 1)); }
                     }
                   };
@@ -287,9 +303,11 @@ spec:
                     // Wait rather than reporting success under contention. This
                     // matters most for the retained one-shot bootstrap Job: if it
                     // exited cleanly while a scheduled run held the Lease, Flux
-                    // would keep that completed no-op forever. The Job's
-                    // activeDeadlineSeconds remains the outer bound.
+                    // would keep that completed no-op forever. The shared
+                    // provisioning deadline throws through workload-specific
+                    // failure handling before activeDeadlineSeconds can fire.
                     for (;;) {
+                      if (Date.now() >= umamiProvisioningDeadline) throw new Error('Umami provisioning deadline exceeded while waiting for Lease');
                       const read = await leaseRequest('GET');
                       // Flux SSA applies Role/RoleBinding before workloads, but
                       // Lease is not a first-stage kind and can follow Job. Do

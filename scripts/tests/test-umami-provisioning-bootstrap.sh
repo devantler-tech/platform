@@ -148,6 +148,16 @@ grep -Fq 'provisioning Lease renewal will retry:' <<<"${provisioner_script}" ||
   fail 'transient renewal failures must stay observable while later heartbeats retry'
 grep -Fq 'req.setTimeout(10000' <<<"${provisioner_script}" ||
   fail 'a hung Lease API request must fail before the Lease can expire'
+grep -Fq 'const umamiRequestTimeoutMilliseconds = 10000;' <<<"${provisioner_script}" ||
+  fail 'a hung Umami HTTP operation must remain bounded inside the Job deadline'
+grep -Fq 'const umamiProvisioningDeadline = Date.now() + 1200000;' <<<"${provisioner_script}" ||
+  fail 'all Umami retries must share a deadline with recovery margin before the Job deadline'
+grep -Fq 'const remainingRequestMilliseconds = umamiProvisioningDeadline - Date.now();' <<<"${provisioner_script}" ||
+  fail 'each Umami fetch attempt must respect the shared provisioning deadline'
+grep -Fq 'signal: AbortSignal.timeout(Math.min(umamiRequestTimeoutMilliseconds, remainingRequestMilliseconds))' <<<"${provisioner_script}" ||
+  fail 'every Umami fetch attempt must bound both headers and response-body reads'
+grep -Fq "if (Date.now() >= umamiProvisioningDeadline) throw new Error('Umami provisioning deadline exceeded while waiting for Lease');" <<<"${provisioner_script}" ||
+  fail 'Lease contention must reach workload-specific failure handling before the Job deadline'
 grep -Fq 'waiting for Umami provisioning Lease holder:' <<<"${provisioner_script}" ||
   fail 'a contending bootstrap must wait for the current Lease holder'
 grep -Fq 'await sleep(Math.min(5000, Math.max(250, expiresAt - Date.now())))' \
