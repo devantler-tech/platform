@@ -389,4 +389,16 @@ func TestFenceReportRefusesJournalsItCannotValidate(t *testing.T) {
 	// Fail-closed: the refusal path prints a diagnostic and `continue`s, so no
 	// release command is emitted for a journal that did not validate.
 	requireContains(t, report, "NOT releasable: the recovery journal is malformed")
+
+	// An EMPTY owner must not satisfy the match. `.owner == $owner` alone is
+	// true when both sides are "", so a journal carrying `"owner": ""` on a node
+	// with no cordon-owner annotation would validate — and the emitted patch
+	// omits the owner test/remove while still dropping the journal and, on
+	// wasCordoned 0, uncordoning. reconcile_bootstrap_recovery_journals requires
+	// a non-empty owner; so does this.
+	requireContains(t, report, `and (.owner | type == "string" and length > 0)`)
+
+	// Belt and braces at the emission site: the cordon owner annotation IS the
+	// fence, so a node without one gets a diagnostic and no command at all.
+	requireContains(t, report, "NOT releasable: the node carries no cordon owner annotation")
 }

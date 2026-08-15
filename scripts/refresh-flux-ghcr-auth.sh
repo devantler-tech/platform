@@ -491,6 +491,7 @@ report_fences_now() {
           "uid", "v", "wasCordoned"
         ] | sort)
         and .v == 1
+        and (.owner | type == "string" and length > 0)
         and .owner == $owner
         and .uid == $uid
         and (.desiredRevision | type == "string" and test("^[0-9a-f]{64}$"))
@@ -503,6 +504,18 @@ report_fences_now() {
       printf '    Run the bridge so bootstrap recovery adjudicates it; releasing on a\n'
       printf '    journal this script cannot validate is how a node gets uncordoned\n'
       printf '    against a state nobody verified.\n\n'
+      continue
+    fi
+    # The cordon owner annotation IS the fence, so releasing without one proves
+    # nothing about who holds it. fence_node_release_command omits the owner
+    # test and remove when the annotation is absent, and the patch would still
+    # drop the journal and — on wasCordoned 0 — uncordon the node. This loop
+    # selects a node carrying an owner OR a journal, so the ownerless-journal
+    # case is reachable and has to be refused here rather than emitted unguarded.
+    if [[ -z "${owner}" ]]; then
+      printf '    NOT releasable: the node carries no cordon owner annotation, so no\n'
+      printf '    release can prove this transaction holds the fence. Run the bridge so\n'
+      printf '    bootstrap recovery adjudicates the journal.\n\n'
       continue
     fi
     printf '    release (ONE CAS-guarded patch — fails safely if anything changed):\n'
