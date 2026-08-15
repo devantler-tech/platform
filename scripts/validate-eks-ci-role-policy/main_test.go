@@ -164,6 +164,118 @@ spec:
 	}
 }
 
+// TestValidatePinnedUnifiSource rejects every source shape that can move
+// without a reviewed Platform change. The unifi Kustomization keeps patch and
+// update authority over live managed resources, so its external Git source
+// must be both the expected repository and one full immutable commit.
+func TestValidatePinnedUnifiSource(t *testing.T) {
+	tests := []struct {
+		name      string
+		manifest  string
+		wantError bool
+	}{
+		{
+			name: "exact trusted commit",
+			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: unifi
+  namespace: unifi
+spec:
+  url: https://github.com/devantler-tech/unifi
+  ref:
+    commit: 7b17f7e33ef507c24c395b884a433c62b92ace98
+`,
+		},
+		{
+			name:      "mutable branch",
+			wantError: true,
+			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: unifi
+  namespace: unifi
+spec:
+  url: https://github.com/devantler-tech/unifi
+  ref:
+    branch: main
+`,
+		},
+		{
+			name:      "abbreviated commit",
+			wantError: true,
+			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: unifi
+  namespace: unifi
+spec:
+  url: https://github.com/devantler-tech/unifi
+  ref:
+    commit: 7b17f7e
+`,
+		},
+		{
+			name:      "mutable branch beside commit",
+			wantError: true,
+			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: unifi
+  namespace: unifi
+spec:
+  url: https://github.com/devantler-tech/unifi
+  ref:
+    branch: main
+    commit: 7b17f7e33ef507c24c395b884a433c62b92ace98
+`,
+		},
+		{
+			name:      "different repository",
+			wantError: true,
+			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: unifi
+  namespace: unifi
+spec:
+  url: https://github.com/attacker/unifi
+  ref:
+    commit: 7b17f7e33ef507c24c395b884a433c62b92ace98
+`,
+		},
+		{
+			name: "unrelated source",
+			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: other
+  namespace: other
+spec:
+  url: https://example.com/other
+  ref:
+    branch: main
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			documents, err := decodeDocuments([]byte(tt.manifest))
+			if err != nil || len(documents) != 1 {
+				t.Fatalf("decode source: documents=%d error=%v", len(documents), err)
+			}
+			err = validatePinnedUnifiSource(documents[0], identityOf(documents[0]))
+			if tt.wantError && err == nil {
+				t.Fatal("validatePinnedUnifiSource() error = nil, want rejection")
+			}
+			if !tt.wantError && err != nil {
+				t.Fatalf("validatePinnedUnifiSource() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
 // TestValidateRenderedRejectsIndirectAuthorizationResources covers controllers.
 func TestValidateRenderedRejectsIndirectAuthorizationResources(t *testing.T) {
 	tests := []struct {
