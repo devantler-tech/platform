@@ -6,6 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 umami_dir="${root_dir}/k8s/bases/apps/umami"
 exception_dir="${root_dir}/k8s/bases/infrastructure/cluster-security-exceptions"
 token_exception="${exception_dir}/umami-provisioning-service-account-token.yaml"
+apps_flux_kustomization="${root_dir}/k8s/clusters/base/flux-kustomization-apps.yaml"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -56,8 +57,8 @@ jq -S '.spec.jobTemplate.spec' <<<"${cron_json}" >"${cron_spec_file}"
 jq -S '.spec' <<<"${job_json}" >"${job_spec_file}"
 cmp -s "${cron_spec_file}" "${job_spec_file}" ||
   fail 'bootstrap Job must use the CronJob controller template verbatim'
-jq -e '.spec.activeDeadlineSeconds >= 840' <<<"${job_json}" >/dev/null ||
-  fail 'bootstrap Job deadline must cover a stale 480s Lease, the 300s login retry budget, and recovery work'
+jq -e '.spec.activeDeadlineSeconds >= 420' <<<"${job_json}" >/dev/null ||
+  fail 'bootstrap Job deadline must cover a stale 60s Lease, the 300s login retry budget, and recovery work'
 
 jq -e '.spec | has("ttlSecondsAfterFinished") | not' <<<"${job_json}" >/dev/null ||
   fail 'bootstrap Job must remain completed so Flux cannot recreate it after TTL cleanup'
@@ -110,6 +111,16 @@ grep -Fq 'acquireProvisioningLease' <<<"${provisioner_script}" ||
   fail 'the shared provisioner must acquire the Lease before calling Umami'
 grep -Fq 'releaseProvisioningLease' <<<"${provisioner_script}" ||
   fail 'the shared provisioner must release the Lease after calling Umami'
+grep -Fq 'const leaseDurationSeconds = 60;' <<<"${provisioner_script}" ||
+  fail 'a crashed provisioner must leave only a short-lived Lease'
+grep -Fq 'async function renewProvisioningLease()' <<<"${provisioner_script}" ||
+  fail 'an active provisioner must renew its short-lived Lease'
+grep -Fq 'setInterval' <<<"${provisioner_script}" ||
+  fail 'Lease renewal must continue throughout provisioning'
+grep -Fq 'clearInterval' <<<"${provisioner_script}" ||
+  fail 'Lease renewal must stop before release'
+grep -Fq 'req.setTimeout(10000' <<<"${provisioner_script}" ||
+  fail 'a hung Lease API request must fail before the Lease can expire'
 grep -Fq 'waiting for Umami provisioning Lease holder:' <<<"${provisioner_script}" ||
   fail 'a contending bootstrap must wait for the current Lease holder'
 grep -Fq 'await sleep(Math.min(5000, Math.max(250, expiresAt - Date.now())))' \
@@ -118,5 +129,17 @@ grep -Fq 'await sleep(Math.min(5000, Math.max(250, expiresAt - Date.now())))' \
 if grep -Fq 'return false;' <<<"${provisioner_script}"; then
   fail 'Lease contention must not complete a one-shot bootstrap without provisioning'
 fi
+
+job_health_count="$(yq eval '[.spec.healthCheckExprs[] | select(.apiVersion == "batch/v1" and .kind == "Job")] | length' "${apps_flux_kustomization}")"
+job_health_current="$(yq eval '.spec.healthCheckExprs[] | select(.apiVersion == "batch/v1" and .kind == "Job") | .current' "${apps_flux_kustomization}")"
+job_health_failed="$(yq eval '.spec.healthCheckExprs[] | select(.apiVersion == "batch/v1" and .kind == "Job") | .failed' "${apps_flux_kustomization}")"
+[[ "${job_health_count}" == 1 &&
+  "${job_health_current}" == *'metadata.name == '* &&
+  "${job_health_current}" == *umami-provision-tenants-bootstrap* &&
+  "${job_health_current}" == *Complete* &&
+  "${job_health_failed}" == *'metadata.name != '* &&
+  "${job_health_failed}" == *umami-provision-tenants-bootstrap* &&
+  "${job_health_failed}" == *Failed* ]] ||
+  fail 'only the best-effort bootstrap Job may bypass the apps health gate'
 
 printf 'Umami bootstrap is one-shot, immutable, and serialized with the scheduled reconciler.\n'

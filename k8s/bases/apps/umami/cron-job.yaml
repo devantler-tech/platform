@@ -73,11 +73,10 @@ spec:
       # script's real error and the next tick retries it, instead of burning
       # in-Job retries against the deadline.
       backoffLimit: 0
-      # Backstop for a hung run only. It covers the worst-case 480s wait for an
-      # abandoned Lease, the script's ~5m wait-for-Umami loop, and a final 2m
-      # recovery margin. A successor can therefore recover and provision
-      # instead of retaining a failed one-shot bootstrap Job.
-      activeDeadlineSeconds: 900
+      # Backstop for a hung run only. It covers the worst-case 60s wait for an
+      # abandoned Lease, the script's ~5m wait-for-Umami loop, and a final 1m
+      # recovery margin. The live holder renews the short Lease below.
+      activeDeadlineSeconds: 420
       template:
         metadata:
           labels:
@@ -216,6 +215,8 @@ spec:
                   // holder fields; this pod can only get/update that exact Lease.
                   const leaseName = 'umami-provision-tenants';
                   const leaseHolder = process.env.HOSTNAME;
+                  const leaseDurationSeconds = 60;
+                  const leaseRenewIntervalMilliseconds = 20000;
                   if (!leaseHolder) throw new Error('HOSTNAME is required for provisioning Lease ownership');
                   const leaseToken = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8').trim();
                   const leaseNamespace = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/namespace', 'utf8').trim();
@@ -246,6 +247,7 @@ spec:
                       });
                     });
                     req.on('error', reject);
+                    req.setTimeout(10000, () => req.destroy(new Error('Lease API request timed out')));
                     req.end(payload);
                   });
                   const leaseBody = (lease, spec) => ({
@@ -285,7 +287,7 @@ spec:
                       const now = new Date().toISOString();
                       const next = {
                         holderIdentity: leaseHolder,
-                        leaseDurationSeconds: 480,
+                        leaseDurationSeconds,
                         acquireTime: holder === leaseHolder && current.acquireTime ? current.acquireTime : now,
                         renewTime: now,
                         leaseTransitions: Number(current.leaseTransitions || 0) + (holder === leaseHolder ? 0 : 1),
@@ -295,6 +297,34 @@ spec:
                       if (update.status === 409) { await sleep(250); continue; }
                       throw new Error('acquire provisioning Lease failed: HTTP ' + update.status);
                     }
+                  }
+                  async function renewProvisioningLease() {
+                    const read = await leaseRequest('GET');
+                    if (read.status !== 200) throw new Error('read provisioning Lease for renewal failed: HTTP ' + read.status);
+                    const current = read.body.spec || {};
+                    if (current.holderIdentity !== leaseHolder) throw new Error('lost provisioning Lease ownership');
+                    const next = {
+                      ...current,
+                      leaseDurationSeconds,
+                      renewTime: new Date().toISOString(),
+                    };
+                    const update = await leaseRequest('PUT', leaseBody(read.body, next));
+                    if (update.status !== 200) throw new Error('renew provisioning Lease failed: HTTP ' + update.status);
+                  }
+                  function startProvisioningLeaseRenewal() {
+                    let renewal = Promise.resolve();
+                    const timer = setInterval(() => {
+                      renewal = renewal
+                        .then(() => renewProvisioningLease())
+                        .catch((e) => {
+                          console.error('provisioning Lease renewal failed:', String((e && e.stack) || e));
+                          process.exit(1);
+                        });
+                    }, leaseRenewIntervalMilliseconds);
+                    return async () => {
+                      clearInterval(timer);
+                      await renewal;
+                    };
                   }
                   async function releaseProvisioningLease() {
                     const read = await leaseRequest('GET');
@@ -420,6 +450,7 @@ spec:
                   }
                   (async () => {
                     await acquireProvisioningLease();
+                    const stopProvisioningLeaseRenewal = startProvisioningLeaseRenewal();
                     try {
                       let token = null;
                       for (let i = 0; i < 60 && !token; i++) {
@@ -434,6 +465,7 @@ spec:
                       }
                       console.log('umami tenant provisioning complete');
                     } finally {
+                      await stopProvisioningLeaseRenewal();
                       await releaseProvisioningLease();
                     }
                   })().catch((e) => { console.error(String((e && e.stack) || e)); process.exit(1); });
