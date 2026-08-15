@@ -363,7 +363,33 @@ const (
 // per-resource fingerprint, since the moved documents belong to main's change
 // rather than the branch's. Compare like with like before concluding the
 // toolchain is at fault.
-const expectedRenderedSurfaceSHA = "26e28178117fa9dc0f7d66c8bd526b1b5f000beeedac9f327207b8a674c56755"
+//
+// Measured against main 2f92d8ef before approving this value: the complete
+// rendered authorization diff changes exactly one object, ClusterRole
+// `cilium-tenant-edit`. Surface membership is unchanged. The only rendered
+// change removes its built-in `aggregate-to-edit` label, so ordinary `edit`
+// bindings no longer inherit Cilium policy access. The tenant-specific
+// aggregation label and all rule verbs remain byte-identical to main: Flux can
+// still server-side apply and prune tenant policies through `tenant-edit`.
+// This strictly narrows which aggregate role inherits the grant without
+// breaking that workflow. Platform#3150 separately tracks admission constraints
+// for permissive or platform-owned tenant policy mutations. The committed-tree
+// validation reported no per-resource mismatch; only this aggregate fingerprint
+// moved.
+//
+// Measured by comparing base 0a97d6c7 with repair head 966ca01c before
+// approving this value: the complete five-layer render diff changes exactly
+// four selected entries. The mutateExisting ClusterPolicy is narrowed from
+// arbitrary matching Deployments to umami/umami-umami and its fixed
+// umami-umami-primary target. The cluster-wide aggregated ClusterRole that
+// granted get/list/watch/update/patch on every Deployment is removed. In its
+// place, one Role in umami grants only get/update/patch on the single
+// umami-umami-primary Deployment, and one RoleBinding grants it only to
+// Kyverno's background-controller ServiceAccount. No existing rendered entry
+// changes, including the Umami Namespace, whose identical rendered form merely
+// moves between two already-scanned ownership layers. The validator reported
+// no per-resource mismatch; only this aggregate fingerprint moved.
+const expectedRenderedSurfaceSHA = "83763a582a9daac9d8555695165489dd86613504099717bfd95b340e396c5f14"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
