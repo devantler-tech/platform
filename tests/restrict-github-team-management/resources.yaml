@@ -116,3 +116,44 @@ spec:
     permission: push
   initProvider:
     permission: admin
+---
+# teamIdSelector: a label selector resolves to whatever Team matches, so it
+# bypasses the by-name allow-list entirely. Exercises the JMESPath map-literal
+# comparison against `{}`, which nothing else covers.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: selector-reference
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdSelector:
+      matchLabels:
+        role: privileged
+    username: attacker
+---
+# A by-name reference that resolves, but to a team outside the allow-list.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: non-allow-listed-reference
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: attacker-team
+    username: attacker
+---
+# maintain is privileged but is not `admin`, so a deny-list on admin alone lets
+# it through. This is the fail-open the allow-list closes.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: maintain-grant
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: platform
+    repository: platform
+    permission: maintain

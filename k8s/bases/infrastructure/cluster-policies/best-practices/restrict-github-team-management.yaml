@@ -140,7 +140,7 @@ spec:
               namespaces:
                 - github-config
       validate:
-        message: GitHub TeamRepository resources must reference platform or maintainers by spec.forProvider.teamIdRef.name and may not grant admin permission, in forProvider or initProvider.
+        message: GitHub TeamRepository resources must reference platform or maintainers by spec.forProvider.teamIdRef.name and may grant only pull, triage or push permission, in forProvider and initProvider.
         deny:
           conditions:
             any:
@@ -155,9 +155,18 @@ spec:
                 value:
                   - platform
                   - maintainers
+              # An allow-list, not a deny-list on `admin`: GitHub also offers
+              # `maintain` and organization-defined custom repository roles, so
+              # denying only `admin` fails open the moment the tenant picks
+              # another privileged role. An empty value is the provider default
+              # (`pull`).
               - key: "{{ request.object.spec.forProvider.permission || '' }}"
-                operator: Equals
-                value: admin
+                operator: AnyNotIn
+                value:
+                  - ""
+                  - pull
+                  - triage
+                  - push
               # Same initProvider merge as above: an approved forProvider
               # reference must not be able to front a foreign team or an admin
               # grant supplied under initProvider.
@@ -174,5 +183,9 @@ spec:
                   - platform
                   - maintainers
               - key: "{{ request.object.spec.initProvider.permission || '' }}"
-                operator: Equals
-                value: admin
+                operator: AnyNotIn
+                value:
+                  - ""
+                  - pull
+                  - triage
+                  - push

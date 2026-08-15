@@ -41,6 +41,8 @@ results:
     resources:
       - github-config/direct-team-id
       - github-config/initprovider-foreign-team
+      - github-config/selector-reference
+      - github-config/non-allow-listed-reference
     kind: TeamMembership
     result: fail
   - policy: restrict-github-team-management
@@ -55,6 +57,7 @@ results:
     resources:
       - github-config/platform-repo-admin
       - github-config/initprovider-admin-grant
+      - github-config/maintain-grant
     kind: TeamRepository
     result: fail
   - policy: restrict-github-team-management
