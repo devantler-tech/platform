@@ -249,6 +249,96 @@ func TestValidatePinnedUnifiSource(t *testing.T) {
 	}
 }
 
+// TestValidateUnifiPruneExemption pins the admission exception that makes the
+// non-pruning UniFi reconciler deployable without weakening the default rule
+// for any other Flux Kustomization.
+func TestValidateUnifiPruneExemption(t *testing.T) {
+	targetIdentity := resourceIdentity{
+		apiVersion: "kyverno.io/v1",
+		kind:       "ClusterPolicy",
+		name:       "enforce-flux-best-practices",
+	}
+	policy := func(exclusions ...any) map[string]any {
+		return map[string]any{
+			"spec": map[string]any{
+				"rules": []any{
+					map[string]any{
+						"name":    "kustomization-recommended-settings",
+						"exclude": map[string]any{"any": exclusions},
+					},
+				},
+			},
+		}
+	}
+	resourceExclusion := func(namespace, name string) map[string]any {
+		return map[string]any{
+			"resources": map[string]any{
+				"namespaces": []any{namespace},
+				"names":      []any{name},
+			},
+		}
+	}
+
+	tests := []struct {
+		name      string
+		identity  resourceIdentity
+		document  map[string]any
+		wantError bool
+	}{
+		{
+			name:     "exact narrow exemption",
+			identity: targetIdentity,
+			document: policy(
+				resourceExclusion("flux-system", "flux-system"),
+				resourceExclusion("unifi", "unifi"),
+			),
+		},
+		{
+			name:      "missing exemption",
+			identity:  targetIdentity,
+			document:  policy(resourceExclusion("flux-system", "flux-system")),
+			wantError: true,
+		},
+		{
+			name:      "namespace wildcard is not narrow",
+			identity:  targetIdentity,
+			document:  policy(resourceExclusion("*", "unifi")),
+			wantError: true,
+		},
+		{
+			name:     "additional broad exemption is rejected",
+			identity: targetIdentity,
+			document: policy(
+				resourceExclusion("flux-system", "flux-system"),
+				resourceExclusion("unifi", "unifi"),
+				resourceExclusion("*", "*"),
+			),
+			wantError: true,
+		},
+		{
+			name: "unrelated policy",
+			identity: resourceIdentity{
+				apiVersion: "kyverno.io/v1",
+				kind:       "ClusterPolicy",
+				name:       "other",
+			},
+			document: policy(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateUnifiPruneExemption(tt.document, tt.identity)
+			if tt.wantError && err == nil {
+				t.Fatal("validateUnifiPruneExemption() error = nil, want rejection")
+			}
+			if !tt.wantError && err != nil {
+				t.Fatalf("validateUnifiPruneExemption() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
 // TestValidateRenderedRejectsIndirectAuthorizationResources covers controllers.
 func TestValidateRenderedRejectsIndirectAuthorizationResources(t *testing.T) {
 	tests := []struct {
