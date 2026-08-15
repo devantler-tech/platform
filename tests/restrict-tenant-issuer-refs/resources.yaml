@@ -1,0 +1,106 @@
+---
+# The escalation the boundary exists to stop: a tenant Certificate pointing at
+# the platform's shared cluster-scoped issuer.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tenant-cert-clusterissuer
+  namespace: tenant-ns
+spec:
+  secretName: tenant-tls
+  dnsNames:
+    - tenant.example.com
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+---
+# An external project's cluster-scoped issuer kind. A deny-list naming only
+# "ClusterIssuer" would let this through; the allow-list catches it.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tenant-cert-external-clusterissuer
+  namespace: tenant-ns
+spec:
+  secretName: tenant-tls-ext
+  dnsNames:
+    - ext.example.com
+  issuerRef:
+    group: awspca.cert-manager.io
+    kind: AWSPCAClusterIssuer
+    name: aws-pca
+---
+# The paved road: a tenant's own namespaced Issuer. This is what
+# ascoachingogvaner actually does on prod today.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tenant-cert-namespaced-issuer
+  namespace: tenant-ns
+spec:
+  secretName: tenant-tls-ok
+  dnsNames:
+    - ok.example.com
+  issuerRef:
+    group: cert-manager.io
+    kind: Issuer
+    name: letsencrypt-prod
+---
+# `kind` omitted entirely — cert-manager defaults it to Issuer. 2 of the 9
+# Certificates live on prod look like this, so denying them would be a real
+# outage. Must PASS.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tenant-cert-kind-omitted
+  namespace: tenant-ns
+spec:
+  secretName: tenant-tls-default
+  dnsNames:
+    - default.example.com
+  issuerRef:
+    name: in-namespace-issuer
+---
+# Out of scope: a platform namespace legitimately using a ClusterIssuer. This
+# mirrors the real kube-system/gateway-certificate, which must keep working.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gateway-certificate
+  namespace: kube-system
+spec:
+  secretName: gateway-tls
+  dnsNames:
+    - example.com
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+---
+# Defense-in-depth: a directly-created tenant CertificateRequest pointing at a
+# cluster-scoped issuer. RBAC forbids this today; the rule holds if that regresses.
+apiVersion: cert-manager.io/v1
+kind: CertificateRequest
+metadata:
+  name: tenant-cr-clusterissuer
+  namespace: tenant-ns
+spec:
+  request: dGVzdA==
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+---
+# The derived CertificateRequest for a compliant tenant Certificate. Must PASS.
+apiVersion: cert-manager.io/v1
+kind: CertificateRequest
+metadata:
+  name: tenant-cr-namespaced-issuer
+  namespace: tenant-ns
+spec:
+  request: dGVzdA==
+  issuerRef:
+    group: cert-manager.io
+    kind: Issuer
+    name: letsencrypt-prod

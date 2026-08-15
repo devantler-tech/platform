@@ -32,6 +32,8 @@ kind: CronJob
 metadata:
   name: longhorn-stale-node-cleanup
   namespace: longhorn-system
+  annotations:
+    checkov.io/skip1: CKV_K8S_38=the cleanup script reconciles Longhorn Node CRs through kubectl
 spec:
   # Daily, off the top of the hour. Stale CRs are pure cosmetic/bookkeeping
   # debt, never urgent, so one reconcile a day is ample.

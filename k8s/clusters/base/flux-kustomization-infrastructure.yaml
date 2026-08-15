@@ -41,5 +41,18 @@ spec:
     - apiVersion: kro.run/v1alpha1
       kind: ResourceGraphDefinition
       current: status.state == 'Active'
+    # coroot-db lives in this layer. kstatus marks a CNPG `Cluster` NotReady for
+    # the whole of any rolling update — and CNPG rolls every instance whenever
+    # the operator, the barman-cloud plugin sidecar, or the PostgreSQL image
+    # changes, which Renovate does routinely. That failed this Kustomization's
+    # health check and evicted every PR from the merge queue on 2026-07-14
+    # (#2639). Gate on "the database is SERVING" instead — a primary is elected
+    # and at least one instance is ready. A degraded-but-serving cluster is a
+    # paging concern, not a deploy failure; the cnpg-degraded-alert CronJob owns
+    # that signal independently of this gate. A cluster with no ready instance
+    # matches no `current` expression, stays InProgress, and still fails.
+    - apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      current: has(status.readyInstances) && status.readyInstances >= 1 && has(status.currentPrimary) && status.currentPrimary != ''
   prune: true
   force: true

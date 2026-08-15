@@ -5061,6 +5061,8 @@ spec:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
+  annotations:
+    checkov.io/skip1: "CKV_K8S_155=Vendored upstream operator RBAC; changes must go through the pinned vendor update path tracked by platform issue 2899."
   labels:
     operator.cdi.kubevirt.io: ""
   name: cdi-operator-cluster
@@ -5671,6 +5673,14 @@ subjects:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  annotations:
+    checkov.io/skip1: "CKV_K8S_11=Pinned upstream operator deployment; changes must go through the vendor update path tracked by platform issue 2899."
+    checkov.io/skip2: "CKV_K8S_13=Pinned upstream operator deployment; changes must go through the vendor update path tracked by platform issue 2899."
+    checkov.io/skip3: "CKV_K8S_15=Pinned upstream operator deployment; changes must go through the vendor update path tracked by platform issue 2899."
+    checkov.io/skip4: "CKV_K8S_22=Pinned upstream operator deployment; changes must go through the vendor update path tracked by platform issue 2899."
+    checkov.io/skip5: "CKV_K8S_38=Pinned upstream operator deployment; changes must go through the vendor update path tracked by platform issue 2899."
+    checkov.io/skip6: "CKV_K8S_40=Pinned upstream operator deployment; changes must go through the vendor update path tracked by platform issue 2899."
+    checkov.io/skip7: "CKV_K8S_43=Pinned upstream operator deployment; changes must go through the vendor update path tracked by platform issue 2899."
   labels:
     cdi.kubevirt.io: cdi-operator
     name: cdi-operator
