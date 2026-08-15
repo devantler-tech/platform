@@ -6,5 +6,9 @@ resources:
   - helm-release.yaml
   - helm-repository.yaml
   - cilium-network-policy.yaml
-  - cluster-role.yaml
+  # Umami's namespace and narrow background-controller grant must exist before
+  # the dependent infrastructure layer admits its mutateExisting policy.
+  - namespace-umami.yaml
+  - role.yaml
+  - role-binding.yaml
   - cluster-role-reports-controller-read-keda.yaml
