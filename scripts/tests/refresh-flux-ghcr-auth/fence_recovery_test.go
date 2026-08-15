@@ -350,3 +350,43 @@ func TestFenceReportNodeReleaseIsCASGuarded(t *testing.T) {
 	}
 	requireContains(t, command, "patch node %s --type=json")
 }
+
+// CAS guards against a CONCURRENT change; it does not say the recorded state is
+// safe to restore. reconcile_bootstrap_recovery_journals and
+// restore_node_schedulability_if_needed both refuse a journal whose schema,
+// owner, UID or phase is wrong. The report has to refuse on the same terms:
+// otherwise a malformed record — `{"wasCordoned":0}` is enough — reaches the
+// phase check as a non-active non-retain journal and earns a CAS-guarded patch
+// that drops it and sets spec.unschedulable to false. The patch would apply
+// cleanly, because nothing about it is concurrent; it is simply wrong.
+func TestFenceReportRefusesJournalsItCannotValidate(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+
+	// The full schema, not a phase check: every field the durable journal
+	// declares is pinned, so a partial object cannot pass by omission.
+	for _, field := range []string{
+		`"desiredRevision", "initialTaints", "owner", "phase",`,
+		`and .v == 1`,
+		`and (.wasCordoned == 0 or .wasCordoned == 1)`,
+		`and (.initialTaints | type == "array")`,
+		`test("^[0-9a-f]{64}$")`,
+	} {
+		requireContains(t, report, field)
+	}
+
+	// The journal must be OURS and for THIS node — a valid journal belonging to
+	// another owner or node is exactly as unsafe to release as a malformed one.
+	requireContains(t, report, `and .owner == $owner`)
+	requireContains(t, report, `and .uid == $uid`)
+
+	// Only the two phases the release path treats as releasable. `active` and
+	// `retain` are refused earlier with their own guidance; anything else must
+	// not reach a printed command at all.
+	requireContains(t, report, `and (.phase == "rollback-safe" or .phase == "release-ready")`)
+
+	// Fail-closed: the refusal path prints a diagnostic and `continue`s, so no
+	// release command is emitted for a journal that did not validate.
+	requireContains(t, report, "NOT releasable: the recovery journal is malformed")
+}

@@ -473,6 +473,38 @@ report_fences_now() {
         continue
         ;;
     esac
+    # CAS protects against a CONCURRENT change; it says nothing about whether
+    # the state recorded here is safe to restore. reconcile_bootstrap_recovery_journals
+    # and restore_node_schedulability_if_needed both refuse a journal whose
+    # schema, owner, UID or phase is wrong, and the report has to refuse on the
+    # same terms — otherwise a malformed record like {"wasCordoned":0}, or one
+    # belonging to another owner or node, reaches the phase check as a non-active
+    # non-retain journal and earns a patch that drops it and uncordons the node.
+    # A node with NO journal is unaffected: that is the ordinary per-node claim,
+    # and the real release path likewise validates only when one is present.
+    if [[ -n "${recovery}" ]] &&
+      ! printf '%s' "${recovery}" | jq -e \
+        --arg owner "${owner}" \
+        --arg uid "${uid}" '
+        (keys | sort) == ([
+          "desiredRevision", "initialTaints", "owner", "phase",
+          "uid", "v", "wasCordoned"
+        ] | sort)
+        and .v == 1
+        and .owner == $owner
+        and .uid == $uid
+        and (.desiredRevision | type == "string" and test("^[0-9a-f]{64}$"))
+        and (.wasCordoned == 0 or .wasCordoned == 1)
+        and (.initialTaints | type == "array")
+        and (.phase == "rollback-safe" or .phase == "release-ready")
+      ' >/dev/null 2>&1; then
+      printf '    NOT releasable: the recovery journal is malformed, records no\n'
+      printf '    releasable phase, or belongs to another owner or node.\n'
+      printf '    Run the bridge so bootstrap recovery adjudicates it; releasing on a\n'
+      printf '    journal this script cannot validate is how a node gets uncordoned\n'
+      printf '    against a state nobody verified.\n\n'
+      continue
+    fi
     printf '    release (ONE CAS-guarded patch — fails safely if anything changed):\n'
     # Only uncordon a node this transaction is RECORDED to have cordoned. The
     # journal keeps the pre-claim state precisely because a node can already be
