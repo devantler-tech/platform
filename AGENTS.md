@@ -526,17 +526,41 @@ failure.
 
 🔴 **`202` is ASYNCHRONOUS, and the head you must query afterwards is a NEW one.** The API schedules
 the update as a background task, so `202 Updating pull request branch` means *accepted*, not *done* —
-and when it completes, the PR's head has **changed**. Re-read it before querying anything:
+and when it completes, the PR's head has **changed**. A single immediate read races that task and
+returns the head you just moved away from, which is the one answer guaranteed to mislead: the
+workflow-run queries would then inspect the old commit, report the same `0`, and the fix would look
+to have failed at the moment it worked. Re-read until the head actually moves, bounded:
 
 ```sh
-gh pr view <n> --repo devantler-tech/platform --json headRefOid --jq .headRefOid
+inspected=<the head you pinned the update to>
+new_head=""
+probe=""
+for _ in $(seq 1 30); do
+  if ! probe="$(gh pr view <n> --repo devantler-tech/platform \
+      --json headRefOid --jq .headRefOid)"; then
+    probe=""
+    break
+  fi
+  if [ "${probe}" != "${inspected}" ]; then
+    new_head="${probe}"
+    break
+  fi
+  sleep 2
+done
 ```
 
-Then run **both** workflow-run queries against that **new** `headRefOid`. Re-running them against the
-head you just moved away from is the trap this whole section is about: that commit's answer is frozen
-and will keep reporting the same `0`, so the fix looks to have failed when it actually worked. Bound
-the wait rather than polling forever — if the head does not change, you are in the
-no-base-to-merge case documented immediately below, which no amount of polling resolves.
+**Three outcomes, and they are not interchangeable** — collapsing them is how a working fix gets
+reported as a failure, and a failed read gets reported as a fix:
+
+| result | what happened | what to do |
+|---|---|---|
+| `new_head` non-empty | the update landed | run **both** workflow-run queries against `new_head` |
+| loop exhausted, head unchanged | there was no base to merge | the case documented immediately below; no amount of polling resolves it |
+| `probe` empty | the read failed, so the update's outcome is unknown | conclude nothing — re-read once before acting on either branch |
+
+Never run the workflow-run queries against the head you moved away from: that commit's answer is
+frozen and keeps reporting the same `0`. An unattended run that exhausts the bound records the PR as
+a carry-forward rather than extending the wait.
 
 A conflicting (`mergeable_state: dirty`) PR cannot be updated this way and needs its conflict resolved
 first.
