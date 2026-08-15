@@ -392,7 +392,7 @@ fence_report_lease() {
 report_fences_now() {
   local state="${work_dir}/fence-report.json"
   local held=0
-  local holder name uid suspend phase resource_version uncordon
+  local holder name uid suspend phase resource_version uncordon deleting
 
   printf '== GHCR deploy fences on context %s ==\n\n' "${KUBE_CONTEXT}"
 
@@ -442,7 +442,15 @@ report_fences_now() {
   # record, so a node killed there carries an owner and no journal — keying this
   # on the journal alone would report "no fence held" while that node stays
   # cordoned and the next run refuses its existing owner.
-  while IFS=$'\t' read -r name owner recovery unschedulable uid resource_version; do
+  # UNIT SEPARATOR, not a tab. Tab is IFS *whitespace*, so bash collapses runs of
+  # them and drops empty fields — and BOTH `owner` and `recovery` are legitimately
+  # empty (a node claimed with no journal is the ordinary per-node claim; an
+  # ownerless journal is the case the validation above refuses). With a tab, such
+  # a row shifted every later field left: `uid` received the resourceVersion and
+  # `resource_version` the deletionTimestamp, so the CAS patch tested values that
+  # were never read from that node. \u001f is not IFS whitespace, so empty fields
+  # are preserved.
+  while IFS=$'\037' read -r name owner recovery unschedulable uid resource_version deleting; do
     [[ -n "${name}" ]] || continue
     held=$((held + 1))
     printf 'HELD  Node %s (drain quarantine)\n' "${name}"
@@ -512,6 +520,16 @@ report_fences_now() {
     # drop the journal and — on wasCordoned 0 — uncordon the node. This loop
     # selects a node carrying an owner OR a journal, so the ownerless-journal
     # case is reachable and has to be refused here rather than emitted unguarded.
+    # The canonical journal rule requires .metadata.deletionTimestamp == null.
+    # A node being deleted is not a node to make schedulable again, and its
+    # annotations are about to go with it, so releasing here races the deletion
+    # for no benefit.
+    if [[ -n "${deleting}" ]]; then
+      printf '    NOT releasable: the node is being deleted (deletionTimestamp %s).\n' \
+        "${deleting}"
+      printf '    Let the deletion finish; there is nothing to restore.\n\n'
+      continue
+    fi
     if [[ -z "${owner}" ]]; then
       printf '    NOT releasable: the node carries no cordon owner annotation, so no\n'
       printf '    release can prove this transaction holds the fence. Run the bridge so\n'
@@ -569,9 +587,11 @@ report_fences_now() {
         $recovery,
         ((.spec.unschedulable // false) | tostring),
         .metadata.uid,
-        .metadata.resourceVersion
+        .metadata.resourceVersion,
+        (.metadata.deletionTimestamp // "")
       ]
-    | @tsv
+    | map(tostring | gsub("[\u001f\n\r]"; " "))
+    | join("\u001f")
   ' "${state}")
 
   fence_report_lease "${state}" || return 1

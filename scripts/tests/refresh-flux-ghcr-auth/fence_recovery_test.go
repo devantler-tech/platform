@@ -402,3 +402,26 @@ func TestFenceReportRefusesJournalsItCannotValidate(t *testing.T) {
 	// fence, so a node without one gets a diagnostic and no command at all.
 	requireContains(t, report, "NOT releasable: the node carries no cordon owner annotation")
 }
+
+// Tab is IFS *whitespace*, so bash collapses runs of it and drops empty fields.
+// Both `owner` and `recovery` are legitimately empty here — a node claimed with
+// no journal is the ordinary per-node claim, and an ownerless journal is the
+// case the validation refuses — so a tab-delimited row shifted every later
+// field one position left: `uid` received the resourceVersion and
+// `resource_version` the deletionTimestamp. The CAS patch then tested values
+// that were never read from that node, and the whole guard was inert.
+func TestFenceReportNodeFeedSurvivesEmptyFields(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+
+	// Unit separator on both sides of the pipe, never a tab.
+	requireContains(t, report, `join("\u001f")`)
+	requireContains(t, report, `while IFS=$'\037' read -r name owner recovery`)
+	requireNotContains(t, stepDirectives(report), `while IFS=$'\t' read -r name`)
+	requireNotContains(t, stepDirectives(report), "| @tsv")
+
+	// Values are sanitized of the separator and of newlines before joining, so a
+	// crafted annotation cannot inject an extra field or an extra row.
+	requireContains(t, report, `gsub("[\u001f\n\r]"; " ")`)
+}
