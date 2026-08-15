@@ -103,6 +103,7 @@ jobs:
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
+              - 'scripts/tests/test-umami-provisioning-bootstrap.sh'
               - 'scripts/tests/test-kyverno-admission-vpa.sh'
               - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
               # The image-verifier liveness checker and its test are one
@@ -400,6 +401,12 @@ jobs:
         uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
         with:
           release: v1.18.2
+
+      - name: 🔒 Validate Umami provisioning serialization
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-umami-provisioning-bootstrap.sh
+          bash scripts/tests/test-umami-provisioning-bootstrap.sh
 
       - name: ⚖️ Validate cluster policies
         if: needs.changes.outputs.k8s == 'true'

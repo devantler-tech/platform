@@ -1,0 +1,11 @@
+# Shared lock for the immediate and scheduled Umami provisioners. Flux creates
+# it once, then leaves its live holder fields to the workers using it.
+apiVersion: coordination.k8s.io/v1
+kind: Lease
+metadata:
+  name: umami-provision-tenants
+  namespace: umami
+  annotations:
+    kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
+    kustomize.toolkit.fluxcd.io/prune: Disabled
+spec: {}

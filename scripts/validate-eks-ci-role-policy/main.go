@@ -389,7 +389,16 @@ const (
 // changes, including the Umami Namespace, whose identical rendered form merely
 // moves between two already-scanned ownership layers. The validator reported
 // no per-resource mismatch; only this aggregate fingerprint moved.
-const expectedRenderedSurfaceSHA = "83763a582a9daac9d8555695165489dd86613504099717bfd95b340e396c5f14"
+//
+// Measured by comparing the apps layer at branch baseline c7f2842f45b2 with
+// the staged Umami provisioning repair using the CI-pinned kubectl v1.36.2
+// renderer. Existing authorization documents are byte-identical. Membership
+// adds exactly three namespaced entries, all named umami-provision-tenants: a
+// ServiceAccount, a RoleBinding to only that ServiceAccount, and a Role whose
+// only verbs are get/update on the single coordination.k8s.io Lease with that
+// resourceName. The Lease itself is pre-created, so the workload cannot create
+// or address any other coordination object.
+const expectedRenderedSurfaceSHA = "d3f2c84eb498c26c334ad4dc564bb83e0c729a839214a84dde02941bfe202eef"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

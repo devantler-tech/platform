@@ -23,5 +23,20 @@ resources:
   - scaled-object.yaml
   - cilium-network-policy.yaml
   - pod-disruption-budget.yaml
+  - service-account-provision-tenants.yaml
+  - role-provision-tenants.yaml
+  - role-binding-provision-tenants.yaml
+  - lease-provision-tenants.yaml
   - job.yaml
   - cron-job.yaml
+replacements:
+  - source:
+      kind: CronJob
+      name: umami-provision-tenants
+      fieldPath: spec.jobTemplate.spec
+    targets:
+      - select:
+          kind: Job
+          name: umami-provision-tenants-bootstrap
+        fieldPaths:
+          - spec

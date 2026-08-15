@@ -34,10 +34,11 @@
 # loop: each tick re-asserts the desired tenants, converging within one interval
 # once Umami is reachable, and picking up TENANTS edits automatically. The script
 # is fully idempotent, so a steady-state tick is a fast no-op. `concurrencyPolicy:
-# Forbid` prevents overlap, and `failedJobsHistoryLimit` keeps recent failures
-# visible for debugging (the old TTL'd Job hid them). The sibling
-# job.yaml bootstrap Job runs the same idempotent script immediately on deploy,
-# so the default admin password is rotated without waiting for the first tick.
+# `Forbid` prevents scheduled runs overlapping each other; the sibling bootstrap
+# Job and this CronJob additionally share a narrowly-scoped Lease because they
+# have different controllers. `failedJobsHistoryLimit` keeps recent failures
+# visible for debugging. The bootstrap Job stays completed instead of using a
+# TTL, so Flux cannot recreate it on every apps reconciliation.
 #
 # Reuses the Umami image (Node runtime, built-in fetch) so no extra image or
 # curl/jq dependency is needed; pinned by digest per platform convention.
@@ -86,7 +87,10 @@ spec:
           # CronJob schedule provides retries. A failed Job's pod is retained
           # (up to failedJobsHistoryLimit) for log inspection.
           restartPolicy: Never
-          automountServiceAccountToken: false
+          serviceAccountName: umami-provision-tenants
+          # The token is used only for the named Lease below. The Role grants no
+          # access to Secrets, workloads, or any other coordination object.
+          automountServiceAccountToken: true
           securityContext:
             runAsNonRoot: true
             runAsUser: 1001
@@ -170,6 +174,7 @@ spec:
                 - -e
                 - |
                   const fs = require('fs');
+                  const https = require('https');
                   const base = process.env.UMAMI_BASE;
                   // Credentials are mounted files (see volumeMounts). A path is
                   // resolved under SECRETS_DIR and may not escape it, so a
@@ -203,6 +208,94 @@ spec:
                       catch (e) { if (i >= 4) throw e; await sleep(500 * (i + 1)); }
                     }
                   };
+                  // The bootstrap Job and CronJob are different Kubernetes
+                  // controllers, so CronJob concurrencyPolicy cannot serialize
+                  // them. Coordinate both through one namespaced Lease. Flux
+                  // creates that object with IfNotPresent and never owns the
+                  // holder fields; this pod can only get/update that exact Lease.
+                  const leaseName = 'umami-provision-tenants';
+                  const leaseHolder = process.env.HOSTNAME;
+                  if (!leaseHolder) throw new Error('HOSTNAME is required for provisioning Lease ownership');
+                  const leaseToken = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8').trim();
+                  const leaseNamespace = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/namespace', 'utf8').trim();
+                  const leaseCa = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
+                  const leasePath = '/apis/coordination.k8s.io/v1/namespaces/' + encodeURIComponent(leaseNamespace) + '/leases/' + encodeURIComponent(leaseName);
+                  const leaseRequest = (method, body) => new Promise((resolve, reject) => {
+                    const payload = body ? JSON.stringify(body) : '';
+                    const req = https.request({
+                      host: process.env.KUBERNETES_SERVICE_HOST,
+                      port: Number(process.env.KUBERNETES_SERVICE_PORT_HTTPS || 443),
+                      path: leasePath,
+                      method,
+                      ca: leaseCa,
+                      headers: {
+                        authorization: 'Bearer ' + leaseToken,
+                        accept: 'application/json',
+                        ...(payload ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) } : {}),
+                      },
+                    }, (res) => {
+                      let data = '';
+                      res.setEncoding('utf8');
+                      res.on('data', (chunk) => { data += chunk; });
+                      res.on('end', () => {
+                        let parsed = {};
+                        try { parsed = data ? JSON.parse(data) : {}; }
+                        catch (e) { reject(new Error('Lease API returned invalid JSON: ' + data.slice(0, 120))); return; }
+                        resolve({ status: res.statusCode, body: parsed });
+                      });
+                    });
+                    req.on('error', reject);
+                    req.end(payload);
+                  });
+                  const leaseBody = (lease, spec) => ({
+                    apiVersion: 'coordination.k8s.io/v1',
+                    kind: 'Lease',
+                    metadata: {
+                      name: leaseName,
+                      namespace: leaseNamespace,
+                      resourceVersion: lease.metadata.resourceVersion,
+                      annotations: lease.metadata.annotations,
+                      labels: lease.metadata.labels,
+                    },
+                    spec,
+                  });
+                  async function acquireProvisioningLease() {
+                    for (let attempt = 0; attempt < 8; attempt++) {
+                      const read = await leaseRequest('GET');
+                      if (read.status !== 200) throw new Error('read provisioning Lease failed: HTTP ' + read.status);
+                      const lease = read.body;
+                      const current = lease.spec || {};
+                      const holder = current.holderIdentity || '';
+                      const renewedAt = current.renewTime || current.acquireTime || '';
+                      const renewedMillis = Date.parse(renewedAt);
+                      const expiresAt = renewedAt && Number.isFinite(renewedMillis)
+                        ? renewedMillis + Number(current.leaseDurationSeconds || 0) * 1000
+                        : Number.POSITIVE_INFINITY;
+                      if (holder && holder !== leaseHolder && expiresAt > Date.now()) {
+                        console.log('another Umami provisioner holds the Lease:', holder);
+                        return false;
+                      }
+                      const now = new Date().toISOString();
+                      const next = {
+                        holderIdentity: leaseHolder,
+                        leaseDurationSeconds: 480,
+                        acquireTime: holder === leaseHolder && current.acquireTime ? current.acquireTime : now,
+                        renewTime: now,
+                        leaseTransitions: Number(current.leaseTransitions || 0) + (holder === leaseHolder ? 0 : 1),
+                      };
+                      const update = await leaseRequest('PUT', leaseBody(lease, next));
+                      if (update.status === 200) return true;
+                      if (update.status !== 409) throw new Error('acquire provisioning Lease failed: HTTP ' + update.status);
+                    }
+                    throw new Error('acquire provisioning Lease failed after concurrent updates');
+                  }
+                  async function releaseProvisioningLease() {
+                    const read = await leaseRequest('GET');
+                    if (read.status !== 200) throw new Error('read provisioning Lease for release failed: HTTP ' + read.status);
+                    if ((read.body.spec || {}).holderIdentity !== leaseHolder) return;
+                    const update = await leaseRequest('PUT', leaseBody(read.body, {}));
+                    if (update.status !== 200 && update.status !== 409) throw new Error('release provisioning Lease failed: HTTP ' + update.status);
+                  }
                   // Why each login attempt failed, for the retry-loop log line and the
                   // final error. Distinguishing rejected credentials (401) from a broken
                   // backend (500, e.g. Umami's DB password drifted -> Prisma P1000) from
@@ -319,18 +412,24 @@ spec:
                     throw new Error('add member ' + m.username + ' failed: ' + a.status + ' ' + ab);
                   }
                   (async () => {
-                    let token = null;
-                    for (let i = 0; i < 60 && !token; i++) {
-                      token = await ensureAuth();
-                      if (!token) { console.log('waiting for umami to be ready... (last login failure: ' + lastLoginFailure + ')'); await sleep(5000); }
+                    const leaseHeld = await acquireProvisioningLease();
+                    if (!leaseHeld) return;
+                    try {
+                      let token = null;
+                      for (let i = 0; i < 60 && !token; i++) {
+                        token = await ensureAuth();
+                        if (!token) { console.log('waiting for umami to be ready... (last login failure: ' + lastLoginFailure + ')'); await sleep(5000); }
+                      }
+                      if (!token) throw new Error('could not authenticate to umami after retries; last login failure: ' + lastLoginFailure);
+                      for (const t of tenants) {
+                        const teamId = await ensureTeam(token, t.team);
+                        for (const s of (t.websites || [])) await ensureWebsite(token, s, teamId);
+                        for (const m of (t.members || [])) await ensureMember(token, teamId, m);
+                      }
+                      console.log('umami tenant provisioning complete');
+                    } finally {
+                      await releaseProvisioningLease();
                     }
-                    if (!token) throw new Error('could not authenticate to umami after retries; last login failure: ' + lastLoginFailure);
-                    for (const t of tenants) {
-                      const teamId = await ensureTeam(token, t.team);
-                      for (const s of (t.websites || [])) await ensureWebsite(token, s, teamId);
-                      for (const m of (t.members || [])) await ensureMember(token, teamId, m);
-                    }
-                    console.log('umami tenant provisioning complete');
                   })().catch((e) => { console.error(String((e && e.stack) || e)); process.exit(1); });
           volumes:
             # Writable scratch for the Node runtime, so the container's own root
