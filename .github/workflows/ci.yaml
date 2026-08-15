@@ -100,6 +100,7 @@ jobs:
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-tenant-route-hostname-boundary.sh'
               - 'scripts/tests/test-kyverno-admission-vpa.sh'
               - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
               # The image-verifier liveness checker and its test are one
@@ -402,6 +403,8 @@ jobs:
           kyverno test ./tests
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
+          shellcheck scripts/tests/test-tenant-route-hostname-boundary.sh
+          bash scripts/tests/test-tenant-route-hostname-boundary.sh
 
       - name: 🚦 Validate default-off Cilium bandwidth manager
         if: needs.changes.outputs.k8s == 'true'

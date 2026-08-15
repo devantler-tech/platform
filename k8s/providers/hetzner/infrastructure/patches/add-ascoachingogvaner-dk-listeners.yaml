@@ -11,6 +11,10 @@
 # Certificate), and the tenant ships a ReferenceGrant authorising this Gateway to
 # read that Secret. Until the cert issues the listener simply stays
 # ResolvedRefs=False (Gateway still Programmed) — it never gates reconciliation.
+#
+# Both listeners pin `allowedRoutes.kinds` to HTTPRoute, matching the base
+# Gateway's listeners — see k8s/bases/infrastructure/gateway/gateway.yaml for
+# why an unpinned HTTPS listener is a hostname-claiming gap.
 - op: add
   path: /spec/listeners/-
   value:
@@ -28,6 +32,9 @@
     allowedRoutes:
       namespaces:
         from: All
+      kinds:
+        - group: gateway.networking.k8s.io
+          kind: HTTPRoute
 - op: add
   path: /spec/listeners/-
   value:
@@ -45,3 +52,6 @@
     allowedRoutes:
       namespaces:
         from: All
+      kinds:
+        - group: gateway.networking.k8s.io
+          kind: HTTPRoute

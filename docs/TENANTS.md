@@ -226,6 +226,14 @@ here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes,
   The shared platform Gateway intentionally accepts routes from all namespaces, so the
   admission policy is the boundary that prevents a tenant artifact from claiming another
   platform hostname.
+- **`HTTPRoute` is the only route kind a tenant can use.** The hostname allow-list above
+  matches `HTTPRoute`, so every other Gateway API route kind is closed off rather than left
+  to reach the shared listener unchecked: the tenant role grants only `httproutes` and
+  `referencegrants`, and each Gateway listener pins `allowedRoutes.kinds` to `HTTPRoute`
+  (an HTTPS listener would otherwise accept `GRPCRoute` too). A tenant needing another kind
+  is a platform change, not a tenant one — extend the hostname policy to cover that kind
+  and relax both layers together. `scripts/tests/test-tenant-route-hostname-boundary.sh`
+  pins all three in CI.
 - The platform's `homepage` app discovers `gethomepage.dev/*` annotations on the tenant's
   HTTPRoute cluster-wide, so the tenant authors them in its own artifact — they are tenant
   self-presentation, not platform config.
