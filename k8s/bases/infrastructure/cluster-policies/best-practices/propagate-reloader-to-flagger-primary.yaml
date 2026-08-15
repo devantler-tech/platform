@@ -23,11 +23,12 @@
 #
 # The background controller needs update access on the target Deployment to run
 # this mutate-existing patch (Kyverno verifies the grant at policy admission).
-# That grant is an aggregated ClusterRole shipped one layer earlier with the
-# Kyverno controller (controllers/kyverno/cluster-role.yaml) so it is live and
-# aggregated before this policy is admitted. Keep the policy and RBAC target
-# static unless another Flagger workload needs this workaround: RBAC cannot limit
-# Deployment patch/update to metadata-only changes.
+# That grant is a namespaced Role and direct RoleBinding shipped one layer
+# earlier with the Kyverno controller (controllers/kyverno/role*.yaml) so it is
+# live before this policy is admitted. The same layer creates the Umami namespace;
+# the apps layer deliberately does not co-own it. Keep the policy and RBAC target
+# static unless another Flagger workload needs this workaround: RBAC cannot
+# limit Deployment patch/update to metadata-only changes.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
