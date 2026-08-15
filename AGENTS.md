@@ -524,9 +524,22 @@ revision proceeds into the **production-deploying** merge queue once its checks 
 GitHub refuses the mismatch with `422` and the diagnosis simply starts again, which is the cheap
 failure.
 
-Verify the effect with the query above; the API's `202 Updating pull request branch` only means the
-update was accepted. A conflicting (`mergeable_state: dirty`) PR cannot be updated this way and needs
-its conflict resolved first.
+🔴 **`202` is ASYNCHRONOUS, and the head you must query afterwards is a NEW one.** The API schedules
+the update as a background task, so `202 Updating pull request branch` means *accepted*, not *done* —
+and when it completes, the PR's head has **changed**. Re-read it before querying anything:
+
+```sh
+gh pr view <n> --repo devantler-tech/platform --json headRefOid --jq .headRefOid
+```
+
+Then run **both** workflow-run queries against that **new** `headRefOid`. Re-running them against the
+head you just moved away from is the trap this whole section is about: that commit's answer is frozen
+and will keep reporting the same `0`, so the fix looks to have failed when it actually worked. Bound
+the wait rather than polling forever — if the head does not change, you are in the
+no-base-to-merge case documented immediately below, which no amount of polling resolves.
+
+A conflicting (`mergeable_state: dirty`) PR cannot be updated this way and needs its conflict resolved
+first.
 
 ⚠️ **`update-branch` only works when there is base to merge.** It updates the branch *with the latest
 changes of the base*, so a head that already contains the current tip of `main` — the case when the
