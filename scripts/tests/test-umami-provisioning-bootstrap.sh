@@ -27,6 +27,13 @@ jq -e '
 jq -e '.metadata.annotations["kustomize.toolkit.fluxcd.io/force"] == "enabled"' \
   <<<"${raw_job_json}" >/dev/null ||
   fail 'bootstrap Job must use Flux lowercase force annotation for immutable updates'
+jq -e '
+  .metadata.annotations["checkov.io/skip1"] == "CKV_K8S_8=inert source template is replaced before apply" and
+  .metadata.annotations["checkov.io/skip2"] == "CKV_K8S_9=inert source template is replaced before apply" and
+  ((.spec.template.metadata.annotations // {}) | has("checkov.io/skip1") | not) and
+  ((.spec.template.metadata.annotations // {}) | has("checkov.io/skip2") | not)
+' <<<"${raw_job_json}" >/dev/null ||
+  fail 'raw Job Checkov suppressions must be resource-scoped at top-level metadata'
 
 rendered_file="$(mktemp)"
 cron_spec_file="$(mktemp)"

@@ -11,6 +11,8 @@ metadata:
   name: umami-provision-tenants-bootstrap
   namespace: umami
   annotations:
+    checkov.io/skip1: CKV_K8S_8=inert source template is replaced before apply
+    checkov.io/skip2: CKV_K8S_9=inert source template is replaced before apply
     kustomize.toolkit.fluxcd.io/force: enabled
 spec:
   # KSail validates each raw manifest before Kustomize runs. Keep this source
@@ -18,10 +20,6 @@ spec:
   # the complete spec with the CronJob's jobTemplate before Flux applies it.
   suspend: true
   template:
-    metadata:
-      annotations:
-        checkov.io/skip1: CKV_K8S_8=inert source template is replaced before apply
-        checkov.io/skip2: CKV_K8S_9=inert source template is replaced before apply
     spec:
       automountServiceAccountToken: false
       restartPolicy: Never
