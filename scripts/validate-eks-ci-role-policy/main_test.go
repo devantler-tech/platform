@@ -169,103 +169,78 @@ spec:
 // update authority over live managed resources, so its external Git source
 // must be both the expected repository and one full immutable commit.
 func TestValidatePinnedUnifiSource(t *testing.T) {
+	const (
+		trustedURL   = "https://github.com/devantler-tech/unifi"
+		pinnedCommit = "7b17f7e33ef507c24c395b884a433c62b92ace98"
+	)
+	targetIdentity := resourceIdentity{
+		apiVersion: "source.toolkit.fluxcd.io/v1",
+		kind:       "GitRepository",
+		namespace:  "unifi",
+		name:       "unifi",
+	}
+	source := func(url string, ref map[string]any) map[string]any {
+		return map[string]any{
+			"spec": map[string]any{
+				"url": url,
+				"ref": ref,
+			},
+		}
+	}
+
 	tests := []struct {
 		name      string
-		manifest  string
+		identity  resourceIdentity
+		document  map[string]any
 		wantError bool
 	}{
 		{
-			name: "exact trusted commit",
-			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: unifi
-  namespace: unifi
-spec:
-  url: https://github.com/devantler-tech/unifi
-  ref:
-    commit: 7b17f7e33ef507c24c395b884a433c62b92ace98
-`,
+			name:     "exact trusted commit",
+			identity: targetIdentity,
+			document: source(trustedURL, map[string]any{"commit": pinnedCommit}),
 		},
 		{
 			name:      "mutable branch",
+			identity:  targetIdentity,
+			document:  source(trustedURL, map[string]any{"branch": "main"}),
 			wantError: true,
-			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: unifi
-  namespace: unifi
-spec:
-  url: https://github.com/devantler-tech/unifi
-  ref:
-    branch: main
-`,
 		},
 		{
 			name:      "abbreviated commit",
+			identity:  targetIdentity,
+			document:  source(trustedURL, map[string]any{"commit": "7b17f7e"}),
 			wantError: true,
-			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: unifi
-  namespace: unifi
-spec:
-  url: https://github.com/devantler-tech/unifi
-  ref:
-    commit: 7b17f7e
-`,
 		},
 		{
-			name:      "mutable branch beside commit",
+			name:     "mutable branch beside commit",
+			identity: targetIdentity,
+			document: source(trustedURL, map[string]any{
+				"branch": "main",
+				"commit": pinnedCommit,
+			}),
 			wantError: true,
-			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: unifi
-  namespace: unifi
-spec:
-  url: https://github.com/devantler-tech/unifi
-  ref:
-    branch: main
-    commit: 7b17f7e33ef507c24c395b884a433c62b92ace98
-`,
 		},
 		{
 			name:      "different repository",
+			identity:  targetIdentity,
+			document:  source("https://github.com/attacker/unifi", map[string]any{"commit": pinnedCommit}),
 			wantError: true,
-			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: unifi
-  namespace: unifi
-spec:
-  url: https://github.com/attacker/unifi
-  ref:
-    commit: 7b17f7e33ef507c24c395b884a433c62b92ace98
-`,
 		},
 		{
 			name: "unrelated source",
-			manifest: `apiVersion: source.toolkit.fluxcd.io/v1
-kind: GitRepository
-metadata:
-  name: other
-  namespace: other
-spec:
-  url: https://example.com/other
-  ref:
-    branch: main
-`,
+			identity: resourceIdentity{
+				apiVersion: "source.toolkit.fluxcd.io/v1",
+				kind:       "GitRepository",
+				namespace:  "other",
+				name:       "other",
+			},
+			document: source("https://example.com/other", map[string]any{"branch": "main"}),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			documents, err := decodeDocuments([]byte(tt.manifest))
-			if err != nil || len(documents) != 1 {
-				t.Fatalf("decode source: documents=%d error=%v", len(documents), err)
-			}
-			err = validatePinnedUnifiSource(documents[0], identityOf(documents[0]))
+			err := validatePinnedUnifiSource(tt.document, tt.identity)
 			if tt.wantError && err == nil {
 				t.Fatal("validatePinnedUnifiSource() error = nil, want rejection")
 			}
