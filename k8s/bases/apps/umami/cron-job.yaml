@@ -73,10 +73,12 @@ spec:
       # script's real error and the next tick retries it, instead of burning
       # in-Job retries against the deadline.
       backoffLimit: 0
-      # Backstop for a hung run only. It covers the worst-case 60s wait for an
-      # abandoned Lease, the script's ~5m wait-for-Umami loop, and a final 1m
+      # Backstop for a hung run only. On the first Lease-aware rollout it also
+      # covers 480s for any pre-upgrade CronJob worker to drain (its 420s
+      # deadline plus rollout margin), then the
+      # worst-case 60s abandoned Lease, the ~5m wait-for-Umami loop, and a final
       # recovery margin. The live holder renews the short Lease below.
-      activeDeadlineSeconds: 420
+      activeDeadlineSeconds: 900
       template:
         metadata:
           labels:
@@ -227,6 +229,8 @@ spec:
                   const leaseHolder = process.env.HOSTNAME;
                   const leaseDurationSeconds = 60;
                   const leaseRenewIntervalMilliseconds = 20000;
+                  const leasePrerequisiteWaitMilliseconds = 60000;
+                  const legacyProvisionerDrainSeconds = 480;
                   // coordination.k8s.io Lease fields use Kubernetes MicroTime,
                   // whose JSON parser requires six fractional digits. JavaScript
                   // ISO timestamps carry only milliseconds, so pad them to micros.
@@ -277,6 +281,7 @@ spec:
                     spec,
                   });
                   async function acquireProvisioningLease() {
+                    const leasePrerequisiteWaitDeadline = Date.now() + leasePrerequisiteWaitMilliseconds;
                     // Wait rather than reporting success under contention. This
                     // matters most for the retained one-shot bootstrap Job: if it
                     // exited cleanly while a scheduled run held the Lease, Flux
@@ -290,14 +295,32 @@ spec:
                       // retained best-effort bootstrap into a completed no-op.
                       // Keep waiting until Flux supplies both prerequisites; a
                       // permanent configuration error remains bounded by the
-                      // Job deadline and is therefore visible as a failed Job.
+                      // shorter prerequisite window, then reaches the shared
+                      // workload-specific failure handling below.
                       if (read.status === 403 || read.status === 404) {
                         console.log('waiting for Umami provisioning Lease prerequisites: HTTP', read.status);
-                        await sleep(1000);
+                        if (Date.now() >= leasePrerequisiteWaitDeadline) {
+                          throw new Error('provisioning Lease prerequisites unavailable after ' + leasePrerequisiteWaitMilliseconds + 'ms: HTTP ' + read.status);
+                        }
+                        await sleep(Math.min(1000, Math.max(1, leasePrerequisiteWaitDeadline - Date.now())));
                         continue;
                       }
                       if (read.status !== 200) throw new Error('read provisioning Lease failed: HTTP ' + read.status);
                       const lease = read.body;
+                      // Jobs already running from the pre-Lease CronJob cannot
+                      // participate in this lock. On the Lease's first creation,
+                      // wait one old active-deadline window before any new worker
+                      // acquires it. IfNotPresent preserves creationTimestamp, so
+                      // later reconciliations and template replacements skip this
+                      // rollout-only drain without inspecting namespace-wide Jobs.
+                      const leaseCreatedMillis = Date.parse((lease.metadata || {}).creationTimestamp || '');
+                      if (!Number.isFinite(leaseCreatedMillis)) throw new Error('provisioning Lease creationTimestamp is missing or invalid');
+                      const legacyProvisionerDrainUntil = leaseCreatedMillis + legacyProvisionerDrainSeconds * 1000;
+                      if (legacyProvisionerDrainUntil > Date.now()) {
+                        console.log('waiting for pre-Lease Umami provisioners to drain');
+                        await sleep(Math.min(5000, legacyProvisionerDrainUntil - Date.now()));
+                        continue;
+                      }
                       const current = lease.spec || {};
                       const holder = current.holderIdentity || '';
                       const renewedAt = current.renewTime || current.acquireTime || '';

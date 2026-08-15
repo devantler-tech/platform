@@ -7,5 +7,5 @@ metadata:
   namespace: umami
   annotations:
     kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
-    kustomize.toolkit.fluxcd.io/prune: Disabled
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec: {}

@@ -57,8 +57,8 @@ jq -S '.spec.jobTemplate.spec' <<<"${cron_json}" >"${cron_spec_file}"
 jq -S '.spec' <<<"${job_json}" >"${job_spec_file}"
 cmp -s "${cron_spec_file}" "${job_spec_file}" ||
   fail 'bootstrap Job must use the CronJob controller template verbatim'
-jq -e '.spec.activeDeadlineSeconds >= 420' <<<"${job_json}" >/dev/null ||
-  fail 'bootstrap Job deadline must cover a stale 60s Lease, the 300s login retry budget, and recovery work'
+jq -e '.spec.activeDeadlineSeconds >= 900' <<<"${job_json}" >/dev/null ||
+  fail 'bootstrap Job deadline must cover legacy Job drain, a stale Lease, login retries, and recovery work'
 
 jq -e '.spec | has("ttlSecondsAfterFinished") | not' <<<"${job_json}" >/dev/null ||
   fail 'bootstrap Job must remain completed so Flux cannot recreate it after TTL cleanup'
@@ -95,7 +95,7 @@ jq -e '
 
 jq -e '.metadata.annotations["kustomize.toolkit.fluxcd.io/ssa"] == "IfNotPresent"' <<<"${lease_json}" >/dev/null ||
   fail 'Flux must create the Lease once without overwriting live lock state'
-jq -e '.metadata.annotations["kustomize.toolkit.fluxcd.io/prune"] == "Disabled"' <<<"${lease_json}" >/dev/null ||
+jq -e '.metadata.annotations["kustomize.toolkit.fluxcd.io/prune"] == "disabled"' <<<"${lease_json}" >/dev/null ||
   fail 'Flux must not prune a live Lease during a rollout'
 jq -e '
   .rules == [{
@@ -135,6 +135,17 @@ grep -Fq 'read.status === 403 || read.status === 404' <<<"${provisioner_script}"
   fail 'bootstrap must wait when Flux has not applied the Lease prerequisites yet'
 grep -Fq 'waiting for Umami provisioning Lease prerequisites:' <<<"${provisioner_script}" ||
   fail 'Lease prerequisite retries must remain observable'
+grep -Fq 'const leasePrerequisiteWaitMilliseconds = 60000;' <<<"${provisioner_script}" ||
+  fail 'missing Lease prerequisites must stop retrying before the Job deadline'
+grep -Fq 'Date.now() >= leasePrerequisiteWaitDeadline' <<<"${provisioner_script}" ||
+  fail 'Lease prerequisite retries must hand control back to workload-specific failure handling'
+grep -Fq 'const legacyProvisionerDrainSeconds = 480;' <<<"${provisioner_script}" ||
+  fail 'the initial rollout must drain pre-Lease CronJob workers before provisioning'
+grep -Fq "const leaseCreatedMillis = Date.parse((lease.metadata || {}).creationTimestamp || '');" \
+  <<<"${provisioner_script}" ||
+  fail 'legacy-worker drain must be scoped to the first creation of the persistent Lease'
+grep -Fq 'waiting for pre-Lease Umami provisioners to drain' <<<"${provisioner_script}" ||
+  fail 'legacy-worker drain must remain observable'
 if grep -Fq 'return false;' <<<"${provisioner_script}"; then
   fail 'Lease contention must not complete a one-shot bootstrap without provisioning'
 fi
