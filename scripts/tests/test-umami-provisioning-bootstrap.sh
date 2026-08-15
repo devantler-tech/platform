@@ -57,8 +57,8 @@ jq -S '.spec.jobTemplate.spec' <<<"${cron_json}" >"${cron_spec_file}"
 jq -S '.spec' <<<"${job_json}" >"${job_spec_file}"
 cmp -s "${cron_spec_file}" "${job_spec_file}" ||
   fail 'bootstrap Job must use the CronJob controller template verbatim'
-jq -e '.spec.activeDeadlineSeconds >= 900' <<<"${job_json}" >/dev/null ||
-  fail 'bootstrap Job deadline must cover legacy Job drain, a stale Lease, login retries, and recovery work'
+jq -e '.spec.activeDeadlineSeconds >= 1500' <<<"${job_json}" >/dev/null ||
+  fail 'bootstrap Job deadline must cover legacy drain, a contending worker, its own login retries, and recovery margin'
 
 jq -e '.spec | has("ttlSecondsAfterFinished") | not' <<<"${job_json}" >/dev/null ||
   fail 'bootstrap Job must remain completed so Flux cannot recreate it after TTL cleanup'
@@ -175,6 +175,13 @@ grep -Fq "const bestEffortBootstrap = process.env.UMAMI_PROVISION_JOB_NAME === '
 grep -Fq 'const provisioningFailureExitCode = bestEffortBootstrap ? 0 : 1;' \
   <<<"${provisioner_script}" ||
   fail 'the bootstrap must complete while scheduled failures remain visible'
+error_boundary_line="$(grep -nF '(async () => {' <<<"${provisioner_script}" | head -n 1 | cut -d: -f1)"
+secret_initialization_line="$(grep -nF "const newPw = readSecretFile('umami-admin/password');" <<<"${provisioner_script}" | cut -d: -f1)"
+tenant_initialization_line="$(grep -nF 'const tenants = JSON.parse(process.env.TENANTS);' <<<"${provisioner_script}" | cut -d: -f1)"
+[[ -n "${error_boundary_line}" && -n "${secret_initialization_line}" && -n "${tenant_initialization_line}" ]] ||
+  fail 'bootstrap initialization and its workload-specific error boundary must remain present'
+[[ "${error_boundary_line}" -lt "${secret_initialization_line}" && "${error_boundary_line}" -lt "${tenant_initialization_line}" ]] ||
+  fail 'secret and tenant initialization errors must use workload-specific failure handling'
 [[ "$(grep -Fc 'process.exit(provisioningFailureExitCode);' <<<"${provisioner_script}")" -ge 2 ]] ||
   fail 'both heartbeat and provisioning failures must use the workload-specific result'
 if grep -Fq 'process.exit(1)' <<<"${provisioner_script}"; then

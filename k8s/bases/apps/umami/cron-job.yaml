@@ -73,12 +73,12 @@ spec:
       # script's real error and the next tick retries it, instead of burning
       # in-Job retries against the deadline.
       backoffLimit: 0
-      # Backstop for a hung run only. On the first Lease-aware rollout it also
-      # covers 480s for any pre-upgrade CronJob worker to drain (its 420s
-      # deadline plus rollout margin), then the
-      # worst-case 60s abandoned Lease, the ~5m wait-for-Umami loop, and a final
-      # recovery margin. The live holder renews the short Lease below.
-      activeDeadlineSeconds: 900
+      # Backstop for a hung run only. On the first Lease-aware rollout it covers
+      # 480s for any pre-upgrade CronJob worker to drain, a full ~5m run by a
+      # contending Lease-aware worker, this worker's own ~5m wait-for-Umami loop,
+      # an abandoned 60s Lease, and recovery margin. The live holder renews the
+      # short Lease below.
+      activeDeadlineSeconds: 1500
       template:
         metadata:
           labels:
@@ -188,6 +188,7 @@ spec:
                   const base = process.env.UMAMI_BASE;
                   const bestEffortBootstrap = process.env.UMAMI_PROVISION_JOB_NAME === 'umami-provision-tenants-bootstrap';
                   const provisioningFailureExitCode = bestEffortBootstrap ? 0 : 1;
+                  (async () => {
                   // Credentials are mounted files (see volumeMounts). A path is
                   // resolved under SECRETS_DIR and may not escape it, so a
                   // TENANTS entry can only ever name a mounted credential.
@@ -517,7 +518,6 @@ spec:
                     if (a.status === 400 && /member/i.test(ab)) { console.log('member ok:', m.username); return; }
                     throw new Error('add member ' + m.username + ' failed: ' + a.status + ' ' + ab);
                   }
-                  (async () => {
                     await acquireProvisioningLease();
                     const stopProvisioningLeaseRenewal = startProvisioningLeaseRenewal();
                     try {
