@@ -498,9 +498,24 @@ either count (the same provenance collision `scripts/check-megalinter-version-dr
 checks for), and otherwise fail closed and read the rejection reason from the mutation instead.
 
 **The fix is to move the head** — `PUT /repos/{owner}/{repo}/pulls/{n}/update-branch` (a merge of
-`main`, never a force-push) makes the workflow fire. Verify the effect with the query above; the
-API's `202 Updating pull request branch` only means the update was accepted. A conflicting
-(`mergeable_state: dirty`) PR cannot be updated this way and needs its conflict resolved first.
+`main`, never a force-push) makes the workflow fire. **Pin it to the head you inspected**, exactly as
+the enqueue mutation above is pinned:
+
+```sh
+gh api --method PUT "repos/devantler-tech/platform/pulls/<n>/update-branch" \
+  -f expected_head_sha=<head>
+```
+
+🔴 **Unpinned, this write moves whatever head is current, which is not necessarily the one you
+diagnosed.** A contributor or bot push landing between the inspection and this call makes the update
+advance an uninspected revision — and because auto-merge may already be armed on this repo, that
+revision proceeds into the **production-deploying** merge queue once its checks pass. With the pin,
+GitHub refuses the mismatch with `422` and the diagnosis simply starts again, which is the cheap
+failure.
+
+Verify the effect with the query above; the API's `202 Updating pull request branch` only means the
+update was accepted. A conflicting (`mergeable_state: dirty`) PR cannot be updated this way and needs
+its conflict resolved first.
 
 ⚠️ **`update-branch` only works when there is base to merge.** It updates the branch *with the latest
 changes of the base*, so a head that already contains the current tip of `main` — the case when the
