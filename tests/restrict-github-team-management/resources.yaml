@@ -1,0 +1,87 @@
+---
+# The paved road: object name is allow-listed and the provider identity agrees
+# with it, so the reference rules mean what they say.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: platform
+  namespace: github-config
+spec:
+  forProvider:
+    name: platform
+    privacy: closed
+---
+# Allow-listed with the provider identity omitted entirely — Crossplane then
+# derives the remote team from the object name, which is the shape the
+# allow-list was written for.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: maintainers
+  namespace: github-config
+spec:
+  forProvider:
+    privacy: closed
+---
+# A team outside the allow-list. Its provider identity is self-consistent, so it
+# must fail the allow-list rule and pass the identity-binding rule — the two
+# rules are independent.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: attacker-team
+  namespace: github-config
+spec:
+  forProvider:
+    name: attacker-team
+---
+# A TeamMembership on the paved road.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: platform-member
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: platform
+    username: devantler
+    role: member
+---
+# A direct numeric team ID bypasses the reference allow-list entirely.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: direct-team-id
+  namespace: github-config
+spec:
+  forProvider:
+    teamId: "1234567"
+    username: attacker
+    role: maintainer
+---
+# A TeamRepository on the paved road.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: platform-repo
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: platform
+    repository: platform
+    permission: push
+---
+# Admin is the privileged repository grant the rule blocks.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: platform-repo-admin
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: platform
+    repository: platform
+    permission: admin

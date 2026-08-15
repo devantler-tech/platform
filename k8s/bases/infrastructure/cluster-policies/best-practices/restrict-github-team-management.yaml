@@ -33,7 +33,7 @@ spec:
         any:
           - resources:
               kinds:
-                - Team.team.github.m.upbound.io
+                - team.github.m.upbound.io/*/Team
               namespaces:
                 - github-config
       validate:
@@ -46,12 +46,76 @@ spec:
                 value:
                   - platform
                   - maintainers
+    # The allow-list above constrains the Kubernetes object name, but the
+    # provider takes the real GitHub team from spec.forProvider.name (and
+    # spec.initProvider.name). Without this rule a Team object named "platform"
+    # may carry forProvider.name: some-other-team, so the reference rules below
+    # accept teamIdRef.name: platform while the org-admin provider reconciles a
+    # different remote team. Binding the provider identity to the object name is
+    # what makes the object name a faithful proxy for the remote team, which is
+    # the assumption the two reference rules rest on. Both fields are authored
+    # by the tenant and never rewritten by the provider, so pinning them carries
+    # no reconciliation risk.
+    - name: teams-bind-provider-identity-to-object-name
+      match:
+        any:
+          - resources:
+              kinds:
+                - team.github.m.upbound.io/*/Team
+              namespaces:
+                - github-config
+      validate:
+        message: GitHub Team spec.forProvider.name and spec.initProvider.name must be omitted or equal to metadata.name, so the allow-listed object name is the team actually reconciled.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.forProvider.name || '' }}"
+                operator: AnyNotIn
+                value:
+                  - ""
+                  - "{{ request.object.metadata.name }}"
+              - key: "{{ request.object.spec.initProvider.name || '' }}"
+                operator: AnyNotIn
+                value:
+                  - ""
+                  - "{{ request.object.metadata.name }}"
+    # crossplane.io/external-name is the other way the local name can be
+    # detached from the remote team: setting it at creation adopts a
+    # pre-existing GitHub team regardless of what metadata.name says. This is
+    # scoped to CREATE deliberately — provider-upjet-github writes the numeric
+    # team ID back into this annotation after creation, so enforcing it on
+    # UPDATE would block the provider's own reconciliation. Tenant-authored
+    # UPDATE of this annotation is therefore still open and needs the provider
+    # ServiceAccount excluded to close; tracked separately.
+    - name: teams-block-foreign-external-name-adoption
+      match:
+        any:
+          - resources:
+              kinds:
+                - team.github.m.upbound.io/*/Team
+              namespaces:
+                - github-config
+      preconditions:
+        all:
+          - key: "{{ request.operation || 'BACKGROUND' }}"
+            operator: Equals
+            value: CREATE
+      validate:
+        message: GitHub Team resources must not set crossplane.io/external-name to a different team at creation; omit it or set it to metadata.name.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.metadata.annotations.\"crossplane.io/external-name\" || '' }}"
+                operator: AnyNotIn
+                value:
+                  - ""
+                  - "{{ request.object.metadata.name }}"
     - name: teammemberships-reference-allow-listed-teams
       match:
         any:
           - resources:
               kinds:
-                - TeamMembership.team.github.m.upbound.io
+                - team.github.m.upbound.io/*/TeamMembership
               namespaces:
                 - github-config
       validate:
@@ -75,7 +139,7 @@ spec:
         any:
           - resources:
               kinds:
-                - TeamRepository.team.github.m.upbound.io
+                - team.github.m.upbound.io/*/TeamRepository
               namespaces:
                 - github-config
       validate:

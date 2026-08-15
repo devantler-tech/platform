@@ -1,0 +1,15 @@
+---
+# THE ESCALATION THIS RULE EXISTS TO STOP. metadata.name passes the allow-list,
+# so a TeamMembership with teamIdRef.name: platform resolves to this object —
+# while the org-admin provider reconciles the unrelated team named here.
+# Its own fixture directory because it must reuse the allow-listed object name
+# that the paved-road fixture already occupies.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: platform
+  namespace: github-config
+spec:
+  forProvider:
+    name: some-other-team
+    privacy: closed
