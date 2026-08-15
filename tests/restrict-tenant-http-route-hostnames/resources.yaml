@@ -151,3 +151,60 @@ spec:
     - backendRefs:
         - name: oauth2-proxy
           port: 80
+---
+# The third tenant's paved road. Its rule was missing entirely until the
+# default-deny rule was added alongside it, leaving this namespace free to
+# claim any hostname.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: doggy-approved-host
+  namespace: doggy-countdown
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - simba.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: doggy-countdown
+          port: 80
+---
+# The third tenant claiming a platform hostname.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: doggy-claims-other-host
+  namespace: doggy-countdown
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - vault.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: doggy-countdown
+          port: 80
+---
+# A tenant onboarded with NO hostname rule of its own. Before the default-deny
+# rule this was admitted unconditionally — the fail-open gap.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: unlisted-tenant-route
+  namespace: new-tenant
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - vault.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: new-tenant
+          port: 80

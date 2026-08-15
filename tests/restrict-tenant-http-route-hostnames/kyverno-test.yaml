@@ -8,9 +8,10 @@ policies:
     ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-http-route-hostnames.yaml
 resources:
   - resources.yaml
-# The policy matches namespaces by NAME (not a namespaceSelector), so unlike the
-# restrict-tenant-issuer-refs fixture no Values file is needed to avoid vacuous
-# "Excluded" results.
+# Declares the namespace labels the default-deny rule's namespaceSelector matches
+# on. Without it that rule reports "Excluded" for every resource and its fail
+# case passes vacuously.
+variables: values.yaml
 results:
   # The escalation the boundary exists to stop, plus the two ways around a naive
   # allow-list: omitting hostnames entirely, and smuggling a rogue hostname in
@@ -45,9 +46,47 @@ results:
       - ascoachingogvaner/ascoachingogvaner-approved-host
     kind: HTTPRoute
     result: pass
-  # Out of scope: platform namespaces are untouched by the tenant boundary.
+  # The third tenant, whose rule was missing entirely.
+  - policy: restrict-tenant-http-route-hostnames
+    rule: restrict-doggy-countdown-hostnames
+    resources:
+      - doggy-countdown/doggy-claims-other-host
+    kind: HTTPRoute
+    result: fail
+  - policy: restrict-tenant-http-route-hostnames
+    rule: restrict-doggy-countdown-hostnames
+    resources:
+      - doggy-countdown/doggy-approved-host
+    kind: HTTPRoute
+    result: pass
+  # The fail-open class: a tenant namespace with no allow-list of its own is
+  # denied by default instead of being silently unrestricted.
+  - policy: restrict-tenant-http-route-hostnames
+    rule: restrict-unlisted-tenant-hostnames
+    resources:
+      - new-tenant/unlisted-tenant-route
+    kind: HTTPRoute
+    result: fail
+  # ...and the default-deny must NOT catch the tenants that do have one, or it
+  # would break every listed tenant's paved road.
+  - policy: restrict-tenant-http-route-hostnames
+    rule: restrict-unlisted-tenant-hostnames
+    resources:
+      - wedding-app/wedding-approved-host
+      - ascoachingogvaner/ascoachingogvaner-approved-host
+      - doggy-countdown/doggy-approved-host
+    kind: HTTPRoute
+    result: skip
+  # Out of scope: platform namespaces are untouched by the tenant boundary —
+  # by the per-tenant rules and by the default-deny alike.
   - policy: restrict-tenant-http-route-hostnames
     rule: restrict-wedding-app-hostnames
+    resources:
+      - kube-system/platform-gateway-route
+    kind: HTTPRoute
+    result: skip
+  - policy: restrict-tenant-http-route-hostnames
+    rule: restrict-unlisted-tenant-hostnames
     resources:
       - kube-system/platform-gateway-route
     kind: HTTPRoute

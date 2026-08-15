@@ -65,3 +65,65 @@ spec:
                   - ascoachingogvaner.dk
                   - www.ascoachingogvaner.dk
                   - ascoachingogvaner.platform.lan
+    - name: restrict-doggy-countdown-hostnames
+      match:
+        any:
+          - resources:
+              kinds:
+                - HTTPRoute
+              namespaces:
+                - doggy-countdown
+      validate:
+        message: "doggy-countdown HTTPRoutes may only use approved doggy-countdown hostnames."
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.spec.hostnames || `[]` }}"
+                operator: Equals
+                value: []
+              - key: "{{ request.object.spec.hostnames || `[]` }}"
+                operator: AnyNotIn
+                value:
+                  - simba.platform.devantler.tech
+    # Default-deny for any OTHER tenant namespace.
+    #
+    # The rules above are an allow-list keyed by namespace NAME, which is
+    # fail-OPEN: a tenant with no rule of its own is not restricted at all, and
+    # nothing signals that. doggy-countdown sat in exactly that state — an
+    # active tenant, bound to `tenant-edit` (so able to create HTTPRoutes) and
+    # matched by no rule, therefore free to claim any hostname on the shared
+    # wildcard listener. Adding its rule fixes that one tenant; this rule fixes
+    # the CLASS, so onboarding the next tenant cannot silently reopen it.
+    #
+    # Scope: `app.kubernetes.io/managed-by: ksail` is the tenant-namespace label
+    # (the same selector restrict-tenant-issuer-refs and
+    # restrict-tenant-secret-stores use). It is carried by tenant namespaces
+    # only — the platform's own app namespaces (actual-budget, homepage,
+    # whoami, backstage, headlamp …) do not have it, so their platform-authored
+    # HTTPRoutes are untouched.
+    #
+    # Onboarding a tenant that serves HTTP now REQUIRES adding a rule above with
+    # its approved hostnames. That is the intended cost: the failure is a loud,
+    # immediate admission denial naming the fix, not a silent gap.
+    - name: restrict-unlisted-tenant-hostnames
+      match:
+        any:
+          - resources:
+              kinds:
+                - HTTPRoute
+              namespaceSelector:
+                matchLabels:
+                  app.kubernetes.io/managed-by: ksail
+      exclude:
+        any:
+          - resources:
+              namespaces:
+                - wedding-app
+                - ascoachingogvaner
+                - doggy-countdown
+      validate:
+        message: >-
+          This tenant namespace has no approved hostname allow-list, so its
+          HTTPRoutes are denied by default. Add a rule for it to
+          restrict-tenant-http-route-hostnames naming its approved hostnames.
+        deny: {}

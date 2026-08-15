@@ -226,6 +226,12 @@ here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes,
   The shared platform Gateway intentionally accepts routes from all namespaces, so the
   admission policy is the boundary that prevents a tenant artifact from claiming another
   platform hostname.
+- **A tenant with no rule of its own is denied by default.** Adding the allow-list entry is
+  therefore part of onboarding, not an optional hardening step: until a tenant namespace has
+  a rule naming its approved hostnames, its HTTPRoutes are refused at admission with a
+  message saying exactly that. The alternative — enumerating only some tenants — is
+  fail-open, and `doggy-countdown` ran that way, able to claim any hostname because no rule
+  matched its namespace.
 - **`HTTPRoute` is the only route kind a tenant can use.** The hostname allow-list above
   matches `HTTPRoute`, so every other Gateway API route kind is closed off rather than left
   to reach the shared listener unchecked: the tenant role grants only `httproutes` and
