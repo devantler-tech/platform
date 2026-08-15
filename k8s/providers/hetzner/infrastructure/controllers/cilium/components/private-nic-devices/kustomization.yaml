@@ -18,10 +18,9 @@
 # in git history of patches/enforce-wireguard-strict-mode.yaml): Hetzner nodes
 # are dual-homed. With devices unset, Cilium attaches to BOTH NICs and can
 # take the default-route (public) NIC's IP as the node's PRIMARY address; the
-# SPIRE mutual-auth control connection (agent->agent TCP 4250) then dials peer
-# PUBLIC IPs, which the Talos ingress firewall only admits from the private
-# node CIDR — dropped handshakes black-hole every auth-gated cross-node pod
-# flow (observed live 2026-06-19). Pinning the private NICs keeps each node's
+# Cilium/SPIRE control connection (agent->agent TCP 4250) then dials peer PUBLIC
+# IPs, which the Talos ingress firewall only admits from the private node CIDR.
+# Pinning the private NICs keeps each node's
 # primary address private (10.0.1.x), so 4250/4240/8472 ride the admitted
 # path. (A residual upstream defect remains regardless: cilium/cilium#46767 —
 # the auth dial picks a RANDOM advertised node IP, so intermittent public-IP

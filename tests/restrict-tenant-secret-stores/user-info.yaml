@@ -1,0 +1,11 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata:
+  name: tenant-author
+userInfo:
+  username: system:serviceaccount:tenant-ns:tenant
+  groups:
+    - system:serviceaccounts
+    - system:serviceaccounts:tenant-ns
+    - system:authenticated

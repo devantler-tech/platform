@@ -1,0 +1,50 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-issuer-refs
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-issuer-refs.yaml
+resources:
+  - resources.yaml
+# Declares the namespace labels the namespaceSelector matches on. Without it the
+# CLI reports every resource "Excluded" and the fixture passes vacuously.
+variables: values.yaml
+results:
+  # The escalation the boundary exists to stop.
+  - policy: restrict-tenant-issuer-refs
+    rule: certificate-no-cluster-scoped-issuer
+    resources:
+      - tenant-ns/tenant-cert-clusterissuer
+      - tenant-ns/tenant-cert-external-clusterissuer
+    kind: Certificate
+    result: fail
+  # The paved road, and the omitted-kind default that must not be caught.
+  - policy: restrict-tenant-issuer-refs
+    rule: certificate-no-cluster-scoped-issuer
+    resources:
+      - tenant-ns/tenant-cert-namespaced-issuer
+      - tenant-ns/tenant-cert-kind-omitted
+    kind: Certificate
+    result: pass
+  # Out of scope: platform namespaces keep their ClusterIssuer.
+  - policy: restrict-tenant-issuer-refs
+    rule: certificate-no-cluster-scoped-issuer
+    resources:
+      - kube-system/gateway-certificate
+    kind: Certificate
+    result: skip
+  # Defense-in-depth on directly-created CertificateRequests.
+  - policy: restrict-tenant-issuer-refs
+    rule: certificaterequest-no-cluster-scoped-issuer
+    resources:
+      - tenant-ns/tenant-cr-clusterissuer
+    kind: CertificateRequest
+    result: fail
+  - policy: restrict-tenant-issuer-refs
+    rule: certificaterequest-no-cluster-scoped-issuer
+    resources:
+      - tenant-ns/tenant-cr-namespaced-issuer
+    kind: CertificateRequest
+    result: pass
