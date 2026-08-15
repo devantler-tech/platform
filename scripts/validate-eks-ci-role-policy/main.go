@@ -415,7 +415,25 @@ const (
 // exception needed to admit prune:false; validateUnifiPruneExemption pins that
 // rule's complete exception set to flux-system/flux-system and unifi/unifi.
 // No identity, binding, resource kind, or remaining verb moved.
-const expectedRenderedSurfaceSHA = "1c4c1986a7b891b184d70a19bec6a85f33c0ea4c0ac174b26501000e38582cd1"
+//
+// Measured by comparing exact current main 025fd5a6 with merge head 8654ae7
+// for #2742 using the CI-pinned kubectl v1.36.2 / Kustomize v5.8.1 renderer.
+// All five production authorization roots retain the same 170 selected
+// identities: the set difference is empty in both directions. Exactly ONE
+// selected entry changes:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  actual-budget/actual-budget
+//
+// Its complete projected delta adds ACTUAL_TOKEN_EXPIRATION=openid-provider
+// to the existing post-rendered Deployment environment and changes
+// login.openid.tokenExpiration from `never` to `openid-provider`. Both edits
+// move session expiry from an unlimited local setting to the configured OIDC
+// provider; no IAM, RBAC, Flux source, identity, binding, verb, or resource
+// membership changes. The PR's HTTPRoute, ReferenceGrant,
+// CiliumNetworkPolicy, and auth-proxy configuration are outside this
+// EKS/RBAC/Flux selector, so this fingerprint deliberately makes no claim that
+// it validates those independently reviewed surfaces.
+const expectedRenderedSurfaceSHA = "b7ee5cdd99fca2c6291d444b99992aa83d5a16e844164fff2a6b9603e8c6fd08"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
