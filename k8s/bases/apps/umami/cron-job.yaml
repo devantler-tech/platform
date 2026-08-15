@@ -284,6 +284,18 @@ spec:
                     // activeDeadlineSeconds remains the outer bound.
                     for (;;) {
                       const read = await leaseRequest('GET');
+                      // Flux SSA applies Role/RoleBinding before workloads, but
+                      // Lease is not a first-stage kind and can follow Job. Do
+                      // not let that short creation/authorization race turn the
+                      // retained best-effort bootstrap into a completed no-op.
+                      // Keep waiting until Flux supplies both prerequisites; a
+                      // permanent configuration error remains bounded by the
+                      // Job deadline and is therefore visible as a failed Job.
+                      if (read.status === 403 || read.status === 404) {
+                        console.log('waiting for Umami provisioning Lease prerequisites: HTTP', read.status);
+                        await sleep(1000);
+                        continue;
+                      }
                       if (read.status !== 200) throw new Error('read provisioning Lease failed: HTTP ' + read.status);
                       const lease = read.body;
                       const current = lease.spec || {};

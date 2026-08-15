@@ -131,6 +131,10 @@ grep -Fq 'waiting for Umami provisioning Lease holder:' <<<"${provisioner_script
 grep -Fq 'await sleep(Math.min(5000, Math.max(250, expiresAt - Date.now())))' \
   <<<"${provisioner_script}" ||
   fail 'Lease contention must retry on a bounded interval'
+grep -Fq 'read.status === 403 || read.status === 404' <<<"${provisioner_script}" ||
+  fail 'bootstrap must wait when Flux has not applied the Lease prerequisites yet'
+grep -Fq 'waiting for Umami provisioning Lease prerequisites:' <<<"${provisioner_script}" ||
+  fail 'Lease prerequisite retries must remain observable'
 if grep -Fq 'return false;' <<<"${provisioner_script}"; then
   fail 'Lease contention must not complete a one-shot bootstrap without provisioning'
 fi
