@@ -458,22 +458,44 @@ report_fences_now() {
   # whose sibling is still retain, and an operator following the runbook steps
   # around the all-or-nothing guard one node at a time. Compute the same set
   # here so the report refuses every node belonging to a blocked owner.
+  # A journal this cannot PARSE must not be dropped from the grouping. The
+  # reconciler validates every journal up front and refuses EVERY recovery
+  # mutation when any one of them is malformed, so silently excluding an
+  # unparseable record would leave a valid sibling under the same owner looking
+  # releasable — the same all-or-nothing guard walked around from the other
+  # side. Whenever any journal is unparseable or lacks a string owner/phase,
+  # emit the `*` sentinel and block every journal-carrying node, mirroring that
+  # global refusal rather than guessing an owner the record does not supply.
   if ! jq -r \
     --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" '
     [
       .items[]
       | select((.metadata.annotations[$recovery_annotation] // "") != "")
-      | ((.metadata.annotations[$recovery_annotation] | fromjson?) // empty)
-    ]
-    | map(select((.owner | type) == "string" and (.phase | type) == "string"))
-    | sort_by(.owner)
-    | group_by(.owner)[]
-    | select(
-        (map(.phase) | unique | length) > 1
-        or .[0].phase == "active"
-        or .[0].phase == "retain"
+      | (.metadata.annotations[$recovery_annotation] | try fromjson catch null)
+    ] as $records
+    | (
+        if any($records[];
+             (type != "object")
+             or ((.owner | type) != "string")
+             or ((.phase | type) != "string"))
+        then "*"
+        else empty
+        end
+      ),
+      (
+        $records
+        | map(select((type == "object")
+            and ((.owner | type) == "string")
+            and ((.phase | type) == "string")))
+        | sort_by(.owner)
+        | group_by(.owner)[]
+        | select(
+            (map(.phase) | unique | length) > 1
+            or .[0].phase == "active"
+            or .[0].phase == "retain"
+          )
+        | .[0].owner
       )
-    | .[0].owner
   ' "${state}" >"${blocked_owners}"; then
     echo "::error::Could not group durable GHCR bootstrap recovery journals by owner."
     return 1
@@ -556,6 +578,16 @@ report_fences_now() {
     # An interrupted bootstrap is quarantined per OWNER, all-or-nothing. Refuse
     # every node in a blocked batch, or the runbook walks around that guard one
     # node at a time.
+    # The `*` sentinel covers only journal-carrying nodes: the reconciler's
+    # global refusal is about recovery journals, while a node with no journal is
+    # the ordinary per-node claim that reclaim_orphaned_node_fences owns and the
+    # drain-phase guard above has already adjudicated.
+    if [[ -n "${recovery}" ]] && grep -Fqx -- '*' "${blocked_owners}"; then
+      printf '    NOT releasable: at least one recovery journal in the cluster is\n'
+      printf '    malformed, and bootstrap recovery refuses every recovery mutation\n'
+      printf '    while that is true. Run the bridge so it adjudicates them together.\n\n'
+      continue
+    fi
     if [[ -n "${owner}" ]] && grep -Fqx -- "${owner}" "${blocked_owners}"; then
       printf '    NOT releasable: another node under bootstrap owner %s is still\n' "${owner}"
       printf '    active, retained, or in a different phase, and that quarantine is\n'
@@ -690,7 +722,11 @@ report_fences_now() {
     | ($a[$owner_annotation] // "") as $owner
     | ($a[$recovery_annotation] // "") as $recovery
     | select($owner != "" or $recovery != "")
-    | ($recovery | fromjson?) as $record
+    # `try/catch null`, never `fromjson?`: the latter yields EMPTY on a malformed
+    # journal, and `empty as $record` drops the whole node from this feed — so a
+    # node carrying an unparseable journal would disappear from the report and
+    # read as no fence held at all, the worst possible failure for this tool.
+    | ($recovery | try fromjson catch null) as $record
     | [
         .metadata.name,
         $owner,

@@ -728,3 +728,35 @@ func TestFencesRejectsCombinationWithOperationalModes(t *testing.T) {
 		})
 	}
 }
+
+// A journal this report cannot PARSE must not vanish from the owner grouping.
+// reconcile_bootstrap_recovery_journals validates every journal up front and
+// refuses EVERY recovery mutation when any one is malformed, so dropping an
+// unparseable record with `fromjson?` left a VALID sibling under the same owner
+// looking releasable — the same all-or-nothing guard walked around from the
+// other side, and the exact defect the per-owner grouping was added to close.
+func TestFenceReportBlocksEveryJournalWhenAnyIsMalformed(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+
+	// `try/catch null` keeps the malformed record so it can be detected.
+	// `fromjson?` yields EMPTY, which both drops it from the owner grouping and —
+	// via `empty as $record` — drops the whole NODE from the report feed.
+	// Checked against the DIRECTIVES only: the rationale comments name the
+	// anti-pattern they forbid, so matching the raw body would fire on them.
+	requireContains(t, report, "try fromjson catch null")
+	requireNotContains(t, stepDirectives(report), "fromjson?")
+
+	// An unparseable or non-string-owner/phase record raises the sentinel.
+	requireContains(t, report, `then "*"`)
+	requireContains(t, report, "NOT releasable: at least one recovery journal in the cluster is")
+
+	// The sentinel gates on the journal, not on every node: a node with NO
+	// journal is the ordinary per-node claim that the drain-phase guard owns.
+	requireContains(t, report, `if [[ -n "${recovery}" ]] && grep -Fqx -- '*' "${blocked_owners}"`)
+
+	// The reconciler really does refuse globally on ANY malformed journal.
+	requireContains(t, script,
+		"At least one durable GHCR bootstrap recovery journal is malformed")
+}
