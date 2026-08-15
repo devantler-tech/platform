@@ -467,8 +467,8 @@ on a head that is perfectly satisfied. Ask which workflows ran instead:
 requirement" from "the workflow ran and went red". `0` here is the defect this section is about:
 
 ```sh
-gh api "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100" \
-  --jq '[.workflow_runs[]
+gh api --paginate --slurp "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100" \
+  | jq '[.[].workflow_runs[]
          | select(.path == ".github/workflows/validate-go-project.yaml")] | length'
 ```
 
@@ -476,12 +476,23 @@ gh api "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100"
 successful run counts:
 
 ```sh
-gh api "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100" \
-  --jq '[.workflow_runs[]
+gh api --paginate --slurp "repos/devantler-tech/platform/actions/runs?head_sha=<head>&per_page=100" \
+  | jq '[.[].workflow_runs[]
          | select(.path == ".github/workflows/validate-go-project.yaml"
                   and .status == "completed"
                   and .conclusion == "success")] | length'
 ```
+
+⚠️ **Both queries must paginate, and `--paginate` ALONE is not the fix.** `per_page=100` caps one
+page, so an unpaginated count can miss a run and report the `0` this section teaches you to read as
+"the head predates the requirement" — the false negative that sends the diagnosis down the wrong
+path. But this endpoint returns an **object** (`{total_count, workflow_runs}`), so `--paginate` emits
+one object *per page* and a `--jq` filter runs **per page**: measured on a real head with
+`per_page=1`, the naive form printed `0 0 0 0 1 0 0` — seven separate numbers, not a total, which a
+numeric shell test then mis-reads or errors on. `--slurp` wraps the pages into one array, which is
+why the filter moves to a standalone `jq` over `.[].workflow_runs[]`. `gh api` rejects `--slurp`
+together with `--jq` (`the --slurp option is not supported with --jq or --template`), so the pipe is
+required rather than stylistic.
 
 ⚠️ **Do not use the first query to answer the second.** A run that is queued, in progress, cancelled or
 **failed** still appears in `workflow_runs`, so a `>= 1` from the path-only form will report a red or
