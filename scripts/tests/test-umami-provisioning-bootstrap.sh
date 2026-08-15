@@ -113,6 +113,11 @@ grep -Fq 'releaseProvisioningLease' <<<"${provisioner_script}" ||
   fail 'the shared provisioner must release the Lease after calling Umami'
 grep -Fq 'const leaseDurationSeconds = 60;' <<<"${provisioner_script}" ||
   fail 'a crashed provisioner must leave only a short-lived Lease'
+grep -Fq "const leaseMicroTime = () => new Date().toISOString().replace('Z', '000Z');" \
+  <<<"${provisioner_script}" ||
+  fail 'Lease timestamps must use the six fractional digits Kubernetes MicroTime requires'
+[[ "$(grep -Fc 'leaseMicroTime' <<<"${provisioner_script}")" -ge 3 ]] ||
+  fail 'Lease acquisition and renewal must share the Kubernetes-compatible clock'
 grep -Fq 'async function renewProvisioningLease()' <<<"${provisioner_script}" ||
   fail 'an active provisioner must renew its short-lived Lease'
 grep -Fq 'setInterval' <<<"${provisioner_script}" ||
@@ -130,16 +135,29 @@ if grep -Fq 'return false;' <<<"${provisioner_script}"; then
   fail 'Lease contention must not complete a one-shot bootstrap without provisioning'
 fi
 
+jq -e '
+  .spec.template.spec.containers[0].env[] |
+  select(.name == "UMAMI_PROVISION_JOB_NAME") |
+  .valueFrom.fieldRef.fieldPath == "metadata.labels['"'"'batch.kubernetes.io/job-name'"'"']"
+' <<<"${job_json}" >/dev/null ||
+  fail 'the shared template must identify the owning Job from its controller label'
+grep -Fq "const bestEffortBootstrap = process.env.UMAMI_PROVISION_JOB_NAME === 'umami-provision-tenants-bootstrap';" \
+  <<<"${provisioner_script}" ||
+  fail 'only the immediate bootstrap may downgrade a provisioning failure'
+grep -Fq 'const provisioningFailureExitCode = bestEffortBootstrap ? 0 : 1;' \
+  <<<"${provisioner_script}" ||
+  fail 'the bootstrap must complete while scheduled failures remain visible'
+[[ "$(grep -Fc 'process.exit(provisioningFailureExitCode);' <<<"${provisioner_script}")" -ge 2 ]] ||
+  fail 'both heartbeat and provisioning failures must use the workload-specific result'
+if grep -Fq 'process.exit(1)' <<<"${provisioner_script}"; then
+  fail 'an unconditional failure path can retain a failed bootstrap and wedge Flux'
+fi
+grep -Fq 'best-effort bootstrap failed; the scheduled reconciler will retry' \
+  <<<"${provisioner_script}" ||
+  fail 'a failed immediate bootstrap must explain the scheduled recovery path'
+
 job_health_count="$(yq eval '[.spec.healthCheckExprs[] | select(.apiVersion == "batch/v1" and .kind == "Job")] | length' "${apps_flux_kustomization}")"
-job_health_current="$(yq eval '.spec.healthCheckExprs[] | select(.apiVersion == "batch/v1" and .kind == "Job") | .current' "${apps_flux_kustomization}")"
-job_health_failed="$(yq eval '.spec.healthCheckExprs[] | select(.apiVersion == "batch/v1" and .kind == "Job") | .failed' "${apps_flux_kustomization}")"
-[[ "${job_health_count}" == 1 &&
-  "${job_health_current}" == *'metadata.name == '* &&
-  "${job_health_current}" == *umami-provision-tenants-bootstrap* &&
-  "${job_health_current}" == *Complete* &&
-  "${job_health_failed}" == *'metadata.name != '* &&
-  "${job_health_failed}" == *umami-provision-tenants-bootstrap* &&
-  "${job_health_failed}" == *Failed* ]] ||
-  fail 'only the best-effort bootstrap Job may bypass the apps health gate'
+[[ "${job_health_count}" == 0 ]] ||
+  fail 'Flux native Job health takes precedence over CEL overrides; do not install a dead bypass rule'
 
 printf 'Umami bootstrap is one-shot, immutable, and serialized with the scheduled reconciler.\n'

@@ -51,19 +51,5 @@ spec:
     - apiVersion: postgresql.cnpg.io/v1
       kind: Cluster
       current: has(status.readyInstances) && status.readyInstances >= 1 && has(status.currentPrimary) && status.currentPrimary != ''
-    # The immediate Umami bootstrap is best-effort: its scheduled twin retries
-    # every 15 minutes, so a retained failed bootstrap must remain observable
-    # without wedging the health-gated apps layer forever. Preserve the normal
-    # Complete/Failed semantics for every other Job managed by this layer.
-    - apiVersion: batch/v1
-      kind: Job
-      failed: >-
-        metadata.name != 'umami-provision-tenants-bootstrap' &&
-        has(status.conditions) &&
-        status.conditions.exists(e, e.type == 'Failed' && e.status == 'True')
-      current: >-
-        metadata.name == 'umami-provision-tenants-bootstrap' ||
-        (has(status.conditions) &&
-        status.conditions.exists(e, e.type == 'Complete' && e.status == 'True'))
   prune: true
   force: true

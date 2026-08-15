@@ -140,6 +140,14 @@ spec:
                   cpu: 250m
                   memory: 128Mi
               env:
+                # Job pods receive this stable controller label from Kubernetes.
+                # The shared script uses it to make only the immediate bootstrap
+                # best-effort; scheduled failures must still surface and remain
+                # visible in the CronJob's failed history.
+                - name: UMAMI_PROVISION_JOB_NAME
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.labels['batch.kubernetes.io/job-name']
                 - name: UMAMI_BASE
                   value: http://umami-umami.umami.svc.cluster.local
                 # Declarative source of truth: one team per tenant, its websites, and
@@ -176,6 +184,8 @@ spec:
                   const fs = require('fs');
                   const https = require('https');
                   const base = process.env.UMAMI_BASE;
+                  const bestEffortBootstrap = process.env.UMAMI_PROVISION_JOB_NAME === 'umami-provision-tenants-bootstrap';
+                  const provisioningFailureExitCode = bestEffortBootstrap ? 0 : 1;
                   // Credentials are mounted files (see volumeMounts). A path is
                   // resolved under SECRETS_DIR and may not escape it, so a
                   // TENANTS entry can only ever name a mounted credential.
@@ -217,6 +227,10 @@ spec:
                   const leaseHolder = process.env.HOSTNAME;
                   const leaseDurationSeconds = 60;
                   const leaseRenewIntervalMilliseconds = 20000;
+                  // coordination.k8s.io Lease fields use Kubernetes MicroTime,
+                  // whose JSON parser requires six fractional digits. JavaScript
+                  // ISO timestamps carry only milliseconds, so pad them to micros.
+                  const leaseMicroTime = () => new Date().toISOString().replace('Z', '000Z');
                   if (!leaseHolder) throw new Error('HOSTNAME is required for provisioning Lease ownership');
                   const leaseToken = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8').trim();
                   const leaseNamespace = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/namespace', 'utf8').trim();
@@ -284,7 +298,7 @@ spec:
                         await sleep(Math.min(5000, Math.max(250, expiresAt - Date.now())));
                         continue;
                       }
-                      const now = new Date().toISOString();
+                      const now = leaseMicroTime();
                       const next = {
                         holderIdentity: leaseHolder,
                         leaseDurationSeconds,
@@ -306,7 +320,7 @@ spec:
                     const next = {
                       ...current,
                       leaseDurationSeconds,
-                      renewTime: new Date().toISOString(),
+                      renewTime: leaseMicroTime(),
                     };
                     const update = await leaseRequest('PUT', leaseBody(read.body, next));
                     if (update.status !== 200) throw new Error('renew provisioning Lease failed: HTTP ' + update.status);
@@ -318,7 +332,7 @@ spec:
                         .then(() => renewProvisioningLease())
                         .catch((e) => {
                           console.error('provisioning Lease renewal failed:', String((e && e.stack) || e));
-                          process.exit(1);
+                          process.exit(provisioningFailureExitCode);
                         });
                     }, leaseRenewIntervalMilliseconds);
                     return async () => {
@@ -468,7 +482,11 @@ spec:
                       await stopProvisioningLeaseRenewal();
                       await releaseProvisioningLease();
                     }
-                  })().catch((e) => { console.error(String((e && e.stack) || e)); process.exit(1); });
+                  })().catch((e) => {
+                    console.error(String((e && e.stack) || e));
+                    if (bestEffortBootstrap) console.error('best-effort bootstrap failed; the scheduled reconciler will retry');
+                    process.exit(provisioningFailureExitCode);
+                  });
           volumes:
             # Writable scratch for the Node runtime, so the container's own root
             # filesystem can stay immutable (readOnlyRootFilesystem above).
