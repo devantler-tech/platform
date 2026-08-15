@@ -133,46 +133,9 @@ jobs:
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
           KSAIL_VERSION: "7.178.25"
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          BASE="https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}"
-          ASSET="ksail_${KSAIL_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL "${BASE}/${ASSET}" -o /tmp/ksail.tar.gz
-          # A version-pinned URL is not an integrity check: this archive is
-          # `sudo install`ed and executed on a trusted `main` workflow, so a
-          # replaced release asset would run here. Verify against the release's
-          # published checksums before extracting.
-          #
-          # Checked against the published list rather than a literal SHA pinned
-          # in this file: Renovate bumps KSAIL_VERSION and cannot update an
-          # opaque digest beside it, so a pinned SHA would break every bump
-          # until a human hand-edited it — a control people end up removing.
-          # This costs nothing per bump. Its LIMIT, stated plainly: the archive
-          # and the checksum list come from the same origin, so this detects a
-          # corrupted, truncated or individually-substituted asset, not a fully
-          # compromised release. Provenance attestations would close that and
-          # are tracked separately.
-          curl -fsSL "${BASE}/ksail_${KSAIL_VERSION}_checksums.txt" -o /tmp/ksail_checksums.txt
-          # Match the filename field EXACTLY. A regex match treats the dots in
-          # the asset name as metacharacters, so `ksail_7x178x20_…` would select
-          # a different line's digest and report a confusing mismatch instead of
-          # the actionable "no published checksum" below. awk also exits 0 with
-          # no match, so the empty-result check is the single fail-closed path.
-          expected=$(awk -v a="${ASSET}" '$2 == a {print $1}' /tmp/ksail_checksums.txt)
-          # Fail closed on a MISSING entry too — otherwise a renamed asset
-          # silently skips verification instead of failing.
-          if [ -z "$expected" ]; then
-            echo "::error::no published checksum for ${ASSET} — refusing to install unverified"
-            exit 1
-          fi
-          actual=$(sha256sum /tmp/ksail.tar.gz | cut -d' ' -f1)
-          if [ "$expected" != "$actual" ]; then
-            echo "::error::checksum mismatch for ${ASSET}: expected ${expected}, got ${actual}"
-            exit 1
-          fi
-          tar -xzf /tmp/ksail.tar.gz -C /tmp
-          sudo install /tmp/ksail /usr/local/bin/ksail
-          ksail --version
+          .github/scripts/setup-ksail.sh
 
       # The guard runs HERE too, not only in ci.yaml. A direct push to main
       # bypasses the merge queue, so without this a push that reduced the scan
