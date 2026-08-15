@@ -2,6 +2,7 @@ package refreshfluxghcrauth
 
 import (
 	"os"
+	"os/exec"
 	"reflect"
 	"regexp"
 	"sort"
@@ -424,4 +425,70 @@ func TestFenceReportNodeFeedSurvivesEmptyFields(t *testing.T) {
 	// Values are sanitized of the separator and of newlines before joining, so a
 	// crafted annotation cannot inject an extra field or an extra row.
 	requireContains(t, report, `gsub("[\u001f\n\r]"; " ")`)
+}
+
+// The report prints kubectl commands for an operator to PASTE, and every patch
+// it carries is built from values read off the cluster — the Lease holder, the
+// node cordon-owner annotation, the recovery journal. Interpolating that JSON
+// into `-p '…'` breaks on the first single quote in any of them: the command
+// either fails to parse, or closes the quote and appends shell syntax the
+// operator then executes. Exercising it is the point — the pre-fix spelling
+// looks correct and is not, and a substring assertion cannot tell the two
+// apart, so this runs the emitted command with kubectl stubbed and compares
+// what the argument actually received.
+func TestFenceReleaseCommandsSurviveAQuoteInClusterState(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	quote := functionBody(t, script, "fence_shell_quote")
+
+	// A malicious holder, and a benign one that merely contains an apostrophe:
+	// the second is the case that silently broke the command for everyone.
+	for _, value := range []string{
+		`runner'; touch PWNED; echo '`,
+		`tick'only`,
+		`plain-runner`,
+		`has"double$dollar`,
+		`back\slash`,
+	} {
+		// functionBody returns the signature line too, so the definition is
+		// reused verbatim and only its closing brace is supplied.
+		harness := quote + "\n}\n" +
+			`printf 'kubectl --type=json -p %s' "$(fence_shell_quote "$1")"`
+		command := exec.Command("/bin/bash", "-c", harness, "bash", value)
+		emitted, err := command.Output()
+		if err != nil {
+			t.Fatalf("emit quoted command for %q: %v", value, err)
+		}
+
+		// Re-parse exactly as an operator's shell would, and print back the
+		// final argument. A broken escape shows up as a parse failure or as a
+		// different string — never as a silent pass.
+		replay := `eval "set -- ${1#kubectl }"; printf '%s' "${@: -1}"`
+		back := exec.Command("/bin/bash", "-c", replay, "bash", string(emitted))
+		got, err := back.Output()
+		if err != nil {
+			t.Fatalf("emitted command does not re-parse for %q: %v", value, err)
+		}
+		if string(got) != value {
+			t.Errorf("round-trip for %q returned %q", value, string(got))
+		}
+	}
+}
+
+// Every emission site must route through the quoter. A site that still writes
+// the patch inside literal single quotes is exactly the defect above, and the
+// only durable guard is that no such spelling remains.
+func TestFenceReleaseCommandsNeverInterpolateAPatchIntoLiteralQuotes(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+
+	for _, builder := range []string{
+		"fence_lease_release_command",
+		"fence_node_release_command",
+		"fence_kustomization_release_command",
+	} {
+		body := functionBody(t, script, builder)
+		requireContains(t, body, `fence_shell_quote "${patch}"`)
+		requireNotContains(t, body, `-p '%s'`)
+	}
 }

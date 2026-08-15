@@ -616,6 +616,33 @@ fence_report_epoch() {
     true
 }
 
+# The printed release commands are meant to be pasted into a shell, and every
+# patch they carry is built from values READ OFF THE CLUSTER — the Lease holder,
+# the node cordon-owner annotation, the recovery journal. Interpolating that JSON
+# straight into `-p '…'` breaks on the first single quote in any of them: the
+# command either fails to run, or — because a holder/annotation is attacker- or
+# accident-writable — closes the quote and appends shell syntax the operator then
+# executes. Same shape as the CAS gap above: the REPORT was not held to the
+# safety rules the release path enforces. POSIX single-quoting is what makes an
+# arbitrary byte string safe as one shell word: end the quote, emit an escaped
+# quote, reopen. Resource NAMES are not routed through this because Kubernetes
+# constrains them to RFC 1123 (lowercase alphanumeric, `-`, `.`), which cannot
+# contain a quote; the patch is the only free-form value here.
+fence_shell_quote() {
+  # `'\''` — close the quote, emit an escaped quote, reopen — is the only way to
+  # carry a single quote inside a single-quoted shell word. Pattern and
+  # replacement are locals, and are deliberately left UNQUOTED in the expansion:
+  # bash does not re-split or glob them there, but double-quoting them inside
+  # `${var//…/…}` emits the quote characters literally, which silently corrupts
+  # every escaped value. Both spellings were checked against a round-trip.
+  local literal="$1"
+  local quote="'"
+  local escaped="'\\''"
+
+  # shellcheck disable=SC2295 # quoting the pattern here would embed literal quotes
+  printf "'%s'" "${literal//$quote/$escaped}"
+}
+
 fence_lease_release_command() {
   local state="$1"
   local holder="$2"
@@ -629,8 +656,8 @@ fence_lease_release_command() {
     {op: "replace", path: "/spec/holderIdentity", value: ""},
     {op: "replace", path: "/spec/leaseDurationSeconds", value: 1}
   ]')"
-  printf "kubectl --context %s -n flux-system patch lease %s --type=json -p '%s'" \
-    "${KUBE_CONTEXT}" "${SYNC_LEASE_NAME}" "${patch}"
+  printf "kubectl --context %s -n flux-system patch lease %s --type=json -p %s" \
+    "${KUBE_CONTEXT}" "${SYNC_LEASE_NAME}" "$(fence_shell_quote "${patch}")"
 }
 
 # One CAS-guarded patch, mirroring restore_node_schedulability_if_needed's own
@@ -678,8 +705,8 @@ fence_node_release_command() {
     + (if $owner == "" then [] else
         [{op: "remove", path: $owner_path}] end)
   ')"
-  printf "kubectl --context %s patch node %s --type=json -p '%s'" \
-    "${KUBE_CONTEXT}" "${name}" "${patch}"
+  printf "kubectl --context %s patch node %s --type=json -p %s" \
+    "${KUBE_CONTEXT}" "${name}" "$(fence_shell_quote "${patch}")"
 }
 
 fence_kustomization_release_command() {
@@ -721,8 +748,8 @@ fence_kustomization_release_command() {
       {op: "remove", path: $owner_path}
     ]')"
   fi
-  printf "kubectl --context %s -n flux-system patch %s %s --type=json -p '%s'" \
-    "${KUBE_CONTEXT}" "${FLUX_KUSTOMIZATION_RESOURCE}" "${name}" "${patch}"
+  printf "kubectl --context %s -n flux-system patch %s %s --type=json -p %s" \
+    "${KUBE_CONTEXT}" "${FLUX_KUSTOMIZATION_RESOURCE}" "${name}" "$(fence_shell_quote "${patch}")"
 }
 
 # Read-only, and deliberately before any credential work: an operator reaches
