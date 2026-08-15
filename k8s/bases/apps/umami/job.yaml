@@ -12,4 +12,45 @@ metadata:
   namespace: umami
   annotations:
     kustomize.toolkit.fluxcd.io/force: Enabled
-spec: {}
+spec:
+  # KSail validates each raw manifest before Kustomize runs. Keep this source
+  # object valid but inert; the replacement in kustomization.yaml overwrites
+  # the complete spec with the CronJob's jobTemplate before Flux applies it.
+  suspend: true
+  template:
+    metadata:
+      annotations:
+        checkov.io/skip1: CKV_K8S_8=inert source template is replaced before apply
+        checkov.io/skip2: CKV_K8S_9=inert source template is replaced before apply
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: replaced-by-kustomize
+          image: registry.k8s.io/pause:3.10@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: 1m
+              memory: 1Mi
+            limits:
+              cpu: 1m
+              memory: 1Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsGroup: 65534
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault

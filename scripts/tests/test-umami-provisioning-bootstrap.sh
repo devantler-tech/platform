@@ -4,6 +4,8 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 umami_dir="${root_dir}/k8s/bases/apps/umami"
+exception_dir="${root_dir}/k8s/bases/infrastructure/cluster-security-exceptions"
+token_exception="${exception_dir}/umami-provisioning-service-account-token.yaml"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -13,6 +15,14 @@ fail() {
 for dependency in kubectl yq jq; do
   command -v "${dependency}" >/dev/null 2>&1 || fail "${dependency} is required"
 done
+
+raw_job_json="$(yq -o=json -I=0 '.' "${umami_dir}/job.yaml")"
+jq -e '
+  .spec.template.spec |
+  (.containers | type == "array" and length > 0) and
+  (.restartPolicy == "Never")
+' <<<"${raw_job_json}" >/dev/null ||
+  fail 'raw bootstrap Job must remain schema-valid before Kustomize replacement'
 
 rendered_file="$(mktemp)"
 cron_spec_file="$(mktemp)"
@@ -50,6 +60,23 @@ jq -e '.spec.template.spec.serviceAccountName == "umami-provision-tenants"' <<<"
   fail 'both provisioners must use the Lease-scoped service account'
 jq -e '.spec.template.spec.automountServiceAccountToken == true' <<<"${job_json}" >/dev/null ||
   fail 'the provisioner needs its scoped service-account token to coordinate'
+[[ -f "${token_exception}" ]] ||
+  fail 'the required provisioner token must carry a workload-scoped Kubescape exception'
+yq eval -e '
+  (.spec.posture | length) == 1 and
+  .spec.posture[0].controlID == "C-0034" and
+  .spec.posture[0].action == "ignore" and
+  (.spec.match.resources | length) == 2 and
+  .spec.match.resources[0].apiGroup == "batch" and
+  .spec.match.resources[0].kind == "CronJob" and
+  .spec.match.resources[0].name == "umami-provision-tenants" and
+  .spec.match.resources[1].apiGroup == "batch" and
+  .spec.match.resources[1].kind == "Job" and
+  .spec.match.resources[1].name == "umami-provision-tenants-bootstrap"
+' "${token_exception}" >/dev/null ||
+  fail 'the token exception must cover only the two Umami provisioning workloads'
+grep -Fxq '  - umami-provisioning-service-account-token.yaml' "${exception_dir}/kustomization.yaml" ||
+  fail 'the workload-scoped token exception must be rendered by the Platform'
 jq -e '.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true' <<<"${job_json}" >/dev/null ||
   fail 'bootstrap provisioning must keep the container root filesystem immutable'
 
