@@ -73,11 +73,11 @@ spec:
       # script's real error and the next tick retries it, instead of burning
       # in-Job retries against the deadline.
       backoffLimit: 0
-      # Backstop for a hung run only. It sits comfortably above the script's
-      # ~5m wait-for-Umami loop, so a normal "Umami unreachable" failure exits
-      # with its real error well before this — never masquerading as
-      # DeadlineExceeded.
-      activeDeadlineSeconds: 420
+      # Backstop for a hung run only. It covers the worst-case 480s wait for an
+      # abandoned Lease, the script's ~5m wait-for-Umami loop, and a final 2m
+      # recovery margin. A successor can therefore recover and provision
+      # instead of retaining a failed one-shot bootstrap Job.
+      activeDeadlineSeconds: 900
       template:
         metadata:
           labels:

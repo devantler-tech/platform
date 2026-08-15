@@ -56,6 +56,8 @@ jq -S '.spec.jobTemplate.spec' <<<"${cron_json}" >"${cron_spec_file}"
 jq -S '.spec' <<<"${job_json}" >"${job_spec_file}"
 cmp -s "${cron_spec_file}" "${job_spec_file}" ||
   fail 'bootstrap Job must use the CronJob controller template verbatim'
+jq -e '.spec.activeDeadlineSeconds >= 840' <<<"${job_json}" >/dev/null ||
+  fail 'bootstrap Job deadline must cover a stale 480s Lease, the 300s login retry budget, and recovery work'
 
 jq -e '.spec | has("ttlSecondsAfterFinished") | not' <<<"${job_json}" >/dev/null ||
   fail 'bootstrap Job must remain completed so Flux cannot recreate it after TTL cleanup'
