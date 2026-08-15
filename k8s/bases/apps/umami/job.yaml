@@ -11,7 +11,7 @@ metadata:
   name: umami-provision-tenants-bootstrap
   namespace: umami
   annotations:
-    kustomize.toolkit.fluxcd.io/force: Enabled
+    kustomize.toolkit.fluxcd.io/force: enabled
 spec:
   # KSail validates each raw manifest before Kustomize runs. Keep this source
   # object valid but inert; the replacement in kustomization.yaml overwrites

@@ -23,6 +23,9 @@ jq -e '
   (.restartPolicy == "Never")
 ' <<<"${raw_job_json}" >/dev/null ||
   fail 'raw bootstrap Job must remain schema-valid before Kustomize replacement'
+jq -e '.metadata.annotations["kustomize.toolkit.fluxcd.io/force"] == "enabled"' \
+  <<<"${raw_job_json}" >/dev/null ||
+  fail 'bootstrap Job must use Flux lowercase force annotation for immutable updates'
 
 rendered_file="$(mktemp)"
 cron_spec_file="$(mktemp)"
@@ -98,5 +101,13 @@ grep -Fq 'acquireProvisioningLease' <<<"${provisioner_script}" ||
   fail 'the shared provisioner must acquire the Lease before calling Umami'
 grep -Fq 'releaseProvisioningLease' <<<"${provisioner_script}" ||
   fail 'the shared provisioner must release the Lease after calling Umami'
+grep -Fq 'waiting for Umami provisioning Lease holder:' <<<"${provisioner_script}" ||
+  fail 'a contending bootstrap must wait for the current Lease holder'
+grep -Fq 'await sleep(Math.min(5000, Math.max(250, expiresAt - Date.now())))' \
+  <<<"${provisioner_script}" ||
+  fail 'Lease contention must retry on a bounded interval'
+if grep -Fq 'return false;' <<<"${provisioner_script}"; then
+  fail 'Lease contention must not complete a one-shot bootstrap without provisioning'
+fi
 
 printf 'Umami bootstrap is one-shot, immutable, and serialized with the scheduled reconciler.\n'

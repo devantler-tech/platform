@@ -260,7 +260,12 @@ spec:
                     spec,
                   });
                   async function acquireProvisioningLease() {
-                    for (let attempt = 0; attempt < 8; attempt++) {
+                    // Wait rather than reporting success under contention. This
+                    // matters most for the retained one-shot bootstrap Job: if it
+                    // exited cleanly while a scheduled run held the Lease, Flux
+                    // would keep that completed no-op forever. The Job's
+                    // activeDeadlineSeconds remains the outer bound.
+                    for (;;) {
                       const read = await leaseRequest('GET');
                       if (read.status !== 200) throw new Error('read provisioning Lease failed: HTTP ' + read.status);
                       const lease = read.body;
@@ -272,8 +277,9 @@ spec:
                         ? renewedMillis + Number(current.leaseDurationSeconds || 0) * 1000
                         : Number.POSITIVE_INFINITY;
                       if (holder && holder !== leaseHolder && expiresAt > Date.now()) {
-                        console.log('another Umami provisioner holds the Lease:', holder);
-                        return false;
+                        console.log('waiting for Umami provisioning Lease holder:', holder);
+                        await sleep(Math.min(5000, Math.max(250, expiresAt - Date.now())));
+                        continue;
                       }
                       const now = new Date().toISOString();
                       const next = {
@@ -285,9 +291,9 @@ spec:
                       };
                       const update = await leaseRequest('PUT', leaseBody(lease, next));
                       if (update.status === 200) return true;
-                      if (update.status !== 409) throw new Error('acquire provisioning Lease failed: HTTP ' + update.status);
+                      if (update.status === 409) { await sleep(250); continue; }
+                      throw new Error('acquire provisioning Lease failed: HTTP ' + update.status);
                     }
-                    throw new Error('acquire provisioning Lease failed after concurrent updates');
                   }
                   async function releaseProvisioningLease() {
                     const read = await leaseRequest('GET');
@@ -412,8 +418,7 @@ spec:
                     throw new Error('add member ' + m.username + ' failed: ' + a.status + ' ' + ab);
                   }
                   (async () => {
-                    const leaseHeld = await acquireProvisioningLease();
-                    if (!leaseHeld) return;
+                    await acquireProvisioningLease();
                     try {
                       let token = null;
                       for (let i = 0; i < 60 && !token; i++) {
