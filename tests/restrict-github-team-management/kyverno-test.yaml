@@ -35,20 +35,12 @@ results:
       - github-config/attacker-team
     kind: Team
     result: pass
-  # Creation without the annotation is the normal path.
-  - policy: restrict-github-team-management
-    rule: teams-block-foreign-external-name-adoption
-    resources:
-      - github-config/platform
-      - github-config/maintainers
-      - github-config/attacker-team
-    kind: Team
-    result: pass
   # References must go through the allow-listed Team objects, never a raw ID.
   - policy: restrict-github-team-management
     rule: teammemberships-reference-allow-listed-teams
     resources:
       - github-config/direct-team-id
+      - github-config/initprovider-foreign-team
     kind: TeamMembership
     result: fail
   - policy: restrict-github-team-management
@@ -62,6 +54,7 @@ results:
     rule: teamrepositories-reference-allow-listed-teams
     resources:
       - github-config/platform-repo-admin
+      - github-config/initprovider-admin-grant
     kind: TeamRepository
     result: fail
   - policy: restrict-github-team-management

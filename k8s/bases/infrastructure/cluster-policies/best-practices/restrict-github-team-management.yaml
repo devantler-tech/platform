@@ -80,38 +80,17 @@ spec:
                   - ""
                   - "{{ request.object.metadata.name }}"
     # crossplane.io/external-name is the other way the local name can be
-    # detached from the remote team: setting it at creation adopts a
-    # pre-existing GitHub team regardless of what metadata.name says. This is
-    # scoped to CREATE deliberately — provider-upjet-github writes the numeric
-    # team ID back into this annotation after creation, so enforcing it on
-    # UPDATE would block the provider's own reconciliation. Tenant-authored
-    # UPDATE of this annotation is therefore still open and needs the provider
-    # ServiceAccount excluded to close; tracked separately.
-    # The CREATE scope is expressed as a match operation rather than a
-    # {{ request.operation }} precondition on purpose: this policy sets
-    # background: true, and a background scan has no AdmissionReview to read
-    # request.* from. Matching on operations keeps the rule background-safe and
-    # simply does not select during a background scan.
-    - name: teams-block-foreign-external-name-adoption
-      match:
-        any:
-          - resources:
-              kinds:
-                - team.github.m.upbound.io/*/Team
-              namespaces:
-                - github-config
-              operations:
-                - CREATE
-      validate:
-        message: GitHub Team resources must not set crossplane.io/external-name to a different team at creation; omit it or set it to metadata.name.
-        deny:
-          conditions:
-            any:
-              - key: "{{ request.object.metadata.annotations.\"crossplane.io/external-name\" || '' }}"
-                operator: AnyNotIn
-                value:
-                  - ""
-                  - "{{ request.object.metadata.name }}"
+    # detached from the remote team, and it is NOT constrained here. A rule
+    # accepting only an empty annotation or metadata.name looks like the
+    # obvious counterpart to the binding above, but it breaks legitimate
+    # re-adoption: after a rebuild, or whenever a Team CR is recreated, the
+    # existing GitHub team must be adopted by the numeric team ID the provider
+    # itself writes into this annotation — and refusing that makes Crossplane
+    # try to create a team that already exists, so github-config cannot recover
+    # its own teams. Constraining it safely needs a way to tell our teams'
+    # numeric identities from a foreign one, plus the provider ServiceAccount
+    # excluded so its post-create write still succeeds. Tracked in #3144 rather
+    # than half-closed here.
     - name: teammemberships-reference-allow-listed-teams
       match:
         any:
@@ -121,7 +100,7 @@ spec:
               namespaces:
                 - github-config
       validate:
-        message: GitHub TeamMembership resources must use spec.forProvider.teamIdRef.name set to platform or maintainers; direct teamId values and selectors are not allowed.
+        message: GitHub TeamMembership resources must use spec.forProvider.teamIdRef.name set to platform or maintainers; direct teamId values and selectors are not allowed, in forProvider or initProvider.
         deny:
           conditions:
             any:
@@ -136,6 +115,22 @@ spec:
                 value:
                   - platform
                   - maintainers
+              # upjet merges initProvider into any unset forProvider field, so
+              # every constraint above has to hold there too — otherwise an
+              # approved forProvider reference fronts a foreign team supplied
+              # under initProvider.
+              - key: "{{ request.object.spec.initProvider.teamId || '' }}"
+                operator: NotEquals
+                value: ""
+              - key: "{{ request.object.spec.initProvider.teamIdSelector || `{}` }}"
+                operator: NotEquals
+                value: {}
+              - key: "{{ request.object.spec.initProvider.teamIdRef.name || '' }}"
+                operator: AnyNotIn
+                value:
+                  - ""
+                  - platform
+                  - maintainers
     - name: teamrepositories-reference-allow-listed-teams
       match:
         any:
@@ -145,7 +140,7 @@ spec:
               namespaces:
                 - github-config
       validate:
-        message: GitHub TeamRepository resources must reference platform or maintainers by spec.forProvider.teamIdRef.name and may not grant admin permission.
+        message: GitHub TeamRepository resources must reference platform or maintainers by spec.forProvider.teamIdRef.name and may not grant admin permission, in forProvider or initProvider.
         deny:
           conditions:
             any:
@@ -161,5 +156,23 @@ spec:
                   - platform
                   - maintainers
               - key: "{{ request.object.spec.forProvider.permission || '' }}"
+                operator: Equals
+                value: admin
+              # Same initProvider merge as above: an approved forProvider
+              # reference must not be able to front a foreign team or an admin
+              # grant supplied under initProvider.
+              - key: "{{ request.object.spec.initProvider.teamId || '' }}"
+                operator: NotEquals
+                value: ""
+              - key: "{{ request.object.spec.initProvider.teamIdSelector || `{}` }}"
+                operator: NotEquals
+                value: {}
+              - key: "{{ request.object.spec.initProvider.teamIdRef.name || '' }}"
+                operator: AnyNotIn
+                value:
+                  - ""
+                  - platform
+                  - maintainers
+              - key: "{{ request.object.spec.initProvider.permission || '' }}"
                 operator: Equals
                 value: admin

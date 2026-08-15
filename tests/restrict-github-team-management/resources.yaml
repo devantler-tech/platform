@@ -85,3 +85,34 @@ spec:
       name: platform
     repository: platform
     permission: admin
+---
+# initProvider bypass: the forProvider reference is approved, but upjet merges
+# initProvider into unset forProvider fields, so a foreign team supplied there
+# is what actually reconciles.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: initprovider-foreign-team
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: platform
+    username: attacker
+  initProvider:
+    teamId: "7654321"
+---
+# Same bypass for the admin grant the TeamRepository rule blocks.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: initprovider-admin-grant
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: platform
+    repository: platform
+    permission: push
+  initProvider:
+    permission: admin
