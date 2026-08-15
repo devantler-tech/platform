@@ -415,7 +415,41 @@ const (
 // exception needed to admit prune:false; validateUnifiPruneExemption pins that
 // rule's complete exception set to flux-system/flux-system and unifi/unifi.
 // No identity, binding, resource kind, or remaining verb moved.
-const expectedRenderedSurfaceSHA = "1c4c1986a7b891b184d70a19bec6a85f33c0ea4c0ac174b26501000e38582cd1"
+//
+// This value covers closing the non-HTTPRoute path to the shared Gateway
+// listener. The delta is exactly two documents, and only one of them is RBAC:
+//
+//	ClusterRole  gateway-tenant-edit   resources narrowed
+//	ClusterPolicy restrict-tenant-http-route-hostnames   added
+//
+// The ClusterRole is a STRICT NARROWING: `grpcroutes`, `tcproutes`, `tlsroutes`
+// and `udproutes` are removed, leaving `httproutes` + `referencegrants`. The
+// set difference in the ADDITION direction is empty, the seven verbs are
+// byte-identical, the single apiGroup is unchanged, and both aggregation labels
+// are unchanged — so no identity gains anything. The tenant hostname policy
+// matches HTTPRoute only, so those four kinds were a path to the shared
+// hostname-less listener that the policy never ran on.
+//
+// Measured by rendering the five authorization overlays from `main` and from
+// this head and diffing the canonical documents: 71 RBAC documents on each
+// side, identity sets identical (Role 10, ClusterRole 22, RoleBinding 15,
+// ClusterRoleBinding 10, ServiceAccount 14 — unchanged), and exactly ONE RBAC
+// document differs in content, the ClusterRole above. Nothing is added,
+// removed, or renamed anywhere else in the surface. The added ClusterPolicy is
+// the admission boundary itself (ClusterPolicy 26 -> 27); it grants nothing and
+// only denies, and scripts/tests/test-tenant-route-hostname-boundary.sh pins
+// both the narrowed grant set and the policy's admit/deny verdict.
+//
+// The fingerprint was read from the required job's own output on the approved
+// renderer, and then independently REPRODUCED locally under two controls rather
+// than copied on trust: the `main` tree reproduces its own prior constant
+// (1c4c1986…), and this tree reproduces the value below. Both controls passing
+// is what makes the delta above admissible evidence — a local render that could
+// not reproduce a known-good constant would say nothing about what CI hashed.
+// (Local kubectl was v1.36.1 against the pinned v1.36.2, with the same embedded
+// Kustomize v5.8.1; that patch difference demonstrably does not move this
+// surface, but the controls are what establish it, not the version numbers.)
+const expectedRenderedSurfaceSHA = "55533168c5f38be31381db2f900094b9ce8e6abbb38229359f74de2d12fee102"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
