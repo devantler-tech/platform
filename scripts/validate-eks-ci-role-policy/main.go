@@ -402,7 +402,7 @@ const (
 //	kustomize.toolkit.fluxcd.io/v1  Kustomization  unifi/unifi
 //	  prune: true -> false
 //	source.toolkit.fluxcd.io/v1      GitRepository  unifi/unifi
-//	  ref.branch: main -> ref.commit: 7b17f7e33ef507c24c395b884a433c62b92ace98
+//	  ref.branch: main -> one full 40-hex ref.commit pin
 //
 // The first two changes remove deletion paths. The third replaces a moving
 // branch with one full immutable commit from the expected repository, so a

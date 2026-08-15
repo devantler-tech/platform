@@ -169,10 +169,8 @@ spec:
 // update authority over live managed resources, so its external Git source
 // must be both the expected repository and one full immutable commit.
 func TestValidatePinnedUnifiSource(t *testing.T) {
-	const (
-		trustedURL   = "https://github.com/devantler-tech/unifi"
-		pinnedCommit = "7b17f7e33ef507c24c395b884a433c62b92ace98"
-	)
+	const trustedURL = "https://github.com/devantler-tech/unifi"
+	pinnedCommit := strings.Repeat("a", 40)
 	targetIdentity := resourceIdentity{
 		apiVersion: "source.toolkit.fluxcd.io/v1",
 		kind:       "GitRepository",
