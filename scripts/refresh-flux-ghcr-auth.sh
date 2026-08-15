@@ -463,27 +463,66 @@ report_fences_now() {
   # mutation when any one of them is malformed, so silently excluding an
   # unparseable record would leave a valid sibling under the same owner looking
   # releasable — the same all-or-nothing guard walked around from the other
-  # side. Whenever any journal is unparseable or lacks a string owner/phase,
-  # emit the `*` sentinel and block every journal-carrying node, mirroring that
-  # global refusal rather than guessing an owner the record does not supply.
+  # side. Whenever any journal fails that validation, emit the `*` sentinel and
+  # block every journal-carrying node, mirroring the global refusal rather than
+  # guessing an owner the record does not supply.
+  #
+  # The sentinel test applies the reconciler's FULL schema, not merely "parses
+  # as an object carrying string owner and phase". A journal can clear that
+  # weaker bar and still fail the reconciler — an empty owner, a non-hex
+  # desiredRevision, an extra key, a wasCordoned outside {0,1}, an unsupported
+  # phase, or a UID / owner-annotation that does not match its node. The
+  # reconciler refuses every recovery mutation for all of those, so anything
+  # short of its own predicate leaves such a record outside the sentinel while
+  # its well-formed rollback-safe sibling under the same owner keeps a printed
+  # release the bridge would refuse. The per-node validation further down
+  # refuses the malformed node itself and says nothing about its siblings,
+  # which is why the batch-level predicate is the strict one.
+  #
+  # `try fromjson catch null` is required over `fromjson?`: the `?` form yields
+  # EMPTY, which drops the whole entry instead of its record, so the sentinel
+  # test would pass vacuously across the records that survive.
   if ! jq -r \
-    --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" '
+    --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
+    --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" '
     [
       .items[]
       | select((.metadata.annotations[$recovery_annotation] // "") != "")
-      | (.metadata.annotations[$recovery_annotation] | try fromjson catch null)
-    ] as $records
+      | . as $node
+      | ($node.metadata.annotations[$recovery_annotation]
+         | try fromjson catch null) as $record
+      | {node: $node, record: $record}
+    ] as $entries
     | (
-        if any($records[];
-             (type != "object")
-             or ((.owner | type) != "string")
-             or ((.phase | type) != "string"))
+        if any($entries[];
+             (
+               .record != null
+               and (.record | keys | sort) == ([
+                 "desiredRevision", "initialTaints", "owner", "phase",
+                 "uid", "v", "wasCordoned"
+               ] | sort)
+               and .record.v == 1
+               and (.record.owner | type == "string" and length > 0)
+               and (.record.uid | type == "string" and length > 0)
+               and (.record.desiredRevision
+                 | type == "string" and test("^[0-9a-f]{64}$"))
+               and (.record.wasCordoned == 0 or .record.wasCordoned == 1)
+               and (.record.initialTaints | type == "array")
+               and (.record.phase == "rollback-safe"
+                 or .record.phase == "active"
+                 or .record.phase == "retain"
+                 or .record.phase == "release-ready")
+               and .node.metadata.uid == .record.uid
+               and .node.metadata.deletionTimestamp == null
+               and .node.metadata.annotations[$owner_annotation] == .record.owner
+             ) | not)
         then "*"
         else empty
         end
       ),
       (
-        $records
+        $entries
+        | map(.record)
         | map(select((type == "object")
             and ((.owner | type) == "string")
             and ((.phase | type) == "string")))

@@ -760,3 +760,49 @@ func TestFenceReportBlocksEveryJournalWhenAnyIsMalformed(t *testing.T) {
 	requireContains(t, script,
 		"At least one durable GHCR bootstrap recovery journal is malformed")
 }
+
+// The owner-wide sentinel has to apply the reconciler's FULL journal schema.
+// "Parses as an object carrying a string owner and phase" is a strictly weaker
+// bar than reconcile_bootstrap_recovery_journals enforces, so a record that
+// clears it while failing the reconciler — an empty owner, a non-hex
+// desiredRevision, an extra key, a wasCordoned outside {0,1}, an unsupported
+// phase, or a UID / owner annotation that does not match its node — stays out
+// of the `*` sentinel. Both journals then group under one owner with the same
+// phase, nothing blocks the batch, and the WELL-FORMED sibling earns a printed
+// release the bridge refuses for the whole owner. The per-node validation
+// refuses the malformed node itself and says nothing about its siblings, which
+// is why the batch-level predicate is the one that has to be strict.
+func TestFenceReportSentinelAppliesTheReconcilersFullJournalSchema(t *testing.T) {
+	t.Parallel()
+	script := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	report := functionBody(t, script, "report_fences_now")
+
+	// The `.record` / `.node` shape is what distinguishes the batch-level
+	// sentinel from the per-node check, which reads a flat record against jq
+	// args. These two clauses exist ONLY in the sentinel.
+	requireContains(t, report, "and .node.metadata.uid == .record.uid")
+	requireContains(t, report,
+		"and .node.metadata.annotations[$owner_annotation] == .record.owner")
+	requireContains(t, report, "and .node.metadata.deletionTimestamp == null")
+
+	// The rest of the reconciler's schema, likewise `.record`-scoped.
+	requireContains(t, report, "(.record | keys | sort) == ([")
+	requireContains(t, report, "and .record.v == 1")
+	requireContains(t, report, `and (.record.owner | type == "string" and length > 0)`)
+	requireContains(t, report, "and (.record.wasCordoned == 0 or .record.wasCordoned == 1)")
+	requireContains(t, report, `and (.record.phase == "rollback-safe"`)
+
+	// The weaker predicate must not come back. The owner grouping legitimately
+	// keeps the `== "string"` form to drop records it cannot key by owner; it is
+	// the `!=` sentinel test that was too permissive.
+	requireNotContains(t, stepDirectives(report), `((.phase | type) != "string")`)
+	requireNotContains(t, stepDirectives(report), `((.owner | type) != "string")`)
+
+	// The sentinel is computed before the release print it is supposed to gate.
+	sentinel := requireIndex(t, report, "and .node.metadata.uid == .record.uid")
+	release := requireIndex(t, report, "fence_node_release_command")
+	requireBefore(t, sentinel, release, "owner-wide sentinel computed before the release print")
+
+	// The schema being mirrored is the reconciler's own up-front validation.
+	requireContains(t, script, "and .node.metadata.deletionTimestamp == null")
+}
