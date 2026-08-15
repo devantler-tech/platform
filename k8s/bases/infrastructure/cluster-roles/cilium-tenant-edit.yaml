@@ -3,12 +3,12 @@
 # additive CiliumNetworkPolicy allow-lists in its namespace without receiving
 # write access to platform-maintained policies.
 #
-# The platform keeps the security FLOOR regardless: the `add-default-deny`
-# Kyverno policy generates deny-all + allow-dns CiliumNetworkPolicies in every
-# namespace. Those generated policies, plus platform-owned tenant allow-lists,
-# are part of the namespace security boundary — so tenants may only layer ALLOWs
-# on top, scoped to their own namespace. They cannot update, patch, or delete an
-# existing policy such as `default-deny`, and cannot manage cluster-wide policy
+# The `add-default-deny` Kyverno policy generates deny-all + allow-dns
+# CiliumNetworkPolicies in every namespace. This role protects those existing
+# objects from tenant update, patch, or delete, but Cilium combines matching
+# allow rules: a tenant-created permissive policy can still widen traffic until
+# admission constraints land (platform#3150). `create` remains here solely for
+# self-service additive allow-lists. Tenants cannot manage cluster-wide policy
 # resources.
 #
 # This role is intentionally NOT aggregated into the built-in `edit` role.

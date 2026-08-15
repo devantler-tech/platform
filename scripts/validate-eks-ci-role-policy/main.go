@@ -363,7 +363,19 @@ const (
 // per-resource fingerprint, since the moved documents belong to main's change
 // rather than the branch's. Compare like with like before concluding the
 // toolchain is at fault.
-const expectedRenderedSurfaceSHA = "26e28178117fa9dc0f7d66c8bd526b1b5f000beeedac9f327207b8a674c56755"
+//
+// Measured against main 2f92d8ef before approving this value: the complete
+// rendered authorization diff changes exactly one object, ClusterRole
+// `cilium-tenant-edit`. Surface membership is unchanged. Its built-in
+// `aggregate-to-edit` label is removed, so ordinary `edit` bindings no longer
+// inherit Cilium policy access, and its `update`, `patch`, and `delete` verbs
+// are removed. The remaining get/list/watch/create grant was already present;
+// every request permitted by the new role was permitted by the old role.
+// Therefore this is strictly an authorization narrowing, while platform#3150
+// separately tracks admission constraints for permissive tenant-created
+// policies. The committed-tree validation reported no per-resource mismatch;
+// only this aggregate fingerprint moved.
+const expectedRenderedSurfaceSHA = "6a854be18346bd0224e2fcd0953a967c48805a677850ddd9ba965d62d9aa6fd8"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
