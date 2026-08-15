@@ -20,7 +20,7 @@ Files: `ksail.yaml` (local), `ksail.prod.yaml`.
 Only these fields genuinely vary per instance:
 
 | Field | local | prod |
-|---|---|---|
+| --- | --- | --- |
 | `metadata.name` | cluster short name (e.g. `local`) | `prod` |
 | `spec.cluster.connection.context` | kubeconfig context | kubeconfig context |
 | `spec.cluster.localRegistry.registry` | n/a | OCI registry URL for the manifest artefact |
@@ -117,7 +117,7 @@ The platform uses a **hybrid SOPS + OpenBao** model:
 ### Secret categories
 
 | Category | Source | Example | Mechanism |
-|----------|--------|---------|-----------|
+| ---------- | -------- | --------- | ----------- |
 | Randomly-generatable | ESO Password generator | DB passwords, OIDC client secrets | Generator -> PushSecret -> OpenBao -> ExternalSecret |
 | Externally-sourced | SOPS-encrypted Git | API tokens, service credentials | SOPS -> PushSecret -> OpenBao -> ExternalSecret |
 | Bootstrap-critical | SOPS + Flux substitution | hcloud token | SOPS -> Flux `postBuild` -> inline K8s Secret |

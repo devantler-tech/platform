@@ -9,6 +9,12 @@ apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
   name: upstream-chart-defaults
+  annotations:
+    # Cluster-wide on purpose: C-0258 is an etcd-level property of the Talos
+    # control plane with no workload scope at all, and the remaining three are
+    # properties of upstream chart images and operator hostPath usage that
+    # appear wherever those charts are installed.
+    platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
     These controls flag behaviors defined by upstream Helm charts or the

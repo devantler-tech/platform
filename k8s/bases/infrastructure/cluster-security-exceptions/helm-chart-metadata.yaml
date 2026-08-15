@@ -7,6 +7,11 @@ apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
   name: helm-chart-metadata
+  annotations:
+    # Cluster-wide on purpose: the recommended-label conventions these controls
+    # check are set by whichever upstream chart rendered the object, in every
+    # namespace that runs one. The platform authors none of them.
+    platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
     Third-party Helm charts use their own label conventions. Adding all
