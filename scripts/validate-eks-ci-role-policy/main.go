@@ -363,7 +363,42 @@ const (
 // per-resource fingerprint, since the moved documents belong to main's change
 // rather than the branch's. Compare like with like before concluding the
 // toolchain is at fault.
-const expectedRenderedSurfaceSHA = "26e28178117fa9dc0f7d66c8bd526b1b5f000beeedac9f327207b8a674c56755"
+//
+// Measured against main 44f14fab before approving this value: 524 rendered
+// documents on main and 525 on this branch across all five production roots,
+// with membership differing by exactly ONE entry and zero removed or renamed
+// (set difference in both directions over the complete
+// apiVersion|kind|namespace|name identity). The single added entry is
+//
+//	kyverno.io/v1  ClusterPolicy  restrict-doggy-countdown-hostnames
+//
+// and after removing just that entry the remaining 524 documents are
+// byte-identical to main's render — checked with a negative control that fired
+// on a one-line perturbation, so the identical result is not vacuous. Nothing
+// added, removed, or renamed touches a Role, ClusterRole, RoleBinding,
+// ClusterRoleBinding, ServiceAccount, or IAM document.
+//
+// The added policy is selected into the surface only because Kyverno
+// ClusterPolicies are indirect authorization policies. It is a single
+// `validate.deny` rule matching HTTPRoute in the doggy-countdown namespace and
+// requiring exactly the tenant's assigned hostname, with
+// validationFailureAction Enforce. It creates no identity, binding, role, or
+// policy document and grants nothing to the aws/aws service account; it can
+// only refuse admission, so it moves the surface strictly in the restrictive
+// direction.
+//
+// Two independent renderers agree on this value: the required CI job on the
+// approved toolchain, and a local render on kubectl v1.36.1 with the same
+// embedded kustomize v5.8.1. Agreement across a kubectl patch difference is
+// what rules out a renderer-version artifact in the value.
+//
+// That local corroboration is reachable only through the test path, and the
+// reason is worth recording: TestValidateAuthorizationAcceptsCommittedPolicy
+// calls validateAuthorization directly, so it never passes through
+// validateRendererVersion — only run() does. A local `go run` on v1.36.1 is
+// still rejected by design. Do not read a passing `go test` as evidence that
+// the local toolchain matches the pin.
+const expectedRenderedSurfaceSHA = "e02856de56721b06897d6c151974796b08ecd73c23b461edde4c4f1efb44636b"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
