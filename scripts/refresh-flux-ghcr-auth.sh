@@ -204,7 +204,8 @@ cleanup_refresh_work() {
       echo "::error::Could not safely resume the parent Flux reconciliation; its ownership annotation was retained for explicit recovery."
     fi
   fi
-  if ! cleanup_bootstrap_quarantine; then
+  if declare -F cleanup_bootstrap_quarantine >/dev/null &&
+    ! cleanup_bootstrap_quarantine; then
     cleanup_status=1
     echo "::error::Bootstrap quarantine cleanup was incomplete; durable recovery annotations remain on the affected nodes."
   fi

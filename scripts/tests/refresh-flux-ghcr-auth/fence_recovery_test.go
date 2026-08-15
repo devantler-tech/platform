@@ -3,11 +3,15 @@ package refreshfluxghcrauth
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // The fence report is the supported answer to "prove the prior process is dead
@@ -490,5 +494,91 @@ func TestFenceReleaseCommandsNeverInterpolateAPatchIntoLiteralQuotes(t *testing.
 		body := functionBody(t, script, builder)
 		requireContains(t, body, `fence_shell_quote "${patch}"`)
 		requireNotContains(t, body, `-p '%s'`)
+	}
+}
+
+// syncBuffer is written by the exec copier goroutine while the test reads it to
+// decide when the report has started, so the two need to be serialized.
+type syncBuffer struct {
+	mu   sync.Mutex
+	data []byte
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.data = append(b.data, p...)
+
+	return len(p), nil
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	return string(b.data)
+}
+
+// A hard kill is the case the fence report exists for, and it still runs the
+// EXIT trap. The trap is armed near the top of the file, so it runs before the
+// rest of the file has been parsed into functions: every helper it calls has to
+// be guarded. Left unguarded, an interrupted report ends in a `command not
+// found` and a false claim that durable recovery annotations remain on nodes —
+// emitted during exactly the incident the operator is trying to read.
+func TestInterruptedFenceReportDoesNotCallAnUndefinedCleanupHelper(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	mustWriteJSON(t, f.decryptedConfig, validConfig())
+	f.clearRunStatePreservingCluster(true, false)
+
+	// Park the first cluster read so the signal reliably lands inside the
+	// report rather than after it has already exited.
+	slowDir := t.TempDir()
+	stub := "#!/usr/bin/env bash\nsleep 3\nexec " +
+		filepath.Join(f.binDir, "kubectl") + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(slowDir, "kubectl"), []byte(stub), 0o755); err != nil {
+		t.Fatalf("write slow kubectl stub: %v", err)
+	}
+
+	env := f.baseEnvironment()
+	env["PATH"] = slowDir + string(os.PathListSeparator) + env["PATH"]
+
+	cmd := exec.Command(helperPath, "--fences")
+	cmd.Dir = rootPath
+	cmd.Env = environmentSlice(env)
+	stdout := &syncBuffer{}
+	stderr := &syncBuffer{}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start fence report: %v", err)
+	}
+
+	deadline := time.Now().Add(30 * time.Second)
+	for !strings.Contains(stdout.String(), "GHCR deploy fences") {
+		if time.Now().After(deadline) {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			t.Fatalf("fence report never started; stdout = %q stderr = %q",
+				stdout.String(), stderr.String())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("signal fence report: %v", err)
+	}
+	_ = cmd.Wait()
+
+	combined := stdout.String() + stderr.String()
+	// Without the guard the trap reaches an undefined function; the message is
+	// the operator-visible symptom, so assert on both.
+	if strings.Contains(combined, "command not found") {
+		t.Errorf("interrupted fence report called an undefined helper; output = %q", combined)
+	}
+	if strings.Contains(combined, "Bootstrap quarantine cleanup was incomplete") {
+		t.Errorf("interrupted fence report claimed quarantine state it never created; output = %q",
+			combined)
 	}
 }

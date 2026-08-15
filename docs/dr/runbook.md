@@ -616,7 +616,7 @@ dependency cannot recover a stale root credential by itself.
 A deploy fails to start with one of:
 
 > Another GHCR synchronization transaction holds the synchronization lease
-
+>
 > Another transaction already owns the image-verification policy handoff
 
 `refresh-flux-ghcr-auth.sh` fences its transaction with a `Lease` and by suspending
@@ -648,10 +648,13 @@ fences legitimately.
   it is terminal:
 
   ```bash
-  gh run view <run-id> --repo devantler-tech/platform --json status,conclusion
+  gh run view <run-id> --repo devantler-tech/platform --attempt <attempt> --json status,conclusion
   ```
 
   Anything other than `status: completed` means it is still running. Stop.
+  `--attempt` is not optional: a rerun reuses the run id, so without it `gh`
+  reports the newest attempt and an orphan left by a finished attempt reads as
+  live — blocking a recovery that is valid.
 - An identity with no run reference predates that recording, or came from a local
   run. Establish liveness another way before continuing.
 
