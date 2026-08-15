@@ -553,7 +553,7 @@ done
 reported as a failure, and a failed read gets reported as a fix:
 
 | result | what happened | what to do |
-|---|---|---|
+| --- | --- | --- |
 | `new_head` non-empty | the update landed | run **both** workflow-run queries against `new_head` |
 | loop exhausted, head unchanged | there was no base to merge | the case documented immediately below; no amount of polling resolves it |
 | `probe` empty | the read failed, so the update's outcome is unknown | conclude nothing — re-read once before acting on either branch |
