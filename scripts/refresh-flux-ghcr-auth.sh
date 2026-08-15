@@ -3254,6 +3254,11 @@ report_sync_lease_state() {
     --namespace flux-system \
     get lease "${SYNC_LEASE_NAME}" \
     -o json >"${probe}" 2>/dev/null; then
+    # The redirect creates the file before kubectl fails, so this path has a
+    # partial probe to remove too. work_dir outlives every heartbeat renewal, so
+    # skipping it here would accumulate one file per failed renewal for the whole
+    # run — exactly the path that fires repeatedly when the API is unhealthy.
+    rm -f "${probe}"
     printf '::warning::sync-lease diagnostic (%s): the Lease could not be read, so ownership is UNKNOWN — this is the transient-failure shape, not proof of loss. ours=%s\n' \
       "${context}" "${sync_lease_holder:-<unset>}"
     return 0
