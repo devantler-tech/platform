@@ -821,6 +821,63 @@ func TestValidateAuthorizationAcceptsCommittedPolicy(t *testing.T) {
 	}
 }
 
+// TestCiliumTenantEditSupportsFluxReconciliationWithoutBuiltInEditAggregation
+// pins the safe, non-breaking boundary: Flux impersonates tenant service
+// accounts and needs PATCH for server-side apply plus DELETE for pruning, while
+// unrelated bindings to Kubernetes' built-in edit role must inherit neither.
+func TestCiliumTenantEditSupportsFluxReconciliationWithoutBuiltInEditAggregation(t *testing.T) {
+	const manifestPath = "k8s/bases/infrastructure/cluster-roles/cilium-tenant-edit.yaml"
+	contents, err := os.ReadFile(filepath.Join("..", "..", manifestPath)) //nolint:gosec // Explicit repository path.
+	if err != nil {
+		t.Fatalf("read %s: %v", manifestPath, err)
+	}
+	documents, err := decodeDocuments(contents)
+	if err != nil || len(documents) != 1 {
+		t.Fatalf("decode %s: documents=%d error=%v", manifestPath, len(documents), err)
+	}
+
+	metadata, ok := documents[0]["metadata"].(map[string]any)
+	if !ok {
+		t.Fatal("cilium-tenant-edit metadata is missing or malformed")
+	}
+	labels, ok := metadata["labels"].(map[string]any)
+	if !ok {
+		t.Fatal("cilium-tenant-edit labels are missing or malformed")
+	}
+	if _, exists := labels["rbac.authorization.k8s.io/aggregate-to-edit"]; exists {
+		t.Fatal("cilium-tenant-edit must not aggregate into Kubernetes' built-in edit role")
+	}
+	if got := labels["devantler.tech/aggregate-to-tenant-edit"]; got != "true" {
+		t.Fatalf("tenant-edit aggregation label = %v, want true", got)
+	}
+
+	rules, ok := documents[0]["rules"].([]any)
+	if !ok || len(rules) != 1 {
+		t.Fatalf("cilium-tenant-edit rules = %T len=%d, want one rule", documents[0]["rules"], len(rules))
+	}
+	rule, ok := rules[0].(map[string]any)
+	if !ok {
+		t.Fatal("cilium-tenant-edit rule is malformed")
+	}
+	verbValues, ok := rule["verbs"].([]any)
+	if !ok {
+		t.Fatal("cilium-tenant-edit verbs are missing or malformed")
+	}
+	verbs := make(map[string]bool, len(verbValues))
+	for _, value := range verbValues {
+		verb, ok := value.(string)
+		if !ok {
+			t.Fatalf("cilium-tenant-edit verb = %T, want string", value)
+		}
+		verbs[verb] = true
+	}
+	for _, verb := range []string{"create", "patch", "delete"} {
+		if !verbs[verb] {
+			t.Errorf("cilium-tenant-edit must retain %q for Flux reconciliation", verb)
+		}
+	}
+}
+
 // TestAuthorizationSurfaceEntryNormalizesOnlyPinnedHelmChartVersions keeps
 // routine dependency pins out of the authorization approval fingerprint while
 // preserving every field that can configure, redirect, or float the chart.
