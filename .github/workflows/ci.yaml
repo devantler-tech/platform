@@ -97,9 +97,12 @@ jobs:
               - 'talos/**'
               - 'scripts/validate-naming.py'
               - 'scripts/validate-embedded-json.py'
+              - '.github/scripts/setup-ksail.sh'
+              - 'scripts/tests/test-setup-ksail.sh'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
               - 'scripts/tests/test-tenant-route-hostname-boundary.sh'
               - 'scripts/tests/test-kyverno-admission-vpa.sh'
               - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
@@ -136,6 +139,7 @@ jobs:
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy-regressions.sh'
+              - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh'
@@ -304,6 +308,12 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 🔐 Validate KSail installer integrity guard
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck .github/scripts/setup-ksail.sh scripts/tests/test-setup-ksail.sh
+          bash scripts/tests/test-setup-ksail.sh
+
       - name: 🔐 Validate Flux GHCR credential bridge
         # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
         # registry credential, cluster access, or network is used.
@@ -403,6 +413,8 @@ jobs:
           kyverno test ./tests
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
+          shellcheck scripts/tests/test-kyverno-umami-mutation-rbac.sh
+          bash scripts/tests/test-kyverno-umami-mutation-rbac.sh
           shellcheck scripts/tests/test-tenant-route-hostname-boundary.sh
           bash scripts/tests/test-tenant-route-hostname-boundary.sh
 
@@ -432,6 +444,14 @@ jobs:
         run: |
           bash scripts/tests/test-cilium-mutual-auth-policy-regressions.sh
           bash scripts/tests/test-cilium-mutual-auth-policy.sh
+
+      - name: 🐘 Validate Coroot Postgres scrape policy
+        if: needs.changes.outputs.k8s == 'true'
+        # Schema validation cannot detect a valid selector that matches no pod.
+        # Pin both cross-namespace policies to the operator's generated labels.
+        run: |
+          shellcheck scripts/tests/test-coroot-postgres-scrape-policy.sh
+          bash scripts/tests/test-coroot-postgres-scrape-policy.sh
 
       - name: 🌐 Validate active Cilium device selection
         if: needs.changes.outputs.k8s == 'true' || needs.changes.outputs.bridge_validation == 'true'
@@ -559,48 +579,9 @@ jobs:
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
           KSAIL_VERSION: "7.178.25"
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          BASE="https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}"
-          ASSET="ksail_${KSAIL_VERSION}_linux_amd64.tar.gz"
-          curl -fsSL "${BASE}/${ASSET}" -o /tmp/ksail.tar.gz
-          # A version-pinned URL names WHICH asset to fetch, not WHAT BYTES to
-          # expect. This archive is `sudo install`ed and executed on the runner,
-          # and this job runs on `pull_request` including FORK PRs, so a replaced
-          # release asset would execute here on every contributor's build.
-          # (This job is `pull_request`-only — the prod deploy paths install the
-          # same archive separately and are tracked in #3075.)
-          #
-          # Checked against the published list rather than a literal SHA pinned
-          # here: Renovate bumps KSAIL_VERSION and cannot update an opaque digest
-          # beside it, so a pinned SHA would break every bump until hand-edited —
-          # a control that reliably breaks the routine path is one that gets
-          # removed. LIMIT, stated plainly: archive and checksum list share an
-          # origin, so this detects a corrupted, truncated or individually
-          # substituted asset, not a fully compromised release.
-          #
-          # Kept byte-identical to the same block in validate-main.yaml.
-          curl -fsSL "${BASE}/ksail_${KSAIL_VERSION}_checksums.txt" -o /tmp/ksail_checksums.txt
-          # Match the filename field EXACTLY. A regex match treats the dots in
-          # the asset name as metacharacters, so `ksail_7x178x20_…` would select
-          # a different line's digest and report a confusing mismatch instead of
-          # the actionable "no published checksum" below. awk also exits 0 with
-          # no match, so the empty-result check is the single fail-closed path.
-          expected=$(awk -v a="${ASSET}" '$2 == a {print $1}' /tmp/ksail_checksums.txt)
-          # Fail closed on a MISSING entry too — otherwise a renamed asset
-          # silently skips verification instead of failing.
-          if [ -z "$expected" ]; then
-            echo "::error::no published checksum for ${ASSET} — refusing to install unverified"
-            exit 1
-          fi
-          actual=$(sha256sum /tmp/ksail.tar.gz | cut -d' ' -f1)
-          if [ "$expected" != "$actual" ]; then
-            echo "::error::checksum mismatch for ${ASSET}: expected ${expected}, got ${actual}"
-            exit 1
-          fi
-          tar -xzf /tmp/ksail.tar.gz -C /tmp
-          sudo install /tmp/ksail /usr/local/bin/ksail
-          ksail --version
+          .github/scripts/setup-ksail.sh
 
       - name: 📥 Restore kubeconform schema cache
         # ksail's kubeconform client fetches JSON schemas from
