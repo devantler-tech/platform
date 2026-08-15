@@ -31,7 +31,7 @@ spec:
             k8s:io.kubernetes.pod.namespace: observability
             app.kubernetes.io/managed-by: coroot-operator
             app.kubernetes.io/part-of: coroot
-            app.kubernetes.io/component: cluster-agent
+            app.kubernetes.io/component: coroot-cluster-agent
       toPorts:
         - ports:
             - port: "5432"

@@ -135,6 +135,7 @@ jobs:
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy-regressions.sh'
+              - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh'
@@ -429,6 +430,14 @@ jobs:
         run: |
           bash scripts/tests/test-cilium-mutual-auth-policy-regressions.sh
           bash scripts/tests/test-cilium-mutual-auth-policy.sh
+
+      - name: 🐘 Validate Coroot Postgres scrape policy
+        if: needs.changes.outputs.k8s == 'true'
+        # Schema validation cannot detect a valid selector that matches no pod.
+        # Pin both cross-namespace policies to the operator's generated labels.
+        run: |
+          shellcheck scripts/tests/test-coroot-postgres-scrape-policy.sh
+          bash scripts/tests/test-coroot-postgres-scrape-policy.sh
 
       - name: 🌐 Validate active Cilium device selection
         if: needs.changes.outputs.k8s == 'true' || needs.changes.outputs.bridge_validation == 'true'
