@@ -376,7 +376,20 @@ const (
 // for permissive or platform-owned tenant policy mutations. The committed-tree
 // validation reported no per-resource mismatch; only this aggregate fingerprint
 // moved.
-const expectedRenderedSurfaceSHA = "96d53d99da43a9bd4e8aa23bd3dac622c4eef391b6cf0ad80f42b00643e199e3"
+//
+// Measured by comparing base 0a97d6c7 with repair head 966ca01c before
+// approving this value: the complete five-layer render diff changes exactly
+// four selected entries. The mutateExisting ClusterPolicy is narrowed from
+// arbitrary matching Deployments to umami/umami-umami and its fixed
+// umami-umami-primary target. The cluster-wide aggregated ClusterRole that
+// granted get/list/watch/update/patch on every Deployment is removed. In its
+// place, one Role in umami grants only get/update/patch on the single
+// umami-umami-primary Deployment, and one RoleBinding grants it only to
+// Kyverno's background-controller ServiceAccount. No existing rendered entry
+// changes, including the Umami Namespace, whose identical rendered form merely
+// moves between two already-scanned ownership layers. The validator reported
+// no per-resource mismatch; only this aggregate fingerprint moved.
+const expectedRenderedSurfaceSHA = "83763a582a9daac9d8555695165489dd86613504099717bfd95b340e396c5f14"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
