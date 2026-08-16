@@ -486,7 +486,27 @@ const (
 // re-measured after merging exact main b32ba493: the branch's earlier value
 // (5c5d36cc, rendered against a main 10 commits older) no longer described the
 // merge result, so it was never approved.
-const expectedRenderedSurfaceSHA = "1fac0ff549c9ad7e94fce4e6e723b9ca588f16ecbf43016c24eee219ec83b867"
+//
+// Measured against exact current main 64767a99 after merging it into #2714,
+// using the checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer.
+// Four of the five complete production roots are byte-identical. The only
+// rendered delta is in the infrastructure root and changes exactly ONE entry:
+//
+//	rbac.authorization.k8s.io/v1  ClusterRole  cluster-reader
+//
+// Its complete delta removes two API groups from the read-only allow-list:
+//
+//	coroot.com
+//	helm.toolkit.fluxcd.io
+//
+// Resource membership is identical: no apiVersion, kind, namespace, or name
+// line moves in any root. Both removals are privilege reductions. HelmRelease
+// specs persist substituted and inline values, while the production Coroot
+// Cluster persists the substituted alertmanager_webhook_url. Removing their
+// groups prevents an OIDC cluster-reader from recovering those credentials;
+// no identity, binding, resource, or verb is added. A parsed-RBAC regression
+// independently rejects any future read grant to either secret-bearing group.
+const expectedRenderedSurfaceSHA = "03da7c1b972490eb9a4a4eecdffcd02e1b31c8ebb3dde3f4790f35f499837552"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

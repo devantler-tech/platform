@@ -37,6 +37,52 @@ func repositoryInputs(t *testing.T) ([]byte, []byte, []byte) {
 	return read(roleManifestPath), read(boundaryManifestPath), rendered
 }
 
+// TestClusterReaderCannotReadSecretBearingCustomResources guards the effective
+// read boundary, not the YAML spelling. Both API groups persist values after
+// Flux substitution, so granting any read verb on their resources lets the
+// read-only OIDC identity recover credentials while core Secrets stay hidden.
+func TestClusterReaderCannotReadSecretBearingCustomResources(t *testing.T) {
+	manifest, err := os.ReadFile(filepath.Join(
+		"..", "..", "k8s/bases/infrastructure/cluster-roles/cluster-reader.yaml",
+	))
+	if err != nil {
+		t.Fatalf("read cluster-reader role: %v", err)
+	}
+
+	var role struct {
+		Rules []struct {
+			APIGroups []string `yaml:"apiGroups"`
+			Resources []string `yaml:"resources"`
+			Verbs     []string `yaml:"verbs"`
+		} `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(manifest, &role); err != nil {
+		t.Fatalf("parse cluster-reader role: %v", err)
+	}
+	contains := func(values []string, expected string) bool {
+		for _, value := range values {
+			if value == expected {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, forbiddenGroup := range []string{
+		"coroot.com",
+		"helm.toolkit.fluxcd.io",
+	} {
+		for ruleIndex, rule := range role.Rules {
+			groupMatches := contains(rule.APIGroups, forbiddenGroup) || contains(rule.APIGroups, "*")
+			readGranted := contains(rule.Verbs, "get") || contains(rule.Verbs, "list") ||
+				contains(rule.Verbs, "watch") || contains(rule.Verbs, "*")
+			if groupMatches && len(rule.Resources) > 0 && readGranted {
+				t.Errorf("cluster-reader rule %d grants read access to secret-bearing API group %s", ruleIndex, forbiddenGroup)
+			}
+		}
+	}
+}
+
 // TestRenderAuthorizationLayersIncludesEveryProductionLayer pins scan coverage.
 func TestRenderAuthorizationLayersIncludesEveryProductionLayer(t *testing.T) {
 	repoRoot := filepath.Join("test", "repo")

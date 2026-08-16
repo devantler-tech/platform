@@ -37,7 +37,8 @@ rules:
     verbs: ["get", "list", "watch"]
   # Safe-to-read non-core API groups on the cluster — all resources, read-only.
   # Do not add API groups whose custom resources persist substituted or inline
-  # secret material (for example helm.toolkit.fluxcd.io HelmRelease specs).
+  # secret material (for example helm.toolkit.fluxcd.io HelmRelease specs or
+  # coroot.com Cluster specs containing substituted notification webhooks).
   - apiGroups:
       - acme.cert-manager.io
       - actions.github.m.upbound.io
@@ -62,7 +63,6 @@ rules:
       - clone.kubevirt.io
       - com.github.runnerm.cert-manager-simply-webhook
       - coordination.k8s.io
-      - coroot.com
       - dex.coreos.com
       - discovery.k8s.io
       - enterprise.github.m.upbound.io
