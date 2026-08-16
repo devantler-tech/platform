@@ -25,18 +25,19 @@ rendered="$(kubectl kustomize "${controllers_dir}")" ||
 
 select_crossplane_policies() {
   local required_name="${2-}"
+  local include_standard="${3-0}"
 
   awk '
     function reset_document() {
       document = ""
-      is_cilium_policy = 0
+      is_selected_policy_kind = 0
       in_metadata = 0
       is_crossplane_namespace = 0
       has_required_name = 0
     }
 
     function emit_if_selected() {
-      if (is_cilium_policy && is_crossplane_namespace &&
+      if (is_selected_policy_kind && is_crossplane_namespace &&
           (required_name == "" || has_required_name)) {
         printf "%s", document
       }
@@ -52,8 +53,9 @@ select_crossplane_policies() {
 
     {
       document = document $0 ORS
-      if ($0 == "kind: CiliumNetworkPolicy") {
-        is_cilium_policy = 1
+      if ($0 == "kind: CiliumNetworkPolicy" ||
+          (include_standard == "1" && $0 == "kind: NetworkPolicy")) {
+        is_selected_policy_kind = 1
       }
       if ($0 == "metadata:") {
         in_metadata = 1
@@ -69,15 +71,15 @@ select_crossplane_policies() {
     }
 
     END { emit_if_selected() }
-  ' required_name="${required_name}" <<<"$1"
+  ' required_name="${required_name}" include_standard="${include_standard}" <<<"$1"
 }
 
 select_crossplane_policy() {
-  select_crossplane_policies "$1" 'allow-crossplane'
+  select_crossplane_policies "$1" 'allow-crossplane' '0'
 }
 
 select_crossplane_namespace_policies() {
-  select_crossplane_policies "$1"
+  select_crossplane_policies "$1" '' '1'
 }
 
 policy="$(select_crossplane_policy "${rendered}")"
@@ -89,12 +91,18 @@ selected_policy_count="$(awk '/^kind: CiliumNetworkPolicy$/ { count++ } END { pr
 
 crossplane_namespace_policies="$(select_crossplane_namespace_policies "${rendered}")"
 [ "${crossplane_namespace_policies}" = "${policy}" ] ||
-  fail 'allow-crossplane must be the only CiliumNetworkPolicy in crossplane-system'
+  fail 'allow-crossplane must be the only Cilium or Kubernetes network policy in crossplane-system'
 
 additional_world_policy=$'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: additional-world-egress\n  namespace: crossplane-system\nspec:\n  endpointSelector: {}\n  egress:\n  - toEntities: [world]'
 rendered_with_additional_world_policy="${rendered}"$'\n---\n'"${additional_world_policy}"
 if [ "$(select_crossplane_namespace_policies "${rendered_with_additional_world_policy}")" = "${policy}" ]; then
   fail 'the regression guard must reject an additional Crossplane CiliumNetworkPolicy'
+fi
+
+standard_world_policy=$'apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: additional-standard-world-egress\n  namespace: crossplane-system\nspec:\n  podSelector: {}\n  policyTypes: [Egress]\n  egress:\n  - {}'
+rendered_with_standard_world_policy="${rendered}"$'\n---\n'"${standard_world_policy}"
+if [ "$(select_crossplane_namespace_policies "${rendered_with_standard_world_policy}")" = "${policy}" ]; then
+  fail 'the regression guard must reject an additional standard Crossplane NetworkPolicy'
 fi
 
 if grep -Eq '^[[:space:]]*serverNames:' <<<"${policy}"; then
