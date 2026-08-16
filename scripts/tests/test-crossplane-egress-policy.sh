@@ -67,8 +67,42 @@ readonly expected_fqdns
 [ "${actual_fqdns}" = "${expected_fqdns}" ] ||
   fail "Crossplane must retain exactly the seven reviewed FQDN destinations (got: ${actual_fqdns//$'\n'/, })"
 
-grep -Fq -- 'port: "443"' <<<"${policy}" ||
-  fail 'the reviewed FQDN destinations must remain limited to HTTPS'
+https_port_contract() {
+  awk '
+    /^[[:space:]]*-[[:space:]]+toFQDNs:$/ { in_fqdns = 1; next }
+    in_fqdns && /^[[:space:]]+toPorts:$/ { in_ports = 1; next }
+    in_ports && /^[[:space:]]*-[[:space:]]+toEndpoints:$/ { exit }
+    in_ports && /^[[:space:]]*-[[:space:]]+port:/ {
+      port = $3
+      gsub(/"/, "", port)
+      print "port=" port
+    }
+    in_ports && /^[[:space:]]+protocol:/ { print "protocol=" $2 }
+  ' <<<"$1"
+}
+
+assert_https_only() {
+  local candidate_policy="$1"
+  local actual_contract
+
+  actual_contract="$(https_port_contract "${candidate_policy}")"
+  [ "${actual_contract}" = $'port=443\nprotocol=TCP' ] ||
+    fail "the reviewed FQDN destinations must remain exactly TCP/443 (got: ${actual_contract//$'\n'/, })"
+}
+
+assert_https_only "${policy}"
+
+# Prove the regression guard rejects both dimensions of a widened transport
+# contract instead of merely checking that an HTTPS entry is present.
+widened_port_policy="${policy/port: \"443\"/port: \"8443\"}"
+if (assert_https_only "${widened_port_policy}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject a changed Crossplane egress port'
+fi
+
+widened_protocol_policy="${policy/protocol: TCP/protocol: UDP}"
+if (assert_https_only "${widened_protocol_policy}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject a changed Crossplane egress protocol'
+fi
 
 printf 'PASS: Crossplane keeps direct HTTPS egress closed to the reviewed FQDN set\n'
 
