@@ -267,6 +267,8 @@ spec:
                   const leaseRenewalSafetyMarginMilliseconds = 15000;
                   const leasePrerequisiteWaitMilliseconds = 60000;
                   const legacyProvisionerDrainSeconds = 480;
+                  const fluxPruneAnnotation = 'kustomize.toolkit.fluxcd.io/prune';
+                  const legacyDrainUntilAnnotation = 'platform.devantler.tech/legacy-worker-drain-until';
                   const teamCreateNotBeforeAnnotation = 'platform.devantler.tech/team-create-not-before';
                   const teamCreateCooldownMilliseconds = 15 * 60 * 1000;
                   // coordination.k8s.io Lease fields use Kubernetes MicroTime,
@@ -347,7 +349,23 @@ spec:
                         continue;
                       }
                       if (read.status !== 200) throw new Error('read provisioning Lease failed: HTTP ' + read.status);
-                      const lease = read.body;
+                      let lease = read.body;
+                      // Earlier candidate heads made the live Lease non-prunable.
+                      // Remove that one-time migration guard before the normal
+                      // drain so a later Lease-less rollback deletes this lock.
+                      // Because its old creationTimestamp cannot prove whether a
+                      // rollback-era worker exists, arm a fresh durable drain
+                      // window in the same resourceVersion-guarded update.
+                      const annotations = { ...((lease.metadata || {}).annotations || {}) };
+                      if (annotations[fluxPruneAnnotation]) {
+                        delete annotations[fluxPruneAnnotation];
+                        annotations[legacyDrainUntilAnnotation] = new Date(Date.now() + legacyProvisionerDrainSeconds * 1000).toISOString();
+                        const migrated = await leaseRequest('PUT', leaseBody(lease, lease.spec || {}, annotations));
+                        if (migrated.status === 409) { await sleep(250); continue; }
+                        if (migrated.status !== 200) throw new Error('make provisioning Lease prunable failed: HTTP ' + migrated.status);
+                        lease = migrated.body;
+                        console.log('made provisioning Lease prunable and armed a fresh legacy-worker drain');
+                      }
                       // Jobs already running from the pre-Lease CronJob cannot
                       // participate in this lock. On the Lease's first creation,
                       // wait one old active-deadline window before any new worker
@@ -356,7 +374,15 @@ spec:
                       // rollout-only drain without inspecting namespace-wide Jobs.
                       const leaseCreatedMillis = Date.parse((lease.metadata || {}).creationTimestamp || '');
                       if (!Number.isFinite(leaseCreatedMillis)) throw new Error('provisioning Lease creationTimestamp is missing or invalid');
-                      const legacyProvisionerDrainUntil = leaseCreatedMillis + legacyProvisionerDrainSeconds * 1000;
+                      const legacyDrainUntilValue = ((lease.metadata || {}).annotations || {})[legacyDrainUntilAnnotation] || '';
+                      const migratedLegacyDrainUntil = Date.parse(legacyDrainUntilValue);
+                      if (legacyDrainUntilValue && !Number.isFinite(migratedLegacyDrainUntil)) {
+                        throw new Error('provisioning Lease legacy-worker drain marker is invalid');
+                      }
+                      const legacyProvisionerDrainUntil = Math.max(
+                        leaseCreatedMillis + legacyProvisionerDrainSeconds * 1000,
+                        Number.isFinite(migratedLegacyDrainUntil) ? migratedLegacyDrainUntil : Number.NEGATIVE_INFINITY,
+                      );
                       if (legacyProvisionerDrainUntil > Date.now()) {
                         console.log('waiting for pre-Lease Umami provisioners to drain');
                         await sleep(Math.min(5000, legacyProvisionerDrainUntil - Date.now()));

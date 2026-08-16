@@ -44,7 +44,8 @@ patches:
         name: apps
         namespace: flux-system
       spec:
-        timeout: 20m
+        # Preserve the base recovery window for the retained Umami bootstrap.
+        timeout: 30m
 
 replacements:
   # Point apps / infrastructure / infrastructure-controllers Flux Kustomizations

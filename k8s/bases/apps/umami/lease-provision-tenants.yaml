@@ -1,5 +1,7 @@
 # Shared lock for the immediate and scheduled Umami provisioners. Flux creates
-# it once, then leaves its live holder fields to the workers using it.
+# it once, then leaves its live holder fields to the workers using it. Keep the
+# Lease prunable: a rollback to a Lease-less revision must delete it so a later
+# re-apply gets a fresh creationTimestamp and drains rollback-era workers.
 apiVersion: coordination.k8s.io/v1
 kind: Lease
 metadata:
@@ -7,5 +9,4 @@ metadata:
   namespace: umami
   annotations:
     kustomize.toolkit.fluxcd.io/ssa: IfNotPresent
-    kustomize.toolkit.fluxcd.io/prune: disabled
 spec: {}

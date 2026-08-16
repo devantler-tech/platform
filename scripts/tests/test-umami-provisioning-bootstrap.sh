@@ -7,6 +7,7 @@ umami_dir="${root_dir}/k8s/bases/apps/umami"
 exception_dir="${root_dir}/k8s/bases/infrastructure/cluster-security-exceptions"
 token_exception="${exception_dir}/umami-provisioning-service-account-token.yaml"
 apps_flux_kustomization="${root_dir}/k8s/clusters/base/flux-kustomization-apps.yaml"
+dr_rebuild_workflow="${root_dir}/.github/workflows/dr-rebuild.yaml"
 
 fail() {
   printf 'FAIL: %s\n' "$*" >&2
@@ -73,6 +74,13 @@ jq -e '
   fail 'bootstrap Job must keep controller-level startup failures retryable instead of retaining Failed'
 yq eval -e '.spec.timeout == "30m"' "${apps_flux_kustomization}" >/dev/null ||
   fail 'apps reconciliation must keep a full recovery window for the bootstrap Job'
+for cluster in local prod; do
+  kubectl kustomize "${root_dir}/k8s/clusters/${cluster}" |
+    yq eval-all -e 'select(.apiVersion == "kustomize.toolkit.fluxcd.io/v1" and .kind == "Kustomization" and .metadata.name == "apps") | .spec.timeout == "30m"' - >/dev/null ||
+    fail "${cluster} cluster overlay must preserve the 30-minute apps recovery window"
+done
+grep -Fq -- '--for=condition=Ready --timeout=35m' "${dr_rebuild_workflow}" ||
+  fail 'DR must wait longer than the rendered apps Flux recovery window'
 
 jq -e '.spec | has("ttlSecondsAfterFinished") | not' <<<"${job_json}" >/dev/null ||
   fail 'bootstrap Job must remain completed so Flux cannot recreate it after TTL cleanup'
@@ -109,8 +117,8 @@ jq -e '
 
 jq -e '.metadata.annotations["kustomize.toolkit.fluxcd.io/ssa"] == "IfNotPresent"' <<<"${lease_json}" >/dev/null ||
   fail 'Flux must create the Lease once without overwriting live lock state'
-jq -e '.metadata.annotations["kustomize.toolkit.fluxcd.io/prune"] == "disabled"' <<<"${lease_json}" >/dev/null ||
-  fail 'Flux must not prune a live Lease during a rollout'
+jq -e '(.metadata.annotations // {}) | has("kustomize.toolkit.fluxcd.io/prune") | not' <<<"${lease_json}" >/dev/null ||
+  fail 'a Lease-less rollback must prune the lock so re-apply gets a fresh legacy-worker drain timestamp'
 jq -e '
   .rules == [{
     apiGroups: ["coordination.k8s.io"],
@@ -209,11 +217,17 @@ grep -Fq 'Date.now() >= leasePrerequisiteWaitDeadline' <<<"${provisioner_script}
   fail 'Lease prerequisite retries must hand control back to workload-specific failure handling'
 grep -Fq 'const legacyProvisionerDrainSeconds = 480;' <<<"${provisioner_script}" ||
   fail 'the initial rollout must drain pre-Lease CronJob workers before provisioning'
+grep -Fq "const fluxPruneAnnotation = 'kustomize.toolkit.fluxcd.io/prune';" <<<"${provisioner_script}" ||
+  fail 'the provisioner must recognize a live Lease left non-prunable by an older rollout'
+grep -Fq 'delete annotations[fluxPruneAnnotation];' <<<"${provisioner_script}" ||
+  fail 'the migration must make an older live Lease prunable before a rollback'
+grep -Fq "const legacyDrainUntilAnnotation = 'platform.devantler.tech/legacy-worker-drain-until';" <<<"${provisioner_script}" ||
+  fail 'removing the legacy prune guard must arm a fresh durable worker-drain window'
+grep -Fq 'waiting for pre-Lease Umami provisioners to drain' <<<"${provisioner_script}" ||
+  fail 'legacy-worker drain must remain observable'
 grep -Fq "const leaseCreatedMillis = Date.parse((lease.metadata || {}).creationTimestamp || '');" \
   <<<"${provisioner_script}" ||
   fail 'legacy-worker drain must be scoped to the first creation of the persistent Lease'
-grep -Fq 'waiting for pre-Lease Umami provisioners to drain' <<<"${provisioner_script}" ||
-  fail 'legacy-worker drain must remain observable'
 if grep -Fq 'return false;' <<<"${provisioner_script}"; then
   fail 'Lease contention must not complete a one-shot bootstrap without provisioning'
 fi

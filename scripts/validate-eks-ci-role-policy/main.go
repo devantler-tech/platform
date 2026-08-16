@@ -428,7 +428,23 @@ const (
 // Re-measured after merging exact main 025fd5a6 into the Umami repair. The
 // validator reported no unapproved per-resource fingerprint; only the aggregate
 // moved to the combined surface recorded below.
-const expectedRenderedSurfaceSHA = "bc55b7016b05510a795962fbe0b094cc03700508d801f0419112bb9fcaa5c031"
+//
+// Re-measured against exact approved parent 03115fa7 before raising the rendered
+// apps recovery window. All five production render trees contain 537 documents
+// on both sides, with membership IDENTICAL by set difference over
+// apiVersion|kind|namespace|name. Exactly four rendered entries move:
+//
+//	batch/v1                         CronJob       umami/umami-provision-tenants
+//	batch/v1                         Job           umami/umami-provision-tenants-bootstrap
+//	coordination.k8s.io/v1           Lease         umami/umami-provision-tenants
+//	kustomize.toolkit.fluxcd.io/v1    Kustomization flux-system/apps
+//
+// The CronJob and derived Job add only deadline/cooldown coordination logic; the
+// Lease becomes prunable across a Lease-less rollback; and the Kustomization
+// timeout moves from 20m to 30m. The 74 Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding / ServiceAccount documents are byte-identical. No identity,
+// binding, API resource, or verb moves.
+const expectedRenderedSurfaceSHA = "6e6723eafd381b5280d1a0d0de7cec8c06fbaee0f3742913682f53f0be6e4000"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -585,7 +601,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "072e4478cdad39c0a7d9f5119cad63d4c56a9fc96ba88d657fef97f6b91bae31",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "a0b12b336d39709cb2f491662a3c8dd98269485b6a33935101e0bf9f03ec8925",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "ee11a54686a68eb49b833b234949f9d21a7b8106c1b3ae677e5c205e5506f6ac",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "7f674a1762f298330c7c9e4d9d4e8bf46108b10727e02a25ca5096d7913cc0a7",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "d1bc403b6458bd22cf967bd570e24718341cbd584f58e7f0069aaffe1e187945",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "9d9b62d3221442d6355d16a34d31c198619fb3b3728df960fd67222a531ece7b",
