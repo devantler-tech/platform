@@ -390,32 +390,110 @@ const (
 // moves between two already-scanned ownership layers. The validator reported
 // no per-resource mismatch; only this aggregate fingerprint moved.
 //
-// Measured against main 57ca1dbe before approving this value: the branch's only
-// source change moves Headlamp's plugin directory off a PersistentVolumeClaim
-// back to the chart's default emptyDir — it deletes the PVC, its kustomization
-// entry, and the post-render patch that repointed the `plugins-dir` volume. No
-// identity, binding, policy document or service account is touched, and
-// `cluster-role-binding.yaml` in that same component folder is untouched.
+// This value additionally covers the UniFi source containment repair in #2707,
+// measured after rebasing the PR onto exact main 57ca1dbe. Three of the five
+// authorization roots are byte-identical across main and this change:
+// infrastructure/controllers, prod/bootstrap, and prod. The complete apps
+// render has identical membership and exactly THREE changed fields across
+// three existing documents:
+//
+//	rbac.authorization.k8s.io/v1    Role           unifi/unifi-managed-resources
+//	  verbs: delete                                        (removed)
+//	kustomize.toolkit.fluxcd.io/v1  Kustomization  unifi/unifi
+//	  prune: true -> false
+//	source.toolkit.fluxcd.io/v1      GitRepository  unifi/unifi
+//	  ref.branch: main -> one full 40-hex ref.commit pin
+//
+// The first two changes remove deletion paths. The third replaces a moving
+// branch with one full immutable commit from the expected repository, so a
+// source-repository compromise cannot alter resources that retain patch/update
+// authority without a separately reviewed Platform change. The semantic
+// validatePinnedUnifiSource control and its negative tests reject branches,
+// tags/mixed selectors, abbreviated hashes, substitutions, and alternate URLs
+// before the aggregate hash is considered. The infrastructure render changes
+// exactly one existing ClusterPolicy by adding the exact unifi/unifi admission
+// exception needed to admit prune:false; validateUnifiPruneExemption pins that
+// rule's complete exception set to flux-system/flux-system and unifi/unifi.
+// No identity, binding, resource kind, or remaining verb moved.
+//
+// Measured by comparing exact current main 025fd5a6 with merge head 8654ae7
+// for #2742 using the CI-pinned kubectl v1.36.2 / Kustomize v5.8.1 renderer.
+// All five production authorization roots retain the same 170 selected
+// identities: the set difference is empty in both directions. Exactly ONE
+// selected entry changes:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  actual-budget/actual-budget
+//
+// Its complete projected delta adds ACTUAL_TOKEN_EXPIRATION=openid-provider
+// to the existing post-rendered Deployment environment, which changes runtime
+// session-expiry behavior. login.openid.tokenExpiration mirrors that value for
+// chart-schema alignment; with ingress.enabled=false, chart 1.9.3 does not
+// render or consume the OpenID Secret. No IAM, RBAC, Flux source, identity,
+// binding, verb, or resource membership changes. The PR's HTTPRoute, ReferenceGrant,
+// CiliumNetworkPolicy, and auth-proxy configuration are outside this
+// EKS/RBAC/Flux selector, so this fingerprint deliberately makes no claim that
+// it validates those independently reviewed surfaces.
+//
+// Measured against exact current main b32ba493 with merge head 162815ee for
+// #2740. The change is a privilege REDUCTION plus one new admission guardrail;
+// the complete rendered authorization delta is:
+//
+//	rbac.authorization.k8s.io/v1  ClusterRole  gateway-tenant-edit
+//	  metadata.labels."rbac.authorization.k8s.io/aggregate-to-edit"  (removed)
+//
+//	kyverno.io/v1  ClusterPolicy  restrict-tenant-route-hostnames  (added)
+//
+// Removing the built-in aggregation label means ordinary `edit` bindings in
+// EVERY namespace no longer inherit Gateway API route verbs. The tenant-specific
+// `devantler.tech/aggregate-to-tenant-edit` label and all rule verbs remain
+// byte-identical to main, so tenant ServiceAccounts keep exactly the access they
+// had through `tenant-edit`. This is the same strict narrowing already approved
+// above for `cilium-tenant-edit`, applied to the Gateway API grant.
+//
+// The added ClusterPolicy grants nothing. It is an Enforce admission rule
+// confining each tenant namespace's HTTPRoute hostnames to that tenant's own
+// declared set, denying hostname-less routes (which match every hostname on the
+// shared wildcard listener), and fail-closed denying any ksail tenant namespace
+// with no explicit allow-list. It enters the surface because a policy document
+// is authorization-capable, not because it confers a grant.
+//
+// No identity, binding, ServiceAccount, or verb is added anywhere, and nothing
+// granted to the aws/aws service account this validator protects is touched.
+// The validator reported no per-resource mismatch; only this aggregate
+// fingerprint moved.
+//
+// The fingerprint was read from the required job's own output on the approved
+// renderer, because the local toolchain is refused as unapproved. It was
+// re-measured after merging exact main b32ba493: the branch's earlier value
+// (5c5d36cc, rendered against a main 10 commits older) no longer described the
+// merge result, so it was never approved.
+//
+// Measured after merging exact main 64767a99 for #2739, which moves Headlamp's
+// plugin directory off a PersistentVolumeClaim back to the chart's default
+// emptyDir: it deletes the PVC, its kustomization entry, and the post-render
+// patch that repointed the `plugins-dir` volume. No identity, binding, policy
+// document, ServiceAccount or verb is touched, and `cluster-role-binding.yaml`
+// in that same component folder is untouched.
 //
 // The aggregate nonetheless moves because a HelmRelease joins the selected
 // surface (a chart's controller can materialise RBAC), so editing its values or
 // post-renderers moves its own per-resource fingerprint. That is the
 // over-breadth #2768 tracks, not an authorization change.
 //
-// Verified across all five rendered roots against main: authorization
-// membership is identical at 71 documents — no `kind:`/`name:` line added,
-// removed or renamed — and the concatenated Role / ClusterRole / RoleBinding /
-// ClusterRoleBinding / ServiceAccount text is byte-identical at 36303 bytes on
-// both sides, with a dropped-line negative control confirming the comparison
-// discriminates.
+// The branch's own earlier value (c9ae7235, rendered against a main 57ca1dbe
+// that has since moved many commits) is deliberately NOT carried across: it
+// described a different merge result, so approving it would have re-approved a
+// surface nobody measured. Neither side of the merge conflict described the
+// merged tree, so neither was approvable.
 //
-// The renderer was validated against the trap recorded above rather than
-// assumed: on this branch's pre-merge head the local render reproduced the
-// required CI job's fingerprint exactly (6e186a84…), which is what rules out a
-// renderer-version artifact. This value is the post-merge render, so it is
-// compared like with like — approving the pre-merge value would have gone stale
-// the moment CI re-rendered the merge commit against a main that had moved.
-const expectedRenderedSurfaceSHA = "c9ae723582d79096750ab3a4b9e6f8aaa10e45c24c5a45989d0320538a203135"
+// The value below is main's, carried into the merge UNAPPROVED for this branch:
+// the local toolchain is kubectl v1.36.1 against the CI-pinned v1.36.2, so the
+// post-merge fingerprint cannot be produced here. The required job renders it
+// and will reject this value with the measured one, which is then approved on
+// the evidence above. Until that read lands, this constant is a placeholder and
+// the gate is expected to be RED — that failure is the measurement, not a
+// regression.
+const expectedRenderedSurfaceSHA = "1fac0ff549c9ad7e94fce4e6e723b9ca588f16ecbf43016c24eee219ec83b867"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -436,6 +514,8 @@ var exactPinnedHelmChartVersion = regexp.MustCompile(
 		`(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`,
 )
 
+var exactGitCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
 // commandExecutor makes the renderer orchestration independently testable
 // without weakening the production command and deadline contract.
 type commandExecutor func(context.Context, string, ...string) ([]byte, error)
@@ -453,6 +533,104 @@ type resourceIdentity struct {
 type resourceType struct {
 	apiVersion string
 	kind       string
+}
+
+// validatePinnedUnifiSource keeps the external repository from moving without
+// a reviewed Platform change. This source retains patch/update authority over
+// live UniFi managed resources, so a branch, tag, abbreviated hash, alternate
+// repository, or mixed selector is not an acceptable provenance boundary.
+func validatePinnedUnifiSource(document map[string]any, identity resourceIdentity) error {
+	wantIdentity := resourceIdentity{
+		apiVersion: "source.toolkit.fluxcd.io/v1",
+		kind:       "GitRepository",
+		namespace:  "unifi",
+		name:       "unifi",
+	}
+	if identity != wantIdentity {
+		return nil
+	}
+
+	spec, ok := document["spec"].(map[string]any)
+	if !ok || spec["url"] != "https://github.com/devantler-tech/unifi" {
+		return errors.New("unifi GitRepository must use the trusted devantler-tech/unifi source")
+	}
+	ref, ok := spec["ref"].(map[string]any)
+	if !ok || len(ref) != 1 {
+		return errors.New("unifi GitRepository must pin exactly one full immutable commit")
+	}
+	commit, ok := ref["commit"].(string)
+	if !ok || !exactGitCommit.MatchString(commit) {
+		return errors.New("unifi GitRepository must pin exactly one full immutable commit")
+	}
+	return nil
+}
+
+// validateUnifiPruneExemption keeps the deliberate non-pruning reconciler
+// deployable while requiring the admission-policy exception to remain scoped
+// to exactly one namespaced Kustomization.
+func validateUnifiPruneExemption(document map[string]any, identity resourceIdentity) error {
+	wantIdentity := resourceIdentity{
+		apiVersion: "kyverno.io/v1",
+		kind:       "ClusterPolicy",
+		name:       "enforce-flux-best-practices",
+	}
+	if identity != wantIdentity {
+		return nil
+	}
+
+	exactSingleton := func(value any, want string) bool {
+		values, ok := value.([]any)
+		return ok && len(values) == 1 && values[0] == want
+	}
+	spec, ok := document["spec"].(map[string]any)
+	if !ok {
+		return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
+	}
+	rules, ok := spec["rules"].([]any)
+	if !ok {
+		return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
+	}
+	for _, ruleValue := range rules {
+		rule, ok := ruleValue.(map[string]any)
+		if !ok || rule["name"] != "kustomization-recommended-settings" {
+			continue
+		}
+		exclude, ok := rule["exclude"].(map[string]any)
+		if !ok {
+			break
+		}
+		exclusions, ok := exclude["any"].([]any)
+		if !ok {
+			break
+		}
+		seenFluxSystem := false
+		seenUnifi := false
+		for _, exclusionValue := range exclusions {
+			exclusion, ok := exclusionValue.(map[string]any)
+			if !ok {
+				break
+			}
+			resources, ok := exclusion["resources"].(map[string]any)
+			if !ok {
+				break
+			}
+			switch {
+			case exactSingleton(resources["namespaces"], "flux-system") &&
+				exactSingleton(resources["names"], "flux-system") && !seenFluxSystem:
+				seenFluxSystem = true
+			case exactSingleton(resources["namespaces"], "unifi") &&
+				exactSingleton(resources["names"], "unifi") && !seenUnifi:
+				seenUnifi = true
+			default:
+				return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
+			}
+		}
+		if seenFluxSystem && seenUnifi && len(exclusions) == 2 {
+			return nil
+		}
+		break
+	}
+	return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
 }
 
 // expectedRenderedHashes preserves object-specific diagnostics for the core
@@ -477,7 +655,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "d1bc403b6458bd22cf967bd570e24718341cbd584f58e7f0069aaffe1e187945",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "9d9b62d3221442d6355d16a34d31c198619fb3b3728df960fd67222a531ece7b",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "8e9f72b0f4f982d050aff0b97d246c68b538cbc397cdd45d031c95cfae981e7c",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "47c63f6a762caeacf257ddd32cbbeb3f3568eeea0e258ec006621579114731ff",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "33a579299700de2467631854bac4982d3e14caa3bad8cbcd2613ac180b30af32",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "8af27d4845565c57b9ebc618f186669f18ada89e070cf4e6514924717a2532f8",
 }
 
@@ -1395,6 +1573,12 @@ func validateRendered(rendered []byte) error {
 	substitutionProblems := make([]error, 0)
 	for _, document := range documents {
 		identity := identityOf(document)
+		if sourceErr := validatePinnedUnifiSource(document, identity); sourceErr != nil {
+			problems = append(problems, sourceErr)
+		}
+		if exemptionErr := validateUnifiPruneExemption(document, identity); exemptionErr != nil {
+			problems = append(problems, exemptionErr)
+		}
 		isAuthorizationCapable := isAuthorizationCapableDocument(document, identity)
 		hasAuthorizationSubstitution := isAuthorizationCapable &&
 			containsFluxSubstitution(document) &&

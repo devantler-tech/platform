@@ -100,6 +100,7 @@ jobs:
               - '.github/scripts/setup-ksail.sh'
               - 'scripts/tests/test-setup-ksail.sh'
               - 'scripts/tests/test-openbao-oidc-role.sh'
+              - 'scripts/tests/test-actual-budget-auth-route.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
@@ -138,6 +139,7 @@ jobs:
               - 'scripts/tests/test-cilium-bandwidth-manager-component.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy.sh'
               - 'scripts/tests/test-cilium-mutual-auth-policy-regressions.sh'
+              - 'scripts/tests/test-coroot-postgres-scrape-policy.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-flux-wait.sh'
@@ -413,6 +415,8 @@ jobs:
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
           shellcheck scripts/tests/test-kyverno-umami-mutation-rbac.sh
           bash scripts/tests/test-kyverno-umami-mutation-rbac.sh
+          shellcheck scripts/tests/test-actual-budget-auth-route.sh
+          bash scripts/tests/test-actual-budget-auth-route.sh
 
       - name: 🚦 Validate default-off Cilium bandwidth manager
         if: needs.changes.outputs.k8s == 'true'
@@ -440,6 +444,14 @@ jobs:
         run: |
           bash scripts/tests/test-cilium-mutual-auth-policy-regressions.sh
           bash scripts/tests/test-cilium-mutual-auth-policy.sh
+
+      - name: 🐘 Validate Coroot Postgres scrape policy
+        if: needs.changes.outputs.k8s == 'true'
+        # Schema validation cannot detect a valid selector that matches no pod.
+        # Pin both cross-namespace policies to the operator's generated labels.
+        run: |
+          shellcheck scripts/tests/test-coroot-postgres-scrape-policy.sh
+          bash scripts/tests/test-coroot-postgres-scrape-policy.sh
 
       - name: 🌐 Validate active Cilium device selection
         if: needs.changes.outputs.k8s == 'true' || needs.changes.outputs.bridge_validation == 'true'

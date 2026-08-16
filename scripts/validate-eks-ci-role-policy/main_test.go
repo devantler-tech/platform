@@ -164,6 +164,238 @@ spec:
 	}
 }
 
+// TestValidatePinnedUnifiSource rejects every source shape that can move
+// without a reviewed Platform change. The unifi Kustomization keeps patch and
+// update authority over live managed resources, so its external Git source
+// must be both the expected repository and one full immutable commit.
+func TestValidatePinnedUnifiSource(t *testing.T) {
+	const trustedURL = "https://github.com/devantler-tech/unifi"
+	pinnedCommit := strings.Repeat("a", 40)
+	targetIdentity := resourceIdentity{
+		apiVersion: "source.toolkit.fluxcd.io/v1",
+		kind:       "GitRepository",
+		namespace:  "unifi",
+		name:       "unifi",
+	}
+	source := func(url string, ref map[string]any) map[string]any {
+		return map[string]any{
+			"spec": map[string]any{
+				"url": url,
+				"ref": ref,
+			},
+		}
+	}
+
+	tests := []struct {
+		name      string
+		identity  resourceIdentity
+		document  map[string]any
+		wantError bool
+	}{
+		{
+			name:     "exact trusted commit",
+			identity: targetIdentity,
+			document: source(trustedURL, map[string]any{"commit": pinnedCommit}),
+		},
+		{
+			name:      "mutable branch",
+			identity:  targetIdentity,
+			document:  source(trustedURL, map[string]any{"branch": "main"}),
+			wantError: true,
+		},
+		{
+			name:      "abbreviated commit",
+			identity:  targetIdentity,
+			document:  source(trustedURL, map[string]any{"commit": "7b17f7e"}),
+			wantError: true,
+		},
+		{
+			name:     "mutable branch beside commit",
+			identity: targetIdentity,
+			document: source(trustedURL, map[string]any{
+				"branch": "main",
+				"commit": pinnedCommit,
+			}),
+			wantError: true,
+		},
+		{
+			name:      "different repository",
+			identity:  targetIdentity,
+			document:  source("https://github.com/attacker/unifi", map[string]any{"commit": pinnedCommit}),
+			wantError: true,
+		},
+		{
+			name: "unrelated source",
+			identity: resourceIdentity{
+				apiVersion: "source.toolkit.fluxcd.io/v1",
+				kind:       "GitRepository",
+				namespace:  "other",
+				name:       "other",
+			},
+			document: source("https://example.com/other", map[string]any{"branch": "main"}),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePinnedUnifiSource(tt.document, tt.identity)
+			if tt.wantError && err == nil {
+				t.Fatal("validatePinnedUnifiSource() error = nil, want rejection")
+			}
+			if !tt.wantError && err != nil {
+				t.Fatalf("validatePinnedUnifiSource() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestValidateUnifiPruneExemption pins the admission exception that makes the
+// non-pruning UniFi reconciler deployable without weakening the default rule
+// for any other Flux Kustomization.
+func TestValidateUnifiPruneExemption(t *testing.T) {
+	targetIdentity := resourceIdentity{
+		apiVersion: "kyverno.io/v1",
+		kind:       "ClusterPolicy",
+		name:       "enforce-flux-best-practices",
+	}
+	policy := func(exclusions ...any) map[string]any {
+		return map[string]any{
+			"spec": map[string]any{
+				"rules": []any{
+					map[string]any{
+						"name":    "kustomization-recommended-settings",
+						"exclude": map[string]any{"any": exclusions},
+					},
+				},
+			},
+		}
+	}
+	resourceExclusion := func(namespace, name string) map[string]any {
+		return map[string]any{
+			"resources": map[string]any{
+				"namespaces": []any{namespace},
+				"names":      []any{name},
+			},
+		}
+	}
+
+	tests := []struct {
+		name      string
+		identity  resourceIdentity
+		document  map[string]any
+		wantError bool
+	}{
+		{
+			name:     "exact narrow exemption",
+			identity: targetIdentity,
+			document: policy(
+				resourceExclusion("flux-system", "flux-system"),
+				resourceExclusion("unifi", "unifi"),
+			),
+		},
+		{
+			name:      "missing exemption",
+			identity:  targetIdentity,
+			document:  policy(resourceExclusion("flux-system", "flux-system")),
+			wantError: true,
+		},
+		{
+			name:      "namespace wildcard is not narrow",
+			identity:  targetIdentity,
+			document:  policy(resourceExclusion("*", "unifi")),
+			wantError: true,
+		},
+		{
+			name:     "additional broad exemption is rejected",
+			identity: targetIdentity,
+			document: policy(
+				resourceExclusion("flux-system", "flux-system"),
+				resourceExclusion("unifi", "unifi"),
+				resourceExclusion("*", "*"),
+			),
+			wantError: true,
+		},
+		{
+			name: "unrelated policy",
+			identity: resourceIdentity{
+				apiVersion: "kyverno.io/v1",
+				kind:       "ClusterPolicy",
+				name:       "other",
+			},
+			document: policy(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateUnifiPruneExemption(tt.document, tt.identity)
+			if tt.wantError && err == nil {
+				t.Fatal("validateUnifiPruneExemption() error = nil, want rejection")
+			}
+			if !tt.wantError && err != nil {
+				t.Fatalf("validateUnifiPruneExemption() error = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// TestUnifiPruneExemptionIsHetznerScoped keeps the production-only safety
+// exception out of the shared infrastructure base while proving that the
+// Hetzner render still carries the exact admission shape the app needs.
+func TestUnifiPruneExemptionIsHetznerScoped(t *testing.T) {
+	repoRoot := filepath.Join("..", "..")
+	basePath := filepath.Join(
+		repoRoot,
+		"k8s/bases/infrastructure/cluster-policies/flux/enforce-flux-best-practices.yaml",
+	)
+	baseContents, err := os.ReadFile(basePath) //nolint:gosec // Explicit repository path.
+	if err != nil {
+		t.Fatalf("read shared Flux policy: %v", err)
+	}
+	baseDocuments, err := decodeDocuments(baseContents)
+	if err != nil {
+		t.Fatalf("decode shared Flux policy: %v", err)
+	}
+	if got, want := len(baseDocuments), 1; got != want {
+		t.Fatalf("shared Flux policy documents = %d, want %d", got, want)
+	}
+	if err := validateUnifiPruneExemption(baseDocuments[0], identityOf(baseDocuments[0])); err == nil {
+		t.Fatal("shared Flux policy unexpectedly exempts unifi/unifi")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), rendererCommandTimeout)
+	defer cancel()
+	rendered, err := commandOutput(
+		ctx,
+		"kubectl",
+		"kustomize",
+		filepath.Join(repoRoot, infrastructureOverlayPath),
+	)
+	if err != nil {
+		t.Fatalf("render Hetzner infrastructure: %v", err)
+	}
+	renderedDocuments, err := decodeDocuments(rendered)
+	if err != nil {
+		t.Fatalf("decode Hetzner infrastructure: %v", err)
+	}
+	found := false
+	for _, document := range renderedDocuments {
+		identity := identityOf(document)
+		if identity.apiVersion != "kyverno.io/v1" ||
+			identity.kind != "ClusterPolicy" ||
+			identity.name != "enforce-flux-best-practices" {
+			continue
+		}
+		found = true
+		if err := validateUnifiPruneExemption(document, identity); err != nil {
+			t.Fatalf("validate rendered Hetzner exception: %v", err)
+		}
+	}
+	if !found {
+		t.Fatal("Hetzner infrastructure render omitted enforce-flux-best-practices")
+	}
+}
+
 // TestValidateRenderedRejectsIndirectAuthorizationResources covers controllers.
 func TestValidateRenderedRejectsIndirectAuthorizationResources(t *testing.T) {
 	tests := []struct {
