@@ -109,8 +109,10 @@ static_crossplane_policy_inventory() {
   yq e -N -r '
     select(
       ((.kind == "CiliumNetworkPolicy" or .kind == "NetworkPolicy") and
-        .metadata.namespace == "crossplane-system") or
+        .metadata.namespace == "crossplane-system" and
+        ((.spec.egress // []) | length > 0)) or
       (.kind == "CiliumClusterwideNetworkPolicy" and
+        ((.spec.egress // []) | length > 0) and
         .spec.nodeSelector == null and
         (
           .spec.endpointSelector == {} or
@@ -169,7 +171,10 @@ assert_generated_policy_contract() {
 
   unsafe_generator_kinds="$(
     yq e -N -r '
-      select(.kind == "ClusterPolicy" or .kind == "Policy") |
+      select(
+        ((.apiVersion // "") | test("^kyverno\\.io/")) and
+        (.kind == "ClusterPolicy" or .kind == "Policy")
+      ) |
       .spec.rules[] |
       (
         .generate.kind?,
@@ -186,7 +191,10 @@ assert_generated_policy_contract() {
 
   clone_list_generators="$(
     yq e -N -r '
-      select(.kind == "ClusterPolicy" or .kind == "Policy") |
+      select(
+        ((.apiVersion // "") | test("^kyverno\\.io/")) and
+        (.kind == "ClusterPolicy" or .kind == "Policy")
+      ) |
       .spec.rules[] |
       (
         .generate.cloneList.kinds[]?,
@@ -208,7 +216,10 @@ assert_generated_policy_contract() {
 
   unsafe_mutation_targets="$(
     yq e -N -r '
-      select(.kind == "ClusterPolicy" or .kind == "Policy") |
+      select(
+        ((.apiVersion // "") | test("^kyverno\\.io/")) and
+        (.kind == "ClusterPolicy" or .kind == "Policy")
+      ) |
       .spec.rules[].mutate.targets[]? |
       (.kind // "__MISSING__") |
       select(test("^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$") | not)
@@ -224,6 +235,7 @@ assert_generated_policy_contract() {
   CROSSPLANE_GENERATOR_DIR="${generator_dir}" yq e -N \
     -s 'strenv(CROSSPLANE_GENERATOR_DIR) + "/" + ($index | tostring) + "-" + .metadata.name + ".yaml"' \
     'select(
+      ((.apiVersion // "") | test("^kyverno\\.io/")) and
       (.kind == "ClusterPolicy" or .kind == "Policy") and
       ([.spec.rules[] |
         select(
@@ -287,6 +299,7 @@ assert_generated_policy_contract() {
     # shellcheck disable=SC2016 # $rule is a yq variable.
     yq e -N -r '
       select(
+        ((.apiVersion // "") | test("^kyverno\\.io/")) and
         (.kind == "ClusterPolicy" or .kind == "Policy") and
         .metadata.name == "add-default-deny"
       ) |
@@ -324,6 +337,7 @@ assert_generated_policy_contract() {
     # shellcheck disable=SC2016 # $policy is a yq variable.
     yq e -N -r '
       select(
+        ((.apiVersion // "") | test("^kyverno\\.io/")) and
         (.kind == "ClusterPolicy" or .kind == "Policy") and
         .metadata.name == "add-default-deny"
       ) |
@@ -359,6 +373,7 @@ assert_generated_policy_contract() {
   CROSSPLANE_MUTATION_DIR="${mutation_dir}" yq e -N \
     -s 'strenv(CROSSPLANE_MUTATION_DIR) + "/" + ($index | tostring) + "-" + .metadata.name + ".yaml"' \
     'select(
+      ((.apiVersion // "") | test("^kyverno\\.io/")) and
       (.kind == "ClusterPolicy" or .kind == "Policy") and
       ([.spec.rules[] | select(.mutate != null)] | length > 0)
     )' "${policy_bundle}"
@@ -464,6 +479,18 @@ assert_helm_rules_reject \
   "${helm_network_policy_fixture}" \
   'the Helm-render guard must reject an additional Crossplane NetworkPolicy'
 
+helm_ingress_only_network_policy_fixture=$'apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: chart-ingress-only\n  namespace: crossplane-system\nspec:\n  podSelector: {}\n  policyTypes: [Ingress]\n  ingress:\n  - from:\n    - namespaceSelector: {}'
+assert_helm_rules_accept \
+  'helm-ingress-only-network-policy' \
+  "${helm_ingress_only_network_policy_fixture}" \
+  'the Helm-render guard must allow ingress-only policies that cannot widen Crossplane egress'
+
+helm_ingress_only_cilium_policy_fixture=$'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: chart-ingress-only\n  namespace: crossplane-system\nspec:\n  endpointSelector: {}\n  ingress:\n  - fromEndpoints:\n    - matchLabels:\n        k8s:io.kubernetes.pod.namespace: monitoring'
+assert_helm_rules_accept \
+  'helm-ingress-only-cilium-policy' \
+  "${helm_ingress_only_cilium_policy_fixture}" \
+  'the Helm-render guard must allow ingress-only Cilium policies that cannot widen Crossplane egress'
+
 helm_widened_allow_policy_fixture=$'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: allow-crossplane\n  namespace: crossplane-system\nspec:\n  endpointSelector: {}\n  egress:\n  - toEntities: [world]'
 assert_helm_rules_reject \
   'helm-widened-allow-policy' \
@@ -527,6 +554,12 @@ assert_helm_rules_reject \
   "${helm_mutation_fixture}" \
   'the Helm-render guard must reject a Kyverno network-policy mutation'
 
+helm_generated_policy_mutation_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-generated-policy-mutation\nspec:\n  rules:\n  - name: chart-generated-policy-mutation\n    match:\n      resources:\n        kinds: [CiliumNetworkPolicy]\n        names: [allow-dns]\n        namespaces: [crossplane-system]\n    mutate:\n      patchStrategicMerge:\n        spec:\n          egress:\n          - toEntities: [world]'
+assert_helm_rules_reject \
+  'helm-generated-policy-mutation' \
+  "${helm_generated_policy_mutation_fixture}" \
+  'the Helm-render guard must protect the generated Crossplane allow policies too'
+
 helm_dynamic_target_mutation_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-dynamic-target-mutation\nspec:\n  rules:\n  - name: chart-dynamic-target-mutation\n    match:\n      resources:\n        kinds: [ConfigMap]\n    mutate:\n      targets:\n      - apiVersion: cilium.io/v2\n        kind: "{{request.object.data.kind}}"\n        name: allow-crossplane\n        namespace: crossplane-system\n      patchStrategicMerge:\n        spec:\n          egress:\n          - toEntities: [world]'
 assert_helm_rules_reject \
   'helm-dynamic-target-mutation' \
@@ -550,6 +583,30 @@ assert_helm_rules_accept \
   'helm-safe-all-match-mutation' \
   "${helm_safe_all_match_mutation_fixture}" \
   'the Helm-render guard must honor a safe kind constraint across match.all filters'
+
+helm_namespace_filtered_all_match_mutation_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-namespace-filtered-all-match-mutation\nspec:\n  rules:\n  - name: chart-namespace-filtered-all-match-mutation\n    match:\n      all:\n      - resources:\n          kinds: [CiliumNetworkPolicy]\n      - resources:\n          namespaces: [monitoring]\n    mutate:\n      patchStrategicMerge:\n        spec:\n          egress:\n          - toEntities: [world]'
+assert_helm_rules_accept \
+  'helm-namespace-filtered-all-match-mutation' \
+  "${helm_namespace_filtered_all_match_mutation_fixture}" \
+  'the Helm-render guard must honor namespace constraints across match.all filters'
+
+helm_excluded_crossplane_mutation_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-excluded-crossplane-mutation\nspec:\n  rules:\n  - name: chart-excluded-crossplane-mutation\n    match:\n      any:\n      - resources:\n          kinds: [CiliumNetworkPolicy]\n          names: [allow-crossplane]\n          namespaces: [crossplane-system]\n    exclude:\n      any:\n      - resources:\n          kinds: [CiliumNetworkPolicy]\n          namespaces: [crossplane-system]\n    mutate:\n      patchStrategicMerge:\n        spec:\n          egress:\n          - toEntities: [world]'
+assert_helm_rules_accept \
+  'helm-excluded-crossplane-mutation' \
+  "${helm_excluded_crossplane_mutation_fixture}" \
+  'the Helm-render guard must honor an exclusion that removes Crossplane network policies from scope'
+
+helm_foreign_policy_fixture=$'apiVersion: policy.example.com/v1\nkind: Policy\nmetadata:\n  name: foreign-policy-kind\nspec:\n  rules:\n  - generate:\n      kind: CiliumNetworkPolicy\n  - mutate:\n      targets:\n      - kind: CiliumNetworkPolicy'
+assert_helm_rules_accept \
+  'helm-foreign-policy-kind' \
+  "${helm_foreign_policy_fixture}" \
+  'the Helm-render guard must not interpret another API group as a Kyverno policy'
+
+helm_target_with_irrelevant_exclusion_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-target-with-irrelevant-exclusion\nspec:\n  rules:\n  - name: chart-target-with-irrelevant-exclusion\n    match:\n      resources:\n        kinds: [ConfigMap]\n    exclude:\n      resources:\n        kinds: [CiliumNetworkPolicy]\n        names: [allow-crossplane]\n        namespaces: [crossplane-system]\n    mutate:\n      targets:\n      - apiVersion: cilium.io/v2\n        kind: CiliumNetworkPolicy\n        name: allow-crossplane\n        namespace: crossplane-system\n      patchStrategicMerge:\n        spec:\n          egress:\n          - toEntities: [world]'
+assert_helm_rules_reject \
+  'helm-target-with-irrelevant-exclusion' \
+  "${helm_target_with_irrelevant_exclusion_fixture}" \
+  'an exclusion on the trigger must not hide an unsafe mutate-existing target'
 
 unexpected_generate_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: generate-crossplane-world-egress\nspec:\n  rules:\n  - name: generate-world-egress\n    match:\n      resources:\n        kinds: [Namespace]\n    generate:\n      generateExisting: true\n      apiVersion: cilium.io/v2\n      kind: CiliumNetworkPolicy\n      name: allow-world\n      namespace: "{{request.object.metadata.name}}"\n      synchronize: true\n      data:\n        spec:\n          endpointSelector: {}\n          egress:\n          - toEntities: [world]'
 render_with_unexpected_generate="${effective_policy_render}"$'\n---\n'"${unexpected_generate_policy}"
@@ -598,6 +655,12 @@ standard_world_policy=$'apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nm
 rendered_with_standard_world_policy="${effective_policy_render}"$'\n---\n'"${standard_world_policy}"
 if [ "$(static_crossplane_policy_inventory "${rendered_with_standard_world_policy}")" = "${expected_static_policy}" ]; then
   fail 'the regression guard must reject an additional standard Crossplane NetworkPolicy'
+fi
+
+ingress_only_policies=$'apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: ingress-only-standard\n  namespace: crossplane-system\nspec:\n  podSelector: {}\n  policyTypes: [Ingress]\n  ingress:\n  - {}\n---\napiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: ingress-only-cilium\n  namespace: crossplane-system\nspec:\n  endpointSelector: {}\n  ingress:\n  - fromEntities: [cluster]'
+rendered_with_ingress_only_policies="${effective_policy_render}"$'\n---\n'"${ingress_only_policies}"
+if [ "$(static_crossplane_policy_inventory "${rendered_with_ingress_only_policies}")" != "${expected_static_policy}" ]; then
+  fail 'the static guard must ignore ingress-only policies that cannot widen Crossplane egress'
 fi
 
 clusterwide_world_policy=$'apiVersion: cilium.io/v2\nkind: CiliumClusterwideNetworkPolicy\nmetadata:\n  name: additional-clusterwide-world-egress\nspec:\n  endpointSelector:\n    matchLabels:\n      k8s:io.kubernetes.pod.namespace: crossplane-system\n  egress:\n  - toEntities: [world]'
