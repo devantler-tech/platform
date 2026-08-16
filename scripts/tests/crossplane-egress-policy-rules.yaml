@@ -11,7 +11,11 @@ rules:
 
   - name: restrict-crossplane-chart-network-policies
     expression: >-
-      !(object.kind in ['CiliumNetworkPolicy', 'NetworkPolicy']) ||
+      !has(object.apiVersion) ||
+      !((object.apiVersion == 'networking.k8s.io/v1' &&
+         object.kind == 'NetworkPolicy') ||
+        (object.apiVersion == 'cilium.io/v2' &&
+         object.kind == 'CiliumNetworkPolicy')) ||
       !has(object.metadata.namespace) ||
       object.metadata.namespace != 'crossplane-system' ||
       ((!has(object.spec.egress) || object.spec.egress.size() == 0) &&
@@ -93,6 +97,8 @@ rules:
 
   - name: reject-crossplane-chart-clusterwide-network-policies
     expression: >-
+      !has(object.apiVersion) ||
+      object.apiVersion != 'cilium.io/v2' ||
       object.kind != 'CiliumClusterwideNetworkPolicy' ||
       ((!has(object.spec.egress) || object.spec.egress.size() == 0) &&
        (!has(object.spec.egressDeny) ||
@@ -116,6 +122,86 @@ rules:
     message: >-
       Helm charts in the Crossplane controller overlay must not add a
       cluster-wide Cilium policy
+    severity: error
+
+  - name: reject-crossplane-cilium-policy-specs
+    expression: >-
+      !has(object.apiVersion) ||
+      object.apiVersion != 'cilium.io/v2' ||
+      !(object.kind in [
+        'CiliumNetworkPolicy', 'CiliumClusterwideNetworkPolicy'
+      ]) ||
+      (object.kind == 'CiliumNetworkPolicy' &&
+       (!has(object.metadata.namespace) ||
+        object.metadata.namespace != 'crossplane-system')) ||
+      !has(object.specs) ||
+      !object.specs.exists(policy,
+        ((has(policy.egress) && policy.egress.size() > 0) ||
+         (has(policy.egressDeny) && policy.egressDeny.size() > 0)) &&
+        (object.kind != 'CiliumClusterwideNetworkPolicy' ||
+         !has(policy.nodeSelector)) &&
+        !(has(policy.endpointSelector) &&
+          ((has(policy.endpointSelector.matchLabels) &&
+            'k8s:io.kubernetes.pod.namespace' in
+              policy.endpointSelector.matchLabels &&
+            policy.endpointSelector.matchLabels[
+              'k8s:io.kubernetes.pod.namespace'
+            ] != 'crossplane-system') ||
+           (has(policy.endpointSelector.matchExpressions) &&
+            policy.endpointSelector.matchExpressions.exists(selector,
+              selector.key == 'k8s:io.kubernetes.pod.namespace' &&
+              ((selector.operator == 'In' && has(selector.values) &&
+                !('crossplane-system' in selector.values)) ||
+               (selector.operator == 'NotIn' && has(selector.values) &&
+                'crossplane-system' in selector.values) ||
+               selector.operator == 'DoesNotExist'))))))
+    message: >-
+      Helm charts must not hide Crossplane egress changes in Cilium specs
+    severity: error
+
+  - name: reject-crossplane-administrative-network-policies
+    expression: >-
+      !has(object.apiVersion) ||
+      object.apiVersion != 'policy.networking.k8s.io/v1alpha1' ||
+      !(object.kind in [
+        'AdminNetworkPolicy', 'BaselineAdminNetworkPolicy'
+      ]) ||
+      !has(object.spec.egress) ||
+      object.spec.egress.size() == 0 ||
+      (has(object.spec.subject.namespaces) &&
+       ((has(object.spec.subject.namespaces.matchLabels) &&
+         'kubernetes.io/metadata.name' in
+           object.spec.subject.namespaces.matchLabels &&
+         object.spec.subject.namespaces.matchLabels[
+           'kubernetes.io/metadata.name'
+         ] != 'crossplane-system') ||
+        (has(object.spec.subject.namespaces.matchExpressions) &&
+         object.spec.subject.namespaces.matchExpressions.exists(selector,
+           selector.key == 'kubernetes.io/metadata.name' &&
+           ((selector.operator == 'In' && has(selector.values) &&
+             !('crossplane-system' in selector.values)) ||
+            (selector.operator == 'NotIn' && has(selector.values) &&
+             'crossplane-system' in selector.values) ||
+            selector.operator == 'DoesNotExist'))))) ||
+      (has(object.spec.subject.pods) &&
+       has(object.spec.subject.pods.namespaceSelector) &&
+       ((has(object.spec.subject.pods.namespaceSelector.matchLabels) &&
+         'kubernetes.io/metadata.name' in
+           object.spec.subject.pods.namespaceSelector.matchLabels &&
+         object.spec.subject.pods.namespaceSelector.matchLabels[
+           'kubernetes.io/metadata.name'
+         ] != 'crossplane-system') ||
+        (has(object.spec.subject.pods.namespaceSelector.matchExpressions) &&
+         object.spec.subject.pods.namespaceSelector.matchExpressions.exists(
+           selector,
+           selector.key == 'kubernetes.io/metadata.name' &&
+           ((selector.operator == 'In' && has(selector.values) &&
+             !('crossplane-system' in selector.values)) ||
+            (selector.operator == 'NotIn' && has(selector.values) &&
+             'crossplane-system' in selector.values) ||
+            selector.operator == 'DoesNotExist')))))
+    message: >-
+      Administrative network policies must not change Crossplane egress
     severity: error
 
   - name: restrict-kyverno-network-policy-generators
@@ -365,7 +451,10 @@ rules:
             !has(rule.exclude.resources.selector) &&
             !has(rule.exclude.resources.namespaceSelector) &&
             !has(rule.exclude.resources.annotations) &&
-            !has(rule.exclude.resources.operations)
+            !has(rule.exclude.resources.operations) &&
+            !has(rule.exclude.subjects) &&
+            !has(rule.exclude.roles) &&
+            !has(rule.exclude.clusterRoles)
           ) &&
          ((!has(rule.match.resources) &&
            !has(rule.match.any) &&
@@ -466,11 +555,23 @@ rules:
       Helm-rendered Kyverno policies must not mutate network-policy resources
     severity: error
 
+  - name: reject-kyverno-cleanup-policy-producers
+    expression: >-
+      !has(object.apiVersion) ||
+      !object.apiVersion.startsWith('kyverno.io/') ||
+      !(object.kind in ['CleanupPolicy', 'ClusterCleanupPolicy'])
+    message: >-
+      Helm-rendered cleanup policies require explicit effective-policy review
+      before deployment
+    severity: error
+
   - name: reject-cel-policy-producers
     expression: >-
       !has(object.apiVersion) ||
       !object.apiVersion.startsWith('policies.kyverno.io/') ||
-      !(object.kind in ['GeneratingPolicy', 'MutatingPolicy'])
+      !(object.kind in [
+        'GeneratingPolicy', 'MutatingPolicy', 'DeletingPolicy'
+      ])
     message: >-
       Helm-rendered CEL policy producers require explicit effective-policy
       review before deployment
