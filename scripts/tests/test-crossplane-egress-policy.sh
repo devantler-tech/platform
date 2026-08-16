@@ -42,8 +42,8 @@ fi
 assert_no_unrestricted_egress() {
   local candidate_policy="$1"
 
-  if grep -Eq "^[[:space:]]*-[[:space:]]+['\"]?(world|all)['\"]?$" <<<"${candidate_policy}" ||
-    grep -Eq '^[[:space:]]*-[[:space:]]+toEntities:.*[^[:alnum:]_-](world|all)([^[:alnum:]_-]|$)' <<<"${candidate_policy}"; then
+  if grep -Eq "^[[:space:]]*-[[:space:]]+['\"]?(world|all)['\"]?([[:space:]]+#.*)?$" <<<"${candidate_policy}" ||
+    grep -Eq "^[[:space:]]*-[[:space:]]+toEntities:[[:space:]]*(\\[[[:space:]]*['\"]?(world|all)['\"]?[[:space:]]*\\]|['\"]?(world|all)['\"]?)([[:space:]]+#.*)?$" <<<"${candidate_policy}"; then
     fail 'Crossplane must not receive unrestricted world or all-entity egress'
   fi
 
@@ -150,6 +150,16 @@ fi
 flow_all_policy="${policy/$'  - toEntities:\n    - kube-apiserver'/$'  - toEntities: [all]'}"
 if (assert_no_unrestricted_egress "${flow_all_policy}") >/dev/null 2>&1; then
   fail 'the regression guard must reject flow-style all-entity egress'
+fi
+
+commented_world_policy="${policy/kube-apiserver/world # unrestricted}"
+if (assert_no_unrestricted_egress "${commented_world_policy}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject commented world egress'
+fi
+
+commented_all_policy="${policy/$'  - toEntities:\n    - kube-apiserver'/$'  - toEntities: [all] # unrestricted'}"
+if (assert_no_unrestricted_egress "${commented_all_policy}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject commented all-entity egress'
 fi
 
 widened_port_policy="${policy/port: \"443\"/port: \"8443\"}"
