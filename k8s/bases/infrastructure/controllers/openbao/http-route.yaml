@@ -20,10 +20,22 @@ spec:
     - vault.${domain}
   rules:
     - filters:
-        # Gate the public OpenBao UI/API route behind oauth2-proxy so
-        # unauthenticated Internet traffic cannot generate unbounded audit
-        # records on the fail-closed file audit PVC. After SSO, auth-proxy
-        # forwards vault.${domain} to the active OpenBao Service.
+        # Gate the public OpenBao route behind oauth2-proxy so unauthenticated
+        # Internet traffic cannot generate unbounded audit records on the
+        # fail-closed file audit PVC (helm-release.yaml auditStorage: the file
+        # device does not rotate and OpenBao blocks every API request once the
+        # volume fills). After SSO, auth-proxy forwards vault.${domain} to the
+        # active OpenBao Service.
+        #
+        # This makes vault.${domain} BROWSER-ONLY, and that is deliberate: the
+        # audited surface IS /v1, so exempting it to keep token auth working
+        # would restore the very DoS this gate closes. A token-authenticated
+        # client (bao CLI, `bao login -method=oidc`, any X-Vault-Token consumer)
+        # receives an oauth2-proxy redirect here and must reach the API
+        # in-cluster instead -- `kubectl -n openbao port-forward
+        # svc/openbao-active 8200:8200`, or `kubectl -n openbao exec openbao-0`.
+        # The localhost:8250 entry in the oidc role's allowed_redirect_uris
+        # (vault-config/job.yaml) stays valid over that port-forward.
         - type: RequestHeaderModifier
           requestHeaderModifier:
             set:
