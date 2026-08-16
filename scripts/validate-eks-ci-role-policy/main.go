@@ -433,7 +433,41 @@ const (
 // CiliumNetworkPolicy, and auth-proxy configuration are outside this
 // EKS/RBAC/Flux selector, so this fingerprint deliberately makes no claim that
 // it validates those independently reviewed surfaces.
-const expectedRenderedSurfaceSHA = "b7ee5cdd99fca2c6291d444b99992aa83d5a16e844164fff2a6b9603e8c6fd08"
+//
+// Measured against exact current main b32ba493 with merge head 162815ee for
+// #2740. The change is a privilege REDUCTION plus one new admission guardrail;
+// the complete rendered authorization delta is:
+//
+//	rbac.authorization.k8s.io/v1  ClusterRole  gateway-tenant-edit
+//	  metadata.labels."rbac.authorization.k8s.io/aggregate-to-edit"  (removed)
+//
+//	kyverno.io/v1  ClusterPolicy  restrict-tenant-route-hostnames  (added)
+//
+// Removing the built-in aggregation label means ordinary `edit` bindings in
+// EVERY namespace no longer inherit Gateway API route verbs. The tenant-specific
+// `devantler.tech/aggregate-to-tenant-edit` label and all rule verbs remain
+// byte-identical to main, so tenant ServiceAccounts keep exactly the access they
+// had through `tenant-edit`. This is the same strict narrowing already approved
+// above for `cilium-tenant-edit`, applied to the Gateway API grant.
+//
+// The added ClusterPolicy grants nothing. It is an Enforce admission rule
+// confining each tenant namespace's HTTPRoute hostnames to that tenant's own
+// declared set, denying hostname-less routes (which match every hostname on the
+// shared wildcard listener), and fail-closed denying any ksail tenant namespace
+// with no explicit allow-list. It enters the surface because a policy document
+// is authorization-capable, not because it confers a grant.
+//
+// No identity, binding, ServiceAccount, or verb is added anywhere, and nothing
+// granted to the aws/aws service account this validator protects is touched.
+// The validator reported no per-resource mismatch; only this aggregate
+// fingerprint moved.
+//
+// The fingerprint was read from the required job's own output on the approved
+// renderer, because the local toolchain is refused as unapproved. It was
+// re-measured after merging exact main b32ba493: the branch's earlier value
+// (5c5d36cc, rendered against a main 10 commits older) no longer described the
+// merge result, so it was never approved.
+const expectedRenderedSurfaceSHA = "1fac0ff549c9ad7e94fce4e6e723b9ca588f16ecbf43016c24eee219ec83b867"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
