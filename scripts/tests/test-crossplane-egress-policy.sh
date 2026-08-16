@@ -232,6 +232,7 @@ assert_generated_policy_contract() {
   local unsafe_generator_kinds
   local unsafe_mutation_targets
   local unsafe_deletion_policies
+  local unsafe_policy_api_references
 
   case_dir="$(mktemp -d "${test_temp_root}/kyverno.XXXXXX")"
   policy_bundle="${case_dir}/policies.yaml"
@@ -301,6 +302,30 @@ assert_generated_policy_contract() {
   [ -z "${clone_list_generators}" ] ||
     fail 'Kyverno cloneList rules must not produce network policies'
 
+  unsafe_policy_api_references="$(
+    yq e -N -r '
+      select(
+        ((.apiVersion // "") | test("^kyverno\\.io/")) and
+        (.kind == "ClusterPolicy" or .kind == "Policy")
+      ) |
+      .spec.rules[] |
+      (
+        .generate?,
+        .generate.foreach[]?,
+        .mutate.targets[]?
+      ) |
+      select(
+        (.kind == "CiliumNetworkPolicy" or
+         .kind == "NetworkPolicy" or
+         .kind == "CiliumClusterwideNetworkPolicy") and
+        .apiVersion == null
+      ) |
+      .kind
+    ' "${policy_bundle}" | awk 'NF'
+  )"
+  [ -z "${unsafe_policy_api_references}" ] ||
+    fail 'unqualified Kyverno policy kinds must declare an API version'
+
   unsafe_mutation_targets="$(
     yq e -N -r '
       select(
@@ -326,14 +351,20 @@ assert_generated_policy_contract() {
       (.kind == "ClusterPolicy" or .kind == "Policy") and
       ([.spec.rules[] |
         select(
-          .generate.kind == "CiliumNetworkPolicy" or
-          .generate.kind == "NetworkPolicy" or
-          .generate.kind == "CiliumClusterwideNetworkPolicy" or
-          ([.generate.foreach[]?.kind] |
+          (.generate.kind == "CiliumNetworkPolicy" and
+           .generate.apiVersion == "cilium.io/v2") or
+          (.generate.kind == "NetworkPolicy" and
+           .generate.apiVersion == "networking.k8s.io/v1") or
+          (.generate.kind == "CiliumClusterwideNetworkPolicy" and
+           .generate.apiVersion == "cilium.io/v2") or
+          ([.generate.foreach[]?] |
             any_c(
-              . == "CiliumNetworkPolicy" or
-              . == "NetworkPolicy" or
-              . == "CiliumClusterwideNetworkPolicy"
+              (.kind == "CiliumNetworkPolicy" and
+               .apiVersion == "cilium.io/v2") or
+              (.kind == "NetworkPolicy" and
+               .apiVersion == "networking.k8s.io/v1") or
+              (.kind == "CiliumClusterwideNetworkPolicy" and
+               .apiVersion == "cilium.io/v2")
             )) or
           ([.generate.cloneList.kinds[]?] |
             any_c(
@@ -371,9 +402,11 @@ assert_generated_policy_contract() {
   applicable_generators="$(
     yq e -N -r '
       select(
-        (.kind == "CiliumNetworkPolicy" or
-          .kind == "NetworkPolicy" or
-          .kind == "CiliumClusterwideNetworkPolicy") and
+        ((.apiVersion == "cilium.io/v2" and
+          (.kind == "CiliumNetworkPolicy" or
+           .kind == "CiliumClusterwideNetworkPolicy")) or
+         (.apiVersion == "networking.k8s.io/v1" and
+          .kind == "NetworkPolicy")) and
         .metadata.labels."generate.kyverno.io/policy-name" != null
       ) |
       .metadata.labels."generate.kyverno.io/policy-name"
@@ -731,10 +764,10 @@ assert_helm_rules_accept \
   "${helm_foreign_policy_fixture}" \
   'the Helm-render guard must not interpret another API group as a Kyverno policy'
 
-helm_foreign_qualified_kinds_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-foreign-qualified-policy-kinds\nspec:\n  rules:\n  - name: direct-generate\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      apiVersion: example.io/v1\n      kind: example.io/v1/NetworkPolicy\n      name: foreign-direct\n      namespace: crossplane-system\n      data:\n        spec:\n          egress: [{}]\n  - name: foreach-generate\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      foreach:\n      - list: "[request.object.metadata.name]"\n        apiVersion: example.io/v1\n        kind: example.io/v1/CiliumNetworkPolicy\n        name: foreign-foreach\n        namespace: crossplane-system\n        data:\n          spec:\n            egress: [{}]\n  - name: clone-list\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      namespace: crossplane-system\n      cloneList:\n        namespace: source\n        kinds: [example.io/v1/NetworkPolicy]\n  - name: admission-mutation\n    match:\n      resources:\n        kinds: [example.io/v1/CiliumNetworkPolicy]\n    mutate:\n      patchStrategicMerge:\n        spec:\n          egress: [{}]\n  - name: target-mutation\n    match:\n      resources:\n        kinds: [ConfigMap]\n    mutate:\n      targets:\n      - apiVersion: example.io/v1\n        kind: example.io/v1/CiliumClusterwideNetworkPolicy\n        name: foreign-target\n      patchStrategicMerge:\n        spec:\n          egress: [{}]'
+helm_foreign_policy_kinds_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-foreign-policy-kinds\nspec:\n  rules:\n  - name: direct-generate\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      apiVersion: example.io/v1\n      kind: NetworkPolicy\n      name: foreign-direct\n      namespace: crossplane-system\n      data:\n        spec:\n          egress: [{}]\n  - name: foreach-generate\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      foreach:\n      - list: "[request.object.metadata.name]"\n        apiVersion: example.io/v1\n        kind: CiliumNetworkPolicy\n        name: foreign-foreach\n        namespace: crossplane-system\n        data:\n          spec:\n            egress: [{}]\n  - name: clone-list\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      namespace: crossplane-system\n      cloneList:\n        namespace: source\n        kinds: [example.io/v1/NetworkPolicy]\n  - name: admission-mutation\n    match:\n      resources:\n        kinds: [example.io/v1/CiliumNetworkPolicy]\n    mutate:\n      patchStrategicMerge:\n        spec:\n          egress: [{}]\n  - name: target-mutation\n    match:\n      resources:\n        kinds: [ConfigMap]\n    mutate:\n      targets:\n      - apiVersion: example.io/v1\n        kind: CiliumClusterwideNetworkPolicy\n        name: foreign-target\n      patchStrategicMerge:\n        spec:\n          egress: [{}]'
 assert_helm_rules_accept \
-  'helm-foreign-qualified-policy-kinds' \
-  "${helm_foreign_qualified_kinds_fixture}" \
+  'helm-foreign-policy-kinds' \
+  "${helm_foreign_policy_kinds_fixture}" \
   'the Helm-render guard must ignore policy-like kinds outside the Kubernetes and Cilium API groups'
 
 helm_foreign_cel_policy_fixture=$'apiVersion: policy.example.com/v1\nkind: GeneratingPolicy\nmetadata:\n  name: foreign-cel-policy-kind\nspec: {}'
