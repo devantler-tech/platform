@@ -101,6 +101,9 @@ components:
   # - cilium/components/ebpf-host-routing/
 patches:
   - path: openbao/patches/store-data-on-hcloud.yaml
+  # Umami's Namespace moved into the preceding controllers layer with its
+  # Kyverno Role; keep the prod-only user-namespace label with its new owner.
+  - path: kyverno/patches/enable-user-namespaces.yaml
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
   # Dormant prod-only SPIRE storage values. Authentication/SPIRE stay disabled
