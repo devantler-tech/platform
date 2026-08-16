@@ -166,6 +166,8 @@ jobs:
               - 'scripts/wait-for-platform-flux-revision.sh'
               - 'scripts/tests/test-opencost-usage-scraper.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
+              - 'scripts/tests/test-crossplane-egress-policy.sh'
+              - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
@@ -622,6 +624,14 @@ jobs:
           key: kubeconform-schema-cache-v1-${{ github.run_id }}
           restore-keys: |
             kubeconform-schema-cache-v1-
+
+      - name: 🔒 Validate Crossplane provider egress policy
+        if: needs.changes.outputs.k8s == 'true'
+        # This test exercises KSail's in-process Helm renderer, so it must run
+        # after the pinned KSail setup and schema-cache restore above. The
+        # reviewed FQDN set must remain narrow while provider traffic stays on
+        # the direct L3/L4 path that completes upstream TLS handshakes.
+        run: bash scripts/tests/test-crossplane-egress-policy.sh
 
       - name: 🧠 Validate Kyverno admission VPA safety
         if: needs.changes.outputs.k8s == 'true'
