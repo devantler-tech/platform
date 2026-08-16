@@ -523,10 +523,21 @@ on — not just one you moved yourself.
 whole reason this needs saying: after *you* moved the head a run is definitely coming, so waiting
 always terminates; on a head you did **not** move, a run may genuinely never appear, so the poll
 cannot distinguish "still indexing" from "never fired" by waiting longer. Waiting is what rules out
-the first; it can never establish the second. So conclude `predates` only on **independent
-evidence** — the head's commit predates the requirement's introduction, or some *other* workflow run
-is already indexed at that head, proving indexing has completed and the managed run's absence is
-real. Absent that, carry it forward as UNKNOWN rather than spending the head-moving write on a guess.
+the first; it can never establish the second.
+
+🔴 **Neither of the two obvious "independent evidence" shortcuts actually works — do not reach for
+them.** They are the first things that come to mind here, and both fail in the same direction, blessing
+an absence as real and spending the head-moving write on it:
+
+| Tempting evidence | Why it does not establish `predates` |
+| --- | --- |
+| *Some other workflow run is already indexed at this head, so indexing has completed* | Workflows are created and indexed **independently** — the poll below says so in its own comment, and relies on it. Another workflow appearing first says nothing about the managed one, which may still be mid-creation. |
+| *The head commit's date precedes the requirement's introduction* | The requirement fires on **PR events, not commit dates**. An older commit can become the head afterwards — a force-push back to it, or a PR opened later off a stale branch — and the run then fires normally. |
+
+The only conclusive evidence is about the **managed workflow itself**: a run for it observed at this
+head (whatever its conclusion), or a PR head-event record showing the requirement was already in force
+when this head was pushed and no such run was created. Absent that, carry it forward as UNKNOWN rather
+than spending the head-moving write on a guess.
 
 **The fix is to move the head** — `PUT /repos/{owner}/{repo}/pulls/{n}/update-branch` (a merge of
 `main`, never a force-push) makes the workflow fire. **Pin it to the head you inspected**, exactly as
@@ -592,6 +603,20 @@ if [ -n "${new_head}" ]; then
     --jq .behind_by)" || behind=""
   [ "${behind}" = "0" ] || new_head=""   # someone else's push: re-pin and restart
 fi
+# Containment is NOT identity. `behind_by == 0` only proves base_tip is an ANCESTOR of
+# new_head, which stays true when another actor pushes ON TOP of GitHub's merge — so the
+# check above would accept that actor's extra, uninspected commit as the update result.
+# GitHub's update-branch merge has the head you pinned as a DIRECT parent; a commit pushed
+# on top demotes it to a grandparent. Require the parent relationship, and fail closed on a
+# failed read rather than accepting an unverified head.
+if [ -n "${new_head}" ]; then
+  if parents="$(gh api "repos/devantler-tech/platform/commits/${new_head}" \
+      --jq '.parents[].sha')"; then
+    printf '%s\n' "${parents}" | grep -qxF -- "${inspected}" || new_head=""
+  else
+    new_head=""                          # unverified: re-pin and restart
+  fi
+fi
 ```
 
 **Four outcomes, and they are not interchangeable** — collapsing them is how a working fix gets
@@ -620,7 +645,12 @@ predates the requirement*. A successful refresh is then misdiagnosed as a no-op 
 another branch update or empty commit. Wait for a matching run on `new_head` under its own bound
 before interpreting any absence, and only then read its status:
 
-```sh
+**Run this one with Bash specifically** — it needs `set -o pipefail`, which is not POSIX. Under a
+`/bin/sh` that is `dash` (the Debian and Ubuntu default) that line aborts the subshell with an
+illegal-option error, so **every** iteration reads as a failed query and the poll returns UNKNOWN even
+where the managed run exists — the one failure mode this poll is written to avoid:
+
+```bash
 # Poll for the MANAGED workflow's own run, not merely for any run at the head. Workflows are
 # created and indexed independently, so another PR workflow appearing first makes a total
 # count non-zero while the required run is still absent — and the path-filtered query would
