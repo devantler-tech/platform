@@ -1,0 +1,22 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+# The catch-all rule uses a namespaceSelector, so the CLI needs these labels
+# declared explicitly or every case is reported as Excluded.
+namespaceSelector:
+  - name: wedding-app
+    labels:
+      app.kubernetes.io/managed-by: ksail
+  - name: ascoachingogvaner
+    labels:
+      app.kubernetes.io/managed-by: ksail
+  - name: doggy-countdown
+    labels:
+      app.kubernetes.io/managed-by: ksail
+  - name: future-tenant
+    labels:
+      app.kubernetes.io/managed-by: ksail
+  - name: platform-ns
+    labels: {}

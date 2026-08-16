@@ -1,0 +1,16 @@
+---
+# A route the PLATFORM places in a tenant namespace. It uses a hostname that is
+# NOT on the tenant's allow-list, so it is only admitted because the applying
+# identity is flux-system's kustomize-controller rather than the tenant SA.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: platform-applied-route
+  namespace: wedding-app
+spec:
+  hostnames:
+    - platform-owned.platform.devantler.tech
+  rules:
+    - backendRefs:
+        - name: platform-service
+          port: 80
