@@ -518,7 +518,29 @@ const (
 // the existing vault-snapshots force override narrows enabled to disabled.
 // These metadata-only changes prevent destructive reconciliation and grant no
 // identity, binding, resource, or verb.
-const expectedRenderedSurfaceSHA = "8a817e5916aa9bbe199fe190b7f9328ef6ef063988eaf3fb65b95eec24bedef6"
+//
+// Measured against exact current main cdababde for #2741 with the
+// checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer. The complete
+// apps, infrastructure, and controller roots retain 126, 219, and 178
+// documents respectively. Apps replaces the retired headlamp/headlamp PVC with
+// the authenticated crossview/crossview HTTPRoute; both are outside this
+// authorization selector. Infrastructure and controller membership is
+// identical. Rendered Role, ClusterRole, RoleBinding, ClusterRoleBinding, and
+// ServiceAccount bytes are identical in all three roots, and the two direct AWS
+// policy inputs are byte-identical. Exactly THREE selected entries change:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  crossview/crossview
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  headlamp/headlamp
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  dex/dex
+//
+// Headlamp disables the runtime plugin manager and its writable plugin state.
+// Crossview changes only its CORS origin and OIDC callback from the removed
+// localhost port-forward to its native authenticated HTTPS route. Dex replaces
+// that localhost callback with the exact HTTPS callback. Chart/source identity,
+// reconciliation policy, workload ServiceAccounts, every RBAC object, and every
+// verb remain byte-identical. The Cilium policies and HTTPRoute are outside this
+// selector and are covered by the focused rendered fresh/upgrade-path test.
+const expectedRenderedSurfaceSHA = "9489aa305462b03ef18c2734908d0792752bd422229ddc07f0792bf79cdea950"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

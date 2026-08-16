@@ -6,17 +6,12 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Crossview has NO public route: the only entry point is the Headlamp
-    # crossview-headlamp plugin's port-forward, whose final hop is dialed by the
-    # kubelet on the pod's node, so it arrives with the "host" (or, cross-node,
-    # "remote-node") identity. Keep this allow scoped to those host identities;
-    # an authentication rule with a catch-all source would widen the policy.
-    # (The port-forward reaches Crossview's own /login; without a Dex session it
-    # cannot read cluster data.) Kubelet health probes reach the pod via Cilium's
-    # implicit allow-localhost=auto path regardless.
+    # Public route traffic from the Cilium Gateway (crossview.${domain},
+    # http-route.yaml). The gateway reaches the app with Cilium's reserved
+    # `ingress` identity; Crossview's native session middleware still gates all
+    # data routes behind Dex authentication.
     - fromEntities:
-        - host
-        - remote-node
+        - ingress
       toPorts:
         - ports:
             - port: "3001"

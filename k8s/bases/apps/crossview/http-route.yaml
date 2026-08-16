@@ -1,0 +1,38 @@
+# Route for Crossview at crossview.${domain} — the authenticated replacement for
+# the removed runtime-downloaded Headlamp plugin. Crossview serves its own login
+# page and gates data routes with its native Dex-backed session middleware, so
+# the route goes directly to crossview-service without an oauth2-proxy hop.
+#
+# Prod/hetzner only in practice: Crossview is opt-in on the local Docker overlay,
+# so this route renders only where the app is deployed.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: crossview
+  namespace: crossview
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Crossview
+    gethomepage.dev/description: Crossplane resource explorer.
+    gethomepage.dev/group: Infrastructure as Code
+    gethomepage.dev/icon: mdi-graph-outline
+    gethomepage.dev/pod-selector: app.kubernetes.io/name=crossview,app.kubernetes.io/component=app
+spec:
+  parentRefs:
+    - name: platform
+      namespace: kube-system
+      sectionName: https
+  hostnames:
+    - crossview.${domain}
+  rules:
+    - filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+              - name: Content-Security-Policy
+                value: "frame-ancestors 'self'"
+      backendRefs:
+        - name: crossview-service
+          port: 80

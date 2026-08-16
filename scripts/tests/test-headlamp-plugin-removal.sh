@@ -10,8 +10,10 @@ readonly headlamp_release="${headlamp_dir}/helm-release.yaml"
 readonly headlamp_policy="${headlamp_dir}/cilium-network-policy.yaml"
 readonly crossview_dir="${root_dir}/k8s/bases/apps/crossview"
 readonly crossview_release="${crossview_dir}/helm-release.yaml"
+readonly crossview_policy="${crossview_dir}/cilium-network-policy.yaml"
 readonly dex_release="${root_dir}/k8s/bases/infrastructure/controllers/dex/helm-release.yaml"
 readonly crossview_origin="https://crossview.\${domain}"
+readonly crossview_hostname="crossview.\${domain}"
 readonly crossview_callback="https://crossview.\${domain}/api/auth/oidc/callback"
 readonly dex_fqdn="dex.\${domain}"
 
@@ -53,16 +55,18 @@ if [[ -e "${headlamp_dir}/persistent-volume-claim.yaml" ]]; then
 fi
 
 DEX_FQDN="${dex_fqdn}" yq e -e '
-  [.spec.egress[] | select(has("toFQDNs")) | .toFQDNs[]] ==
-    [{"matchName": strenv(DEX_FQDN)}]
+  ([.spec.egress[] | select(has("toFQDNs")) | .toFQDNs[]] | length) == 1 and
+  ([.spec.egress[] | select(has("toFQDNs")) | .toFQDNs[]][0].matchName ==
+    strenv(DEX_FQDN)) and
+  ([.spec.egress[] | select(has("toFQDNs")) | .toFQDNs[]][0] | length) == 1
 ' "${headlamp_policy}" >/dev/null ||
   fail 'Headlamp egress must retain Dex only, without dynamic plugin download hosts'
 
- CROSSVIEW_ORIGIN="${crossview_origin}" \
+CROSSVIEW_ORIGIN="${crossview_origin}" \
   CROSSVIEW_CALLBACK="${crossview_callback}" \
   yq e -e '
-  .spec.values.app.config.server.cors.origin == strenv(CROSSVIEW_ORIGIN) and
-  .spec.values.app.config.sso.oidc.callbackURL ==
+  .spec.values.config.server.cors.origin == strenv(CROSSVIEW_ORIGIN) and
+  .spec.values.config.sso.oidc.callbackURL ==
     strenv(CROSSVIEW_CALLBACK)
 ' "${crossview_release}" >/dev/null ||
   fail 'Crossview must use its authenticated public origin after the Headlamp plugin is removed'
@@ -76,19 +80,32 @@ CROSSVIEW_CALLBACK="${crossview_callback}" yq e -e '
 ' "${dex_release}" >/dev/null ||
   fail 'Dex must register the exact Crossview public OIDC callback'
 
+yq e -e '
+  ([.spec.ingress[] |
+    select((.fromEntities | length) == 1 and .fromEntities[0] == "ingress")] |
+    length) == 1 and
+  [.spec.ingress[] | select(.fromEntities[0] == "ingress")][0].toPorts[0].ports[0].port == "3001" and
+  [.spec.ingress[] | select(.fromEntities[0] == "ingress")][0].toPorts[0].ports[0].protocol == "TCP" and
+  ([.spec.ingress[] | select(.fromEntities[0] == "ingress")][0].toPorts[0].ports | length) == 1
+' "${crossview_policy}" >/dev/null ||
+  fail 'Crossview must admit only Cilium Gateway traffic on its public app port'
+
 rendered="$(kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps")" ||
   fail 'the production apps overlay must render successfully'
 
 printf '%s\n' "${rendered}" |
-  CROSSVIEW_ORIGIN="${crossview_origin}" \
-  yq ea -e '
+  CROSSVIEW_HOSTNAME="${crossview_hostname}" \
+    yq ea -e '
     [select(
       .apiVersion == "gateway.networking.k8s.io/v1" and
       .kind == "HTTPRoute" and
       .metadata.namespace == "crossview" and
       .metadata.name == "crossview" and
-      .spec.hostnames == [strenv(CROSSVIEW_ORIGIN)] and
-      .spec.rules[0].backendRefs == [{"name": "crossview-service", "port": 80}]
+      (.spec.hostnames | length) == 1 and
+      .spec.hostnames[0] == strenv(CROSSVIEW_HOSTNAME) and
+      .spec.rules[0].backendRefs[0].name == "crossview-service" and
+      .spec.rules[0].backendRefs[0].port == 80 and
+      (.spec.rules[0].backendRefs | length) == 1
     )] |
     length == 1
   ' - >/dev/null ||
