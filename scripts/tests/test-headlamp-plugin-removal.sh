@@ -15,6 +15,7 @@ readonly dex_release="${root_dir}/k8s/bases/infrastructure/controllers/dex/helm-
 readonly crossview_origin="https://crossview.\${domain}"
 readonly crossview_hostname="crossview.\${domain}"
 readonly crossview_callback="https://crossview.\${domain}/api/auth/oidc/callback"
+readonly retired_crossview_callback="http://localhost:3001/api/auth/oidc/callback"
 readonly dex_fqdn="dex.\${domain}"
 
 fail() {
@@ -71,24 +72,42 @@ CROSSVIEW_ORIGIN="${crossview_origin}" \
 ' "${crossview_release}" >/dev/null ||
   fail 'Crossview must use its authenticated public origin after the Headlamp plugin is removed'
 
-CROSSVIEW_CALLBACK="${crossview_callback}" yq e -e '
+CROSSVIEW_CALLBACK="${crossview_callback}" \
+  RETIRED_CROSSVIEW_CALLBACK="${retired_crossview_callback}" \
+  yq e -e '
   [.spec.values.config.staticClients[] |
     select(.id == "public-client") |
     .redirectURIs[] |
     select(. == strenv(CROSSVIEW_CALLBACK))] |
-  length == 1
+  length == 1 and
+  ([.spec.values.config.staticClients[] |
+    select(.id == "public-client") |
+    .redirectURIs[] |
+    select(. == strenv(RETIRED_CROSSVIEW_CALLBACK))] |
+  length == 0)
 ' "${dex_release}" >/dev/null ||
-  fail 'Dex must register the exact Crossview public OIDC callback'
+  fail 'Dex must register only the public Crossview callback, without the retired localhost redirect'
 
 yq e -e '
+  (.spec.ingress | length) == 2 and
   ([.spec.ingress[] |
-    select((.fromEntities | length) == 1 and .fromEntities[0] == "ingress")] |
-    length) == 1 and
-  [.spec.ingress[] | select(.fromEntities[0] == "ingress")][0].toPorts[0].ports[0].port == "3001" and
-  [.spec.ingress[] | select(.fromEntities[0] == "ingress")][0].toPorts[0].ports[0].protocol == "TCP" and
-  ([.spec.ingress[] | select(.fromEntities[0] == "ingress")][0].toPorts[0].ports | length) == 1
+    select(
+      (.fromEntities | length) == 1 and
+      .fromEntities[0] == "ingress" and
+      (.toPorts | length) == 1 and
+      (.toPorts[0].ports | length) == 1 and
+      .toPorts[0].ports[0].port == "3001" and
+      .toPorts[0].ports[0].protocol == "TCP"
+    )] | length) == 1 and
+  ([.spec.ingress[] |
+    select(
+      (.fromEndpoints | length) == 1 and
+      .fromEndpoints[0].matchLabels."k8s:io.kubernetes.pod.namespace" == "crossview" and
+      (has("fromEntities") | not) and
+      (has("toPorts") | not)
+    )] | length) == 1
 ' "${crossview_policy}" >/dev/null ||
-  fail 'Crossview must admit only Cilium Gateway traffic on its public app port'
+  fail 'Crossview ingress must contain only the exact gateway and intra-namespace rules'
 
 rendered="$(kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps")" ||
   fail 'the production apps overlay must render successfully'
@@ -101,6 +120,11 @@ printf '%s\n' "${rendered}" |
       .kind == "HTTPRoute" and
       .metadata.namespace == "crossview" and
       .metadata.name == "crossview" and
+      (.spec.parentRefs | length) == 1 and
+      (.spec.parentRefs[0] | length) == 3 and
+      .spec.parentRefs[0].name == "platform" and
+      .spec.parentRefs[0].namespace == "kube-system" and
+      .spec.parentRefs[0].sectionName == "https" and
       (.spec.hostnames | length) == 1 and
       .spec.hostnames[0] == strenv(CROSSVIEW_HOSTNAME) and
       .spec.rules[0].backendRefs[0].name == "crossview-service" and
@@ -109,6 +133,6 @@ printf '%s\n' "${rendered}" |
     )] |
     length == 1
   ' - >/dev/null ||
-  fail 'fresh installs must render exactly one Crossview route to crossview-service'
+  fail 'fresh installs must render one Crossview route on the approved HTTPS gateway parent'
 
 printf 'PASS: Headlamp plugin removal prunes upgrade state and preserves authenticated Crossview access\n'
