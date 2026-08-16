@@ -13,18 +13,26 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
+readonly bootstrap_dir="${root_dir}/k8s/providers/hetzner/bootstrap"
 readonly controllers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
 readonly infrastructure_dir="${root_dir}/k8s/providers/hetzner/infrastructure"
+readonly apps_dir="${root_dir}/k8s/providers/hetzner/apps"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1
 }
 
+bootstrap_rendered="$(kubectl kustomize "${bootstrap_dir}")" ||
+  fail 'the deployed Hetzner bootstrap overlay must render'
 rendered="$(kubectl kustomize "${controllers_dir}")" ||
   fail 'the deployed Hetzner controller overlay must render'
 infrastructure_rendered="$(kubectl kustomize "${infrastructure_dir}")" ||
   fail 'the deployed Hetzner infrastructure overlay must render'
+apps_rendered="$(kubectl kustomize "${apps_dir}")" ||
+  fail 'the deployed Hetzner apps overlay must render'
+
+effective_policy_render="${bootstrap_rendered}"$'\n---\n'"${rendered}"$'\n---\n'"${infrastructure_rendered}"$'\n---\n'"${apps_rendered}"
 
 command -v yq >/dev/null 2>&1 ||
   fail 'mikefarah yq v4.9+ is required to inspect generated policy templates'
@@ -133,8 +141,13 @@ assert_generated_policy_contract() {
         .generate.namespace == "crossplane-system" or
         (
           .generate.namespace == "{{request.object.metadata.name}}" and
-          ([.match.any[]?.resources.kinds[]?] | any_c(. == "Namespace")) and
-          (([.exclude.any[]?.resources.names[]?] |
+          ([.match.resources.kinds[]?,
+            .match.any[]?.resources.kinds[]?,
+            .match.all[]?.resources.kinds[]?] |
+            any_c(. == "Namespace")) and
+          (([.exclude.resources.names[]?,
+            .exclude.any[]?.resources.names[]?,
+            .exclude.all[]?.resources.names[]?] |
             any_c(. == "crossplane-system")) | not)
         )
       ) |
@@ -164,8 +177,13 @@ assert_generated_policy_contract() {
         .generate.namespace == "crossplane-system" or
         (
           .generate.namespace == "{{request.object.metadata.name}}" and
-          ([.match.any[]?.resources.kinds[]?] | any_c(. == "Namespace")) and
-          (([.exclude.any[]?.resources.names[]?] |
+          ([.match.resources.kinds[]?,
+            .match.any[]?.resources.kinds[]?,
+            .match.all[]?.resources.kinds[]?] |
+            any_c(. == "Namespace")) and
+          (([.exclude.resources.names[]?,
+            .exclude.any[]?.resources.names[]?,
+            .exclude.all[]?.resources.names[]?] |
             any_c(. == "crossplane-system")) | not)
         )
       ) |
@@ -200,49 +218,48 @@ selected_policy_count="$(awk '/^kind: CiliumNetworkPolicy$/ { count++ } END { pr
 [ "${selected_policy_count}" -eq 1 ] ||
   fail 'the deployed overlay must contain exactly one allow-crossplane CiliumNetworkPolicy'
 
-static_policy_render="${rendered}"$'\n---\n'"${infrastructure_rendered}"
 expected_static_policy='CiliumNetworkPolicy|crossplane-system|allow-crossplane'
-static_crossplane_policies="$(static_crossplane_policy_inventory "${static_policy_render}")"
+static_crossplane_policies="$(static_crossplane_policy_inventory "${effective_policy_render}")"
 [ "${static_crossplane_policies}" = "${expected_static_policy}" ] ||
   fail 'allow-crossplane must be the only static policy that can select Crossplane pods across deployed layers'
 
 # Kyverno materializes default-deny and allow-dns policies after the static
-# controller layer is applied. Inspect their templates from the deployed
-# infrastructure overlay so the effective additive allow-set is covered too.
-assert_generated_policy_contract "${infrastructure_rendered}"
+# layers are applied. Inspect generators across every deployed Hetzner layer so
+# the effective additive allow-set is covered too.
+assert_generated_policy_contract "${effective_policy_render}"
 
-unexpected_generate_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: generate-crossplane-world-egress\nspec:\n  rules:\n  - name: generate-world-egress\n    match:\n      any:\n      - resources:\n          kinds: [Namespace]\n    generate:\n      generateExisting: true\n      apiVersion: cilium.io/v2\n      kind: CiliumNetworkPolicy\n      name: allow-world\n      namespace: "{{request.object.metadata.name}}"\n      synchronize: true\n      data:\n        spec:\n          endpointSelector: {}\n          egress:\n          - toEntities: [world]'
-infrastructure_with_unexpected_generate="${infrastructure_rendered}"$'\n---\n'"${unexpected_generate_policy}"
-if (assert_generated_policy_contract "${infrastructure_with_unexpected_generate}") >/dev/null 2>&1; then
+unexpected_generate_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: generate-crossplane-world-egress\nspec:\n  rules:\n  - name: generate-world-egress\n    match:\n      resources:\n        kinds: [Namespace]\n    generate:\n      generateExisting: true\n      apiVersion: cilium.io/v2\n      kind: CiliumNetworkPolicy\n      name: allow-world\n      namespace: "{{request.object.metadata.name}}"\n      synchronize: true\n      data:\n        spec:\n          endpointSelector: {}\n          egress:\n          - toEntities: [world]'
+render_with_unexpected_generate="${effective_policy_render}"$'\n---\n'"${unexpected_generate_policy}"
+if (assert_generated_policy_contract "${render_with_unexpected_generate}") >/dev/null 2>&1; then
   fail 'the regression guard must reject an additional Kyverno-generated network policy'
 fi
 
 unrelated_generate_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: generate-monitoring-network-policy\nspec:\n  rules:\n  - name: generate-monitoring-egress\n    match:\n      any:\n      - resources:\n          kinds: [Pod]\n    generate:\n      generateExisting: true\n      apiVersion: networking.k8s.io/v1\n      kind: NetworkPolicy\n      name: monitoring-egress\n      namespace: monitoring\n      synchronize: true\n      data:\n        spec:\n          podSelector: {}\n          egress:\n          - {}'
-infrastructure_with_unrelated_generate="${infrastructure_rendered}"$'\n---\n'"${unrelated_generate_policy}"
-if ! (assert_generated_policy_contract "${infrastructure_with_unrelated_generate}") >/dev/null 2>&1; then
+render_with_unrelated_generate="${effective_policy_render}"$'\n---\n'"${unrelated_generate_policy}"
+if ! (assert_generated_policy_contract "${render_with_unrelated_generate}") >/dev/null 2>&1; then
   fail 'the regression guard must ignore Kyverno generators that cannot target Crossplane'
 fi
 
 additional_world_policy=$'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: additional-world-egress\n  namespace: crossplane-system\nspec:\n  endpointSelector: {}\n  egress:\n  - toEntities: [world]'
-rendered_with_additional_world_policy="${static_policy_render}"$'\n---\n'"${additional_world_policy}"
+rendered_with_additional_world_policy="${effective_policy_render}"$'\n---\n'"${additional_world_policy}"
 if [ "$(static_crossplane_policy_inventory "${rendered_with_additional_world_policy}")" = "${expected_static_policy}" ]; then
   fail 'the regression guard must reject an additional Crossplane CiliumNetworkPolicy'
 fi
 
 standard_world_policy=$'apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: additional-standard-world-egress\n  namespace: crossplane-system\nspec:\n  podSelector: {}\n  policyTypes: [Egress]\n  egress:\n  - {}'
-rendered_with_standard_world_policy="${static_policy_render}"$'\n---\n'"${standard_world_policy}"
+rendered_with_standard_world_policy="${effective_policy_render}"$'\n---\n'"${standard_world_policy}"
 if [ "$(static_crossplane_policy_inventory "${rendered_with_standard_world_policy}")" = "${expected_static_policy}" ]; then
   fail 'the regression guard must reject an additional standard Crossplane NetworkPolicy'
 fi
 
 clusterwide_world_policy=$'apiVersion: cilium.io/v2\nkind: CiliumClusterwideNetworkPolicy\nmetadata:\n  name: additional-clusterwide-world-egress\nspec:\n  endpointSelector:\n    matchLabels:\n      k8s:io.kubernetes.pod.namespace: crossplane-system\n  egress:\n  - toEntities: [world]'
-rendered_with_clusterwide_world_policy="${static_policy_render}"$'\n---\n'"${clusterwide_world_policy}"
+rendered_with_clusterwide_world_policy="${effective_policy_render}"$'\n---\n'"${clusterwide_world_policy}"
 if [ "$(static_crossplane_policy_inventory "${rendered_with_clusterwide_world_policy}")" = "${expected_static_policy}" ]; then
   fail 'the regression guard must reject a Cilium cluster-wide policy that can select Crossplane pods'
 fi
 
 unrelated_clusterwide_policy=$'apiVersion: cilium.io/v2\nkind: CiliumClusterwideNetworkPolicy\nmetadata:\n  name: monitoring-only-egress\nspec:\n  endpointSelector:\n    matchLabels:\n      k8s:io.kubernetes.pod.namespace: monitoring\n  egress:\n  - toEntities: [world]'
-rendered_with_unrelated_clusterwide="${static_policy_render}"$'\n---\n'"${unrelated_clusterwide_policy}"
+rendered_with_unrelated_clusterwide="${effective_policy_render}"$'\n---\n'"${unrelated_clusterwide_policy}"
 if [ "$(static_crossplane_policy_inventory "${rendered_with_unrelated_clusterwide}")" != "${expected_static_policy}" ]; then
   fail 'the regression guard must ignore cluster-wide policies constrained to another namespace'
 fi
