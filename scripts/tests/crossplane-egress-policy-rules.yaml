@@ -14,8 +14,26 @@ rules:
       !(object.kind in ['CiliumNetworkPolicy', 'NetworkPolicy']) ||
       !has(object.metadata.namespace) ||
       object.metadata.namespace != 'crossplane-system' ||
-      !has(object.spec.egress) ||
-      object.spec.egress.size() == 0 ||
+      ((!has(object.spec.egress) || object.spec.egress.size() == 0) &&
+       (object.kind != 'CiliumNetworkPolicy' ||
+        !has(object.spec.egressDeny) ||
+        object.spec.egressDeny.size() == 0)) ||
+      (object.kind == 'CiliumNetworkPolicy' &&
+       has(object.spec.endpointSelector) &&
+       ((has(object.spec.endpointSelector.matchLabels) &&
+         'k8s:io.kubernetes.pod.namespace' in
+           object.spec.endpointSelector.matchLabels &&
+         object.spec.endpointSelector.matchLabels[
+           'k8s:io.kubernetes.pod.namespace'
+         ] != 'crossplane-system') ||
+        (has(object.spec.endpointSelector.matchExpressions) &&
+         object.spec.endpointSelector.matchExpressions.exists(selector,
+           selector.key == 'k8s:io.kubernetes.pod.namespace' &&
+           ((selector.operator == 'In' && has(selector.values) &&
+             !('crossplane-system' in selector.values)) ||
+            (selector.operator == 'NotIn' && has(selector.values) &&
+             'crossplane-system' in selector.values) ||
+            selector.operator == 'DoesNotExist'))))) ||
       object == {
         'apiVersion': 'cilium.io/v2',
         'kind': 'CiliumNetworkPolicy',
@@ -76,8 +94,9 @@ rules:
   - name: reject-crossplane-chart-clusterwide-network-policies
     expression: >-
       object.kind != 'CiliumClusterwideNetworkPolicy' ||
-      !has(object.spec.egress) ||
-      object.spec.egress.size() == 0 ||
+      ((!has(object.spec.egress) || object.spec.egress.size() == 0) &&
+       (!has(object.spec.egressDeny) ||
+        object.spec.egressDeny.size() == 0)) ||
       has(object.spec.nodeSelector) ||
       (has(object.spec.endpointSelector) &&
        ((has(object.spec.endpointSelector.matchLabels) &&
@@ -107,32 +126,97 @@ rules:
       !has(object.spec.rules) ||
       !object.spec.rules.exists(rule,
         has(rule.generate) &&
-        ((has(rule.generate.kind) &&
+        ((object.apiVersion == 'kyverno.io/v1' &&
+          object.kind == 'ClusterPolicy' &&
+          object.metadata.name == 'add-default-deny' &&
+          !has(object.metadata.namespace)) ||
+         (has(rule.generate.kind) &&
           (!rule.generate.kind.matches(
             '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
            rule.generate.kind == '*' ||
-           rule.generate.kind.endsWith('/CiliumNetworkPolicy') ||
-           rule.generate.kind.endsWith('/NetworkPolicy') ||
-           rule.generate.kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
-           rule.generate.kind in [
-             'CiliumNetworkPolicy',
-             'NetworkPolicy',
-             'CiliumClusterwideNetworkPolicy'
-           ])) ||
+           ((rule.generate.kind.endsWith('/CiliumNetworkPolicy') ||
+             rule.generate.kind.endsWith('/NetworkPolicy') ||
+             rule.generate.kind.endsWith(
+               '/CiliumClusterwideNetworkPolicy') ||
+             rule.generate.kind in [
+               'CiliumNetworkPolicy',
+               'NetworkPolicy',
+               'CiliumClusterwideNetworkPolicy'
+             ]) &&
+            !(
+              (!(rule.generate.kind.endsWith(
+                   '/CiliumClusterwideNetworkPolicy') ||
+                 rule.generate.kind ==
+                   'CiliumClusterwideNetworkPolicy') &&
+               has(rule.generate.namespace) &&
+               rule.generate.namespace.matches(
+                 '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$') &&
+               rule.generate.namespace != 'crossplane-system') ||
+              (has(rule.generate.data) &&
+               has(rule.generate.data.spec) &&
+               (!has(rule.generate.data.spec.egress) ||
+                rule.generate.data.spec.egress.size() == 0) &&
+               (!has(rule.generate.data.spec.egressDeny) ||
+                rule.generate.data.spec.egressDeny.size() == 0)) ||
+              ((rule.generate.kind.endsWith(
+                  '/CiliumNetworkPolicy') ||
+                rule.generate.kind.endsWith(
+                  '/CiliumClusterwideNetworkPolicy') ||
+                rule.generate.kind in [
+                  'CiliumNetworkPolicy',
+                  'CiliumClusterwideNetworkPolicy'
+                ]) &&
+               has(rule.generate.data) &&
+               has(rule.generate.data.spec) &&
+               has(rule.generate.data.spec.endpointSelector) &&
+               has(rule.generate.data.spec.endpointSelector.matchLabels) &&
+               'k8s:io.kubernetes.pod.namespace' in
+                 rule.generate.data.spec.endpointSelector.matchLabels &&
+               rule.generate.data.spec.endpointSelector.matchLabels[
+                 'k8s:io.kubernetes.pod.namespace'
+               ] != 'crossplane-system'))))) ||
          (has(rule.generate.foreach) &&
           rule.generate.foreach.exists(item,
             has(item.kind) &&
             (!item.kind.matches(
               '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
              item.kind == '*' ||
-             item.kind.endsWith('/CiliumNetworkPolicy') ||
-             item.kind.endsWith('/NetworkPolicy') ||
-             item.kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
-             item.kind in [
-               'CiliumNetworkPolicy',
-               'NetworkPolicy',
-               'CiliumClusterwideNetworkPolicy'
-             ]))) ||
+             ((item.kind.endsWith('/CiliumNetworkPolicy') ||
+               item.kind.endsWith('/NetworkPolicy') ||
+               item.kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+               item.kind in [
+                 'CiliumNetworkPolicy',
+                 'NetworkPolicy',
+                 'CiliumClusterwideNetworkPolicy'
+               ]) &&
+              !(
+                (!(item.kind.endsWith(
+                     '/CiliumClusterwideNetworkPolicy') ||
+                   item.kind == 'CiliumClusterwideNetworkPolicy') &&
+                 has(item.namespace) &&
+                 item.namespace.matches(
+                   '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$') &&
+                 item.namespace != 'crossplane-system') ||
+                (has(item.data) && has(item.data.spec) &&
+                 (!has(item.data.spec.egress) ||
+                  item.data.spec.egress.size() == 0) &&
+                 (!has(item.data.spec.egressDeny) ||
+                  item.data.spec.egressDeny.size() == 0)) ||
+                ((item.kind.endsWith('/CiliumNetworkPolicy') ||
+                  item.kind.endsWith(
+                    '/CiliumClusterwideNetworkPolicy') ||
+                  item.kind in [
+                    'CiliumNetworkPolicy',
+                    'CiliumClusterwideNetworkPolicy'
+                  ]) &&
+                 has(item.data) && has(item.data.spec) &&
+                 has(item.data.spec.endpointSelector) &&
+                 has(item.data.spec.endpointSelector.matchLabels) &&
+                 'k8s:io.kubernetes.pod.namespace' in
+                   item.data.spec.endpointSelector.matchLabels &&
+                 item.data.spec.endpointSelector.matchLabels[
+                   'k8s:io.kubernetes.pod.namespace'
+                 ] != 'crossplane-system')))))) ||
          (has(rule.generate.cloneList) &&
           has(rule.generate.cloneList.kinds) &&
           rule.generate.cloneList.kinds.exists(kind,
@@ -141,12 +225,15 @@ rules:
             kind == '*' ||
             kind.endsWith('/CiliumNetworkPolicy') ||
             kind.endsWith('/NetworkPolicy') ||
-            kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
-            kind in [
-              'CiliumNetworkPolicy',
-              'NetworkPolicy',
-              'CiliumClusterwideNetworkPolicy'
-            ])) ||
+            ((kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+              kind == 'CiliumClusterwideNetworkPolicy') ||
+             ((kind.endsWith('/CiliumNetworkPolicy') ||
+               kind.endsWith('/NetworkPolicy') ||
+               kind in ['CiliumNetworkPolicy', 'NetworkPolicy']) &&
+              (!has(rule.generate.namespace) ||
+               !rule.generate.namespace.matches(
+                 '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$') ||
+               rule.generate.namespace == 'crossplane-system'))))) ||
          (has(rule.generate.foreach) &&
           rule.generate.foreach.exists(item,
             has(item.cloneList) && has(item.cloneList.kinds) &&
@@ -156,12 +243,15 @@ rules:
               kind == '*' ||
               kind.endsWith('/CiliumNetworkPolicy') ||
               kind.endsWith('/NetworkPolicy') ||
-              kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
-              kind in [
-                'CiliumNetworkPolicy',
-                'NetworkPolicy',
-                'CiliumClusterwideNetworkPolicy'
-              ])))) &&
+              ((kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+                kind == 'CiliumClusterwideNetworkPolicy') ||
+               ((kind.endsWith('/CiliumNetworkPolicy') ||
+                 kind.endsWith('/NetworkPolicy') ||
+                 kind in ['CiliumNetworkPolicy', 'NetworkPolicy']) &&
+                (!has(item.namespace) ||
+                 !item.namespace.matches(
+                   '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$') ||
+                 item.namespace == 'crossplane-system'))))))) &&
         !(object.apiVersion == 'kyverno.io/v1' &&
           object.kind == 'ClusterPolicy' &&
           object.metadata.name == 'add-default-deny' &&
@@ -245,76 +335,44 @@ rules:
       !object.spec.rules.exists(rule,
         has(rule.mutate) &&
         (
-         (!(
-          (has(rule.exclude.resources) &&
-           (!has(rule.exclude.resources.kinds) ||
-            rule.exclude.resources.kinds.exists(kind,
-              kind == '*' ||
-              kind.endsWith('/CiliumNetworkPolicy') ||
-              kind.endsWith('/NetworkPolicy') ||
-              kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
-              kind in [
-                'CiliumNetworkPolicy',
-                'NetworkPolicy',
-                'CiliumClusterwideNetworkPolicy'
-              ])) &&
-           (!has(rule.exclude.resources.names) ||
-            '*' in rule.exclude.resources.names) &&
-           (!has(rule.exclude.resources.namespaces) ||
-            'crossplane-system' in rule.exclude.resources.namespaces ||
-            '*' in rule.exclude.resources.namespaces) &&
-           !has(rule.exclude.resources.selector) &&
-           !has(rule.exclude.resources.namespaceSelector) &&
-           !has(rule.exclude.resources.annotations)) ||
-          (has(rule.exclude.any) &&
-           rule.exclude.any.exists(filter,
-             has(filter.resources) &&
-             (!has(filter.subjects) && !has(filter.roles) &&
-              !has(filter.clusterRoles)) &&
-             (!has(filter.resources.kinds) ||
-              filter.resources.kinds.exists(kind,
-                kind == '*' ||
-                kind.endsWith('/CiliumNetworkPolicy') ||
-                kind.endsWith('/NetworkPolicy') ||
-                kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
-                kind in [
-                  'CiliumNetworkPolicy',
-                  'NetworkPolicy',
-                  'CiliumClusterwideNetworkPolicy'
-                ])) &&
-             (!has(filter.resources.names) ||
-              '*' in filter.resources.names) &&
-             (!has(filter.resources.namespaces) ||
-              'crossplane-system' in filter.resources.namespaces ||
-              '*' in filter.resources.namespaces) &&
-             !has(filter.resources.selector) &&
-             !has(filter.resources.namespaceSelector) &&
-             !has(filter.resources.annotations))) ||
-          (has(rule.exclude.all) && rule.exclude.all.size() > 0 &&
-           rule.exclude.all.all(filter,
-             has(filter.resources) &&
-             (!has(filter.subjects) && !has(filter.roles) &&
-              !has(filter.clusterRoles)) &&
-             (!has(filter.resources.kinds) ||
-              filter.resources.kinds.exists(kind,
-                kind == '*' ||
-                kind.endsWith('/CiliumNetworkPolicy') ||
-                kind.endsWith('/NetworkPolicy') ||
-                kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
-                kind in [
-                  'CiliumNetworkPolicy',
-                  'NetworkPolicy',
-                  'CiliumClusterwideNetworkPolicy'
-                ])) &&
-             (!has(filter.resources.names) ||
-              '*' in filter.resources.names) &&
-             (!has(filter.resources.namespaces) ||
-              'crossplane-system' in filter.resources.namespaces ||
-              '*' in filter.resources.namespaces) &&
-             !has(filter.resources.selector) &&
-             !has(filter.resources.namespaceSelector) &&
-             !has(filter.resources.annotations)))
-         ) &&
+         ((!has(rule.mutate.targets) ||
+           rule.mutate.targets.size() == 0) &&
+          !(
+            has(rule.match.resources) &&
+            has(rule.match.resources.kinds) &&
+            rule.match.resources.kinds.size() > 0 &&
+            has(rule.exclude.resources) &&
+            rule.match.resources.kinds.all(kind,
+              kind.matches(
+                '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') &&
+              kind != '*' &&
+              (!has(rule.exclude.resources.kinds) ||
+               '*' in rule.exclude.resources.kinds ||
+               kind in rule.exclude.resources.kinds)) &&
+            (!has(rule.exclude.resources.names) ||
+             '*' in rule.exclude.resources.names ||
+             (has(rule.match.resources.names) &&
+              rule.match.resources.names.size() > 0 &&
+              rule.match.resources.names.all(name,
+                name.matches(
+                  '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$') &&
+                name in rule.exclude.resources.names))) &&
+            (!has(rule.exclude.resources.namespaces) ||
+             '*' in rule.exclude.resources.namespaces ||
+             (rule.match.resources.kinds.all(kind,
+                !kind.endsWith('/CiliumClusterwideNetworkPolicy') &&
+                kind != 'CiliumClusterwideNetworkPolicy') &&
+              has(rule.match.resources.namespaces) &&
+              rule.match.resources.namespaces.size() > 0 &&
+              rule.match.resources.namespaces.all(ns,
+                ns.matches(
+                  '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$') &&
+                ns in rule.exclude.resources.namespaces))) &&
+            !has(rule.exclude.resources.selector) &&
+            !has(rule.exclude.resources.namespaceSelector) &&
+            !has(rule.exclude.resources.annotations) &&
+            !has(rule.exclude.resources.operations)
+          ) &&
          ((!has(rule.match.resources) &&
            !has(rule.match.any) &&
            !has(rule.match.all)) ||
@@ -393,32 +451,31 @@ rules:
               filter.resources.namespaces.all(ns,
                 ns.matches(
                   '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$') &&
-                ns != 'crossplane-system')))))) ||
+                ns != 'crossplane-system'))))))) ||
          (has(rule.mutate.targets) &&
           rule.mutate.targets.exists(target,
-            (!has(target.namespace) ||
-             !target.namespace.matches(
-               '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$') ||
-             target.namespace == 'crossplane-system') &&
-            (!has(target.kind) ||
+            !has(target.kind) ||
              !target.kind.matches(
                '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
              target.kind == '*' ||
-             target.kind.endsWith('/CiliumNetworkPolicy') ||
-             target.kind.endsWith('/NetworkPolicy') ||
              target.kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
-             target.kind in [
-               'CiliumNetworkPolicy',
-               'NetworkPolicy',
-               'CiliumClusterwideNetworkPolicy'
-             ]))))
-        ))
+             target.kind == 'CiliumClusterwideNetworkPolicy' ||
+             ((target.kind.endsWith('/CiliumNetworkPolicy') ||
+               target.kind.endsWith('/NetworkPolicy') ||
+               target.kind in ['CiliumNetworkPolicy', 'NetworkPolicy']) &&
+              (!has(target.namespace) ||
+               !target.namespace.matches(
+                 '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$') ||
+               target.namespace == 'crossplane-system')))))
+        )
     message: >-
       Helm-rendered Kyverno policies must not mutate network-policy resources
     severity: error
 
   - name: reject-cel-policy-producers
     expression: >-
+      !has(object.apiVersion) ||
+      !object.apiVersion.startsWith('policies.kyverno.io/') ||
       !(object.kind in ['GeneratingPolicy', 'MutatingPolicy'])
     message: >-
       Helm-rendered CEL policy producers require explicit effective-policy
