@@ -45,6 +45,12 @@ data:
           rule: "Host(`backstage.${domain}`)"
           entryPoints: ["web"]
           service: backstage
+        # Crossview also has native OIDC, but the outer oauth2-proxy hop keeps
+        # its cluster-wide read surface restricted to the maintainer team.
+        crossview:
+          rule: "Host(`crossview.${domain}`)"
+          entryPoints: ["web"]
+          service: crossview
         # Kyverno Policy Reporter UI. Prod-only (the app lives in the
         # `infrastructure` layer, pulled in full only by the hetzner overlay), so
         # this router is inert on local/CI -- no HTTPRoute sends
@@ -82,6 +88,10 @@ data:
           loadBalancer:
             servers:
               - url: "http://backstage.backstage.svc.cluster.local:7007"
+        crossview:
+          loadBalancer:
+            servers:
+              - url: "http://crossview-service.crossview.svc.cluster.local:80"
         # Policy Reporter UI (policy-reporter-ui Service :8080). Prod-only and
         # inert on local (the policy-reporter namespace has no pods there).
         policy-reporter:
