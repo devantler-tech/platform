@@ -561,6 +561,32 @@ case "${base_tip}" in
 esac
 [ ${#base_tip} -eq 40 ] || { echo "base tip not a full sha: '${base_tip}'" >&2; exit 1; }
 
+# PREFLIGHT THE NO-BASE CASE — this read is what makes the empty-commit fallback REACHABLE.
+# `update-branch` merges the base INTO the head, so a head that already contains the current
+# tip of `main` has nothing to merge: the call cannot move the head or fire the workflow.
+# Without this read the sequence goes straight from the tip to the PUT, and that case
+# degrades into either a refused request or an unchanged-head timeout — which the outcome
+# table below defines as UNKNOWN and explicitly forbids reading as "no base". The fallback
+# would then be documented but unreachable from this sequence. Establish it POSITIVELY here,
+# before the write, exactly as the fallback paragraph below requires.
+#
+# `behind_by` from `compare/{base}...{head}` counts commits the HEAD is behind the BASE, so
+# `0` means the head already contains `base_tip`. This is the same read, in the same
+# direction, that the post-update compare uses to prove the base landed.
+if ! behind_before="$(gh api \
+    "repos/devantler-tech/platform/compare/${base_tip}...<head>" --jq .behind_by)"; then
+  echo "preflight compare failed - cannot tell whether there is base to merge" >&2; exit 1
+fi
+case "${behind_before}" in
+  ''|*[!0-9]*) echo "behind_by malformed: '${behind_before}'" >&2; exit 1 ;;
+esac
+if [ "${behind_before}" -eq 0 ]; then
+  # Evidenced no-base case. Do NOT issue the PUT — it cannot help. Exit distinctly so the
+  # caller takes the empty-commit fallback rather than treating this as a failed diagnosis.
+  echo "head already contains main (behind_by=0) - take the empty-commit fallback" >&2
+  exit 2
+fi
+
 # GUARD THE WRITE. `gh` returns nonzero on a failed request, and the failure that matters
 # here is the `422` raised when `expected_head_sha` no longer matches — i.e. another actor
 # moved the head first. Unguarded, the sequence falls straight through into the poll below
@@ -665,13 +691,24 @@ where the managed run exists — the one failure mode this poll is written to av
 # created and indexed independently, so another PR workflow appearing first makes a total
 # count non-zero while the required run is still absent — and the path-filtered query would
 # then read that absence as "the head predates the requirement".
+#
+# POLL TO A TERMINAL STATUS, never to mere existence. A run that is `queued` or `in_progress`
+# is already indexed, so an existence test breaks out here immediately — and the strict
+# "is the requirement satisfied?" query above then answers `0`, which is the SAME answer it
+# gives for a run that FAILED or was cancelled. Breaking early therefore reports a perfectly
+# healthy still-running workflow as a red build, and sends the diagnosis off to fix a build
+# that is fine — or to spend another head-moving write on it. Wait for the run to complete,
+# then branch on its conclusion.
 managed=".github/workflows/validate-go-project.yaml"
 managed_run=""
+managed_conclusion=""
 for _ in $(seq 1 30); do
   # A FAILED read is UNKNOWN, never a hit. Check the exit status: on a transient API,
-  # network or auth error the substitution collapses to the empty string, and
-  # `[ "" != "0" ]` is TRUE — so one failed request would set managed_run=1 having
-  # observed no run whatsoever, which is the fail-open this poll exists to prevent.
+  # network or auth error the substitution collapses to the empty string, which carries no
+  # observation at all — so it must reach neither `success` nor `failed`. The exit-status
+  # test is the first line of that defence and the catch-all arm below is the second; a
+  # verdict must come from a read that actually succeeded, which is the fail-open this poll
+  # exists to prevent.
   # PAGINATE, exactly as the two diagnostic queries above must: `per_page=100` caps one page,
   # so a head with enough runs (repeated reruns, a busy PR) can push the managed run onto a
   # later page and make this poll return `0` forever — a false UNKNOWN that never terminates.
@@ -682,16 +719,25 @@ for _ in $(seq 1 30); do
   # the status of the LAST element of the pipeline, so without it a failed `gh api` is masked
   # by a `jq` that exits 0 on empty input — and the exit-status check below would be reading
   # jq's success while gh had failed.
-  if count="$(set -o pipefail
+  # `--arg` rather than string-interpolating `${managed}` into the filter: the path is data,
+  # and a quoted jq program keeps the shell out of it.
+  if state="$(set -o pipefail
       gh api --paginate --slurp \
         "repos/devantler-tech/platform/actions/runs?head_sha=${new_head}&per_page=100" \
-      | jq "[.[].workflow_runs[] | select(.path == \"${managed}\")] | length")"; then
-    # Require a NUMBER. Anything else — an error string, an empty body — is UNKNOWN too,
-    # because `!=` accepts every one of them as if it were a positive count.
-    case "${count}" in
-      ''|*[!0-9]*) ;;               # not a count: keep waiting
-      0)           ;;               # no run yet: keep waiting
-      *) managed_run=1; break ;;    # a real, positive count
+      | jq -r --arg managed "${managed}" '
+          [.[].workflow_runs[] | select(.path == $managed)]
+          | if   length == 0                    then "absent"
+            elif any(.status != "completed")    then "running"
+            elif any(.conclusion == "success")  then "success"
+            else                                     "failed"
+            end')"; then
+    # Require a RECOGNISED verdict. Anything else — an error string, an empty body, a status
+    # this repo has not seen — is UNKNOWN, and must keep waiting rather than break.
+    case "${state}" in
+      success) managed_run=1; managed_conclusion=success; break ;;
+      failed)  managed_run=1; managed_conclusion=failed;  break ;;
+      absent|running) ;;            # not terminal yet: keep waiting
+      *) ;;                         # unrecognised: UNKNOWN, keep waiting
     esac
   fi
   sleep 2
@@ -700,6 +746,12 @@ done
 # That is also what keeps this poll from being circular: it never has to *conclude* absence,
 # so a head which genuinely predates the requirement ends at UNKNOWN rather than hanging.
 # Carry it forward like any other unknown; do not answer it with a second head move.
+#
+# `managed_conclusion` now ANSWERS the "is the requirement satisfied?" question directly, and
+# it is the same test that query applies (`status == "completed"` and some run `success`), so
+# read it rather than re-issuing the strict query — re-reading only reopens the window where a
+# still-running run answers `0`. `success` = satisfied, enqueue. `failed` = a genuinely red
+# build to fix, NOT a head to move again. Empty = UNKNOWN, per the bound above.
 ```
 
 ⚠️ **The provenance collision above applies to this poll too.** A PR whose own tree contains
