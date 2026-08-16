@@ -590,23 +590,30 @@ another branch update or empty commit. Wait for a matching run on `new_head` und
 before interpreting any absence, and only then read its status:
 
 ```sh
-run_found=""
+# Poll for the MANAGED workflow's own run, not merely for any run at the head. Workflows are
+# created and indexed independently, so another PR workflow appearing first makes a total
+# count non-zero while the required run is still absent — and the path-filtered query would
+# then read that absence as "the head predates the requirement".
+managed=".github/workflows/validate-go-project.yaml"
+managed_run=""
 for _ in $(seq 1 30); do
   if [ "$(gh api "repos/devantler-tech/platform/actions/runs?head_sha=${new_head}" \
-        --jq '.total_count')" != "0" ]; then
-    run_found=1
+        --jq "[.workflow_runs[] | select(.path == \"${managed}\")] | length")" != "0" ]; then
+    managed_run=1
     break
   fi
   sleep 2
 done
-# Only a non-empty run_found makes a later `0` meaningful. An exhausted bound is UNKNOWN —
-# it is not evidence that the head predates the requirement.
-#
-# This deliberately probes for ANY run at the head, not for the required workflow itself.
-# Polling for that specific path would be circular: its absence is the very thing the
-# path-filtered query is being asked to establish, so a genuine "head predates the
-# requirement" would hang here instead of being reported.
+# An exhausted bound is UNKNOWN — NOT evidence that the head predates the requirement.
+# That is also what keeps this poll from being circular: it never has to *conclude* absence,
+# so a head which genuinely predates the requirement ends at UNKNOWN rather than hanging.
+# Carry it forward like any other unknown; do not answer it with a second head move.
 ```
+
+⚠️ **The provenance collision above applies to this poll too.** A PR whose own tree contains
+`validate-go-project.yaml` produces runs carrying that exact path from its own copy, so `managed_run`
+can be satisfied by the PR's own workflow rather than the org-injected one. Confirm the file is absent
+from the PR's tree before trusting this poll, exactly as when trusting either count.
 
 🔴 **A CHANGED head is not evidence your update landed — check what is IN it.**
 `expected_head_sha` guards the request-time head only; it is not a lock, so nothing stops a bot or
