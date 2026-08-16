@@ -35,6 +35,14 @@ spec:
         - ports:
             - port: "7007"
               protocol: TCP
+    # Crossview upstream (cluster resource explorer; Service :80 -> pod :3001).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: crossview
+      toPorts:
+        - ports:
+            - port: "3001"
+              protocol: TCP
     # Homepage upstream
     - toEndpoints:
         - matchLabels:
@@ -76,6 +84,15 @@ spec:
       toPorts:
         - ports:
             - port: "8080"
+              protocol: TCP
+    # OpenBao UI/API upstream. The public HTTPRoute points at oauth2-proxy,
+    # then auth-proxy forwards only authenticated requests to OpenBao.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: openbao
+      toPorts:
+        - ports:
+            - port: "8200"
               protocol: TCP
     # DNS resolution
     - toEndpoints:

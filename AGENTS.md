@@ -434,6 +434,19 @@ GitHub's force-cancel endpoint bypasses conditions such as `always()` and can st
 artifact. If a legacy/cancelled run did not execute `🩹 Heal Prod`, dispatch `CD` on `main` and
 verify that deployment before treating the production lane as clean.
 
+**Persistence retirement is always two-stage.** A merge-group artifact is speculative, but
+Kubernetes PVC deletion is irreversible once `deletionTimestamp` is set: queue eviction and the
+heal job cannot un-delete it. The production persistence-safety component therefore disables Flux
+pruning on every PVC, HelmRelease, and Namespace, and disables Flux force replacement on PVCs.
+HelmRelease protection prevents chart uninstall from deleting chart-owned claims; Namespace
+protection prevents cascading deletion from bypassing a claim's own annotation. To retire any of
+these objects, first merge and deploy that protection in its own revision; only a later PR may
+remove the manifest. After the second PR lands and no workload depends on the orphan, delete it
+explicitly. `scripts/tests/test-pvc-prune-safety.sh` checks every production reconciliation root,
+rejects an unprotected current or base resource, and compares a deploy candidate with the actual
+live Flux-owned objects before the mutable production artifact moves. Do not collapse the two
+revisions or use Flux force replacement for a PVC migration.
+
 **Feature flags — four independent layers (feature-flag-first, monorepo#2059).** Land new behaviour **off**, validate it, then flip it on — using the right layer, coarsest first:
 1. **Runtime per-request flags → flagd + OpenFeature Operator** (`k8s/bases/infrastructure/controllers/openfeature-operator/`, `#2510`). Flag definitions live in Git as **`FeatureFlag` CRs** (`core.openfeature.dev/v1beta1`) reconciled by Flux; workloads opt in with the `openfeature.dev/enabled` + `openfeature.dev/featureflagsource` pod annotations. Prefer **flagd-proxy** sync (`provider: flagd-proxy` on the `FeatureFlagSource`) so pods need no cluster-wide API RBAC — and so Flux never fights the operator over the `flagd-kubernetes-sync` ClusterRoleBinding (that drift only happens under `provider: kubernetes`). A `FeatureFlag` CR belongs in the **`infrastructure` layer**, never the controllers layer (a CR can't share a Flux Kustomization with the controller that installs its CRD).
 2. **Version rollout / traffic shifting → Flagger** (already deployed): the release/canary toggle — "is this build safe to shift traffic to?", metric-analysed auto-rollback. Distinct from per-user flags; not a runtime flag.

@@ -506,7 +506,88 @@ const (
 // groups prevents an OIDC cluster-reader from recovering those credentials;
 // no identity, binding, resource, or verb is added. A parsed-RBAC regression
 // independently rejects any future read grant to either secret-bearing group.
-const expectedRenderedSurfaceSHA = "03da7c1b972490eb9a4a4eecdffcd02e1b31c8ebb3dde3f4790f35f499837552"
+//
+// Measured against exact current main 388758f5 for #3168 with the
+// checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer. The new
+// production component is an AnnotationsTransformer whose fieldSpecs select
+// only PersistentVolumeClaim, HelmRelease, and Namespace, so it cannot mutate
+// a Role, ClusterRole, RoleBinding, ClusterRoleBinding, or ServiceAccount.
+// Resource membership across all five production roots is unchanged. The
+// rendered changes add only kustomize.toolkit.fluxcd.io/prune=disabled to those
+// three selected kinds and kustomize.toolkit.fluxcd.io/force=disabled to PVCs;
+// the existing vault-snapshots force override narrows enabled to disabled.
+// These metadata-only changes prevent destructive reconciliation and grant no
+// identity, binding, resource, or verb.
+//
+// Measured against exact current main cdababde for #2741 with the
+// checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer. The complete
+// apps, infrastructure, and controller roots retain 126, 219, and 178
+// documents respectively. Apps replaces the retired headlamp/headlamp PVC with
+// the authenticated crossview/crossview HTTPRoute; both are outside this
+// authorization selector. Infrastructure and controller membership is
+// identical. Rendered Role, ClusterRole, RoleBinding, ClusterRoleBinding, and
+// ServiceAccount bytes are identical in all three roots, and the two direct AWS
+// policy inputs are byte-identical. Exactly THREE selected entries change:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  crossview/crossview
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  headlamp/headlamp
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  dex/dex
+//
+// Headlamp disables the runtime plugin manager and its writable plugin state.
+// Crossview changes only its CORS origin and OIDC callback from the removed
+// localhost port-forward to its native authenticated HTTPS route. Dex replaces
+// that localhost callback with the exact HTTPS callback. Chart/source identity,
+// reconciliation policy, workload ServiceAccounts, every RBAC object, and every
+// verb remain byte-identical. The Cilium policies and HTTPRoute are outside this
+// selector and are covered by the focused rendered fresh/upgrade-path test.
+//
+// Measured by comparing exact reviewed head 253b7aa7 with the maintainer-access
+// repair for #2741, using the checksum-verified kubectl v1.36.2 / Kustomize
+// v5.8.1 renderer. All five roots retain 532 distinct rendered identities and
+// the set difference is empty in both directions. The complete rendered change
+// is confined to six existing objects: Crossview's HTTPRoute and
+// CiliumNetworkPolicy, oauth2-proxy's ReferenceGrant, auth-proxy's ConfigMap
+// and CiliumNetworkPolicy, and Headlamp's HelmRelease.
+//
+// Of those six, exactly ONE enters this validator's 170-entry selected
+// EKS/RBAC/Flux authorization projection:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  headlamp/headlamp
+//
+// Its complete projected delta removes the post-render patch that appended a
+// temporary volume mount to container index 1. The same release already
+// disables the dynamic plugin manager, so that sidecar is absent; retaining the
+// patch made the Helm render invalid instead of granting or withholding access.
+//
+// The other five objects restore Crossview's established outer maintainer gate:
+// Gateway -> oauth2-proxy allowed_groups -> host-routing auth-proxy -> Crossview,
+// with exact ReferenceGrant and Cilium ingress/egress peers. They are outside
+// this selector and covered by the focused rendered contract. Across all five
+// roots, all 56 distinct RBAC identities have byte-identical canonical content,
+// and the direct EKS role and permissions-boundary inputs are byte-identical.
+//
+// Measured by comparing exact reviewed head 57f70354 with the merge-group
+// deployment repair for #2741, using the checksum-verified kubectl v1.36.2 /
+// Kustomize v5.8.1 renderer. The five roots retain 126, 219, 178, 5, and 4
+// documents respectively. Their combined 532 distinct identities are identical
+// in both directions. Exactly ONE existing rendered object changes:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  headlamp/headlamp
+//
+// The release removes JSON append operations whose volumes and volumeMounts
+// parent arrays disappear when pluginsManager and its PVC are disabled, and
+// supplies the same two writable directories through Headlamp 0.44.0's native
+// chart values instead. This repairs the post-render failure observed in the
+// merge group without changing an identity, chart/source pin, ServiceAccount,
+// binding, or verb. All 71 distinct rendered Role, ClusterRole, RoleBinding,
+// ClusterRoleBinding, and ServiceAccount objects are byte-identical, and the
+// direct EKS role and permissions-boundary inputs retain their approved hashes.
+//
+// Recomputed after rebasing the complete #2741 series onto exact protected
+// main cdababde. The persistence annotations introduced by #3168 remain in
+// every surviving selected object; #2741 removes only the already-protected
+// Headlamp PVC identity and retains the authorization-neutral changes above.
+const expectedRenderedSurfaceSHA = "6e6753583bbffa59ce236412f63f27e3d77d03739742ef0a3a34596eb96c5f2a"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
