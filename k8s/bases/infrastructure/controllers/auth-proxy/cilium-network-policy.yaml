@@ -52,6 +52,14 @@ spec:
         - ports:
             - port: "8081"
               protocol: TCP
+    # KSail operator UI upstream (ksail-operator Service :8080).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ksail-operator
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
     # Coroot UI upstream (metrics/logs/traces/profiles/alerts).
     - toEndpoints:
         - matchLabels:
