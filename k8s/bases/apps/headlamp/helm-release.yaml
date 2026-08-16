@@ -63,11 +63,6 @@ spec:
                 value:
                   name: headlamp-config
                   mountPath: /home/headlamp/.config
-              - op: add
-                path: /spec/template/spec/containers/1/volumeMounts/-
-                value:
-                  name: tmp-dir
-                  mountPath: /tmp
               # Chart hardcodes liveness/readiness with K8s defaults
               # (timeoutSeconds: 1, failureThreshold: 3, periodSeconds: 10).
               # Headlamp is KEDA-scaled to 0 in prod; every cold start logs

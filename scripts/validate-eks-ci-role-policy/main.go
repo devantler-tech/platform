@@ -540,7 +540,32 @@ const (
 // reconciliation policy, workload ServiceAccounts, every RBAC object, and every
 // verb remain byte-identical. The Cilium policies and HTTPRoute are outside this
 // selector and are covered by the focused rendered fresh/upgrade-path test.
-const expectedRenderedSurfaceSHA = "9489aa305462b03ef18c2734908d0792752bd422229ddc07f0792bf79cdea950"
+//
+// Measured by comparing exact reviewed head 253b7aa7 with the maintainer-access
+// repair for #2741, using the checksum-verified kubectl v1.36.2 / Kustomize
+// v5.8.1 renderer. All five roots retain 532 distinct rendered identities and
+// the set difference is empty in both directions. The complete rendered change
+// is confined to six existing objects: Crossview's HTTPRoute and
+// CiliumNetworkPolicy, oauth2-proxy's ReferenceGrant, auth-proxy's ConfigMap
+// and CiliumNetworkPolicy, and Headlamp's HelmRelease.
+//
+// Of those six, exactly ONE enters this validator's 170-entry selected
+// EKS/RBAC/Flux authorization projection:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  headlamp/headlamp
+//
+// Its complete projected delta removes the post-render patch that appended a
+// temporary volume mount to container index 1. The same release already
+// disables the dynamic plugin manager, so that sidecar is absent; retaining the
+// patch made the Helm render invalid instead of granting or withholding access.
+//
+// The other five objects restore Crossview's established outer maintainer gate:
+// Gateway -> oauth2-proxy allowed_groups -> host-routing auth-proxy -> Crossview,
+// with exact ReferenceGrant and Cilium ingress/egress peers. They are outside
+// this selector and covered by the focused rendered contract. Across all five
+// roots, all 56 distinct RBAC identities have byte-identical canonical content,
+// and the direct EKS role and permissions-boundary inputs are byte-identical.
+const expectedRenderedSurfaceSHA = "34db823f2756cc6bea22c6632ff709a1deb90d35d972215bae394f8f936429cd"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

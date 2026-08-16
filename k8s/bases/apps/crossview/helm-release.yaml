@@ -204,8 +204,9 @@ spec:
           # The public HTTPS route is the post-login redirect target and replaces
           # the removed runtime-downloaded Headlamp plugin entry point.
           origin: https://crossview.${domain}
-        # Crossview does its OWN authentication with no oauth2-proxy hop. Mode
-        # `session` is mandatory for the OIDC flow below:
+        # Crossview keeps its OWN application session after the outer
+        # oauth2-proxy maintainer-team gate. Mode `session` is mandatory for the
+        # OIDC flow below:
         # the SessionAuthMiddleware gates the /api/kubernetes/* data routes on a
         # signed session cookie, the cookie store is ONLY wired up when
         # AUTH_MODE=session (api/middlewares/session.go), and the boot-time admin
@@ -239,13 +240,13 @@ spec:
       # Crossview validates the user via the userinfo endpoint, not the
       # id_token, so no JWKS/issuer match is required.
       #
-      # SECURITY NOTE: crossview has no oauth2-proxy allowed_groups gate, so the
-      # effective gate is any devantler-tech ORG member that Dex authenticates
-      # (its github connector is org-scoped). They land as a non-admin `user` on
-      # a read-only dashboard (the first login is the break-glass `admin` seeded
-      # at boot, so SSO users are never `admin`). The public route exposes only
-      # this authenticated dashboard; it does not restore cluster-admin plugin
-      # controls.
+      # SECURITY NOTE: the public HTTPRoute is fronted by oauth2-proxy's
+      # devantler-tech:maintainers allowed_groups gate before auth-proxy reaches
+      # this service. Crossview then maps the same user's native OIDC session to
+      # a non-admin `user` on the read-only dashboard (the first login is the
+      # break-glass `admin` seeded at boot, so SSO users are never `admin`). The
+      # outer team gate is required because Crossview's ServiceAccount retains
+      # broad cluster reads; native org membership alone is not sufficient.
       sso:
         oidc:
           enabled: true

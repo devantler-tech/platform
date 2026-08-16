@@ -1,7 +1,7 @@
 # Route for Crossview at crossview.${domain} — the authenticated replacement for
-# the removed runtime-downloaded Headlamp plugin. Crossview serves its own login
-# page and gates data routes with its native Dex-backed session middleware, so
-# the route goes directly to crossview-service without an oauth2-proxy hop.
+# the removed runtime-downloaded Headlamp plugin. Public traffic first passes
+# through oauth2-proxy's maintainer-team gate and auth-proxy's Host router, then
+# Crossview establishes its own Dex-backed application session.
 #
 # Prod/hetzner only in practice: Crossview is opt-in on the local Docker overlay,
 # so this route renders only where the app is deployed.
@@ -26,6 +26,11 @@ spec:
     - crossview.${domain}
   rules:
     - filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://crossview.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
@@ -34,5 +39,6 @@ spec:
               - name: Content-Security-Policy
                 value: "frame-ancestors 'self'"
       backendRefs:
-        - name: crossview-service
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
           port: 80
