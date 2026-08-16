@@ -14,15 +14,81 @@ rules:
       !(object.kind in ['CiliumNetworkPolicy', 'NetworkPolicy']) ||
       !has(object.metadata.namespace) ||
       object.metadata.namespace != 'crossplane-system' ||
-      (object.kind == 'CiliumNetworkPolicy' &&
-       object.metadata.name == 'allow-crossplane')
+      object == {
+        'apiVersion': 'cilium.io/v2',
+        'kind': 'CiliumNetworkPolicy',
+        'metadata': {
+          'name': 'allow-crossplane',
+          'namespace': 'crossplane-system'
+        },
+        'spec': {
+          'endpointSelector': {},
+          'egress': [
+            {'toEntities': ['kube-apiserver']},
+            {
+              'toFQDNs': [
+                {'matchName': 'ghcr.io'},
+                {'matchName': 'pkg-containers.githubusercontent.com'},
+                {'matchName': 'api.github.com'},
+                {'matchName': 'xpkg.upbound.io'},
+                {'matchName': 'd3qrbvrml4iuq4.cloudfront.net'},
+                {'matchName': 'sts.eu-central-1.amazonaws.com'},
+                {'matchName': 'iam.amazonaws.com'},
+                {'matchName': 'api.ui.com'}
+              ],
+              'toPorts': [{'ports': [
+                {'port': '443', 'protocol': 'TCP'}
+              ]}]
+            },
+            {
+              'toEndpoints': [{'matchLabels': {
+                'k8s:io.kubernetes.pod.namespace': 'kube-system',
+                'k8s-app': 'kube-dns'
+              }}],
+              'toPorts': [{
+                'ports': [
+                  {'port': '53', 'protocol': 'UDP'},
+                  {'port': '53', 'protocol': 'TCP'}
+                ],
+                'rules': {'dns': [
+                  {'matchName': 'ghcr.io'},
+                  {'matchName': 'pkg-containers.githubusercontent.com'},
+                  {'matchName': 'api.github.com'},
+                  {'matchName': 'xpkg.upbound.io'},
+                  {'matchName': 'd3qrbvrml4iuq4.cloudfront.net'},
+                  {'matchName': 'sts.eu-central-1.amazonaws.com'},
+                  {'matchName': 'iam.amazonaws.com'},
+                  {'matchName': 'api.ui.com'},
+                  {'matchPattern': '*.cluster.local'}
+                ]}
+              }]
+            }
+          ]
+        }
+      }
     message: >-
       Helm charts must not add a network policy to crossplane-system; the
       reviewed allow-crossplane policy is the only static policy in scope
     severity: error
 
   - name: reject-crossplane-chart-clusterwide-network-policies
-    expression: object.kind != 'CiliumClusterwideNetworkPolicy'
+    expression: >-
+      object.kind != 'CiliumClusterwideNetworkPolicy' ||
+      (has(object.spec.endpointSelector) &&
+       ((has(object.spec.endpointSelector.matchLabels) &&
+         'k8s:io.kubernetes.pod.namespace' in
+           object.spec.endpointSelector.matchLabels &&
+         object.spec.endpointSelector.matchLabels[
+           'k8s:io.kubernetes.pod.namespace'
+         ] != 'crossplane-system') ||
+        (has(object.spec.endpointSelector.matchExpressions) &&
+         object.spec.endpointSelector.matchExpressions.exists(selector,
+           selector.key == 'k8s:io.kubernetes.pod.namespace' &&
+           ((selector.operator == 'In' && has(selector.values) &&
+             !('crossplane-system' in selector.values)) ||
+            (selector.operator == 'NotIn' && has(selector.values) &&
+             'crossplane-system' in selector.values) ||
+            selector.operator == 'DoesNotExist')))))
     message: >-
       Helm charts in the Crossplane controller overlay must not add a
       cluster-wide Cilium policy
@@ -93,8 +159,7 @@ rules:
           object.kind == 'ClusterPolicy' &&
           object.metadata.name == 'add-default-deny' &&
           !has(object.metadata.namespace) &&
-          object.spec.rules.size() == 3 &&
-          object.spec.rules.all(candidate, candidate == {
+          object.spec == {'rules': [{
              'name': 'generate-default-deny',
              'match': {'any': [{'resources': {'kinds': ['Namespace']}}]},
              'exclude': {'any': [{'resources': {'names': [
@@ -112,8 +177,7 @@ rules:
                  'enableDefaultDeny': {'ingress': true, 'egress': true}
                }}
              }
-           } ||
-           candidate == {
+           }, {
              'name': 'generate-allow-dns',
              'match': {'any': [{'resources': {'kinds': ['Namespace']}}]},
              'exclude': {'any': [{'resources': {'names': [
@@ -140,8 +204,7 @@ rules:
                  }]
                }}
              }
-           } ||
-           candidate == {
+           }, {
              'name': 'generate-default-deny-networkpolicy',
              'match': {'any': [{'resources': {'kinds': ['Namespace']}}]},
              'exclude': {'any': [{'resources': {'names': [
@@ -159,13 +222,7 @@ rules:
                  'policyTypes': ['Ingress', 'Egress']
                }}
              }
-           }) &&
-          object.spec.rules.exists(candidate,
-            candidate.name == 'generate-default-deny') &&
-          object.spec.rules.exists(candidate,
-            candidate.name == 'generate-allow-dns') &&
-          object.spec.rules.exists(candidate,
-            candidate.name == 'generate-default-deny-networkpolicy'))
+           }]})
       )
     message: >-
       Helm-rendered Kyverno policies must not generate network policies beyond
@@ -179,22 +236,22 @@ rules:
       !object.spec.rules.exists(rule,
         has(rule.mutate) &&
         ((has(rule.match.resources) &&
-          has(rule.match.resources.kinds) &&
-          rule.match.resources.kinds.exists(kind,
-            !kind.matches(
-              '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
-            kind == '*' ||
-            kind.endsWith('/CiliumNetworkPolicy') ||
-            kind.endsWith('/NetworkPolicy') ||
-            kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
-            kind in [
-              'CiliumNetworkPolicy',
-              'NetworkPolicy',
-              'CiliumClusterwideNetworkPolicy'
-            ])) ||
+          (!has(rule.match.resources.kinds) ||
+           rule.match.resources.kinds.exists(kind,
+             !kind.matches(
+               '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
+             kind == '*' ||
+             kind.endsWith('/CiliumNetworkPolicy') ||
+             kind.endsWith('/NetworkPolicy') ||
+             kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+             kind in [
+               'CiliumNetworkPolicy',
+               'NetworkPolicy',
+               'CiliumClusterwideNetworkPolicy'
+             ]))) ||
          (has(rule.match.any) &&
           rule.match.any.exists(filter,
-            has(filter.resources) && has(filter.resources.kinds) &&
+            !has(filter.resources) || !has(filter.resources.kinds) ||
             filter.resources.kinds.exists(kind,
               !kind.matches(
                 '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
@@ -209,7 +266,7 @@ rules:
               ]))) ||
          (has(rule.match.all) &&
           rule.match.all.exists(filter,
-            has(filter.resources) && has(filter.resources.kinds) &&
+            !has(filter.resources) || !has(filter.resources.kinds) ||
             filter.resources.kinds.exists(kind,
               !kind.matches(
                 '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
