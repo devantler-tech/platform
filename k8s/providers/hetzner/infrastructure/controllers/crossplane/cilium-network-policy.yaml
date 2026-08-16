@@ -35,6 +35,8 @@ spec:
     #     AWS identity APIs used by provider-aws-iam. The provider calls STS
     #     GetCallerIdentity before reconciling IAM resources, then uses the
     #     global IAM endpoint for the managed OIDC provider and role.
+    #   api.ui.com — the UniFi Cloud Connector endpoint used by
+    #     provider-upjet-unifi for every managed-resource request.
     - toFQDNs:
         - matchName: "ghcr.io"
         - matchName: "pkg-containers.githubusercontent.com"
@@ -43,6 +45,7 @@ spec:
         - matchName: "d3qrbvrml4iuq4.cloudfront.net"
         - matchName: "sts.eu-central-1.amazonaws.com"
         - matchName: "iam.amazonaws.com"
+        - matchName: "api.ui.com"
       toPorts:
         - ports:
             - port: "443"
@@ -70,4 +73,5 @@ spec:
               - matchName: "d3qrbvrml4iuq4.cloudfront.net"
               - matchName: "sts.eu-central-1.amazonaws.com"
               - matchName: "iam.amazonaws.com"
+              - matchName: "api.ui.com"
               - matchPattern: "*.cluster.local"

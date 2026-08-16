@@ -56,13 +56,12 @@ spec:
         data:
           spec:
             endpointSelector: {}
+            # Selecting every endpoint activates whitelist mode. Keep this as
+            # default-deny-by-selection: an explicit ingressDeny/egressDeny
+            # rule would take precedence over the namespace's allow policies.
             enableDefaultDeny:
               ingress: true
               egress: true
-            ingressDeny:
-              - {}
-            egressDeny:
-              - {}
     - name: generate-allow-dns
       match:
         any:
