@@ -57,7 +57,32 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main 025fd5a6 before approving this value: 532 documents on
+// Measured against main df5bcc39 before approving this value: 534 documents on
+// both sides, membership IDENTICAL — zero added, zero removed, zero renamed,
+// proven by set difference in BOTH directions over the complete
+// apiVersion|kind|namespace|name identity across all five rendered overlays.
+// Neither side carries a duplicate identity, so that pairing is one-to-one.
+// Exactly ONE entry's content moves:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  crossview/crossview
+//
+// Its only rendered delta adds a single annotation —
+// `configmap.reloader.stakater.com/reload: crossview-config` — to the Deployment
+// its postRenderer patch targets. The chart wires every OIDC value in through
+// env[].valueFrom.configMapKeyRef, and env resolves once at container creation,
+// so a ConfigMap change alone never reaches the running process. The annotation
+// tells the already-deployed Reloader controller to roll the Deployment when
+// that ConfigMap changes; it names no subject, no role and no resource, and the
+// same annotation is already carried by six other rendered documents.
+//
+// No grant-bearing object moved: the surface carries 72 Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount documents on BOTH sides
+// (10/22/15/10/15) and their canonical byte stream is identical. All 116
+// `aws`-bearing lines are byte-identical across the two trees, so nothing
+// granted to the aws/aws service account this validator exists to protect is
+// touched.
+//
+// Measured against main 025fd5a6 before approving the previous value: 532 documents on
 // both sides, membership IDENTICAL — zero added, zero removed, zero renamed,
 // proven by set difference in BOTH directions over the complete
 // apiVersion|kind|namespace|name identity across all five rendered overlays.
@@ -587,7 +612,7 @@ const (
 // main cdababde. The persistence annotations introduced by #3168 remain in
 // every surviving selected object; #2741 removes only the already-protected
 // Headlamp PVC identity and retains the authorization-neutral changes above.
-const expectedRenderedSurfaceSHA = "6e6753583bbffa59ce236412f63f27e3d77d03739742ef0a3a34596eb96c5f2a"
+const expectedRenderedSurfaceSHA = "133166992d16b83da48105656927c1b8cdeadbe37d041bef7a50284cec028fb7"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
