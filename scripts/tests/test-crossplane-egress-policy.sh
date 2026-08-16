@@ -39,69 +39,75 @@ if grep -Eq '^[[:space:]]*serverNames:' <<<"${policy}"; then
   fail 'Crossplane HTTPS egress must stay on the direct L3/L4 path, not the broken SNI proxy path'
 fi
 
-if grep -Eq '^[[:space:]]*-[[:space:]]+world$' <<<"${policy}"; then
-  fail 'Crossplane must not receive unrestricted world egress'
-fi
+assert_no_unrestricted_egress() {
+  local candidate_policy="$1"
 
-actual_fqdns="$(
+  if grep -Eq '^[[:space:]]*-[[:space:]]+world$' <<<"${candidate_policy}"; then
+    fail 'Crossplane must not receive unrestricted world egress'
+  fi
+
+  if grep -Eq '^[[:space:]]*-[[:space:]]+toCIDR(Set)?:' <<<"${candidate_policy}"; then
+    fail 'Crossplane must not receive CIDR-based egress'
+  fi
+}
+
+https_egress_contract() {
   awk '
-    /^[[:space:]]*-[[:space:]]+toFQDNs:$/ { in_fqdns = 1; next }
-    in_fqdns && /^[[:space:]]+toPorts:$/ { exit }
-    in_fqdns && /^[[:space:]]*-[[:space:]]+matchName:/ { print $3 }
-  ' <<<"${policy}" | sort
-)"
-readonly actual_fqdns
-
-expected_fqdns="$(
-  printf '%s\n' \
-    api.github.com \
-    d3qrbvrml4iuq4.cloudfront.net \
-    ghcr.io \
-    iam.amazonaws.com \
-    pkg-containers.githubusercontent.com \
-    sts.eu-central-1.amazonaws.com \
-    xpkg.upbound.io | sort
-)"
-readonly expected_fqdns
-
-[ "${actual_fqdns}" = "${expected_fqdns}" ] ||
-  fail "Crossplane must retain exactly the seven reviewed FQDN destinations (got: ${actual_fqdns//$'\n'/, })"
-
-https_port_contract() {
-  awk '
-    /^[[:space:]]*-[[:space:]]+toFQDNs:$/ { in_fqdns = 1; next }
-    in_fqdns && /^[[:space:]]+toPorts:$/ { in_ports = 1; next }
-    in_ports && /^[[:space:]]*-[[:space:]]+toEndpoints:$/ { exit }
-    in_ports && /^[[:space:]]*-[[:space:]]+port:/ {
-      port = $3
-      gsub(/"/, "", port)
-      print "port=" port
-    }
-    in_ports && /^[[:space:]]+protocol:/ { print "protocol=" $2 }
+    /^  - toFQDNs:$/ { in_https_egress = 1 }
+    in_https_egress && /^  - / && !/^  - toFQDNs:$/ { exit }
+    in_https_egress { print }
   ' <<<"$1"
 }
 
-assert_https_only() {
+expected_https_egress=$'  - toFQDNs:\n    - matchName: ghcr.io\n    - matchName: pkg-containers.githubusercontent.com\n    - matchName: api.github.com\n    - matchName: xpkg.upbound.io\n    - matchName: d3qrbvrml4iuq4.cloudfront.net\n    - matchName: sts.eu-central-1.amazonaws.com\n    - matchName: iam.amazonaws.com\n    toPorts:\n    - ports:\n      - port: "443"\n        protocol: TCP'
+readonly expected_https_egress
+
+assert_direct_https_contract() {
   local candidate_policy="$1"
   local actual_contract
 
-  actual_contract="$(https_port_contract "${candidate_policy}")"
-  [ "${actual_contract}" = $'port=443\nprotocol=TCP' ] ||
-    fail "the reviewed FQDN destinations must remain exactly TCP/443 (got: ${actual_contract//$'\n'/, })"
+  actual_contract="$(https_egress_contract "${candidate_policy}")"
+  [ "${actual_contract}" = "${expected_https_egress}" ] ||
+    fail 'Crossplane HTTPS egress must remain the exact direct FQDN-scoped TCP/443 contract'
 }
 
-assert_https_only "${policy}"
+assert_no_unrestricted_egress "${policy}"
+assert_direct_https_contract "${policy}"
 
-# Prove the regression guard rejects both dimensions of a widened transport
-# contract instead of merely checking that an HTTPS entry is present.
+# Prove the regression guard rejects selector, transport, proxy, and broad
+# egress drift instead of merely checking that reviewed entries are present.
+wildcard_selector=$'- toFQDNs:\n    - matchPattern: "*.github.com"'
+wildcard_policy="${policy/- toFQDNs:/${wildcard_selector}}"
+if (assert_direct_https_contract "${wildcard_policy}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject wildcard Crossplane FQDN selectors'
+fi
+
 widened_port_policy="${policy/port: \"443\"/port: \"8443\"}"
-if (assert_https_only "${widened_port_policy}") >/dev/null 2>&1; then
+if (assert_direct_https_contract "${widened_port_policy}") >/dev/null 2>&1; then
   fail 'the regression guard must reject a changed Crossplane egress port'
 fi
 
 widened_protocol_policy="${policy/protocol: TCP/protocol: UDP}"
-if (assert_https_only "${widened_protocol_policy}") >/dev/null 2>&1; then
+if (assert_direct_https_contract "${widened_protocol_policy}") >/dev/null 2>&1; then
   fail 'the regression guard must reject a changed Crossplane egress protocol'
+fi
+
+l7_proxy_rule=$'protocol: TCP\n      rules:\n        http:\n        - method: GET'
+l7_proxy_policy="${policy/protocol: TCP/${l7_proxy_rule}}"
+if (assert_direct_https_contract "${l7_proxy_policy}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject HTTPS L7 proxy rules'
+fi
+
+cidr_rule=$'- toCIDR:\n    - 0.0.0.0/0\n  - toEndpoints:'
+cidr_policy="${policy/- toEndpoints:/${cidr_rule}}"
+if (assert_no_unrestricted_egress "${cidr_policy}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject CIDR-based Crossplane egress'
+fi
+
+cidr_set_rule=$'- toCIDRSet:\n    - cidr: 0.0.0.0/0\n  - toEndpoints:'
+cidr_set_policy="${policy/- toEndpoints:/${cidr_set_rule}}"
+if (assert_no_unrestricted_egress "${cidr_set_policy}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject CIDR-set-based Crossplane egress'
 fi
 
 printf 'PASS: Crossplane keeps direct HTTPS egress closed to the reviewed FQDN set\n'
