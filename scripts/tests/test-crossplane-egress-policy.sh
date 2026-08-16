@@ -14,6 +14,7 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly controllers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
+readonly infrastructure_dir="${root_dir}/k8s/providers/hetzner/infrastructure"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -22,6 +23,11 @@ fail() {
 
 rendered="$(kubectl kustomize "${controllers_dir}")" ||
   fail 'the deployed Hetzner controller overlay must render'
+infrastructure_rendered="$(kubectl kustomize "${infrastructure_dir}")" ||
+  fail 'the deployed Hetzner infrastructure overlay must render'
+
+command -v yq >/dev/null 2>&1 ||
+  fail 'yq is required to inspect Kyverno generated policy templates'
 
 select_crossplane_policies() {
   local required_name="${2-}"
@@ -91,6 +97,65 @@ select_crossplane_namespace_policies() {
   select_crossplane_policies "$1" '' '1' '1'
 }
 
+assert_generated_policy_contract() {
+  local candidate_render="$1"
+  local actual_generators
+  local expected_generators
+  local actual_contract
+  local expected_contract
+
+  actual_generators="$(
+    # shellcheck disable=SC2016 # $policy is a yq variable.
+    yq e -N -r '
+      select(.kind == "ClusterPolicy" or .kind == "Policy") |
+      . as $policy |
+      .spec.rules[] |
+      select(.generate != null) |
+      select((.generate | @json) |
+        test("CiliumNetworkPolicy|NetworkPolicy|CiliumClusterwideNetworkPolicy")) |
+      ($policy.kind + "/" + ($policy.metadata.namespace // "") + "/" +
+        $policy.metadata.name + "|" + .name)
+    ' - <<<"${candidate_render}" | awk 'NF'
+  )"
+  expected_generators="$(
+    printf '%s\n' \
+      'ClusterPolicy//add-default-deny|generate-default-deny' \
+      'ClusterPolicy//add-default-deny|generate-allow-dns' \
+      'ClusterPolicy//add-default-deny|generate-default-deny-networkpolicy'
+  )"
+  [ "${actual_generators}" = "${expected_generators}" ] ||
+    fail 'Kyverno must keep exactly the three reviewed generated network-policy rules'
+
+  actual_contract="$(
+    # shellcheck disable=SC2016 # $policy is a yq variable.
+    yq e -N -r '
+      select(.kind == "ClusterPolicy" or .kind == "Policy") |
+      . as $policy |
+      .spec.rules[] |
+      select(.generate.kind == "CiliumNetworkPolicy" or
+        .generate.kind == "NetworkPolicy" or
+        .generate.kind == "CiliumClusterwideNetworkPolicy") |
+      [($policy.kind + "/" + ($policy.metadata.namespace // "") + "/" +
+        $policy.metadata.name), .name, .generate.apiVersion, .generate.kind,
+        .generate.name, .generate.namespace,
+        (.generate.generateExisting | tostring),
+        (.generate.synchronize | tostring),
+        (.match.any[0].resources.kinds | @json),
+        (.exclude.any[0].resources.names | @json),
+        (.generate.data.spec | @json)] |
+      join("|")
+    ' - <<<"${candidate_render}" | awk 'NF'
+  )"
+  expected_contract="$(
+    printf '%s\n' \
+      'ClusterPolicy//add-default-deny|generate-default-deny|cilium.io/v2|CiliumNetworkPolicy|default-deny|{{request.object.metadata.name}}|true|true|["Namespace"]|["kube-system","kube-public","kube-node-lease"]|{"egressDeny":[{}],"enableDefaultDeny":{"egress":true,"ingress":true},"endpointSelector":{},"ingressDeny":[{}]}' \
+      'ClusterPolicy//add-default-deny|generate-allow-dns|cilium.io/v2|CiliumNetworkPolicy|allow-dns|{{request.object.metadata.name}}|true|true|["Namespace"]|["kube-system","kube-public","kube-node-lease"]|{"egress":[{"toEndpoints":[{"matchLabels":{"k8s-app":"kube-dns","k8s:io.kubernetes.pod.namespace":"kube-system"}}],"toPorts":[{"ports":[{"port":"53","protocol":"UDP"},{"port":"53","protocol":"TCP"}]}]}],"endpointSelector":{}}' \
+      'ClusterPolicy//add-default-deny|generate-default-deny-networkpolicy|networking.k8s.io/v1|NetworkPolicy|default-deny|{{request.object.metadata.name}}|true|true|["Namespace"]|["kube-system","kube-public","kube-node-lease"]|{"podSelector":{},"policyTypes":["Ingress","Egress"]}'
+  )"
+  [ "${actual_contract}" = "${expected_contract}" ] ||
+    fail 'Kyverno generated Crossplane policies must remain the exact default-deny and DNS-only contract'
+}
+
 policy="$(select_crossplane_policy "${rendered}")"
 readonly policy
 
@@ -98,9 +163,20 @@ selected_policy_count="$(awk '/^kind: CiliumNetworkPolicy$/ { count++ } END { pr
 [ "${selected_policy_count}" -eq 1 ] ||
   fail 'the deployed overlay must contain exactly one allow-crossplane CiliumNetworkPolicy'
 
-crossplane_namespace_policies="$(select_crossplane_namespace_policies "${rendered}")"
-[ "${crossplane_namespace_policies}" = "${policy}" ] ||
-  fail 'allow-crossplane must be the only namespaced or cluster-wide network policy that can select Crossplane pods'
+static_crossplane_policies="$(select_crossplane_namespace_policies "${rendered}")"
+[ "${static_crossplane_policies}" = "${policy}" ] ||
+  fail 'allow-crossplane must be the only statically rendered controller policy that can select Crossplane pods'
+
+# Kyverno materializes default-deny and allow-dns policies after the static
+# controller layer is applied. Inspect their templates from the deployed
+# infrastructure overlay so the effective additive allow-set is covered too.
+assert_generated_policy_contract "${infrastructure_rendered}"
+
+unexpected_generate_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: generate-crossplane-world-egress\nspec:\n  rules:\n  - name: generate-world-egress\n    match:\n      any:\n      - resources:\n          kinds: [Namespace]\n    generate:\n      generateExisting: true\n      apiVersion: cilium.io/v2\n      kind: CiliumNetworkPolicy\n      name: allow-world\n      namespace: "{{request.object.metadata.name}}"\n      synchronize: true\n      data:\n        spec:\n          endpointSelector: {}\n          egress:\n          - toEntities: [world]'
+infrastructure_with_unexpected_generate="${infrastructure_rendered}"$'\n---\n'"${unexpected_generate_policy}"
+if (assert_generated_policy_contract "${infrastructure_with_unexpected_generate}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject an additional Kyverno-generated network policy'
+fi
 
 additional_world_policy=$'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: additional-world-egress\n  namespace: crossplane-system\nspec:\n  endpointSelector: {}\n  egress:\n  - toEntities: [world]'
 rendered_with_additional_world_policy="${rendered}"$'\n---\n'"${additional_world_policy}"
