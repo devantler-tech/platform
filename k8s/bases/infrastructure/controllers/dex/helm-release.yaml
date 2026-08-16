@@ -125,15 +125,9 @@ spec:
             - "https://budget.${domain}/openid/callback"
             - "https://vault.${domain}/ui/vault/auth/oidc/oidc/callback"
             - "https://ksail.${domain}/api/v1/auth/callback"
-            # crossview authenticates natively against Dex as this shared
-            # confidential client (k8s/bases/apps/crossview/helm-release.yaml,
-            # config.sso.oidc). It has no public route — it is reached through
-            # the Headlamp crossview-headlamp plugin's port-forward on
-            # localhost, so its registered callback is the forwarded localhost
-            # origin (port 3001 = the crossview-service target port the plugin
-            # forwards). Dex matches redirect URIs exactly, so the forward must
-            # land on that port.
-            - "http://localhost:3001/api/auth/oidc/callback"
+            # Crossview authenticates natively against Dex on its public HTTPS
+            # route; Dex matches this callback exactly.
+            - "https://crossview.${domain}/api/auth/oidc/callback"
           trustedPeers:
             - kubectl
         - name: kubectl

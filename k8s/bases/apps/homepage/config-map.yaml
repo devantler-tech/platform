@@ -57,9 +57,22 @@ data:
     target: _blank
     # Layout order also controls render order on the page. Groups not listed
     # here still appear (Homepage falls back to alphabetical) but get a generic
-    # icon — keep this in sync with the gethomepage.dev/group annotations on
-    # the HTTPRoutes under k8s/bases/apps/** and k8s/**/infrastructure/** (incl.
-    # provider overlays, e.g. Longhorn on Hetzner) and the service entries below.
+    # icon AND sort below every listed group — bookmarks included — so an
+    # undeclared group silently lands at the bottom of the page.
+    #
+    # The SERVICE groups below are enforced at admission by the Kyverno policy
+    # cluster-policies/best-practices/restrict-homepage-service-groups.yaml: a
+    # route annotated gethomepage.dev/enabled="true" may only name a group
+    # declared here. Adding a service group means adding it there too, in the
+    # same PR — that policy carries the matching allow-list. Homepage itself has
+    # no way to filter discovery by group, which is why the binding lives in
+    # admission rather than in this file.
+    #
+    # Still keep this in sync with the gethomepage.dev/group annotations on the
+    # HTTPRoutes under k8s/bases/apps/** and k8s/**/infrastructure/** (incl.
+    # provider overlays, e.g. Longhorn on Hetzner) and the service entries below
+    # — and note tenant repositories carry their own routes, so a group can be
+    # claimed from outside this repository.
     layout:
       # First on the page: the Internal Developer Platform (Backstage and any
       # future self-service portals). Keep this entry first so the IDP is the
@@ -77,6 +90,13 @@ data:
         icon: mdi-stethoscope
       Device Management:
         icon: mdi-cellphone-cog
+      # Sits immediately before the two providers it declares: Crossplane
+      # provisions the Hetzner cloud and the UniFi network, so "declare it" reads
+      # ahead of "here is the provider console".
+      Infrastructure as Code:
+        # `crossplane` is not in simple-icons (verified 404); use an MDI icon, as
+        # the Observability entry above already has to.
+        icon: mdi-file-cog
       Cloud:
         icon: si-hetzner
       Network:

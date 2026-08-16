@@ -507,37 +507,108 @@ const (
 // no identity, binding, resource, or verb is added. A parsed-RBAC regression
 // independently rejects any future read grant to either secret-bearing group.
 //
-// Re-approved for #2709, which narrows Dex's GitHub connector to the
-// devantler-tech/maintainers team. Measured against exact current main after
-// `gh pr update-branch`, so the fingerprint describes the MERGE RESULT rather
-// than a stale base — the branch's pre-update value (1a4f58dc) was rendered
-// against a main seven commits older and was never approved.
+// Measured against exact current main 388758f5 for #3168 with the
+// checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer. The new
+// production component is an AnnotationsTransformer whose fieldSpecs select
+// only PersistentVolumeClaim, HelmRelease, and Namespace, so it cannot mutate
+// a Role, ClusterRole, RoleBinding, ClusterRoleBinding, or ServiceAccount.
+// Resource membership across all five production roots is unchanged. The
+// rendered changes add only kustomize.toolkit.fluxcd.io/prune=disabled to those
+// three selected kinds and kustomize.toolkit.fluxcd.io/force=disabled to PVCs;
+// the existing vault-snapshots force override narrows enabled to disabled.
+// These metadata-only changes prevent destructive reconciliation and grant no
+// identity, binding, resource, or verb.
 //
-// Two independent renderers agree exactly on this value: the required CI job on
-// the approved toolchain, and a local render. The validator reported NO
-// per-resource mismatch; only this aggregate fingerprint moved.
+// Measured against exact current main cdababde for #2741 with the
+// checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer. The complete
+// apps, infrastructure, and controller roots retain 126, 219, and 178
+// documents respectively. Apps replaces the retired headlamp/headlamp PVC with
+// the authenticated crossview/crossview HTTPRoute; both are outside this
+// authorization selector. Infrastructure and controller membership is
+// identical. Rendered Role, ClusterRole, RoleBinding, ClusterRoleBinding, and
+// ServiceAccount bytes are identical in all three roots, and the two direct AWS
+// policy inputs are byte-identical. Exactly THREE selected entries change:
 //
-// The delta is fully attributable to the three manifests this PR touches.
-// Reverting exactly those three files to their main versions in the PR's own
-// worktree makes this validator PASS against the previous constant, so the
-// merge carried no unrelated authorization drift:
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  crossview/crossview
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  headlamp/headlamp
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  dex/dex
 //
-//	k8s/bases/infrastructure/controllers/dex/helm-release.yaml
-//	k8s/bases/infrastructure/controllers/oauth2-proxy/helm-release.yaml
-//	k8s/bases/apps/crossview/helm-release.yaml
+// Headlamp disables the runtime plugin manager and its writable plugin state.
+// Crossview changes only its CORS origin and OIDC callback from the removed
+// localhost port-forward to its native authenticated HTTPS route. Dex replaces
+// that localhost callback with the exact HTTPS callback. Chart/source identity,
+// reconciliation policy, workload ServiceAccounts, every RBAC object, and every
+// verb remain byte-identical. The Cilium policies and HTTPRoute are outside this
+// selector and are covered by the focused rendered fresh/upgrade-path test.
 //
-// Only the first is semantic. It adds a `teams: [maintainers]` entry under the
-// existing org-scoped GitHub connector, so Dex authenticates the maintainers
-// team instead of every devantler-tech org member. That matters for apps which
-// authenticate natively against Dex rather than through oauth2-proxy's
-// allowed_groups gate. The other two change only comment text inside the
-// rendered values.
+// Measured by comparing exact reviewed head 253b7aa7 with the maintainer-access
+// repair for #2741, using the checksum-verified kubectl v1.36.2 / Kustomize
+// v5.8.1 renderer. All five roots retain 532 distinct rendered identities and
+// the set difference is empty in both directions. The complete rendered change
+// is confined to six existing objects: Crossview's HTTPRoute and
+// CiliumNetworkPolicy, oauth2-proxy's ReferenceGrant, auth-proxy's ConfigMap
+// and CiliumNetworkPolicy, and Headlamp's HelmRelease.
 //
-// This is a privilege REDUCTION on every axis: the authenticated population
-// strictly shrinks, and no identity, binding, ServiceAccount, resource, or verb
-// is added anywhere. Nothing granted to the aws/aws service account this
-// validator protects is touched.
-const expectedRenderedSurfaceSHA = "78490ee996a3a09569ec8fd00a5b9c9c70177be2413de7a619941993cfe851e1"
+// Of those six, exactly ONE enters this validator's 170-entry selected
+// EKS/RBAC/Flux authorization projection:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  headlamp/headlamp
+//
+// Its complete projected delta removes the post-render patch that appended a
+// temporary volume mount to container index 1. The same release already
+// disables the dynamic plugin manager, so that sidecar is absent; retaining the
+// patch made the Helm render invalid instead of granting or withholding access.
+//
+// The other five objects restore Crossview's established outer maintainer gate:
+// Gateway -> oauth2-proxy allowed_groups -> host-routing auth-proxy -> Crossview,
+// with exact ReferenceGrant and Cilium ingress/egress peers. They are outside
+// this selector and covered by the focused rendered contract. Across all five
+// roots, all 56 distinct RBAC identities have byte-identical canonical content,
+// and the direct EKS role and permissions-boundary inputs are byte-identical.
+//
+// Measured by comparing exact reviewed head 57f70354 with the merge-group
+// deployment repair for #2741, using the checksum-verified kubectl v1.36.2 /
+// Kustomize v5.8.1 renderer. The five roots retain 126, 219, 178, 5, and 4
+// documents respectively. Their combined 532 distinct identities are identical
+// in both directions. Exactly ONE existing rendered object changes:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  headlamp/headlamp
+//
+// The release removes JSON append operations whose volumes and volumeMounts
+// parent arrays disappear when pluginsManager and its PVC are disabled, and
+// supplies the same two writable directories through Headlamp 0.44.0's native
+// chart values instead. This repairs the post-render failure observed in the
+// merge group without changing an identity, chart/source pin, ServiceAccount,
+// binding, or verb. All 71 distinct rendered Role, ClusterRole, RoleBinding,
+// ClusterRoleBinding, and ServiceAccount objects are byte-identical, and the
+// direct EKS role and permissions-boundary inputs retain their approved hashes.
+//
+// Recomputed after rebasing the complete #2741 series onto exact protected
+// main cdababde. The persistence annotations introduced by #3168 remain in
+// every surviving selected object; #2741 removes only the already-protected
+// Headlamp PVC identity and retains the authorization-neutral changes above.
+//
+// PENDING RE-MEASUREMENT for #2709, which narrows Dex's GitHub connector to the
+// devantler-tech/maintainers team, merged with exact main 6ebcb24f. The value
+// below is main's approved fingerprint and does not yet describe this merge
+// result; the branch's own earlier value was rendered against an older main and
+// no longer describes it either, so neither is approved for this head. The local
+// toolchain is kubectl v1.36.1 against the pinned v1.36.2, so
+// validateRendererVersion refuses it and the aggregate must be read from the
+// required job's own output on the approved renderer before this PR can merge.
+//
+// The reviewed reasoning for the change itself is unaffected by the merge. Of
+// the three manifests the branch touches, only the Dex connector is semantic: it
+// adds a `teams: [maintainers]` entry under the existing org-scoped GitHub
+// connector, so Dex authenticates the maintainers team instead of every
+// devantler-tech org member. That matters for apps authenticating natively
+// against Dex rather than through oauth2-proxy's allowed_groups gate. The
+// oauth2-proxy and crossview releases change only comment text inside the
+// rendered values. This is a privilege REDUCTION on every axis: the
+// authenticated population strictly shrinks, and no identity, binding,
+// ServiceAccount, resource, or verb is added anywhere. Nothing granted to the
+// aws/aws service account this validator protects is touched.
+const expectedRenderedSurfaceSHA = "6e6753583bbffa59ce236412f63f27e3d77d03739742ef0a3a34596eb96c5f2a"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

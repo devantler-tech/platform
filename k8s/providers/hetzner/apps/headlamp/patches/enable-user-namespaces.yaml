@@ -24,10 +24,9 @@
 # Safe to apply now: the pilot (#2651) is verified and closed, the running pod
 # already sets hostUsers: false explicitly and so passes =(hostUsers): false
 # unchanged, headlamp is the only workload in the namespace, and it holds no
-# CNPG pods, so the rules' cnpg.io/cluster exclude is moot here. Its Longhorn
-# PVC round trip — the plugin sidecar writes, the main container reads — is the
-# property the disposable userns-longhorn-smoke Job proved on this cluster
-# (#2619).
+# CNPG pods, so the rules' cnpg.io/cluster exclude is moot here. Runtime plugin
+# downloads and their Longhorn PVC have since been removed; the disposable
+# userns-longhorn-smoke Job retains the storage proof independently (#2619).
 #
 # Hetzner-only, like the others: this label lives in the Hetzner overlay so the
 # nested local Docker provider stays default-off.

@@ -39,6 +39,19 @@ jobs:
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
 
+      - name: 💾 Validate two-stage PVC retirement
+        # A merge-group artifact is speculative, but a PVC deletion is not: its
+        # deletionTimestamp survives queue eviction and main cannot undo it.
+        # Run in the shared changes job so both PR and merge-group refs compare
+        # against their exact base even when the full manifest job is skipped.
+        env:
+          PVC_PRUNE_BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck scripts/tests/test-pvc-prune-safety.sh
+          bash scripts/tests/test-pvc-prune-safety.sh
+
       # The DR contract runs in its own dedicated job (below). This checks that
       # the verify block is in effect at all: it ran at spec.cluster.verify for
       # ~3 weeks, where KSail discards it, and every text-based check passed
@@ -101,8 +114,13 @@ jobs:
               - 'scripts/tests/test-setup-ksail.sh'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-actual-budget-auth-route.sh'
+              - 'scripts/tests/test-pvc-prune-safety.sh'
+              - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              # The Homepage layout and the policy's allow-list are one contract:
+              # either side changing alone is the drift this test exists to catch.
+              - 'scripts/tests/test-restrict-homepage-service-groups.sh'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
               - 'scripts/tests/test-kyverno-admission-vpa.sh'
               - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
@@ -151,6 +169,8 @@ jobs:
               - 'scripts/wait-for-platform-flux-revision.sh'
               - 'scripts/tests/test-opencost-usage-scraper.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
+              - 'scripts/tests/test-crossplane-egress-policy.sh'
+              - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
@@ -384,6 +404,12 @@ jobs:
         # serializes it as a string and leaves the role unenforced.
         run: bash scripts/tests/test-openbao-oidc-role.sh
 
+      - name: 🧩 Validate Headlamp plugin removal
+        if: needs.changes.outputs.k8s == 'true'
+        # Removing runtime-downloaded plugins must also prune upgrade state and
+        # preserve Crossview's authenticated fresh-install entry point.
+        run: bash scripts/tests/test-headlamp-plugin-removal.sh
+
       - name: 🔑 Validate github-config Role covers the activated MR kinds
         if: needs.changes.outputs.k8s == 'true'
         # The tenant Role enumerates managed-resource kinds instead of `*`, so
@@ -413,6 +439,8 @@ jobs:
           kyverno test ./tests
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
+          shellcheck scripts/tests/test-restrict-homepage-service-groups.sh
+          bash scripts/tests/test-restrict-homepage-service-groups.sh
           shellcheck scripts/tests/test-kyverno-umami-mutation-rbac.sh
           bash scripts/tests/test-kyverno-umami-mutation-rbac.sh
           shellcheck scripts/tests/test-actual-budget-auth-route.sh
@@ -601,6 +629,14 @@ jobs:
           key: kubeconform-schema-cache-v1-${{ github.run_id }}
           restore-keys: |
             kubeconform-schema-cache-v1-
+
+      - name: 🔒 Validate Crossplane provider egress policy
+        if: needs.changes.outputs.k8s == 'true'
+        # This test exercises KSail's in-process Helm renderer, so it must run
+        # after the pinned KSail setup and schema-cache restore above. The
+        # reviewed FQDN set must remain narrow while provider traffic stays on
+        # the direct L3/L4 path that completes upstream TLS handshakes.
+        run: bash scripts/tests/test-crossplane-egress-policy.sh
 
       - name: 🧠 Validate Kyverno admission VPA safety
         if: needs.changes.outputs.k8s == 'true'
@@ -900,7 +936,7 @@ jobs:
           # Keep in step with the Talos version the prod cluster runs (ksail's
           # node image pin — see ksail DefaultTalosImage).
           # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-          TALOS_VERSION: "1.13.7"
+          TALOS_VERSION: "1.13.8"
         run: |
           curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
           sudo install /tmp/talosctl /usr/local/bin/talosctl
