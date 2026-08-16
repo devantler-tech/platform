@@ -561,8 +561,18 @@ case "${base_tip}" in
 esac
 [ ${#base_tip} -eq 40 ] || { echo "base tip not a full sha: '${base_tip}'" >&2; exit 1; }
 
-gh api --method PUT "repos/devantler-tech/platform/pulls/<n>/update-branch" \
-  -f expected_head_sha=<head>
+# GUARD THE WRITE. `gh` returns nonzero on a failed request, and the failure that matters
+# here is the `422` raised when `expected_head_sha` no longer matches — i.e. another actor
+# moved the head first. Unguarded, the sequence falls straight through into the poll below
+# and starts interpreting a head THIS REQUEST NEVER CREATED. The downstream checks do not
+# save you: if that actor's commit is a direct child carrying `base_tip`, it passes the
+# ancestry test AND the parent test, so an uninspected revision is accepted as GitHub's
+# update — and on this repo auto-merge may already be armed. Abort and re-pin instead.
+if ! gh api --method PUT "repos/devantler-tech/platform/pulls/<n>/update-branch" \
+    -f expected_head_sha=<head>; then
+  echo "update-branch refused (head moved, or the request failed) - re-pin and restart" >&2
+  exit 1
+fi
 ```
 
 🔴 **Unpinned, this write moves whatever head is current, which is not necessarily the one you
