@@ -1,13 +1,13 @@
-# Aggregate ClusterRole that extends the tenant role (`tenant-edit`, and the
-# built-in `edit`) with Gateway API verbs so a tenant ServiceAccount can manage
-# HTTPRoute / ReferenceGrant resources in its namespace.
+# Aggregate ClusterRole that extends the tenant role (`tenant-edit`) with
+# Gateway API verbs so a tenant ServiceAccount can manage HTTPRoute /
+# ReferenceGrant resources in its namespace without broadening the built-in
+# `edit` role for every namespace.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: gateway-tenant-edit
   labels:
-    rbac.authorization.k8s.io/aggregate-to-edit: "true"
     devantler.tech/aggregate-to-tenant-edit: "true"
 rules:
   - apiGroups: ["gateway.networking.k8s.io"]
