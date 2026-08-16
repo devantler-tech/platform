@@ -14,7 +14,10 @@ config_map="${repo_root}/k8s/bases/apps/homepage/config-map.yaml"
 policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/restrict-homepage-service-groups.yaml"
 
 for f in "${config_map}" "${policy}"; do
-  [ -r "$f" ] || { echo "::error::missing or unreadable: $f"; exit 1; }
+  [ -r "$f" ] || {
+    echo "::error::missing or unreadable: $f"
+    exit 1
+  }
 done
 
 # --- 1. the rule must ENFORCE, via the non-deprecated field -------------------
@@ -53,7 +56,8 @@ policy_groups="$(yq -r '
 
 # Proof-of-life: an empty side would make the comparison pass vacuously.
 for pair in "layout:${layout_groups}" "bookmark:${bookmark_groups}" "service:${service_groups}" "policy:${policy_groups}"; do
-  name="${pair%%:*}"; body="${pair#*:}"
+  name="${pair%%:*}"
+  body="${pair#*:}"
   n="$(printf '%s\n' "${body}" | grep -c . || true)"
   if [ "${n}" -lt 1 ]; then
     echo "::error::extracted zero ${name} groups — the parse broke, so this check would pass vacuously"
