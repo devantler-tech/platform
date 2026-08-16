@@ -587,7 +587,40 @@ const (
 // main cdababde. The persistence annotations introduced by #3168 remain in
 // every surviving selected object; #2741 removes only the already-protected
 // Headlamp PVC identity and retains the authorization-neutral changes above.
-const expectedRenderedSurfaceSHA = "6e6753583bbffa59ce236412f63f27e3d77d03739742ef0a3a34596eb96c5f2a"
+//
+// Measured for #2737 by the required job's own approved renderer on the merge
+// result of head 665a4d38 with exact current main, so it describes what would
+// land rather than a stale base. The local toolchain is refused as unapproved
+// (kubectl v1.36.1 against the approved v1.36.2), which is why this value comes
+// from CI rather than a workstation.
+//
+// The complete delta is TWO files, one line each, and nothing else:
+//
+//	source.toolkit.fluxcd.io/v1  OCIRepository  ascoachingogvaner/ascoachingogvaner
+//	  spec.ref.semver: ">=1.0.0"  (removed)
+//	  spec.ref.tag:    1.13.4     (added)
+//
+//	source.toolkit.fluxcd.io/v1  OCIRepository  wedding-app/wedding-app
+//	  spec.ref.semver: ">=1.0.0"  (removed)
+//	  spec.ref.tag:    1.15.10    (added)
+//
+// Both are Flux source resources, so they are authorization-capable and their
+// projected text is covered by the aggregate. Resource membership is identical:
+// no apiVersion, kind, namespace, or name line moves in any root, and the
+// validator reported no per-resource mismatch, no missing resource, and no
+// duplicate — only this aggregate fingerprint. The accompanying
+// unresolved-substitution notes are the diagnostics emitted alongside any
+// aggregate mismatch; they are unchanged and are not findings.
+//
+// The change is a reduction in what may be deployed: a floating `>=1.0.0` range
+// lets ANY newer tag pushed to that registry path be selected and reconciled
+// automatically, so an actor able to publish one tag chooses the manifests; a
+// fixed tag removes that selection. Each tag is the revision production is
+// already reconciling (verified read-only against admin@prod), so this pins
+// what is running rather than moving it. No identity, binding, ServiceAccount,
+// verb, policy, or URL changes, and nothing granted to the aws/aws service
+// account this validator protects is touched.
+const expectedRenderedSurfaceSHA = "96872df84d578d6397ef1bbdc175f6ccedcc1b1150f5b045deba709407eec610"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
