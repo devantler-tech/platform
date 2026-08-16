@@ -508,6 +508,17 @@ PR that touches that file, confirm the file is **absent from the PR's own tree**
 either count (the same provenance collision `scripts/check-megalinter-version-drift.sh` documents and
 checks for), and otherwise fail closed and read the rejection reason from the mutation instead.
 
+🔴 **A `0` read moments after the head appeared is not evidence of anything yet — wait before you act
+on it.** Run creation and indexing lag behind the push, so the count comes back `0` while the required
+workflow is merely still being created, and that `0` is **indistinguishable** from the one this section
+is about. What makes it expensive rather than merely wrong is the answer it selects: the fix below is a
+**write** that moves the head, so an unwaited read buys an unnecessary branch update — and on this repo
+auto-merge may already be armed, which sends a revision nobody diagnosed toward the production-deploying
+merge queue. Give the current head the **same bounded poll and the same UNKNOWN-on-timeout treatment**
+the post-update poll below uses, and treat only a `0` that survives the bound as "this head predates the
+requirement". This applies to **any** head you have not already watched a run appear on — not just one
+you moved yourself.
+
 **The fix is to move the head** — `PUT /repos/{owner}/{repo}/pulls/{n}/update-branch` (a merge of
 `main`, never a force-push) makes the workflow fire. **Pin it to the head you inspected**, exactly as
 the enqueue mutation above is pinned:
@@ -597,10 +608,19 @@ before interpreting any absence, and only then read its status:
 managed=".github/workflows/validate-go-project.yaml"
 managed_run=""
 for _ in $(seq 1 30); do
-  if [ "$(gh api "repos/devantler-tech/platform/actions/runs?head_sha=${new_head}" \
-        --jq "[.workflow_runs[] | select(.path == \"${managed}\")] | length")" != "0" ]; then
-    managed_run=1
-    break
+  # A FAILED read is UNKNOWN, never a hit. Check the exit status: on a transient API,
+  # network or auth error the substitution collapses to the empty string, and
+  # `[ "" != "0" ]` is TRUE — so one failed request would set managed_run=1 having
+  # observed no run whatsoever, which is the fail-open this poll exists to prevent.
+  if count="$(gh api "repos/devantler-tech/platform/actions/runs?head_sha=${new_head}" \
+        --jq "[.workflow_runs[] | select(.path == \"${managed}\")] | length")"; then
+    # Require a NUMBER. Anything else — an error string, an empty body — is UNKNOWN too,
+    # because `!=` accepts every one of them as if it were a positive count.
+    case "${count}" in
+      ''|*[!0-9]*) ;;               # not a count: keep waiting
+      0)           ;;               # no run yet: keep waiting
+      *) managed_run=1; break ;;    # a real, positive count
+    esac
   fi
   sleep 2
 done
