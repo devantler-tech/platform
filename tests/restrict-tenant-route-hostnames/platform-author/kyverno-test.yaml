@@ -1,0 +1,21 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-route-hostnames-platform-author
+policies:
+  - >-
+    ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-route-hostnames.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  # The apps layer must keep the paved road for placing platform-owned routes in
+  # a managed tenant namespace, even on a hostname the tenant itself may not use.
+  - policy: restrict-tenant-route-hostnames
+    rule: wedding-app-approved-hostnames
+    resources:
+      - wedding-app/platform-applied-route
+    kind: HTTPRoute
+    result: skip

@@ -1,0 +1,12 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata:
+  name: tenant-author
+# A tenant's deploy Kustomization applies as its impersonated tenant SA, so these
+# requests are NOT covered by the flux-system carve-out.
+userInfo:
+  username: system:serviceaccount:wedding-app:wedding-app
+  groups:
+    - system:serviceaccounts
+    - system:authenticated

@@ -19,13 +19,12 @@ spec:
   timeout: 5m
   retryInterval: 2m
   path: ./
-  prune: true
+  # Do not prune Crossplane managed resources sourced from the separate
+  # devantler-tech/unifi repository. A source compromise or accidental removal
+  # there must not cause Flux to delete the Kubernetes managed resource and let
+  # Crossplane cascade-delete the backing live UniFi object.
+  prune: false
   wait: true
-  # No force: these are Crossplane managed resources with the default
-  # deletionPolicy: Delete, so a force delete/recreate on immutable-field drift
-  # would cascade into deleting the backing UniFi object. Handle a genuine
-  # immutable conflict per-resource with the
-  # kustomize.toolkit.fluxcd.io/force: enabled annotation instead.
   serviceAccountName: unifi
   sourceRef:
     kind: GitRepository

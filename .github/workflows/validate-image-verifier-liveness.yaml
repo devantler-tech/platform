@@ -72,7 +72,7 @@ jobs:
           # older than the cluster can start failing before it inspects a single
           # node, which would read as a fleet-wide fault rather than a stale pin.
           # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-          TALOS_VERSION: "1.13.7"
+          TALOS_VERSION: "1.13.8"
           # SHA-256 of talosctl-linux-amd64 for the TALOS_VERSION above, from
           # that release's sha256sum.txt. UPDATE BOTH TOGETHER — a version bump
           # that leaves this stale fails the step, which is the intended
