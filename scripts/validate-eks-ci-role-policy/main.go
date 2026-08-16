@@ -506,7 +506,38 @@ const (
 // groups prevents an OIDC cluster-reader from recovering those credentials;
 // no identity, binding, resource, or verb is added. A parsed-RBAC regression
 // independently rejects any future read grant to either secret-bearing group.
-const expectedRenderedSurfaceSHA = "03da7c1b972490eb9a4a4eecdffcd02e1b31c8ebb3dde3f4790f35f499837552"
+//
+// Re-approved for #2709, which narrows Dex's GitHub connector to the
+// devantler-tech/maintainers team. Measured against exact current main after
+// `gh pr update-branch`, so the fingerprint describes the MERGE RESULT rather
+// than a stale base — the branch's pre-update value (1a4f58dc) was rendered
+// against a main seven commits older and was never approved.
+//
+// Two independent renderers agree exactly on this value: the required CI job on
+// the approved toolchain, and a local render. The validator reported NO
+// per-resource mismatch; only this aggregate fingerprint moved.
+//
+// The delta is fully attributable to the three manifests this PR touches.
+// Reverting exactly those three files to their main versions in the PR's own
+// worktree makes this validator PASS against the previous constant, so the
+// merge carried no unrelated authorization drift:
+//
+//	k8s/bases/infrastructure/controllers/dex/helm-release.yaml
+//	k8s/bases/infrastructure/controllers/oauth2-proxy/helm-release.yaml
+//	k8s/bases/apps/crossview/helm-release.yaml
+//
+// Only the first is semantic. It adds a `teams: [maintainers]` entry under the
+// existing org-scoped GitHub connector, so Dex authenticates the maintainers
+// team instead of every devantler-tech org member. That matters for apps which
+// authenticate natively against Dex rather than through oauth2-proxy's
+// allowed_groups gate. The other two change only comment text inside the
+// rendered values.
+//
+// This is a privilege REDUCTION on every axis: the authenticated population
+// strictly shrinks, and no identity, binding, ServiceAccount, resource, or verb
+// is added anywhere. Nothing granted to the aws/aws service account this
+// validator protects is touched.
+const expectedRenderedSurfaceSHA = "78490ee996a3a09569ec8fd00a5b9c9c70177be2413de7a619941993cfe851e1"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
