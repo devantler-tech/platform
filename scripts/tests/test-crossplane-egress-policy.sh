@@ -23,17 +23,21 @@ fail() {
 rendered="$(kubectl kustomize "${controllers_dir}")" ||
   fail 'the deployed Hetzner controller overlay must render'
 
-select_crossplane_policy() {
+select_crossplane_policies() {
+  local required_name="${2-}"
+
   awk '
     function reset_document() {
       document = ""
       is_cilium_policy = 0
       in_metadata = 0
-      is_allow_crossplane = 0
+      is_crossplane_namespace = 0
+      has_required_name = 0
     }
 
     function emit_if_selected() {
-      if (is_cilium_policy && is_allow_crossplane) {
+      if (is_cilium_policy && is_crossplane_namespace &&
+          (required_name == "" || has_required_name)) {
         printf "%s", document
       }
       reset_document()
@@ -56,13 +60,24 @@ select_crossplane_policy() {
       } else if (in_metadata && $0 !~ /^ /) {
         in_metadata = 0
       }
-      if (in_metadata && $0 == "  name: allow-crossplane") {
-        is_allow_crossplane = 1
+      if (in_metadata && $0 == "  namespace: crossplane-system") {
+        is_crossplane_namespace = 1
+      }
+      if (in_metadata && $0 == "  name: " required_name) {
+        has_required_name = 1
       }
     }
 
     END { emit_if_selected() }
-  ' <<<"$1"
+  ' required_name="${required_name}" <<<"$1"
+}
+
+select_crossplane_policy() {
+  select_crossplane_policies "$1" 'allow-crossplane'
+}
+
+select_crossplane_namespace_policies() {
+  select_crossplane_policies "$1"
 }
 
 policy="$(select_crossplane_policy "${rendered}")"
@@ -71,6 +86,16 @@ readonly policy
 selected_policy_count="$(awk '/^kind: CiliumNetworkPolicy$/ { count++ } END { print count + 0 }' <<<"${policy}")"
 [ "${selected_policy_count}" -eq 1 ] ||
   fail 'the deployed overlay must contain exactly one allow-crossplane CiliumNetworkPolicy'
+
+crossplane_namespace_policies="$(select_crossplane_namespace_policies "${rendered}")"
+[ "${crossplane_namespace_policies}" = "${policy}" ] ||
+  fail 'allow-crossplane must be the only CiliumNetworkPolicy in crossplane-system'
+
+additional_world_policy=$'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: additional-world-egress\n  namespace: crossplane-system\nspec:\n  endpointSelector: {}\n  egress:\n  - toEntities: [world]'
+rendered_with_additional_world_policy="${rendered}"$'\n---\n'"${additional_world_policy}"
+if [ "$(select_crossplane_namespace_policies "${rendered_with_additional_world_policy}")" = "${policy}" ]; then
+  fail 'the regression guard must reject an additional Crossplane CiliumNetworkPolicy'
+fi
 
 if grep -Eq '^[[:space:]]*serverNames:' <<<"${policy}"; then
   fail 'Crossplane HTTPS egress must stay on the direct L3/L4 path, not the broken SNI proxy path'
