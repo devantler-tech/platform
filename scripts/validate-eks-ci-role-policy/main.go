@@ -506,7 +506,29 @@ const (
 // groups prevents an OIDC cluster-reader from recovering those credentials;
 // no identity, binding, resource, or verb is added. A parsed-RBAC regression
 // independently rejects any future read grant to either secret-bearing group.
-const expectedRenderedSurfaceSHA = "03da7c1b972490eb9a4a4eecdffcd02e1b31c8ebb3dde3f4790f35f499837552"
+//
+// Re-measured for #2739 after merging exact main aa7836ad, which already carries
+// #2714's reduction above. Neither side of the merge conflict described the
+// merged tree: this branch's earlier value (9b086829) was measured before #2714
+// landed, and #2714's own value (03da7c1b) was measured without #2739. Carrying
+// either across would have re-approved a surface nobody rendered, so main's was
+// taken as the baseline and the merged result measured on its own.
+//
+// #2739 moves Headlamp's plugin directory off a PersistentVolumeClaim back to
+// the chart's default emptyDir: it deletes the PVC, its kustomization entry, and
+// the post-render patch that repointed the `plugins-dir` volume. No identity,
+// binding, policy document, ServiceAccount or verb is touched. The aggregate
+// still moves because the Headlamp HelmRelease itself participates in the
+// selected surface, so editing its post-renderers moves its per-resource
+// fingerprint — the over-breadth #2768 tracks, not an authorization change.
+//
+// The local toolchain cannot produce this value: a local run leaves Flux
+// substitutions unresolved and is refused as an unapproved renderer. It was read
+// from the required job's own output on the approved renderer — run 31929231585,
+// job 95121502004, at merge head 0348055f, reporting `unapproved rendered
+// authorization surface fingerprint: 992f7b9e…`. That run reported NO
+// per-resource mismatch; only the aggregate moved.
+const expectedRenderedSurfaceSHA = "992f7b9ec7880894f296a6c1ff2fda4100fb0a85f27bc6d064525d179a2a19dc"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
