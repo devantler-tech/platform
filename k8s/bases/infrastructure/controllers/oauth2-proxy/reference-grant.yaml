@@ -8,16 +8,32 @@ spec:
   from:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
+      namespace: actual-budget
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
       namespace: backstage
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
+      namespace: crossview
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
       namespace: homepage
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: ksail-operator
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: kube-system
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: observability
+    # The OpenBao UI HTTPRoute (openbao) backends to the oauth2-proxy Service so
+    # vault.${domain} is reached through SSO. Without this entry Gateway API
+    # refuses the cross-namespace backendRef (ResolvedRefs=False /
+    # RefNotPermitted) and the route stops forwarding altogether.
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: openbao
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: opencost

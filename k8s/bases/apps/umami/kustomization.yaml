@@ -5,6 +5,7 @@ resources:
   # Namespace ownership lives in infrastructure-controllers/kyverno so the
   # namespaced background-controller grant exists before its ClusterPolicy.
   - service-account.yaml
+  - service-account-provision-tenants.yaml
   - external-secret.yaml
   - external-secret-admin.yaml
   - external-secret-ascoachingogvaner.yaml
@@ -23,7 +24,6 @@ resources:
   - scaled-object.yaml
   - cilium-network-policy.yaml
   - pod-disruption-budget.yaml
-  - service-account-provision-tenants.yaml
   - role-provision-tenants.yaml
   - role-binding-provision-tenants.yaml
   - lease-provision-tenants.yaml

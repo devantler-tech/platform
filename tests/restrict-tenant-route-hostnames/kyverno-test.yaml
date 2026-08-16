@@ -1,0 +1,81 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-route-hostnames
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-route-hostnames.yaml
+resources:
+  - resources.yaml
+# The catch-all rule uses a namespaceSelector, so the CLI needs the namespace
+# labels declared explicitly or every case is reported as Excluded.
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  # --- wedding-app: the tenant this policy already covered ---
+  - policy: restrict-tenant-route-hostnames
+    rule: wedding-app-approved-hostnames
+    resources:
+      - wedding-app/approved-both-hostnames
+    kind: HTTPRoute
+    result: pass
+  - policy: restrict-tenant-route-hostnames
+    rule: wedding-app-approved-hostnames
+    resources:
+      - wedding-app/foreign-hostname
+      - wedding-app/no-hostnames
+      - wedding-app/approved-plus-smuggled
+      - wedding-app/platform-applied-route
+    kind: HTTPRoute
+    result: fail
+  # --- ascoachingogvaner: previously UNCOVERED by this policy ---
+  - policy: restrict-tenant-route-hostnames
+    rule: ascoachingogvaner-approved-hostnames
+    resources:
+      - ascoachingogvaner/approved-apex-and-lan
+      - ascoachingogvaner/approved-www-redirect
+    kind: HTTPRoute
+    result: pass
+  # The cross-tenant claim this generalisation exists to stop.
+  - policy: restrict-tenant-route-hostnames
+    rule: ascoachingogvaner-approved-hostnames
+    resources:
+      - ascoachingogvaner/steals-wedding-hostname
+    kind: HTTPRoute
+    result: fail
+  # --- doggy-countdown: previously UNCOVERED by this policy ---
+  - policy: restrict-tenant-route-hostnames
+    rule: doggy-countdown-approved-hostnames
+    resources:
+      - doggy-countdown/approved-simba
+    kind: HTTPRoute
+    result: pass
+  - policy: restrict-tenant-route-hostnames
+    rule: doggy-countdown-approved-hostnames
+    resources:
+      - doggy-countdown/no-hostnames-third-tenant
+    kind: HTTPRoute
+    result: fail
+  # --- fail-closed catch-all ---
+  - policy: restrict-tenant-route-hostnames
+    rule: unlisted-tenant-namespace-has-no-approved-hostnames
+    resources:
+      - future-tenant/unlisted-tenant-route
+    kind: HTTPRoute
+    result: fail
+  # A namespace with an allow-list rule is excluded from the catch-all, so an
+  # approved route is not double-denied by it.
+  - policy: restrict-tenant-route-hostnames
+    rule: unlisted-tenant-namespace-has-no-approved-hostnames
+    resources:
+      - wedding-app/approved-both-hostnames
+    kind: HTTPRoute
+    result: skip
+  # A non-ksail platform namespace is outside this boundary entirely.
+  - policy: restrict-tenant-route-hostnames
+    rule: unlisted-tenant-namespace-has-no-approved-hostnames
+    resources:
+      - platform-ns/platform-route
+    kind: HTTPRoute
+    result: skip

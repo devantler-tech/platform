@@ -138,11 +138,8 @@ spec:
         # Crossview keys several behaviours off NODE_ENV (lib/env.go ->
         # Environment): with it set to `production` the session-cookie middleware
         # marks the cookie Secure (api/middlewares/session.go), CORS debug logging
-        # is off, and gin runs in release mode. Crossview is reached over the
-        # Headlamp plugin's port-forward at http://localhost:<port>, and
-        # Chromium-based browsers treat localhost as a trustworthy origin, so
-        # the Secure cookie still sticks there (Safari does not — use Chrome,
-        # same as the existing Headlamp-OIDC guidance).
+        # is off, and gin runs in release mode. Crossview is served over HTTPS at
+        # crossview.${domain}, so the Secure cookie is valid in every environment.
         - name: NODE_ENV
           value: "production"
     # The chart bundles a Postgres for session/user state. Run it ephemeral (no
@@ -204,15 +201,12 @@ spec:
     config:
       server:
         cors:
-          # Crossview has NO public route anymore: it is surfaced exclusively
-          # inside Headlamp via the crossview-headlamp plugin, whose resolver
-          # falls through to a Headlamp-managed port-forward of
-          # crossview-service (target port 3001) bound on 127.0.0.1 — so the
-          # browser-facing origin, and the post-login redirect target, is the
-          # forwarded localhost URL.
-          origin: http://localhost:3001
-        # Crossview does its OWN authentication (no oauth2-proxy hop — and no
-        # gateway route at all). Mode `session` is mandatory for the OIDC flow below:
+          # The public HTTPS route is the post-login redirect target and replaces
+          # the removed runtime-downloaded Headlamp plugin entry point.
+          origin: https://crossview.${domain}
+        # Crossview keeps its OWN application session after the outer
+        # oauth2-proxy maintainer-team gate. Mode `session` is mandatory for the
+        # OIDC flow below:
         # the SessionAuthMiddleware gates the /api/kubernetes/* data routes on a
         # signed session cookie, the cookie store is ONLY wired up when
         # AUTH_MODE=session (api/middlewares/session.go), and the boot-time admin
@@ -246,13 +240,13 @@ spec:
       # Crossview validates the user via the userinfo endpoint, not the
       # id_token, so no JWKS/issuer match is required.
       #
-      # SECURITY NOTE: crossview has no oauth2-proxy allowed_groups gate, so the
-      # effective gate is any devantler-tech ORG member that Dex authenticates
-      # (its github connector is org-scoped). They land as a non-admin `user` on
-      # a read-only dashboard (the first login is the break-glass `admin` seeded
-      # at boot, so SSO users are never `admin`). With the public route gone the
-      # practical surface shrinks further: reaching the login page at all now
-      # requires a kube-API port-forward (the Headlamp plugin path).
+      # SECURITY NOTE: the public HTTPRoute is fronted by oauth2-proxy's
+      # devantler-tech:maintainers allowed_groups gate before auth-proxy reaches
+      # this service. Crossview then maps the same user's native OIDC session to
+      # a non-admin `user` on the read-only dashboard (the first login is the
+      # break-glass `admin` seeded at boot, so SSO users are never `admin`). The
+      # outer team gate is required because Crossview's ServiceAccount retains
+      # broad cluster reads; native org membership alone is not sufficient.
       sso:
         oidc:
           enabled: true
@@ -261,8 +255,5 @@ spec:
           authorizationURL: https://dex.${domain}/auth
           tokenURL: http://dex.dex.svc.cluster.local:5556/token
           userInfoURL: http://dex.dex.svc.cluster.local:5556/userinfo
-          # The browser-facing callback on the Headlamp-managed port-forward
-          # (registered on the shared Dex client — controllers/dex/
-          # helm-release.yaml). The plugin forwards crossview-service to a local
-          # port; 3001 mirrors the service target port the forward requests.
-          callbackURL: http://localhost:3001/api/auth/oidc/callback
+          # Registered exactly on the shared Dex client in controllers/dex.
+          callbackURL: https://crossview.${domain}/api/auth/oidc/callback
