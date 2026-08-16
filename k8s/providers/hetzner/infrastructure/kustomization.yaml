@@ -64,6 +64,8 @@ resources:
   # (like umami-db) these live in this overlay, not the shared base. The
   # drain-safe PDB for the operator-built server StatefulSet ships here too.
   - coroot/cluster.yaml
+  - coroot/password-coroot-monitor.yaml
+  - coroot/external-secret-coroot-monitor.yaml
   - coroot/external-secret.yaml
   - coroot/object-store.yaml
   - coroot/scheduled-backup.yaml
@@ -122,6 +124,7 @@ resources:
   # (patches/add-ascoachingogvaner-dk-listeners.yaml, below), which references the
   # tenant Secret cross-namespace and stays Ready (Gateway Programmed) regardless.
 components:
+  - ../../../bases/components/annotations-transformers
   # Prod-only activation for platform#2689. The shared OpenCost base keeps this
   # bounded cAdvisor scraper default-off; Hetzner runs Kubernetes v1.36, whose
   # fine-grained kubelet authorization maps /metrics/* to nodes/metrics.
@@ -143,6 +146,25 @@ components:
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
 patches:
+  # UniFi exists only on Hetzner and applies Crossplane Managed Resources whose
+  # default deletion policy cascades to live network objects. Keep its deliberate
+  # non-pruning exception in this provider overlay so the shared admission policy
+  # remains strict for every other environment. The authorization validator pins
+  # the rendered exception set and the reconciler's immutable source/delete bounds.
+  - target:
+      group: kyverno.io
+      version: v1
+      kind: ClusterPolicy
+      name: enforce-flux-best-practices
+    patch: |
+      - op: add
+        path: /spec/rules/0/exclude/any/-
+        value:
+          resources:
+            namespaces:
+              - unifi
+            names:
+              - unifi
   # gateway-patch self-identifies (Gateway/platform/kube-system), so a path is
   # enough — no explicit target, matching the coroot patch below.
   - path: patches/attach-hcloud-load-balancer.yaml

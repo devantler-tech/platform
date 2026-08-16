@@ -17,15 +17,16 @@
 #
 # Lives in the hetzner overlay (not the base) because the hcloud StorageClass
 # only exists on this provider — the Talos+Docker base/local cluster keeps the
-# default StorageClass. storageClassName and a storage bump are immutable on a
-# bound PVC, so the force annotation lets Flux delete-and-recreate it.
+# default StorageClass. The original migration needed one deliberate
+# replacement; later immutable changes now fail closed because a speculative
+# deployment must never force-delete durable storage.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: vault-snapshots
   namespace: openbao
   annotations:
-    kustomize.toolkit.fluxcd.io/force: enabled
+    kustomize.toolkit.fluxcd.io/force: disabled
 spec:
   # Hetzner Cloud Volumes attach reliably via the API to any node in the
   # location, unlike a Longhorn RWO volume mounted by node-mobile Jobs.

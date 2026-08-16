@@ -110,10 +110,14 @@ no annotation; Crossplane creates it. See the tenant repo's
 [`docs/runbook.md`](https://github.com/devantler-tech/unifi/blob/main/docs/runbook.md)
 for the full procedure and how to find a live object's `_id`.
 
-> **Deletion:** the Managed Resources use the default `deletionPolicy: Delete`, and
-> the tenant's Flux `Kustomization` has `prune: true` — removing a resource from the
-> repo deletes the live object. Set `deletionPolicy: Orphan` on a resource if it must
-> survive removal from Git.
+> **Deletion:** the Platform Flux `Kustomization` deliberately has `prune: false`,
+> and its `unifi` ServiceAccount has no `delete` permission. Removing a resource
+> from the tenant repository therefore leaves both the Managed Resource and the
+> live UniFi object in place. Retirement is an explicit, reviewed Platform
+> operation: choose `deletionPolicy: Delete` to remove the backing object or
+> `deletionPolicy: Orphan` to preserve it, wait for that policy to reconcile, then
+> delete the Managed Resource with a platform-operator identity and verify the
+> intended live-object outcome. There is no Git-removal-only deletion path.
 
 ## Validation notes (confirm on the live cluster)
 

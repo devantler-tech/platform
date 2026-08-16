@@ -19,18 +19,34 @@ spec:
   hostnames:
     - vault.${domain}
   rules:
-    - backendRefs:
-        # openbao-active routes only to the unsealed Raft leader. The chart's
-        # openbao-ui Service selects every server pod, including sealed-but-Ready
-        # standbys (readinessProbe sealedcode=204), so the UI would round-robin
-        # onto a sealed node. Trade-off: with NO active node (all sealed, DR),
-        # the UI is unreachable — recovery is CLI-driven anyway
-        # (docs/dr/openbao-raft-ha-migration.md).
-        - name: openbao-active
-          port: 8200
-      filters:
+    - filters:
+        # Gate the public OpenBao route behind oauth2-proxy so unauthenticated
+        # Internet traffic cannot generate unbounded audit records on the
+        # fail-closed file audit PVC (helm-release.yaml auditStorage: the file
+        # device does not rotate and OpenBao blocks every API request once the
+        # volume fills). After SSO, auth-proxy forwards vault.${domain} to the
+        # active OpenBao Service.
+        #
+        # This makes vault.${domain} BROWSER-ONLY, and that is deliberate: the
+        # audited surface IS /v1, so exempting it to keep token auth working
+        # would restore the very DoS this gate closes. A token-authenticated
+        # client (bao CLI, `bao login -method=oidc`, any X-Vault-Token consumer)
+        # receives an oauth2-proxy redirect here and must reach the API
+        # in-cluster instead -- `kubectl -n openbao port-forward
+        # svc/openbao-active 8200:8200`, or `kubectl -n openbao exec openbao-0`.
+        # The localhost:8250 entry in the oidc role's allowed_redirect_uris
+        # (vault-config/job.yaml) stays valid over that port-forward.
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            set:
+              - name: X-Auth-Request-Redirect
+                value: https://vault.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
               - name: Strict-Transport-Security
                 value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80

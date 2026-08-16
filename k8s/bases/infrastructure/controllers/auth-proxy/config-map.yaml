@@ -33,11 +33,24 @@ data:
           rule: "Host(`opencost.${domain}`)"
           entryPoints: ["web"]
           service: opencost
+        # Actual Budget handles its own OIDC login too, but it is a personal
+        # finance app, so public Gateway traffic first passes through the
+        # platform oauth2-proxy maintainer-team gate.
+        actual-budget:
+          rule: "Host(`budget.${domain}`)"
+          entryPoints: ["web"]
+          service: actual-budget
         # Backstage IDP (forward-auth, demo-image scaffold — see docs/backstage.md).
         backstage:
           rule: "Host(`backstage.${domain}`)"
           entryPoints: ["web"]
           service: backstage
+        # Crossview also has native OIDC, but the outer oauth2-proxy hop keeps
+        # its cluster-wide read surface restricted to the maintainer team.
+        crossview:
+          rule: "Host(`crossview.${domain}`)"
+          entryPoints: ["web"]
+          service: crossview
         # Kyverno Policy Reporter UI. Prod-only (the app lives in the
         # `infrastructure` layer, pulled in full only by the hetzner overlay), so
         # this router is inert on local/CI -- no HTTPRoute sends
@@ -46,7 +59,15 @@ data:
           rule: "Host(`policy-reporter.${domain}`)"
           entryPoints: ["web"]
           service: policy-reporter
+        openbao:
+          rule: "Host(`vault.${domain}`)"
+          entryPoints: ["web"]
+          service: openbao
       services:
+        actual-budget:
+          loadBalancer:
+            servers:
+              - url: "http://actual-budget-actualbudget.actual-budget.svc.cluster.local:5006"
         homepage:
           loadBalancer:
             servers:
@@ -67,9 +88,19 @@ data:
           loadBalancer:
             servers:
               - url: "http://backstage.backstage.svc.cluster.local:7007"
+        crossview:
+          loadBalancer:
+            servers:
+              - url: "http://crossview-service.crossview.svc.cluster.local:80"
         # Policy Reporter UI (policy-reporter-ui Service :8080). Prod-only and
         # inert on local (the policy-reporter namespace has no pods there).
         policy-reporter:
           loadBalancer:
             servers:
               - url: "http://policy-reporter-ui.policy-reporter.svc.cluster.local:8080"
+        # OpenBao UI/API, routed only after oauth2-proxy SSO. Use the active
+        # Service to avoid sending UI/API requests to sealed standby pods.
+        openbao:
+          loadBalancer:
+            servers:
+              - url: "http://openbao-active.openbao.svc.cluster.local:8200"

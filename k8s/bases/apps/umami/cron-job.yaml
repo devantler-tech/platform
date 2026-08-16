@@ -86,6 +86,14 @@ spec:
           # CronJob schedule provides retries. A failed Job's pod is retained
           # (up to failedJobsHistoryLimit) for log inspection.
           restartPolicy: Never
+          # Named explicitly so this field stays inside kustomize-controller's
+          # server-side-apply fieldset. SSA prunes only fields a manager owns, so
+          # an unowned `serviceAccountName` on the live CronJob is unreachable by
+          # reconciliation and pins every Job to whatever subject it names — if
+          # that account does not exist the controller cannot create the pod at
+          # all, and the run fails on `DeadlineExceeded` rather than on anything
+          # the script did. Declaring it keeps the value reconcilable.
+          serviceAccountName: umami-provision-tenants
           automountServiceAccountToken: false
           securityContext:
             runAsNonRoot: true
@@ -100,6 +108,17 @@ spec:
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
+                # Restated at container level even though the pod securityContext
+                # above already sets it: `validate-pod-security` autogenerates a
+                # CronJob rule that reads this container path, while
+                # `add-security-context` has no autogen rules, so a CronJob
+                # template is validated but never mutated. Without this field the
+                # manifest is admitted only while the live object is equally
+                # non-compliant (the validate rules set
+                # `allowExistingViolations: true`) — so the moment anything makes
+                # the live CronJob compliant, this manifest stops being
+                # appliable and wedges the apps Kustomization.
+                runAsNonRoot: true
                 readOnlyRootFilesystem: true
                 capabilities:
                   drop:

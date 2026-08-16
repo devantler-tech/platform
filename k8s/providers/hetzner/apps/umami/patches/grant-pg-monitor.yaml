@@ -1,14 +1,15 @@
-# Grant the `umami` role membership in pg_monitor so Coroot's cluster-agent —
-# which logs in AS the umami role (its credential is umami-db-rotated, referenced
-# by the scrape annotations) — can read the full pg_stat_* surface (other
-# sessions, replication, bgwriter) rather than just its own. JSON6902 `add`
-# appends inRoles to the EXISTING managed role (index 0 = the sole `umami` role
-# in the base Cluster) instead of a strategic merge, which would replace the
-# whole managed.roles list and duplicate/desync the carefully-tuned umami role
-# (passwordSecret umami-db-rotated, the OpenBao-rotation enforcer). pg_monitor is
-# read-only, so this is a minimal privilege addition on a login the app already
-# holds.
+# Create a dedicated Coroot monitoring login instead of granting pg_monitor to
+# Umami's write-capable application owner. JSON6902 appends the role to the
+# existing managed.roles list so the base `umami` role and its OpenBao-rotated
+# passwordSecret remain unchanged. The generated Secret is kubernetes.io/basic-auth
+# and is consumed only by Coroot's Postgres scrape annotations.
 - op: add
-  path: /spec/managed/roles/0/inRoles
+  path: /spec/managed/roles/-
   value:
-    - pg_monitor
+    name: coroot_monitor
+    ensure: present
+    login: true
+    inRoles:
+      - pg_monitor
+    passwordSecret:
+      name: umami-db-coroot-monitor

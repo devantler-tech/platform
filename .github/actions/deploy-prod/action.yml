@@ -36,20 +36,18 @@ runs:
   using: composite
   steps:
     - name: ⚙️ Setup KSail
-      # Install the KSail CLI from the release tarball via curl. We use curl
-      # rather than brew/setup-ksail-cli because the v7.20.0 release shipped
-      # only desktop artifacts (linux CLI missing, 404 on the tarball).
-      # v7.25.0 ships complete linux artifacts again and carries the
-      # cluster-update fixes; renovate keeps this pin current.
+      # Install the KSail CLI from the release tarball and verify the
+      # downloaded asset against GitHub's published release checksum before
+      # running it with production credentials. We still use the tarball rather
+      # than brew/setup-ksail-cli because v7.20.0 shipped only desktop artifacts
+      # (linux CLI missing, 404 on the tarball); Renovate keeps this pin current.
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
         KSAIL_VERSION: "7.178.25"
+        GITHUB_TOKEN: ${{ github.token }}
       run: |
-        curl -fsSL "https://github.com/devantler-tech/ksail/releases/download/v${KSAIL_VERSION}/ksail_${KSAIL_VERSION}_linux_amd64.tar.gz" -o /tmp/ksail.tar.gz
-        tar -xzf /tmp/ksail.tar.gz -C /tmp
-        sudo install /tmp/ksail /usr/local/bin/ksail
-        ksail --version
+        .github/scripts/setup-ksail.sh
 
     - name: ⚙️ Setup talosctl
       # refresh-flux-ghcr-auth.sh uses the host API for a secret-safe,
@@ -151,6 +149,19 @@ runs:
         last_err=$(printf '%s' "$last_err" | tr '\n' ' ')
         echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig (last kubectl error: ${last_err}). KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
         exit 1
+
+    - name: 💾 Validate live persistence retirement safety
+      # A commit parent is not evidence that its protection reached production:
+      # two direct pushes can be waiting behind one manual dispatch. Compare the
+      # candidate with the actual Flux-owned PVCs, HelmReleases, and Namespaces
+      # after restoring the pinned prod context, but before moving the mutable
+      # artifact tag. Any removed live object must already carry prune=disabled.
+      shell: bash
+      env:
+        PVC_PRUNE_LIVE_CONTEXT: admin@prod
+      run: |
+        shellcheck scripts/tests/test-pvc-prune-safety.sh
+        bash scripts/tests/test-pvc-prune-safety.sh
 
     - name: 🛡️ Suspend autoscaling for gated Cilium rollout
       id: cilium_rollout_gate

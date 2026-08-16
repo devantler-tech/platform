@@ -61,6 +61,7 @@ resources:
   # experiments are actually running, not as always-on prod attack surface.
   # - ../../../../bases/infrastructure/controllers/chaos-mesh/
 components:
+  - ../../../../bases/components/annotations-transformers
   # Platform-wide HelmRelease drift detection (mode: enabled). Restores
   # Helm-rendered resources deleted/mutated out-of-band — the cause of the
   # silently-broken keda external-scaler and homepage Deployments.
@@ -101,6 +102,9 @@ components:
   # - cilium/components/ebpf-host-routing/
 patches:
   - path: openbao/patches/store-data-on-hcloud.yaml
+  # Umami's Namespace moved into the preceding controllers layer with its
+  # Kyverno Role; keep the prod-only user-namespace label with its new owner.
+  - path: kyverno/patches/enable-user-namespaces.yaml
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
   # Dormant prod-only SPIRE storage values. Authentication/SPIRE stay disabled
