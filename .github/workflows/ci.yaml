@@ -488,12 +488,6 @@ jobs:
         # see any of it, so render the component contract instead.
         run: bash scripts/tests/test-crossplane-sync-exporter.sh
 
-      - name: 🔒 Validate Crossplane provider egress policy
-        if: needs.changes.outputs.k8s == 'true'
-        # The reviewed FQDN set must remain narrow while provider traffic stays
-        # on the direct L3/L4 path that completes upstream TLS handshakes.
-        run: bash scripts/tests/test-crossplane-egress-policy.sh
-
       - name: 🩺 Validate the CNPG degraded-cluster alert
         if: needs.changes.outputs.k8s == 'true'
         # This CronJob is the only signal for a database degraded without
@@ -590,6 +584,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
+
+      - name: 🔒 Validate Crossplane provider egress policy
+        if: needs.changes.outputs.k8s == 'true'
+        # This test exercises KSail's in-process Helm renderer, so it must run
+        # after the pinned KSail setup above. The reviewed FQDN set must remain
+        # narrow while provider traffic stays on the direct L3/L4 path that
+        # completes upstream TLS handshakes.
+        run: bash scripts/tests/test-crossplane-egress-policy.sh
 
       - name: 📥 Restore kubeconform schema cache
         # ksail's kubeconform client fetches JSON schemas from
