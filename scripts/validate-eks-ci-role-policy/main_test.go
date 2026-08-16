@@ -37,6 +37,53 @@ func repositoryInputs(t *testing.T) ([]byte, []byte, []byte) {
 	return read(roleManifestPath), read(boundaryManifestPath), rendered
 }
 
+func clusterReaderSecretBoundaryViolations(manifest []byte) ([]string, error) {
+	var role struct {
+		AggregationRule *struct {
+			ClusterRoleSelectors []map[string]any `yaml:"clusterRoleSelectors"`
+		} `yaml:"aggregationRule"`
+		Rules []struct {
+			APIGroups []string `yaml:"apiGroups"`
+			Resources []string `yaml:"resources"`
+			Verbs     []string `yaml:"verbs"`
+		} `yaml:"rules"`
+	}
+	if err := yaml.Unmarshal(manifest, &role); err != nil {
+		return nil, fmt.Errorf("parse cluster-reader role: %w", err)
+	}
+
+	violations := make([]string, 0)
+	if role.AggregationRule != nil {
+		violations = append(violations, "cluster-reader must not define aggregationRule")
+	}
+	contains := func(values []string, expected string) bool {
+		for _, value := range values {
+			if value == expected {
+				return true
+			}
+		}
+		return false
+	}
+	for _, forbiddenGroup := range []string{
+		"coroot.com",
+		"helm.toolkit.fluxcd.io",
+	} {
+		for ruleIndex, rule := range role.Rules {
+			groupMatches := contains(rule.APIGroups, forbiddenGroup) || contains(rule.APIGroups, "*")
+			readGranted := contains(rule.Verbs, "get") || contains(rule.Verbs, "list") ||
+				contains(rule.Verbs, "watch") || contains(rule.Verbs, "*")
+			if groupMatches && len(rule.Resources) > 0 && readGranted {
+				violations = append(violations, fmt.Sprintf(
+					"cluster-reader rule %d grants read access to secret-bearing API group %s",
+					ruleIndex, forbiddenGroup,
+				))
+			}
+		}
+	}
+
+	return violations, nil
+}
+
 // TestClusterReaderCannotReadSecretBearingCustomResources guards the effective
 // read boundary, not the YAML spelling. Both API groups persist values after
 // Flux substitution, so granting any read verb on their resources lets the
@@ -49,37 +96,32 @@ func TestClusterReaderCannotReadSecretBearingCustomResources(t *testing.T) {
 		t.Fatalf("read cluster-reader role: %v", err)
 	}
 
-	var role struct {
-		Rules []struct {
-			APIGroups []string `yaml:"apiGroups"`
-			Resources []string `yaml:"resources"`
-			Verbs     []string `yaml:"verbs"`
-		} `yaml:"rules"`
+	violations, err := clusterReaderSecretBoundaryViolations(manifest)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err := yaml.Unmarshal(manifest, &role); err != nil {
-		t.Fatalf("parse cluster-reader role: %v", err)
+	for _, violation := range violations {
+		t.Error(violation)
 	}
-	contains := func(values []string, expected string) bool {
-		for _, value := range values {
-			if value == expected {
-				return true
-			}
-		}
-		return false
-	}
+}
 
-	for _, forbiddenGroup := range []string{
-		"coroot.com",
-		"helm.toolkit.fluxcd.io",
-	} {
-		for ruleIndex, rule := range role.Rules {
-			groupMatches := contains(rule.APIGroups, forbiddenGroup) || contains(rule.APIGroups, "*")
-			readGranted := contains(rule.Verbs, "get") || contains(rule.Verbs, "list") ||
-				contains(rule.Verbs, "watch") || contains(rule.Verbs, "*")
-			if groupMatches && len(rule.Resources) > 0 && readGranted {
-				t.Errorf("cluster-reader rule %d grants read access to secret-bearing API group %s", ruleIndex, forbiddenGroup)
-			}
-		}
+// TestClusterReaderCannotUseAggregationRule prevents indirect grants from
+// bypassing the direct-rule checks through labeled contributor ClusterRoles.
+func TestClusterReaderCannotUseAggregationRule(t *testing.T) {
+	manifest := []byte(`
+aggregationRule:
+  clusterRoleSelectors:
+    - matchLabels:
+        rbac.authorization.k8s.io/aggregate-to-cluster-reader: "true"
+rules: []
+`)
+
+	violations, err := clusterReaderSecretBoundaryViolations(manifest)
+	if err != nil {
+		t.Fatalf("validate synthetic cluster-reader role: %v", err)
+	}
+	if len(violations) != 1 || !strings.Contains(violations[0], "aggregationRule") {
+		t.Fatalf("violations = %v, want explicit aggregationRule rejection", violations)
 	}
 }
 
