@@ -17,6 +17,7 @@ readonly bootstrap_dir="${root_dir}/k8s/providers/hetzner/bootstrap"
 readonly controllers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
 readonly infrastructure_dir="${root_dir}/k8s/providers/hetzner/infrastructure"
 readonly apps_dir="${root_dir}/k8s/providers/hetzner/apps"
+readonly helm_policy_rules="${root_dir}/scripts/tests/crossplane-egress-policy-rules.yaml"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -36,6 +37,10 @@ effective_policy_render="${bootstrap_rendered}"$'\n---\n'"${rendered}"$'\n---\n'
 
 command -v yq >/dev/null 2>&1 ||
   fail 'mikefarah yq v4.9+ is required to inspect generated policy templates'
+command -v kyverno >/dev/null 2>&1 ||
+  fail 'Kyverno CLI is required to evaluate generated and mutated policies'
+command -v ksail >/dev/null 2>&1 ||
+  fail 'KSail is required to inspect Helm-rendered policy resources'
 
 yq_capability="$(
   yq e -N -r \
@@ -44,6 +49,14 @@ yq_capability="$(
 )" || fail 'mikefarah yq v4.9+ must support e, -N, and any_c'
 [ "${yq_capability}" = 'true' ] ||
   fail 'mikefarah yq v4.9+ capability probe returned an unexpected result'
+
+test_temp_root="$(mktemp -d /tmp/crossplane-egress-policy.XXXXXX)"
+readonly test_temp_root
+# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap.
+cleanup() {
+  rm -rf "${test_temp_root}"
+}
+trap cleanup EXIT
 
 select_crossplane_policy() {
   awk '
@@ -126,43 +139,90 @@ static_crossplane_policy_inventory() {
 
 assert_generated_policy_contract() {
   local candidate_render="$1"
+  local case_dir
+  local generator_dir
+  local generator_output_dir
+  local mutation_dir
+  local mutation_output_dir
+  local policy_bundle
+  local kyverno_result
+  local applicable_generators
   local actual_generators
   local expected_generators
   local actual_contract
   local expected_contract
+  local expected_mutated_contract
+  local actual_mutated_contract
+  local mutated_files
+
+  case_dir="$(mktemp -d "${test_temp_root}/kyverno.XXXXXX")"
+  policy_bundle="${case_dir}/policies.yaml"
+  generator_dir="${case_dir}/generators"
+  generator_output_dir="${case_dir}/generated"
+  mutation_dir="${case_dir}/mutations"
+  mutation_output_dir="${case_dir}/mutated"
+  printf '%s\n' "${candidate_render}" >"${policy_bundle}"
+
+  # Ask Kyverno itself which generators apply to the real Crossplane Namespace.
+  # This preserves names, selectors, expressions, any/all blocks, exclusions,
+  # and future matcher semantics instead of reimplementing them in yq.
+  # shellcheck disable=SC2016 # $index is a yq variable.
+  CROSSPLANE_GENERATOR_DIR="${generator_dir}" yq e -N \
+    -s 'strenv(CROSSPLANE_GENERATOR_DIR) + "/" + ($index | tostring) + "-" + .metadata.name + ".yaml"' \
+    'select(
+      (.kind == "ClusterPolicy" or .kind == "Policy") and
+      ([.spec.rules[] |
+        select(
+          .generate.kind == "CiliumNetworkPolicy" or
+          .generate.kind == "NetworkPolicy" or
+          .generate.kind == "CiliumClusterwideNetworkPolicy"
+        )] | length > 0)
+    )' "${policy_bundle}"
+
+  if ! kyverno_result="$(
+    kyverno apply "${generator_dir}" \
+      --resource "${controllers_dir}/crossplane/namespace.yaml" \
+      --output "${generator_output_dir}" \
+      --remove-color 2>&1
+  )"; then
+    printf '%s\n' "${kyverno_result}" >&2
+    fail 'Kyverno must evaluate the deployed network-policy generators'
+  fi
+
+  applicable_generators="$(
+    yq e -N -r '
+      select(
+        (.kind == "CiliumNetworkPolicy" or
+          .kind == "NetworkPolicy" or
+          .kind == "CiliumClusterwideNetworkPolicy") and
+        .metadata.labels."generate.kyverno.io/policy-name" != null
+      ) |
+      .metadata.labels."generate.kyverno.io/policy-name"
+    ' "${generator_output_dir}"/*.yaml | LC_ALL=C sort -u
+  )"
+  [ "${applicable_generators}" = 'add-default-deny' ] ||
+    fail 'add-default-deny must be the only Kyverno policy that generates a network policy for Crossplane'
 
   actual_generators="$(
-    # shellcheck disable=SC2016 # $policy is a yq variable.
     yq e -N -r '
-      select(.kind == "ClusterPolicy" or .kind == "Policy") |
-      . as $policy |
+      select(
+        (.kind == "ClusterPolicy" or .kind == "Policy") and
+        .metadata.name == "add-default-deny"
+      ) |
       .spec.rules[] |
       select(
-        .generate.namespace == "crossplane-system" or
-        (
-          .generate.namespace == "{{request.object.metadata.name}}" and
-          ([.match.resources.kinds[]?,
-            .match.any[]?.resources.kinds[]?,
-            .match.all[]?.resources.kinds[]?] |
-            any_c(. == "Namespace")) and
-          (([.exclude.resources.names[]?,
-            .exclude.any[]?.resources.names[]?,
-            .exclude.all[]?.resources.names[]?] |
-            any_c(. == "crossplane-system")) | not)
-        )
+        .generate.kind == "CiliumNetworkPolicy" or
+        .generate.kind == "NetworkPolicy" or
+        .generate.kind == "CiliumClusterwideNetworkPolicy"
       ) |
-      select(.generate != null) |
-      select((.generate | @json) |
-        test("CiliumNetworkPolicy|NetworkPolicy|CiliumClusterwideNetworkPolicy")) |
-      ($policy.kind + "/" + ($policy.metadata.namespace // "") + "/" +
-        $policy.metadata.name + "|" + .name)
-    ' - <<<"${candidate_render}" | awk 'NF'
+      (.name + "|" + .generate.kind)
+    ' "${policy_bundle}" | awk 'NF'
   )"
   expected_generators="$(
     printf '%s\n' \
-      'ClusterPolicy//add-default-deny|generate-default-deny' \
-      'ClusterPolicy//add-default-deny|generate-allow-dns' \
-      'ClusterPolicy//add-default-deny|generate-default-deny-networkpolicy'
+      'generate-default-deny|CiliumNetworkPolicy' \
+      'generate-allow-dns|CiliumNetworkPolicy' \
+      'generate-default-deny-networkpolicy|NetworkPolicy'
   )"
   [ "${actual_generators}" = "${expected_generators}" ] ||
     fail 'Kyverno must keep exactly the three reviewed generated network-policy rules'
@@ -170,23 +230,12 @@ assert_generated_policy_contract() {
   actual_contract="$(
     # shellcheck disable=SC2016 # $policy is a yq variable.
     yq e -N -r '
-      select(.kind == "ClusterPolicy" or .kind == "Policy") |
+      select(
+        (.kind == "ClusterPolicy" or .kind == "Policy") and
+        .metadata.name == "add-default-deny"
+      ) |
       . as $policy |
       .spec.rules[] |
-      select(
-        .generate.namespace == "crossplane-system" or
-        (
-          .generate.namespace == "{{request.object.metadata.name}}" and
-          ([.match.resources.kinds[]?,
-            .match.any[]?.resources.kinds[]?,
-            .match.all[]?.resources.kinds[]?] |
-            any_c(. == "Namespace")) and
-          (([.exclude.resources.names[]?,
-            .exclude.any[]?.resources.names[]?,
-            .exclude.all[]?.resources.names[]?] |
-            any_c(. == "crossplane-system")) | not)
-        )
-      ) |
       select(.generate.kind == "CiliumNetworkPolicy" or
         .generate.kind == "NetworkPolicy" or
         .generate.kind == "CiliumClusterwideNetworkPolicy") |
@@ -199,7 +248,7 @@ assert_generated_policy_contract() {
         (.exclude.any[0].resources.names | @json),
         (.generate.data.spec | @json)] |
       join("|")
-    ' - <<<"${candidate_render}" | awk 'NF'
+    ' "${policy_bundle}" | awk 'NF'
   )"
   expected_contract="$(
     printf '%s\n' \
@@ -209,6 +258,49 @@ assert_generated_policy_contract() {
   )"
   [ "${actual_contract}" = "${expected_contract}" ] ||
     fail 'Kyverno generated Crossplane policies must remain the exact default-deny and DNS-only contract'
+
+  # Evaluate admission-time and mutate-existing rules against both the real
+  # Namespace trigger and the real policy target. Every emitted form of
+  # allow-crossplane must remain byte-for-byte equivalent at the spec level.
+  # shellcheck disable=SC2016 # $index is a yq variable.
+  CROSSPLANE_MUTATION_DIR="${mutation_dir}" yq e -N \
+    -s 'strenv(CROSSPLANE_MUTATION_DIR) + "/" + ($index | tostring) + "-" + .metadata.name + ".yaml"' \
+    'select(
+      (.kind == "ClusterPolicy" or .kind == "Policy") and
+      ([.spec.rules[] | select(.mutate != null)] | length > 0)
+    )' "${policy_bundle}"
+
+  if ! kyverno_result="$(
+    kyverno apply "${mutation_dir}" \
+      --resource "${controllers_dir}/crossplane/namespace.yaml" \
+      --resource "${controllers_dir}/crossplane/cilium-network-policy.yaml" \
+      --target-resource "${controllers_dir}/crossplane/cilium-network-policy.yaml" \
+      --output "${mutation_output_dir}" \
+      --remove-color 2>&1
+  )"; then
+    printf '%s\n' "${kyverno_result}" >&2
+    fail 'Kyverno must evaluate deployed mutations of allow-crossplane'
+  fi
+
+  expected_mutated_contract="$(
+    yq e -o=json -I=0 '.spec | sort_keys(..)' \
+      "${controllers_dir}/crossplane/cilium-network-policy.yaml"
+  )"
+  mutated_files=("${mutation_output_dir}"/*.yaml)
+  actual_mutated_contract="$(
+    yq e -o=json -I=0 '
+      select(
+        .kind == "CiliumNetworkPolicy" and
+        .metadata.namespace == "crossplane-system" and
+        .metadata.name == "allow-crossplane"
+      ) |
+      .spec |
+      sort_keys(..)
+    ' "${mutated_files[@]}" | LC_ALL=C sort -u
+  )"
+  [ -z "${actual_mutated_contract}" ] ||
+    [ "${actual_mutated_contract}" = "${expected_mutated_contract}" ] ||
+    fail 'Kyverno mutations must not change the reviewed allow-crossplane spec'
 }
 
 policy="$(select_crossplane_policy "${rendered}")"
@@ -228,6 +320,41 @@ static_crossplane_policies="$(static_crossplane_policy_inventory "${effective_po
 # the effective additive allow-set is covered too.
 assert_generated_policy_contract "${effective_policy_render}"
 
+# kubectl kustomize intentionally stops at HelmRelease CRs. KSail renders the
+# declared charts in-process, then applies these CEL rules to every chart child.
+# Require a chart-only Deployment marker so a skipped Helm pass cannot look
+# indistinguishable from a clean policy inventory.
+if ! helm_validation="$(
+  ksail workload validate "${controllers_dir}" \
+    --rules "${helm_policy_rules}" 2>&1
+)"; then
+  printf '%s\n' "${helm_validation}" >&2
+  fail 'Helm-rendered Crossplane resources must satisfy the egress-policy contract'
+fi
+if [[ "${helm_validation}" != *'observe-crossplane-chart-deployment'* ]] ||
+  [[ "${helm_validation}" != *'Deployment/crossplane-system/crossplane'* ]]; then
+  printf '%s\n' "${helm_validation}" >&2
+  fail 'KSail must prove it inspected the rendered Crossplane chart'
+fi
+
+helm_policy_fixture="${test_temp_root}/helm-network-policy.yaml"
+printf '%s\n' \
+  'apiVersion: networking.k8s.io/v1' \
+  'kind: NetworkPolicy' \
+  'metadata:' \
+  '  name: chart-world-egress' \
+  '  namespace: crossplane-system' \
+  'spec:' \
+  '  podSelector: {}' \
+  '  policyTypes: [Egress]' \
+  '  egress:' \
+  '    - {}' >"${helm_policy_fixture}"
+if ksail workload validate "${helm_policy_fixture}" \
+  --skip-helm-render \
+  --rules "${helm_policy_rules}" >/dev/null 2>&1; then
+  fail 'the Helm-render guard must reject an additional Crossplane NetworkPolicy'
+fi
+
 unexpected_generate_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: generate-crossplane-world-egress\nspec:\n  rules:\n  - name: generate-world-egress\n    match:\n      resources:\n        kinds: [Namespace]\n    generate:\n      generateExisting: true\n      apiVersion: cilium.io/v2\n      kind: CiliumNetworkPolicy\n      name: allow-world\n      namespace: "{{request.object.metadata.name}}"\n      synchronize: true\n      data:\n        spec:\n          endpointSelector: {}\n          egress:\n          - toEntities: [world]'
 render_with_unexpected_generate="${effective_policy_render}"$'\n---\n'"${unexpected_generate_policy}"
 if (assert_generated_policy_contract "${render_with_unexpected_generate}") >/dev/null 2>&1; then
@@ -238,6 +365,18 @@ unrelated_generate_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmeta
 render_with_unrelated_generate="${effective_policy_render}"$'\n---\n'"${unrelated_generate_policy}"
 if ! (assert_generated_policy_contract "${render_with_unrelated_generate}") >/dev/null 2>&1; then
   fail 'the regression guard must ignore Kyverno generators that cannot target Crossplane'
+fi
+
+positive_filtered_generate_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: generate-filtered-network-policies\nspec:\n  rules:\n  - name: name-filtered\n    match:\n      resources:\n        kinds: [Namespace]\n        names: [monitoring]\n    generate:\n      apiVersion: cilium.io/v2\n      kind: CiliumNetworkPolicy\n      name: monitoring-egress\n      namespace: "{{request.object.metadata.name}}"\n      data:\n        spec:\n          endpointSelector: {}\n          egress:\n          - toEntities: [world]\n  - name: selector-filtered\n    match:\n      resources:\n        kinds: [Namespace]\n        selector:\n          matchLabels:\n            team: monitoring\n    generate:\n      apiVersion: networking.k8s.io/v1\n      kind: NetworkPolicy\n      name: monitoring-default-deny\n      namespace: "{{request.object.metadata.name}}"\n      data:\n        spec:\n          podSelector: {}\n          policyTypes: [Ingress, Egress]'
+render_with_positive_filters="${effective_policy_render}"$'\n---\n'"${positive_filtered_generate_policy}"
+if ! (assert_generated_policy_contract "${render_with_positive_filters}") >/dev/null 2>&1; then
+  fail 'the regression guard must honor positive Kyverno name and selector filters'
+fi
+
+mutate_existing_world_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: mutate-crossplane-world-egress\nspec:\n  rules:\n  - name: mutate-existing-crossplane-policy\n    match:\n      resources:\n        kinds: [Namespace]\n        names: [crossplane-system]\n    mutate:\n      mutateExistingOnPolicyUpdate: true\n      targets:\n      - apiVersion: cilium.io/v2\n        kind: CiliumNetworkPolicy\n        name: allow-crossplane\n        namespace: crossplane-system\n      patchStrategicMerge:\n        spec:\n          egress:\n          - toEntities: [world]'
+render_with_mutate_existing="${effective_policy_render}"$'\n---\n'"${mutate_existing_world_policy}"
+if (assert_generated_policy_contract "${render_with_mutate_existing}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject Kyverno mutate-existing widening of allow-crossplane'
 fi
 
 additional_world_policy=$'apiVersion: cilium.io/v2\nkind: CiliumNetworkPolicy\nmetadata:\n  name: additional-world-egress\n  namespace: crossplane-system\nspec:\n  endpointSelector: {}\n  egress:\n  - toEntities: [world]'

@@ -1,0 +1,29 @@
+rules:
+  # This warning is consumed by the shell harness. It proves KSail rendered the
+  # Crossplane chart before the policy assertion below is accepted as evidence.
+  - name: observe-crossplane-chart-deployment
+    expression: >-
+      object.kind != 'Deployment' ||
+      !has(object.metadata.namespace) ||
+      object.metadata.namespace != 'crossplane-system'
+    message: rendered Crossplane chart Deployment found
+    severity: warning
+
+  - name: restrict-crossplane-chart-network-policies
+    expression: >-
+      !(object.kind in ['CiliumNetworkPolicy', 'NetworkPolicy']) ||
+      !has(object.metadata.namespace) ||
+      object.metadata.namespace != 'crossplane-system' ||
+      (object.kind == 'CiliumNetworkPolicy' &&
+       object.metadata.name == 'allow-crossplane')
+    message: >-
+      Helm charts must not add a network policy to crossplane-system; the
+      reviewed allow-crossplane policy is the only static policy in scope
+    severity: error
+
+  - name: reject-crossplane-chart-clusterwide-network-policies
+    expression: object.kind != 'CiliumClusterwideNetworkPolicy'
+    message: >-
+      Helm charts in the Crossplane controller overlay must not add a
+      cluster-wide Cilium policy
+    severity: error

@@ -152,6 +152,7 @@ jobs:
               - 'scripts/tests/test-opencost-usage-scraper.sh'
               - 'scripts/tests/test-crossplane-sync-exporter.sh'
               - 'scripts/tests/test-crossplane-egress-policy.sh'
+              - 'scripts/tests/crossplane-egress-policy-rules.yaml'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               # Both halves, so editing the guard alone — or its test alone —
               # still runs the check that covers it.
