@@ -14,10 +14,22 @@
 #
 # DISCRIMINATOR — KSail contract: autoscaler-provisioned nodes carry the node
 # label `ksail.io/autoscaled: "true"`; baseline (static) workers and control
-# planes do NOT. SHIPPED: KSail stamps the label since ksail#5113 (verified on
-# the live prod autoscale-cx33 nodes, 2026-07-01), so this policy is ACTIVE —
-# pods created since then are biased toward the baseline workers. Note the
-# label does NOT gate Longhorn's default-disk creation (that keys exclusively
+# planes do NOT. SHIPPED: KSail stamps the label since ksail#5113, so this
+# policy is ACTIVE — pods are biased toward the baseline workers.
+#
+# ⚠️ COVERAGE IS NOT UNIVERSAL — the label is stamped at node CREATION and is
+# never applied retroactively, so any autoscaler node that predates ksail#5113
+# carries no label and this policy silently does not see it. That is not
+# hypothetical: measured on prod 2026-08-16, the two long-lived
+# `autoscale-cx33-*` nodes had NO `ksail.io/autoscaled` label while the current
+# cx43 node did. Those two were created about a day before the label shipped,
+# so workloads kept landing on them and they sat at ~63% CPU requests — above
+# the 50% scale-down-utilization threshold, which is self-reinforcing. Node
+# affinity matches label VALUES and supports no wildcard, so a name-based
+# `autoscale-*` discriminator (the one its two sibling policies use) is not
+# expressible here; the durable fix is deleting stranded nodes, see #3178.
+#
+# Note the label does NOT gate Longhorn's default-disk creation (that keys exclusively
 # on node.longhorn.io/create-default-disk, still stamped by the shared Talos
 # worker config) — replica placement is handled separately by
 # restrict-storage-to-baseline-workers.yaml in this folder. Also note the bias

@@ -458,6 +458,34 @@ hcloud server list --selector hcloud/node-group
 hcloud server delete <server-id>
 ```
 
+### Stranded autoscaler nodes on a LIVE cluster (removed pool)
+
+Removing a pool from `ksail.prod.yaml` does **not** delete servers already
+running in it. The autoscaler only ever considers nodes that belong to one of
+its configured node groups, so a node whose pool no longer exists becomes
+invisible to scale-down and survives indefinitely — however idle the cluster
+gets. It keeps consuming `maxNodesTotal`, which starves real bursts, and it is
+never rolled, so it drifts behind on Kubernetes and Talos.
+
+Detect it by comparing live node names against the configured groups:
+
+```bash
+# pools the autoscaler actually manages
+kubectl -n kube-system get deploy cluster-autoscaler-hetzner-cluster-autoscaler \
+  -o jsonpath='{range .spec.template.spec.containers[0].args[*]}{@}{"\n"}{end}' | grep '^--nodes='
+# every autoscaler-provisioned node currently registered
+kubectl get nodes -o name | grep '/autoscale-'
+```
+
+Any `autoscale-<type>-*` node whose `<type>` has no matching `--nodes=` group is
+stranded. Drain it and delete its server (same `hcloud server delete` as above).
+Longhorn replicas must move first; `restrict-storage-to-baseline-workers` and
+`drain-autoscale-node-storage` cover these nodes because they key on the node
+*name*, not on the `ksail.io/autoscaled` label — which a node predating
+ksail#5113 does not carry.
+
+Whenever you remove a pool, check for its running nodes in the same change.
+
 ### Autoscaler node not joining cluster
 
 ```bash
