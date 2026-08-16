@@ -611,6 +611,82 @@ dependency cannot recover a stale root credential by itself.
 
 ---
 
+## Scenario 11 — Recover an orphaned GHCR deploy fence
+
+A deploy fails to start with one of:
+
+> Another GHCR synchronization transaction holds the synchronization lease
+>
+> Another transaction already owns the image-verification policy handoff
+
+`refresh-flux-ghcr-auth.sh` fences its transaction with a `Lease` and by suspending
+the `infrastructure` and `flux-system` Kustomizations. Those fences are released
+together at exit. A hard kill releases an arbitrary prefix and leaves the rest
+held — and nothing reclaims them automatically, because Talos machine-config
+writes expose no fencing token, so a surviving process could still write after a
+timeout takeover. Recovery is deliberately a human step.
+
+A held policy fence is the more serious of the two: the deploy fails loudly, but
+the suspended Kustomization silently stops GitOps reconciliation for that layer
+until it is released.
+
+**1. List what is actually held.** Read-only; needs no credential and works while
+a deploy is refusing to start:
+
+```bash
+./scripts/refresh-flux-ghcr-auth.sh --fences
+```
+
+It prints each held fence, its holder, liveness evidence, and the exact
+CAS-guarded release command. `--fences` is an alternative mode and cannot be
+combined with `--check-only`, `--allow-incomplete-fanout`, or either
+`--*-runtime-proof` flag; it reports and exits, so accepting the combination
+would let an automation step pass having skipped the work it was configured to
+do.
+
+**2. Prove the holder is dead — never skip this.** A live deploy holds these
+fences legitimately.
+
+- If the Lease was renewed inside its duration, the holder is **live**. Stop.
+- The holder identity embeds the GitHub run: `…-gh<run-id>.<attempt>-…`. Confirm
+  it is terminal:
+
+  ```bash
+  gh run view <run-id> --repo devantler-tech/platform --attempt <attempt> --json status,conclusion
+  ```
+
+  Anything other than `status: completed` means it is still running. Stop.
+  `--attempt` is not optional: a rerun reuses the run id, so without it `gh`
+  reports the newest attempt and an orphan left by a finished attempt reads as
+  live — blocking a recovery that is valid.
+- An identity with no run reference predates that recording, or came from a local
+  run. Establish liveness another way before continuing.
+
+**3. Release.** Run the command the report printed for each dead fence. Each is
+CAS-guarded on the holder and the resource's current state, so it fails safely if
+anything changed since the report.
+
+A node fence may print `NOT releasable` and no command. That is a refusal, not a
+gap to work around by hand: the report only emits a release where it can prove
+the release is the same one the bridge would perform. It withholds one when the
+drain phase is anything but `claimed` (a Talos write may already be in flight,
+and an absent phase is never read as innocence), when another node under the
+same bootstrap owner is still quarantined (that quarantine is all-or-nothing),
+when the journal is `release-ready` (proving it covers the current credential
+revision needs the credential, which this mode deliberately never loads), or
+when the node's scheduling state has drifted from the intent its journal
+captured. In each case run the bridge — a normal `CD` dispatch — and let
+bootstrap recovery adjudicate the node. Never hand-clear a recovery journal: it
+is the only durable record of that state.
+
+**4. Confirm.** Re-run `--fences`; it should report no fence held. Then dispatch
+`CD` on `main`.
+
+Do not raise timeouts or add automatic expiry takeover to work around this — the
+absence of takeover is the property that makes the Talos write path safe.
+
+---
+
 ## Related documents
 
 - [Cryptographic custody](./crypto-custody.md) — per-artifact threat model for SOPS keys, Talos PKI, OpenBao seal, cosign identity
