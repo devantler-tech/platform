@@ -216,24 +216,29 @@ spec:
                   // convergence, so a one-shot fetch can intermittently throw
                   // `TypeError: fetch failed`. The ensureAuth loop below already
                   // absorbs that for login, but
-                  // ensureTeam/ensureWebsite/ensureMember called fetch exactly once
-                  // each -- a transient network error failed the whole run (observed:
-                  // `fetch failed at async ensureTeam`). Retry thrown fetch errors;
-                  // an HTTP error RESPONSE is returned untouched so every
-                  // caller's existing !r.ok / status handling is preserved. A
+                  // tenant reconciliation previously called fetch exactly once
+                  // per operation -- a transient network error failed the whole
+                  // run (observed: `fetch failed at async ensureTeam`). Retry
+                  // thrown errors for reads and replay-safe writes; the
+                  // non-idempotent team create below uses fetchOnce and re-lists
+                  // after ambiguity. An HTTP error RESPONSE is returned untouched
+                  // so every caller's existing !r.ok / status handling is preserved. A
                   // per-attempt AbortSignal also bounds response-body reads;
                   // every attempt shares the earlier provisioning deadline so
                   // retries cannot consume the Job controller's recovery margin.
                   const umamiRequestTimeoutMilliseconds = 10000;
+                  const fetchOnce = async (u, o) => {
+                    const remainingRequestMilliseconds = umamiProvisioningDeadline - Date.now();
+                    if (remainingRequestMilliseconds <= 0) throw new Error('Umami provisioning deadline exceeded');
+                    const requestOptions = {
+                      ...(o || {}),
+                      signal: AbortSignal.timeout(Math.min(umamiRequestTimeoutMilliseconds, remainingRequestMilliseconds)),
+                    };
+                    return await globalThis.fetch(u, requestOptions);
+                  };
                   const fetchRetry = async (u, o) => {
                     for (let i = 0; ; i++) {
-                      const remainingRequestMilliseconds = umamiProvisioningDeadline - Date.now();
-                      if (remainingRequestMilliseconds <= 0) throw new Error('Umami provisioning deadline exceeded');
-                      const requestOptions = {
-                        ...(o || {}),
-                        signal: AbortSignal.timeout(Math.min(umamiRequestTimeoutMilliseconds, remainingRequestMilliseconds)),
-                      };
-                      try { return await globalThis.fetch(u, requestOptions); }
+                      try { return await fetchOnce(u, o); }
                       catch (e) { if (i >= 4) throw e; await sleep(500 * (i + 1)); }
                     }
                   };
@@ -454,10 +459,25 @@ spec:
                     if (!r.ok) throw new Error('list teams failed: ' + r.status + ' ' + (await r.text()));
                     const existing = asArray(await r.json()).find((t) => t.name === name);
                     if (existing) return existing.id;
-                    const c = await fetchRetry(base + '/api/teams', { method: 'POST', headers: H(token), body: JSON.stringify({ name }) });
-                    if (!c.ok) throw new Error('create team ' + name + ' failed: ' + c.status + ' ' + (await c.text()));
-                    console.log('team created:', name);
-                    return (await c.json()).id;
+                    try {
+                      // This POST is not idempotent: Umami permits duplicate team
+                      // names. A timeout can mean the server committed but the
+                      // response was lost, so never resend it blindly.
+                      const c = await fetchOnce(base + '/api/teams', { method: 'POST', headers: H(token), body: JSON.stringify({ name }) });
+                      if (!c.ok) {
+                        const failure = new Error('create team ' + name + ' failed: ' + c.status + ' ' + (await c.text()));
+                        failure.definitiveTeamCreateFailure = true;
+                        throw failure;
+                      }
+                      const created = await c.json();
+                      if (!created || !created.id) throw new Error('create team ' + name + ' returned no id');
+                      console.log('team created:', name);
+                      return created.id;
+                    } catch (e) {
+                      if (e && e.definitiveTeamCreateFailure) throw e;
+                      console.warn('team creation response ambiguous; re-listing before retry:', String((e && e.cause) || e));
+                      return await ensureTeam(token, name);
+                    }
                   }
                   async function ensureWebsite(token, s, teamId) {
                     const g = await fetchRetry(base + '/api/websites/' + s.id, { headers: H(token) });

@@ -156,6 +156,14 @@ grep -Fq 'const remainingRequestMilliseconds = umamiProvisioningDeadline - Date.
   fail 'each Umami fetch attempt must respect the shared provisioning deadline'
 grep -Fq 'signal: AbortSignal.timeout(Math.min(umamiRequestTimeoutMilliseconds, remainingRequestMilliseconds))' <<<"${provisioner_script}" ||
   fail 'every Umami fetch attempt must bound both headers and response-body reads'
+grep -Fq 'const fetchOnce = async (u, o) =>' <<<"${provisioner_script}" ||
+  fail 'non-idempotent Umami writes need a bounded single-attempt primitive'
+grep -Fq "const c = await fetchOnce(base + '/api/teams'," <<<"${provisioner_script}" ||
+  fail 'team creation must not blindly retry an ambiguous POST'
+grep -Fq "console.warn('team creation response ambiguous; re-listing before retry:'," <<<"${provisioner_script}" ||
+  fail 'an ambiguous team create must remain observable'
+grep -Fq 'return await ensureTeam(token, name);' <<<"${provisioner_script}" ||
+  fail 'an ambiguous team create must re-list before deciding to retry'
 grep -Fq "if (Date.now() >= umamiProvisioningDeadline) throw new Error('Umami provisioning deadline exceeded while waiting for Lease');" <<<"${provisioner_script}" ||
   fail 'Lease contention must reach workload-specific failure handling before the Job deadline'
 grep -Fq 'waiting for Umami provisioning Lease holder:' <<<"${provisioner_script}" ||
