@@ -33,10 +33,10 @@ replacements:
   - source:
       kind: CronJob
       name: umami-provision-tenants
-      fieldPath: spec.jobTemplate.spec
+      fieldPath: spec.jobTemplate.spec.template
     targets:
       - select:
           kind: Job
           name: umami-provision-tenants-bootstrap
         fieldPaths:
-          - spec
+          - spec.template

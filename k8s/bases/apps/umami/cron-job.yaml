@@ -73,7 +73,7 @@ spec:
       # script's real error and the next tick retries it, instead of burning
       # in-Job retries against the deadline.
       backoffLimit: 0
-      # Backstop for a hung run only. On the first Lease-aware rollout it covers
+      # Backstop for a hung scheduled run only. On the first Lease-aware rollout it covers
       # 480s for any pre-upgrade CronJob worker to drain, a full ~5m run by a
       # contending Lease-aware worker, this worker's own ~5m wait-for-Umami loop,
       # an abandoned 60s Lease, and recovery margin. The live holder renews the
@@ -475,8 +475,15 @@ spec:
                       return created.id;
                     } catch (e) {
                       if (e && e.definitiveTeamCreateFailure) throw e;
-                      console.warn('team creation response ambiguous; re-listing before retry:', String((e && e.cause) || e));
-                      return await ensureTeam(token, name);
+                      // Do not re-list and immediately create again: the first
+                      // transaction may still be committing after the client
+                      // timeout. Stop this run so the next scheduled
+                      // reconciliation performs a fresh list after the normal
+                      // 15-minute separation before considering another POST.
+                      console.warn('team creation response ambiguous; deferring another POST to the next scheduled reconciliation:', String((e && e.cause) || e));
+                      const ambiguity = new Error('team creation outcome ambiguous; deferring another POST to the next scheduled reconciliation');
+                      ambiguity.cause = e;
+                      throw ambiguity;
                     }
                   }
                   async function ensureWebsite(token, s, teamId) {

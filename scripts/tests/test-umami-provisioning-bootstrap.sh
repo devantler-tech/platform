@@ -36,9 +36,9 @@ jq -e '
   fail 'raw Job Checkov suppressions must be resource-scoped at top-level metadata'
 
 rendered_file="$(mktemp)"
-cron_spec_file="$(mktemp)"
-job_spec_file="$(mktemp)"
-trap 'rm -f "${rendered_file}" "${cron_spec_file}" "${job_spec_file}"' EXIT
+cron_template_file="$(mktemp)"
+job_template_file="$(mktemp)"
+trap 'rm -f "${rendered_file}" "${cron_template_file}" "${job_template_file}"' EXIT
 
 kubectl kustomize "${umami_dir}" >"${rendered_file}" || fail 'Umami base must render'
 
@@ -60,14 +60,19 @@ role_json="$(resource_json Role umami-provision-tenants)"
 [[ -n "${lease_json}" ]] || fail 'shared Umami provisioning Lease is missing'
 [[ -n "${role_json}" ]] || fail 'Lease-scoped Umami provisioner Role is missing'
 
-jq -S '.spec.jobTemplate.spec' <<<"${cron_json}" >"${cron_spec_file}"
-jq -S '.spec' <<<"${job_json}" >"${job_spec_file}"
-cmp -s "${cron_spec_file}" "${job_spec_file}" ||
-  fail 'bootstrap Job must use the CronJob controller template verbatim'
-jq -e '.spec.activeDeadlineSeconds >= 1500' <<<"${job_json}" >/dev/null ||
-  fail 'bootstrap Job deadline must cover legacy drain, a contending worker, its own login retries, and recovery margin'
+jq -S '.spec.jobTemplate.spec.template' <<<"${cron_json}" >"${cron_template_file}"
+jq -S '.spec.template' <<<"${job_json}" >"${job_template_file}"
+cmp -s "${cron_template_file}" "${job_template_file}" ||
+  fail 'bootstrap Job must use the CronJob pod template verbatim'
+jq -e '.spec.jobTemplate.spec.activeDeadlineSeconds >= 1500' <<<"${cron_json}" >/dev/null ||
+  fail 'scheduled Job deadline must cover legacy drain, a contending worker, its own login retries, and recovery margin'
+jq -e '
+  .spec.backoffLimit == 2147483647 and
+  (.spec | has("activeDeadlineSeconds") | not)
+' <<<"${job_json}" >/dev/null ||
+  fail 'bootstrap Job must keep controller-level startup failures retryable instead of retaining Failed'
 yq eval -e '.spec.timeout == "30m"' "${apps_flux_kustomization}" >/dev/null ||
-  fail 'apps reconciliation timeout must outlive the bootstrap Job deadline'
+  fail 'apps reconciliation must keep a full recovery window for the bootstrap Job'
 
 jq -e '.spec | has("ttlSecondsAfterFinished") | not' <<<"${job_json}" >/dev/null ||
   fail 'bootstrap Job must remain completed so Flux cannot recreate it after TTL cleanup'
@@ -160,10 +165,13 @@ grep -Fq 'const fetchOnce = async (u, o) =>' <<<"${provisioner_script}" ||
   fail 'non-idempotent Umami writes need a bounded single-attempt primitive'
 grep -Fq "const c = await fetchOnce(base + '/api/teams'," <<<"${provisioner_script}" ||
   fail 'team creation must not blindly retry an ambiguous POST'
-grep -Fq "console.warn('team creation response ambiguous; re-listing before retry:'," <<<"${provisioner_script}" ||
+grep -Fq "console.warn('team creation response ambiguous; deferring another POST to the next scheduled reconciliation:'," <<<"${provisioner_script}" ||
   fail 'an ambiguous team create must remain observable'
-grep -Fq 'return await ensureTeam(token, name);' <<<"${provisioner_script}" ||
-  fail 'an ambiguous team create must re-list before deciding to retry'
+if grep -Fq 'return await ensureTeam(token, name);' <<<"${provisioner_script}"; then
+  fail 'an ambiguous team create must not race its own uncommitted POST with an immediate retry'
+fi
+grep -Fq 'team creation outcome ambiguous; deferring another POST to the next scheduled reconciliation' <<<"${provisioner_script}" ||
+  fail 'an ambiguous team create must defer another POST until a later reconciliation re-lists first'
 grep -Fq "if (Date.now() >= umamiProvisioningDeadline) throw new Error('Umami provisioning deadline exceeded while waiting for Lease');" <<<"${provisioner_script}" ||
   fail 'Lease contention must reach workload-specific failure handling before the Job deadline'
 grep -Fq 'waiting for Umami provisioning Lease holder:' <<<"${provisioner_script}" ||
