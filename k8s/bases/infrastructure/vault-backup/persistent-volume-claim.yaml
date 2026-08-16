@@ -14,6 +14,12 @@ kind: PersistentVolumeClaim
 metadata:
   name: vault-snapshots
   namespace: openbao
+  annotations:
+    # Flux must never retire durable storage as part of a speculative
+    # merge-group deploy. Removal requires this protection to have reached
+    # production from an earlier merged revision, followed by an explicit
+    # out-of-band deletion once no workload mounts the claim.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   accessModes:
     - ReadWriteOnce

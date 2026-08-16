@@ -506,7 +506,19 @@ const (
 // groups prevents an OIDC cluster-reader from recovering those credentials;
 // no identity, binding, resource, or verb is added. A parsed-RBAC regression
 // independently rejects any future read grant to either secret-bearing group.
-const expectedRenderedSurfaceSHA = "03da7c1b972490eb9a4a4eecdffcd02e1b31c8ebb3dde3f4790f35f499837552"
+//
+// Measured against exact current main 388758f5 for #3168 with the
+// checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer. The new
+// production component is an AnnotationsTransformer whose fieldSpecs select
+// only PersistentVolumeClaim, HelmRelease, and Namespace, so it cannot mutate
+// a Role, ClusterRole, RoleBinding, ClusterRoleBinding, or ServiceAccount.
+// Resource membership across all five production roots is unchanged. The
+// rendered changes add only kustomize.toolkit.fluxcd.io/prune=disabled to those
+// three selected kinds and kustomize.toolkit.fluxcd.io/force=disabled to PVCs;
+// the existing vault-snapshots force override narrows enabled to disabled.
+// These metadata-only changes prevent destructive reconciliation and grant no
+// identity, binding, resource, or verb.
+const expectedRenderedSurfaceSHA = "8a817e5916aa9bbe199fe190b7f9328ef6ef063988eaf3fb65b95eec24bedef6"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
