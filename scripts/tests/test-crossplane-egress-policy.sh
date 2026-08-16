@@ -72,6 +72,23 @@ assert_direct_https_contract() {
     fail 'Crossplane HTTPS egress must remain the exact direct FQDN-scoped TCP/443 contract'
 }
 
+assert_kube_api_contract() {
+  local candidate_policy="$1"
+  local actual_contract
+  local expected_contract
+
+  actual_contract="$(
+    awk '
+      /^  - toEntities:$/ { in_kube_api_egress = 1 }
+      in_kube_api_egress && /^  - / && !/^  - toEntities:$/ { exit }
+      in_kube_api_egress { print }
+    ' <<<"${candidate_policy}"
+  )"
+  expected_contract=$'  - toEntities:\n    - kube-apiserver'
+  [ "${actual_contract}" = "${expected_contract}" ] ||
+    fail 'Crossplane Kubernetes API egress must remain the exact kube-apiserver entity rule'
+}
+
 assert_egress_shape() {
   local candidate_policy="$1"
   local actual_rules
@@ -115,6 +132,7 @@ assert_policy_scope() {
 
 assert_no_unrestricted_egress "${policy}"
 assert_direct_https_contract "${policy}"
+assert_kube_api_contract "${policy}"
 assert_egress_shape "${policy}"
 assert_dns_contract "${policy}"
 assert_policy_scope "${policy}"
@@ -160,6 +178,17 @@ fi
 commented_all_policy="${policy/$'  - toEntities:\n    - kube-apiserver'/$'  - toEntities: [all] # unrestricted'}"
 if (assert_no_unrestricted_egress "${commented_all_policy}") >/dev/null 2>&1; then
   fail 'the regression guard must reject commented all-entity egress'
+fi
+
+host_entity_policy="${policy/kube-apiserver/host}"
+if (assert_kube_api_contract "${host_entity_policy}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject a changed Kubernetes API entity'
+fi
+
+kube_api_port_rule=$'    - kube-apiserver\n    toPorts:\n    - ports:\n      - port: "6443"\n        protocol: TCP'
+kube_api_port_policy="${policy/    - kube-apiserver/${kube_api_port_rule}}"
+if (assert_kube_api_contract "${kube_api_port_policy}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject a restricted Kubernetes API transport'
 fi
 
 widened_port_policy="${policy/port: \"443\"/port: \"8443\"}"
