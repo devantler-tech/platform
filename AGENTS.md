@@ -513,6 +513,12 @@ checks for), and otherwise fail closed and read the rejection reason from the mu
 the enqueue mutation above is pinned:
 
 ```sh
+# Capture the base tip FIRST. It is what the new head must later be proved to contain, and
+# reading it after the request races a `main` that advanced while the update was in flight —
+# which returns a non-zero `behind_by` and misreports your own successful update as someone
+# else's push.
+base_tip="$(gh api repos/devantler-tech/platform/commits/main --jq .sha)"
+
 gh api --method PUT "repos/devantler-tech/platform/pulls/<n>/update-branch" \
   -f expected_head_sha=<head>
 ```
@@ -533,8 +539,7 @@ to have failed at the moment it worked. Re-read until the head actually moves, b
 
 ```sh
 inspected=<the head you pinned the update to>
-# Captured BEFORE the update, because it is what the new head must be proved to contain.
-base_tip="$(gh api repos/devantler-tech/platform/commits/main --jq .sha)"
+# `base_tip` is already set — it was captured above, BEFORE the update was requested.
 new_head=""
 probe=""
 for _ in $(seq 1 30); do
@@ -558,15 +563,50 @@ if [ -n "${new_head}" ]; then
 fi
 ```
 
-**Three outcomes, and they are not interchangeable** — collapsing them is how a working fix gets
+**Four outcomes, and they are not interchangeable** — collapsing them is how a working fix gets
 reported as a failure, and a failed read gets reported as a fix:
 
 | result | what happened | what to do |
 | --- | --- | --- |
-| `new_head` non-empty | the update landed **and the base is provably in it** | run **both** workflow-run queries against `new_head` |
+| `new_head` non-empty | the update landed **and the base is provably in it** | run **both** workflow-run queries against `new_head` — but only after a run for `new_head` actually exists (see below) |
 | head moved but `behind_by` non-zero | someone else's push moved it, not your update | **fail closed**: re-pin to that head and restart the diagnosis |
-| loop exhausted, head unchanged | there was no base to merge | the case documented immediately below; no amount of polling resolves it |
+| loop exhausted, head unchanged | **unknown** — either there was no base to merge, or the accepted update is still pending or failed after acceptance | conclude nothing from the timeout alone; carry the PR forward and require independent evidence before the empty-commit fallback |
 | `probe` empty | the read failed, so the update's outcome is unknown | conclude nothing — re-read once before acting on either branch |
+
+🔴 **A timeout is NOT the no-base case, and treating it as one pushes a commit you did not need.**
+`202` means the update was *accepted*; an unchanged head after the bound is equally consistent with a
+task that is delayed or that failed after acceptance. Row 3 therefore proves nothing on its own —
+inferring "there was no base to merge" from it sends an agent to push the fallback empty commit while
+the original update is still in flight, landing two head moves for one problem. The no-base case is
+real and documented below, but it is established by **evidence** — the head already contains the
+current tip of `main`, i.e. `behind_by` against `main` is `0` **before** the request — never by a
+loop having run out.
+
+🔴 **A run for the new head does not exist the instant the head does — poll for it, or its absence
+lies.** Workflow-run creation and indexing lag behind the head update, so a query issued immediately
+after `new_head` appears can return `0` runs — which this guide defines as evidence that *the head
+predates the requirement*. A successful refresh is then misdiagnosed as a no-op and answered with yet
+another branch update or empty commit. Wait for a matching run on `new_head` under its own bound
+before interpreting any absence, and only then read its status:
+
+```sh
+run_found=""
+for _ in $(seq 1 30); do
+  if [ "$(gh api "repos/devantler-tech/platform/actions/runs?head_sha=${new_head}" \
+        --jq '.total_count')" != "0" ]; then
+    run_found=1
+    break
+  fi
+  sleep 2
+done
+# Only a non-empty run_found makes a later `0` meaningful. An exhausted bound is UNKNOWN —
+# it is not evidence that the head predates the requirement.
+#
+# This deliberately probes for ANY run at the head, not for the required workflow itself.
+# Polling for that specific path would be circular: its absence is the very thing the
+# path-filtered query is being asked to establish, so a genuine "head predates the
+# requirement" would hang here instead of being reported.
+```
 
 🔴 **A CHANGED head is not evidence your update landed — check what is IN it.**
 `expected_head_sha` guards the request-time head only; it is not a lock, so nothing stops a bot or
@@ -589,8 +629,10 @@ first.
 ⚠️ **`update-branch` only works when there is base to merge.** It updates the branch *with the latest
 changes of the base*, so a head that already contains the current tip of `main` — the case when the
 ruleset was enabled with no `main` commit after it — has nothing to merge, and the call cannot move
-the head or fire the workflow. It is not an unconditional fix. When that happens, create a new head
-event some other way: push an empty commit
+the head or fire the workflow. It is not an unconditional fix. **Establish this case positively
+before acting on it** — `behind_by` against `main` is `0` for the head you inspected, read *before*
+the request — never by inferring it from an exhausted polling bound, which is the unknown in row 3
+above. Once it is evidenced, create a new head event some other way: push an empty commit
 (`git commit --allow-empty -m "chore: refresh head for required workflow"`) on the PR branch, which
 is the cheapest thing that makes the workflow fire. Never force-push a branch to achieve this.
 
