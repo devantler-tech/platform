@@ -515,9 +515,18 @@ is about. What makes it expensive rather than merely wrong is the answer it sele
 **write** that moves the head, so an unwaited read buys an unnecessary branch update — and on this repo
 auto-merge may already be armed, which sends a revision nobody diagnosed toward the production-deploying
 merge queue. Give the current head the **same bounded poll and the same UNKNOWN-on-timeout treatment**
-the post-update poll below uses, and treat only a `0` that survives the bound as "this head predates the
-requirement". This applies to **any** head you have not already watched a run appear on — not just one
-you moved yourself.
+the post-update poll below uses. This applies to **any** head you have not already watched a run appear
+on — not just one you moved yourself.
+
+⚠️ **An exhausted bound is UNKNOWN here too — a `0` surviving the poll is NOT by itself the
+"predates the requirement" case.** The two reads differ in what a timeout can mean, and that is the
+whole reason this needs saying: after *you* moved the head a run is definitely coming, so waiting
+always terminates; on a head you did **not** move, a run may genuinely never appear, so the poll
+cannot distinguish "still indexing" from "never fired" by waiting longer. Waiting is what rules out
+the first; it can never establish the second. So conclude `predates` only on **independent
+evidence** — the head's commit predates the requirement's introduction, or some *other* workflow run
+is already indexed at that head, proving indexing has completed and the managed run's absence is
+real. Absent that, carry it forward as UNKNOWN rather than spending the head-moving write on a guess.
 
 **The fix is to move the head** — `PUT /repos/{owner}/{repo}/pulls/{n}/update-branch` (a merge of
 `main`, never a force-push) makes the workflow fire. **Pin it to the head you inspected**, exactly as
@@ -528,7 +537,18 @@ the enqueue mutation above is pinned:
 # reading it after the request races a `main` that advanced while the update was in flight —
 # which returns a non-zero `behind_by` and misreports your own successful update as someone
 # else's push.
-base_tip="$(gh api repos/devantler-tech/platform/commits/main --jq .sha)"
+#
+# ABORT if that read fails. Check the exit status and require a full sha: an API, network or
+# auth error leaves base_tip empty, and an unguarded script then still issues the PUT below —
+# performing the WRITE while having lost the ability to prove what landed. The later compare
+# would build an empty-base URL, fail, and report the update as someone else's push.
+if ! base_tip="$(gh api repos/devantler-tech/platform/commits/main --jq .sha)"; then
+  echo "base tip unreadable - not moving the head" >&2; exit 1
+fi
+case "${base_tip}" in
+  *[!0-9a-f]*|"") echo "base tip malformed: '${base_tip}'" >&2; exit 1 ;;
+esac
+[ ${#base_tip} -eq 40 ] || { echo "base tip not a full sha: '${base_tip}'" >&2; exit 1; }
 
 gh api --method PUT "repos/devantler-tech/platform/pulls/<n>/update-branch" \
   -f expected_head_sha=<head>
@@ -612,8 +632,20 @@ for _ in $(seq 1 30); do
   # network or auth error the substitution collapses to the empty string, and
   # `[ "" != "0" ]` is TRUE — so one failed request would set managed_run=1 having
   # observed no run whatsoever, which is the fail-open this poll exists to prevent.
-  if count="$(gh api "repos/devantler-tech/platform/actions/runs?head_sha=${new_head}" \
-        --jq "[.workflow_runs[] | select(.path == \"${managed}\")] | length")"; then
+  # PAGINATE, exactly as the two diagnostic queries above must: `per_page=100` caps one page,
+  # so a head with enough runs (repeated reruns, a busy PR) can push the managed run onto a
+  # later page and make this poll return `0` forever — a false UNKNOWN that never terminates.
+  # `--paginate` alone is wrong here for the documented reason: this endpoint returns an
+  # object, so a `--jq` filter would run per page and emit one number per page instead of a
+  # total. `--slurp` wraps the pages, and it cannot be combined with `--jq`, hence the pipe.
+  # `set -o pipefail` in the subshell is REQUIRED, not tidiness: a command substitution takes
+  # the status of the LAST element of the pipeline, so without it a failed `gh api` is masked
+  # by a `jq` that exits 0 on empty input — and the exit-status check below would be reading
+  # jq's success while gh had failed.
+  if count="$(set -o pipefail
+      gh api --paginate --slurp \
+        "repos/devantler-tech/platform/actions/runs?head_sha=${new_head}&per_page=100" \
+      | jq "[.[].workflow_runs[] | select(.path == \"${managed}\")] | length")"; then
     # Require a NUMBER. Anything else — an error string, an empty body — is UNKNOWN too,
     # because `!=` accepts every one of them as if it were a positive count.
     case "${count}" in
