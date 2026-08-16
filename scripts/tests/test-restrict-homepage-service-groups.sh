@@ -85,5 +85,25 @@ done <<EOF
 ${bookmark_groups}
 EOF
 
+# The deny message names the valid groups so a rejected apply does not have to go
+# read the layout. That is a THIRD copy of the list, so pin it too — otherwise the
+# admission error goes stale exactly when a group is added, which is when someone
+# is most likely to be reading it.
+message="$(yq -r '
+  .spec.rules[] | select(.name == "declared-service-group") | .validate.message' "${policy}")"
+if [ -z "${message}" ] || [ "${message}" = "null" ]; then
+  echo "::error::the rule has no validate.message"
+  exit 1
+fi
+while IFS= read -r g; do
+  [ -n "${g}" ] || continue
+  if ! printf '%s' "${message}" | tr '\n' ' ' | grep -qF -- "${g}"; then
+    echo "::error::deny message does not name the allowed group '${g}'"
+    exit 1
+  fi
+done <<EOF
+${service_groups}
+EOF
+
 count="$(printf '%s\n' "${service_groups}" | grep -c .)"
-echo "Homepage layout and Kyverno allow-list agree on ${count} service groups; rule enforces."
+echo "Homepage layout, Kyverno allow-list and deny message agree on ${count} service groups; rule enforces."
