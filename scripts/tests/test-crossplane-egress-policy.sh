@@ -479,7 +479,7 @@ assert_generated_policy_contract() {
   )"
   expected_contract="$(
     printf '%s\n' \
-      'ClusterPolicy//add-default-deny|generate-default-deny|cilium.io/v2|CiliumNetworkPolicy|default-deny|{{request.object.metadata.name}}|true|true|["Namespace"]|["kube-system","kube-public","kube-node-lease"]|{"enableDefaultDeny":{"egress":true,"ingress":true},"endpointSelector":{}}' \
+      'ClusterPolicy//add-default-deny|generate-default-deny|cilium.io/v2|CiliumNetworkPolicy|default-deny|{{request.object.metadata.name}}|true|true|["Namespace"]|["kube-system","kube-public","kube-node-lease"]|{"egress":[],"enableDefaultDeny":{"egress":true,"ingress":true},"endpointSelector":{},"ingress":[]}' \
       'ClusterPolicy//add-default-deny|generate-allow-dns|cilium.io/v2|CiliumNetworkPolicy|allow-dns|{{request.object.metadata.name}}|true|true|["Namespace"]|["kube-system","kube-public","kube-node-lease"]|{"egress":[{"toEndpoints":[{"matchLabels":{"k8s-app":"kube-dns","k8s:io.kubernetes.pod.namespace":"kube-system"}}],"toPorts":[{"ports":[{"port":"53","protocol":"UDP"},{"port":"53","protocol":"TCP"}]}]}],"endpointSelector":{}}' \
       'ClusterPolicy//add-default-deny|generate-default-deny-networkpolicy|networking.k8s.io/v1|NetworkPolicy|default-deny|{{request.object.metadata.name}}|true|true|["Namespace"]|["kube-system","kube-public","kube-node-lease"]|{"podSelector":{},"policyTypes":["Ingress","Egress"]}'
   )"
