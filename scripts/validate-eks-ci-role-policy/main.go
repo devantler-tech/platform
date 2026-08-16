@@ -506,7 +506,39 @@ const (
 // groups prevents an OIDC cluster-reader from recovering those credentials;
 // no identity, binding, resource, or verb is added. A parsed-RBAC regression
 // independently rejects any future read grant to either secret-bearing group.
-const expectedRenderedSurfaceSHA = "03da7c1b972490eb9a4a4eecdffcd02e1b31c8ebb3dde3f4790f35f499837552"
+//
+// This value covers pinning the two tenant OCI manifest sources (#2737). The
+// branch's complete delta against exact current main is TWO files, one line
+// each, and nothing else:
+//
+//	source.toolkit.fluxcd.io/v1  OCIRepository  ascoachingogvaner/ascoachingogvaner
+//	  spec.ref.semver: ">=1.0.0"  (removed)
+//	  spec.ref.tag:    1.1.0      (added)
+//
+//	source.toolkit.fluxcd.io/v1  OCIRepository  wedding-app/wedding-app
+//	  spec.ref.semver: ">=1.0.0"  (removed)
+//	  spec.ref.tag:    1.5.9      (added)
+//
+// Both are Flux source resources, so they are authorization-capable and their
+// projected text is covered by the aggregate. Resource membership is identical:
+// no apiVersion, kind, namespace, or name line moves in any root, and the
+// validator reported no per-resource mismatch, no missing resource, and no
+// duplicate — only this aggregate fingerprint. (The accompanying
+// unresolved-substitution notes are the diagnostics described above, emitted
+// alongside any aggregate mismatch; they are unchanged and not findings.)
+//
+// The change is a reduction in what may be deployed. A floating `>=1.0.0`
+// range lets ANY newer tag pushed to that registry path be selected and
+// reconciled automatically, so an actor able to publish one tag chooses the
+// manifests; a fixed tag removes that selection entirely. No identity,
+// binding, ServiceAccount, verb, policy, or URL changes, and nothing granted
+// to the aws/aws service account this validator protects is touched.
+//
+// The fingerprint was read from the required job's own output on the approved
+// renderer, because the local toolchain is refused as unapproved. It was
+// measured after updating the branch onto exact current main (behind_by 0), so
+// it describes the merge result rather than a stale base.
+const expectedRenderedSurfaceSHA = "a4f9f4f0b9256a9f72159d8c22667622439df6b56b673448220834a53708f296"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
