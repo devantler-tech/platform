@@ -42,7 +42,8 @@ fi
 assert_no_unrestricted_egress() {
   local candidate_policy="$1"
 
-  if grep -Eq '^[[:space:]]*-[[:space:]]+world$' <<<"${candidate_policy}"; then
+  if grep -Eq '^[[:space:]]*-[[:space:]]+world$' <<<"${candidate_policy}" ||
+    grep -Eq '^[[:space:]]*-[[:space:]]+toEntities:.*[^[:alnum:]_-]world([^[:alnum:]_-]|$)' <<<"${candidate_policy}"; then
     fail 'Crossplane must not receive unrestricted world egress'
   fi
 
@@ -80,6 +81,18 @@ wildcard_selector=$'- toFQDNs:\n    - matchPattern: "*.github.com"'
 wildcard_policy="${policy/- toFQDNs:/${wildcard_selector}}"
 if (assert_direct_https_contract "${wildcard_policy}") >/dev/null 2>&1; then
   fail 'the regression guard must reject wildcard Crossplane FQDN selectors'
+fi
+
+block_world_rule=$'- toEntities:\n    - world\n  - toFQDNs:'
+block_world_policy="${policy/- toFQDNs:/${block_world_rule}}"
+if (assert_no_unrestricted_egress "${block_world_policy}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject block-style world egress'
+fi
+
+flow_world_rule=$'- toEntities: [world]\n  - toFQDNs:'
+flow_world_policy="${policy/- toFQDNs:/${flow_world_rule}}"
+if (assert_no_unrestricted_egress "${flow_world_policy}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject flow-style world egress'
 fi
 
 widened_port_policy="${policy/port: \"443\"/port: \"8443\"}"
