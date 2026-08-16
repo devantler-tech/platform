@@ -588,13 +588,10 @@ const (
 // every surviving selected object; #2741 removes only the already-protected
 // Headlamp PVC identity and retains the authorization-neutral changes above.
 //
-// PENDING RE-MEASUREMENT for #2713, merged with exact main 6ebcb24f. The value
-// below is main's approved fingerprint and does not yet describe this merge
-// result; the branch's own earlier value was rendered against main 6d926e42 and
-// no longer describes it either, so neither is approved for this head. The local
-// toolchain is kubectl v1.36.1 against the pinned v1.36.2, so
-// validateRendererVersion refuses it and the aggregate must be read from the
-// required job's own output on the approved renderer before this PR can merge.
+// Measured for #2713 merged with exact main 6ebcb24f. Two independent renderers
+// agree on this value: the required CI job on the approved toolchain (run
+// 31974280947) and a local render. The branch's own earlier value was rendered
+// against main 6d926e42 and never described this merge result.
 //
 // The reviewed reasoning for the change itself is unaffected by the merge. The
 // complete authorization delta changes exactly ONE selected entry:
@@ -610,7 +607,7 @@ const (
 // removal of built-in edit aggregation; neither is duplicated by this change.
 // Gateway listener-kind pins are outside this authorization projection and are
 // covered by scripts/tests/test-tenant-route-hostname-boundary.sh.
-const expectedRenderedSurfaceSHA = "6e6753583bbffa59ce236412f63f27e3d77d03739742ef0a3a34596eb96c5f2a"
+const expectedRenderedSurfaceSHA = "9a9a010230ad7b63610c0920e39aa0b5067b248384356818af01c59c06f6abc7"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
