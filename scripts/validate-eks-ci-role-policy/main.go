@@ -597,15 +597,31 @@ const (
 // every surviving selected object; #2741 removes only the already-protected
 // Headlamp PVC identity and retains the authorization-neutral changes above.
 //
-// PENDING RE-MEASUREMENT for the #2725 Umami provisioning repair merged with
-// exact main 6ebcb24f. The value below is main's approved fingerprint and does
-// not yet describe this merge result: the branch's own earlier value was
-// rendered against an older main and no longer describes it either, so neither
-// is approved for this head. The local toolchain is kubectl v1.36.1 against the
-// pinned v1.36.2, so validateRendererVersion refuses it and the aggregate must
-// be read from the required job's own output on the approved renderer, then
-// recorded here with its complete delta before this PR can merge.
-const expectedRenderedSurfaceSHA = "6e6753583bbffa59ce236412f63f27e3d77d03739742ef0a3a34596eb96c5f2a"
+// Measured for the #2725 Umami provisioning repair merged with exact main
+// 6ebcb24f. Two independent renderers agree on this value: the required CI job
+// on the approved toolchain (run 31973534571) and a local render.
+//
+// Unlike the reductions recorded above, this delta ADDS a grant. The Umami
+// scheduled and bootstrap provisioners serialise through one named Lease, so
+// the merge introduces:
+//
+//	rbac.authorization.k8s.io/v1  Role         umami/umami-provision-tenants
+//	rbac.authorization.k8s.io/v1  RoleBinding  umami/umami-provision-tenants
+//	coordination.k8s.io/v1        Lease        umami/umami-provision-tenants
+//	batch/v1                      Job          umami/umami-provision-tenants-bootstrap
+//
+// The Role's complete rule set is `get` and `update` on `leases`, restricted by
+// resourceNames to the single `umami-provision-tenants` Lease; the RoleBinding
+// binds it to that namespace's own ServiceAccount and to nothing else. No other
+// identity, binding, resource, or verb is added, and nothing granted to the
+// aws/aws service account this validator protects is touched.
+//
+// The CronJob adds Lease coordination to its existing pod template and requests
+// the projected token at pod level, which the ServiceAccount's own default still
+// withholds from every other consumer. The apps Flux Kustomization timeout moves
+// from 20m to 30m in both rendered cluster overlays. The ServiceAccount itself is
+// unchanged from main in canonical content.
+const expectedRenderedSurfaceSHA = "295c44e37dcb09bfa1dd83d7f0eba975b529035c8618be9b65e41d9c20d6157b"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
