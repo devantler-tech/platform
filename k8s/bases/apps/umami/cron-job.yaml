@@ -189,11 +189,15 @@ spec:
                   const bestEffortBootstrap = process.env.UMAMI_PROVISION_JOB_NAME === 'umami-provision-tenants-bootstrap';
                   const provisioningFailureExitCode = bestEffortBootstrap ? 0 : 1;
                   // Keep all initialization, Lease coordination, Umami retries,
-                  // and response-body reads inside the Job's 25-minute backstop.
-                  // The remaining five minutes let the workload-specific catch
-                  // and best-effort Lease release finish before Kubernetes can
-                  // mark the retained bootstrap Job DeadlineExceeded.
+                  // and response-body reads inside 20 minutes. That leaves the
+                  // scheduled Job five minutes before its controller deadline
+                  // and keeps the bootstrap inside Flux's 30-minute health wait.
                   const umamiProvisioningDeadline = Date.now() + 1200000;
+                  const provisioningDeadlineExceeded = (suffix = '') => {
+                    const deadline = new Error('Umami provisioning deadline exceeded' + suffix);
+                    deadline.umamiProvisioningDeadlineExceeded = true;
+                    return deadline;
+                  };
                   (async () => {
                   // Credentials are mounted files (see volumeMounts). A path is
                   // resolved under SECRETS_DIR and may not escape it, so a
@@ -220,7 +224,7 @@ spec:
                   // per operation -- a transient network error failed the whole
                   // run (observed: `fetch failed at async ensureTeam`). Retry
                   // thrown errors for reads and replay-safe writes; the
-                  // non-idempotent team create below uses fetchOnce and re-lists
+                  // non-idempotent team create below uses fetchOnce and defers
                   // after ambiguity. An HTTP error RESPONSE is returned untouched
                   // so every caller's existing !r.ok / status handling is preserved. A
                   // per-attempt AbortSignal also bounds response-body reads;
@@ -229,7 +233,7 @@ spec:
                   const umamiRequestTimeoutMilliseconds = 10000;
                   const fetchOnce = async (u, o) => {
                     const remainingRequestMilliseconds = umamiProvisioningDeadline - Date.now();
-                    if (remainingRequestMilliseconds <= 0) throw new Error('Umami provisioning deadline exceeded');
+                    if (remainingRequestMilliseconds <= 0) throw provisioningDeadlineExceeded();
                     const requestOptions = {
                       ...(o || {}),
                       signal: AbortSignal.timeout(Math.min(umamiRequestTimeoutMilliseconds, remainingRequestMilliseconds)),
@@ -239,7 +243,16 @@ spec:
                   const fetchRetry = async (u, o) => {
                     for (let i = 0; ; i++) {
                       try { return await fetchOnce(u, o); }
-                      catch (e) { if (i >= 4) throw e; await sleep(500 * (i + 1)); }
+                      catch (e) {
+                        if (e && e.umamiProvisioningDeadlineExceeded) throw e;
+                        if (Date.now() >= umamiProvisioningDeadline) {
+                          const deadline = provisioningDeadlineExceeded();
+                          deadline.cause = e;
+                          throw deadline;
+                        }
+                        if (i >= 4) throw e;
+                        await sleep(Math.min(500 * (i + 1), Math.max(1, umamiProvisioningDeadline - Date.now())));
+                      }
                     }
                   };
                   // The bootstrap Job and CronJob are different Kubernetes
@@ -254,6 +267,8 @@ spec:
                   const leaseRenewalSafetyMarginMilliseconds = 15000;
                   const leasePrerequisiteWaitMilliseconds = 60000;
                   const legacyProvisionerDrainSeconds = 480;
+                  const teamCreateNotBeforeAnnotation = 'platform.devantler.tech/team-create-not-before';
+                  const teamCreateCooldownMilliseconds = 15 * 60 * 1000;
                   // coordination.k8s.io Lease fields use Kubernetes MicroTime,
                   // whose JSON parser requires six fractional digits. JavaScript
                   // ISO timestamps carry only milliseconds, so pad them to micros.
@@ -291,14 +306,14 @@ spec:
                     req.setTimeout(10000, () => req.destroy(new Error('Lease API request timed out')));
                     req.end(payload);
                   });
-                  const leaseBody = (lease, spec) => ({
+                  const leaseBody = (lease, spec, annotations = lease.metadata.annotations) => ({
                     apiVersion: 'coordination.k8s.io/v1',
                     kind: 'Lease',
                     metadata: {
                       name: leaseName,
                       namespace: leaseNamespace,
                       resourceVersion: lease.metadata.resourceVersion,
-                      annotations: lease.metadata.annotations,
+                      annotations,
                       labels: lease.metadata.labels,
                     },
                     spec,
@@ -310,9 +325,10 @@ spec:
                     // exited cleanly while a scheduled run held the Lease, Flux
                     // would keep that completed no-op forever. The shared
                     // provisioning deadline throws through workload-specific
-                    // failure handling before activeDeadlineSeconds can fire.
+                    // failure handling before the scheduled controller deadline
+                    // or the bootstrap's Flux health timeout can fire.
                     for (;;) {
-                      if (Date.now() >= umamiProvisioningDeadline) throw new Error('Umami provisioning deadline exceeded while waiting for Lease');
+                      if (Date.now() >= umamiProvisioningDeadline) throw provisioningDeadlineExceeded(' while waiting for Lease');
                       const read = await leaseRequest('GET');
                       // Flux SSA applies Role/RoleBinding before workloads, but
                       // Lease is not a first-stage kind and can follow Job. Do
@@ -344,6 +360,20 @@ spec:
                       if (legacyProvisionerDrainUntil > Date.now()) {
                         console.log('waiting for pre-Lease Umami provisioners to drain');
                         await sleep(Math.min(5000, legacyProvisionerDrainUntil - Date.now()));
+                        continue;
+                      }
+                      // A non-idempotent team POST is pre-armed with this durable
+                      // marker. Every contender honors it even after the holder
+                      // releases or crashes, so an unobserved commit gets the
+                      // normal 15-minute schedule separation before another POST.
+                      const teamCreateNotBeforeValue = ((lease.metadata || {}).annotations || {})[teamCreateNotBeforeAnnotation] || '';
+                      const teamCreateNotBefore = Date.parse(teamCreateNotBeforeValue);
+                      if (teamCreateNotBeforeValue && !Number.isFinite(teamCreateNotBefore)) {
+                        throw new Error('provisioning Lease team-create cooldown is invalid');
+                      }
+                      if (Number.isFinite(teamCreateNotBefore) && teamCreateNotBefore > Date.now()) {
+                        console.log('waiting for ambiguous Umami team creation to settle');
+                        await sleep(Math.min(5000, Math.max(250, teamCreateNotBefore - Date.now())));
                         continue;
                       }
                       const current = lease.spec || {};
@@ -426,6 +456,33 @@ spec:
                     const update = await leaseRequest('PUT', leaseBody(read.body, {}));
                     if (update.status !== 200 && update.status !== 409) throw new Error('release provisioning Lease failed: HTTP ' + update.status);
                   }
+                  async function writeTeamCreateCooldown(notBefore) {
+                    for (let attempt = 0; attempt < 5; attempt++) {
+                      const read = await leaseRequest('GET');
+                      if (read.status !== 200) throw new Error('read provisioning Lease for team-create cooldown failed: HTTP ' + read.status);
+                      const current = read.body.spec || {};
+                      if (current.holderIdentity !== leaseHolder) {
+                        const lost = new Error('lost provisioning Lease ownership while updating team-create cooldown');
+                        lost.leaseOwnershipLost = true;
+                        throw lost;
+                      }
+                      const annotations = { ...((read.body.metadata || {}).annotations || {}) };
+                      if (notBefore) annotations[teamCreateNotBeforeAnnotation] = notBefore;
+                      else delete annotations[teamCreateNotBeforeAnnotation];
+                      const next = { ...current, leaseDurationSeconds, renewTime: leaseMicroTime() };
+                      const update = await leaseRequest('PUT', leaseBody(read.body, next, annotations));
+                      if (update.status === 200) return;
+                      if (update.status === 409) { await sleep(250); continue; }
+                      throw new Error('update provisioning Lease team-create cooldown failed: HTTP ' + update.status);
+                    }
+                    throw new Error('update provisioning Lease team-create cooldown conflicted repeatedly');
+                  }
+                  const setTeamCreateCooldown = async () => {
+                    await writeTeamCreateCooldown(new Date(Date.now() + teamCreateCooldownMilliseconds).toISOString());
+                  };
+                  const clearTeamCreateCooldown = async () => {
+                    await writeTeamCreateCooldown(null);
+                  };
                   // Why each login attempt failed, for the retry-loop log line and the
                   // final error. Distinguishing rejected credentials (401) from a broken
                   // backend (500, e.g. Umami's DB password drifted -> Prisma P1000) from
@@ -441,7 +498,16 @@ spec:
                         ? 'HTTP 401 (credentials rejected)'
                         : 'HTTP ' + r.status + ' ' + (await r.text()).slice(0, 120);
                       return null;
-                    } catch (e) { lastLoginFailure = 'network: ' + String((e && e.cause) || e).slice(0, 120); return null; }
+                    } catch (e) {
+                      if (e && e.umamiProvisioningDeadlineExceeded) throw e;
+                      if (Date.now() >= umamiProvisioningDeadline) {
+                        const deadline = provisioningDeadlineExceeded();
+                        deadline.cause = e;
+                        throw deadline;
+                      }
+                      lastLoginFailure = 'network: ' + String((e && e.cause) || e).slice(0, 120);
+                      return null;
+                    }
                   }
                   async function ensureAuth() {
                     let token = await login(newPw);
@@ -459,6 +525,10 @@ spec:
                     if (!r.ok) throw new Error('list teams failed: ' + r.status + ' ' + (await r.text()));
                     const existing = asArray(await r.json()).find((t) => t.name === name);
                     if (existing) return existing.id;
+                    // Arm the shared Lease before the non-idempotent POST. If the
+                    // response is lost or this process dies, contenders still
+                    // wait through the normal schedule interval before re-listing.
+                    await setTeamCreateCooldown();
                     try {
                       // This POST is not idempotent: Umami permits duplicate team
                       // names. A timeout can mean the server committed but the
@@ -467,10 +537,14 @@ spec:
                       if (!c.ok) {
                         const failure = new Error('create team ' + name + ' failed: ' + c.status + ' ' + (await c.text()));
                         failure.definitiveTeamCreateFailure = true;
+                        try { await clearTeamCreateCooldown(); }
+                        catch (e) { console.warn('could not clear team-create cooldown after definitive failure:', String((e && e.stack) || e)); }
                         throw failure;
                       }
                       const created = await c.json();
                       if (!created || !created.id) throw new Error('create team ' + name + ' returned no id');
+                      try { await clearTeamCreateCooldown(); }
+                      catch (e) { console.warn('could not clear conservative team-create cooldown after observed success:', String((e && e.stack) || e)); }
                       console.log('team created:', name);
                       return created.id;
                     } catch (e) {
@@ -568,8 +642,12 @@ spec:
                     try {
                       let token = null;
                       for (let i = 0; i < 60 && !token; i++) {
+                        if (Date.now() >= umamiProvisioningDeadline) throw provisioningDeadlineExceeded();
                         token = await ensureAuth();
-                        if (!token) { console.log('waiting for umami to be ready... (last login failure: ' + lastLoginFailure + ')'); await sleep(5000); }
+                        if (!token) {
+                          console.log('waiting for umami to be ready... (last login failure: ' + lastLoginFailure + ')');
+                          await sleep(Math.min(5000, Math.max(1, umamiProvisioningDeadline - Date.now())));
+                        }
                       }
                       if (!token) throw new Error('could not authenticate to umami after retries; last login failure: ' + lastLoginFailure);
                       for (const t of tenants) {

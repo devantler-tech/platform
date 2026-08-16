@@ -159,6 +159,12 @@ grep -Fq 'const umamiProvisioningDeadline = Date.now() + 1200000;' <<<"${provisi
   fail 'all Umami retries must share a deadline with recovery margin before the Job deadline'
 grep -Fq 'const remainingRequestMilliseconds = umamiProvisioningDeadline - Date.now();' <<<"${provisioner_script}" ||
   fail 'each Umami fetch attempt must respect the shared provisioning deadline'
+grep -Fq 'deadline.umamiProvisioningDeadlineExceeded = true;' <<<"${provisioner_script}" ||
+  fail 'shared deadline expiry must remain distinguishable through every retry layer'
+[[ "$(grep -Fc 'if (e && e.umamiProvisioningDeadlineExceeded) throw e;' <<<"${provisioner_script}")" -ge 2 ]] ||
+  fail 'fetch and authentication retries must propagate shared deadline expiry immediately'
+grep -Fq 'await sleep(Math.min(5000, Math.max(1, umamiProvisioningDeadline - Date.now())))' <<<"${provisioner_script}" ||
+  fail 'the outer authentication loop must not sleep beyond the shared provisioning deadline'
 grep -Fq 'signal: AbortSignal.timeout(Math.min(umamiRequestTimeoutMilliseconds, remainingRequestMilliseconds))' <<<"${provisioner_script}" ||
   fail 'every Umami fetch attempt must bound both headers and response-body reads'
 grep -Fq 'const fetchOnce = async (u, o) =>' <<<"${provisioner_script}" ||
@@ -172,7 +178,21 @@ if grep -Fq 'return await ensureTeam(token, name);' <<<"${provisioner_script}"; 
 fi
 grep -Fq 'team creation outcome ambiguous; deferring another POST to the next scheduled reconciliation' <<<"${provisioner_script}" ||
   fail 'an ambiguous team create must defer another POST until a later reconciliation re-lists first'
-grep -Fq "if (Date.now() >= umamiProvisioningDeadline) throw new Error('Umami provisioning deadline exceeded while waiting for Lease');" <<<"${provisioner_script}" ||
+grep -Fq "const teamCreateNotBeforeAnnotation = 'platform.devantler.tech/team-create-not-before';" <<<"${provisioner_script}" ||
+  fail 'ambiguous team creation needs a durable cooldown on the shared Lease'
+grep -Fq 'waiting for ambiguous Umami team creation to settle' <<<"${provisioner_script}" ||
+  fail 'every Lease contender must honor the durable ambiguous-create cooldown'
+grep -Fq "throw new Error('provisioning Lease team-create cooldown is invalid');" <<<"${provisioner_script}" ||
+  fail 'a malformed durable cooldown must fail closed instead of allowing another POST'
+grep -Fq 'const leaseBody = (lease, spec, annotations = lease.metadata.annotations) =>' <<<"${provisioner_script}" ||
+  fail 'ordinary Lease renewal and release must preserve the durable cooldown annotation'
+team_create_cooldown_line="$(grep -nF 'await setTeamCreateCooldown();' <<<"${provisioner_script}" | cut -d: -f1)"
+team_create_post_line="$(grep -nF "const c = await fetchOnce(base + '/api/teams'," <<<"${provisioner_script}" | cut -d: -f1)"
+[[ -n "${team_create_cooldown_line}" && -n "${team_create_post_line}" && "${team_create_cooldown_line}" -lt "${team_create_post_line}" ]] ||
+  fail 'the durable cooldown must be armed before the non-idempotent team POST'
+grep -Fq 'await clearTeamCreateCooldown();' <<<"${provisioner_script}" ||
+  fail 'a definitively observed team-create result should clear its conservative cooldown'
+grep -Fq "if (Date.now() >= umamiProvisioningDeadline) throw provisioningDeadlineExceeded(' while waiting for Lease');" <<<"${provisioner_script}" ||
   fail 'Lease contention must reach workload-specific failure handling before the Job deadline'
 grep -Fq 'waiting for Umami provisioning Lease holder:' <<<"${provisioner_script}" ||
   fail 'a contending bootstrap must wait for the current Lease holder'
