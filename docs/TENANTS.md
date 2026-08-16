@@ -238,8 +238,8 @@ here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes,
   `referencegrants`, and each Gateway listener pins `allowedRoutes.kinds` to `HTTPRoute`
   (an HTTPS listener would otherwise accept `GRPCRoute` too). A tenant needing another kind
   is a platform change, not a tenant one — extend the hostname policy to cover that kind
-  and relax both layers together. `scripts/tests/test-tenant-route-hostname-boundary.sh`
-  pins all three in CI.
+  and relax both layers together. CI runs the rendered two-layer route-kind boundary test
+  alongside the canonical Kyverno policy fixtures, so neither half can widen silently.
 - The platform's `homepage` app discovers `gethomepage.dev/*` annotations on the tenant's
   HTTPRoute cluster-wide, so the tenant authors them in its own artifact — they are tenant
   self-presentation, not platform config.
