@@ -118,6 +118,9 @@ jobs:
               - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              # The Homepage layout and the policy's allow-list are one contract:
+              # either side changing alone is the drift this test exists to catch.
+              - 'scripts/tests/test-restrict-homepage-service-groups.sh'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
               - 'scripts/tests/test-kyverno-admission-vpa.sh'
               - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
@@ -436,6 +439,8 @@ jobs:
           kyverno test ./tests
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
+          shellcheck scripts/tests/test-restrict-homepage-service-groups.sh
+          bash scripts/tests/test-restrict-homepage-service-groups.sh
           shellcheck scripts/tests/test-kyverno-umami-mutation-rbac.sh
           bash scripts/tests/test-kyverno-umami-mutation-rbac.sh
           shellcheck scripts/tests/test-actual-budget-auth-route.sh

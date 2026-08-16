@@ -45,14 +45,19 @@ metadata:
     policies.kyverno.io/category: Best Practices
     policies.kyverno.io/severity: low
     policies.kyverno.io/subject: HTTPRoute, Ingress
-    policies.kyverno.io/minversion: 1.9.0
+    policies.kyverno.io/minversion: 1.13.0
     policies.kyverno.io/description: >-
       Requires every route that opts into Homepage discovery
       (gethomepage.dev/enabled: "true") to name a service group declared in the
       dashboard's layout, so a discovered service cannot invent a group and sink
       to the bottom of the page with a generic icon.
 spec:
-  validationFailureAction: Enforce
+  # Rule-level `validate.failureAction` below, not the spec-level
+  # `validationFailureAction`: Kyverno's own v1 CRD describes that one as
+  # "Deprecated, use validationFailureAction under the validate rule instead."
+  # The eleven older policies here still use the deprecated form — it is honoured
+  # on the deployed v1.18.2 — and migrating them is tracked separately; a new
+  # policy should not add to that debt.
   rules:
     - name: declared-service-group
       match:
@@ -72,6 +77,7 @@ spec:
             operator: Equals
             value: "true"
       validate:
+        failureAction: Enforce
         message: >-
           A route with gethomepage.dev/enabled="true" must set
           gethomepage.dev/group to a service group declared in the Homepage
