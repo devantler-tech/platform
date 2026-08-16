@@ -134,18 +134,16 @@ rules:
           (!rule.generate.kind.matches(
             '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
            rule.generate.kind == '*' ||
-           ((rule.generate.kind.endsWith('/CiliumNetworkPolicy') ||
-             rule.generate.kind.endsWith('/NetworkPolicy') ||
-             rule.generate.kind.endsWith(
-               '/CiliumClusterwideNetworkPolicy') ||
+           ((rule.generate.kind.matches('^cilium[.]io/[^/]+/CiliumNetworkPolicy$') ||
+             rule.generate.kind.matches('^networking[.]k8s[.]io/[^/]+/NetworkPolicy$') ||
+             rule.generate.kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') ||
              rule.generate.kind in [
                'CiliumNetworkPolicy',
                'NetworkPolicy',
                'CiliumClusterwideNetworkPolicy'
              ]) &&
             !(
-              (!(rule.generate.kind.endsWith(
-                   '/CiliumClusterwideNetworkPolicy') ||
+              (!(rule.generate.kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') ||
                  rule.generate.kind ==
                    'CiliumClusterwideNetworkPolicy') &&
                has(rule.generate.namespace) &&
@@ -158,10 +156,8 @@ rules:
                 rule.generate.data.spec.egress.size() == 0) &&
                (!has(rule.generate.data.spec.egressDeny) ||
                 rule.generate.data.spec.egressDeny.size() == 0)) ||
-              ((rule.generate.kind.endsWith(
-                  '/CiliumNetworkPolicy') ||
-                rule.generate.kind.endsWith(
-                  '/CiliumClusterwideNetworkPolicy') ||
+              ((rule.generate.kind.matches('^cilium[.]io/[^/]+/CiliumNetworkPolicy$') ||
+                rule.generate.kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') ||
                 rule.generate.kind in [
                   'CiliumNetworkPolicy',
                   'CiliumClusterwideNetworkPolicy'
@@ -181,17 +177,16 @@ rules:
             (!item.kind.matches(
               '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
              item.kind == '*' ||
-             ((item.kind.endsWith('/CiliumNetworkPolicy') ||
-               item.kind.endsWith('/NetworkPolicy') ||
-               item.kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+             ((item.kind.matches('^cilium[.]io/[^/]+/CiliumNetworkPolicy$') ||
+               item.kind.matches('^networking[.]k8s[.]io/[^/]+/NetworkPolicy$') ||
+               item.kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') ||
                item.kind in [
                  'CiliumNetworkPolicy',
                  'NetworkPolicy',
                  'CiliumClusterwideNetworkPolicy'
                ]) &&
               !(
-                (!(item.kind.endsWith(
-                     '/CiliumClusterwideNetworkPolicy') ||
+                (!(item.kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') ||
                    item.kind == 'CiliumClusterwideNetworkPolicy') &&
                  has(item.namespace) &&
                  item.namespace.matches(
@@ -202,9 +197,8 @@ rules:
                   item.data.spec.egress.size() == 0) &&
                  (!has(item.data.spec.egressDeny) ||
                   item.data.spec.egressDeny.size() == 0)) ||
-                ((item.kind.endsWith('/CiliumNetworkPolicy') ||
-                  item.kind.endsWith(
-                    '/CiliumClusterwideNetworkPolicy') ||
+                ((item.kind.matches('^cilium[.]io/[^/]+/CiliumNetworkPolicy$') ||
+                  item.kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') ||
                   item.kind in [
                     'CiliumNetworkPolicy',
                     'CiliumClusterwideNetworkPolicy'
@@ -223,12 +217,12 @@ rules:
             !kind.matches(
               '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
             kind == '*' ||
-            kind.endsWith('/CiliumNetworkPolicy') ||
-            kind.endsWith('/NetworkPolicy') ||
-            ((kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+            kind.matches('^cilium[.]io/[^/]+/CiliumNetworkPolicy$') ||
+            kind.matches('^networking[.]k8s[.]io/[^/]+/NetworkPolicy$') ||
+            ((kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') ||
               kind == 'CiliumClusterwideNetworkPolicy') ||
-             ((kind.endsWith('/CiliumNetworkPolicy') ||
-               kind.endsWith('/NetworkPolicy') ||
+             ((kind.matches('^cilium[.]io/[^/]+/CiliumNetworkPolicy$') ||
+               kind.matches('^networking[.]k8s[.]io/[^/]+/NetworkPolicy$') ||
                kind in ['CiliumNetworkPolicy', 'NetworkPolicy']) &&
               (!has(rule.generate.namespace) ||
                !rule.generate.namespace.matches(
@@ -241,12 +235,12 @@ rules:
               !kind.matches(
                 '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
               kind == '*' ||
-              kind.endsWith('/CiliumNetworkPolicy') ||
-              kind.endsWith('/NetworkPolicy') ||
-              ((kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+              kind.matches('^cilium[.]io/[^/]+/CiliumNetworkPolicy$') ||
+              kind.matches('^networking[.]k8s[.]io/[^/]+/NetworkPolicy$') ||
+              ((kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') ||
                 kind == 'CiliumClusterwideNetworkPolicy') ||
-               ((kind.endsWith('/CiliumNetworkPolicy') ||
-                 kind.endsWith('/NetworkPolicy') ||
+               ((kind.matches('^cilium[.]io/[^/]+/CiliumNetworkPolicy$') ||
+                 kind.matches('^networking[.]k8s[.]io/[^/]+/NetworkPolicy$') ||
                  kind in ['CiliumNetworkPolicy', 'NetworkPolicy']) &&
                 (!has(item.namespace) ||
                  !item.namespace.matches(
@@ -360,7 +354,7 @@ rules:
             (!has(rule.exclude.resources.namespaces) ||
              '*' in rule.exclude.resources.namespaces ||
              (rule.match.resources.kinds.all(kind,
-                !kind.endsWith('/CiliumClusterwideNetworkPolicy') &&
+                !kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') &&
                 kind != 'CiliumClusterwideNetworkPolicy') &&
               has(rule.match.resources.namespaces) &&
               rule.match.resources.namespaces.size() > 0 &&
@@ -390,9 +384,9 @@ rules:
               !kind.matches(
                 '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
               kind == '*' ||
-              kind.endsWith('/CiliumNetworkPolicy') ||
-              kind.endsWith('/NetworkPolicy') ||
-              kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+              kind.matches('^cilium[.]io/[^/]+/CiliumNetworkPolicy$') ||
+              kind.matches('^networking[.]k8s[.]io/[^/]+/NetworkPolicy$') ||
+              kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') ||
               kind in [
                 'CiliumNetworkPolicy',
                 'NetworkPolicy',
@@ -414,9 +408,9 @@ rules:
                 !kind.matches(
                   '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
                 kind == '*' ||
-                kind.endsWith('/CiliumNetworkPolicy') ||
-                kind.endsWith('/NetworkPolicy') ||
-                kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+                kind.matches('^cilium[.]io/[^/]+/CiliumNetworkPolicy$') ||
+                kind.matches('^networking[.]k8s[.]io/[^/]+/NetworkPolicy$') ||
+                kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') ||
                 kind in [
                   'CiliumNetworkPolicy',
                   'NetworkPolicy',
@@ -431,9 +425,9 @@ rules:
                 kind.matches(
                   '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') &&
                 kind != '*' &&
-                !kind.endsWith('/CiliumNetworkPolicy') &&
-                !kind.endsWith('/NetworkPolicy') &&
-                !kind.endsWith('/CiliumClusterwideNetworkPolicy') &&
+                !kind.matches('^cilium[.]io/[^/]+/CiliumNetworkPolicy$') &&
+                !kind.matches('^networking[.]k8s[.]io/[^/]+/NetworkPolicy$') &&
+                !kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') &&
                 !(kind in [
                   'CiliumNetworkPolicy',
                   'NetworkPolicy',
@@ -458,10 +452,10 @@ rules:
              !target.kind.matches(
                '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
              target.kind == '*' ||
-             target.kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+             target.kind.matches('^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$') ||
              target.kind == 'CiliumClusterwideNetworkPolicy' ||
-             ((target.kind.endsWith('/CiliumNetworkPolicy') ||
-               target.kind.endsWith('/NetworkPolicy') ||
+             ((target.kind.matches('^cilium[.]io/[^/]+/CiliumNetworkPolicy$') ||
+               target.kind.matches('^networking[.]k8s[.]io/[^/]+/NetworkPolicy$') ||
                target.kind in ['CiliumNetworkPolicy', 'NetworkPolicy']) &&
               (!has(target.namespace) ||
                !target.namespace.matches(

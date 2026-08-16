@@ -225,13 +225,13 @@ assert_generated_policy_contract() {
         .generate.foreach[]?.cloneList.kinds[]?
       ) |
       select(
-        . == "*" or
+        (. | test("^[*]$")) or
         . == "CiliumNetworkPolicy" or
         . == "NetworkPolicy" or
         . == "CiliumClusterwideNetworkPolicy" or
-        test("/CiliumNetworkPolicy$") or
-        test("/NetworkPolicy$") or
-        test("/CiliumClusterwideNetworkPolicy$")
+        (. | test("^cilium[.]io/[^/]+/CiliumNetworkPolicy$")) or
+        (. | test("^networking[.]k8s[.]io/[^/]+/NetworkPolicy$")) or
+        (. | test("^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$"))
       )
     ' "${policy_bundle}" | awk 'NF'
   )"
@@ -274,23 +274,23 @@ assert_generated_policy_contract() {
             )) or
           ([.generate.cloneList.kinds[]?] |
             any_c(
-              . == "*" or
+              (. | test("^[*]$")) or
               . == "CiliumNetworkPolicy" or
               . == "NetworkPolicy" or
               . == "CiliumClusterwideNetworkPolicy" or
-              test("/CiliumNetworkPolicy$") or
-              test("/NetworkPolicy$") or
-              test("/CiliumClusterwideNetworkPolicy$")
+              (. | test("^cilium[.]io/[^/]+/CiliumNetworkPolicy$")) or
+              (. | test("^networking[.]k8s[.]io/[^/]+/NetworkPolicy$")) or
+              (. | test("^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$"))
             )) or
           ([.generate.foreach[]?.cloneList.kinds[]?] |
             any_c(
-              . == "*" or
+              (. | test("^[*]$")) or
               . == "CiliumNetworkPolicy" or
               . == "NetworkPolicy" or
               . == "CiliumClusterwideNetworkPolicy" or
-              test("/CiliumNetworkPolicy$") or
-              test("/NetworkPolicy$") or
-              test("/CiliumClusterwideNetworkPolicy$")
+              (. | test("^cilium[.]io/[^/]+/CiliumNetworkPolicy$")) or
+              (. | test("^networking[.]k8s[.]io/[^/]+/NetworkPolicy$")) or
+              (. | test("^cilium[.]io/[^/]+/CiliumClusterwideNetworkPolicy$"))
             ))
         )] | length > 0)
     )' "${policy_bundle}"
@@ -644,6 +644,12 @@ assert_helm_rules_accept \
   "${helm_foreign_policy_fixture}" \
   'the Helm-render guard must not interpret another API group as a Kyverno policy'
 
+helm_foreign_qualified_kinds_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-foreign-qualified-policy-kinds\nspec:\n  rules:\n  - name: direct-generate\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      apiVersion: example.io/v1\n      kind: example.io/v1/NetworkPolicy\n      name: foreign-direct\n      namespace: crossplane-system\n      data:\n        spec:\n          egress: [{}]\n  - name: foreach-generate\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      foreach:\n      - list: "[request.object.metadata.name]"\n        apiVersion: example.io/v1\n        kind: example.io/v1/CiliumNetworkPolicy\n        name: foreign-foreach\n        namespace: crossplane-system\n        data:\n          spec:\n            egress: [{}]\n  - name: clone-list\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      namespace: crossplane-system\n      cloneList:\n        namespace: source\n        kinds: [example.io/v1/NetworkPolicy]\n  - name: admission-mutation\n    match:\n      resources:\n        kinds: [example.io/v1/CiliumNetworkPolicy]\n    mutate:\n      patchStrategicMerge:\n        spec:\n          egress: [{}]\n  - name: target-mutation\n    match:\n      resources:\n        kinds: [ConfigMap]\n    mutate:\n      targets:\n      - apiVersion: example.io/v1\n        kind: example.io/v1/CiliumClusterwideNetworkPolicy\n        name: foreign-target\n      patchStrategicMerge:\n        spec:\n          egress: [{}]'
+assert_helm_rules_accept \
+  'helm-foreign-qualified-policy-kinds' \
+  "${helm_foreign_qualified_kinds_fixture}" \
+  'the Helm-render guard must ignore policy-like kinds outside the Kubernetes and Cilium API groups'
+
 helm_foreign_cel_policy_fixture=$'apiVersion: policy.example.com/v1\nkind: GeneratingPolicy\nmetadata:\n  name: foreign-cel-policy-kind\nspec: {}'
 assert_helm_rules_accept \
   'helm-foreign-cel-policy-kind' \
@@ -697,6 +703,12 @@ clone_list_world_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetada
 render_with_clone_list="${effective_policy_render}"$'\n---\n'"${clone_list_world_policy}"
 if (assert_generated_policy_contract "${render_with_clone_list}") >/dev/null 2>&1; then
   fail 'the regression guard must reject cloneList-generated Crossplane network policies'
+fi
+
+foreign_clone_list_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: clone-list-foreign-policy-kind\nspec:\n  rules:\n  - name: clone-list-foreign-policy-kind\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      namespace: crossplane-system\n      cloneList:\n        namespace: source\n        kinds: [example.io/v1/NetworkPolicy]'
+render_with_foreign_clone_list="${effective_policy_render}"$'\n---\n'"${foreign_clone_list_policy}"
+if ! (assert_generated_policy_contract "${render_with_foreign_clone_list}") >/dev/null 2>&1; then
+  fail 'the aggregate guard must ignore cloneList kinds outside the Kubernetes and Cilium API groups'
 fi
 
 mutate_existing_world_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: mutate-crossplane-world-egress\nspec:\n  rules:\n  - name: mutate-existing-crossplane-policy\n    match:\n      resources:\n        kinds: [Namespace]\n        names: [crossplane-system]\n    mutate:\n      mutateExistingOnPolicyUpdate: true\n      targets:\n      - apiVersion: cilium.io/v2\n        kind: CiliumNetworkPolicy\n        name: allow-crossplane\n        namespace: crossplane-system\n      patchStrategicMerge:\n        spec:\n          egress:\n          - toEntities: [world]'
