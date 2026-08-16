@@ -357,6 +357,8 @@ rules:
                'namespace': '{{request.object.metadata.name}}',
                'data': {'spec': {
                  'endpointSelector': {},
+                 'ingress': [],
+                 'egress': [],
                  'enableDefaultDeny': {'ingress': true, 'egress': true}
                }}
              }
