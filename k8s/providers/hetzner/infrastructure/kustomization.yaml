@@ -124,6 +124,7 @@ resources:
   # (patches/add-ascoachingogvaner-dk-listeners.yaml, below), which references the
   # tenant Secret cross-namespace and stays Ready (Gateway Programmed) regardless.
 components:
+  - ../../../bases/components/annotations-transformers
   # Prod-only activation for platform#2689. The shared OpenCost base keeps this
   # bounded cAdvisor scraper default-off; Hetzner runs Kubernetes v1.36, whose
   # fine-grained kubelet authorization maps /metrics/* to nodes/metrics.

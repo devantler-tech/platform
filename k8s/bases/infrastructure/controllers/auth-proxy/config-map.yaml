@@ -33,6 +33,10 @@ data:
           rule: "Host(`opencost.${domain}`)"
           entryPoints: ["web"]
           service: opencost
+        ksail:
+          rule: "Host(`ksail.${domain}`)"
+          entryPoints: ["web"]
+          service: ksail-operator
         # Actual Budget handles its own OIDC login too, but it is a personal
         # finance app, so public Gateway traffic first passes through the
         # platform oauth2-proxy maintainer-team gate.
@@ -45,6 +49,22 @@ data:
           rule: "Host(`backstage.${domain}`)"
           entryPoints: ["web"]
           service: backstage
+        # Crossview also has native OIDC, but the outer oauth2-proxy hop keeps
+        # its cluster-wide read surface restricted to the maintainer team.
+        crossview:
+          rule: "Host(`crossview.${domain}`)"
+          entryPoints: ["web"]
+          # Crossview builds its OIDC redirect_uri from the incoming request
+          # rather than from OIDC_CALLBACK_URL -- proven in prod: with the env
+          # set to the https public callback it still sent http://. Every hop in
+          # front of it is plaintext (Gateway terminates TLS, then oauth2-proxy,
+          # then this entryPoint), and Traefik sets X-Forwarded-Proto from its
+          # OWN entryPoint scheme, so without this the app sees http and Dex
+          # rejects the redirect_uri it did not register. This router is only
+          # ever reached through the public HTTPS Gateway, so asserting https
+          # here states a fact about the traffic, not a preference.
+          middlewares: ["forwarded-proto-https"]
+          service: crossview
         # Kyverno Policy Reporter UI. Prod-only (the app lives in the
         # `infrastructure` layer, pulled in full only by the hetzner overlay), so
         # this router is inert on local/CI -- no HTTPRoute sends
@@ -53,6 +73,23 @@ data:
           rule: "Host(`policy-reporter.${domain}`)"
           entryPoints: ["web"]
           service: policy-reporter
+        openbao:
+          rule: "Host(`vault.${domain}`)"
+          entryPoints: ["web"]
+          service: openbao
+      middlewares:
+        # Restores the scheme the client actually used. Traefik derives
+        # X-Forwarded-Proto from the entryPoint it received on, and this
+        # entryPoint is plaintext (:8080) because TLS is terminated out at the
+        # Gateway -- so an app that trusts the header would otherwise be told
+        # every request arrived over http. Attach it only to routers whose app
+        # builds absolute URLs from the request; apps given an explicit public
+        # hostname (actual-budget's ACTUAL_OPENID_SERVER_HOSTNAME) do not need
+        # it and are deliberately left alone.
+        forwarded-proto-https:
+          headers:
+            customRequestHeaders:
+              X-Forwarded-Proto: "https"
       services:
         actual-budget:
           loadBalancer:
@@ -74,13 +111,27 @@ data:
           loadBalancer:
             servers:
               - url: "http://opencost.opencost.svc.cluster.local:9090"
+        ksail-operator:
+          loadBalancer:
+            servers:
+              - url: "http://ksail-operator.ksail-operator.svc.cluster.local:8080"
         backstage:
           loadBalancer:
             servers:
               - url: "http://backstage.backstage.svc.cluster.local:7007"
+        crossview:
+          loadBalancer:
+            servers:
+              - url: "http://crossview-service.crossview.svc.cluster.local:80"
         # Policy Reporter UI (policy-reporter-ui Service :8080). Prod-only and
         # inert on local (the policy-reporter namespace has no pods there).
         policy-reporter:
           loadBalancer:
             servers:
               - url: "http://policy-reporter-ui.policy-reporter.svc.cluster.local:8080"
+        # OpenBao UI/API, routed only after oauth2-proxy SSO. Use the active
+        # Service to avoid sending UI/API requests to sealed standby pods.
+        openbao:
+          loadBalancer:
+            servers:
+              - url: "http://openbao-active.openbao.svc.cluster.local:8200"
