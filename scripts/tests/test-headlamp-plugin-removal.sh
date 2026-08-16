@@ -16,6 +16,7 @@ readonly auth_proxy_dir="${root_dir}/k8s/bases/infrastructure/controllers/auth-p
 readonly auth_proxy_config="${auth_proxy_dir}/config-map.yaml"
 readonly auth_proxy_policy="${auth_proxy_dir}/cilium-network-policy.yaml"
 readonly oauth2_proxy_grant="${root_dir}/k8s/bases/infrastructure/controllers/oauth2-proxy/reference-grant.yaml"
+readonly local_hosts="${root_dir}/hosts"
 readonly crossview_origin="https://crossview.\${domain}"
 readonly crossview_redirect="${crossview_origin}/"
 readonly crossview_hostname="crossview.\${domain}"
@@ -31,6 +32,9 @@ fail() {
 
 command -v kubectl >/dev/null 2>&1 || fail 'kubectl is required to render the production apps overlay'
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to inspect the rendered plugin-removal contract'
+
+grep -Fxq '127.0.0.1 crossview.platform.lan' "${local_hosts}" ||
+  fail 'the optional local Crossview route must resolve through the managed hosts file'
 
 grep -Fq \
   "'scripts/tests/test-headlamp-plugin-removal.sh'" \
