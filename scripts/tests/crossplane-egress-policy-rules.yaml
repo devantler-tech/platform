@@ -74,6 +74,7 @@ rules:
   - name: reject-crossplane-chart-clusterwide-network-policies
     expression: >-
       object.kind != 'CiliumClusterwideNetworkPolicy' ||
+      has(object.spec.nodeSelector) ||
       (has(object.spec.endpointSelector) &&
        ((has(object.spec.endpointSelector.matchLabels) &&
          'k8s:io.kubernetes.pod.namespace' in
@@ -265,20 +266,21 @@ rules:
                 'CiliumClusterwideNetworkPolicy'
               ]))) ||
          (has(rule.match.all) &&
-          rule.match.all.exists(filter,
-            !has(filter.resources) || !has(filter.resources.kinds) ||
-            filter.resources.kinds.exists(kind,
-              !kind.matches(
-                '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') ||
-              kind == '*' ||
-              kind.endsWith('/CiliumNetworkPolicy') ||
-              kind.endsWith('/NetworkPolicy') ||
-              kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
-              kind in [
+          !rule.match.all.exists(filter,
+            has(filter.resources) && has(filter.resources.kinds) &&
+            filter.resources.kinds.size() > 0 &&
+            filter.resources.kinds.all(kind,
+              kind.matches(
+                '^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$') &&
+              kind != '*' &&
+              !kind.endsWith('/CiliumNetworkPolicy') &&
+              !kind.endsWith('/NetworkPolicy') &&
+              !kind.endsWith('/CiliumClusterwideNetworkPolicy') &&
+              !(kind in [
                 'CiliumNetworkPolicy',
                 'NetworkPolicy',
                 'CiliumClusterwideNetworkPolicy'
-              ]))) ||
+              ])))) ||
          (has(rule.mutate.targets) &&
           rule.mutate.targets.exists(target,
             !has(target.kind) ||

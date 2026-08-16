@@ -476,6 +476,12 @@ assert_helm_rules_accept \
   "${helm_unrelated_clusterwide_policy_fixture}" \
   'the Helm-render guard must ignore cluster-wide policies that cannot select Crossplane'
 
+helm_node_clusterwide_policy_fixture=$'apiVersion: cilium.io/v2\nkind: CiliumClusterwideNetworkPolicy\nmetadata:\n  name: chart-node-egress\nspec:\n  nodeSelector:\n    matchLabels:\n      node-role.kubernetes.io/worker: ""\n  egress:\n  - toEntities: [world]'
+assert_helm_rules_accept \
+  'helm-node-clusterwide-policy' \
+  "${helm_node_clusterwide_policy_fixture}" \
+  'the Helm-render guard must ignore cluster-wide node policies that cannot select Crossplane pods'
+
 helm_foreach_generator_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-foreach-network-policy\nspec:\n  rules:\n  - name: chart-foreach-network-policy\n    match:\n      resources:\n        kinds: [Namespace]\n    generate:\n      foreach:\n      - list: "[request.object.metadata.name]"\n        apiVersion: cilium.io/v2\n        kind: CiliumNetworkPolicy\n        name: chart-world-egress\n        namespace: "{{element}}"\n        data:\n          spec:\n            endpointSelector: {}\n            egress:\n            - toEntities: [world]'
 assert_helm_rules_reject \
   'helm-foreach-generator' \
@@ -538,6 +544,12 @@ assert_helm_rules_reject \
   'helm-missing-kind-mutation' \
   "${helm_missing_kind_mutation_fixture}" \
   'the Helm-render guard must reject a Kyverno mutation match without resource kinds'
+
+helm_safe_all_match_mutation_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-safe-all-match-mutation\nspec:\n  rules:\n  - name: chart-safe-all-match-mutation\n    match:\n      all:\n      - resources:\n          kinds: [Deployment]\n      - resources:\n          namespaces: [monitoring]\n    mutate:\n      patchStrategicMerge:\n        metadata:\n          labels:\n            chart.example.com/reviewed: "true"'
+assert_helm_rules_accept \
+  'helm-safe-all-match-mutation' \
+  "${helm_safe_all_match_mutation_fixture}" \
+  'the Helm-render guard must honor a safe kind constraint across match.all filters'
 
 unexpected_generate_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: generate-crossplane-world-egress\nspec:\n  rules:\n  - name: generate-world-egress\n    match:\n      resources:\n        kinds: [Namespace]\n    generate:\n      generateExisting: true\n      apiVersion: cilium.io/v2\n      kind: CiliumNetworkPolicy\n      name: allow-world\n      namespace: "{{request.object.metadata.name}}"\n      synchronize: true\n      data:\n        spec:\n          endpointSelector: {}\n          egress:\n          - toEntities: [world]'
 render_with_unexpected_generate="${effective_policy_render}"$'\n---\n'"${unexpected_generate_policy}"
