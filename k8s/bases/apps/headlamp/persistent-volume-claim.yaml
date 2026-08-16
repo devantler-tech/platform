@@ -3,6 +3,12 @@ kind: PersistentVolumeClaim
 metadata:
   name: headlamp
   namespace: headlamp
+  annotations:
+    # PVC retirement is deliberately two-stage: this protection must reach
+    # production in a merged revision before a later PR removes the manifest.
+    # Otherwise a speculative merge-group artifact can start an irreversible
+    # deletion even when that PR never merges.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   accessModes:
     - ReadWriteOnce

@@ -150,6 +150,19 @@ runs:
         echo "::error::Prod cluster (context admin@prod) is unreachable with the restored kubeconfig (last kubectl error: ${last_err}). KUBE_CONFIG (and likely TALOS_CONFIG) are probably stale after a cluster rebuild — refresh both and update the 'prod' environment secrets. See docs/dr/runbook.md → 'Refresh CI deploy credentials'."
         exit 1
 
+    - name: 💾 Validate live persistence retirement safety
+      # A commit parent is not evidence that its protection reached production:
+      # two direct pushes can be waiting behind one manual dispatch. Compare the
+      # candidate with the actual Flux-owned PVCs, HelmReleases, and Namespaces
+      # after restoring the pinned prod context, but before moving the mutable
+      # artifact tag. Any removed live object must already carry prune=disabled.
+      shell: bash
+      env:
+        PVC_PRUNE_LIVE_CONTEXT: admin@prod
+      run: |
+        shellcheck scripts/tests/test-pvc-prune-safety.sh
+        bash scripts/tests/test-pvc-prune-safety.sh
+
     - name: 🛡️ Suspend autoscaling for gated Cilium rollout
       id: cilium_rollout_gate
       # The widened device component deliberately uses OnDelete so the Cilium

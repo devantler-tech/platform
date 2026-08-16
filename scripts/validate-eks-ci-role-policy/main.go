@@ -57,6 +57,25 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
+// Measured against main 025fd5a6 before approving this value: 532 documents on
+// both sides, membership IDENTICAL — zero added, zero removed, zero renamed,
+// proven by set difference in BOTH directions over the complete
+// apiVersion|kind|namespace|name identity across all five rendered overlays.
+// The surface carries 71 Role / ClusterRole / RoleBinding / ClusterRoleBinding
+// / ServiceAccount documents on BOTH sides (10/22/15/10/14). Seventy of them
+// are byte-identical after canonicalization. Exactly ONE entry's content moves:
+//
+//	rbac.authorization.k8s.io/v1  ClusterRole  cluster-reader
+//
+// Its only rendered delta REMOVES the helm.toolkit.fluxcd.io API group from the
+// role's non-core apiGroups list. Nothing is added. A HelmRelease spec persists
+// substituted and inline values, so get/list/watch on that group let any bound
+// read-only OIDC identity recover secret material that the role's deliberate
+// core-group exclusion already withholds as Secrets. Removing the group closes
+// that disclosure path and grants no identity or permission; every `aws`-bearing
+// line in the surface is byte-identical, so nothing granted to the aws/aws
+// service account moved.
+//
 // Measured by comparing base 4673fe2d with manifest head d0f130a0 before
 // approving this value: all five production render trees contain 1,019 documents
 // on both sides, with membership IDENTICAL by
@@ -433,7 +452,73 @@ const (
 // CiliumNetworkPolicy, and auth-proxy configuration are outside this
 // EKS/RBAC/Flux selector, so this fingerprint deliberately makes no claim that
 // it validates those independently reviewed surfaces.
-const expectedRenderedSurfaceSHA = "b7ee5cdd99fca2c6291d444b99992aa83d5a16e844164fff2a6b9603e8c6fd08"
+//
+// Measured against exact current main b32ba493 with merge head 162815ee for
+// #2740. The change is a privilege REDUCTION plus one new admission guardrail;
+// the complete rendered authorization delta is:
+//
+//	rbac.authorization.k8s.io/v1  ClusterRole  gateway-tenant-edit
+//	  metadata.labels."rbac.authorization.k8s.io/aggregate-to-edit"  (removed)
+//
+//	kyverno.io/v1  ClusterPolicy  restrict-tenant-route-hostnames  (added)
+//
+// Removing the built-in aggregation label means ordinary `edit` bindings in
+// EVERY namespace no longer inherit Gateway API route verbs. The tenant-specific
+// `devantler.tech/aggregate-to-tenant-edit` label and all rule verbs remain
+// byte-identical to main, so tenant ServiceAccounts keep exactly the access they
+// had through `tenant-edit`. This is the same strict narrowing already approved
+// above for `cilium-tenant-edit`, applied to the Gateway API grant.
+//
+// The added ClusterPolicy grants nothing. It is an Enforce admission rule
+// confining each tenant namespace's HTTPRoute hostnames to that tenant's own
+// declared set, denying hostname-less routes (which match every hostname on the
+// shared wildcard listener), and fail-closed denying any ksail tenant namespace
+// with no explicit allow-list. It enters the surface because a policy document
+// is authorization-capable, not because it confers a grant.
+//
+// No identity, binding, ServiceAccount, or verb is added anywhere, and nothing
+// granted to the aws/aws service account this validator protects is touched.
+// The validator reported no per-resource mismatch; only this aggregate
+// fingerprint moved.
+//
+// The fingerprint was read from the required job's own output on the approved
+// renderer, because the local toolchain is refused as unapproved. It was
+// re-measured after merging exact main b32ba493: the branch's earlier value
+// (5c5d36cc, rendered against a main 10 commits older) no longer described the
+// merge result, so it was never approved.
+//
+// Measured against exact current main 64767a99 after merging it into #2714,
+// using the checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer.
+// Four of the five complete production roots are byte-identical. The only
+// rendered delta is in the infrastructure root and changes exactly ONE entry:
+//
+//	rbac.authorization.k8s.io/v1  ClusterRole  cluster-reader
+//
+// Its complete delta removes two API groups from the read-only allow-list:
+//
+//	coroot.com
+//	helm.toolkit.fluxcd.io
+//
+// Resource membership is identical: no apiVersion, kind, namespace, or name
+// line moves in any root. Both removals are privilege reductions. HelmRelease
+// specs persist substituted and inline values, while the production Coroot
+// Cluster persists the substituted alertmanager_webhook_url. Removing their
+// groups prevents an OIDC cluster-reader from recovering those credentials;
+// no identity, binding, resource, or verb is added. A parsed-RBAC regression
+// independently rejects any future read grant to either secret-bearing group.
+//
+// Measured against exact current main 388758f5 for #3168 with the
+// checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer. The new
+// production component is an AnnotationsTransformer whose fieldSpecs select
+// only PersistentVolumeClaim, HelmRelease, and Namespace, so it cannot mutate
+// a Role, ClusterRole, RoleBinding, ClusterRoleBinding, or ServiceAccount.
+// Resource membership across all five production roots is unchanged. The
+// rendered changes add only kustomize.toolkit.fluxcd.io/prune=disabled to those
+// three selected kinds and kustomize.toolkit.fluxcd.io/force=disabled to PVCs;
+// the existing vault-snapshots force override narrows enabled to disabled.
+// These metadata-only changes prevent destructive reconciliation and grant no
+// identity, binding, resource, or verb.
+const expectedRenderedSurfaceSHA = "8a817e5916aa9bbe199fe190b7f9328ef6ef063988eaf3fb65b95eec24bedef6"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

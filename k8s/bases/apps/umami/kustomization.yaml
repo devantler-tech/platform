@@ -5,6 +5,7 @@ resources:
   # Namespace ownership lives in infrastructure-controllers/kyverno so the
   # namespaced background-controller grant exists before its ClusterPolicy.
   - service-account.yaml
+  - service-account-provision-tenants.yaml
   - external-secret.yaml
   - external-secret-admin.yaml
   - external-secret-ascoachingogvaner.yaml
