@@ -34,8 +34,14 @@ fi
 # --- 2. allow-list == the layout's SERVICE groups ----------------------------
 settings="$(yq -r '.data."settings.yaml"' "${config_map}")"
 bookmarks="$(yq -r '.data."bookmarks.yaml"' "${config_map}")"
-[ -n "${settings}" ] && [ "${settings}" != "null" ] || { echo "::error::settings.yaml missing from the ConfigMap"; exit 1; }
-[ -n "${bookmarks}" ] && [ "${bookmarks}" != "null" ] || { echo "::error::bookmarks.yaml missing from the ConfigMap"; exit 1; }
+if [ -z "${settings}" ] || [ "${settings}" = "null" ]; then
+  echo "::error::settings.yaml missing from the ConfigMap"
+  exit 1
+fi
+if [ -z "${bookmarks}" ] || [ "${bookmarks}" = "null" ]; then
+  echo "::error::bookmarks.yaml missing from the ConfigMap"
+  exit 1
+fi
 
 layout_groups="$(printf '%s\n' "${settings}" | yq -r '.layout | keys | .[]' | sort -u)"
 bookmark_groups="$(printf '%s\n' "${bookmarks}" | yq -r '.[] | keys | .[0]' | sort -u)"
