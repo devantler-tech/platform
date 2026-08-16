@@ -486,14 +486,13 @@ const (
 // surface nobody measured. Neither side of the merge conflict described the
 // merged tree, so neither was approvable.
 //
-// The value below is main's, carried into the merge UNAPPROVED for this branch:
-// the local toolchain is kubectl v1.36.1 against the CI-pinned v1.36.2, so the
-// post-merge fingerprint cannot be produced here. The required job renders it
-// and will reject this value with the measured one, which is then approved on
-// the evidence above. Until that read lands, this constant is a placeholder and
-// the gate is expected to be RED — that failure is the measurement, not a
-// regression.
-const expectedRenderedSurfaceSHA = "1fac0ff549c9ad7e94fce4e6e723b9ca588f16ecbf43016c24eee219ec83b867"
+// The local toolchain is kubectl v1.36.1 against the CI-pinned v1.36.2, so this
+// value was NOT produced locally. It was read from the required job's own output
+// on the approved renderer: run 31926842489 at merge head 849f5c75 reported
+// `unapproved rendered authorization surface fingerprint: 9b086829…`. That run
+// reported NO per-resource mismatch — only the aggregate moved — which is what
+// distinguishes a HelmRelease-values change from an authorization change.
+const expectedRenderedSurfaceSHA = "9b086829abd61886d989f6da17ae75138891519b9488d308c7f106935a0e7fb0"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
