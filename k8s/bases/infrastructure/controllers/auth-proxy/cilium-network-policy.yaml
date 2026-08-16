@@ -35,6 +35,14 @@ spec:
         - ports:
             - port: "7007"
               protocol: TCP
+    # Crossview upstream (cluster resource explorer; Service :80 -> pod :3001).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: crossview
+      toPorts:
+        - ports:
+            - port: "3001"
+              protocol: TCP
     # Homepage upstream
     - toEndpoints:
         - matchLabels:
@@ -51,6 +59,14 @@ spec:
       toPorts:
         - ports:
             - port: "8081"
+              protocol: TCP
+    # KSail operator UI upstream (ksail-operator Service :8080).
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: ksail-operator
+      toPorts:
+        - ports:
+            - port: "8080"
               protocol: TCP
     # Coroot UI upstream (metrics/logs/traces/profiles/alerts).
     - toEndpoints:

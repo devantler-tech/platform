@@ -35,6 +35,7 @@ resources:
   - backstage/password-coroot-monitor.yaml
   - backstage/external-secret-coroot-monitor.yaml
 components:
+  - ../../../bases/components/annotations-transformers
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
   # bases/components/helmrelease-drift-detection.
   - ../../../bases/components/helmrelease-drift-detection
@@ -76,11 +77,10 @@ patches:
   # the add-security-context rule's +(hostUsers) conditional anchor — which only
   # fills in a MISSING value — cannot reach it. Setting the chart value is what
   # actually changes the rendered Deployment.
-  # Headlamp is the first Longhorn-backed workload here: its plugin sidecar
-  # writes to the `headlamp` PVC and the main container reads those files. That
-  # cross-container round trip under a user namespace is the property the
-  # disposable userns-longhorn-smoke Job proved on this cluster (#2619).
-  # Recovery re-comments this block and never deletes the plugins PVC.
+  # Headlamp uses only ephemeral writable volumes now that runtime plugin
+  # downloads are disabled. The disposable userns-longhorn-smoke Job still
+  # carries the separate Longhorn idmapped-mount proof for future stateful
+  # workloads; this Headlamp activation no longer depends on that storage path.
   - target:
       group: helm.toolkit.fluxcd.io
       version: v2

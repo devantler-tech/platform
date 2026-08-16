@@ -14,7 +14,13 @@ spec:
       namespace: backstage
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
+      namespace: crossview
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
       namespace: homepage
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: ksail-operator
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: kube-system

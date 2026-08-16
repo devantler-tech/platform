@@ -61,6 +61,7 @@ resources:
   # experiments are actually running, not as always-on prod attack surface.
   # - ../../../../bases/infrastructure/controllers/chaos-mesh/
 components:
+  - ../../../../bases/components/annotations-transformers
   # Platform-wide HelmRelease drift detection (mode: enabled). Restores
   # Helm-rendered resources deleted/mutated out-of-band — the cause of the
   # silently-broken keda external-scaler and homepage Deployments.
