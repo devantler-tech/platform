@@ -155,6 +155,9 @@ assert_generated_policy_contract() {
   local expected_mutated_contract
   local actual_mutated_contract
   local mutated_files
+  local clone_list_generators
+  local unsafe_generator_kinds
+  local unsafe_mutation_targets
 
   case_dir="$(mktemp -d "${test_temp_root}/kyverno.XXXXXX")"
   policy_bundle="${case_dir}/policies.yaml"
@@ -163,6 +166,56 @@ assert_generated_policy_contract() {
   mutation_dir="${case_dir}/mutations"
   mutation_output_dir="${case_dir}/mutated"
   printf '%s\n' "${candidate_render}" >"${policy_bundle}"
+
+  unsafe_generator_kinds="$(
+    yq e -N -r '
+      select(.kind == "ClusterPolicy" or .kind == "Policy") |
+      .spec.rules[] |
+      (
+        .generate.kind?,
+        .generate.foreach[]?.kind?,
+        .generate.cloneList.kinds[]?,
+        .generate.foreach[]?.cloneList.kinds[]?
+      ) |
+      select(. != null) |
+      select(test("^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$") | not)
+    ' "${policy_bundle}" | awk 'NF'
+  )"
+  [ -z "${unsafe_generator_kinds}" ] ||
+    fail 'Kyverno generator kinds must be literal resource kinds'
+
+  clone_list_generators="$(
+    yq e -N -r '
+      select(.kind == "ClusterPolicy" or .kind == "Policy") |
+      .spec.rules[] |
+      (
+        .generate.cloneList.kinds[]?,
+        .generate.foreach[]?.cloneList.kinds[]?
+      ) |
+      select(
+        . == "*" or
+        . == "CiliumNetworkPolicy" or
+        . == "NetworkPolicy" or
+        . == "CiliumClusterwideNetworkPolicy" or
+        test("/CiliumNetworkPolicy$") or
+        test("/NetworkPolicy$") or
+        test("/CiliumClusterwideNetworkPolicy$")
+      )
+    ' "${policy_bundle}" | awk 'NF'
+  )"
+  [ -z "${clone_list_generators}" ] ||
+    fail 'Kyverno cloneList rules must not produce network policies'
+
+  unsafe_mutation_targets="$(
+    yq e -N -r '
+      select(.kind == "ClusterPolicy" or .kind == "Policy") |
+      .spec.rules[].mutate.targets[]? |
+      (.kind // "__MISSING__") |
+      select(test("^([a-z0-9.-]+/){0,2}[A-Z][A-Za-z0-9]*$") | not)
+    ' "${policy_bundle}" | awk 'NF'
+  )"
+  [ -z "${unsafe_mutation_targets}" ] ||
+    fail 'Kyverno mutation target kinds must be literal resource kinds'
 
   # Ask Kyverno itself which generators apply to the real Crossplane Namespace.
   # This preserves names, selectors, expressions, any/all blocks, exclusions,
@@ -182,6 +235,26 @@ assert_generated_policy_contract() {
               . == "CiliumNetworkPolicy" or
               . == "NetworkPolicy" or
               . == "CiliumClusterwideNetworkPolicy"
+            )) or
+          ([.generate.cloneList.kinds[]?] |
+            any_c(
+              . == "*" or
+              . == "CiliumNetworkPolicy" or
+              . == "NetworkPolicy" or
+              . == "CiliumClusterwideNetworkPolicy" or
+              test("/CiliumNetworkPolicy$") or
+              test("/NetworkPolicy$") or
+              test("/CiliumClusterwideNetworkPolicy$")
+            )) or
+          ([.generate.foreach[]?.cloneList.kinds[]?] |
+            any_c(
+              . == "*" or
+              . == "CiliumNetworkPolicy" or
+              . == "NetworkPolicy" or
+              . == "CiliumClusterwideNetworkPolicy" or
+              test("/CiliumNetworkPolicy$") or
+              test("/NetworkPolicy$") or
+              test("/CiliumClusterwideNetworkPolicy$")
             ))
         )] | length > 0)
     )' "${policy_bundle}"
@@ -383,11 +456,47 @@ assert_helm_rules_reject \
   "${helm_foreach_generator_fixture}" \
   'the Helm-render guard must reject a Kyverno foreach network-policy generator'
 
+helm_spoofed_approved_generator_fixture=$'apiVersion: kyverno.io/v1\nkind: Policy\nmetadata:\n  name: add-default-deny\n  namespace: crossplane-system\nspec:\n  rules:\n  - name: generate-default-deny\n    match:\n      resources:\n        kinds: [Namespace]\n    generate:\n      apiVersion: cilium.io/v2\n      kind: CiliumNetworkPolicy\n      name: chart-world-egress\n      namespace: crossplane-system\n      data:\n        spec:\n          endpointSelector: {}\n          egress:\n          - toEntities: [world]'
+assert_helm_rules_reject \
+  'helm-spoofed-approved-generator' \
+  "${helm_spoofed_approved_generator_fixture}" \
+  'the Helm-render guard must validate the complete approved Kyverno generator'
+
+helm_duplicate_approved_generator_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: add-default-deny\nspec:\n  rules:\n  - &duplicate-rule\n    name: generate-default-deny\n    match:\n      any:\n      - resources:\n          kinds: [Namespace]\n    exclude:\n      any:\n      - resources:\n          names: [kube-system, kube-public, kube-node-lease]\n    generate:\n      generateExisting: true\n      apiVersion: cilium.io/v2\n      kind: CiliumNetworkPolicy\n      name: default-deny\n      synchronize: true\n      namespace: "{{request.object.metadata.name}}"\n      data:\n        spec:\n          endpointSelector: {}\n          enableDefaultDeny:\n            ingress: true\n            egress: true\n  - *duplicate-rule\n  - *duplicate-rule'
+assert_helm_rules_reject \
+  'helm-duplicate-approved-generator' \
+  "${helm_duplicate_approved_generator_fixture}" \
+  'the Helm-render guard must require each exact approved generator once'
+
+helm_clone_list_generator_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-clone-list-network-policy\nspec:\n  rules:\n  - name: chart-clone-list-network-policy\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      namespace: crossplane-system\n      cloneList:\n        namespace: attacker\n        kinds: [cilium.io/v2/CiliumNetworkPolicy]'
+assert_helm_rules_reject \
+  'helm-clone-list-generator' \
+  "${helm_clone_list_generator_fixture}" \
+  'the Helm-render guard must reject a Kyverno cloneList network-policy generator'
+
+helm_foreach_clone_list_generator_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-foreach-clone-list-network-policy\nspec:\n  rules:\n  - name: chart-foreach-clone-list-network-policy\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      foreach:\n      - list: "[request.object.metadata.name]"\n        namespace: crossplane-system\n        cloneList:\n          namespace: attacker\n          kinds: [networking.k8s.io/v1/NetworkPolicy]'
+assert_helm_rules_reject \
+  'helm-foreach-clone-list-generator' \
+  "${helm_foreach_clone_list_generator_fixture}" \
+  'the Helm-render guard must reject a Kyverno foreach cloneList network-policy generator'
+
 helm_mutation_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-network-policy-mutation\nspec:\n  rules:\n  - name: chart-network-policy-mutation\n    match:\n      resources:\n        kinds: [CiliumNetworkPolicy]\n    mutate:\n      patchStrategicMerge:\n        spec:\n          egress:\n          - toEntities: [world]'
 assert_helm_rules_reject \
   'helm-policy-mutation' \
   "${helm_mutation_fixture}" \
   'the Helm-render guard must reject a Kyverno network-policy mutation'
+
+helm_dynamic_target_mutation_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-dynamic-target-mutation\nspec:\n  rules:\n  - name: chart-dynamic-target-mutation\n    match:\n      resources:\n        kinds: [ConfigMap]\n    mutate:\n      targets:\n      - apiVersion: cilium.io/v2\n        kind: "{{request.object.data.kind}}"\n        name: allow-crossplane\n        namespace: crossplane-system\n      patchStrategicMerge:\n        spec:\n          egress:\n          - toEntities: [world]'
+assert_helm_rules_reject \
+  'helm-dynamic-target-mutation' \
+  "${helm_dynamic_target_mutation_fixture}" \
+  'the Helm-render guard must reject a dynamic Kyverno mutation target kind'
+
+helm_dynamic_match_mutation_fixture=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: chart-dynamic-match-mutation\nspec:\n  rules:\n  - name: chart-dynamic-match-mutation\n    match:\n      resources:\n        kinds: ["{{request.object.data.kind}}"]\n    mutate:\n      patchStrategicMerge:\n        spec:\n          egress:\n          - toEntities: [world]'
+assert_helm_rules_reject \
+  'helm-dynamic-match-mutation' \
+  "${helm_dynamic_match_mutation_fixture}" \
+  'the Helm-render guard must reject a dynamic Kyverno mutation match kind'
 
 unexpected_generate_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: generate-crossplane-world-egress\nspec:\n  rules:\n  - name: generate-world-egress\n    match:\n      resources:\n        kinds: [Namespace]\n    generate:\n      generateExisting: true\n      apiVersion: cilium.io/v2\n      kind: CiliumNetworkPolicy\n      name: allow-world\n      namespace: "{{request.object.metadata.name}}"\n      synchronize: true\n      data:\n        spec:\n          endpointSelector: {}\n          egress:\n          - toEntities: [world]'
 render_with_unexpected_generate="${effective_policy_render}"$'\n---\n'"${unexpected_generate_policy}"
@@ -412,6 +521,12 @@ foreach_generate_world_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\n
 render_with_foreach_generate="${effective_policy_render}"$'\n---\n'"${foreach_generate_world_policy}"
 if (assert_generated_policy_contract "${render_with_foreach_generate}") >/dev/null 2>&1; then
   fail 'the regression guard must reject foreach-generated Crossplane network policies'
+fi
+
+clone_list_world_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: clone-list-crossplane-world-egress\nspec:\n  rules:\n  - name: clone-list-crossplane-world-egress\n    match:\n      resources:\n        kinds: [ConfigMap]\n    generate:\n      namespace: crossplane-system\n      cloneList:\n        namespace: attacker\n        kinds: [cilium.io/v2/CiliumNetworkPolicy]'
+render_with_clone_list="${effective_policy_render}"$'\n---\n'"${clone_list_world_policy}"
+if (assert_generated_policy_contract "${render_with_clone_list}") >/dev/null 2>&1; then
+  fail 'the regression guard must reject cloneList-generated Crossplane network policies'
 fi
 
 mutate_existing_world_policy=$'apiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: mutate-crossplane-world-egress\nspec:\n  rules:\n  - name: mutate-existing-crossplane-policy\n    match:\n      resources:\n        kinds: [Namespace]\n        names: [crossplane-system]\n    mutate:\n      mutateExistingOnPolicyUpdate: true\n      targets:\n      - apiVersion: cilium.io/v2\n        kind: CiliumNetworkPolicy\n        name: allow-crossplane\n        namespace: crossplane-system\n      patchStrategicMerge:\n        spec:\n          egress:\n          - toEntities: [world]'
