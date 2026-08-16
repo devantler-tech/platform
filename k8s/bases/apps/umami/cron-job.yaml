@@ -100,6 +100,17 @@ spec:
               imagePullPolicy: IfNotPresent
               securityContext:
                 allowPrivilegeEscalation: false
+                # Restated at container level even though the pod securityContext
+                # above already sets it: `validate-pod-security` autogenerates a
+                # CronJob rule that reads this container path, while
+                # `add-security-context` has no autogen rules, so a CronJob
+                # template is validated but never mutated. Without this field the
+                # manifest is admitted only while the live object is equally
+                # non-compliant (the validate rules set
+                # `allowExistingViolations: true`) — so the moment anything makes
+                # the live CronJob compliant, this manifest stops being
+                # appliable and wedges the apps Kustomization.
+                runAsNonRoot: true
                 readOnlyRootFilesystem: true
                 capabilities:
                   drop:
