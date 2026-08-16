@@ -33,6 +33,10 @@ data:
           rule: "Host(`opencost.${domain}`)"
           entryPoints: ["web"]
           service: opencost
+        ksail:
+          rule: "Host(`ksail.${domain}`)"
+          entryPoints: ["web"]
+          service: ksail-operator
         # Actual Budget handles its own OIDC login too, but it is a personal
         # finance app, so public Gateway traffic first passes through the
         # platform oauth2-proxy maintainer-team gate.
@@ -84,6 +88,10 @@ data:
           loadBalancer:
             servers:
               - url: "http://opencost.opencost.svc.cluster.local:9090"
+        ksail-operator:
+          loadBalancer:
+            servers:
+              - url: "http://ksail-operator.ksail-operator.svc.cluster.local:8080"
         backstage:
           loadBalancer:
             servers:
