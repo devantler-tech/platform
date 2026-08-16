@@ -27,3 +27,101 @@ rules:
       Helm charts in the Crossplane controller overlay must not add a
       cluster-wide Cilium policy
     severity: error
+
+  - name: restrict-kyverno-network-policy-generators
+    expression: >-
+      !(object.kind in ['ClusterPolicy', 'Policy']) ||
+      !has(object.spec.rules) ||
+      !object.spec.rules.exists(rule,
+        has(rule.generate) &&
+        ((has(rule.generate.kind) &&
+          (rule.generate.kind in [
+            'CiliumNetworkPolicy',
+            'NetworkPolicy',
+            'CiliumClusterwideNetworkPolicy'
+          ]) &&
+          !(object.metadata.name == 'add-default-deny' &&
+            ((rule.name == 'generate-default-deny' &&
+              rule.generate.kind == 'CiliumNetworkPolicy') ||
+             (rule.name == 'generate-allow-dns' &&
+              rule.generate.kind == 'CiliumNetworkPolicy') ||
+             (rule.name == 'generate-default-deny-networkpolicy' &&
+              rule.generate.kind == 'NetworkPolicy')))) ||
+         (has(rule.generate.foreach) &&
+          rule.generate.foreach.exists(item,
+            has(item.kind) && item.kind in [
+              'CiliumNetworkPolicy',
+              'NetworkPolicy',
+              'CiliumClusterwideNetworkPolicy'
+            ]))))
+    message: >-
+      Helm-rendered Kyverno policies must not generate network policies beyond
+      the reviewed add-default-deny rules
+    severity: error
+
+  - name: reject-kyverno-network-policy-mutations
+    expression: >-
+      !(object.kind in ['ClusterPolicy', 'Policy']) ||
+      !has(object.spec.rules) ||
+      !object.spec.rules.exists(rule,
+        has(rule.mutate) &&
+        ((has(rule.match.resources) &&
+          has(rule.match.resources.kinds) &&
+          rule.match.resources.kinds.exists(kind,
+            kind == '*' ||
+            kind.endsWith('/CiliumNetworkPolicy') ||
+            kind.endsWith('/NetworkPolicy') ||
+            kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+            kind in [
+              'CiliumNetworkPolicy',
+              'NetworkPolicy',
+              'CiliumClusterwideNetworkPolicy'
+            ])) ||
+         (has(rule.match.any) &&
+          rule.match.any.exists(filter,
+            has(filter.resources) && has(filter.resources.kinds) &&
+            filter.resources.kinds.exists(kind,
+              kind == '*' ||
+              kind.endsWith('/CiliumNetworkPolicy') ||
+              kind.endsWith('/NetworkPolicy') ||
+              kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+              kind in [
+                'CiliumNetworkPolicy',
+                'NetworkPolicy',
+                'CiliumClusterwideNetworkPolicy'
+              ]))) ||
+         (has(rule.match.all) &&
+          rule.match.all.exists(filter,
+            has(filter.resources) && has(filter.resources.kinds) &&
+            filter.resources.kinds.exists(kind,
+              kind == '*' ||
+              kind.endsWith('/CiliumNetworkPolicy') ||
+              kind.endsWith('/NetworkPolicy') ||
+              kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+              kind in [
+                'CiliumNetworkPolicy',
+                'NetworkPolicy',
+                'CiliumClusterwideNetworkPolicy'
+              ]))) ||
+         (has(rule.mutate.targets) &&
+          rule.mutate.targets.exists(target,
+            has(target.kind) &&
+            (target.kind.endsWith('/CiliumNetworkPolicy') ||
+             target.kind.endsWith('/NetworkPolicy') ||
+             target.kind.endsWith('/CiliumClusterwideNetworkPolicy') ||
+             target.kind in [
+               'CiliumNetworkPolicy',
+               'NetworkPolicy',
+               'CiliumClusterwideNetworkPolicy'
+             ])))))
+    message: >-
+      Helm-rendered Kyverno policies must not mutate network-policy resources
+    severity: error
+
+  - name: reject-cel-policy-producers
+    expression: >-
+      !(object.kind in ['GeneratingPolicy', 'MutatingPolicy'])
+    message: >-
+      Helm-rendered CEL policy producers require explicit effective-policy
+      review before deployment
+    severity: error
