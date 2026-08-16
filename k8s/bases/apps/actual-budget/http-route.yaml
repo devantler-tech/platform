@@ -19,12 +19,13 @@ spec:
   hostnames:
     - budget.${domain}
   rules:
-    - backendRefs:
-        - name: actual-budget-actualbudget
-          port: 5006
-      filters:
+    - filters:
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
               - name: Strict-Transport-Security
                 value: max-age=63072000; includeSubDomains; preload
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80
