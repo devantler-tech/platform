@@ -6,13 +6,11 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
-    # Gateway ingress for the operator UI + REST API.
-    - fromEntities:
-        - ingress
-      toPorts:
-        - ports:
-            - port: "8080"
-              protocol: TCP
+    # The UI + REST API are reachable only through the SSO chain: the Gateway
+    # routes ksail.${domain} to oauth2-proxy, which authorizes the
+    # devantler-tech:maintainers team before auth-proxy forwards here. There is
+    # deliberately no `fromEntities: ingress` rule — a direct Gateway path would
+    # reach port 8080 without that team gate.
     # Authenticated, team-authorized traffic via oauth2-proxy/auth-proxy.
     - fromEndpoints:
         - matchLabels:
