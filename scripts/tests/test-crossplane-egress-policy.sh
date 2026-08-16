@@ -13,27 +13,64 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
-readonly crossplane_dir="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/crossplane"
+readonly controllers_dir="${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1
 }
 
-rendered="$(kubectl kustomize "${crossplane_dir}")" ||
-  fail 'the Crossplane controller component must render'
+rendered="$(kubectl kustomize "${controllers_dir}")" ||
+  fail 'the deployed Hetzner controller overlay must render'
 
-policy="$(
+select_crossplane_policy() {
   awk '
-    /^kind: CiliumNetworkPolicy$/ { in_policy = 1 }
-    in_policy { print }
-    in_policy && /^---$/ { exit }
-  ' <<<"${rendered}"
-)"
+    function reset_document() {
+      document = ""
+      is_cilium_policy = 0
+      in_metadata = 0
+      is_allow_crossplane = 0
+    }
+
+    function emit_if_selected() {
+      if (is_cilium_policy && is_allow_crossplane) {
+        printf "%s", document
+      }
+      reset_document()
+    }
+
+    BEGIN { reset_document() }
+
+    /^---$/ {
+      emit_if_selected()
+      next
+    }
+
+    {
+      document = document $0 ORS
+      if ($0 == "kind: CiliumNetworkPolicy") {
+        is_cilium_policy = 1
+      }
+      if ($0 == "metadata:") {
+        in_metadata = 1
+      } else if (in_metadata && $0 !~ /^ /) {
+        in_metadata = 0
+      }
+      if (in_metadata && $0 == "  name: allow-crossplane") {
+        is_allow_crossplane = 1
+      }
+    }
+
+    END { emit_if_selected() }
+  ' <<<"$1"
+}
+
+policy="$(select_crossplane_policy "${rendered}")"
 readonly policy
 
-grep -Fq -- 'name: allow-crossplane' <<<"${policy}" ||
-  fail 'the rendered component must contain the allow-crossplane policy'
+selected_policy_count="$(awk '/^kind: CiliumNetworkPolicy$/ { count++ } END { print count + 0 }' <<<"${policy}")"
+[ "${selected_policy_count}" -eq 1 ] ||
+  fail 'the deployed overlay must contain exactly one allow-crossplane CiliumNetworkPolicy'
 
 if grep -Eq '^[[:space:]]*serverNames:' <<<"${policy}"; then
   fail 'Crossplane HTTPS egress must stay on the direct L3/L4 path, not the broken SNI proxy path'
