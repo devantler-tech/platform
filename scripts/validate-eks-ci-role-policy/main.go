@@ -363,7 +363,77 @@ const (
 // per-resource fingerprint, since the moved documents belong to main's change
 // rather than the branch's. Compare like with like before concluding the
 // toolchain is at fault.
-const expectedRenderedSurfaceSHA = "26e28178117fa9dc0f7d66c8bd526b1b5f000beeedac9f327207b8a674c56755"
+//
+// Measured against main 2f92d8ef before approving this value: the complete
+// rendered authorization diff changes exactly one object, ClusterRole
+// `cilium-tenant-edit`. Surface membership is unchanged. The only rendered
+// change removes its built-in `aggregate-to-edit` label, so ordinary `edit`
+// bindings no longer inherit Cilium policy access. The tenant-specific
+// aggregation label and all rule verbs remain byte-identical to main: Flux can
+// still server-side apply and prune tenant policies through `tenant-edit`.
+// This strictly narrows which aggregate role inherits the grant without
+// breaking that workflow. Platform#3150 separately tracks admission constraints
+// for permissive or platform-owned tenant policy mutations. The committed-tree
+// validation reported no per-resource mismatch; only this aggregate fingerprint
+// moved.
+//
+// Measured by comparing base 0a97d6c7 with repair head 966ca01c before
+// approving this value: the complete five-layer render diff changes exactly
+// four selected entries. The mutateExisting ClusterPolicy is narrowed from
+// arbitrary matching Deployments to umami/umami-umami and its fixed
+// umami-umami-primary target. The cluster-wide aggregated ClusterRole that
+// granted get/list/watch/update/patch on every Deployment is removed. In its
+// place, one Role in umami grants only get/update/patch on the single
+// umami-umami-primary Deployment, and one RoleBinding grants it only to
+// Kyverno's background-controller ServiceAccount. No existing rendered entry
+// changes, including the Umami Namespace, whose identical rendered form merely
+// moves between two already-scanned ownership layers. The validator reported
+// no per-resource mismatch; only this aggregate fingerprint moved.
+//
+// This value additionally covers the UniFi source containment repair in #2707,
+// measured after rebasing the PR onto exact main 57ca1dbe. Three of the five
+// authorization roots are byte-identical across main and this change:
+// infrastructure/controllers, prod/bootstrap, and prod. The complete apps
+// render has identical membership and exactly THREE changed fields across
+// three existing documents:
+//
+//	rbac.authorization.k8s.io/v1    Role           unifi/unifi-managed-resources
+//	  verbs: delete                                        (removed)
+//	kustomize.toolkit.fluxcd.io/v1  Kustomization  unifi/unifi
+//	  prune: true -> false
+//	source.toolkit.fluxcd.io/v1      GitRepository  unifi/unifi
+//	  ref.branch: main -> one full 40-hex ref.commit pin
+//
+// The first two changes remove deletion paths. The third replaces a moving
+// branch with one full immutable commit from the expected repository, so a
+// source-repository compromise cannot alter resources that retain patch/update
+// authority without a separately reviewed Platform change. The semantic
+// validatePinnedUnifiSource control and its negative tests reject branches,
+// tags/mixed selectors, abbreviated hashes, substitutions, and alternate URLs
+// before the aggregate hash is considered. The infrastructure render changes
+// exactly one existing ClusterPolicy by adding the exact unifi/unifi admission
+// exception needed to admit prune:false; validateUnifiPruneExemption pins that
+// rule's complete exception set to flux-system/flux-system and unifi/unifi.
+// No identity, binding, resource kind, or remaining verb moved.
+//
+// Measured by comparing exact current main 025fd5a6 with merge head 8654ae7
+// for #2742 using the CI-pinned kubectl v1.36.2 / Kustomize v5.8.1 renderer.
+// All five production authorization roots retain the same 170 selected
+// identities: the set difference is empty in both directions. Exactly ONE
+// selected entry changes:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  actual-budget/actual-budget
+//
+// Its complete projected delta adds ACTUAL_TOKEN_EXPIRATION=openid-provider
+// to the existing post-rendered Deployment environment, which changes runtime
+// session-expiry behavior. login.openid.tokenExpiration mirrors that value for
+// chart-schema alignment; with ingress.enabled=false, chart 1.9.3 does not
+// render or consume the OpenID Secret. No IAM, RBAC, Flux source, identity,
+// binding, verb, or resource membership changes. The PR's HTTPRoute, ReferenceGrant,
+// CiliumNetworkPolicy, and auth-proxy configuration are outside this
+// EKS/RBAC/Flux selector, so this fingerprint deliberately makes no claim that
+// it validates those independently reviewed surfaces.
+const expectedRenderedSurfaceSHA = "b7ee5cdd99fca2c6291d444b99992aa83d5a16e844164fff2a6b9603e8c6fd08"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -384,6 +454,8 @@ var exactPinnedHelmChartVersion = regexp.MustCompile(
 		`(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`,
 )
 
+var exactGitCommit = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
 // commandExecutor makes the renderer orchestration independently testable
 // without weakening the production command and deadline contract.
 type commandExecutor func(context.Context, string, ...string) ([]byte, error)
@@ -401,6 +473,104 @@ type resourceIdentity struct {
 type resourceType struct {
 	apiVersion string
 	kind       string
+}
+
+// validatePinnedUnifiSource keeps the external repository from moving without
+// a reviewed Platform change. This source retains patch/update authority over
+// live UniFi managed resources, so a branch, tag, abbreviated hash, alternate
+// repository, or mixed selector is not an acceptable provenance boundary.
+func validatePinnedUnifiSource(document map[string]any, identity resourceIdentity) error {
+	wantIdentity := resourceIdentity{
+		apiVersion: "source.toolkit.fluxcd.io/v1",
+		kind:       "GitRepository",
+		namespace:  "unifi",
+		name:       "unifi",
+	}
+	if identity != wantIdentity {
+		return nil
+	}
+
+	spec, ok := document["spec"].(map[string]any)
+	if !ok || spec["url"] != "https://github.com/devantler-tech/unifi" {
+		return errors.New("unifi GitRepository must use the trusted devantler-tech/unifi source")
+	}
+	ref, ok := spec["ref"].(map[string]any)
+	if !ok || len(ref) != 1 {
+		return errors.New("unifi GitRepository must pin exactly one full immutable commit")
+	}
+	commit, ok := ref["commit"].(string)
+	if !ok || !exactGitCommit.MatchString(commit) {
+		return errors.New("unifi GitRepository must pin exactly one full immutable commit")
+	}
+	return nil
+}
+
+// validateUnifiPruneExemption keeps the deliberate non-pruning reconciler
+// deployable while requiring the admission-policy exception to remain scoped
+// to exactly one namespaced Kustomization.
+func validateUnifiPruneExemption(document map[string]any, identity resourceIdentity) error {
+	wantIdentity := resourceIdentity{
+		apiVersion: "kyverno.io/v1",
+		kind:       "ClusterPolicy",
+		name:       "enforce-flux-best-practices",
+	}
+	if identity != wantIdentity {
+		return nil
+	}
+
+	exactSingleton := func(value any, want string) bool {
+		values, ok := value.([]any)
+		return ok && len(values) == 1 && values[0] == want
+	}
+	spec, ok := document["spec"].(map[string]any)
+	if !ok {
+		return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
+	}
+	rules, ok := spec["rules"].([]any)
+	if !ok {
+		return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
+	}
+	for _, ruleValue := range rules {
+		rule, ok := ruleValue.(map[string]any)
+		if !ok || rule["name"] != "kustomization-recommended-settings" {
+			continue
+		}
+		exclude, ok := rule["exclude"].(map[string]any)
+		if !ok {
+			break
+		}
+		exclusions, ok := exclude["any"].([]any)
+		if !ok {
+			break
+		}
+		seenFluxSystem := false
+		seenUnifi := false
+		for _, exclusionValue := range exclusions {
+			exclusion, ok := exclusionValue.(map[string]any)
+			if !ok {
+				break
+			}
+			resources, ok := exclusion["resources"].(map[string]any)
+			if !ok {
+				break
+			}
+			switch {
+			case exactSingleton(resources["namespaces"], "flux-system") &&
+				exactSingleton(resources["names"], "flux-system") && !seenFluxSystem:
+				seenFluxSystem = true
+			case exactSingleton(resources["namespaces"], "unifi") &&
+				exactSingleton(resources["names"], "unifi") && !seenUnifi:
+				seenUnifi = true
+			default:
+				return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
+			}
+		}
+		if seenFluxSystem && seenUnifi && len(exclusions) == 2 {
+			return nil
+		}
+		break
+	}
+	return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
 }
 
 // expectedRenderedHashes preserves object-specific diagnostics for the core
@@ -425,7 +595,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "d1bc403b6458bd22cf967bd570e24718341cbd584f58e7f0069aaffe1e187945",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "9d9b62d3221442d6355d16a34d31c198619fb3b3728df960fd67222a531ece7b",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "github-config", name: "github-config"}:            "8e9f72b0f4f982d050aff0b97d246c68b538cbc397cdd45d031c95cfae981e7c",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "47c63f6a762caeacf257ddd32cbbeb3f3568eeea0e258ec006621579114731ff",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "unifi", name: "unifi"}:                            "33a579299700de2467631854bac4982d3e14caa3bad8cbcd2613ac180b30af32",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "wedding-app", name: "wedding-app"}:                "8af27d4845565c57b9ebc618f186669f18ada89e070cf4e6514924717a2532f8",
 }
 
@@ -1343,6 +1513,12 @@ func validateRendered(rendered []byte) error {
 	substitutionProblems := make([]error, 0)
 	for _, document := range documents {
 		identity := identityOf(document)
+		if sourceErr := validatePinnedUnifiSource(document, identity); sourceErr != nil {
+			problems = append(problems, sourceErr)
+		}
+		if exemptionErr := validateUnifiPruneExemption(document, identity); exemptionErr != nil {
+			problems = append(problems, exemptionErr)
+		}
 		isAuthorizationCapable := isAuthorizationCapableDocument(document, identity)
 		hasAuthorizationSubstitution := isAuthorizationCapable &&
 			containsFluxSubstitution(document) &&
