@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Negative coverage for the tenant hostname boundary on the shared Gateway.
 #
-# The boundary is enforced by `restrict-tenant-http-route-hostnames`, which
+# The boundary is enforced by `restrict-tenant-route-hostnames`, which
 # matches HTTPRoute. That leaves a gap unless the other route kinds cannot reach
 # the shared listener at all: an HTTPS listener accepts GRPCRoute as well as
 # HTTPRoute by default, so a tenant able to create a GRPCRoute could claim
@@ -12,21 +12,15 @@
 #   1. tenant RBAC grants only `httproutes` (+ `referencegrants`);
 #   2. every Gateway listener pins `allowedRoutes.kinds` to HTTPRoute, covering
 #      routes created by any other principal.
-# Layer 3 re-checks that the hostname policy itself still denies, so a future
-# edit cannot leave the allow-list admitting everything — including its
-# default-deny rule, without which a tenant carrying no allow-list of its own is
-# unrestricted rather than refused.
+# The policy's allow-list and default-deny behavior have their own real Kyverno
+# fixtures under tests/restrict-tenant-route-hostnames; this test owns the
+# separate route-kind boundary those fixtures cannot exercise.
 set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 
 role_file="${repo_root}/k8s/bases/infrastructure/cluster-roles/gateway-tenant-edit.yaml"
-policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-http-route-hostnames.yaml"
-fixtures="${repo_root}/tests/restrict-tenant-http-route-hostnames/resources.yaml"
-# The default-deny rule matches on a namespaceSelector, which the CLI only
-# honours when the namespace labels are declared here.
-values="${repo_root}/tests/restrict-tenant-http-route-hostnames/values.yaml"
 # The prod overlay is what carries every listener: two come from the base
 # Gateway and two more are appended by the hetzner JSON6902 patch, which a
 # per-file check would never see.
@@ -36,7 +30,6 @@ workdir="$(mktemp -d)"
 trap 'rm -rf "${workdir}"' EXIT
 render="${workdir}/render.yaml"
 gateway="${workdir}/gateway.yaml"
-output_file="${workdir}/kyverno.out"
 
 fail() {
   echo "::error::$1"
@@ -58,7 +51,7 @@ granted="$(yq eval \
 
 expected_grant="httproutes referencegrants "
 [ "${granted}" = "${expected_grant}" ] ||
-  fail "gateway-tenant-edit must grant exactly 'httproutes referencegrants'; found '${granted}'. Any other route kind bypasses restrict-tenant-http-route-hostnames — extend that policy and the listener kinds before widening this."
+  fail "gateway-tenant-edit must grant exactly 'httproutes referencegrants'; found '${granted}'. Any other route kind bypasses restrict-tenant-route-hostnames — extend that policy and the listener kinds before widening this."
 
 # --- Layer 2: every listener pins allowedRoutes.kinds to HTTPRoute ----------
 kubectl kustomize "${overlay}" >"${render}" 2>"${workdir}/render.err" ||
@@ -84,24 +77,6 @@ unpinned="$(yq eval \
   '[.spec.listeners[] | select(((.allowedRoutes.kinds // []) | map(.kind) | sort | join(",")) != "HTTPRoute")] | .[].name' \
   "${gateway}" | tr '\n' ' ')"
 [ -z "${unpinned// /}" ] ||
-  fail "these Gateway listeners do not pin allowedRoutes.kinds to exactly [HTTPRoute]: ${unpinned}— an unpinned HTTPS listener also accepts GRPCRoute, which restrict-tenant-http-route-hostnames does not match."
+  fail "these Gateway listeners do not pin allowedRoutes.kinds to exactly [HTTPRoute]: ${unpinned}— an unpinned HTTPS listener also accepts GRPCRoute, which restrict-tenant-route-hostnames does not match."
 
-# --- Layer 3: the hostname policy still denies ------------------------------
-# `kyverno test` reports a missing named rule as Excluded and can pass
-# vacuously, so exercise the policy directly (same second gate as
-# test-restrict-tenant-secret-stores.sh): the fixture must admit 4 and deny 6.
-if kyverno apply "${policy}" \
-  --resource "${fixtures}" \
-  --values-file "${values}" \
-  --remove-color >"${output_file}" 2>&1; then
-  fail "tenant HTTPRoute hostname policy admitted every fixture; no deny rule executed"
-fi
-
-expected_summary="pass: 4, fail: 6, warn: 0, error: 0, skip: 0"
-if ! grep -Fq "${expected_summary}" "${output_file}"; then
-  echo "::error::tenant HTTPRoute hostname policy returned an unexpected allow/deny verdict"
-  sed -n '1,80p' "${output_file}"
-  exit 1
-fi
-
-echo "Tenant route boundary holds: RBAC grants HTTPRoute only, all ${listener_count} listeners pin kinds to HTTPRoute, and the hostname policy enforced 4-admit/6-deny."
+echo "Tenant route-kind boundary holds: RBAC grants HTTPRoute only and all ${listener_count} listeners pin kinds to HTTPRoute."

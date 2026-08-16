@@ -8,7 +8,7 @@ spec:
   listeners:
     # Every listener pins `allowedRoutes.kinds` to HTTPRoute. Left unset, an
     # HTTPS listener accepts GRPCRoute as well (Gateway API's documented
-    # default), and `restrict-tenant-http-route-hostnames` matches HTTPRoute
+    # default), and `restrict-tenant-route-hostnames` matches HTTPRoute
     # only — so a GRPCRoute could claim another service's hostname on this
     # shared, hostname-less listener without the hostname policy ever running.
     # The tenant RBAC (`cluster-roles/gateway-tenant-edit.yaml`) grants only

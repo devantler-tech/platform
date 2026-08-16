@@ -614,6 +614,37 @@ spec:
                 echo "AWS bootstrap credentials already present at secret/infrastructure/aws/bootstrap (leaving as-is)."
               fi
 
+              # --- 1f. Retire the pre-isolation Velero repository password copy ---
+              # The Velero kopia repository password used to be mirrored to
+              # secret/infrastructure/backup/velero-repo, which the broad
+              # infra-backup-readonly policy grants read on. It now lands at
+              # secret/infrastructure/velero/repo instead (see the PushSecret in
+              # vault-seed/), but a PushSecret only writes the new path -- it never
+              # migrates or removes the old one. Left in place, the old entry stays
+              # readable by every infra-backup-readonly holder, so the isolation
+              # would not actually have happened.
+              #
+              # Destroy the old entry, but ONLY once the new path is confirmed to
+              # hold the password, so a run that happens before ESO has synced can
+              # never leave the platform with neither copy. `kv metadata delete`
+              # removes every version plus the metadata (a plain `kv delete` only
+              # soft-deletes the latest version and is trivially undeleted, which
+              # would not remove the exposure). Both branches are idempotent, so a
+              # later Job re-run is a no-op once the migration has completed.
+              if bao kv get -mount=secret -field=repository-password \
+                   infrastructure/velero/repo >/dev/null 2>&1; then
+                if bao kv metadata get -mount=secret \
+                     infrastructure/backup/velero-repo >/dev/null 2>&1; then
+                  echo "Retiring pre-isolation copy at secret/infrastructure/backup/velero-repo..."
+                  bao kv metadata delete -mount=secret infrastructure/backup/velero-repo
+                  echo "Retired: the Velero repository password now lives only at secret/infrastructure/velero/repo."
+                else
+                  echo "No pre-isolation Velero repository password copy present (already retired)."
+                fi
+              else
+                echo "WARNING: secret/infrastructure/velero/repo is not populated yet -- leaving the old copy at secret/infrastructure/backup/velero-repo in place until the PushSecret has synced."
+              fi
+
               # --- 2. Enable Kubernetes auth ---
               if ! bao auth list -format=json | grep -q '"kubernetes/"'; then
                 echo "Enabling Kubernetes auth method..."
@@ -877,6 +908,9 @@ spec:
               path "secret/data/infrastructure/ghcr/*" {
                 capabilities = ["create", "update", "read"]
               }
+              path "secret/data/infrastructure/velero/*" {
+                capabilities = ["create", "update", "read"]
+              }
               path "secret/data/apps/fleetdm/*" {
                 capabilities = ["create", "update", "read"]
               }
@@ -920,6 +954,9 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/infrastructure/ghcr/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/infrastructure/velero/*" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/fleetdm/*" {

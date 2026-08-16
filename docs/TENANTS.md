@@ -222,7 +222,7 @@ here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes,
 - List all of a tenant's hostnames (local + prod + any custom domains) directly in its
   `deploy/httproute.yaml`, and add every approved hostname to the platform-side
   Kyverno allow-list in
-  [`restrict-tenant-http-route-hostnames.yaml`](../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-http-route-hostnames.yaml).
+  [`restrict-tenant-route-hostnames.yaml`](../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-route-hostnames.yaml).
   The shared platform Gateway intentionally accepts routes from all namespaces, so the
   admission policy is the boundary that prevents a tenant artifact from claiming another
   platform hostname.

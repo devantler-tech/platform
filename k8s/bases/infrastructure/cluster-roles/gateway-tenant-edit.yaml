@@ -1,9 +1,9 @@
-# Aggregate ClusterRole that extends the tenant role (`tenant-edit`, and the
-# built-in `edit`) with Gateway API verbs so a tenant ServiceAccount can manage
+# Aggregate ClusterRole that extends the tenant role (`tenant-edit`) with
+# Gateway API verbs so a tenant ServiceAccount can manage
 # HTTPRoute / ReferenceGrant resources in its namespace.
 #
 # HTTPRoute is the ONLY route kind granted, and that is a security boundary
-# rather than a convenience. `restrict-tenant-http-route-hostnames` confines a
+# rather than a convenience. `restrict-tenant-route-hostnames` confines a
 # tenant to its approved hostnames by matching `HTTPRoute`, so any other route
 # kind a tenant could create would reach the shared hostname-less listener
 # without that policy ever running — a compromised tenant artifact could then
@@ -15,13 +15,14 @@
 # layer, so a route created by some other principal still cannot attach. If a
 # route kind is ever genuinely needed, extend the hostname policy to cover it
 # and relax BOTH layers together — never this one alone.
+# This role deliberately carries only the tenant-specific aggregation label;
+# ordinary built-in `edit` bindings must not inherit Gateway API route verbs.
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: gateway-tenant-edit
   labels:
-    rbac.authorization.k8s.io/aggregate-to-edit: "true"
     devantler.tech/aggregate-to-tenant-edit: "true"
 rules:
   - apiGroups: ["gateway.networking.k8s.io"]

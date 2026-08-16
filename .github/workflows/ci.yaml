@@ -100,6 +100,7 @@ jobs:
               - '.github/scripts/setup-ksail.sh'
               - 'scripts/tests/test-setup-ksail.sh'
               - 'scripts/tests/test-openbao-oidc-role.sh'
+              - 'scripts/tests/test-actual-budget-auth-route.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
@@ -417,6 +418,8 @@ jobs:
           bash scripts/tests/test-kyverno-umami-mutation-rbac.sh
           shellcheck scripts/tests/test-tenant-route-hostname-boundary.sh
           bash scripts/tests/test-tenant-route-hostname-boundary.sh
+          shellcheck scripts/tests/test-actual-budget-auth-route.sh
+          bash scripts/tests/test-actual-budget-auth-route.sh
 
       - name: 🚦 Validate default-off Cilium bandwidth manager
         if: needs.changes.outputs.k8s == 'true'
