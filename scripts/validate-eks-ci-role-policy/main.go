@@ -565,7 +565,29 @@ const (
 // this selector and covered by the focused rendered contract. Across all five
 // roots, all 56 distinct RBAC identities have byte-identical canonical content,
 // and the direct EKS role and permissions-boundary inputs are byte-identical.
-const expectedRenderedSurfaceSHA = "34db823f2756cc6bea22c6632ff709a1deb90d35d972215bae394f8f936429cd"
+//
+// Measured by comparing exact reviewed head 57f70354 with the merge-group
+// deployment repair for #2741, using the checksum-verified kubectl v1.36.2 /
+// Kustomize v5.8.1 renderer. The five roots retain 126, 219, 178, 5, and 4
+// documents respectively. Their combined 532 distinct identities are identical
+// in both directions. Exactly ONE existing rendered object changes:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  headlamp/headlamp
+//
+// The release removes JSON append operations whose volumes and volumeMounts
+// parent arrays disappear when pluginsManager and its PVC are disabled, and
+// supplies the same two writable directories through Headlamp 0.44.0's native
+// chart values instead. This repairs the post-render failure observed in the
+// merge group without changing an identity, chart/source pin, ServiceAccount,
+// binding, or verb. All 71 distinct rendered Role, ClusterRole, RoleBinding,
+// ClusterRoleBinding, and ServiceAccount objects are byte-identical, and the
+// direct EKS role and permissions-boundary inputs retain their approved hashes.
+//
+// Recomputed after rebasing the complete #2741 series onto exact protected
+// main cdababde. The persistence annotations introduced by #3168 remain in
+// every surviving selected object; #2741 removes only the already-protected
+// Headlamp PVC identity and retains the authorization-neutral changes above.
+const expectedRenderedSurfaceSHA = "6e6753583bbffa59ce236412f63f27e3d77d03739742ef0a3a34596eb96c5f2a"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.

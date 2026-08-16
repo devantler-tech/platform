@@ -52,9 +52,19 @@ yq e -e '
   .spec.values.persistentVolumeClaim.enabled == false and
   ([.spec.postRenderers[].kustomize.patches[].patch |
     select(contains("/spec/template/spec/containers/1/"))] |
-  length == 0)
+  length == 0) and
+  ([.spec.postRenderers[].kustomize.patches[].patch |
+    select(contains("/spec/template/spec/volumes/-"))] |
+  length == 0) and
+  ([.spec.postRenderers[].kustomize.patches[].patch |
+    select(contains("/spec/template/spec/containers/0/volumeMounts/-"))] |
+  length == 0) and
+  ([.spec.values.volumes[].name] | sort | join(",")) ==
+    "headlamp-config,tmp-dir" and
+  ([.spec.values.volumeMounts[].name] | sort | join(",")) ==
+    "headlamp-config,tmp-dir"
 ' "${headlamp_release}" >/dev/null ||
-  fail 'Headlamp must disable dynamic plugins without patching their absent sidecar'
+  fail 'Headlamp must disable dynamic plugins and render writable volumes through chart values'
 
 if grep -Fq 'claimName: headlamp' "${headlamp_release}"; then
   fail 'the rendered Headlamp Deployment must not remount the retired plugin PVC on upgrade'
