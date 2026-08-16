@@ -50,6 +50,26 @@ spec:
       # healthy replica behind. (Use least-effort if rebuild churn on frequent
       # autoscaler scale-ups becomes a concern.)
       replicaAutoBalance: best-effort
+      # Reclaim orphaned replica DIRECTORIES, not just deleted volumes. Longhorn
+      # detects replica data left behind on disk (an Orphan CR per directory,
+      # DataCleanable=True) but with this setting empty — the chart default — it
+      # never deletes any of it. Autoscaler scale-downs and worker rolls produce
+      # these steadily, so a storage node accumulates dead directories until it
+      # crosses storage-minimal-available-percentage (25%) and its disk flips to
+      # Schedulable=False (DiskPressure).
+      #
+      # That is not cosmetic: replica-soft-anti-affinity is false (hard
+      # anti-affinity), so with three storage nodes every replica of a
+      # 3-replica volume needs a distinct node. One node under the threshold
+      # means a degraded volume can NEVER rebuild — it sits at
+      # ReplicaSchedulingFailure indefinitely rather than recovering. Measured on
+      # prod 2026-08-16: 16 orphan directories, 14 of them on prod-worker-1,
+      # which sat at 24% available and DiskPressure while two CNPG databases
+      # stayed stuck at 2 of 3 replicas (#3180).
+      #
+      # replica-data is the only type that reclaims disk; orphaned instances are
+      # runtime processes and are deliberately not swept here.
+      orphanResourceAutoDeletion: replica-data
       # Reclaim space from deleted volumes automatically.
       autoDeletePodWhenVolumeDetachedUnexpectedly: true
       # Only create default disks on nodes explicitly labeled for storage.
