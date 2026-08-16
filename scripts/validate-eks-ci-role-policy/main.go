@@ -425,11 +425,11 @@ const (
 //	helm.toolkit.fluxcd.io/v2  HelmRelease  actual-budget/actual-budget
 //
 // Its complete projected delta adds ACTUAL_TOKEN_EXPIRATION=openid-provider
-// to the existing post-rendered Deployment environment and changes
-// login.openid.tokenExpiration from `never` to `openid-provider`. Both edits
-// move session expiry from an unlimited local setting to the configured OIDC
-// provider; no IAM, RBAC, Flux source, identity, binding, verb, or resource
-// membership changes. The PR's HTTPRoute, ReferenceGrant,
+// to the existing post-rendered Deployment environment, which changes runtime
+// session-expiry behavior. login.openid.tokenExpiration mirrors that value for
+// chart-schema alignment; with ingress.enabled=false, chart 1.9.3 does not
+// render or consume the OpenID Secret. No IAM, RBAC, Flux source, identity,
+// binding, verb, or resource membership changes. The PR's HTTPRoute, ReferenceGrant,
 // CiliumNetworkPolicy, and auth-proxy configuration are outside this
 // EKS/RBAC/Flux selector, so this fingerprint deliberately makes no claim that
 // it validates those independently reviewed surfaces.

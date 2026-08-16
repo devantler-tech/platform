@@ -20,11 +20,6 @@ spec:
     - budget.${domain}
   rules:
     - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://budget.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:
