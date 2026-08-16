@@ -27,7 +27,15 @@ infrastructure_rendered="$(kubectl kustomize "${infrastructure_dir}")" ||
   fail 'the deployed Hetzner infrastructure overlay must render'
 
 command -v yq >/dev/null 2>&1 ||
-  fail 'yq is required to inspect Kyverno generated policy templates'
+  fail 'mikefarah yq v4.9+ is required to inspect generated policy templates'
+
+yq_capability="$(
+  yq e -N -r \
+    '["crossplane-system"] | any_c(. == "crossplane-system")' \
+    - 2>/dev/null <<<'null'
+)" || fail 'mikefarah yq v4.9+ must support e, -N, and any_c'
+[ "${yq_capability}" = 'true' ] ||
+  fail 'mikefarah yq v4.9+ capability probe returned an unexpected result'
 
 select_crossplane_policy() {
   awk '
