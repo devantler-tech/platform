@@ -115,6 +115,7 @@ jobs:
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-actual-budget-auth-route.sh'
               - 'scripts/tests/test-pvc-prune-safety.sh'
+              - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
@@ -397,6 +398,12 @@ jobs:
         # bound_claims is a map. Passing JSON-looking text as one CLI argument
         # serializes it as a string and leaves the role unenforced.
         run: bash scripts/tests/test-openbao-oidc-role.sh
+
+      - name: 🧩 Validate Headlamp plugin removal
+        if: needs.changes.outputs.k8s == 'true'
+        # Removing runtime-downloaded plugins must also prune upgrade state and
+        # preserve Crossview's authenticated fresh-install entry point.
+        run: bash scripts/tests/test-headlamp-plugin-removal.sh
 
       - name: 🔑 Validate github-config Role covers the activated MR kinds
         if: needs.changes.outputs.k8s == 'true'
