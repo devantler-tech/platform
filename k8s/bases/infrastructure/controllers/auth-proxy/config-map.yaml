@@ -33,6 +33,13 @@ data:
           rule: "Host(`opencost.${domain}`)"
           entryPoints: ["web"]
           service: opencost
+        # Actual Budget handles its own OIDC login too, but it is a personal
+        # finance app, so public Gateway traffic first passes through the
+        # platform oauth2-proxy maintainer-team gate.
+        actual-budget:
+          rule: "Host(`budget.${domain}`)"
+          entryPoints: ["web"]
+          service: actual-budget
         # Backstage IDP (forward-auth, demo-image scaffold — see docs/backstage.md).
         backstage:
           rule: "Host(`backstage.${domain}`)"
@@ -47,6 +54,10 @@ data:
           entryPoints: ["web"]
           service: policy-reporter
       services:
+        actual-budget:
+          loadBalancer:
+            servers:
+              - url: "http://actual-budget-actualbudget.actual-budget.svc.cluster.local:5006"
         homepage:
           loadBalancer:
             servers:
