@@ -272,10 +272,10 @@ func TestDeployActionConsumerStagingPrecedesPublishAndIsReassertedAfterUpdate(t 
 	// Anchored on the step, not its `run:` line: the gating `if:` precedes the
 	// command, so a slice starting at `run:` would miss the very condition that
 	// keeps this default-off.
-	recover := requireIndex(t, action, "- name: 🧯 Recover an orphaned GHCR deploy fence")
-	requireBefore(t, recover, firstRefresh, "fence recovery before staging")
-	requireContains(t, action[recover:firstRefresh], "inputs.recover-orphaned-fence == 'true'")
-	requireContains(t, action[recover:firstRefresh], "run: ./scripts/refresh-flux-ghcr-auth.sh --recover-fences")
+	recoverStep := requireIndex(t, action, "- name: 🧯 Recover an orphaned GHCR deploy fence")
+	requireBefore(t, recoverStep, firstRefresh, "fence recovery before staging")
+	requireContains(t, action[recoverStep:firstRefresh], "inputs.recover-orphaned-fence == 'true'")
+	requireContains(t, action[recoverStep:firstRefresh], "run: ./scripts/refresh-flux-ghcr-auth.sh --recover-fences")
 	if count := strings.Count(action, "scripts/refresh-flux-ghcr-auth.sh"); count != 4 {
 		t.Errorf("refresh helper references = %d, want 4", count)
 	}
