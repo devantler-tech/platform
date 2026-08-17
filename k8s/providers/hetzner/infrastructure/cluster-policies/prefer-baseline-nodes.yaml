@@ -1,7 +1,7 @@
 # Prod / FinOps-only: bias workload scheduling toward the static baseline
 # workers so the cost-optimized autoscaler nodes (the `autoscale-cx*` pools in
 # ksail.prod.yaml) stay idle and scale back to zero whenever the baseline has
-# room. The baseline (3 cx33 workers) is paid for 24/7; every autoscaler node
+# room. The baseline (3 cx43 workers) is paid for 24/7; every autoscaler node
 # is incremental spend, so keeping them empty until the baseline is full is the
 # cheapest steady state.
 #
@@ -14,10 +14,30 @@
 #
 # DISCRIMINATOR — KSail contract: autoscaler-provisioned nodes carry the node
 # label `ksail.io/autoscaled: "true"`; baseline (static) workers and control
-# planes do NOT. SHIPPED: KSail stamps the label since ksail#5113 (verified on
-# the live prod autoscale-cx33 nodes, 2026-07-01), so this policy is ACTIVE —
-# pods created since then are biased toward the baseline workers. Note the
-# label does NOT gate Longhorn's default-disk creation (that keys exclusively
+# planes do NOT. SHIPPED: KSail stamps the label since ksail#5113, so this
+# policy is ACTIVE — pods are biased toward the baseline workers.
+#
+# ⚠️ AN UNLABELLED AUTOSCALER NODE IS PREFERRED, NOT IGNORED — and that is the
+# dangerous direction. The preference below matches `ksail.io/autoscaled` with
+# `DoesNotExist`, so a node lacking the label is indistinguishable from a
+# baseline worker and receives the SAME weight-100 preference. The bias does not
+# merely fail to steer pods away from such a node; it actively steers them
+# toward it.
+#
+# The label is stamped at node CREATION and never applied retroactively, so any
+# autoscaler node predating ksail#5113 is permanently in that state. Measured on
+# prod 2026-08-16: the two long-lived `autoscale-cx33-*` nodes carried NO
+# `ksail.io/autoscaled` label while the then-current cx43 node did. They had
+# been created about a day before the label shipped, and had accumulated 34 and
+# 33 pods at ~63% CPU requests — above the 50% scale-down-utilization threshold,
+# so the accumulation was self-reinforcing (#3178).
+#
+# There is no in-policy fix: node affinity matches label VALUES and supports no
+# wildcard, so the name-based `autoscale-*` discriminator its two sibling
+# policies use is not expressible here. The durable fix is to not leave stranded
+# nodes running — see #3178 and docs/dr/runbook.md.
+#
+# Note the label does NOT gate Longhorn's default-disk creation (that keys exclusively
 # on node.longhorn.io/create-default-disk, still stamped by the shared Talos
 # worker config) — replica placement is handled separately by
 # restrict-storage-to-baseline-workers.yaml in this folder. Also note the bias
@@ -49,7 +69,9 @@ metadata:
       Adds a soft (preferred) node affinity biasing pods toward the static
       baseline workers and away from the cost-optimized autoscaler nodes
       (labelled ksail.io/autoscaled=true), so autoscaler capacity stays minimal
-      for better FinOps. Inert until KSail labels its autoscaler nodes.
+      for better FinOps. Active since KSail began stamping the label
+      (ksail#5113); a node created before that carries no label and is treated
+      as baseline.
 spec:
   rules:
     - name: prefer-baseline-nodes

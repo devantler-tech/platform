@@ -6,6 +6,14 @@ metadata:
 spec:
   gatewayClassName: cilium
   listeners:
+    # Every listener pins `allowedRoutes.kinds` to HTTPRoute. Left unset, an
+    # HTTPS listener accepts GRPCRoute as well (Gateway API's documented
+    # default), and `restrict-tenant-route-hostnames` matches HTTPRoute
+    # only — so a GRPCRoute could claim another service's hostname on this
+    # shared, hostname-less listener without the hostname policy ever running.
+    # The tenant RBAC (`cluster-roles/gateway-tenant-edit.yaml`) grants only
+    # HTTPRoute for the same reason; this is the second layer, covering routes
+    # created by any other principal. Relax both together or neither.
     - name: https
       port: 443
       protocol: HTTPS
@@ -16,9 +24,15 @@ spec:
       allowedRoutes:
         namespaces:
           from: All
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute
     - name: http
       port: 80
       protocol: HTTP
       allowedRoutes:
         namespaces:
           from: All
+        kinds:
+          - group: gateway.networking.k8s.io
+            kind: HTTPRoute

@@ -44,6 +44,7 @@ type fixture struct {
 	patchCapture                 string
 	variablesPatchCapture        string
 	kubectlCalled                string
+	ghCalled                     string
 	outputPathLog                string
 	registryReadLog              string
 	fanoutLog                    string
@@ -72,6 +73,8 @@ func TestMain(m *testing.M) {
 		code = fakeCurl(os.Args[1:])
 	case "kubectl":
 		code = fakeKubectl(os.Args[1:])
+	case "gh":
+		code = fakeGh(os.Args[1:])
 	default:
 		cleanup := prepareFakeCommandBinary()
 		code = m.Run()
@@ -154,6 +157,7 @@ func newFixture(t *testing.T) *fixture {
 		patchCapture:                 filepath.Join(workspace, "patch.json"),
 		variablesPatchCapture:        filepath.Join(workspace, "variables-patch.json"),
 		kubectlCalled:                filepath.Join(workspace, "kubectl-called"),
+		ghCalled:                     filepath.Join(workspace, "gh-called"),
 		outputPathLog:                filepath.Join(workspace, "ksail-output-path"),
 		registryReadLog:              filepath.Join(workspace, "registry-reads"),
 		fanoutLog:                    filepath.Join(workspace, "fanout-log"),
@@ -174,7 +178,7 @@ func newFixture(t *testing.T) *fixture {
 	if fakeCommandBinary == "" {
 		t.Fatal("fake-command binary was not prepared; TestMain must run before any fixture")
 	}
-	for _, name := range []string{"ksail", "talosctl", "curl", "kubectl"} {
+	for _, name := range []string{"ksail", "talosctl", "curl", "kubectl", "gh"} {
 		if err := os.Symlink(fakeCommandBinary, filepath.Join(f.binDir, name)); err != nil {
 			t.Fatalf("link fake %s: %v", name, err)
 		}
@@ -305,6 +309,7 @@ func (f *fixture) baseEnvironment() map[string]string {
 	env["PATCH_CAPTURE"] = f.patchCapture
 	env["VARIABLES_PATCH_CAPTURE"] = f.variablesPatchCapture
 	env["KUBECTL_CALLED"] = f.kubectlCalled
+	env["GH_CALLED"] = f.ghCalled
 	env["KSAIL_OUTPUT_PATH_LOG"] = f.outputPathLog
 	env["REGISTRY_READ_LOG"] = f.registryReadLog
 	env["FANOUT_LOG"] = f.fanoutLog

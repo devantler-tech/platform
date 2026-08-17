@@ -31,6 +31,16 @@ inputs:
       (secrets.WG_SERVER_PRIVATE_KEY); env-expanded by ksail into
       talos/control-planes/wireguard.yaml when rendering machine config.
     required: true
+  recover-orphaned-fence:
+    description: >-
+      Release the GHCR synchronization Lease before staging when its holder is a
+      GitHub run the API reports terminal, no other fence is held, and its
+      heartbeat has stopped. Default-off: a deploy that dies holding the Lease
+      blocks every later deploy AND its own heal path, and clearing that today
+      needs a human with cluster write access. Any unproven condition refuses
+      rather than releasing.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -175,6 +185,20 @@ runs:
       env:
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
       run: ./scripts/guard-cilium-homogeneous-device-rollout.sh --before-publish
+
+    - name: 🧯 Recover an orphaned GHCR deploy fence
+      # Runs BEFORE staging, because staging is what fails when the Lease is
+      # orphaned — and both the deploy job and the heal job reach this composite,
+      # so one step covers the two paths that wedge together.
+      #
+      # GH_TOKEN is what makes the liveness proof possible: the holder identity
+      # embeds its run reference, and only the API can say whether that attempt
+      # is terminal. Without it the script refuses rather than guessing.
+      if: inputs.recover-orphaned-fence == 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: ./scripts/refresh-flux-ghcr-auth.sh --recover-fences
 
     - name: 🔑 Stage Flux and consumer GHCR pull credential
       id: stage_flux_ghcr_auth

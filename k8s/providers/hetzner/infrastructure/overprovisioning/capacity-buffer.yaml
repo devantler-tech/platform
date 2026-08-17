@@ -38,7 +38,7 @@ metadata:
     app.kubernetes.io/part-of: platform
 spec:
   # One warm spare node. Raise to widen the buffer (N chunks ~= N warm nodes),
-  # bounded by ksail.prod.yaml's maxNodesTotal: 10.
+  # bounded by ksail.prod.yaml's maxNodesTotal: 9.
   replicas: 1
   # Shape of one chunk — see pod-template.yaml (same namespace).
   podTemplateRef:

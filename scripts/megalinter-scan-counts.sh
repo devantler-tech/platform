@@ -17,13 +17,17 @@
 #
 # HOW THE INVOCATIONS WERE DERIVED
 # Both command lines are copied from MegaLinter's own log, which prints the exact command it ran:
-#   - Command: [checkov --skip-path tests/ --config-file /action/lib/.automation/.checkov.yml --directory .]
+#   - Command: [checkov --skip-path tests/ --config-file /action/lib/.automation/.checkov.yml
+#     --skip-path .agents --skip-path megalinter-reports --directory . --skip-framework secrets]
 #   - Command: [trivy fs --scanners vuln,misconfig --exit-code 1 --ignorefile
 #     .trivyignore.yaml --skip-dirs tests .]
 # Read them from a "🧹 Lint - mega-linter" job log if they ever need re-deriving:
 #   gh api repos/devantler-tech/platform/actions/jobs/<job-id>/logs | grep -aE '^\S+ - Command: '
 #
-# TWO DELIBERATE DIFFERENCES FROM THE CI COMMAND, both verified not to change the counts:
+# TWO DELIBERATE DIFFERENCES FROM THE CI COMMAND, both verified not to change the counts.
+# (--skip-framework secrets is NOT one of them: CI passes it too since MegaLinter 10.0.0, so
+# mirroring it keeps the invocations aligned rather than diverging them. The two --skip-path
+# entries CI adds cover directories that do not exist here.)
 #
 #   1. --config-file is dropped. It points inside the MegaLinter container
 #      (/action/lib/.automation/.checkov.yml) and does not exist on a developer machine. Verified:
@@ -43,8 +47,8 @@ set -euo pipefail
 # not fatal — verified across checkov 3.3.0/3.3.2 (identical FAILED counts, different PASSED) and
 # trivy 0.71.2/0.72.0 (identical) — but a large enough gap can add or retire rules, which would look
 # exactly like backlog movement. Report the gap rather than silently attributing it to a fix.
-readonly CI_CHECKOV_VERSION='3.3.2'
-readonly CI_TRIVY_VERSION='0.71.2'
+readonly CI_CHECKOV_VERSION='3.3.9'
+readonly CI_TRIVY_VERSION='0.73.0'
 
 # The MegaLinter release those two versions came from. It is not a local concept — nothing here runs
 # MegaLinter — but it is what makes the pair above checkable: MegaLinter bundles both scanners AND
@@ -55,7 +59,7 @@ readonly CI_TRIVY_VERSION='0.71.2'
 # Nothing in THIS repository selects it: the MegaLinter action is pinned in devantler-tech/actions,
 # so all three constants go stale here when that pin moves, silently and in both directions.
 # scripts/check-megalinter-version-drift.sh is the CI-side guard that catches it (#2853).
-readonly CI_MEGALINTER_VERSION='9.6.0'
+readonly CI_MEGALINTER_VERSION='10.0.0'
 
 # The frameworks MegaLinter's checkov run reports, and their current contribution to the CI total.
 #
@@ -69,7 +73,21 @@ readonly CI_MEGALINTER_VERSION='9.6.0'
 # What protects against the known defect is structural rather than a check: this script always runs
 # checkov from the repository root with a literal ".", the invocation whose absence caused the
 # kubernetes framework to vanish in the first place.
-readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:15 secrets:0 github_actions:0)
+# MegaLinter 10.0.0 reports THREE frameworks, not four: its own checkov invocation now passes
+# --skip-framework secrets, so CI emits no secrets section at all. `secrets` is therefore removed
+# from this list — it records what CI reports, and a framework CI has stopped running is not a
+# framework whose absence should be reported against a local run. The local invocation below mirrors
+# that skip so the totals stay comparable, which is the whole point of both lists.
+#
+# kubernetes moved 15 -> 3 in the SAME step that took MegaLinter 9.6.0 -> 10.0.0 (checkov
+# 3.3.2 -> 3.3.9). That drop is NOT recorded as backlog progress, and #2787 must not read it as any:
+# a major scanner bump adds and retires rules, which is indistinguishable from findings being fixed
+# unless the two versions are run against the same tree. Nobody has done that here. What CI does
+# state is which three findings remain, all in the kubernetes framework:
+#   CKV_K8S_40  CronJob.openbao.vault-snapshot                (high UID)
+#   CKV_K8S_40  Job.openbao.vault-snapshot-init               (high UID)
+#   CKV_K8S_38  CronJob.umami.umami-provision-tenants         (SA token mounted)
+readonly CI_CHECKOV_FRAMEWORKS=(cloudformation:0 kubernetes:3 github_actions:0)
 
 # A parsing error means a file was NOT analysed, so findings can hide behind it. CI's run has
 # exactly one (in the cloudformation framework) and so does a correct local run, which is why this
@@ -176,7 +194,7 @@ scan_checkov() {
   # from 73 to 31 with no error. Reproduced both with and without --skip-path, so it is the absolute
   # path itself.
   (cd "$REPO_ROOT" && checkov --skip-path tests/ --skip-framework kustomize \
-    --directory . --compact --quiet) >"$out" 2>&1 || rc=$?
+    --skip-framework secrets --directory . --compact --quiet) >"$out" 2>&1 || rc=$?
   if [ "$rc" -gt 1 ]; then
     printf 'checkov exited %d — refusing to report a count from an incomplete run\n' "$rc" >&2
     tail -n 5 "$out" >&2
