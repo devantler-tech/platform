@@ -907,7 +907,7 @@ fence_run_is_terminal() {
 }
 
 recover_fences_now() {
-  local run_reference run_id run_attempt resource_version patch_file
+  local run_reference run_id run_attempt patch_file
 
   report_fences_now || return 1
 
@@ -940,19 +940,12 @@ recover_fences_now() {
   run_attempt="${run_reference##* }"
   fence_run_is_terminal "${run_id}" "${run_attempt}" || return 1
 
-  # The same CAS the report prints for an operator: both `test` ops must still
-  # hold, so a holder that changed under us aborts the patch instead of losing a
-  # live acquisition.
-  resource_version="$(jq -r '.metadata.resourceVersion' "${fence_lease_state_file}")"
+  # Literally the same patch the report prints for an operator — one builder, so
+  # the two cannot diverge. It is built from the state the report RETAINED, never
+  # a fresh read, so the CAS tests the observation this decision was made on.
   patch_file="${work_dir}/fence-recovery-patch.json"
-  jq -nc \
-    --arg rv "${resource_version}" \
-    --arg holder "${fence_lease_holder}" '[
-    {op: "test", path: "/metadata/resourceVersion", value: $rv},
-    {op: "test", path: "/spec/holderIdentity", value: $holder},
-    {op: "replace", path: "/spec/holderIdentity", value: ""},
-    {op: "replace", path: "/spec/leaseDurationSeconds", value: 1}
-  ]' >"${patch_file}"
+  fence_lease_release_patch \
+    "${fence_lease_state_file}" "${fence_lease_holder}" >"${patch_file}"
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
@@ -1002,19 +995,34 @@ fence_shell_quote() {
   printf "'%s'" "${literal//$quote/$escaped}"
 }
 
-fence_lease_release_command() {
+# The ONE release patch. Both consumers build it here — the command the report
+# prints for an operator, and the patch --recover-fences applies itself — so the
+# automated path cannot end up on a weaker CAS than the runbook it mirrors.
+# Kept as a single builder deliberately: two copies of a guard that must stay
+# identical will eventually diverge silently, and nothing would fail when they do.
+#
+# Both `test` ops must still hold at apply time, so a Lease that moved after the
+# observation aborts the whole patch instead of clearing a live acquisition.
+fence_lease_release_patch() {
   local state="$1"
   local holder="$2"
-  local patch
 
-  patch="$(jq -nc \
+  jq -nc \
     --arg rv "$(jq -r '.metadata.resourceVersion' "${state}")" \
     --arg holder "${holder}" '[
     {op: "test", path: "/metadata/resourceVersion", value: $rv},
     {op: "test", path: "/spec/holderIdentity", value: $holder},
     {op: "replace", path: "/spec/holderIdentity", value: ""},
     {op: "replace", path: "/spec/leaseDurationSeconds", value: 1}
-  ]')"
+  ]'
+}
+
+fence_lease_release_command() {
+  local state="$1"
+  local holder="$2"
+  local patch
+
+  patch="$(fence_lease_release_patch "${state}" "${holder}")"
   printf "kubectl --context %s -n flux-system patch lease %s --type=json -p %s" \
     "$(fence_shell_quote "${KUBE_CONTEXT}")" "${SYNC_LEASE_NAME}" "$(fence_shell_quote "${patch}")"
 }
