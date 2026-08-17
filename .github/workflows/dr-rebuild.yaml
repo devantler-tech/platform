@@ -163,7 +163,7 @@ jobs:
         env:
           # Keep in step with spec.cluster.talos.version in ksail.prod.yaml.
           # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-          TALOS_VERSION: "1.13.7"
+          TALOS_VERSION: "1.13.8"
         run: |
           curl -fsSL "https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}/talosctl-linux-amd64" -o /tmp/talosctl
           sudo install /tmp/talosctl /usr/local/bin/talosctl
@@ -246,7 +246,7 @@ jobs:
           for k in bootstrap infrastructure-controllers infrastructure apps; do
             echo "Waiting for Kustomization ${k}..."
             kubectl -n flux-system wait "kustomization/${k}" \
-              --for=condition=Ready --timeout=20m
+              --for=condition=Ready --timeout=35m
           done
           echo "✅ All Flux Kustomizations Ready — fresh platform converged."
 

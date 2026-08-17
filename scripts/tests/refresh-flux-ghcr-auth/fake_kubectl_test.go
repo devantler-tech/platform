@@ -1328,6 +1328,20 @@ func fakeKubectlGetNode(args []string) int {
 			"effect": "NoSchedule",
 		})
 	}
+	// Reproduce the autoscaler's advisory removal-candidate marker being RELEASED
+	// while the bridge holds the node: present when the claim captures the node's
+	// taints, gone by the time the pre-reboot guard re-reads it. Observed in prod on
+	// 2026-08-17, where the autoscaler added the taint at 00:11:26, released it at
+	// 00:15:43, and the deploy's guard refused 23s later. The value is a timestamp the
+	// autoscaler regenerates on every add, so it churns even key-for-key.
+	if nodeName == os.Getenv("FAKE_AUTOSCALER_DELETION_CANDIDATE_RELEASED_NODE") &&
+		!markerExists("drained-"+nodeName) {
+		taints = append(taints, map[string]any{
+			"key":    "DeletionCandidateOfClusterAutoscaler",
+			"value":  "1786925486",
+			"effect": "PreferNoSchedule",
+		})
+	}
 	if markerExists("uncordoned-"+nodeName) &&
 		nodeName == os.Getenv("FAKE_TRANSIENT_UNSCHEDULABLE_TAINT_AFTER_RELEASE_NODE") {
 		readMarker := "post-release-node-read-count-" + nodeName
