@@ -6,7 +6,11 @@ metadata:
   namespace: flux-system
 spec:
   interval: 60m
-  timeout: 20m
+  # Give the retained Umami bootstrap Job a full recovery window for its first
+  # Lease-aware rollout. Controller-level startup failures remain retryable
+  # across later reconciliations instead of becoming a permanently Failed Job;
+  # the retry interval below re-enters the health wait after a timeout.
+  timeout: 30m
   retryInterval: 2m
   path: providers/__PROVIDER__/apps
   sourceRef:
