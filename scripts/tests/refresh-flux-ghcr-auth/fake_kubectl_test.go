@@ -914,6 +914,21 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 			"leaseTransitions":     parseInt(defaultString(markerContent("sync-lease-transitions"), "0"), 0),
 		},
 	}))
+	// The read above has already returned the state the fence report will retain.
+	// Advancing the resourceVersion now models the one race --recover-fences must
+	// lose: another actor touched the Lease between the report and the patch. The
+	// CAS then fails through the ordinary comparison in fakeKubectlPatchSyncLease
+	// rather than a recovery-specific short circuit, so the test exercises the
+	// real guard instead of a stand-in for it. Once only — the fence report reads
+	// the Lease exactly once by design, and a repeat would mask a second read.
+	if os.Getenv("FAKE_SYNC_LEASE_TOUCHED_AFTER_FENCE_REPORT") == "true" &&
+		!markerExists("sync-lease-touched-after-fence-report") {
+		touchMarker("sync-lease-touched-after-fence-report")
+		setMarkerContent(
+			"sync-lease-resource-version",
+			incrementDecimal(defaultString(markerContent("sync-lease-resource-version"), "10")),
+		)
+	}
 	return 0
 }
 
