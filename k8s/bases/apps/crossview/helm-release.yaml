@@ -44,6 +44,19 @@ spec:
               kind: Deployment
               metadata:
                 name: crossview
+                annotations:
+                  # The chart wires every OIDC value in as env from
+                  # crossview-config via env[].valueFrom.configMapKeyRef, and env
+                  # is resolved once at container creation -- so a ConfigMap
+                  # change alone NEVER reaches the running process. Without this
+                  # annotation the pod keeps serving whatever OIDC_CALLBACK_URL it
+                  # started with, which is how a reconciled Dex registration and a
+                  # stale in-pod callback silently disagree and every login fails
+                  # with "Unregistered redirect_uri". Reloader (already deployed
+                  # cluster-wide) rolls the Deployment when the named ConfigMap
+                  # changes; same convention as auth-proxy, oauth2-proxy and
+                  # homepage.
+                  configmap.reloader.stakater.com/reload: crossview-config
               spec:
                 template:
                   spec:
