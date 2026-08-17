@@ -622,6 +622,24 @@ const (
 // every surviving selected object; #2741 removes only the already-protected
 // Headlamp PVC identity and retains the authorization-neutral changes above.
 //
+// Re-approved for #3181 (2026-08-17), which reclaims orphaned Longhorn replica
+// directories. Measured by rendering the hetzner infrastructure/controllers
+// root with main's copy of the single changed file and again with the head's
+// copy. The complete rendered delta across the whole surface is ONE added line
+// inside an existing object:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  longhorn-system/longhorn
+//	+      orphanResourceAutoDeletion: replica-data
+//
+// That is a Helm chart value under spec.values. No identity, ServiceAccount,
+// binding, rule, subject, verb, apiGroup, or chart/source pin moved: the root
+// retains 177 documents and 21 distinct Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding objects on both sides, and the delta contains no rules:,
+// subjects:, verbs:, or apiGroups: line. The direct EKS role and
+// permissions-boundary inputs are untouched — the PR changes exactly one file.
+// The value only authorizes Longhorn's own manager to delete replica data it
+// has already marked DataCleanable on disks it owns; it grants nothing to the
+// aws/aws service account this selector protects.
 // Measured for #2709, which narrows Dex's GitHub connector to the
 // devantler-tech/maintainers team, merged with exact main 6ebcb24f. Two
 // independent renderers agree on this value: the required CI job on the approved
@@ -659,6 +677,7 @@ const (
 // removal of built-in edit aggregation; neither is duplicated by this change.
 // Gateway listener-kind pins are outside this authorization projection and are
 // covered by scripts/tests/test-tenant-route-hostname-boundary.sh.
+//
 // Measured for the #2725 Umami provisioning repair merged with exact main
 // 6ebcb24f. Two independent renderers agree on this value: the required CI job
 // on the approved toolchain (run 31973534571) and a local render.
@@ -684,6 +703,10 @@ const (
 // from 20m to 30m in both rendered cluster overlays. The ServiceAccount itself is
 // unchanged from main in canonical content.
 //
+// Re-measured for #3181 after merging exact main d925654e, which had advanced past
+// the head the #3181 value above was taken on. Rendered with the approved renderer
+// (kubectl v1.36.2, Kustomize v5.8.1); the same renderer validates clean main
+// green, which is what establishes it as equivalent to the required job's.
 // Re-measured for #2709 after merging exact main d925654e, which had advanced past
 // the 6ebcb24f the #2709 value above was taken on. Rendered with the approved
 // renderer (kubectl v1.36.2, Kustomize v5.8.1); the same renderer validates clean
@@ -696,6 +719,12 @@ const (
 //	k8s/clusters/prod/bootstrap                       byte-identical
 //	k8s/providers/hetzner/apps                        byte-identical
 //	k8s/providers/hetzner/infrastructure              byte-identical
+//	k8s/providers/hetzner/infrastructure/controllers  1 added line, nothing else
+//
+// The delta is still the single chart value inside an existing object:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  longhorn-system/longhorn
+//	+      orphanResourceAutoDeletion: replica-data
 //	k8s/providers/hetzner/infrastructure/controllers  2 added lines + comment text
 //
 // The complete rendered delta is the connector narrowing plus one comment block:
@@ -710,6 +739,16 @@ const (
 // Resource membership in the controllers root is identical — 178 selected
 // documents and 21 distinct Role / ClusterRole / RoleBinding / ClusterRoleBinding
 // objects on both sides, with no apiVersion, kind, namespace, or name line added,
+// removed, or moved — and the delta contains no rules:, subjects:, verbs:, or
+// apiGroups: line. The count is 178 rather than the 177 recorded above because
+// main itself grew one document in the interval, not because this change adds one.
+// The validator reported no per-resource mismatch, no missing resource and no
+// duplicate — only this aggregate.
+//
+// The value still only authorizes Longhorn's own manager to delete replica data it
+// has already marked DataCleanable on disks it owns; it grants nothing to the
+// aws/aws service account this selector protects.
+//
 // removed, or moved. The validator reported no per-resource mismatch, no missing
 // resource and no duplicate — only this aggregate.
 //
@@ -814,6 +853,73 @@ const (
 // a resource carrying `${…}` is forced into the aggregate so its literal text is
 // already covered by this digest.
 //
+// Re-approved after merging main 9a84e92b into this branch. Both parents had
+// re-approved this constant independently — this branch for the #3181 Longhorn
+// orphan-reclamation chart value recorded above, and main for the #2713
+// gateway-tenant-edit route-kind narrowing — so neither parent's value describes
+// the merge result and the conflict could not be resolved by picking a side. Both
+// records are retained because both deltas are present in the merged surface.
+//
+// The merged surface is main 9a84e92b's surface with this branch's single Longhorn
+// chart-value delta applied on top. Clean main's digest is the value recorded
+// below: main's own required `🔐 Validate EKS Authorization` job is green at
+// 9a84e92b while that constant is committed there, which is what establishes it as
+// clean main's measured digest rather than an assumption.
+//
+// This branch's delta remains the one added line under spec.values:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  longhorn-system/longhorn
+//	+      orphanResourceAutoDeletion: replica-data
+//
+// Measured against main d925654e when that value was approved: no identity,
+// ServiceAccount, binding, rule, subject, verb, apiGroup, or chart/source pin
+// moved, and the delta carried no rules:, subjects:, verbs:, or apiGroups: line.
+// That accounting is inherited from that measurement and has NOT been re-verified
+// against 9a84e92b.
+//
+// MEASURED — this discharges the placeholder that stood here. The required
+// `🔐 Validate EKS Authorization` job rejected clean main's carried-through digest
+// exactly as predicted and reported the merge result's actual value, recorded
+// below from run 32070742779 at head 74676d5a.
+//
+// Taken on exact main feaf5059, which is NEWER than the 9a84e92b the placeholder
+// named: the branch was levelled to `behind_by` 0 before the measurement, so this
+// digest describes the current merge result rather than the older one.
+//
+// Conservation re-verified at that head, which is what the placeholder required
+// before promotion: the aggregate is the ONLY control that moved — zero
+// per-identity mismatches, zero missing resources, and zero duplicates against
+// expectedRenderedHashes, so every individually approved entry is byte-identical
+// and surface MEMBERSHIP is unchanged. The run reports the same 35
+// unresolved-substitution notes clean main reports.
+//
+// The earlier CDN failure that blocked measurement is not repaired by this and is
+// not silently dropped: the render still accumulates pinned remote resources over
+// the network (tracked as #3196), so a local render remains unavailable here. Only
+// ONE renderer therefore stands behind this digest — the approved CI toolchain.
+// The local kubectl is v1.36.1 against an approved v1.36.2, so
+// validateRendererVersion fails closed and cannot corroborate.
+//
+// One independent observation does corroborate that only this branch's own delta
+// moves the digest: the required job reported this IDENTICAL value at head
+// 07ec2b5f, before main was merged in, and again at 74676d5a after four further
+// main commits. Those commits therefore did not move the authorization surface.
+// That is evidence about what did NOT change; it is not a second rendering of what
+// did.
+//
+// The delta remains authorization-neutral — one chart value under spec.values,
+// carrying no rules, subjects, verbs, or apiGroups line, and moving no identity,
+// ServiceAccount, binding, or chart/source pin.
+//
+// ⚠️ The #3181 digest measured above is RETAINED AS A RECORD ONLY and is no longer
+// the constant: main has since merged #2709, so it describes a merge result that
+// no longer exists. Recorded in full so the measurement is not lost:
+//
+//	489afc6651045b6643ee40e0098234a873174a8d807690efb0245aaf92f87a4b
+//
+// It was measured on exact main feaf5059 at head 74676d5a (run 32070742779). See
+// the placeholder note at the end of this block for what supersedes it.
+//
 // Approved for #2709 on exact main feaf5059, which is the value recorded below.
 // This SUPERSEDES the two earlier #2709 records above, measured on the 6ebcb24f
 // and d925654e merge states; neither was ever committed, because each described a
@@ -859,7 +965,50 @@ const (
 // not part of the rendered surface. No identity, binding, ServiceAccount,
 // resource, or verb is added anywhere, and nothing granted to the aws/aws service
 // account this validator protects is touched.
-const expectedRenderedSurfaceSHA = "8773eaf0015f04f14850c5ef025b81657b0ad8d3aab397d99cf969044c04d7e6"
+//
+// The merge of main 6c5506fe into this branch needed re-approval, because both
+// parents had re-approved this constant independently — this branch for the #3181
+// Longhorn orphan-reclamation chart value (`489afc66`, recorded above), and main
+// for the #2709 Dex maintainers-team narrowing (`8773eaf0`) — so NEITHER parent's
+// value described the merge result and the conflict could not be resolved by
+// picking a side. Both records are retained because both deltas are present in the
+// merged surface: main's Dex connector narrowing AND this branch's Longhorn chart
+// value.
+//
+// The merge result is now MEASURED, and is the value recorded below. The required
+// `🔐 Validate EKS Authorization` job rejected the carried-through placeholder at
+// head 2ec723d9 (run 32073398792) and reported the merge result's actual digest.
+// It was taken with the branch level against main 6c5506fe — `behind_by` is 0 — so
+// it describes the merge result rather than a stale rendering of it.
+//
+// Conservation, measured against this branch's OWN pre-merge rendering at head
+// 74676d5a (run 32071082835). That control is what isolates main's contribution:
+// both renderings already contain this branch's Longhorn delta, so their
+// difference is exactly what the merge brought in. Both report the same 35
+// unresolved-substitution notes, all 35 distinct, with ZERO resources added, ZERO
+// removed and ZERO duplicated — surface MEMBERSHIP is unchanged. Exactly TWO
+// per-identity fingerprints move:
+//
+//	HelmRelease dex/dex                    c62d1a9f… → 6192cf46…
+//	HelmRelease oauth2-proxy/oauth2-proxy  60750d76… → 24f03c83…
+//
+// Those are precisely the two manifests #2709 changes — it touches
+// `controllers/dex/helm-release.yaml`, `controllers/oauth2-proxy/helm-release.yaml`
+// and this validator, the last of which is not in the surface. So the prediction
+// was falsifiable and held: had the merge carried anything else into the
+// authorization surface, a third identity would have moved. Main 6c5506fe contains
+// #2709 and PASSES the required job against its own digest `8773eaf0`, so both
+// moved documents are already approved on main. Nothing outside them moved, which
+// leaves the aggregate as the only control this merge changes. Main's own digest is
+// recorded here in full, so replacing the constant does not lose it:
+//
+//	8773eaf0015f04f14850c5ef025b81657b0ad8d3aab397d99cf969044c04d7e6
+//
+// Only ONE renderer stands behind this value, as with the records above: the
+// approved CI toolchain, via the required job. The local kubectl is v1.36.1
+// against an approved v1.36.2, so validateRendererVersion fails closed and cannot
+// corroborate.
+const expectedRenderedSurfaceSHA = "ed2767037a88348b22ec8ecfcc8b2081e86b7979dfe3c86d554034980af01fdf"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
