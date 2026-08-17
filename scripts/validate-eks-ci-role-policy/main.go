@@ -587,7 +587,26 @@ const (
 // main cdababde. The persistence annotations introduced by #3168 remain in
 // every surviving selected object; #2741 removes only the already-protected
 // Headlamp PVC identity and retains the authorization-neutral changes above.
-const expectedRenderedSurfaceSHA = "6e6753583bbffa59ce236412f63f27e3d77d03739742ef0a3a34596eb96c5f2a"
+//
+// Re-approved for #3181 (2026-08-17), which reclaims orphaned Longhorn replica
+// directories. Measured by rendering the hetzner infrastructure/controllers
+// root with main's copy of the single changed file and again with the head's
+// copy. The complete rendered delta across the whole surface is ONE added line
+// inside an existing object:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  longhorn-system/longhorn
+//	+      orphanResourceAutoDeletion: replica-data
+//
+// That is a Helm chart value under spec.values. No identity, ServiceAccount,
+// binding, rule, subject, verb, apiGroup, or chart/source pin moved: the root
+// retains 177 documents and 21 distinct Role / ClusterRole / RoleBinding /
+// ClusterRoleBinding objects on both sides, and the delta contains no rules:,
+// subjects:, verbs:, or apiGroups: line. The direct EKS role and
+// permissions-boundary inputs are untouched — the PR changes exactly one file.
+// The value only authorizes Longhorn's own manager to delete replica data it
+// has already marked DataCleanable on disks it owns; it grants nothing to the
+// aws/aws service account this selector protects.
+const expectedRenderedSurfaceSHA = "4e7b77bc8012f412c723a20f9320b7f953c842db450e6e609d943baa68527d24"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
