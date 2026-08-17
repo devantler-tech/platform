@@ -276,6 +276,18 @@ func TestDeployActionConsumerStagingPrecedesPublishAndIsReassertedAfterUpdate(t 
 	requireBefore(t, recoverStep, firstRefresh, "fence recovery before staging")
 	requireContains(t, action[recoverStep:firstRefresh], "inputs.recover-orphaned-fence == 'true'")
 	requireContains(t, action[recoverStep:firstRefresh], "run: ./scripts/refresh-flux-ghcr-auth.sh --recover-fences")
+	// The gate above keeps this off only while the input's own default does, and
+	// the two fail INDEPENDENTLY: a default flipped to "true" leaves the assertion
+	// above passing unchanged while arming automatic Lease mutation against prod on
+	// every deploy and every heal. Read structurally rather than as a substring, so
+	// a `default: "false"` belonging to some other input cannot satisfy it.
+	recoverDefault, err := yamlScalarAtPath(action, "inputs", "recover-orphaned-fence", "default")
+	if err != nil {
+		t.Fatalf("read the fence recovery input default: %v", err)
+	}
+	if recoverDefault != "false" {
+		t.Errorf("recover-orphaned-fence default = %q, want %q", recoverDefault, "false")
+	}
 	if count := strings.Count(action, "scripts/refresh-flux-ghcr-auth.sh"); count != 4 {
 		t.Errorf("refresh helper references = %d, want 4", count)
 	}
