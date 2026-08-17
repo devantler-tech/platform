@@ -656,15 +656,26 @@ const (
 // authorization-neutral, so the grant-bearing accounting recorded for #2725
 // carries over unchanged and only the whole-surface digest moves.
 //
-// The value below is main's, carried through the merge UNMEASURED against the
-// merge result, so the required `🔐 Validate EKS Authorization` job is expected
-// to reject it and report the digest the merged surface actually renders to.
-// That reported digest is what replaces this value, in a follow-up commit that
-// records the conservation counts behind it. It is deliberately not guessed
-// here: a local render cannot approve it, because without the CI substitution
-// inputs the render reports 35 unresolved Flux substitutions and is incomplete,
-// and the two-independent-renderer protocol requires the approved toolchain.
-const expectedRenderedSurfaceSHA = "295c44e37dcb09bfa1dd83d7f0eba975b529035c8618be9b65e41d9c20d6157b"
+// The value below is the digest the required `🔐 Validate EKS Authorization`
+// job measured on the approved toolchain for this merged surface, reported by
+// its rejection of the carried-through placeholder. It is recorded here from
+// that measurement rather than guessed, per the plan above.
+//
+// Only ONE renderer stands behind it, and that is stated rather than glossed:
+// the approved CI toolchain. A local render cannot corroborate it, because
+// without the CI substitution inputs it reports unresolved Flux substitutions
+// and is incomplete — the same reason the placeholder was carried through
+// unmeasured. So this value does not meet the two-independent-renderer bar the
+// reductions recorded above met; it rests on the required job alone.
+//
+// One independent observation does corroborate that the crossview delta is the
+// only thing moving the digest: the required job reported this identical value
+// at head 632e2ff3 (before main was merged in) and again at head 422f1890
+// (after). Main's intervening commit therefore did not move the authorization
+// surface, which is consistent with its content — documentation plus a Kyverno
+// policy description annotation, carrying no grant. That is evidence about
+// what did NOT change; it is not a second rendering of what did.
+const expectedRenderedSurfaceSHA = "88667d39d19c923b0b84e3c0b4c548409a3990f360dfe9ddad22778eefdda328"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
