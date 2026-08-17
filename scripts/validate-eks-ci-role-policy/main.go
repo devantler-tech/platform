@@ -640,6 +640,23 @@ const (
 // The value only authorizes Longhorn's own manager to delete replica data it
 // has already marked DataCleanable on disks it owns; it grants nothing to the
 // aws/aws service account this selector protects.
+// Measured for #2709, which narrows Dex's GitHub connector to the
+// devantler-tech/maintainers team, merged with exact main 6ebcb24f. Two
+// independent renderers agree on this value: the required CI job on the approved
+// toolchain (run 31973901010) and a local render. The branch's own earlier value
+// was rendered against an older main and never described this merge result.
+//
+// The reviewed reasoning for the change itself is unaffected by the merge. Of
+// the three manifests the branch touches, only the Dex connector is semantic: it
+// adds a `teams: [maintainers]` entry under the existing org-scoped GitHub
+// connector, so Dex authenticates the maintainers team instead of every
+// devantler-tech org member. That matters for apps authenticating natively
+// against Dex rather than through oauth2-proxy's allowed_groups gate. The
+// oauth2-proxy and crossview releases change only comment text inside the
+// rendered values. This is a privilege REDUCTION on every axis: the
+// authenticated population strictly shrinks, and no identity, binding,
+// ServiceAccount, resource, or verb is added anywhere. Nothing granted to the
+// aws/aws service account this validator protects is touched.
 //
 // Measured for #2713 merged with exact main 6ebcb24f. Two independent renderers
 // agree on this value: the required CI job on the approved toolchain (run
@@ -690,6 +707,10 @@ const (
 // the head the #3181 value above was taken on. Rendered with the approved renderer
 // (kubectl v1.36.2, Kustomize v5.8.1); the same renderer validates clean main
 // green, which is what establishes it as equivalent to the required job's.
+// Re-measured for #2709 after merging exact main d925654e, which had advanced past
+// the 6ebcb24f the #2709 value above was taken on. Rendered with the approved
+// renderer (kubectl v1.36.2, Kustomize v5.8.1); the same renderer validates clean
+// main green, which is what establishes it as equivalent to the required job's.
 //
 // Conservation across the five authorization roots, measured by rendering both
 // trees and comparing:
@@ -704,6 +725,16 @@ const (
 //
 //	helm.toolkit.fluxcd.io/v2  HelmRelease  longhorn-system/longhorn
 //	+      orphanResourceAutoDeletion: replica-data
+//	k8s/providers/hetzner/infrastructure/controllers  2 added lines + comment text
+//
+// The complete rendered delta is the connector narrowing plus one comment block:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  dex/dex
+//	+            teams:
+//	+            - maintainers
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  oauth2-proxy/oauth2-proxy
+//	  comment text only, inside spec.values
 //
 // Resource membership in the controllers root is identical — 178 selected
 // documents and 21 distinct Role / ClusterRole / RoleBinding / ClusterRoleBinding
@@ -718,6 +749,14 @@ const (
 // has already marked DataCleanable on disks it owns; it grants nothing to the
 // aws/aws service account this selector protects.
 //
+// removed, or moved. The validator reported no per-resource mismatch, no missing
+// resource and no duplicate — only this aggregate.
+//
+// The reviewed reasoning is unchanged and still a privilege REDUCTION on every
+// axis: Dex authenticates the maintainers team instead of every devantler-tech org
+// member, so the authenticated population strictly shrinks, and no identity,
+// binding, ServiceAccount, resource, or verb is added anywhere. Nothing granted to
+// the aws/aws service account this validator protects is touched.
 // Re-approved after merging main into this branch. Both parents measured against
 // the same exact main 6ebcb24f, but each described only its own delta — this
 // branch the gateway-tenant-edit route-kind narrowing, main the #2725 Umami
@@ -871,7 +910,87 @@ const (
 // The delta remains authorization-neutral — one chart value under spec.values,
 // carrying no rules, subjects, verbs, or apiGroups line, and moving no identity,
 // ServiceAccount, binding, or chart/source pin.
-const expectedRenderedSurfaceSHA = "489afc6651045b6643ee40e0098234a873174a8d807690efb0245aaf92f87a4b"
+//
+// ⚠️ The #3181 digest measured above is RETAINED AS A RECORD ONLY and is no longer
+// the constant: main has since merged #2709, so it describes a merge result that
+// no longer exists. Recorded in full so the measurement is not lost:
+//
+//	489afc6651045b6643ee40e0098234a873174a8d807690efb0245aaf92f87a4b
+//
+// It was measured on exact main feaf5059 at head 74676d5a (run 32070742779). See
+// the placeholder note at the end of this block for what supersedes it.
+//
+// Approved for #2709 on exact main feaf5059, which is the value recorded below.
+// This SUPERSEDES the two earlier #2709 records above, measured on the 6ebcb24f
+// and d925654e merge states; neither was ever committed, because each described a
+// merge result that a later main had already moved past. They are kept as the
+// branch's measurement history, not as candidate values.
+//
+// Measured by the required `🔐 Validate EKS Authorization` job (run 32069284792)
+// at head 1d357303, taken with the branch level against main — `behind_by` is 0,
+// so this digest describes the merge result rather than a stale rendering of it.
+//
+// Only ONE renderer stands behind it, and that is stated rather than glossed: the
+// approved CI toolchain. The local kubectl here is v1.36.1 against an approved
+// v1.36.2, so validateRendererVersion fails closed and a local render cannot
+// corroborate. It therefore does not meet the two-independent-renderer bar the
+// reductions recorded above met; it rests on the required job alone.
+//
+// Two independent observations do corroborate that the leveling merge moved
+// nothing, which is what makes the single rendering safe to approve:
+//
+//   - the required job reported this IDENTICAL digest at head 629bdd10 (before
+//     main was merged in) and again at head 1d357303 (after), so the merge itself
+//     did not move the surface;
+//   - main feaf5059 already contains that merge's only k8s change — Checkov skip
+//     annotations on the umami CronJob — and the required job PASSES on main
+//     against the previous digest, so those annotations are not in the surface at
+//     all. That is evidence about what did NOT change; it is not a second
+//     rendering of what did.
+//
+// Conservation behind the new digest: the whole-surface fingerprint is the ONLY
+// control that moved. The run reports exactly one problem — this aggregate — and
+// zero per-identity mismatches, zero missing resources, zero duplicates, and zero
+// encrypted-resource findings, so every individually approved entry is
+// byte-identical to its recorded value and surface MEMBERSHIP is unchanged. It
+// reports the same 35 unresolved-substitution notes that clean main reports.
+//
+// The reviewed reasoning is unchanged and is a privilege REDUCTION on every axis.
+// Of the three files the branch touches, only the Dex connector is semantic: it
+// adds a `teams: [maintainers]` entry under the existing org-scoped GitHub
+// connector, so Dex authenticates the maintainers team instead of every
+// devantler-tech org member — which is what gates apps authenticating natively
+// against Dex rather than through oauth2-proxy's allowed_groups. The oauth2-proxy
+// release changes only comment text inside its rendered values, and this file is
+// not part of the rendered surface. No identity, binding, ServiceAccount,
+// resource, or verb is added anywhere, and nothing granted to the aws/aws service
+// account this validator protects is touched.
+//
+// ⚠️ THE VALUE BELOW IS AN UNMEASURED PLACEHOLDER for the current merge result —
+// it is clean main's digest carried through, and the merge result is known NOT to
+// equal it.
+//
+// Re-approval is required after merging main 6c5506fe into this branch. Both
+// parents had re-approved this constant independently — this branch for the #3181
+// Longhorn orphan-reclamation chart value (`489afc66`, recorded above), and main
+// for the #2709 Dex maintainers-team narrowing (`8773eaf0`) — so NEITHER parent's
+// value describes the merge result and the conflict cannot be resolved by picking
+// a side. Both records are retained because both deltas are present in the merged
+// surface: main's Dex connector narrowing AND this branch's Longhorn chart value.
+//
+// Both deltas are individually measured and individually authorization-neutral or
+// privilege-reducing, and neither moved surface MEMBERSHIP (each was measured with
+// zero per-identity mismatches, zero missing, zero duplicates). What is unmeasured
+// is only their AGGREGATE digest, which necessarily differs from both parents
+// because both are selected documents whose content moved.
+//
+// The required `🔐 Validate EKS Authorization` job is therefore expected to REJECT
+// this value and report the merge result's actual digest. Before this PR is
+// promoted: record that reported digest here, and re-verify the conservation above
+// against 6c5506fe — zero per-identity mismatches, zero missing and zero duplicate
+// resources against expectedRenderedHashes, and the substitution-note count equal
+// to clean main's, so the aggregate is the only control that moved.
+const expectedRenderedSurfaceSHA = "8773eaf0015f04f14850c5ef025b81657b0ad8d3aab397d99cf969044c04d7e6"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
