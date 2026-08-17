@@ -966,31 +966,49 @@ const (
 // resource, or verb is added anywhere, and nothing granted to the aws/aws service
 // account this validator protects is touched.
 //
-// ⚠️ THE VALUE BELOW IS AN UNMEASURED PLACEHOLDER for the current merge result —
-// it is clean main's digest carried through, and the merge result is known NOT to
-// equal it.
-//
-// Re-approval is required after merging main 6c5506fe into this branch. Both
+// The merge of main 6c5506fe into this branch needed re-approval, because both
 // parents had re-approved this constant independently — this branch for the #3181
 // Longhorn orphan-reclamation chart value (`489afc66`, recorded above), and main
 // for the #2709 Dex maintainers-team narrowing (`8773eaf0`) — so NEITHER parent's
-// value describes the merge result and the conflict cannot be resolved by picking
-// a side. Both records are retained because both deltas are present in the merged
-// surface: main's Dex connector narrowing AND this branch's Longhorn chart value.
+// value described the merge result and the conflict could not be resolved by
+// picking a side. Both records are retained because both deltas are present in the
+// merged surface: main's Dex connector narrowing AND this branch's Longhorn chart
+// value.
 //
-// Both deltas are individually measured and individually authorization-neutral or
-// privilege-reducing, and neither moved surface MEMBERSHIP (each was measured with
-// zero per-identity mismatches, zero missing, zero duplicates). What is unmeasured
-// is only their AGGREGATE digest, which necessarily differs from both parents
-// because both are selected documents whose content moved.
+// The merge result is now MEASURED, and is the value recorded below. The required
+// `🔐 Validate EKS Authorization` job rejected the carried-through placeholder at
+// head 2ec723d9 (run 32073398792) and reported the merge result's actual digest.
+// It was taken with the branch level against main 6c5506fe — `behind_by` is 0 — so
+// it describes the merge result rather than a stale rendering of it.
 //
-// The required `🔐 Validate EKS Authorization` job is therefore expected to REJECT
-// this value and report the merge result's actual digest. Before this PR is
-// promoted: record that reported digest here, and re-verify the conservation above
-// against 6c5506fe — zero per-identity mismatches, zero missing and zero duplicate
-// resources against expectedRenderedHashes, and the substitution-note count equal
-// to clean main's, so the aggregate is the only control that moved.
-const expectedRenderedSurfaceSHA = "8773eaf0015f04f14850c5ef025b81657b0ad8d3aab397d99cf969044c04d7e6"
+// Conservation, measured against this branch's OWN pre-merge rendering at head
+// 74676d5a (run 32071082835). That control is what isolates main's contribution:
+// both renderings already contain this branch's Longhorn delta, so their
+// difference is exactly what the merge brought in. Both report the same 35
+// unresolved-substitution notes, all 35 distinct, with ZERO resources added, ZERO
+// removed and ZERO duplicated — surface MEMBERSHIP is unchanged. Exactly TWO
+// per-identity fingerprints move:
+//
+//	HelmRelease dex/dex                    c62d1a9f… → 6192cf46…
+//	HelmRelease oauth2-proxy/oauth2-proxy  60750d76… → 24f03c83…
+//
+// Those are precisely the two manifests #2709 changes — it touches
+// `controllers/dex/helm-release.yaml`, `controllers/oauth2-proxy/helm-release.yaml`
+// and this validator, the last of which is not in the surface. So the prediction
+// was falsifiable and held: had the merge carried anything else into the
+// authorization surface, a third identity would have moved. Main 6c5506fe contains
+// #2709 and PASSES the required job against its own digest `8773eaf0`, so both
+// moved documents are already approved on main. Nothing outside them moved, which
+// leaves the aggregate as the only control this merge changes. Main's own digest is
+// recorded here in full, so replacing the constant does not lose it:
+//
+//	8773eaf0015f04f14850c5ef025b81657b0ad8d3aab397d99cf969044c04d7e6
+//
+// Only ONE renderer stands behind this value, as with the records above: the
+// approved CI toolchain, via the required job. The local kubectl is v1.36.1
+// against an approved v1.36.2, so validateRendererVersion fails closed and cannot
+// corroborate.
+const expectedRenderedSurfaceSHA = "ed2767037a88348b22ec8ecfcc8b2081e86b7979dfe3c86d554034980af01fdf"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
