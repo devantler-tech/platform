@@ -65,7 +65,7 @@ spec:
       # ReplicaSchedulingFailure indefinitely rather than recovering. Measured on
       # prod 2026-08-16: 16 orphan directories, 14 of them on prod-worker-1,
       # which sat at 24% available and DiskPressure while two CNPG databases
-      # stayed stuck at 2 of 3 replicas (#3180).
+      # stayed stuck at 2 of 3 replicas (#3201).
       #
       # replica-data is the only type that reclaims disk; orphaned instances are
       # runtime processes and are deliberately not swept here.
