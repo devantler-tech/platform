@@ -400,6 +400,27 @@ func TestAutoscalerTaintIsNeverUncordoned(t *testing.T) {
 	}
 }
 
+// The autoscaler's DeletionCandidateOfClusterAutoscaler taint is advisory
+// (PreferNoSchedule) and churns on the autoscaler's ~10s re-evaluation loop. It says a
+// node COULD be removed, never that it is being removed, so its coming and going is not
+// a scheduling-safety change and must not evict the deploy from the merge queue.
+// TestAutoscalerTaintIsNeverUncordoned is the negative control: the hard
+// ToBeDeletedByClusterAutoscaler taint must still fail closed.
+func TestAutoscalerDeletionCandidateTaintDoesNotBlockDeploy(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_AUTOSCALER_DELETION_CANDIDATE_RELEASED_NODE": "prod-worker-1",
+	})
+	requireSuccessResult(t, result)
+	requireNotContains(t, result.stdout+result.stderr, "scheduling safety state changed")
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-drain:prod-worker-1")
+	requireLine(t, operations, "talos-reboot:10.0.0.2")
+	requireLine(t, operations, "node-uncordon:prod-worker-1")
+	requireLine(t, operations, "root-patch")
+}
+
 func TestExternalUncordonAfterDrainBlocksReboot(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)

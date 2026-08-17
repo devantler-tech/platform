@@ -1231,6 +1231,35 @@ data:
         "reason": "Infrastructure controllers and platform middleware need Kubernetes API access via SA tokens. This includes GitOps controllers, policy engines, certificate managers, autoscalers, monitoring, cluster dashboards (headlamp), service discovery (homepage), device management (fleetdm), identity providers (dex), auth proxies (oauth2-proxy), and config watchers (reloader). The platform uses RBAC to restrict what each SA can do."
       },
       {
+        "name": "umami-provisioning-service-account-token",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "alertOnly"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^CronJob$",
+              "name": "^umami-provision-tenants$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Job$",
+              "name": "^umami-provision-tenants-bootstrap$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0034$"
+          }
+        ],
+        "reason": "The Umami scheduled and bootstrap provisioners need their service-account token to coordinate through the single umami-provision-tenants Lease. Their namespaced Role permits only get and update on that named Lease."
+      },
+      {
         "name": "upstream-chart-defaults",
         "policyType": "postureExceptionPolicy",
         "actions": [
