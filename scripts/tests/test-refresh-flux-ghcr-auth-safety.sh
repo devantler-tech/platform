@@ -573,6 +573,33 @@ else
   fail "an etcd status error blocks a control-plane reboot"
 fi
 
+# The cluster autoscaler's advisory removal-candidate taint must not read as a
+# scheduling-safety change, in EITHER observation. A recovery journal written before
+# that exclusion existed still carries the taint in its captured initialTaints, so the
+# comparison normalizes both sides; otherwise the fix would hold on a fresh deploy and
+# still refuse on the recovery path a killed deploy leaves behind.
+autoscaler_node="${work_dir}/autoscaler-candidate-node.json"
+jq -n '{
+  metadata: {uid: "node-uid-1", annotations: {"platform.devantler.tech/ghcr-auth-drain-owner": "owner-token"}},
+  spec: {unschedulable: true, taints: [{key: "node.kubernetes.io/unschedulable", effect: "NoSchedule"}]}
+}' >"${autoscaler_node}"
+
+if node_scheduling_state_is_safe_to_reboot \
+  "${autoscaler_node}" 1 owner-token node-uid-1 \
+  '[{"key":"DeletionCandidateOfClusterAutoscaler","value":"1786925486","effect":"PreferNoSchedule"}]'; then
+  pass "a released autoscaler removal-candidate taint still permits a reboot"
+else
+  fail "a released autoscaler removal-candidate taint still permits a reboot"
+fi
+
+if node_scheduling_state_is_safe_to_reboot \
+  "${autoscaler_node}" 1 owner-token node-uid-1 \
+  '[{"key":"ToBeDeletedByClusterAutoscaler","effect":"NoSchedule"}]'; then
+  fail "a released autoscaler deletion taint blocks a reboot"
+else
+  pass "a released autoscaler deletion taint blocks a reboot"
+fi
+
 if ((failures > 0)); then
   printf '%d safety regression test(s) failed\n' "${failures}" >&2
   exit 1
