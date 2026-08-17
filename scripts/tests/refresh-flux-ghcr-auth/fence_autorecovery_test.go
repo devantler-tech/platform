@@ -83,6 +83,68 @@ func TestRecoverFencesRefusesWhileTheHolderRunIsNotTerminal(t *testing.T) {
 	}
 }
 
+// The Lease is the GLOBAL exclusion fence, so it is released last: clearing it
+// while a policy or node fence is still held lets a deploy start against a
+// half-recovered cluster. Automation refuses rather than reordering.
+//
+// The assertion that matters here is the third one. This refusal is reached
+// BEFORE any liveness proof is attempted, so a run that queried the API first
+// would be deciding the ordering question after paying for — and potentially
+// acting on — an answer it must not use.
+func TestRecoverFencesRefusesWhileAnotherFenceIsStillHeld(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	seedOrphanedLease(t, f, deadHolderIdentity)
+
+	result := f.runHelperPreservingClusterState(validConfig(), []string{"--recover-fences"},
+		map[string]string{
+			"FAKE_EXPIRED_SYNC_LEASE":        "true",
+			"FAKE_FLUX_POLICY_HANDOFF_OWNED": "true",
+		})
+
+	if result.exitCode == 0 {
+		t.Fatalf("recovery succeeded with another fence held; stdout = %q", result.stdout)
+	}
+	if holder := leaseHolderNow(t, f); holder != deadHolderIdentity {
+		t.Errorf("lease holder = %q, want it untouched", holder)
+	}
+	if _, err := os.Stat(f.ghCalled); err == nil {
+		t.Error("liveness query was made before the ordering refusal; it should not have been")
+	}
+	if output := result.stdout + result.stderr; !strings.Contains(output, "other fence(s) are held") {
+		t.Errorf("refusal does not name the ordering rule it enforced; output = %q", output)
+	}
+}
+
+// The CAS is the last line of defence: the holder and resourceVersion the report
+// observed must BOTH still hold, or something touched the Lease in between and
+// the release could be clearing a live acquisition rather than an orphan.
+//
+// The fixture advances the resourceVersion after the report's read, so the patch
+// is refused by the fake's ordinary CAS comparison — the same one a real cluster
+// applies — rather than by a recovery-specific failure switch.
+func TestRecoverFencesRefusesWhenTheReleasePatchLosesTheCAS(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	seedOrphanedLease(t, f, deadHolderIdentity)
+
+	result := f.runHelperPreservingClusterState(validConfig(), []string{"--recover-fences"},
+		map[string]string{
+			"FAKE_EXPIRED_SYNC_LEASE":                    "true",
+			"FAKE_SYNC_LEASE_TOUCHED_AFTER_FENCE_REPORT": "true",
+		})
+
+	if result.exitCode == 0 {
+		t.Fatalf("recovery succeeded on a refused patch; stdout = %q", result.stdout)
+	}
+	if holder := leaseHolderNow(t, f); holder != deadHolderIdentity {
+		t.Errorf("lease holder = %q, want it untouched", holder)
+	}
+	if output := result.stdout + result.stderr; !strings.Contains(output, "Recovery patch was refused") {
+		t.Errorf("refusal does not report the rejected patch; output = %q", output)
+	}
+}
+
 // An expired heartbeat is NOT a death proof, and this is the case that says so:
 // the lease is expired and the run is terminal, but the identity carries no run
 // reference, so nothing can be proven. That is the shape a local
