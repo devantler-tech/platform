@@ -56,6 +56,18 @@ metadata:
     # the image asks for, and this workload is only deployed to the Hetzner
     # provider, so nothing in CI would catch it going wrong.
     checkov.io/skip1: CKV_K8S_40=UID 1001 is the umami image's baked `nextjs` user, which owns its /app WORKDIR
+    # The token is genuinely used, not mounted by habit: the provisioning script
+    # reads /var/run/secrets/kubernetes.io/serviceaccount/{token,namespace,ca.crt}
+    # and calls coordination.k8s.io directly to hold the umami-provision-tenants
+    # Lease, which serialises the scheduled CronJob against the bootstrap Job.
+    # It is also already the least-privilege shape this check asks for:
+    # role-provision-tenants.yaml grants only `get` + `update` on `leases`,
+    # narrowed by resourceNames to that single Lease — no Secrets, no workloads,
+    # no other coordination object — and the ServiceAccount keeps
+    # automountServiceAccountToken: false as its default, so the token is opted
+    # into per pod rather than granted to everything naming the account.
+    # Dropping the mount would break run serialisation; there is nothing to tighten.
+    checkov.io/skip2: CKV_K8S_38=the script reads its SA token to hold the umami-provision-tenants Lease; the Role grants get/update on that one Lease only
 spec:
   schedule: "*/15 * * * *"
   # Never run two reconciles at once; a slow run (e.g. waiting on a down Umami)
