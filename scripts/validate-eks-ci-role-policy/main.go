@@ -57,7 +57,32 @@ const (
 // The approved surface includes the encrypted flux-system/variables-cluster
 // substitution source and the staged Cilium homogeneous-device activation.
 //
-// Measured against main 025fd5a6 before approving this value: 532 documents on
+// Measured against main df5bcc39 before approving this value: 534 documents on
+// both sides, membership IDENTICAL — zero added, zero removed, zero renamed,
+// proven by set difference in BOTH directions over the complete
+// apiVersion|kind|namespace|name identity across all five rendered overlays.
+// Neither side carries a duplicate identity, so that pairing is one-to-one.
+// Exactly ONE entry's content moves:
+//
+//	helm.toolkit.fluxcd.io/v2  HelmRelease  crossview/crossview
+//
+// Its only rendered delta adds a single annotation —
+// `configmap.reloader.stakater.com/reload: crossview-config` — to the Deployment
+// its postRenderer patch targets. The chart wires every OIDC value in through
+// env[].valueFrom.configMapKeyRef, and env resolves once at container creation,
+// so a ConfigMap change alone never reaches the running process. The annotation
+// tells the already-deployed Reloader controller to roll the Deployment when
+// that ConfigMap changes; it names no subject, no role and no resource, and the
+// same annotation is already carried by six other rendered documents.
+//
+// No grant-bearing object moved: the surface carries 72 Role / ClusterRole /
+// RoleBinding / ClusterRoleBinding / ServiceAccount documents on BOTH sides
+// (10/22/15/10/15) and their canonical byte stream is identical. All 116
+// `aws`-bearing lines are byte-identical across the two trees, so nothing
+// granted to the aws/aws service account this validator exists to protect is
+// touched.
+//
+// Measured against main 025fd5a6 before approving the previous value: 532 documents on
 // both sides, membership IDENTICAL — zero added, zero removed, zero renamed,
 // proven by set difference in BOTH directions over the complete
 // apiVersion|kind|namespace|name identity across all five rendered overlays.
@@ -621,7 +646,36 @@ const (
 // withholds from every other consumer. The apps Flux Kustomization timeout moves
 // from 20m to 30m in both rendered cluster overlays. The ServiceAccount itself is
 // unchanged from main in canonical content.
-const expectedRenderedSurfaceSHA = "295c44e37dcb09bfa1dd83d7f0eba975b529035c8618be9b65e41d9c20d6157b"
+// Re-approved after merging main d925654e into this branch. Both parents had
+// re-approved this constant independently — main for the #2725 Umami
+// provisioning grant recorded directly above, and this branch for the crossview
+// reload annotation recorded at the top of this block — so neither parent's
+// value describes the merge result, and the conflict could not be resolved by
+// picking a side. The merged surface is main's #2725 surface with the crossview
+// HelmRelease's single annotation delta applied on top; that delta is
+// authorization-neutral, so the grant-bearing accounting recorded for #2725
+// carries over unchanged and only the whole-surface digest moves.
+//
+// The value below is the digest the required `🔐 Validate EKS Authorization`
+// job measured on the approved toolchain for this merged surface, reported by
+// its rejection of the carried-through placeholder. It is recorded here from
+// that measurement rather than guessed, per the plan above.
+//
+// Only ONE renderer stands behind it, and that is stated rather than glossed:
+// the approved CI toolchain. A local render cannot corroborate it, because
+// without the CI substitution inputs it reports unresolved Flux substitutions
+// and is incomplete — the same reason the placeholder was carried through
+// unmeasured. So this value does not meet the two-independent-renderer bar the
+// reductions recorded above met; it rests on the required job alone.
+//
+// One independent observation does corroborate that the crossview delta is the
+// only thing moving the digest: the required job reported this identical value
+// at head 632e2ff3 (before main was merged in) and again at head 422f1890
+// (after). Main's intervening commit therefore did not move the authorization
+// surface, which is consistent with its content — documentation plus a Kyverno
+// policy description annotation, carrying no grant. That is evidence about
+// what did NOT change; it is not a second rendering of what did.
+const expectedRenderedSurfaceSHA = "88667d39d19c923b0b84e3c0b4c548409a3990f360dfe9ddad22778eefdda328"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
