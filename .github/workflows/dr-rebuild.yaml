@@ -246,7 +246,7 @@ jobs:
           for k in bootstrap infrastructure-controllers infrastructure apps; do
             echo "Waiting for Kustomization ${k}..."
             kubectl -n flux-system wait "kustomization/${k}" \
-              --for=condition=Ready --timeout=20m
+              --for=condition=Ready --timeout=35m
           done
           echo "✅ All Flux Kustomizations Ready — fresh platform converged."
 

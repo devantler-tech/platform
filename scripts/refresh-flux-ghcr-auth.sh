@@ -569,9 +569,11 @@ report_fences_now() {
     # ignore, so the report would refuse releases the bridge would perform.
     def scheduling_taints:
       map(select((
-        .key == "node.kubernetes.io/unschedulable"
-        and .effect == "NoSchedule"
-        and (.value // "") == ""
+        (.key == "node.kubernetes.io/unschedulable"
+          and .effect == "NoSchedule"
+          and (.value // "") == "")
+        or (.key == "DeletionCandidateOfClusterAutoscaler"
+          and .effect == "PreferNoSchedule")
       ) | not))
       | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]);
     .items[]
@@ -2480,9 +2482,11 @@ prepare_runtime_bootstrap_roll() {
     if ! initial_taints="$(jq -ecS '
       (.spec.taints // [])
       | map(select((
-          .key == "node.kubernetes.io/unschedulable"
-          and .effect == "NoSchedule"
-          and (.value // "") == ""
+          (.key == "node.kubernetes.io/unschedulable"
+            and .effect == "NoSchedule"
+            and (.value // "") == "")
+          or (.key == "DeletionCandidateOfClusterAutoscaler"
+            and .effect == "PreferNoSchedule")
         ) | not))
       | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")])
     ' "${cordon_state_file}")"; then
@@ -2833,9 +2837,11 @@ process_talos_node_target() {
     initial_node_taints="$(jq -cS '
         (.spec.taints // [])
         | map(select((
-            .key == "node.kubernetes.io/unschedulable"
-            and .effect == "NoSchedule"
-            and (.value // "") == ""
+            (.key == "node.kubernetes.io/unschedulable"
+              and .effect == "NoSchedule"
+              and (.value // "") == "")
+            or (.key == "DeletionCandidateOfClusterAutoscaler"
+              and .effect == "PreferNoSchedule")
           ) | not))
         | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")])
       ' "${cordon_state_file}")"

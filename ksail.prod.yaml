@@ -10,7 +10,12 @@ spec:
     distributionConfig: talos
     connection:
       context: admin@prod
-      timeout: 30m
+      # Must stay strictly greater than the longest Flux Kustomization timeout
+      # in the chain (`apps`, 30m in k8s/clusters/base). `workload reconcile`
+      # waits on that chain, so an equal value makes the CLI give up at the
+      # exact moment `apps` times out — the 2m retryInterval that re-enters the
+      # health gate could then never be observed. Matches the 35m outer DR wait.
+      timeout: 35m
     distribution: Talos
     provider: Hetzner
     cni: Cilium

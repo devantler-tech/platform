@@ -139,20 +139,23 @@ node_claim_preconditions_still_hold() {
     --arg uid "${initial_node_uid}" \
     --argjson was_cordoned "${was_cordoned}" \
     --argjson initial_taints "${initial_node_taints}" '
+    def scheduling_taints:
+      map(select((
+        (.key == "node.kubernetes.io/unschedulable"
+          and .effect == "NoSchedule"
+          and (.value // "") == "")
+        or (.key == "DeletionCandidateOfClusterAutoscaler"
+          and .effect == "PreferNoSchedule")
+      ) | not))
+      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]);
     .metadata.uid == $uid
     and .metadata.deletionTimestamp == null
     and ((.metadata.annotations[$owner_annotation] // "") == "")
     and ((.metadata.annotations[$recovery_annotation] // "") == "")
     and ((if (.spec.unschedulable // false) then 1 else 0 end)
       == $was_cordoned)
-    and (((.spec.taints // [])
-      | map(select((
-          .key == "node.kubernetes.io/unschedulable"
-          and .effect == "NoSchedule"
-          and (.value // "") == ""
-        ) | not))
-      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]))
-      == $initial_taints)
+    and (((.spec.taints // []) | scheduling_taints)
+      == ($initial_taints | scheduling_taints))
   ' "${state_file}" >/dev/null
 }
 
@@ -176,18 +179,21 @@ node_scheduling_state_is_safe_to_reboot() {
     --arg uid "${initial_node_uid}" \
     --argjson was_cordoned "${was_cordoned}" \
     --argjson initial_taints "${initial_node_taints}" '
+    def scheduling_taints:
+      map(select((
+        (.key == "node.kubernetes.io/unschedulable"
+          and .effect == "NoSchedule"
+          and (.value // "") == "")
+        or (.key == "DeletionCandidateOfClusterAutoscaler"
+          and .effect == "PreferNoSchedule")
+      ) | not))
+      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]);
     .metadata.uid == $uid
     and .metadata.deletionTimestamp == null
     and .spec.unschedulable == true
     and .metadata.annotations[$owner_annotation] == $owner
-    and (((.spec.taints // [])
-      | map(select((
-          .key == "node.kubernetes.io/unschedulable"
-          and .effect == "NoSchedule"
-          and (.value // "") == ""
-        ) | not))
-      | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]))
-      == $initial_taints)
+    and (((.spec.taints // []) | scheduling_taints)
+      == ($initial_taints | scheduling_taints))
   ' "${state_file}" >/dev/null
 }
 
@@ -216,6 +222,8 @@ node_scheduling_state_is_safe_while_lifecycle_taints_clear() {
         (.key == "node.kubernetes.io/unschedulable"
           and .effect == "NoSchedule"
           and (.value // "") == "")
+        or (.key == "DeletionCandidateOfClusterAutoscaler"
+          and .effect == "PreferNoSchedule")
         or .key == "node.kubernetes.io/not-ready"
         or .key == "node.kubernetes.io/unreachable"
         or .key == "node.cilium.io/agent-not-ready"
