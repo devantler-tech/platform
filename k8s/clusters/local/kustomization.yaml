@@ -16,16 +16,6 @@ patches:
       data:
         cluster_name: local
         provider: docker
-  # Docker CI has slower startup for apps due to cold image cache.
-  # Override the base apps timeout to allow more time for health checks.
-  - patch: |
-      apiVersion: kustomize.toolkit.fluxcd.io/v1
-      kind: Kustomization
-      metadata:
-        name: apps
-        namespace: flux-system
-      spec:
-        timeout: 20m
   # Docker CI has slower image pulls on cold runners. Increase the
   # infrastructure-controllers health-check timeout so VPA (5m default timeout)
   # and keda (10m timeout) can complete before the health check fires, reducing

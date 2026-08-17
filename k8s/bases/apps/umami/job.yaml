@@ -1,0 +1,63 @@
+# Immediate, one-shot run of the scheduled Umami tenant provisioner.
+#
+# Kustomize copies the CronJob's pod template into this Job so the bootstrap and
+# scheduled workloads cannot drift. Controller policy differs deliberately:
+# scheduled failures finish and retry on the next tick, while the retained
+# bootstrap must not become permanently Failed on an image-pull or node-level
+# startup outage. Its effectively non-exhaustible controller retry budget keeps
+# it recoverable across later Flux reconciliations. The completed Job remains in
+# the cluster: deleting it with a TTL would make Flux recreate it on every apps
+# reconciliation. A force-enabled template change still replaces it and performs
+# one fresh bootstrap against the new desired state.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: umami-provision-tenants-bootstrap
+  namespace: umami
+  annotations:
+    checkov.io/skip1: CKV_K8S_8=inert source template is replaced before apply
+    checkov.io/skip2: CKV_K8S_9=inert source template is replaced before apply
+    kustomize.toolkit.fluxcd.io/force: enabled
+spec:
+  # Kubernetes stores this as a signed int32. Using its maximum keeps transient
+  # controller-level startup failures recoverable instead of retaining a Failed
+  # Job that Flux's native health reader can never consider healthy. Container
+  # failures back off exponentially; workload failures inside the shared script
+  # still use its bootstrap-specific best-effort result.
+  backoffLimit: 2147483647
+  # KSail validates each raw manifest before Kustomize runs. Keep a valid
+  # placeholder pod template; Kustomize replaces it with the CronJob's complete
+  # pod template before Flux applies this resource.
+  template:
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: replaced-by-kustomize
+          image: registry.k8s.io/pause:3.10@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+          resources:
+            requests:
+              cpu: 1m
+              memory: 1Mi
+            limits:
+              cpu: 1m
+              memory: 1Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            privileged: false
+            readOnlyRootFilesystem: true
+            runAsGroup: 65534
+            runAsNonRoot: true
+            runAsUser: 65534
+            seccompProfile:
+              type: RuntimeDefault

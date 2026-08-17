@@ -434,6 +434,15 @@ const (
 // moves between two already-scanned ownership layers. The validator reported
 // no per-resource mismatch; only this aggregate fingerprint moved.
 //
+// Measured by comparing the apps layer at branch baseline c7f2842f45b2 with
+// the staged Umami provisioning repair using the CI-pinned kubectl v1.36.2
+// renderer. Existing authorization documents are byte-identical. Membership
+// adds exactly three namespaced entries, all named umami-provision-tenants: a
+// ServiceAccount, a RoleBinding to only that ServiceAccount, and a Role whose
+// only verbs are get/update on the single coordination.k8s.io Lease with that
+// resourceName. The Lease itself is pre-created, so the workload cannot create
+// or address any other coordination object.
+//
 // This value additionally covers the UniFi source containment repair in #2707,
 // measured after rebasing the PR onto exact main 57ca1dbe. Three of the five
 // authorization roots are byte-identical across main and this change:
@@ -612,7 +621,50 @@ const (
 // main cdababde. The persistence annotations introduced by #3168 remain in
 // every surviving selected object; #2741 removes only the already-protected
 // Headlamp PVC identity and retains the authorization-neutral changes above.
-const expectedRenderedSurfaceSHA = "133166992d16b83da48105656927c1b8cdeadbe37d041bef7a50284cec028fb7"
+//
+// Measured for the #2725 Umami provisioning repair merged with exact main
+// 6ebcb24f. Two independent renderers agree on this value: the required CI job
+// on the approved toolchain (run 31973534571) and a local render.
+//
+// Unlike the reductions recorded above, this delta ADDS a grant. The Umami
+// scheduled and bootstrap provisioners serialise through one named Lease, so
+// the merge introduces:
+//
+//	rbac.authorization.k8s.io/v1  Role         umami/umami-provision-tenants
+//	rbac.authorization.k8s.io/v1  RoleBinding  umami/umami-provision-tenants
+//	coordination.k8s.io/v1        Lease        umami/umami-provision-tenants
+//	batch/v1                      Job          umami/umami-provision-tenants-bootstrap
+//
+// The Role's complete rule set is `get` and `update` on `leases`, restricted by
+// resourceNames to the single `umami-provision-tenants` Lease; the RoleBinding
+// binds it to that namespace's own ServiceAccount and to nothing else. No other
+// identity, binding, resource, or verb is added, and nothing granted to the
+// aws/aws service account this validator protects is touched.
+//
+// The CronJob adds Lease coordination to its existing pod template and requests
+// the projected token at pod level, which the ServiceAccount's own default still
+// withholds from every other consumer. The apps Flux Kustomization timeout moves
+// from 20m to 30m in both rendered cluster overlays. The ServiceAccount itself is
+// unchanged from main in canonical content.
+// Re-approved after merging main d925654e into this branch. Both parents had
+// re-approved this constant independently — main for the #2725 Umami
+// provisioning grant recorded directly above, and this branch for the crossview
+// reload annotation recorded at the top of this block — so neither parent's
+// value describes the merge result, and the conflict could not be resolved by
+// picking a side. The merged surface is main's #2725 surface with the crossview
+// HelmRelease's single annotation delta applied on top; that delta is
+// authorization-neutral, so the grant-bearing accounting recorded for #2725
+// carries over unchanged and only the whole-surface digest moves.
+//
+// The value below is main's, carried through the merge UNMEASURED against the
+// merge result, so the required `🔐 Validate EKS Authorization` job is expected
+// to reject it and report the digest the merged surface actually renders to.
+// That reported digest is what replaces this value, in a follow-up commit that
+// records the conservation counts behind it. It is deliberately not guessed
+// here: a local render cannot approve it, because without the CI substitution
+// inputs the render reports 35 unresolved Flux substitutions and is incomplete,
+// and the two-independent-renderer protocol requires the approved toolchain.
+const expectedRenderedSurfaceSHA = "295c44e37dcb09bfa1dd83d7f0eba975b529035c8618be9b65e41d9c20d6157b"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
@@ -769,7 +821,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "072e4478cdad39c0a7d9f5119cad63d4c56a9fc96ba88d657fef97f6b91bae31",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "89ea0484e37b691594b7a72be2ca2de285697818bf88a5b37b4fa8a9161c54fa",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "a0b12b336d39709cb2f491662a3c8dd98269485b6a33935101e0bf9f03ec8925",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "ee11a54686a68eb49b833b234949f9d21a7b8106c1b3ae677e5c205e5506f6ac",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "7f674a1762f298330c7c9e4d9d4e8bf46108b10727e02a25ca5096d7913cc0a7",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "d1bc403b6458bd22cf967bd570e24718341cbd584f58e7f0069aaffe1e187945",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "9d9b62d3221442d6355d16a34d31c198619fb3b3728df960fd67222a531ece7b",
