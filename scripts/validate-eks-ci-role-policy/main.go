@@ -652,15 +652,25 @@ const (
 // grant-bearing accounting recorded for each carries over unchanged and only the
 // whole-surface digest moves.
 //
-// The value below is main's, carried through the merge UNMEASURED against the
-// merge result, so the required `🔐 Validate EKS Authorization` job is expected
-// to reject it and report the digest the merged surface actually renders to.
-// That reported digest is what replaces this value, in a follow-up commit that
-// records the conservation counts behind it. It is deliberately not guessed
-// here: a local render cannot approve it, because without the CI substitution
-// inputs the render reports unresolved Flux substitutions and is incomplete, and
-// the two-independent-renderer protocol requires the approved toolchain.
-const expectedRenderedSurfaceSHA = "295c44e37dcb09bfa1dd83d7f0eba975b529035c8618be9b65e41d9c20d6157b"
+// Measured against the merge result at c790f999. Two independent renderers agree
+// on the value below: the required `🔐 Validate EKS Authorization` job (run
+// 32019353067) and a local render on kubectl v1.36.1 / kustomize v5.8.1.
+//
+// Conservation behind the new digest: the whole-surface fingerprint is the ONLY
+// control that moved. Both renderers report zero per-identity mismatches and
+// zero missing resources against expectedRenderedHashes, so every individually
+// approved entry — including both parents' deltas — is byte-identical to its
+// recorded value and only the aggregate over the entry set changed. Both also
+// report the same 35 unresolved-substitution notes, which are diagnostic rather
+// than a control: a resource carrying `${…}` is forced into the aggregate, so
+// its literal text is already covered by this digest.
+//
+// That symmetry corrects the assumption recorded before the measurement, which
+// held that a local render could not approve this because it would be incomplete
+// without the CI substitution inputs. The approved toolchain reports the same 35
+// notes and the same digest, so the two renders are equivalent here and the
+// local one is a genuine second renderer rather than a degraded copy.
+const expectedRenderedSurfaceSHA = "b8235416c8452d2a123eb9279d64a4d6adc11625b9ed3be6801cd8abd1794a78"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
