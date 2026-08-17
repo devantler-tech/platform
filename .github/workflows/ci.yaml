@@ -122,6 +122,7 @@ jobs:
               # either side changing alone is the drift this test exists to catch.
               - 'scripts/tests/test-restrict-homepage-service-groups.sh'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
+              - 'scripts/tests/test-tenant-route-hostname-boundary.sh'
               - 'scripts/tests/test-umami-provisioning-bootstrap.sh'
               - 'scripts/tests/test-kyverno-admission-vpa.sh'
               - 'scripts/tests/kyverno-admission-vpa-rules.yaml'
@@ -450,6 +451,8 @@ jobs:
           bash scripts/tests/test-restrict-homepage-service-groups.sh
           shellcheck scripts/tests/test-kyverno-umami-mutation-rbac.sh
           bash scripts/tests/test-kyverno-umami-mutation-rbac.sh
+          shellcheck scripts/tests/test-tenant-route-hostname-boundary.sh
+          bash scripts/tests/test-tenant-route-hostname-boundary.sh
           shellcheck scripts/tests/test-actual-budget-auth-route.sh
           bash scripts/tests/test-actual-budget-auth-route.sh
 

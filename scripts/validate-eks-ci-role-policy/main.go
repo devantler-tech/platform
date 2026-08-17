@@ -622,6 +622,25 @@ const (
 // every surviving selected object; #2741 removes only the already-protected
 // Headlamp PVC identity and retains the authorization-neutral changes above.
 //
+// Measured for #2713 merged with exact main 6ebcb24f. Two independent renderers
+// agree on this value: the required CI job on the approved toolchain (run
+// 31974280947) and a local render. The branch's own earlier value was rendered
+// against main 6d926e42 and never described this merge result.
+//
+// The reviewed reasoning for the change itself is unaffected by the merge. The
+// complete authorization delta changes exactly ONE selected entry:
+//
+//	rbac.authorization.k8s.io/v1  ClusterRole  gateway-tenant-edit
+//
+// Its resources are narrowed from httproutes, grpcroutes, tcproutes, tlsroutes,
+// udproutes and referencegrants to httproutes and referencegrants. The removed
+// four route kinds bypass the HTTPRoute-only tenant hostname policy on the
+// shared Gateway. Identity, labels, verbs, apiGroups, bindings and membership
+// are otherwise byte-identical, so this is a strict privilege reduction. Main
+// already carries the canonical restrict-tenant-route-hostnames policy and the
+// removal of built-in edit aggregation; neither is duplicated by this change.
+// Gateway listener-kind pins are outside this authorization projection and are
+// covered by scripts/tests/test-tenant-route-hostname-boundary.sh.
 // Measured for the #2725 Umami provisioning repair merged with exact main
 // 6ebcb24f. Two independent renderers agree on this value: the required CI job
 // on the approved toolchain (run 31973534571) and a local render.
@@ -646,6 +665,37 @@ const (
 // withholds from every other consumer. The apps Flux Kustomization timeout moves
 // from 20m to 30m in both rendered cluster overlays. The ServiceAccount itself is
 // unchanged from main in canonical content.
+//
+// Re-approved after merging main into this branch. Both parents measured against
+// the same exact main 6ebcb24f, but each described only its own delta — this
+// branch the gateway-tenant-edit route-kind narrowing, main the #2725 Umami
+// provisioning grant — so neither value describes the merge result, and the
+// conflict could not be resolved by picking a side. Both records above are
+// retained because both deltas are present in the merged surface: a strict
+// privilege reduction on one selected ClusterRole, and the Lease-scoped Umami
+// provisioning grant. They are independent and neither cancels the other, so the
+// grant-bearing accounting recorded for each carries over unchanged and only the
+// whole-surface digest moves.
+//
+// Measured against the merge result at c790f999. Two independent renderers agree
+// on the value below: the required `🔐 Validate EKS Authorization` job (run
+// 32019353067) and a local render on kubectl v1.36.1 / kustomize v5.8.1.
+//
+// Conservation behind the new digest: the whole-surface fingerprint is the ONLY
+// control that moved. Both renderers report zero per-identity mismatches and
+// zero missing resources against expectedRenderedHashes, so every individually
+// approved entry — including both parents' deltas — is byte-identical to its
+// recorded value and only the aggregate over the entry set changed. Both also
+// report the same 35 unresolved-substitution notes, which are diagnostic rather
+// than a control: a resource carrying `${…}` is forced into the aggregate, so
+// its literal text is already covered by this digest.
+//
+// That symmetry corrects the assumption recorded before the measurement, which
+// held that a local render could not approve this because it would be incomplete
+// without the CI substitution inputs. The approved toolchain reports the same 35
+// notes and the same digest, so the two renders are equivalent here and the
+// local one is a genuine second renderer rather than a degraded copy.
+//
 // Re-approved after merging main d925654e into this branch. Both parents had
 // re-approved this constant independently — main for the #2725 Umami
 // provisioning grant recorded directly above, and this branch for the crossview
@@ -675,7 +725,43 @@ const (
 // surface, which is consistent with its content — documentation plus a Kyverno
 // policy description annotation, carrying no grant. That is evidence about
 // what did NOT change; it is not a second rendering of what did.
-const expectedRenderedSurfaceSHA = "88667d39d19c923b0b84e3c0b4c548409a3990f360dfe9ddad22778eefdda328"
+//
+// Re-approved after merging main b9af3892 into this branch, whose own parent is
+// 90cf208e. Both parents had re-approved this constant independently — this
+// branch for the gateway-tenant-edit route-kind narrowing recorded above, and
+// main for the crossview reload annotation recorded directly above — so neither
+// parent's value describes the merge result and the conflict could not be
+// resolved by picking a side. The merged surface is main's b9af3892 surface with
+// this branch's single authorization delta applied on top: the strict privilege
+// reduction on ClusterRole gateway-tenant-edit already described above. Main's
+// grant-bearing accounting for the #2725 Umami provisioning repair reached this
+// branch through the earlier merge and is unchanged by this one, so only the
+// whole-surface digest moves.
+//
+// Two independent renderers agree on the value below, and each was first proved
+// against clean main b9af3892 as a matched control:
+//
+//   - the approved toolchain (checksum-verified kubectl v1.36.2 / Kustomize
+//     v5.8.1) running this validator, which reports the contract passing on
+//     clean main and this digest on the merge result;
+//   - a local render on kubectl v1.36.1 / Kustomize v5.8.1 through
+//     TestValidateAuthorizationAcceptsCommittedPolicy, which passes on clean
+//     main and reports this same digest on the merge result.
+//
+// The matched controls are what make the measurement trustworthy rather than a
+// guess: both renderers reproduce every already-approved digest in main, so the
+// one value they disagree with main about is the one this merge actually moved.
+//
+// Conservation behind the new digest: the whole-surface fingerprint is the ONLY
+// control that moved. The run reports exactly one problem — this aggregate — and
+// zero per-identity mismatches and zero missing resources against
+// expectedRenderedHashes, so every individually approved entry is byte-identical
+// to its recorded value. It also reports the same 35 unresolved-substitution
+// notes that clean main reports; those are diagnostic rather than a control,
+// emitted only alongside an aggregate mismatch to explain a hash that moved, and
+// a resource carrying `${…}` is forced into the aggregate so its literal text is
+// already covered by this digest.
+const expectedRenderedSurfaceSHA = "b5b394181a8f2bc325bd427a90990fbc3872fb1f41f3d938f1e28f0aac1075f4"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
