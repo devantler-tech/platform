@@ -470,12 +470,18 @@ never rolled, so it drifts behind on Kubernetes and Talos.
 Detect it by comparing live node names against the configured groups:
 
 ```bash
-# pools the autoscaler actually manages
+# pools the autoscaler actually manages — read BOTH command and args: the chart
+# currently passes every flag in `command`, so an `args`-only query returns an
+# empty stream and the grep matches nothing.
 kubectl -n kube-system get deploy cluster-autoscaler-hetzner-cluster-autoscaler \
-  -o jsonpath='{range .spec.template.spec.containers[0].args[*]}{@}{"\n"}{end}' | grep '^--nodes='
+  -o jsonpath='{range .spec.template.spec.containers[0].command[*]}{@}{"\n"}{end}{range .spec.template.spec.containers[0].args[*]}{@}{"\n"}{end}' | grep '^--nodes='
 # every autoscaler-provisioned node currently registered
 kubectl get nodes -o name | grep '/autoscale-'
 ```
+
+An empty result from the first command means the **query** is wrong, not that no
+pools are configured — check the container spec directly before concluding
+anything. It should print one `--nodes=` line per configured pool.
 
 Any `autoscale-<type>-*` node whose `<type>` has no matching `--nodes=` group is
 stranded.
