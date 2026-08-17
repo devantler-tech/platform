@@ -838,23 +838,40 @@ const (
 // That accounting is inherited from that measurement and has NOT been re-verified
 // against 9a84e92b.
 //
-// ⚠️ THE VALUE BELOW IS AN UNMEASURED PLACEHOLDER — it is clean main's digest
-// carried through, and the merge result is known NOT to equal it, because the
-// Longhorn HelmRelease is a selected document whose content moved. It is recorded
-// this way rather than guessed: neither renderer could measure the merge result
-// during this run. The render accumulates a pinned remote resource
-// (kubelet-serving-cert-approver v0.11.0 ha-install.yaml) and
-// raw.githubusercontent.com returned HTTP 429 on both attempts, so the local
-// render aborted before producing any surface — an infrastructure failure, not a
-// measurement.
+// MEASURED — this discharges the placeholder that stood here. The required
+// `🔐 Validate EKS Authorization` job rejected clean main's carried-through digest
+// exactly as predicted and reported the merge result's actual value, recorded
+// below from run 32070742779 at head 74676d5a.
 //
-// The required job is therefore expected to REJECT this value and report the merge
-// result's actual digest. Before this PR is promoted: record that reported digest
-// here, and re-verify the conservation above against 9a84e92b — membership
-// identical by set difference in both directions, zero per-identity mismatches and
-// zero missing resources against expectedRenderedHashes, so the aggregate is the
-// only control that moved.
-const expectedRenderedSurfaceSHA = "b5b394181a8f2bc325bd427a90990fbc3872fb1f41f3d938f1e28f0aac1075f4"
+// Taken on exact main feaf5059, which is NEWER than the 9a84e92b the placeholder
+// named: the branch was levelled to `behind_by` 0 before the measurement, so this
+// digest describes the current merge result rather than the older one.
+//
+// Conservation re-verified at that head, which is what the placeholder required
+// before promotion: the aggregate is the ONLY control that moved — zero
+// per-identity mismatches, zero missing resources, and zero duplicates against
+// expectedRenderedHashes, so every individually approved entry is byte-identical
+// and surface MEMBERSHIP is unchanged. The run reports the same 35
+// unresolved-substitution notes clean main reports.
+//
+// The earlier CDN failure that blocked measurement is not repaired by this and is
+// not silently dropped: the render still accumulates pinned remote resources over
+// the network (tracked as #3196), so a local render remains unavailable here. Only
+// ONE renderer therefore stands behind this digest — the approved CI toolchain.
+// The local kubectl is v1.36.1 against an approved v1.36.2, so
+// validateRendererVersion fails closed and cannot corroborate.
+//
+// One independent observation does corroborate that only this branch's own delta
+// moves the digest: the required job reported this IDENTICAL value at head
+// 07ec2b5f, before main was merged in, and again at 74676d5a after four further
+// main commits. Those commits therefore did not move the authorization surface.
+// That is evidence about what did NOT change; it is not a second rendering of what
+// did.
+//
+// The delta remains authorization-neutral — one chart value under spec.values,
+// carrying no rules, subjects, verbs, or apiGroups line, and moving no identity,
+// ServiceAccount, binding, or chart/source pin.
+const expectedRenderedSurfaceSHA = "489afc6651045b6643ee40e0098234a873174a8d807690efb0245aaf92f87a4b"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
