@@ -813,7 +813,53 @@ const (
 // emitted only alongside an aggregate mismatch to explain a hash that moved, and
 // a resource carrying `${…}` is forced into the aggregate so its literal text is
 // already covered by this digest.
-const expectedRenderedSurfaceSHA = "b5b394181a8f2bc325bd427a90990fbc3872fb1f41f3d938f1e28f0aac1075f4"
+//
+// Approved for #2709 on exact main feaf5059, which is the value recorded below.
+// This SUPERSEDES the two earlier #2709 records above, measured on the 6ebcb24f
+// and d925654e merge states; neither was ever committed, because each described a
+// merge result that a later main had already moved past. They are kept as the
+// branch's measurement history, not as candidate values.
+//
+// Measured by the required `🔐 Validate EKS Authorization` job (run 32069284792)
+// at head 1d357303, taken with the branch level against main — `behind_by` is 0,
+// so this digest describes the merge result rather than a stale rendering of it.
+//
+// Only ONE renderer stands behind it, and that is stated rather than glossed: the
+// approved CI toolchain. The local kubectl here is v1.36.1 against an approved
+// v1.36.2, so validateRendererVersion fails closed and a local render cannot
+// corroborate. It therefore does not meet the two-independent-renderer bar the
+// reductions recorded above met; it rests on the required job alone.
+//
+// Two independent observations do corroborate that the leveling merge moved
+// nothing, which is what makes the single rendering safe to approve:
+//
+//   - the required job reported this IDENTICAL digest at head 629bdd10 (before
+//     main was merged in) and again at head 1d357303 (after), so the merge itself
+//     did not move the surface;
+//   - main feaf5059 already contains that merge's only k8s change — Checkov skip
+//     annotations on the umami CronJob — and the required job PASSES on main
+//     against the previous digest, so those annotations are not in the surface at
+//     all. That is evidence about what did NOT change; it is not a second
+//     rendering of what did.
+//
+// Conservation behind the new digest: the whole-surface fingerprint is the ONLY
+// control that moved. The run reports exactly one problem — this aggregate — and
+// zero per-identity mismatches, zero missing resources, zero duplicates, and zero
+// encrypted-resource findings, so every individually approved entry is
+// byte-identical to its recorded value and surface MEMBERSHIP is unchanged. It
+// reports the same 35 unresolved-substitution notes that clean main reports.
+//
+// The reviewed reasoning is unchanged and is a privilege REDUCTION on every axis.
+// Of the three files the branch touches, only the Dex connector is semantic: it
+// adds a `teams: [maintainers]` entry under the existing org-scoped GitHub
+// connector, so Dex authenticates the maintainers team instead of every
+// devantler-tech org member — which is what gates apps authenticating natively
+// against Dex rather than through oauth2-proxy's allowed_groups. The oauth2-proxy
+// release changes only comment text inside its rendered values, and this file is
+// not part of the rendered surface. No identity, binding, ServiceAccount,
+// resource, or verb is added anywhere, and nothing granted to the aws/aws service
+// account this validator protects is touched.
+const expectedRenderedSurfaceSHA = "8773eaf0015f04f14850c5ef025b81657b0ad8d3aab397d99cf969044c04d7e6"
 
 // authorizationOverlayPaths lists every independently reconciled production
 // layer where an object can grant privileges to the aws/aws service account.
