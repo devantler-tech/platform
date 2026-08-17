@@ -147,9 +147,11 @@ node_claim_preconditions_still_hold() {
       == $was_cordoned)
     and (((.spec.taints // [])
       | map(select((
-          .key == "node.kubernetes.io/unschedulable"
-          and .effect == "NoSchedule"
-          and (.value // "") == ""
+          (.key == "node.kubernetes.io/unschedulable"
+            and .effect == "NoSchedule"
+            and (.value // "") == "")
+          or (.key == "DeletionCandidateOfClusterAutoscaler"
+            and .effect == "PreferNoSchedule")
         ) | not))
       | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]))
       == $initial_taints)
@@ -182,9 +184,11 @@ node_scheduling_state_is_safe_to_reboot() {
     and .metadata.annotations[$owner_annotation] == $owner
     and (((.spec.taints // [])
       | map(select((
-          .key == "node.kubernetes.io/unschedulable"
-          and .effect == "NoSchedule"
-          and (.value // "") == ""
+          (.key == "node.kubernetes.io/unschedulable"
+            and .effect == "NoSchedule"
+            and (.value // "") == "")
+          or (.key == "DeletionCandidateOfClusterAutoscaler"
+            and .effect == "PreferNoSchedule")
         ) | not))
       | sort_by([.key, .effect, (.value // ""), (.timeAdded // "")]))
       == $initial_taints)
@@ -216,6 +220,8 @@ node_scheduling_state_is_safe_while_lifecycle_taints_clear() {
         (.key == "node.kubernetes.io/unschedulable"
           and .effect == "NoSchedule"
           and (.value // "") == "")
+        or (.key == "DeletionCandidateOfClusterAutoscaler"
+          and .effect == "PreferNoSchedule")
         or .key == "node.kubernetes.io/not-ready"
         or .key == "node.kubernetes.io/unreachable"
         or .key == "node.cilium.io/agent-not-ready"
