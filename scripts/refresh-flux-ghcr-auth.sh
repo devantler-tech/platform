@@ -409,7 +409,12 @@ fence_report_lease() {
   # A second read could land either side of a fresh acquisition, which would let
   # recovery act on a holder the operator never saw evidence for.
   fence_lease_holder="${holder}"
-  if ! cp -- "${state}" "${fence_lease_state_file}"; then
+  # Only recovery consumes the retained copy, and only the mode dispatch sets the
+  # path. Guarded so a caller that reports without recovering cannot turn an
+  # unset path into a failed `cp` and lose the report itself — which is read
+  # precisely when a deploy is already refusing to start.
+  if [[ -n "${fence_lease_state_file}" ]] &&
+    ! cp -- "${state}" "${fence_lease_state_file}"; then
     echo "::error::Could not retain the GHCR synchronization lease state."
     return 1
   fi

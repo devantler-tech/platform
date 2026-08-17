@@ -1047,6 +1047,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
+      actions: read # read a prior run attempt status, to prove an orphaned fence holder is dead (deploy-prod recover-orphaned-fence)
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -1107,6 +1108,7 @@ jobs:
       packages: write # push OCI artifacts to GHCR
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
+      actions: read # read a prior run attempt status, to prove an orphaned fence holder is dead (deploy-prod recover-orphaned-fence)
     steps:
       - name: 📑 Checkout main
         # Deploy the CURRENT tip of `main` (the last state that actually landed in
