@@ -106,3 +106,78 @@ misconfigurations:
     statement: >-
       Port 53 is the required DNS service port; the pinned CoreDNS binary carries the file
       capability needed to bind it while the container runs as non-root UID/GID 65532.
+
+  # RBAC breadth in the vendored KubeVirt and CDI operator bundles — 16 of the 25 HIGH/CRITICAL
+  # findings on this tree, dispositioned here once as a class rather than finding by finding
+  # (#2990, which follows the precedent #2899 set for the same bundles under checkov).
+  #
+  # Both files are upstream release artifacts, not manifests this repository authors.
+  # scripts/update-vendored-operators.sh fetches each one from its project's release URL at a
+  # pinned version and verifies it against a recorded SHA-256 before it replaces the committed
+  # copy, so the bytes carrying these rules are upstream's and are re-verified on every refresh.
+  # The only local modification the updater makes is injecting resource-scoped checkov
+  # annotations; it never edits a rule.
+  #
+  # Every finding sits on a ClusterRole or Role named for the operator itself —
+  # cdi-operator-cluster, cdi-operator and kubevirt-operator — and each grant is one the operator
+  # needs to do its job: reconciling VirtualMachines and DataVolumes across every namespace,
+  # registering its own admission webhooks, and managing the services and endpoints that front
+  # them. Narrowing them at the manifest would break the operators, and would also diverge the
+  # bundle from the checksum-verified artifact, which the updater treats as a hard failure. There
+  # is no manifest-level fix available short of forking upstream, which is why these are excepted
+  # rather than repaired.
+  #
+  # SCOPE, and what still fails. Each entry is path-scoped to the two bundles, so all five checks
+  # stay live everywhere else — including on the cluster roles this repository does author, where
+  # they continue to report and are owned by #2990. The paths are written out on every entry
+  # rather than shared through a YAML anchor: an alias that a reader or tool resolves to an empty
+  # list would read as an unscoped skip, which is the one failure mode this block must not have.
+  # The boundary is not left to review either —
+  # scripts/tests/test-trivyignore-vendored-operator-boundary.sh writes identical offending
+  # ClusterRole bytes to a vendored path and to a first-party path and fails if the suppression
+  # reaches the second, so widening a glob or dropping a paths key breaks the build instead of
+  # silently going quiet.
+  #
+  # Deliberately NOT covered here: KSV-0014 on the two operator Deployments. A read-only root
+  # filesystem is a container setting rather than an RBAC grant, so a kustomize patch can supply
+  # it without touching upstream's rules, and it stays reported.
+  - id: KSV-0041
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      The operators reconcile DataVolumes and VirtualMachines that carry their own TLS material and
+      registry pull credentials, so their install bundles grant secret access cluster-wide. The
+      grant is upstream's, in a SHA-256 pinned release artifact this repository vendors verbatim.
+  - id: KSV-0046
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      The KubeVirt and CDI operators install and reconcile their own CustomResourceDefinitions and
+      the controllers behind them, which upstream expresses as a wildcard rule in the install
+      bundle. The grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
+  - id: KSV-0053
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      virt-operator execs into the virt-handler and virt-launcher pods it manages, for VM lifecycle
+      and migration. The grant is upstream's, in a SHA-256 pinned release artifact vendored
+      verbatim. This disposition covers both operator bundles as one class; of the two, only the
+      KubeVirt bundle currently carries such a rule.
+  - id: KSV-0056
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Both operators create and reconcile the services and endpoints fronting their API and webhook
+      deployments. The grant is upstream's, in a SHA-256 pinned release artifact vendored verbatim.
+  - id: KSV-0114
+    paths:
+      - k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml
+      - k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml
+    statement: >-
+      Both operators register, update and remove their own validating and mutating admission
+      webhooks as part of installing and upgrading themselves. The grant is upstream's, in a
+      SHA-256 pinned release artifact vendored verbatim.

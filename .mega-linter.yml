@@ -97,7 +97,7 @@ DISABLE_ERRORS_LINTERS:
   # (#3205). Its dispositions are documented below because they are what holds that zero — each one
   # is a scoped, resource-level skip naming its reason, not a disabled check.
   #
-  # trivy (108 in the local v0.73.0 reproduction): Kubernetes misconfiguration in k8s/, which the
+  # trivy (93 in the local v0.74.0 reproduction): Kubernetes misconfiguration in k8s/, which the
   # section above explains is NOT covered elsewhere. Tracked by #2787.
   #
   # trivy was 614 until KSV-0039 ("limit range usage") was skipped in .trivyignore.yaml — 450 of
@@ -120,6 +120,23 @@ DISABLE_ERRORS_LINTERS:
   # KSV-0109's two HIGH findings are path-scoped false positives (#2990): one ConfigMap embeds
   # JavaScript that reads an ESO-mounted Secret and the other exposes the public
   # `external_secrets_replicas` count. Trivy matched those identifier strings, not credential data.
+  #
+  # It then went 109 -> 93 when the RBAC breadth in the vendored KubeVirt and CDI operator
+  # bundles was dispositioned as a class — 16 findings, and 16 of the 25 HIGH/CRITICAL on this
+  # tree. Both files are upstream release artifacts that update-vendored-operators.sh fetches at
+  # a pinned version and verifies against a recorded SHA-256; every finding sits on a ClusterRole
+  # or Role named for the operator itself, and narrowing those grants would break the operator
+  # and diverge the bundle from the checksum it is verified against. See .trivyignore.yaml for the
+  # reasoning and #2990 for the measurement. The five checks stay live on the cluster roles this
+  # repository does author, where 7 HIGH/CRITICAL remain, and
+  # scripts/tests/test-trivyignore-vendored-operator-boundary.sh fails the build if that boundary
+  # is ever lost. KSV-0014 on the two operator Deployments is deliberately left reporting: a
+  # read-only root filesystem is a container setting a kustomize patch can supply without
+  # touching upstream rules.
+  #
+  # ⚠️ That 109 is NOT 108 plus a regression. 108 was measured on trivy v0.73.0 and 109 on v0.74.0
+  # with no manifest change in between, so that 1 is a scanner rule-set difference rather than new
+  # backlog — the same drift the KSV-0037 note above records. Only the 16 are this slice's work.
   #
   # checkov is at 0 failed checks on all three frameworks CI runs. Its last two findings were both
   # CKV_K8S_40, on the two vault-backup workloads, and #2904 dispositioned them as a scoped

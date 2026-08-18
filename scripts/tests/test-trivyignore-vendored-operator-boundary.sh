@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# The vendored-operator RBAC dispositions in .trivyignore.yaml are PATH-SCOPED, and this test is
+# what keeps them that way.
+#
+# WHY THIS EXISTS
+# KubeVirt's and CDI's install bundles are upstream release artifacts, vendored verbatim and
+# SHA-256 verified by scripts/update-vendored-operators.sh. Their ClusterRoles grant wildcard,
+# secret, webhook, exec and networking permissions because the operators require them, and those
+# grants are not ours to narrow — see the disposition block in .trivyignore.yaml and #2990.
+#
+# The risk that disposition creates is NOT that it is wrong; it is that it silently stops being
+# path-scoped. Drop a `paths:` key, or widen one to k8s/**, and every one of these checks goes
+# quiet across the whole repository — including on the FIRST-PARTY cluster roles this repository
+# does author, where the same permissions are a real finding and four of them are still open.
+# Nothing else would fail: the scan still runs, the count still drops, and the gate still reports
+# a smaller number, which reads exactly like progress.
+#
+# Verified here in two layers, because they fail for different reasons:
+#
+#   STRUCTURE (always) — every dispositioned check id still carries a non-empty `paths:` list, and
+#   every path in it is one of the two vendored bundles, written literally. This is the layer that
+#   catches the regression above, and it needs nothing but yq.
+#
+#   BEHAVIOUR (when trivy is installed) — the paired control the KSV-0037 entry describes: the same
+#   offending ClusterRole bytes are written to a vendored path AND to a first-party path, and the
+#   suppression must apply to exactly the first. This proves trivy agrees with the structure rather
+#   than assuming it. It is skipped, loudly, where trivy is not on PATH.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+readonly repo_root
+readonly ignorefile="$repo_root/.trivyignore.yaml"
+
+command -v yq >/dev/null 2>&1 || {
+  printf 'yq is required to check the vendored-operator disposition boundary\n' >&2
+  exit 1
+}
+
+readonly vendored_cdi='k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml'
+readonly vendored_kubevirt='k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml'
+readonly first_party='k8s/bases/infrastructure/cluster-roles/boundary-probe.yaml'
+
+# Every check id dispositioned for the vendored bundles. Keep in sync with .trivyignore.yaml.
+readonly checks=(KSV-0041 KSV-0046 KSV-0053 KSV-0056 KSV-0114)
+
+status=0
+
+# ---------------------------------------------------------------- structure --
+for check in "${checks[@]}"; do
+  entries="$(yq "[.misconfigurations[] | select(.id == \"$check\")] | length" "$ignorefile")"
+  if [ "$entries" -lt 1 ]; then
+    printf 'MISSING DISPOSITION: %s has no entry in .trivyignore.yaml\n' "$check" >&2
+    status=1
+    continue
+  fi
+
+  # One line per entry, so an entry that lost its paths key cannot hide behind one that kept it.
+  while IFS= read -r n; do
+    if [ "$n" -eq 0 ]; then
+      printf 'UNSCOPED SKIP: an entry for %s has no paths, which suppresses it everywhere including first-party cluster roles\n' "$check" >&2
+      status=1
+    fi
+  done < <(yq ".misconfigurations[] | select(.id == \"$check\") | (.paths // []) | length" "$ignorefile")
+
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in
+      "$vendored_cdi" | "$vendored_kubevirt") ;;
+      *)
+        printf 'WIDENED SKIP: %s is scoped to %s, which is not one of the two vendored operator bundles\n' "$check" "$path" >&2
+        status=1
+        ;;
+    esac
+  done < <(yq ".misconfigurations[] | select(.id == \"$check\") | (.paths // [])[]" "$ignorefile")
+done
+
+# ---------------------------------------------------------------- behaviour --
+if ! command -v trivy >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+  printf 'NOTE: trivy or jq not on PATH; structural checks ran, paired control skipped\n'
+  [ "$status" -eq 0 ] || exit 1
+  printf 'vendored-operator RBAC disposition is path-scoped (structure only): %d checks\n' "${#checks[@]}"
+  exit 0
+fi
+
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+
+# One ClusterRole that trips all five: wildcard resources, secrets, webhook configurations,
+# pods/exec and service/endpoint management.
+write_probe() {
+  local dest="$scratch/$1"
+  mkdir -p "$(dirname "$dest")"
+  cat >"$dest" <<'PROBE'
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: boundary-probe
+rules:
+  - apiGroups: ["*"]
+    resources: ["*"]
+    verbs: ["*"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "delete"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
+    verbs: ["get", "list", "create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list", "create", "update", "delete"]
+PROBE
+}
+
+write_probe "$vendored_cdi"
+write_probe "$vendored_kubevirt"
+write_probe "$first_party"
+cp "$ignorefile" "$scratch/.trivyignore.yaml"
+
+findings="$scratch/findings.txt"
+(cd "$scratch" && trivy fs --scanners misconfig --exit-code 0 \
+  --ignorefile .trivyignore.yaml --format json --quiet . 2>/dev/null) |
+  jq -r '.Results[]? as $r | $r.Misconfigurations[]?
+         | select(.Status=="FAIL") | "\($r.Target)\t\(.ID)"' |
+  sed 's|^\./||' | sort -u >"$findings"
+
+[ -s "$findings" ] || {
+  printf 'probe produced no findings at all: fixture or scan is broken, so this control would pass vacuously\n' >&2
+  exit 1
+}
+
+fires() { grep -qxF -- "$1	$2" "$findings"; }
+
+# The control half. Without it, a blanket suppression satisfies every assertion below it.
+for check in "${checks[@]}"; do
+  fires "$first_party" "$check" || {
+    printf 'BOUNDARY LOST: %s no longer fires on a first-party cluster role; the disposition is hiding real findings\n' "$check" >&2
+    status=1
+  }
+done
+
+for path in "$vendored_cdi" "$vendored_kubevirt"; do
+  for check in "${checks[@]}"; do
+    if fires "$path" "$check"; then
+      printf 'MISSING DISPOSITION: %s still fires on vendored bundle %s\n' "$check" "$path" >&2
+      status=1
+    fi
+  done
+done
+
+[ "$status" -eq 0 ] || exit 1
+
+printf 'vendored-operator RBAC disposition is path-scoped: %d checks suppressed on both vendored bundles, all still live on first-party roles\n' "${#checks[@]}"
