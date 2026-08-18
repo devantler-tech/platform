@@ -24,9 +24,12 @@ metadata:
     # C-0013/C-0016/C-0055/C-0211 with nothing injecting them. Six of the twelve
     # are separately and deliberately excepted for C-0013/C-0016/C-0055 in
     # infrastructure-privileged.yaml; C-0211 and the other six are not covered
-    # anywhere. Narrowing it needs a scope the CSE designators cannot yet spell
-    # (an In-list would fail every newly-onboarded namespace), which is why this
-    # is declared rather than fixed here.
+    # anywhere. The complement scope this needs IS now expressible: #3083 added
+    # `NotIn` support to scripts/generate-kubescape-exceptions, rendered by
+    # namespaceNotInPattern, which is exactly what avoids an In-list failing
+    # every newly-onboarded namespace. What still blocks narrowing is evidence,
+    # not expressiveness — the surfaced set must be re-measured first (#2824),
+    # and C-0211's residual population is unsized (#3217).
     #
     # cert-manager, keda and opencost are NOT part of that set even though
     # add-pod-security-context excludes them: add-imageuid-pod-security-context
@@ -43,17 +46,24 @@ metadata:
     # as the genuinely uncovered pair. In those two, the container-level fields
     # these controls check are set in-spec everywhere except the kubescape,
     # kubevuln and operator Deployments, which lack capabilities.drop: [ALL] and
-    # a container-level seccompProfile. Hardening those three is tracked in
-    # #3064; the four excepted namespaces were not measured, being out of scope.
+    # a container-level seccompProfile. The four excepted namespaces were not
+    # measured, being out of scope.
     # These counts are a prod-only snapshot: the local overlay opts in to a
     # different set, so re-measure rather than assuming they still hold.
+    #
+    # SUPERSEDED 2026-08-18, on the three Deployments only: they now set both
+    # fields in-spec via the kubescape HelmRelease patches, and #3064 closed
+    # COMPLETED, so C-0055 has no genuine gap left behind this exception. The
+    # rest of the 2026-08-10 snapshot has NOT been re-measured.
     #
     # C-0211 is deliberately NOT sized here. It has no other exception, its
     # field set differs from the three above (fsGroupChangePolicy, runAsUser
     # and runAsGroup are supplied by the mutation), and the name-scoped
     # kubescape-privileged.yaml does not cover it — so node-agent and storage
     # remain inside its residual population rather than excepted out of it.
-    # Sizing it needs its own per-workload pass; #3064 carries that.
+    # Sizing it needs its own per-workload pass. #3064 did NOT carry that — its
+    # only C-0211 criterion was node-agent, and it is closed COMPLETED — so that
+    # pass is tracked in #3217.
     platform.devantler.tech/cluster-wide: declared
 spec:
   reason: >-
