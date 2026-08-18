@@ -23,7 +23,8 @@
 #     binding nested inside a ResourceGraphDefinition template counts too);
 #   * cluster-reader grants no verb outside get/list/watch;
 #   * KRO keeps rbac.mode `aggregation` and both RGD roles keep the aggregation label;
-#   * each disposition stays scoped to its own file and never loses its paths key.
+#   * each disposition stays scoped to its own file, never loses its paths key, and no pair beyond
+#     the reviewed matrix appears.
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -75,6 +76,36 @@ while IFS= read -r n; do
   fi
 done < <(yq '.misconfigurations[] | select(.id == "KSV-0041" or .id == "KSV-0046" or .id == "KSV-0056") | (.paths // []) | length' "$ignorefile")
 
+# Nothing beyond the reviewed matrix. The check ids here are also dispositioned for the two vendored
+# operator bundles, so those two paths are expected; ANY other first-party pair is an unreviewed
+# suppression, and it must fail here rather than being noticed only if someone re-reads the file.
+readonly reviewed_pairs=(
+  "KSV-0041:$tenant_role"
+  "KSV-0056:$tenant_role"
+  "KSV-0056:$kro_tenant"
+  "KSV-0056:$kro_webapp"
+  "KSV-0046:$reader_role"
+)
+readonly vendored_cdi='k8s/bases/infrastructure/controllers/cdi/cdi-operator.yaml'
+readonly vendored_kubevirt='k8s/bases/infrastructure/controllers/kubevirt/kubevirt-operator.yaml'
+while IFS= read -r pair; do
+  [ -n "$pair" ] || continue
+  pair_path="${pair#*:}"
+  [ "$pair_path" = "$vendored_cdi" ] && continue
+  [ "$pair_path" = "$vendored_kubevirt" ] && continue
+  known=0
+  for rp in "${reviewed_pairs[@]}"; do
+    if [ "$pair" = "$rp" ]; then
+      known=1
+      break
+    fi
+  done
+  if [ "$known" -eq 0 ]; then
+    printf 'UNREVIEWED DISPOSITION: %s is not one of the reviewed first-party verdicts\n' "$pair" >&2
+    status=1
+  fi
+done < <(yq -N '.misconfigurations[] | select(.id == "KSV-0041" or .id == "KSV-0046" or .id == "KSV-0053" or .id == "KSV-0056" or .id == "KSV-0114") | .id + ":" + (.paths // [])[]' "$ignorefile")
+
 # ----------------------------------------------------------------- premises --
 # 1. The tenant role is never bound cluster-wide. Recursive, so a ClusterRoleBinding nested in an
 #    RGD resource template is caught as well as a top-level one.
@@ -85,7 +116,7 @@ while IFS= read -r -d '' file; do
   for c in $found; do
     [ "${c:-0}" -gt 0 ] && bindings=$((bindings + c))
   done
-done < <(find "$repo_root/k8s" -name '*.yaml' -type f -print0)
+done < <(find "$repo_root/k8s" -type f \( -name '*.yaml' -o -name '*.yml' \) -print0)
 if [ "$bindings" -ne 0 ]; then
   printf 'PREMISE BROKEN: %d ClusterRoleBinding(s) bind the tenant role; the KSV-0041/KSV-0056 dispositions on %s assume namespace-scoped RoleBindings only\n' "$bindings" "$tenant_role" >&2
   status=1
