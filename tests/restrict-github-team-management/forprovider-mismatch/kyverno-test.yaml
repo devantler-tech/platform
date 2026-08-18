@@ -13,13 +13,13 @@ results:
   - policy: restrict-github-team-management
     rule: teams-allow-listed
     resources:
-      - github-config/platform
+      - github-config/admins
     kind: Team
     result: pass
   # Only the identity binding catches it.
   - policy: restrict-github-team-management
     rule: teams-bind-provider-identity-to-object-name
     resources:
-      - github-config/platform
+      - github-config/admins
     kind: Team
     result: fail

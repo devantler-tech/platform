@@ -19,7 +19,7 @@ results:
   - policy: restrict-github-team-management
     rule: teams-allow-listed
     resources:
-      - github-config/platform
+      - github-config/admins
       - github-config/maintainers
     kind: Team
     result: pass
@@ -30,7 +30,7 @@ results:
   - policy: restrict-github-team-management
     rule: teams-bind-provider-identity-to-object-name
     resources:
-      - github-config/platform
+      - github-config/admins
       - github-config/maintainers
       - github-config/attacker-team
     kind: Team
@@ -50,14 +50,14 @@ results:
   - policy: restrict-github-team-management
     rule: teammemberships-reference-allow-listed-teams
     resources:
-      - github-config/platform-member
+      - github-config/admins-member
     kind: TeamMembership
     result: pass
   # Repository grants are capped below admin.
   - policy: restrict-github-team-management
     rule: teamrepositories-reference-allow-listed-teams
     resources:
-      - github-config/platform-repo-admin
+      - github-config/admins-repo-admin
       - github-config/unresolved-reference-repo
       - github-config/initprovider-admin-grant
       - github-config/maintain-grant
@@ -66,6 +66,6 @@ results:
   - policy: restrict-github-team-management
     rule: teamrepositories-reference-allow-listed-teams
     resources:
-      - github-config/platform-repo
+      - github-config/admins-repo
     kind: TeamRepository
     result: pass

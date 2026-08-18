@@ -4,11 +4,11 @@
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: Team
 metadata:
-  name: platform
+  name: admins
   namespace: github-config
 spec:
   forProvider:
-    name: platform
+    name: Admins
     privacy: closed
 ---
 # Allow-listed with the provider identity omitted entirely — Crossplane then
@@ -40,12 +40,12 @@ spec:
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: TeamMembership
 metadata:
-  name: platform-member
+  name: admins-member
   namespace: github-config
 spec:
   forProvider:
     teamIdRef:
-      name: platform
+      name: admins
       policy:
         resolve: Always
     username: devantler
@@ -64,7 +64,7 @@ metadata:
 spec:
   forProvider:
     teamIdRef:
-      name: platform
+      name: admins
     username: attacker
     role: maintainer
 ---
@@ -79,7 +79,7 @@ metadata:
 spec:
   forProvider:
     teamIdRef:
-      name: platform
+      name: admins
       policy:
         resolve: IfNotPresent
     username: attacker
@@ -102,12 +102,12 @@ spec:
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: TeamRepository
 metadata:
-  name: platform-repo
+  name: admins-repo
   namespace: github-config
 spec:
   forProvider:
     teamIdRef:
-      name: platform
+      name: admins
       policy:
         resolve: Always
     repository: platform
@@ -123,7 +123,7 @@ metadata:
 spec:
   forProvider:
     teamIdRef:
-      name: platform
+      name: admins
     repository: platform
     permission: push
 ---
@@ -132,12 +132,12 @@ spec:
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: TeamRepository
 metadata:
-  name: platform-repo-admin
+  name: admins-repo-admin
   namespace: github-config
 spec:
   forProvider:
     teamIdRef:
-      name: platform
+      name: admins
       policy:
         resolve: Always
     repository: platform
@@ -154,7 +154,7 @@ metadata:
 spec:
   forProvider:
     teamIdRef:
-      name: platform
+      name: admins
       policy:
         resolve: Always
     username: attacker
@@ -170,7 +170,7 @@ metadata:
 spec:
   forProvider:
     teamIdRef:
-      name: platform
+      name: admins
       policy:
         resolve: Always
     repository: platform
@@ -218,7 +218,7 @@ metadata:
 spec:
   forProvider:
     teamIdRef:
-      name: platform
+      name: admins
       policy:
         resolve: Always
     repository: platform

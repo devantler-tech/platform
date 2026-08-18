@@ -19,7 +19,7 @@ metadata:
     policies.kyverno.io/minversion: 1.6.0
     policies.kyverno.io/description: >-
       Restricts provider-upjet-github team resources in the github-config
-      namespace to the platform CODEOWNERS teams, requires TeamMembership and
+      namespace to the github-config CODEOWNERS teams, requires TeamMembership and
       TeamRepository resources to reference those Team objects by name, and
       blocks repository admin grants. This prevents a compromised or unintended
       github-config artifact from adding arbitrary users to arbitrary GitHub
@@ -37,20 +37,20 @@ spec:
               namespaces:
                 - github-config
       validate:
-        message: GitHub Team resources managed by github-config must be one of platform or maintainers.
+        message: GitHub Team resources managed by github-config must be one of admins or maintainers.
         deny:
           conditions:
             all:
               - key: "{{ request.object.metadata.name }}"
                 operator: AnyNotIn
                 value:
-                  - platform
+                  - admins
                   - maintainers
     # The allow-list above constrains the Kubernetes object name, but the
     # provider takes the real GitHub team from spec.forProvider.name (and
-    # spec.initProvider.name). Without this rule a Team object named "platform"
+    # spec.initProvider.name). Without this rule a Team object named "admins"
     # may carry forProvider.name: some-other-team, so the reference rules below
-    # accept teamIdRef.name: platform while the org-admin provider reconciles a
+    # accept teamIdRef.name: admins while the org-admin provider reconciles a
     # different remote team. Binding the provider identity to the object name is
     # what makes the object name a faithful proxy for the remote team, which is
     # the assumption the two reference rules rest on. Both fields are authored
@@ -69,16 +69,16 @@ spec:
         deny:
           conditions:
             any:
-              - key: "{{ request.object.spec.forProvider.name || '' }}"
+              - key: "{{ to_lower(request.object.spec.forProvider.name || '') }}"
                 operator: AnyNotIn
                 value:
                   - ""
-                  - "{{ request.object.metadata.name }}"
-              - key: "{{ request.object.spec.initProvider.name || '' }}"
+                  - "{{ to_lower(request.object.metadata.name) }}"
+              - key: "{{ to_lower(request.object.spec.initProvider.name || '') }}"
                 operator: AnyNotIn
                 value:
                   - ""
-                  - "{{ request.object.metadata.name }}"
+                  - "{{ to_lower(request.object.metadata.name) }}"
     # crossplane.io/external-name is the other way the local name can be
     # detached from the remote team, and it is NOT constrained here. A rule
     # accepting only an empty annotation or metadata.name looks like the
@@ -100,7 +100,7 @@ spec:
               namespaces:
                 - github-config
       validate:
-        message: GitHub TeamMembership resources must set spec.forProvider.teamIdRef.name to platform or maintainers with policy.resolve Always, so the reference re-resolves on every reconcile; selectors are not allowed, and initProvider must not carry a teamId, selector or non-allow-listed reference.
+        message: GitHub TeamMembership resources must set spec.forProvider.teamIdRef.name to admins or maintainers with policy.resolve Always, so the reference re-resolves on every reconcile; selectors are not allowed, and initProvider must not carry a teamId, selector or non-allow-listed reference.
         deny:
           conditions:
             any:
@@ -119,7 +119,7 @@ spec:
               - key: "{{ request.object.spec.forProvider.teamIdRef.name || '' }}"
                 operator: AnyNotIn
                 value:
-                  - platform
+                  - admins
                   - maintainers
               # upjet merges initProvider into any unset forProvider field, so
               # every constraint above has to hold there too — otherwise an
@@ -135,7 +135,7 @@ spec:
                 operator: AnyNotIn
                 value:
                   - ""
-                  - platform
+                  - admins
                   - maintainers
     - name: teamrepositories-reference-allow-listed-teams
       match:
@@ -146,7 +146,7 @@ spec:
               namespaces:
                 - github-config
       validate:
-        message: GitHub TeamRepository resources must reference platform or maintainers by spec.forProvider.teamIdRef.name with policy.resolve Always, and may grant only pull, triage or push permission, in forProvider and initProvider.
+        message: GitHub TeamRepository resources must reference admins or maintainers by spec.forProvider.teamIdRef.name with policy.resolve Always, and may grant only pull, triage or push permission, in forProvider and initProvider.
         deny:
           conditions:
             any:
@@ -165,7 +165,7 @@ spec:
               - key: "{{ request.object.spec.forProvider.teamIdRef.name || '' }}"
                 operator: AnyNotIn
                 value:
-                  - platform
+                  - admins
                   - maintainers
               # An allow-list, not a deny-list on `admin`: GitHub also offers
               # `maintain` and organization-defined custom repository roles, so
@@ -192,7 +192,7 @@ spec:
                 operator: AnyNotIn
                 value:
                   - ""
-                  - platform
+                  - admins
                   - maintainers
               - key: "{{ request.object.spec.initProvider.permission || '' }}"
                 operator: AnyNotIn
